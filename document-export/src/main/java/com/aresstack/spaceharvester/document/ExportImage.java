@@ -22,12 +22,15 @@ public final class ExportImage {
         this.failure = failure;
     }
 
-    /** A figure whose bytes were loaded. */
+    /**
+     * A figure whose bytes were loaded. The figure takes the array over without copying it (an attachment may have
+     * 100 MiB); the caller must not change it afterwards.
+     */
     public static ExportImage loaded(String src, String title, byte[] bytes) {
         if (bytes == null) {
             throw new IllegalArgumentException("bytes are required");
         }
-        return new ExportImage(src, title, bytes.clone(), null);
+        return new ExportImage(src, title, bytes, null);
     }
 
     /** A figure that could not be loaded, with the reason the export names. */
@@ -53,6 +56,11 @@ public final class ExportImage {
     /** The bytes as the source delivered them; {@code null} if not loaded. */
     public byte[] bytes() {
         return bytes == null ? null : bytes.clone();
+    }
+
+    /** The bytes without a copy, for reading inside this package only; {@code null} if not loaded. */
+    byte[] shared() {
+        return bytes;
     }
 
     /** Why the figure is missing; {@code null} if loaded. */

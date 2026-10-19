@@ -17,7 +17,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.timeout.ReadTimeoutException;
 import io.netty.resolver.DefaultAddressResolverGroup;
 import io.netty.resolver.NoopAddressResolverGroup;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
@@ -26,6 +25,7 @@ import java.net.URI;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -236,24 +236,54 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         String location = first(response.headers().header("Location"));
         List<String> cookies = ConfluenceRedirects.setCookies(Map.of("Set-Cookie",
                 response.headers().header("Set-Cookie")));
-        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        Body body = new Body(length, maxBytes);
         return response.bodyToFlux(DataBuffer.class)
                 .handle((DataBuffer buffer, SynchronousSink<Void> sink) -> {
                     try {
                         int readable = buffer.readableByteCount();
-                        if (body.size() + (long) readable > maxBytes) {
+                        if (body.size + (long) readable > maxBytes) {
                             sink.error(new ConfluenceResponseTooLargeException(maxBytes));
                             return;
                         }
-                        byte[] bytes = new byte[readable];
-                        buffer.read(bytes);
-                        body.write(bytes, 0, readable);
+                        body.reserve(readable);
+                        buffer.read(body.bytes, body.size, readable);
+                        body.size += readable;
                     } finally {
                         DataBufferUtils.release(buffer);
                     }
                 })
-                .then(Mono.fromCallable(() -> new ConfluenceHttpResponse(status, contentType, body.toByteArray(),
+                .then(Mono.fromCallable(() -> new ConfluenceHttpResponse(status, contentType, body.bytes(),
                         location, cookies)));
+    }
+
+    /**
+     * Der Körper in einem Feld, das bei bekannter Länge gleich passend angelegt wird: Die Pakete gehen direkt hinein,
+     * ohne Zwischenpuffer je Paket und ohne Schlusskopie, wenn die angekündigte Länge stimmt (bei 100 MiB sonst bis zu
+     * dreimal so viel Heap).
+     */
+    static final class Body {
+
+        private static final int INITIAL = 8192;
+
+        private final int maxBytes;
+        byte[] bytes;
+        int size;
+
+        Body(long length, int maxBytes) {
+            this.maxBytes = maxBytes;
+            this.bytes = new byte[length >= 0 ? (int) length : Math.min(INITIAL, maxBytes)];
+        }
+
+        void reserve(int readable) {
+            if (size + readable > bytes.length) {
+                long grown = Math.max((long) bytes.length * 2, (long) size + readable);
+                bytes = Arrays.copyOf(bytes, (int) Math.min(grown, maxBytes));
+            }
+        }
+
+        byte[] bytes() {
+            return size == bytes.length ? bytes : Arrays.copyOf(bytes, size);
+        }
     }
 
     private static String first(List<String> values) {

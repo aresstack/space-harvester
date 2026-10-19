@@ -183,6 +183,26 @@ class WebClientConfluenceTransportTest {
                         e -> assertThat(e.maxBytes()).isEqualTo(5000));
     }
 
+    /** Mit angekündigter Länge liegt der Körper in genau einem passenden Feld, ohne Schlusskopie. */
+    @Test
+    void aBodyOfAnnouncedLengthIsFilledInPlace() {
+        WebClientConfluenceTransport.Body known = new WebClientConfluenceTransport.Body(3000, 5000);
+        byte[] first = known.bytes;
+        for (int i = 0; i < 3; i++) {
+            known.reserve(1000);
+            known.size += 1000;
+        }
+        assertThat(known.bytes()).isSameAs(first).hasSize(3000);
+
+        WebClientConfluenceTransport.Body unknown = new WebClientConfluenceTransport.Body(-1, 50_000);
+        for (int i = 0; i < 20; i++) {
+            unknown.reserve(1000);
+            unknown.size += 1000;
+        }
+        assertThat(unknown.bytes()).hasSize(20_000);
+        assertThat(unknown.bytes.length).isLessThanOrEqualTo(50_000);
+    }
+
     @Test
     void theRouteIsChosenPerTargetOffTheNettyEventLoop() throws Exception {
         List<String> threads = new CopyOnWriteArrayList<>();
