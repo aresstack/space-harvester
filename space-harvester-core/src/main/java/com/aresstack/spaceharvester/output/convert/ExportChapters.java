@@ -158,7 +158,8 @@ final class ExportChapters {
 
     /**
      * Wie {@link #figures(ConvertiblePage, StorageParser, ExportAssets)}, ausgeführte Makros ({@code include},
-     * {@code excerpt-include}, {@code children}) mit ihrem Inhalt aus der abgelegten Lese-Ansicht der Seite; ohne sie
+     * {@code excerpt-include}, {@code children}, {@code toc}, Jira-Abfragen und alle anderen, die der Parser nicht
+     * selbst abbildet) mit ihrem Inhalt aus der abgelegten Lese-Ansicht der Seite; ohne sie
      * bleibt der Hinweis, gemeldet als {@link ConversionNotice.Kind#OMITTED_CONTENT}.
      */
     static Figures figures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
@@ -401,15 +402,18 @@ final class ExportChapters {
                 .or(() -> DocumentTextBlocks.of(page.snapshot().payload()))
                 .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
         String reason = omittedReason(view);
-        parsed.ifPresent(p -> p.omitted().forEach(reference -> omitted.add(new ConversionNotice(page.pageId(),
-                ConversionNotice.Kind.OMITTED_CONTENT, reference, reason))));
+        parsed.ifPresent(p -> p.omitted().forEach(omission -> omitted.add(new ConversionNotice(page.pageId(),
+                ConversionNotice.Kind.OMITTED_CONTENT, omission.reference(),
+                omission.countMismatch() ? "view-count-mismatch" : reason))));
         return "*" + facts + "*\n\n" + MarkdownConverter.blocks(blocks, 0);
     }
 
     /**
      * Grund für eingebundenen Inhalt, der fehlt: {@code not-collected} ohne abgelegte Ansicht, der Grund der Ansicht
      * ({@code foreign-content}, {@code no-reading-view}, {@code page-changed}, {@code source-unavailable}), bei
-     * vorliegender Ansicht ohne gerendertes Makro {@code not-rendered}.
+     * vorliegender Ansicht ohne gerendertes Makro {@code not-rendered}. Hat die Ansicht für den Makronamen eine andere
+     * Zahl äußerster Makros als der Storage, steht statt dessen {@code view-count-mismatch} (bewusste Abweichung vom
+     * Enterprise AI Client, der die Ansicht ungeprüft übernimmt).
      */
     private static String omittedReason(Optional<ExportReadingView> view) {
         if (view.isEmpty()) {
