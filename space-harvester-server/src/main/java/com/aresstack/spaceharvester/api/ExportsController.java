@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -90,11 +91,12 @@ public class ExportsController {
                     + "Mit format entstehen zusätzlich abgeleitete Dateien aus denselben Seiten (json: pages.json); "
                     + "ihre Herkunft steht im Manifest unter conversions. Optional nennt der Rumpf eine Startseite "
                     + "({\"rootPageId\": \"…\"}): dann enthält der Export nur sie und ihre Unterseiten; gibt es sie im "
-                    + "Space nicht oder ist sie nicht lesbar, scheitert der Auftrag (ROOT_NOT_FOUND). Ohne Rumpf der "
-                    + "ganze Space.")
+                    + "Space nicht oder ist sie nicht lesbar, scheitert der Auftrag (ROOT_NOT_FOUND). Mit depth nur so "
+                    + "viele Ebenen unter ihr ({\"rootPageId\": \"…\", \"depth\": 0} = die Seite allein ohne "
+                    + "Unterseiten). Ohne Rumpf der ganze Space.")
     @ApiResponse(responseCode = "202", description = "Export angenommen")
-    @ApiResponse(responseCode = "400", description = "Unbekanntes Format (invalid-request)",
-            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+    @ApiResponse(responseCode = "400", description = "Unbekanntes Format, negative Tiefe oder Tiefe ohne Startseite "
+            + "(invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine Freigabe export und content für diesen Space "
             + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -117,18 +119,24 @@ public class ExportsController {
                     + "Generation wiederverwenden und nur einlesen, wenn keine vorliegt")
             @RequestParam(name = "refresh", defaultValue = "false") boolean refresh,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Optional: Startseite eines "
-                    + "Teilbaum-Exports; ohne Rumpf oder ohne rootPageId der ganze Space", required = false)
+                    + "Teilbaum-Exports und dessen Tiefe; ohne Rumpf oder ohne rootPageId der ganze Space",
+                    required = false)
             @RequestBody(required = false) ExportStartRequest body) {
         requireExport(caller, sourceId, spaceKey);
         String rootPageId = body == null || body.rootPageId() == null || body.rootPageId().isBlank()
                 ? null : body.rootPageId();
+        Integer depth = body == null ? null : body.depth();
+        if (depth != null && (depth < 0 || rootPageId == null)) {
+            throw new InvalidQueryException("depth muss 0 oder größer sein und braucht rootPageId");
+        }
         List<String> requested = formats == null || formats.isEmpty() ? List.of(Exports.DEFAULT_FORMAT) : formats;
         JobStatus job = exports.start(ExportRequest.of(sourceId, spaceKey, owner(caller), requested)
                 .withRefresh(refresh)
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))
                 .withAuthorized(() -> permitsExport(caller, sourceId, spaceKey))
-                .withRoot(rootPageId));
+                .withRoot(rootPageId)
+                .withDepth(depth));
         return ResponseEntity.accepted().location(URI.create(EXPORTS + "/" + job.id()))
                 .body(ExportResponse.of(job, null));
     }
@@ -431,8 +439,9 @@ public class ExportsController {
      * Optionaler Rumpf beim Start eines Exports.
      *
      * @param rootPageId Startseite: nur sie und ihre Unterseiten; {@code null} oder fehlend für den ganzen Space
+     * @param depth      nur mit Startseite: Ebenen unter ihr; {@code 0} für die Seite allein, fehlend für alle
      */
-    public record ExportStartRequest(String rootPageId) {
+    public record ExportStartRequest(String rootPageId, Integer depth) {
     }
 
     /**

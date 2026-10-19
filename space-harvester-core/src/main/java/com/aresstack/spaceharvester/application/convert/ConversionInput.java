@@ -21,6 +21,14 @@ public interface ConversionInput {
         return spaceKey();
     }
 
+    /**
+     * Startseite eines Teilbaum- oder Einzelseiten-Exports (#186), {@code null} für den ganzen Space. Mit Startseite
+     * ist sie wie im Enterprise AI Client das Wurzelkapitel des Dokuments, ihre Unterseiten die Kapitel darunter.
+     */
+    default String rootPageId() {
+        return null;
+    }
+
     /** Baum der exportierten Seiten; nur Verweise über IDs. */
     PageTree tree();
 

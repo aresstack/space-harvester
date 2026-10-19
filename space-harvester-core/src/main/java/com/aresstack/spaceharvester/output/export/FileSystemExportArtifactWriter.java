@@ -653,6 +653,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         generator.writeStringProperty("exportId", summary.exportId());
         generator.writeStringProperty("sourceId", scope.sourceId());
         generator.writeStringProperty("spaceKey", scope.spaceKey());
+        if (scope.rootPageId() != null) {
+            // Teilbaum oder Einzelseite (#186): die Startseite ist die Wurzel des Baums und das Wurzelkapitel
+            generator.writeStringProperty("rootPageId", scope.rootPageId());
+        }
         generator.writeBooleanProperty("complete", summary.complete());
         generator.writeName("cache");
         generator.writeStartObject();

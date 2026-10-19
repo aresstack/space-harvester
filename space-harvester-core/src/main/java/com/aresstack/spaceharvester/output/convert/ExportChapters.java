@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.document.ExportGraphics;
 import com.aresstack.spaceharvester.document.ExportImage;
@@ -27,8 +28,9 @@ import java.util.regex.Pattern;
 
 /**
  * Das gemeinsame Kapitelmodell von Word und PDF: der Space ist Kapitel 1, jede Seite ein Unterkapitel nach ihrer
- * Tiefe im Baum ({@code depth + 2}), linear in Baumreihenfolge. Der Inhalt eines Kapitels ist dasselbe Markdown wie
- * bei {@link MarkdownConverter}, davor Seiten-ID, Version und Link in Confluence. Jede Seite trägt ihren Anker
+ * Tiefe im Baum ({@code depth + 2}), linear in Baumreihenfolge. Bei einem Teilbaum oder einer Einzelseite (#186) ist
+ * wie im Enterprise AI Client die Startseite Kapitel 1, ihre Unterseiten folgen darunter ({@code depth + 1}). Der
+ * Inhalt eines Kapitels ist dasselbe Markdown wie bei {@link MarkdownConverter}, davor Seiten-ID, Version und Link in Confluence. Jede Seite trägt ihren Anker
  * {@link PageLinks#anchor(String)}; Verweise auf Seiten desselben Exports springen dorthin.
  *
  * <p>Bilder kommen nur aus dem Datenbestand ({@link ConversionInput#assets()}): ein abgelegtes Bild wird eingebettet,
@@ -42,10 +44,29 @@ final class ExportChapters {
     }
 
     /**
+     * Ob die Startseite eines Teilbaum- oder Einzelseiten-Exports das Wurzelkapitel ist (#186): wie
+     * {@code KnowledgeExportUseCase.subtree} und {@code page} im Enterprise AI Client, die das Dokument mit der Seite
+     * als Kapitel 1 beginnen. Sonst ist der Space Kapitel 1.
+     */
+    static boolean rooted(ConversionInput input) {
+        String root = input.rootPageId();
+        return root != null && input.tree().roots().size() == 1
+                && input.tree().roots().get(0).pageId().equals(root);
+    }
+
+    /**
      * Titel des Wurzelkapitels und des Dokuments: der Name des Space wie in der Quelle (so auch der Enterprise AI
-     * Client); ohne Namen {@code Space <Schlüssel> (<Quelle>)}.
+     * Client); ohne Namen {@code Space <Schlüssel> (<Quelle>)}. Mit Startseite ({@link #rooted}) ihr Titel.
      */
     static String title(ConversionInput input) {
+        if (rooted(input)) {
+            for (PageHeader header : input.headers()) {
+                if (header.key().pageId().equals(input.rootPageId())) {
+                    String title = header.metadata().title();
+                    return title == null || title.isBlank() ? "Seite " + input.rootPageId() : title;
+                }
+            }
+        }
         String name = input.spaceName();
         return name == null || name.isBlank() || name.equals(input.spaceKey())
                 ? "Space " + input.spaceKey() + " (" + input.sourceId() + ")" : name;
@@ -53,14 +74,28 @@ final class ExportChapters {
 
     /** Text des Wurzelkapitels: Seitenzahl, Quelle und Konverterversion. */
     static String rootText(ConversionInput input, String version) {
-        return "*" + MarkdownConverter.escape(input.headers().size() + " Seiten des Space " + input.spaceKey()
+        String scope = rooted(input) ? " ab Seite " + input.rootPageId() + " des Space " : " des Space ";
+        return "*" + MarkdownConverter.escape(input.headers().size() + " Seiten" + scope + input.spaceKey()
                 + " der Quelle " + input.sourceId()
                 + ", erzeugt mit " + version + " aus dem Confluence-Storage-Format.") + "*";
     }
 
-    /** Tiefe des Kapitels einer Seite: Wurzelseiten 2, deren Kinder 3 … */
-    static int depth(ConvertiblePage page) {
-        return page.depth() + 2;
+    /**
+     * Ob vor den Seiten ein eigenes Wurzelkapitel für den Space steht; mit Startseite ({@link #rooted}) ist sie selbst
+     * das Wurzelkapitel und trägt den Text aus {@link #rootText} vor ihrem Inhalt ({@link #text}).
+     */
+    static boolean spaceChapter(ConversionInput input) {
+        return !rooted(input);
+    }
+
+    /** Inhalt des Kapitels einer Seite; bei der Startseite als Wurzelkapitel mit dem Text des Wurzelkapitels davor. */
+    static String text(ConversionInput input, ConvertiblePage page, String markdown, String version) {
+        return rooted(input) && page.depth() == 0 ? rootText(input, version) + "\n\n" + markdown : markdown;
+    }
+
+    /** Tiefe des Kapitels einer Seite: Wurzelseiten 2, deren Kinder 3 …; mit Startseite diese 1, ihre Kinder 2 … */
+    static int depth(ConversionInput input, ConvertiblePage page) {
+        return page.depth() + (rooted(input) ? 1 : 2);
     }
 
     static String title(ConvertiblePage page) {

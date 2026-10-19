@@ -67,7 +67,8 @@ import java.util.function.Consumer;
  * lesbare Seite fehlt oder beim Einlesen scheiterte. Ein abgebrochener oder gescheiterter Export veröffentlicht nichts.
  *
  * <p>Mit Startseite ({@link ExportRequest#rootPageId()}) exportiert derselbe Auftrag nur diese Seite und ihre
- * Unterseiten, nach den Elternbeziehungen der Generation im Cache; Daten, Formate, Rechteprüfung und Ergebnis sind
+ * Unterseiten, nach den Elternbeziehungen der Generation im Cache, mit {@link ExportRequest#depth()} nur bis zu dieser
+ * Ebene unter ihr ({@code 0}: die Seite allein, wie „Seite exportieren“ im Enterprise AI Client); Daten, Formate, Rechteprüfung und Ergebnis sind
  * dieselben wie beim ganzen Space, die Startseite ist die Wurzel des Baums. Gibt es die Startseite im Space nicht oder
  * darf der Auftraggeber sie nicht lesen, scheitert der Auftrag ({@code ROOT_NOT_FOUND}), ohne zu sagen, welcher Fall
  * vorliegt. Eingelesen wird bei Bedarf trotzdem der ganze Space; die Zähler „gefunden“ und „beschafft“ des Einlesens
@@ -127,6 +128,18 @@ public class Exports {
     /** Verfügbare Formate über das Raw-First-Artefakt hinaus. */
     public List<String> formats() {
         return converters.formats().stream().sorted().toList();
+    }
+
+    /**
+     * Wie {@link #start(String, String, String, String, List)}, aber nur bis {@code depth} Ebenen unter der Startseite.
+     *
+     * @param depth {@code 0} für die Startseite allein ohne Unterseiten, {@code null} für alle Ebenen; nur mit
+     *              Startseite
+     * @throws IllegalArgumentException bei negativer Tiefe oder Tiefe ohne Startseite
+     */
+    public JobStatus start(String sourceId, String spaceKey, String rootPageId, Integer depth, String owner,
+                           List<String> formats) {
+        return start(ExportRequest.of(sourceId, spaceKey, owner, formats).withRoot(rootPageId).withDepth(depth));
     }
 
     /**
@@ -371,7 +384,7 @@ public class Exports {
         String spaceKey = request.spaceKey();
         Instant startedAt = prepared.startedAt();
         CacheGeneration generation = prepared.generation();
-        ExportScope scope = new ExportScope(sourceId, spaceKey, generation);
+        ExportScope scope = new ExportScope(sourceId, spaceKey, generation, request.rootPageId());
         // Nur bei einer Startseite: sie und ihre Unterseiten, lesbar oder nicht; was nicht lesbar ist, fällt unten weg.
         Set<String> subtree = request.rootPageId() == null ? null : subtree(context, request, prepared);
         List<TreeEntry> entries = new ArrayList<>();
@@ -527,7 +540,12 @@ public class Exports {
         Set<String> subtree = new HashSet<>();
         for (PageTree.Node node : tree.roots()) {
             if (node.pageId().equals(rootPageId)) {
-                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, depth) -> subtree.add(pageId));
+                // Ebene 0 ist die Startseite; mit Tiefe kommen nur die Ebenen bis dahin mit (0: Einzelseite).
+                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, depth) -> {
+                    if (request.depth() == null || depth <= request.depth()) {
+                        subtree.add(pageId);
+                    }
+                });
             }
         }
         return subtree;
@@ -682,6 +700,11 @@ public class Exports {
         @Override
         public String spaceKey() {
             return scope.spaceKey();
+        }
+
+        @Override
+        public String rootPageId() {
+            return scope.rootPageId();
         }
 
         /** Aus der ersten Seite in Baumreihenfolge; eine Seite genügt, alle tragen denselben Space. */

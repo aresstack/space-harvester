@@ -333,6 +333,10 @@ Nur eine Seite mit ihren Unterseiten exportiert derselbe Aufruf mit dem optional
 nennt dann `rootPageId` und, sobald der Export die Startseite gelesen hat, `rootTitle`. Gibt es die Startseite im Space
 nicht oder ist sie nicht lesbar, scheitert der Auftrag mit `ROOT_NOT_FOUND`. Im Core entspricht das
 `ExportRequest.withRoot(rootPageId)` bzw. `Exports.start(sourceId, spaceKey, rootPageId, owner, formats)`.
+Mit `"depth": <n>` kommen nur `n` Ebenen unter der Startseite mit; `{"rootPageId": "<Seiten-ID>", "depth": 0}`
+exportiert die Seite allein ohne Unterseiten (Core: `ExportRequest.withDepth(n)`, `withPage(pageId)`,
+`Exports.start(sourceId, spaceKey, rootPageId, depth, owner, formats)`). Eine negative Tiefe oder eine Tiefe ohne
+`rootPageId` lehnt der Server mit 400 ab.
 
 `artifact.complete` ist nur `true`, wenn die Generation bestätigt ist und keine Seite fehlt:
 

@@ -53,12 +53,15 @@ public final class DocxConverter implements ExportConverter {
         ExportGraphics graphics = ExportGraphics.rendering();
         DocxExportWriter writer = new DocxExportWriter(graphics, "Space Harvester");
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
-            chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            if (ExportChapters.spaceChapter(input)) {
+                chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            }
             input.forEachPage(page -> {
                 ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                 figures.notices().forEach(input::report);
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                        figures.markdown(), figures.images(), ExportChapters.depth(page));
+                        ExportChapters.text(input, page, figures.markdown(), VERSION), figures.images(),
+                        ExportChapters.depth(input, page));
                 ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
             });
             chapters.finish(out);
