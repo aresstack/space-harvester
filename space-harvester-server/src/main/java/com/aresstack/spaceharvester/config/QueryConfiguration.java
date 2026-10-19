@@ -40,6 +40,7 @@ import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.facts.PageFacts;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -218,16 +219,21 @@ class QueryConfiguration {
     }
 
     /**
-     * Fakten je Seite aus den Anreicherungen (#182), aus der Ablage der Anreicherungen im Lucene-Cache; ohne Cache gibt
-     * es keine. Rechte je Seite an ihrem Space im Cache.
+     * Fakten je Seite aus den Anreicherungen (#182), aus derselben Ablage wie die Anreicherungen (Lucene-Cache oder
+     * Speicher). Rechte je Seite an ihrem Space im Cache.
      */
     @Bean
     PageFacts pageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages,
                         ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
-                        ObjectProvider<LucenePageCache> cache) {
-        LucenePageCache available = cache.getIfAvailable();
-        return new PageFacts(catalog, access, pages, enrichments.getIfAvailable(), store.getIfUnique(() -> NO_FACTS),
-                available == null ? key -> Optional.empty() : available::findHeader);
+                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader) {
+        Enrichments available = enrichments.getIfAvailable();
+        FactStore facts = (available == null ? Optional.<FactStore>empty() : available.facts())
+                .orElseGet(() -> store.getIfUnique(() -> NO_FACTS));
+        LucenePageCache lucene = cache.getIfAvailable();
+        PageCacheReader any = reader.getIfAvailable();
+        Function<PageKey, Optional<PageHeader>> headers = lucene != null ? lucene::findHeader
+                : any != null ? key -> any.page(key).map(CachedPage::header) : key -> Optional.empty();
+        return new PageFacts(catalog, access, pages, available, facts, headers);
     }
 
     /** Ohne Ablage: keine Fakten. */
