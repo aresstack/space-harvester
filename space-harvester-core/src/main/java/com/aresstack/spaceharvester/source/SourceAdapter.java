@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
@@ -39,6 +41,16 @@ public interface SourceAdapter {
      */
     default String addressOption() {
         return null;
+    }
+
+    /** Eingabefelder unter {@code options} für Formulare, ohne Werte; leer, wenn der Typ keine beschreibt. */
+    default List<SourceField> fields() {
+        return List.of();
+    }
+
+    /** Erlaubte Werte von {@code auth.type}. */
+    default List<SourceType.AuthMode> authModes() {
+        return List.of(SourceType.AuthMode.NONE);
     }
 
     /**

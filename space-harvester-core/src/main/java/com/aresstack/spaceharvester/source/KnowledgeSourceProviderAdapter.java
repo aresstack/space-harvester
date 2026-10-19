@@ -9,11 +9,14 @@ import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLSocketFactory;
@@ -183,6 +186,19 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     @Override
     public String addressOption() {
         return unconnected.type().summaryKey();
+    }
+
+    /** Die Felder des Upstream-Typs ohne das Titelfeld, denn {@code title} steht außerhalb von {@code options}. */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(unconnected.type(), Set.of(titleKey()));
+    }
+
+    /** {@code none}, mit Anmeldefeld auch {@code basic}. */
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return credentialKey == null ? List.of(SourceType.AuthMode.NONE)
+                : List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC);
     }
 
     @Override
