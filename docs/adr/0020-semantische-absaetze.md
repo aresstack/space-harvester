@@ -5,9 +5,8 @@
   (Embeddings nur über den externen Dienst) und [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) (Parität).
 - Umgesetzt (Teil von #181): Prozessor `passages`, `PassageSegmentation`, `OpenNlpSentenceSegmenter`,
   `PagePassages.read` für die Leseansicht, `PassageQueries` (`harvester.passages()`), REST
-  `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`.
-- Offen: Reiter „Absätze“ in der App (#354, Strang L); Passagen als Einheiten für Such-Snippets, Passage-Embeddings
-  und Re-Ranking (#181, eigene PRs).
+  `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`; Suchschnipsel aus Absätzen (`PassageSnippets`).
+- Offen: Reiter „Absätze“ in der App (#354, Strang L); Passage-Embeddings und Re-Ranking (#181, eigene PRs).
 
 ## Kontext
 
@@ -40,6 +39,12 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Text selbst und keine erfundene Konfidenz. Den Wortlaut liefert `PagePassages.read` aus dem Text mit demselben
    Hash. Ändern sich Text, Modell, Satzverfahren oder Zerlegung, veraltet das Ergebnis.
 6. **Rechte wie der Abruf der Seite** (`GET …/pages/{pageId}`, ADR 0014 Punkt 4): ohne `content` keine Absätze.
+7. **Suchschnipsel aus Absätzen** wie im Client, wo ein Schlagworttreffer seine Passage als Auszug bringt
+   (`RetrieveKnowledgeUseCase`): `PassageSnippets` legt sich um den Volltextindex; Treffer und Rangfolge bleiben die
+   des Index, nur der Auszug ist der Absatz mit den meisten Suchwörtern (höchstens 480 Zeichen um die erste
+   Fundstelle). Das Ergebnis trägt dafür `textSha256` des Textes, zu dem seine Stellen gehören (Format 2); passt er
+   nicht zum abgelegten Text, fehlen Absätze oder enthält keiner ein Suchwort, bleibt das Fenster des Index. Die
+   Schlagwortsuche liefert Auszüge weiter nur mit `content`.
 
 ## Abweichungen vom Client
 

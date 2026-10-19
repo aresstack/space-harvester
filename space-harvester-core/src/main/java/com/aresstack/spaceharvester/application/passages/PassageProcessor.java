@@ -32,8 +32,8 @@ public class PassageProcessor implements EnrichmentProcessor {
 
     /** Kennung des Prozessors. */
     public static final String ID = "passages";
-    /** Version des Ergebnisformats. */
-    static final String FORMAT = "1";
+    /** Version des Ergebnisformats; 2 seit {@code textSha256} (Suchschnipsel aus Absätzen). */
+    static final String FORMAT = "2";
     /** Höchstzahl gespeicherter Passagen je Seite. */
     static final int MAX_PASSAGES = 5_000;
 
@@ -100,15 +100,15 @@ public class PassageProcessor implements EnrichmentProcessor {
             warnings.add("Nur die ersten " + PassageSegmentation.MAX_EMBEDDED_SENTENCES
                     + " Sätze nach Themenwechsel geteilt, danach nach Struktur");
         }
-        return output(PassagePayload.Mode.SEMANTIC, null, model, result, warnings, version(model));
+        return output(text, PassagePayload.Mode.SEMANTIC, null, model, result, warnings, version(model));
     }
 
     private EnrichmentOutput structure(PageText text, String reason, String version, List<String> warnings) {
-        return output(PassagePayload.Mode.STRUCTURE, reason, null, segmentation.segment(text, null),
+        return output(text, PassagePayload.Mode.STRUCTURE, reason, null, segmentation.segment(text, null),
                 new ArrayList<>(warnings), version);
     }
 
-    private EnrichmentOutput output(PassagePayload.Mode mode, String reason, String model,
+    private EnrichmentOutput output(PageText text, PassagePayload.Mode mode, String reason, String model,
                                     PassageSegmentation.Result result, List<String> warnings, String version) {
         List<PassageSegmentation.Passage> passages = result.passages();
         if (passages.size() > MAX_PASSAGES) {
@@ -116,7 +116,7 @@ public class PassageProcessor implements EnrichmentProcessor {
             passages = passages.subList(0, MAX_PASSAGES);
         }
         return new EnrichmentOutput(PassagePayload.write(mode, reason, model, segmentation.fingerprint(),
-                result.sentences(), passages), warnings, version);
+                result.sentences(), PassagePayload.textSha256(text.text()), passages), warnings, version);
     }
 
     private Optional<EmbeddingProcessor.Generation> generation() {
