@@ -271,7 +271,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     public List<SourceType> types() {
         return adapters.values().stream()
                 .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials(),
-                        adapter.addressOption()))
+                        adapter.addressOption(), adapter.fields(), adapter.authModes()))
                 .toList();
     }
 
