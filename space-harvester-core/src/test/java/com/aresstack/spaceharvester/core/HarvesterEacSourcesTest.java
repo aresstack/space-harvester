@@ -7,16 +7,33 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
+import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig.Auth;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig.AuthType;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Die Quellen des Enterprise AI Client ohne eigenen Ordner (#187) sind als Typen {@code ftp}, {@code jes}, {@code ndv}
  * {@code sharepoint}, {@code betaview} und {@code outlook} registriert: gültige Einstellungen öffnen je eine Partition ohne Verbindung, die Prüfung des
- * Upstream-Typs meldet ihre Probleme beim Start.
+ * Upstream-Typs meldet ihre Probleme beim Start. Anmeldung über {@code auth} oder den Anbieter des Programms (#188).
  */
 class HarvesterEacSourcesTest {
 
@@ -32,11 +49,16 @@ class HarvesterEacSourcesTest {
     void theHarvesterListsItsSourceTypesWithDisplayNames() {
         try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
             assertThat(harvester.sourceTypes()).containsExactly(
-                    new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
-                    new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
-                    new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
-                    new SourceType("betaview", "BetaView", true), new SourceType("outlook", "Outlook", false),
-                    new SourceType("git", "Git-Repository", false));
+                    new SourceType("confluence", "Confluence", false, null),
+                    new SourceType("files", "Ordner", false, "directory"),
+                    new SourceType("ftp", "FTP", false, "host"),
+                    new SourceType("jes", "JES", true, "host"),
+                    new SourceType("ndv", "NDV", true, "host"),
+                    new SourceType("sharepoint", "SharePoint", false, "siteUrl"),
+                    new SourceType("betaview", "BetaView", true, "baseUrl"),
+                    new SourceType("outlook", "Outlook", false, "mailbox"),
+                    new SourceType("mediawiki", "MediaWiki", false, "apiUrl"),
+                    new SourceType("git", "Git-Repository", false, "url"));
         }
     }
 
@@ -72,5 +94,154 @@ class HarvesterEacSourcesTest {
                 .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems())
                         .anySatisfy(problem -> assertThat(problem).startsWith("sources[0] (id=host-jes)")
                                 .contains("credentialRef")));
+    }
+
+    @Test
+    void basicAuthGoesToTheFtpLoginWithoutAppearingInOptions() throws Exception {
+        try (FakeFtp ftp = new FakeFtp()) {
+            SourceSettingsConfig config = new SourceSettingsConfig("host-ftp", "ftp", "FTP", null,
+                    new Auth(AuthType.BASIC, "TSOUSER", "geheim", null), ftp.options());
+            assertThat(config.toString()).doesNotContain("geheim");
+            try (Harvester harvester = Harvester.builder().source(config).dataDirectory(data).build()) {
+                harvester.await(harvester.sync("host-ftp", "host-ftp").id(), Duration.ofSeconds(60));
+            }
+            assertThat(ftp.commands).contains("USER TSOUSER", "PASS geheim");
+        }
+    }
+
+    @Test
+    void withoutPasswordTheEmbeddersProviderIsAskedForTheSource() throws Exception {
+        try (FakeFtp ftp = new FakeFtp()) {
+            List<String> asked = new CopyOnWriteArrayList<>();
+            try (Harvester harvester = Harvester.builder()
+                    .source(new SourceSettingsConfig("host-jes", "jes", "JES", null,
+                            new Auth(AuthType.BASIC, "TSOUSER", null, null), ftp.options()))
+                    .secretProvider(ref -> {
+                        asked.add(ref);
+                        return Optional.of(new SourceSecrets.Credential("TSOUSER", "aus-dem-tresor".toCharArray()));
+                    }).dataDirectory(data).build()) {
+                harvester.await(harvester.sync("host-jes", "host-jes").id(), Duration.ofSeconds(60));
+            }
+            assertThat(asked).contains("source:host-jes");
+            assertThat(ftp.commands).contains("USER TSOUSER", "PASS aus-dem-tresor");
+        }
+    }
+
+    @Test
+    void anOwnCredentialRefPassesThroughToTheEmbeddersProvider() throws Exception {
+        try (FakeFtp ftp = new FakeFtp()) {
+            Map<String, String> options = new java.util.HashMap<>(ftp.options());
+            options.put("credentialRef", "keepass:mvs");
+            List<String> asked = new CopyOnWriteArrayList<>();
+            try (Harvester harvester = Harvester.builder()
+                    .source(new SourceSettingsConfig("host-ftp", "ftp", "FTP", null, null, options))
+                    .secretProvider(ref -> {
+                        asked.add(ref);
+                        return Optional.of(new SourceSecrets.Credential("KPUSER", "aus-keepass".toCharArray()));
+                    }).dataDirectory(data).build()) {
+                harvester.await(harvester.sync("host-ftp", "host-ftp").id(), Duration.ofSeconds(60));
+            }
+            assertThat(asked).contains("keepass:mvs");
+            assertThat(ftp.commands).contains("USER KPUSER", "PASS aus-keepass");
+        }
+    }
+
+    @Test
+    void basicAuthSatisfiesTheRequiredCredentialRef() {
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("host-jes", "jes", "JES", null,
+                        new Auth(AuthType.BASIC, "TSOUSER", "geheim", null), Map.of("host", "mvs.example.org")))
+                .source(new SourceSettingsConfig("natural", "ndv", "NDV", null,
+                        new Auth(AuthType.BASIC, "NATUSER", "geheim", null),
+                        Map.of("host", "ndv.example.org", "startPoints", "MYLIB")))
+                .dataDirectory(data).build()) {
+            assertThat(harvester.sources().partitions("host-jes")).hasSize(1);
+            assertThat(harvester.sources().partitions("natural")).hasSize(1);
+        }
+    }
+
+    @Test
+    void conflictingOrUnsupportedSettingsAreRejectedAtStart() {
+        ClientCertificate certificate = new ClientCertificate(true, CertificateStoreType.PKCS12,
+                data.resolve("client.p12"), "client", "pw", null);
+        List<SourceSettingsConfig> configs = new ArrayList<>(List.of(
+                new SourceSettingsConfig("both", "jes", "JES", null, new Auth(AuthType.BASIC, "U", "P", null),
+                        Map.of("host", "mvs.example.org", "credentialRef", "keepass:jes")),
+                new SourceSettingsConfig("mtls", "ftp", "FTP", null, null, Map.of("host", "mvs.example.org"),
+                        certificate, null),
+                new SourceSettingsConfig("trust", "ndv", "NDV", null, new Auth(AuthType.BASIC, "U", "P", null),
+                        Map.of("host", "ndv.example.org"), null, "-----BEGIN CERTIFICATE-----"),
+                new SourceSettingsConfig("url", "sharepoint", "Team", java.net.URI.create("https://x.example.org"),
+                        null, Map.of("siteUrl", "https://sharepoint.example.org/sites/team"))));
+        Harvester.Builder builder = Harvester.builder().dataDirectory(data);
+        configs.forEach(builder::source);
+        assertThatThrownBy(builder::build)
+                .isInstanceOf(InvalidSourceConfigurationException.class)
+                .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems())
+                        .contains("sources[0] (id=both): options.credentialRef passt nicht zu auth.type basic; es gilt auth",
+                                "sources[1] (id=mtls): client-certificate passt nicht zu type ftp",
+                                "sources[2] (id=trust): trust-bundle passt nicht zu type ndv",
+                                "sources[3] (id=url): base-url passt nicht zu type sharepoint; die Adresse steht unter "
+                                        + "options"));
+    }
+
+    /** Antwortet wie ein FTP-Server bis zur Anmeldung und lehnt sie ab; merkt sich USER und PASS. */
+    private static final class FakeFtp implements AutoCloseable {
+
+        final List<String> commands = new CopyOnWriteArrayList<>();
+        private final ServerSocket server;
+        private final Thread acceptor;
+
+        FakeFtp() throws Exception {
+            server = new ServerSocket(0, 10, InetAddress.getLoopbackAddress());
+            acceptor = new Thread(() -> {
+                while (!server.isClosed()) {
+                    try (Socket socket = server.accept()) {
+                        serve(socket);
+                    } catch (Exception closed) {
+                        // nächste Verbindung oder Ende
+                    }
+                }
+            }, "fake-ftp");
+            acceptor.setDaemon(true);
+            acceptor.start();
+        }
+
+        Map<String, String> options() {
+            return Map.of("host", "127.0.0.1", "port", String.valueOf(server.getLocalPort()), "startPoints", "HLQ.DATA");
+        }
+
+        private void serve(Socket socket) throws Exception {
+            socket.setSoTimeout(10_000);
+            OutputStream out = socket.getOutputStream();
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(),
+                    StandardCharsets.US_ASCII));
+            send(out, "220 fake");
+            String line;
+            while ((line = in.readLine()) != null) {
+                commands.add(line);
+                if (line.startsWith("USER")) {
+                    send(out, "331 password");
+                } else if (line.startsWith("PASS")) {
+                    send(out, "530 nein");
+                } else if (line.startsWith("QUIT")) {
+                    send(out, "221 bye");
+                    return;
+                } else {
+                    send(out, "502 nicht da");
+                }
+            }
+        }
+
+        private static void send(OutputStream out, String reply) throws Exception {
+            out.write((reply + "\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+        }
+
+        @Override
+        public void close() throws Exception {
+            server.close();
+            acceptor.join(5_000);
+        }
     }
 }

@@ -19,9 +19,12 @@ import java.util.regex.Pattern;
  * @param arguments  suchbare Rollen mit normalisiertem Wert, nach Rolle und Ordnungszahl
  * @param provenance aus welchem Ergebnis welches Prozessors der Fakt stammt
  * @param anchor     Fundstelle im Text oder {@code null}
+ * @param origin     automatisch abgeleitet oder von einer Person angelegt (#182)
+ * @param review     Prüfstatus; automatische Fakten sind ungeprüft, solange niemand sie bestätigt oder verwirft
  */
 public record MetadataFact(String id, PageKey page, String type, String role, String payloadJson,
-                           List<Argument> arguments, Provenance provenance, Anchor anchor) {
+                           List<Argument> arguments, Provenance provenance, Anchor anchor, FactOrigin origin,
+                           FactReview review) {
 
     private static final Pattern NAME = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
 
@@ -38,6 +41,39 @@ public record MetadataFact(String id, PageKey page, String type, String role, St
         }
         arguments = List.copyOf(arguments);
         Objects.requireNonNull(provenance, "provenance");
+        origin = origin == null ? FactOrigin.AUTOMATIC : origin;
+        review = review == null ? FactReview.UNREVIEWED : review;
+    }
+
+    /** Ein automatischer, ungeprüfter Fakt. */
+    public MetadataFact(String id, PageKey page, String type, String role, String payloadJson,
+                        List<Argument> arguments, Provenance provenance, Anchor anchor) {
+        this(id, page, type, role, payloadJson, arguments, provenance, anchor, FactOrigin.AUTOMATIC,
+                FactReview.UNREVIEWED);
+    }
+
+    /** Derselbe Fakt mit anderem Prüfstatus. */
+    public MetadataFact withReview(FactReview value) {
+        return new MetadataFact(id, page, type, role, payloadJson, arguments, provenance, anchor, origin, value);
+    }
+
+    /** Derselbe Fakt unter anderer Kennung. */
+    public MetadataFact withId(String value) {
+        return new MetadataFact(value, page, type, role, payloadJson, arguments, provenance, anchor, origin, review);
+    }
+
+    /**
+     * Ob beide dieselbe Aussage aus demselben Ergebnis sind: alles außer Prüfstatus und Rechenzeitpunkt gleich. Daran
+     * erkennt die Prüfablage, ob ein geprüfter automatischer Fakt noch zum aktuellen Ergebnis gehört.
+     */
+    public boolean sameStatement(MetadataFact other) {
+        return other != null && id.equals(other.id) && page.equals(other.page) && type.equals(other.type)
+                && Objects.equals(role, other.role) && payloadJson.equals(other.payloadJson)
+                && arguments.equals(other.arguments) && Objects.equals(anchor, other.anchor) && origin == other.origin
+                && provenance.processorId().equals(other.provenance.processorId())
+                && provenance.processorVersion().equals(other.provenance.processorVersion())
+                && provenance.inputSha256().equals(other.provenance.inputSha256())
+                && Objects.equals(provenance.revision(), other.provenance.revision());
     }
 
     /**
@@ -93,9 +129,10 @@ public record MetadataFact(String id, PageKey page, String type, String role, St
     }
 
     /**
-     * Herkunft (wie {@code FactProvenance} im Client): immer automatisch, aus dem Ergebnis eines Prozessors.
+     * Herkunft (wie {@code FactProvenance} im Client): bei automatischen Fakten das Ergebnis eines Prozessors, bei
+     * manuellen {@value FactEdits#MANUAL_PROCESSOR} mit dem Eingabe-Hash, gegen den die Person den Fakt angelegt hat.
      *
-     * @param inputSha256 Eingabe-Hash des Ergebnisses ({@link Enrichment#inputSha256()})
+     * @param inputSha256 Eingabe-Hash des Ergebnisses ({@link Enrichment#inputSha256()}), leer wenn unbekannt
      * @param revision    Revision der Payload oder {@code null}
      */
     public record Provenance(String processorId, String processorVersion, String inputSha256, String revision,

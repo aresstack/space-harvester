@@ -79,6 +79,11 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
    - Ein Vorschlagslauf (`propose`, für #122 und #336) gleicht in einem Schritt ab: neue Schlüssel werden
      `PROPOSED`, eigene Vorschläge bekommen neue Belege, abgelehnte und fremde Schlüssel bleiben unberührt, eigene
      unbestätigte, die er nicht mehr nennt, entfallen, eigene bestätigte werden nur als `evidenceStale` markiert.
+     Unverändert belegte werden nicht neu geschrieben, damit ein Lauf je Abgleich weder Revisionen noch Protokoll
+     aufbläht.
+   - Die Akronym-Regel (`AcronymRelationRule`) startet der Core nach jeder Anreicherung einer Quelle selbst, als
+     letzten Schritt des Auftrags `ENRICHMENT` (Phase „Folgeschritte“, nicht nach einem Abbruch); die App braucht
+     dafür keinen Knopf. Der REST-Aufruf `POST …/rules/acronyms` bleibt für den Anstoß von Hand.
    - Lesen: Quelle oder Space braucht `metadata`; Belege zählen nur von Seiten mit Inhaltsrecht; ein automatischer
      Vorschlag ohne lesbaren Beleg ist verborgen, weil er aus deren Inhalt stammt. Ändern braucht `sync` auf den
      Geltungsbereich, global auf jede Quelle. Verborgenes gilt als unbekannt (404).

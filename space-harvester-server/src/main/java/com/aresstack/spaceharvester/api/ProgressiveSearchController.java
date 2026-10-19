@@ -283,13 +283,18 @@ public class ProgressiveSearchController {
      * @param foundBy   Priorität der Suchanfrage, die ihn zuerst fand (0 = q)
      * @param confirmed ob er aus dem Cache stammt (Volltextindex, semantisch die Vektoren), nicht nur aus der Suche
      *                  der Quelle
+     * @param matchedIn  Trefferart wie in der Schlagwortsuche: {@code page} oder {@code attachment}
+     * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
      */
     public record ProgressiveHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                          String title, String snippet, @Schema(nullable = true) URI url,
                                          @Schema(nullable = true) String version,
                                          @Schema(nullable = true) Instant modifiedAt,
                                          @Schema(nullable = true) String parentPageId,
-                                         @Schema(nullable = true) Double score, int foundBy, boolean confirmed) {
+                                         @Schema(nullable = true) Double score, int foundBy, boolean confirmed,
+                                         @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
+                                         @Schema(nullable = true)
+                                         SearchController.AttachmentMatchResponse attachment) {
 
         static ProgressiveHitResponse of(ProgressiveResult.RankedHit ranked) {
             KeywordSearch.Hit hit = ranked.hit();
@@ -297,7 +302,8 @@ public class ProgressiveSearchController {
             return new ProgressiveHitResponse(hit.sourceId(), hit.pageId(), hit.spaceKey(), hit.title(),
                     hit.snippet(), hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(),
                     Double.isNaN(score) || Double.isInfinite(score) ? null : score, ranked.foundBy(),
-                    ranked.confirmed());
+                    ranked.confirmed(), SearchController.matchKind(hit),
+                    SearchController.AttachmentMatchResponse.of(hit.attachment()));
         }
     }
 
