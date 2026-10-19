@@ -17,6 +17,11 @@ public enum SourceCapability {
     ASYNC_STORED_PAGE,
     /** Anhangsliste einer Seite als Metadaten ({@link HarvestSource#attachments}, #9). */
     PAGE_ATTACHMENTS,
+    /**
+     * Vorschauen und PDF-Konvertierung von Anhängen durch die Quelle selbst ({@link HarvestSource#attachmentPreview},
+     * bei Confluence {@code /rest/documentConversion}, #183).
+     */
+    ATTACHMENT_PREVIEWS,
     /** Volltextsuche in der Quelle selbst über Titel und Inhalt ({@link HarvestSource#searchPages}). */
     LIVE_SEARCH,
     /** Seiten über ihren Titel finden, ohne sie zu laden ({@link HarvestSource#findByTitle}). */

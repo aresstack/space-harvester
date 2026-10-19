@@ -1,13 +1,13 @@
 # enterprise-ai-sources
 
-Unveränderte Kopie der Confluence-, MediaWiki-, Git-, FTP/JES- und NDV-Quelle, der Dokument-Extraktion und des
+Unveränderte Kopie der Confluence-, MediaWiki-, Git-, FTP/JES-, NDV- und SharePoint-Quelle, der Dokument-Extraktion und des
 Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aresstack/enterprise-ai-client). Der Space Harvester baut
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
 `9fb91c3200266169da0bc433894a331d575c2e5a`, der Merge von enterprise-ai-client#192 (Änderungssuche und Papierkorb je
 Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main`. Derselbe Stand enthält schon
-`document-tika`; für #183 und für MediaWiki, Git, FTP/JES und NDV (#187) kamen nur weitere Module und Klassen in die
+`document-tika`; für #183 und für MediaWiki, Git, FTP/JES, NDV und SharePoint (#187) kamen nur weitere Module und Klassen in die
 Auswahl, ohne neuen Upstream-Commit.
 
 ## Inhalt
@@ -28,6 +28,7 @@ Auswahl, ohne neuen Upstream-Commit.
 | `proasteion/emporion/holkas/source-git` | vollständig (#187): `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`), JGit 5.13 wie im Upstream; im Core noch nicht registriert |
 | `proasteion/emporion/holkas/source-ftp` | vollständig (#187): `FtpSourceProvider`, `FtpKnowledgeSource` (MVS-Datensätze und Member), `JesSourceProvider`, `JesKnowledgeSource` (Spool), Apache Commons Net 3.9.0 wie im Upstream; im Core noch nicht registriert |
 | `proasteion/emporion/holkas/source-ndv` | vollständig (#187): `NdvSourceProvider`, `NdvKnowledgeSource` (Natural Development Server, NATSPOD/PAL aus MainframeMate), ohne weitere Abhängigkeit; im Core noch nicht registriert |
+| `proasteion/emporion/holkas/source-sharepoint` | vollständig (#187): `SharePointSourceProvider`, `SharePointKnowledgeSource` (Dokumentbibliotheken über die REST-API, Extraktion über deigma), ohne weitere Abhängigkeit; im Core noch nicht registriert |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |

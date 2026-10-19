@@ -23,6 +23,7 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 | `pageMetadata(pageId)` | `ResourceMetadataSource` | eine Seite ohne Inhalt, unabhängig vom Space (#6) |
 | `storedPage(pageId)` | `StoredContentSource` | native Antwort Byte für Byte mit Kopfdaten aus derselben Antwort (#8) |
 | `attachments(pageId)` | `AttachmentListSource` | alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit allen Listenantworten Byte für Byte; nie Dateibytes (#9) |
+| `attachmentPreview(attachment, preview, maxBytes)` | `PageViewSource#loadAttachmentPreview` | Vorschau oder PDF-Konvertierung eines Anhangs durch die Quelle, Fähigkeit `ATTACHMENT_PREVIEWS` (#183) |
 
 - Fehlt einer Quelle eine Fähigkeit, antwortet die Methode mit `SourceAccessException` `UNSUPPORTED`, nie mit
   einem leeren Ergebnis. `storedPage` und `attachments` sind deshalb Default-Methoden.
@@ -194,8 +195,21 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   (`AssetKind.OTHER`) bekommen beim Ablegen über `harvest` ihren Text als Anreicherung an der Datei (`AssetText`, je
   Inhalt und Extraktion unter `texts/` im Asset-Verzeichnis, mit dem Inhalt entfernt); `Assets.text` liefert ihn
   oder liest ihn nach. Fehler halten das Ablegen nicht auf und erscheinen nur als fester Code im Protokoll.
-- Offen in #183: Anhangstexte im Volltextindex und in der API, Vorschau und PDF-Konvertierung über Confluence
-  `documentConversion` als Asset-Variante.
+- **Dateiname als Hinweis:** Wie der Enterprise AI Client (`TikaContentDetector` bekommt dort immer den Dateinamen)
+  fragt `DocumentText.detect(fileName, content)` mit dem Namen nach, wenn der Inhalt den Typ offenlässt: ohne Signatur
+  gilt der Typ nach Name, aus Klartext wird nur ein Textformat (`notizen.md` → `text/markdown`), aus einem ZIP nur
+  OOXML/OpenDocument, aus OLE2 nur ein altes Office-Format. Eine Signatur gilt immer vor der Endung; danach wählt
+  `Assets.chooseMediaType` wie bisher zwischen Quelle und Inhalt.
+- **Vorschau und PDF-Konvertierung:** `HarvestSource.attachmentPreview` mit `AttachmentPreview` `DOCUMENT`
+  (`convert`, etwa ein Office-Dokument als PDF), `POSTER`, `THUMBNAIL`; für Confluence über
+  `PageViewSource#loadAttachmentPreview` der Kopie (`/rest/documentConversion/latest/conversion/<art>/<id>/<version>`,
+  `ConfluenceRestClient#conversionPath`), mit frisch gelesenen Anhangsangaben, nur PDF oder Bild, 202 = `UNAVAILABLE`.
+  `Assets.preview` sucht ohne Art wie der Lesebereich des Enterprise AI Client (`previewOrder`: Dokument, Poster,
+  Vorschaubild) die erste verfügbare; Verweigerung, Anmeldung und Drosselung beenden die Suche. Die Vorschau ist eine
+  eigene Asset-Variante (`preview-<art>-<Anhang>`, Version `source-preview-1:<Version des Anhangs>`,
+  `Assets.PREVIEW_RENDITION`), abgelegt nur mit `sync` und nie ohne Version; Medientyp nach den Bytes. REST:
+  `GET …/assets/{attachmentId}/preview?kind=…` mit derselben Rechteprüfung wie `…/content`.
+- Offen in #183: Anhangstexte im Volltextindex und in der API.
 
 ## Einen Adapter ergänzen
 
@@ -205,7 +219,7 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
    `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
-   Commons Net, #187), `source-ndv` (Natural Development Server, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
+   Commons Net, #187), `source-ndv` (Natural Development Server, #187), `source-sharepoint` (SharePoint-Dokumentbibliotheken, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
    ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
@@ -232,6 +246,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `TikaDocumentTextTest`, `LocalFilesTextProjectorTest`, `AssetDocumentTextTest`: Text aus zur Laufzeit erzeugten
   Dokumenten (`DocumentFixtures`: DOCX, XLSX, PPTX, PDF, ODT, RTF), Erkennung am Inhalt gegen eine falsche Angabe,
   Grenzen; `HarvesterFullTextTest` findet Word und PDF lokaler Dateien im Volltextindex.
+- `AttachmentPreviewTest`: Vorschauen über die Confluence-Kopie mit der Fake-Confluence (Pfad der
+  Dokumentkonvertierung, Reihenfolge, Ablage je Version, Anmeldeseite, 202, Grenze); `AttachmentPreviewApiTest`: die
+  Route über echtes HTTP, Rechte wie beim Inhalt, nicht lesbare Seiten bleiben unsichtbar.
 - Upstream: `ConfluenceStoredContentTest`, die MediaWiki-Tests (`MediaWikiKnowledgeSourceTest`,
   `MediaWikiHttpIntegrationTest`, Vertragstest …), `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die
   übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
