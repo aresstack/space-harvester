@@ -52,6 +52,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCr
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.ParityBetaView;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.JesSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
@@ -143,6 +144,7 @@ public final class EacParityExport {
         git(new File(out, "git.properties"));
         files(new File(out, "files.properties"));
         ftp(new File(out, "ftp.properties"));
+        jes(new File(out, "jes.properties"));
         sharePoint(new File(out, "sharepoint.properties"));
         betaView(new File(out, "betaview.properties"));
     }
@@ -444,6 +446,64 @@ public final class EacParityExport {
     static String sharePointPath(String id) {
         int start = id.indexOf(ParitySharePoint.SITE_PATH + "/");
         return start < 0 ? id : id.substring(start);
+    }
+
+    /**
+     * JES-Quelle (#193) über {@link ParityFtp} im JES-Modus, angemeldet mit Testdaten: alle Jobs ({@code all}) und nur
+     * {@code ZAUF*} ({@code zauf}); je Job-ID der Titel des geladenen Jobs und welche Sätze aus
+     * {@link ParityFtp#JOB_SENTENCES} (Index ab 0) die Ausgabe enthält.
+     */
+    private static void jes(File target) throws Exception {
+        ParityFtp server = ParityFtp.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            jesFilter(server, null, "all", out);
+            jesFilter(server, "ZAUF*", "zauf", out);
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    private static void jesFilter(ParityFtp server, String jobNames, String prefix, PrintWriter out) throws Exception {
+        JesSourceProvider provider = new JesSourceProvider(
+                ref -> new SecretMaterial(ref, "paritaet", "nur-fuer-den-test".toCharArray()));
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("host", server.host());
+        values.put("port", String.valueOf(server.port()));
+        values.put("credentialRef", "keepass:paritaet");
+        if (jobNames != null) {
+            values.put("startPoints", jobNames);
+        }
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("jes", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byJob = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byJob.put(jobId(resource.title() + " " + resource.id().value()), resource);
+        }
+        out.println("jes." + prefix + ".documents=" + join(new ArrayList<String>(byJob.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byJob.entrySet()) {
+            KnowledgeDocument document = source.load(entry.getValue().id());
+            String text = document.text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityFtp.JOB_SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityFtp.JOB_SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            out.println("jes." + prefix + ".title." + entry.getKey() + "=" + document.resource().title());
+            out.println("jes." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /** Job-ID aus Titel oder Ressourcen-ID; auf dem Paritäts-Server sind sie eindeutig. */
+    static String jobId(String value) {
+        for (String jobId : ParityFtp.JOB_IDS) {
+            if (value.contains(jobId)) {
+                return jobId;
+            }
+        }
+        return value;
     }
 
     /** Pfad ab {@link ParityFtp#START_POINT}; Host und Port wechseln je Lauf. */

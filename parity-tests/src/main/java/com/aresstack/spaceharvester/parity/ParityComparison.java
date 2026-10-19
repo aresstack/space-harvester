@@ -349,6 +349,14 @@ public final class ParityComparison {
         return sourceFiles("betaview", eac, core);
     }
 
+    /**
+     * JES-Quelle (#193) wie {@link #git}: je Filter ({@code all}, {@code zauf}) die Jobs (Core ⊇ EAC), der Titel je Job
+     * (gleich) und die Sätze in der Ausgabe je Job (Core ⊇ EAC).
+     */
+    public static List<Finding> jes(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("jes", eac, core);
+    }
+
     private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
         List<Finding> findings = new ArrayList<>();
         for (Map.Entry<String, String> entry : eac.entrySet()) {

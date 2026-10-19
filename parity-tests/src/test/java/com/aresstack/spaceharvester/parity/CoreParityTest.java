@@ -98,6 +98,7 @@ class CoreParityTest {
     private static final Map<String, String> CORE_GIT = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FILES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FTP = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_JES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_SHAREPOINT = new LinkedHashMap<>();
     private static final Map<String, String> CORE_BETAVIEW = new LinkedHashMap<>();
     @TempDir
@@ -159,6 +160,7 @@ class CoreParityTest {
         git();
         files();
         ftp();
+        jes();
         sharePoint();
         betaView();
     }
@@ -456,6 +458,63 @@ class CoreParityTest {
         return String.valueOf(title);
     }
 
+    /**
+     * JES-Quelle (#193) wie {@code EacParityExport.jes}: {@link ParityFtp} im JES-Modus als Typ {@code jes}, angemeldet
+     * über einen Test-Anbieter des Einbetters; alle Jobs ({@code all}) und nur {@code ZAUF*} ({@code zauf}).
+     */
+    private static void jes() throws Exception {
+        try (ParityFtp server = ParityFtp.start()) {
+            jesFilter(server, null, "all");
+            jesFilter(server, "ZAUF*", "zauf");
+        }
+    }
+
+    private static void jesFilter(ParityFtp server, String jobNames, String prefix) throws Exception {
+        Map<String, String> options = new LinkedHashMap<>();
+        options.put("host", server.host());
+        options.put("port", String.valueOf(server.port()));
+        options.put("credentialRef", "keepass:paritaet");
+        if (jobNames != null) {
+            options.put("startPoints", jobNames);
+        }
+        SourceSecrets secrets = ref -> Optional.of(new SourceSecrets.Credential("paritaet",
+                "nur-fuer-den-test".toCharArray()));
+        try (Harvester harvester = Harvester.builder().secretProvider(secrets)
+                .source(new SourceSettingsConfig("parity", "jes", "Parität", null, null, options))
+                .dataDirectory(gitData.resolve("data-jes-" + prefix))
+                .build()) {
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            Map<String, ListedPage> byJob = new TreeMap<>();
+            for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                byJob.put(jobId(page.header().metadata().title()), page);
+            }
+            CORE_JES.put("jes." + prefix + ".documents", String.join(",", byJob.keySet()));
+            byJob.forEach((job, page) -> {
+                String text = new String(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < ParityFtp.JOB_SENTENCES.length; i++) {
+                    if (text.contains(ParityFtp.JOB_SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                CORE_JES.put("jes." + prefix + ".title." + job, page.header().metadata().title());
+                CORE_JES.put("jes." + prefix + ".sentences." + job, found.isEmpty() ? "-" : String.join(",", found));
+            });
+        }
+    }
+
+    /** Job-ID aus dem Titel wie {@code EacParityExport.jobId}. */
+    private static String jobId(String title) {
+        for (String jobId : ParityFtp.JOB_IDS) {
+            if (title.contains(jobId)) {
+                return jobId;
+            }
+        }
+        return title;
+    }
+
     /** Pfad im Repository aus der Seiten-ID ({@code …/parity[@<ref>]/<pfad>}), wie {@code EacParityExport.gitPath}. */
     private static String gitPath(String pageId) {
         String value = new String(Base64.getUrlDecoder().decode(pageId), StandardCharsets.UTF_8);
@@ -689,6 +748,9 @@ class CoreParityTest {
         List<Finding> ftp = ParityComparison.ftp(eacProperties("ftp.properties"), CORE_FTP);
         report.append('\n').append(ParityReport.section("FTP-Quelle", ftp, gaps));
         factsAndRuns.addAll(ftp);
+        List<Finding> jes = ParityComparison.jes(eacProperties("jes.properties"), CORE_JES);
+        report.append('\n').append(ParityReport.section("JES-Quelle", jes, gaps));
+        factsAndRuns.addAll(jes);
         List<Finding> sharePoint = ParityComparison.sharePoint(eacProperties("sharepoint.properties"),
                 CORE_SHAREPOINT);
         report.append('\n').append(ParityReport.section("SharePoint-Quelle", sharePoint, gaps));
