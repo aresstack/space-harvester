@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream;
  * <p>Inhalt:</p>
  * <ul>
  *   <li>Hierarchie bis Ebene 7: Handbuch → Architektur → Komponenten → Ebene 4 … Ebene 7, daneben Betrieb, Makros
- *       (mit Kind Juliett) und Anhänge.</li>
+ *       (mit Kind Juliett), Anhänge und Zählung.</li>
  *   <li>Tabelle 3 × 3 mit Kopfzeile, verschachtelte und nummerierte Listen, Hervorhebungen, Code-Makro.</li>
  *   <li>Externer Link und {@code mailto:}, interner Seitenlink ({@code ac:link}), Verweise auf Anhänge.</li>
  *   <li>Bilder: als Anhang (SVG), extern (nicht ladbar), inline im Fließtext (Vorschaubild eines Anhangs), fehlend
@@ -36,7 +36,8 @@ import java.util.zip.ZipOutputStream;
  *   <li>draw.io mit Revision ({@code drawio}) und dasselbe Diagramm von einer anderen Seite ({@code inc-drawio}),
  *       jeweils mit Vorschaubild {@code ablauf.png} und Quelldaten {@code ablauf}; Mermaid.</li>
  *   <li>Ausgeführte Makros: {@code include} und {@code excerpt-include} einer Seite aus einem anderen Space,
- *       {@code children}, Jira-Vorgang.</li>
+ *       {@code children}, Jira-Vorgang; auf „Zählung“ zwei {@code contentbylabel}, von denen die Ansicht eines
+ *       gerendert hat.</li>
  *   <li>Erwähnungen mit Kennung im Storage und Namen in der Ansicht, dazu eine versteckte und eine eingebundene.</li>
  *   <li>Anhänge PDF und DOCX mit je einem Merksatz.</li>
  * </ul>
@@ -50,13 +51,15 @@ public final class ParityConfluence {
     public static final String SCOPE_ROOT = "1002";
     /** Seite mit Anhängen, Inline-Bild, {@code inc-drawio} und Jira. */
     public static final String ATTACHMENTS_PAGE = "1011";
+    /** Seite mit zwei {@code contentbylabel}-Makros, von denen die Ansicht nur eines gerendert hat. */
+    public static final String MISMATCH_PAGE = "1012";
     /**
      * Alle Seiten des Space, in der Tiefe zuerst und Geschwister in der Reihenfolge, in der {@link #install} sie
      * anhängt. {@link FakeConfluence} liefert keine Position; der Core ordnet Geschwister ohne Position wie Confluence
      * nach Titel, seine Kapitelreihenfolge weicht unter „Handbuch“ deshalb von dieser ab.
      */
     public static final String[] PAGES = {"1001", "1002", "1003", "1005", "1006", "1007", "1008", "1004", "1009",
-            "1010", "1011"};
+            "1010", "1011", MISMATCH_PAGE};
     /** Tiefste Gliederungsebene unter dem Space (Handbuch = 1, Ebene 7 = 7). */
     public static final int DEPTH = 7;
 
@@ -76,6 +79,7 @@ public final class ParityConfluence {
             "Satz Kilo zu den Anhängen.",
             "Satz Lima mit Symbol im Text.",
             "Satz Mike nach dem Symbol.",
+            "Satz Quebec zur Zählung.",
     };
 
     /**
@@ -234,6 +238,14 @@ public final class ParityConfluence {
 
         attachmentsPage(confluence);
         confluence.child(HOME, ATTACHMENTS_PAGE);
+
+        // Zwei Listen nach Label im Storage, die Ansicht hat nur eine gerendert (view-count-mismatch, #426).
+        String byLabel = macro("contentbylabel", "<ac:parameter ac:name=\"labels\">parity</ac:parameter>");
+        page(confluence, MISMATCH_PAGE, "Zählung", "<p>Satz Quebec zur Zählung.</p>" + byLabel + byLabel,
+                "<p>Satz Quebec zur Zählung.</p>" + rendered("contentbylabel", "<ul class=\"content-by-label\">"
+                        + "<li><a href=\"/wiki/spaces/PARITY/pages/1002/Architektur\" data-linked-resource-id=\"1002\""
+                        + " data-linked-resource-type=\"page\">Architektur</a></li></ul>"));
+        confluence.child(HOME, MISMATCH_PAGE);
         return confluence;
     }
 
