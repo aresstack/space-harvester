@@ -50,6 +50,15 @@ public interface HarvestSource {
     }
 
     /**
+     * Ob eine Seite, die es in der Quelle gibt, außerhalb des eingestellten Umfangs liegt (Startpunkte und Tiefe,
+     * {@code startPoints}/{@code maxDepth}), laut der letzten vollständigen Auflistung. Eine solche Seite fällt beim
+     * Abgleich aus dem Katalog wie eine gelöschte. Standard {@code false}: ohne Umfang gehört jede Seite dazu.
+     */
+    default boolean outsideScope(String pageId) {
+        return false;
+    }
+
+    /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
      * ungekürzt.
      *
