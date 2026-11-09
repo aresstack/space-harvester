@@ -32,6 +32,11 @@ public final class Facts extends JPanel {
 
     /** @param action ein Knopf rechts neben dem Wert, z. B. ein {@link IconButton}; {@code null}: keiner */
     public Facts add(String label, String value, Color color, JComponent action) {
+        return add(label, value, color, action, null);
+    }
+
+    /** @param tooltip Erklärung zum Wert; {@code null}: der Wert selbst (für abgeschnittene Pfade) */
+    public Facts add(String label, String value, Color color, JComponent action, String tooltip) {
         GridBagConstraints left = new GridBagConstraints();
         left.gridx = 0;
         left.gridy = row;
@@ -51,7 +56,7 @@ public final class Facts extends JPanel {
         right.insets = new Insets(2, 0, 2, 0);
         // Umbrechend statt abgeschnitten: lange Pfade und Adressen bleiben ganz lesbar (Angelo, 09.11.).
         javax.swing.JTextArea text = Comic.wrapped(value == null || value.isEmpty() ? "–" : value, color, 12.5f);
-        text.setToolTipText(value == null || value.isEmpty() ? null : value);
+        text.setToolTipText(tooltip != null ? tooltip : value == null || value.isEmpty() ? null : value);
         text.setFocusable(true); // per Tab erreichbar, markieren und mit Strg+C kopieren wie das Textfeld zuvor
         super.add(text, right);
         if (action != null) {

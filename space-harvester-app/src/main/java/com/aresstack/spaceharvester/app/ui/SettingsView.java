@@ -36,6 +36,9 @@ public final class SettingsView implements View {
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
     static final String SECURITY = "Sicherheit";
+    /** Tooltip der Tresor-Zeilen, deren Wert nur in KeePass liegt: lokal gibt es nichts zu löschen. */
+    static final String KEEPASS_TIP = "Die Zugangsdaten liegen nur in KeePass und werden bei Bedarf über die Kopplung "
+            + "gelesen; lokal ist nichts gespeichert. Die Verbindung trennt „Entkoppeln“ im Abschnitt KeePass.";
     static final String EXAMPLE = "/com/aresstack/spaceharvester/app/space-harvester-app.example.yml";
 
     private final AppContext context;
@@ -293,25 +296,51 @@ public final class SettingsView implements View {
         if (settings == null) {
             return;
         }
+        // Je Zeile: woher der Wert kommt. Nur was lokal in einer Datei liegt, bekommt den Papierkorb; aus KeePass
+        // gelesene Werte liegen nie lokal, dort gibt es nichts zu löschen.
+        com.aresstack.spaceharvester.app.settings.AiAccess access = settings.aiAccess();
         boolean aiKeyStored = context.aiVault().has(AiSettingsPanel.KEY_ID);
-        security.add("API-Key des KI-Dienstes", context.aiKeyAvailable() ? "gespeichert"
-                : settings.ai().configured() ? "fehlt" : "kein KI-Dienst eingerichtet", Comic.INK,
+        String aiState;
+        String aiTip = null;
+        if (access.fromKeePass()) {
+            aiState = "in KeePass („" + access.entry() + "“)" + (context.aiKeyAvailable() ? "" : "; noch nicht gelesen");
+            aiTip = KEEPASS_TIP;
+        } else if (aiKeyStored) {
+            aiState = "im Tresor";
+        } else if (context.aiKeyAvailable()) {
+            aiState = "nur für diese Sitzung";
+        } else {
+            aiState = settings.ai().configured() ? "fehlt" : "kein KI-Dienst eingerichtet";
+        }
+        security.add("API-Key des KI-Dienstes", aiState, Comic.INK,
                 aiKeyStored ? deleteButton("API-Key des KI-Dienstes", () -> {
                     context.aiVault().remove(AiSettingsPanel.KEY_ID);
                     context.sessionAiKey(null);
-                }) : null);
+                }) : null, aiTip);
         ProxySettings proxy = settings.proxy();
         if (proxy != null && proxy.authentication() != null) {
-            security.add("Proxy-Passwort", context.proxyPasswordAvailable(proxy.authentication().username())
-                    ? "gespeichert" : "fehlt");
+            String username = proxy.authentication().username();
+            boolean proxyStored = context.proxyVault().has(AppContext.PROXY_KEY, username);
+            security.add("Proxy-Passwort", proxyStored ? "im Tresor"
+                    : context.proxyPasswordAvailable(username) ? "nur für diese Sitzung" : "fehlt", Comic.INK,
+                    proxyStored ? deleteButton("Proxy-Passwort", () -> {
+                        context.proxyVault().remove(AppContext.PROXY_KEY);
+                        context.sessionProxyPassword(null, null);
+                    }) : null);
         }
         for (AppSettings.SourceEntry source : settings.sources()) {
             String state;
+            String tip = null;
             boolean stored = context.vault().has(source.id());
+            String keePassEntry = settings.keePassEntry(source.id());
             if (stored) {
                 state = "im Tresor";
+            } else if (keePassEntry != null && source.secretMissing()) {
+                state = "in KeePass („" + keePassEntry + "“)"
+                        + (context.secrets().has(source) ? "" : "; noch nicht gelesen");
+                tip = KEEPASS_TIP;
             } else if (source.secretMissing()) {
-                state = "fehlt";
+                state = context.secrets().has(source) ? "nur für diese Sitzung" : "fehlt";
             } else if (source.secretVariable() != null) {
                 state = "aus ${" + source.secretVariable() + "}";
             } else {
@@ -321,7 +350,7 @@ public final class SettingsView implements View {
                     stored ? deleteButton("Zugangsdaten von „" + source.config().title() + "“", () -> {
                         context.vault().remove(source.id());
                         context.secrets().remove(source.id());
-                    }) : null);
+                    }) : null, tip);
         }
         try {
             if (new ConfigFileEditor(context.loader()).fileHasPlaintextSecret(context.configFile())) {
