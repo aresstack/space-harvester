@@ -136,6 +136,9 @@ public final class AppContext {
     /** Ob beim letzten Laden aus dem KeePass-Eintrag ein API-Key kam. */
     private volatile boolean keePassKeyRead;
     private Navigator navigator;
+    /** Statusmeldungen der Bereiche an die Statuszeile (Muster aus MainframeMate). */
+    private final com.aresstack.spaceharvester.app.event.ApplicationEventBus events =
+            new com.aresstack.spaceharvester.app.event.ApplicationEventBus();
 
     public AppContext(AppSettingsLoader loader, Path configFile, String version) {
         this(loader, configFile, version, SecretVault.forPlatform(
@@ -371,6 +374,11 @@ public final class AppContext {
             }
             return typed.get();
         }
+    }
+
+    /** Der Ereignisbus dieses Fensters; die Statuszeile zeigt, was darauf als {@code StatusMessageEvent} erscheint. */
+    public com.aresstack.spaceharvester.app.event.ApplicationEventBus events() {
+        return events;
     }
 
     public Navigator navigator() {

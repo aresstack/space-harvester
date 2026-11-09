@@ -110,6 +110,8 @@ public final class PageDetailPanel extends JPanel {
     private final PassagesTab passages = new PassagesTab();
     private final ImagesTab images = new ImagesTab();
     private final JLabel state = Comic.muted(" ");
+    /** Das ⓘ neben dem Titel: öffnet die Seitendetails als Popup. */
+    private final JLabel info = new JLabel(new InfoIcon());
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
         @Override
@@ -284,18 +286,54 @@ public final class PageDetailPanel extends JPanel {
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
-        JPanel lines = new JPanel(new BorderLayout(0, 2));
-        lines.setOpaque(false);
-        lines.add(title, BorderLayout.NORTH);
-        JPanel where = new JPanel(new BorderLayout(0, 2));
-        where.setOpaque(false);
-        where.add(breadcrumbs, BorderLayout.NORTH);
-        where.add(path, BorderLayout.CENTER);
-        lines.add(where, BorderLayout.CENTER);
-        lines.add(state, BorderLayout.SOUTH);
+        // Nur die fette Titelzeile bleibt stehen; Ort, Version, Herkunft und Bildzeile stehen hinter dem ⓘ.
+        info.setToolTipText("Details zur Seite");
+        info.getAccessibleContext().setAccessibleName("Details zur Seite");
+        info.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        info.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent event) {
+                showDetails();
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                showDetails();
+            }
+        });
+        // Der Titel gibt nach (mit „…“), das ⓘ bleibt immer direkt daneben sichtbar.
+        JPanel heading = new JPanel(null) {
+            private static final int GAP = 6;
+
+            @Override
+            public void doLayout() {
+                java.awt.Dimension t = title.getPreferredSize();
+                java.awt.Dimension i = info.getPreferredSize();
+                int h = getHeight();
+                int tw = Math.max(0, Math.min(t.width, getWidth() - i.width - GAP));
+                title.setBounds(0, (h - t.height) / 2, tw, t.height);
+                info.setBounds(tw + GAP, (h - i.height) / 2, i.width, i.height);
+            }
+
+            @Override
+            public java.awt.Dimension getPreferredSize() {
+                java.awt.Dimension t = title.getPreferredSize();
+                java.awt.Dimension i = info.getPreferredSize();
+                return new java.awt.Dimension(t.width + GAP + i.width, Math.max(t.height, i.height));
+            }
+
+            @Override
+            public java.awt.Dimension getMinimumSize() {
+                java.awt.Dimension i = info.getPreferredSize();
+                return new java.awt.Dimension(i.width, Math.max(title.getPreferredSize().height, i.height));
+            }
+        };
+        heading.setOpaque(false);
+        heading.add(title);
+        heading.add(info);
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
-        titleRow.add(lines, BorderLayout.CENTER);
+        titleRow.add(heading, BorderLayout.CENTER);
         titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
         header.add(titleRow, BorderLayout.NORTH);
         header.add(feedback, BorderLayout.SOUTH);
@@ -342,6 +380,7 @@ public final class PageDetailPanel extends JPanel {
         title.setText(" ");
         path.setText(" ");
         state.setText(" ");
+        renderDetails();
         feedback.clear();
         setActionsEnabled(false);
         cards.show(deck, EMPTY);
@@ -409,6 +448,7 @@ public final class PageDetailPanel extends JPanel {
         title.setText("Seite " + pageId);
         path.setText(sourceId);
         state.setText(" ");
+        renderDetails();
         properties.reset();
         technical.reset();
         raw.setText("");
@@ -479,6 +519,7 @@ public final class PageDetailPanel extends JPanel {
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
                 + (metadata.version() == null ? "" : " · Version " + metadata.version()));
         state.setText(origin(page));
+        renderDetails();
         state.setForeground(Comic.TEXT);
         feedback.clear();
         if (page.refresh() != null && loaded.checked()) {
@@ -803,6 +844,7 @@ public final class PageDetailPanel extends JPanel {
         }, prepared -> {
             if (shown == page) {
                 readingPane.show(prepared);
+                renderDetails();
             }
         }, error -> {
             if (shown != page) {
@@ -825,6 +867,7 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> runtime.workspace().position(source, id), position -> {
             if (shown == page) {
                 breadcrumbs.show(position);
+                renderDetails();
                 positionShown.accept(position);
             }
         }, error -> {
@@ -1157,6 +1200,123 @@ public final class PageDetailPanel extends JPanel {
         Background.execute(() -> Files.write(target.toPath(), payload.bytes()),
                 () -> feedback.success("Original gespeichert: " + target + " (" + Texts.bytes(payload.length())
                         + ", SHA-256 " + Texts.shortHash(payload.rawSha256()) + ")"), feedback::problem);
+    }
+
+    /** Die Seitendetails als Text (auch Tooltip des Titels): Ort, Version, Herkunft und Bildzeile. */
+    String details() {
+        List<String> lines = new java.util.ArrayList<>();
+        for (String line : new String[] {breadcrumbs.text(), path.getText(), state.getText(), readingPane.details()}) {
+            if (line != null && !line.isBlank()) {
+                lines.add(line.trim());
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private void renderDetails() {
+        String text = details();
+        String html = text.isEmpty() ? null : "<html>" + text.replace("&", "&amp;").replace("<", "&lt;")
+                .replace("\n", "<br>") + "</html>";
+        title.setToolTipText(html);
+        info.setVisible(page != null || !text.isEmpty());
+    }
+
+    /** Popup mit den Details und den Aktionen der Seite. */
+    private void showDetails() {
+        renderDetails();
+        if (detailsPopup != null && detailsPopup.isVisible()) {
+            return;
+        }
+        javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
+        JPanel body = new JPanel(new BorderLayout(0, 4));
+        body.setBackground(Comic.SURFACE);
+        body.setBorder(BorderFactory.createEmptyBorder(8, 10, 6, 10));
+        JLabel name = new JLabel(title.getText());
+        name.setFont(Comic.semiBold(13f));
+        name.setForeground(Comic.INK);
+        body.add(name, BorderLayout.NORTH);
+        JPanel text = new JPanel();
+        text.setOpaque(false);
+        text.setLayout(new javax.swing.BoxLayout(text, javax.swing.BoxLayout.Y_AXIS));
+        breadcrumbs.setAlignmentX(LEFT_ALIGNMENT);
+        if (!breadcrumbs.text().isBlank()) {
+            text.add(breadcrumbs);
+        }
+        for (String line : new String[] {path.getText(), state.getText(), readingPane.details()}) {
+            if (line != null && !line.isBlank()) {
+                JLabel label = Comic.muted(line);
+                label.setAlignmentX(LEFT_ALIGNMENT);
+                text.add(label);
+            }
+        }
+        body.add(text, BorderLayout.CENTER);
+        popup.add(body);
+        popup.addSeparator();
+        javax.swing.JMenuItem copyBookmark = new javax.swing.JMenuItem("Lesezeichen kopieren");
+        copyBookmark.addActionListener(e -> copyBookmark());
+        javax.swing.JMenuItem openBrowser = new javax.swing.JMenuItem("Im Browser öffnen");
+        openBrowser.addActionListener(e -> browse());
+        openBrowser.setEnabled(page != null && page.header().metadata().url() != null);
+        javax.swing.JMenuItem copyId = new javax.swing.JMenuItem("Seiten-ID kopieren");
+        copyId.addActionListener(e -> copyPageId());
+        copyBookmark.setEnabled(page != null);
+        copyId.setEnabled(pageId != null);
+        popup.add(copyBookmark);
+        popup.add(openBrowser);
+        popup.add(copyId);
+        detailsPopup = popup;
+        if (info.isShowing()) {
+            popup.show(info, 0, info.getHeight());
+        }
+    }
+
+    private javax.swing.JPopupMenu detailsPopup;
+
+    private void copyPageId() {
+        if (pageId == null) {
+            return;
+        }
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                .setContents(new java.awt.datatransfer.StringSelection(pageId), null);
+        feedback.success("Seiten-ID kopiert: " + pageId);
+    }
+
+    /** Für Tests: das ⓘ und das zuletzt geöffnete Popup. */
+    JLabel infoIcon() {
+        return info;
+    }
+
+    javax.swing.JPopupMenu detailsPopup() {
+        return detailsPopup;
+    }
+
+    /** Ein kleines ⓘ im Comic-Stil: Kreis mit Punkt und Strich. */
+    private static final class InfoIcon implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.translate(x, y);
+                g.setColor(Comic.MUTED);
+                g.setStroke(new java.awt.BasicStroke(1.5f));
+                g.draw(new java.awt.geom.Ellipse2D.Double(1.5, 1.5, 13, 13));
+                g.fill(new java.awt.geom.Ellipse2D.Double(7, 4, 2, 2));
+                g.draw(new java.awt.geom.Line2D.Double(8, 7.5, 8, 11.5));
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
     }
 
     /** Legt das Lesezeichen des Core ({@code PageBookmark}, #178) in die Zwischenablage. */

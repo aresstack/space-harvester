@@ -55,7 +55,7 @@ public final class SettingsView implements View {
     private final ComposerButton create = Comic.button("Beispiel anlegen", "Beispielkonfiguration an diesem Ort anlegen");
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
-    private final ComposerButton openData = Comic.button("Datenordner öffnen", "Ordner des lokalen Bestands öffnen");
+    private final ComposerButton openData = Comic.button("Ordner öffnen", "Datenordner des lokalen Bestands im Dateimanager öffnen");
     final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
             "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
     final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");

@@ -91,6 +91,32 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
                 StandardCharsets.UTF_8)).contains("Text der Seite");
+        // Ort, Version und Herkunft stehen nicht dauerhaft unter dem Titel, sondern hinter dem ⓘ und im Tooltip.
+        assertThat(onEdt(() -> view.detail().details())).contains("Space " + space).contains("Aus dem lokalen Bestand");
+        assertThat(onEdt(() -> view.detail().infoIcon().isVisible())).isTrue();
+        // Ein überlanger Titel schiebt das ⓘ nicht aus dem Kopf: der Titel gibt nach, das ⓘ bleibt daneben.
+        assertThat(onEdt(() -> {
+            javax.swing.JLabel icon = view.detail().infoIcon();
+            java.awt.Container heading = icon.getParent();
+            javax.swing.JLabel titleLabel = (javax.swing.JLabel) heading.getComponent(0);
+            titleLabel.setText("Sehr langer Titel ".repeat(40));
+            heading.setSize(300, heading.getPreferredSize().height);
+            heading.doLayout();
+            return icon.getX() + icon.getWidth() <= heading.getWidth() && icon.getWidth() > 0
+                    && titleLabel.getWidth() < titleLabel.getPreferredSize().width;
+        })).isTrue();
+        assertThat(onEdt(() -> {
+            java.awt.event.MouseListener[] listeners = view.detail().infoIcon().getMouseListeners();
+            listeners[listeners.length - 1].mouseClicked(null);
+            javax.swing.JPopupMenu popup = view.detail().detailsPopup();
+            List<String> items = new java.util.ArrayList<>();
+            for (java.awt.Component item : popup.getComponents()) {
+                if (item instanceof javax.swing.JMenuItem menuItem) {
+                    items.add(menuItem.getText());
+                }
+            }
+            return items;
+        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen", "Seiten-ID kopieren");
         assertThat(onEdt(() -> view.detail().feedback().isVisible())).as("keine Cache-Meldung").isFalse();
         assertThat(onEdt(view::crumbs)).isEqualTo("handbuch › " + space);
     }

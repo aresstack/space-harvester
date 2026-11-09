@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
+import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -22,7 +23,6 @@ import javax.swing.Box;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JProgressBar;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.Timer;
@@ -59,16 +59,9 @@ public final class ActivitiesView implements View {
     private final JobsModel model = new JobsModel();
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
-    /** Modell des globalen Fortschritts, gezeichnet als Hintergrund der Statuszeile; darauf links der Schritt, mittig Abbrechen bzw. der Endzustand. */
-    final JProgressBar progress = new JProgressBar();
-    private final JPanel progressBar = new JPanel(new BorderLayout());
-    final JLabel progressText = Comic.muted(" ");
-    /** Mittig im Balken: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“, sobald der Auftrag endet. */
-    final JLabel endState = new JLabel(" ");
     private final Facts facts = new Facts();
     private final Facts result = new Facts();
     private final Feedback feedback = new Feedback();
-    final ComposerButton cancel = Comic.danger("Abbrechen", "Auftrag abbrechen");
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
     /** Kachel „Exportieren“ eines fertigen Downloads: Datenbestand, erzeugte Dateien, Ausgabeordner, Hinweise. */
     final JPanel card = new JPanel(new BorderLayout(0, 6));
@@ -139,10 +132,6 @@ public final class ActivitiesView implements View {
 
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
-        progress.setStringPainted(false);
-        progress.setForeground(Comic.BLUE);
-        progress.setPreferredSize(new java.awt.Dimension(200, 26));
-        cancel.addActionListener(e -> cancelSelected());
         again.addActionListener(e -> restart());
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
@@ -209,24 +198,6 @@ public final class ActivitiesView implements View {
         split.setContinuousLayout(true);
         root.add(split, BorderLayout.CENTER);
 
-        // Der globale Balken: links der Schritt, mittig Abbrechen bzw. der Endzustand, beides über dem Balken.
-        endState.setFont(Comic.semiBold(13f));
-        endState.setForeground(Comic.INK);
-        endState.setVisible(false);
-        JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
-        center.setOpaque(false);
-        center.add(cancel);
-        center.add(endState);
-        JPanel overlay = new JPanel(new BorderLayout());
-        overlay.setOpaque(false);
-        overlay.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-        overlay.add(progressText, BorderLayout.WEST);
-        overlay.add(center, BorderLayout.CENTER);
-        // Der Balken selbst ist der Hintergrund der Statuszeile (StatusLine); hier nur Schritt, Abbrechen, Endzustand.
-        progressBar.setOpaque(false);
-        progressBar.add(overlay, BorderLayout.CENTER);
-        progressText.setText("Kein Auftrag läuft");
-        cancel.setVisible(false);
         updateButtons();
         context.onChange(ignored -> poll());
     }
@@ -254,20 +225,15 @@ public final class ActivitiesView implements View {
         return root;
     }
 
-    /** Keine eigene Aktionszeile mehr: der Fortschritt der Aufträge steht in der Statuszeile ({@link #jobLine()}). */
+    /** Keine eigene Aktionszeile mehr: der Fortschritt der Aufträge geht als {@link JobProgressEvent} an die Statuszeile. */
     @Override
     public JComponent actions() {
         return null;
     }
 
-    /** Schritt, Abbrechen und Endzustand des Auftrags für die Mitte der Statuszeile. */
-    JComponent jobLine() {
-        return progressBar;
-    }
-
-    /** Das Modell des Fortschritts; die Statuszeile zeichnet ihn als ihren Hintergrund. */
-    JProgressBar progress() {
-        return progress;
+    /** Bricht den Auftrag ab, dessen Stand die Statuszeile zeigt (nach Rückfrage). */
+    void cancelShownJob() {
+        cancelSelected();
     }
 
     @Override
@@ -379,48 +345,38 @@ public final class ActivitiesView implements View {
     }
 
     /**
-     * Der globale Balken für diesen Auftrag: während er läuft der Schritt links und mittig „Abbrechen“, danach mittig
+     * Veröffentlicht den Stand dieses Auftrags ({@link JobProgressEvent}) für die Statuszeile: während er läuft der Schritt links und mittig „Abbrechen“, danach mittig
      * der Endzustand; ohne Auftrag „Kein Auftrag läuft“.
      */
     private void renderBar(JobStatus status) {
         barJob = status;
         if (status == null) {
-            progress.setIndeterminate(false);
-            progress.setValue(0);
-            progressText.setText("Kein Auftrag läuft");
-            cancel.setVisible(false);
-            endState.setVisible(false);
+            context.events().publish(JobProgressEvent.none());
             return;
         }
         JobProgress p = status.progress();
         Step step = Step.of(status.type(), phase, p);
         boolean running = !status.state().terminal();
         String subject = Texts.type(status.type()) + " " + status.partitionKey();
+        String text;
+        long done = 0;
+        long total = 0;
         if (status.state() == JobState.RUNNING && step.total() > 0) {
-            progress.setIndeterminate(false);
-            progress.setMaximum((int) Math.min(Integer.MAX_VALUE, step.total()));
-            progress.setValue((int) Math.min(Integer.MAX_VALUE, step.done()));
-            progressText.setText(subject + " · " + step.text());
+            text = subject + " · " + step.text();
+            done = step.done();
+            total = step.total();
         } else {
-            progress.setIndeterminate(running);
-            progress.setMaximum(1);
-            // Fertig heißt 100 %: die Statuszeile zeigt den vollen Balken kurz und blendet ihn dann aus.
-            progress.setValue(status.state() == JobState.COMPLETED ? 1 : 0);
             String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
-            progressText.setText(subject + (running ? " · " + state : ""));
+            text = subject + (running ? " · " + state : "");
         }
-        cancel.setVisible(running);
-        cancel.setEnabled(running && !status.cancelRequested());
-        cancel.setText(status.cancelRequested() ? "Abbruch angefordert" : "Abbrechen");
-        endState.setVisible(!running);
-        endState.setText(switch (status.state()) {
-            case COMPLETED -> "Fertig";
-            case CANCELLED -> "Abgebrochen";
-            case FAILED -> "Fehlgeschlagen";
-            default -> Texts.state(status.state());
-        });
-        endState.setForeground(status.state() == JobState.COMPLETED ? Comic.GREEN
-                : status.state() == JobState.FAILED ? Comic.RED : Comic.ORANGE);
+        JobProgressEvent.Outcome outcome = switch (status.state()) {
+            case COMPLETED -> JobProgressEvent.Outcome.COMPLETED;
+            case CANCELLED -> JobProgressEvent.Outcome.CANCELLED;
+            case FAILED -> JobProgressEvent.Outcome.FAILED;
+            default -> running ? JobProgressEvent.Outcome.RUNNING : JobProgressEvent.Outcome.NONE;
+        };
+        context.events().publish(new JobProgressEvent(status.id(), text, done, total, running && total == 0, outcome,
+                status.cancelRequested()));
     }
 
     private void select(String id) {
