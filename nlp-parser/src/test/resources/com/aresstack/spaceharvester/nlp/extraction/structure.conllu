@@ -1,0 +1,19 @@
+# Gold-Analysen (MIT) zu Ursachen H und I (ADR 0024, Ursachenmatrix): Fälle, in denen die strukturellen Heuristiken
+# NICHT greifen dürfen. Satz 1: Kennung vor eigenem Subjekt; Satz 2: „sicher“ an einem Verb ohne Partikelverb.
+# sent_id = 1
+# text = Hinweis: Der Antrag wird geprüft.
+1	Hinweis	Hinweis	NOUN	NN	_	6	dep	_	SpaceAfter=No
+2	:	:	PUNCT	$.	_	1	punct	_	_
+3	Der	der	DET	ART	_	4	det	_	_
+4	Antrag	Antrag	NOUN	NN	_	6	nsubj:pass	_	_
+5	wird	werden	AUX	VAFIN	_	6	aux:pass	_	_
+6	geprüft	prüfen	VERB	VVPP	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	$.	_	6	punct	_	_
+
+# sent_id = 2
+# text = Sie fühlt sich sicher.
+1	Sie	sie	PRON	PPER	_	2	nsubj	_	_
+2	fühlt	fühlen	VERB	VVFIN	_	0	root	_	_
+3	sich	er	PRON	PRF	_	2	obj	_	_
+4	sicher	sicher	ADJ	ADJD	_	2	xcomp	_	SpaceAfter=No
+5	.	.	PUNCT	$.	_	2	punct	_	_

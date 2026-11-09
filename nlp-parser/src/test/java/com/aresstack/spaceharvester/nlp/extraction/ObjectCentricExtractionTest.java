@@ -375,4 +375,22 @@ class ObjectCentricExtractionTest {
                 .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 5).findFirst().orElseThrow();
         assertEquals("verwaltet werden", reports.predicate().text());
     }
+
+    @Test
+    void structuralHeuristicsStayOutOfOrdinarySentences() {
+        ObjectCentricAnalysis analysis = Gold.analyze("structure.conllu");
+
+        Statement checked = analysis.statements().get(0);
+        Argument applicant = checked.core(Role.AFFECTED_OBJECT);
+        assertEquals("Der Antrag", text(analysis, applicant));
+        assertEquals(Basis.PARSER, applicant.basis(), "eigenes Subjekt schlägt die Kennung");
+        assertFalse(checked.has(Finding.SUBJECT_FROM_LABEL));
+        assertTrue(checked.arguments().stream().noneMatch(a -> text(analysis, a).contains("Hinweis")));
+
+        Statement feels = analysis.statements().get(1);
+        assertEquals("fühlen", feels.predicate().lemma(), "„sicher“ ist bei „fühlen“ kein Verbzusatz");
+        assertFalse(feels.has(Finding.PREDICATIVE_PARTICLE));
+        assertTrue(feels.has(Finding.REFLEXIVE));
+        assertNull(feels.core(Role.AFFECTED_OBJECT), "weder „sich“ noch eine Heuristik als Objekt");
+    }
 }
