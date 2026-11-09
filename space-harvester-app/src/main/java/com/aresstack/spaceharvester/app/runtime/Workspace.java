@@ -456,6 +456,18 @@ public final class Workspace {
         return images;
     }
 
+    /**
+     * Wie {@link #describeImages}, aber nur für diese eine Seite einer nicht freigegebenen Quelle, weil der Benutzer
+     * es ausdrücklich erlaubt hat („Nur diese Seite einmalig beschreiben“); speichert keine Freigabe.
+     */
+    public PageImages describeImagesOnce(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = harvester.imageAnalysis().describeOnce(page.snapshot());
+        harvester.enrichments().flush();
+        return images;
+    }
+
     // ------------------------------------------------------------------ Aussagen (#499, ADR 0024)
 
     /** Ob die App einen Satzanalysator hat (gepinntes Modell bekannt); lädt kein Modell. */

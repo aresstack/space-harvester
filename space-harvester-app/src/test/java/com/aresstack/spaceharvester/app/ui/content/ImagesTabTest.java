@@ -36,6 +36,26 @@ class ImagesTabTest {
     }
 
     @Test
+    void anUnreleasedSourceOffersToDescribeThisPageOnceOrToReleaseTheSource() throws Exception {
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            ImagesTab tab = new ImagesTab();
+            tab.onDescribeOnce(() -> seen.add("einmalig"));
+            tab.onRelease(() -> seen.add("freigeben"));
+            tab.show(PassagesTab.State.CURRENT, null, List.of());
+            seen.add(String.valueOf(tab.releaseOffered()));
+            tab.show(PassagesTab.State.MISSING, "source-not-released", List.of());
+            seen.add(String.valueOf(tab.releaseOffered()));
+            seen.add(String.valueOf(tab.describeOffered()));
+            tab.clickDescribeOnce();
+            tab.clickRelease();
+            tab.describing(true);
+            seen.add(String.valueOf(tab.releaseOffered()));
+        });
+        assertThat(seen).containsExactly("false", "true", "false", "einmalig", "freigeben", "false");
+    }
+
+    @Test
     void staleNamesTheCoreReasonAndKeepsTheOldDescriptionsMarkedAsStale() throws Exception {
         List<String> seen = new ArrayList<>();
         List<ImagesTab.Image> old = List.of(new ImagesTab.Image("architektur.png", ImagesTab.Status.DESCRIBED,

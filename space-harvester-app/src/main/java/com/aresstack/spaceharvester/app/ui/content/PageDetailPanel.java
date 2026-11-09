@@ -316,7 +316,9 @@ public final class PageDetailPanel extends JPanel {
         graphView.onJump(this::jumpTo);
         statementsView.onAnalysed(graphView::analysisChanged);
         knowledgeGraphTab(graphView);
-        images.onDescribe(this::describeImages);
+        images.onDescribe(() -> describeImages(false));
+        images.onDescribeOnce(() -> describeImages(true));
+        images.onRelease(this::releaseSourceAndDescribe);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -1012,8 +1014,11 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. */
-    private void describeImages() {
+    /**
+     * „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. Mit {@code once} auch für
+     * eine nicht freigegebene Quelle, aber nur diese Seite und ohne gespeicherte Freigabe.
+     */
+    private void describeImages(boolean once) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
@@ -1023,7 +1028,8 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, runtime.workspace().describeImages(source, id)), found -> {
+        Background.run(() -> imageRows(runtime, source, once ? runtime.workspace().describeImagesOnce(source, id)
+                : runtime.workspace().describeImages(source, id)), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
             if (shown != page) {
@@ -1038,6 +1044,32 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /**
+     * „Diese Quelle freigeben“: setzt dasselbe Häkchen wie im Quellenformular (dieselbe YAML), lässt den Core die
+     * Freigabe übernehmen und beschreibt dann die Bilder dieser Seite.
+     */
+    private void releaseSourceAndDescribe() {
+        if (context.runtime() == null || page == null || sourceId == null) {
+            return;
+        }
+        String source = sourceId;
+        DeliveredPage shown = page;
+        images.describing(true);
+        feedback.working("Quelle wird freigegeben …");
+        context.releaseSource(source, () -> {
+            if (shown != page) {
+                images.describing(false);
+                return;
+            }
+            describeImages(false);
+        }, error -> {
+            images.describing(false);
+            if (shown == page) {
+                feedback.problem(error, Problems.Step.PAGE);
+            }
         });
     }
 
