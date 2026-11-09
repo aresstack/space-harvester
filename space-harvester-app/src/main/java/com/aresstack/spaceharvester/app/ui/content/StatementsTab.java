@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -73,7 +74,7 @@ final class StatementsTab extends JPanel {
             ParserModelSetup.INSTALL_NOW, "Lädt das deutsche MaltParser-Modell aus dem GitHub-Release, prüft es und "
                     + "entpackt es ins Datenverzeichnis");
     private ParserModelSetup.State modelState = ParserModelSetup.State.INSTALLED;
-    private final JLabel state = new JLabel(" ");
+    private final TabHeader head = new TabHeader("Aussagen dieser Seite");
     private final JLabel progress = Comic.muted(" ");
     private final JTextArea hint = note();
     private final JPanel list = new JPanel();
@@ -89,6 +90,11 @@ final class StatementsTab extends JPanel {
     private final List<Runnable> jumps = new ArrayList<>();
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private Runnable onAnalysed = () -> { };
+    private Consumer<String> onStatus = text -> { };
+    /** Die Aussagen als Text für die Zwischenablage, wie angezeigt. */
+    private final StringBuilder copyText = new StringBuilder();
+    /** Die Erläuterung zum Stand, ob sie im Reiter oder in der Statuszeile steht. */
+    private String explanation = " ";
     private PageSnapshot snapshot;
     private PageText text;
     /** Steigt bei jeder Seite; Ergebnisse mit anderer Nummer gehören zu einer verlassenen Seite. */
@@ -119,25 +125,7 @@ final class StatementsTab extends JPanel {
         this.setup = setup;
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        JLabel title = Comic.text("Aussagen dieser Seite");
-        title.setFont(Comic.semiBold(15f));
-        JLabel experimental = badge("Experimentell", Comic.PETROL);
-        JPanel titles = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        titles.setOpaque(false);
-        titles.add(title);
-        titles.add(experimental);
-        head.add(titles, BorderLayout.WEST);
-        state.setFont(Comic.semiBold(12f));
-        state.setOpaque(true);
-        head.add(state, BorderLayout.EAST);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        actions.setOpaque(false);
-        actions.add(analyze);
-        actions.add(cancel);
-        actions.add(progress);
-        head.add(actions, BorderLayout.SOUTH);
+        head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze).copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
         cancel.addActionListener(e -> cancelRun());
         cancel.setVisible(false);
@@ -264,6 +252,11 @@ final class StatementsTab extends JPanel {
     /** Meldet eine neu gespeicherte Analyse (etwa damit der Graph-Reiter neu lädt). */
     void onAnalysed(Runnable listener) {
         onAnalysed = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} bekommt die Erläuterung zur gezeigten Analyse für die Statuszeile des Hauptfensters. */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
     }
 
     /** {@code listener} springt zu Fundstellen im Reiter „Text“ ({@code PageDetailPanel#jumpTo}). */
@@ -496,6 +489,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        copyText.setLength(0);
         syntaxPanel.setVisible(statements.analysis() != null);
         switch (statements.state()) {
             case MISSING -> setState("Nicht analysiert", Comic.MUTED);
@@ -524,6 +518,13 @@ final class StatementsTab extends JPanel {
                 list.add(Comic.muted("Keine Aussagen mit Vollverb erkannt."));
             }
             links(links, mentions, offsets);
+            // Mit Aussagen steht die Erläuterung („Analysiert am …“) in der Statuszeile, nicht über der Liste.
+            explanation = hint.getText();
+            onStatus.accept(explanation);
+            hint.setText(" ");
+        } else {
+            explanation = hint.getText();
+            onStatus.accept(" ");
         }
         list.revalidate();
         list.repaint();
@@ -539,9 +540,11 @@ final class StatementsTab extends JPanel {
         label.setAlignmentX(LEFT_ALIGNMENT);
         list.add(label);
         lines.add(heading);
+        copyText.append(heading).append(" (").append(statements.size()).append(")\n\n");
         for (ParsedStatements.Statement statement : statements) {
             List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null);
             lines.add(String.join(" | ", body));
+            copyText.append(String.join("\n", body)).append("\n\n");
             list.add(entry(body, stale, offsets ? span(result, statement) : null));
             list.add(Box.createVerticalStrut(4));
         }
@@ -743,20 +746,7 @@ final class StatementsTab extends JPanel {
     }
 
     private void setState(String label, Color tone) {
-        state.setText(label);
-        state.setForeground(tone);
-        state.setBackground(Comic.SURFACE);
-        state.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
-                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
-    }
-
-    private static JLabel badge(String text, Color tone) {
-        JLabel label = new JLabel(text);
-        label.setFont(Comic.semiBold(11f));
-        label.setForeground(tone);
-        label.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
-                BorderFactory.createEmptyBorder(1, 6, 1, 6)));
-        return label;
+        head.status(label.isBlank() ? null : label, tone);
     }
 
     private static JTextArea note() {
@@ -834,11 +824,12 @@ final class StatementsTab extends JPanel {
     }
 
     String stateLabel() {
-        return state.getText();
+        return head.statusText() == null ? " " : head.statusText();
     }
 
+    /** Die Erläuterung, ob sie im Reiter steht oder in der Statuszeile. */
     String hintText() {
-        return hint.getText();
+        return hint.getText().isBlank() ? explanation : hint.getText();
     }
 
     boolean analyzeOffered() {

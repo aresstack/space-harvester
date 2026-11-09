@@ -84,6 +84,10 @@ public final class PageDetailPanel extends JPanel {
     private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
+    /** Stand des sichtbaren Reiters für die Statuszeile des Hauptfensters ({@link #onStatus}). */
+    private java.util.function.Consumer<String> statusShown = text -> { };
+    /** Die Erläuterung je Reiter; gezeigt wird die des sichtbaren Reiters. */
+    private final java.util.Map<String, String> tabStatus = new java.util.HashMap<>();
     private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> positionShown = position -> { };
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
@@ -249,7 +253,6 @@ public final class PageDetailPanel extends JPanel {
         table.setPreferredSize(new Dimension(300, 170));
         analysis.add(table, BorderLayout.NORTH);
         analysis.add(Comic.scroll(enrichmentResult), BorderLayout.CENTER);
-        analysis.add(Comic.row(recompute), BorderLayout.SOUTH);
         enrichments.getSelectionModel().addListSelectionListener(e -> showEnrichment());
 
         PillTabs rawTabs = new PillTabs()
@@ -259,9 +262,10 @@ public final class PageDetailPanel extends JPanel {
                 .tab(TECHNICAL, Comic.scroll(padded(technical)))
                 .tab(ANALYSIS, analysis)
                 .tab(RAW, rawTabs);
+        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter.
+        advancedTabs.actions(refresh, saveRaw, recompute);
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
-        advanced.add(Comic.row(refresh, saveRaw), BorderLayout.NORTH);
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
         // Leseansicht zuerst und damit Standard; ein gewählter Reiter bleibt beim Laden der nächsten Seite.
@@ -283,12 +287,26 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
-        tabs.onSelect(name -> loadVisible());
+        tabs.onSelect(name -> {
+            loadVisible();
+            showTabStatus();
+        });
         analysisTabs.onSelect(name -> {
             if (ANALYSES.equals(tabs.selected())) {
                 loadVisible();
+                showTabStatus();
             }
         });
+        passages.onStatus(text -> tabStatus(PASSAGES, text));
+        images.onStatus(text -> tabStatus(IMAGES, text));
+        references.onStatus(text -> tabStatus(REFERENCES, text));
+        statementsView.onStatus(text -> tabStatus(STATEMENTS, text));
+        graphView.onStatus(text -> tabStatus(GRAPH, text));
+        // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
+        feedback.statusLine((text, tone) -> context.events().publish(
+                new com.aresstack.spaceharvester.app.event.StatusMessageEvent(text,
+                        tone == Comic.BLUE ? Integer.MAX_VALUE : STATUS_MS,
+                        com.aresstack.spaceharvester.app.event.Severity.INFO)));
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
@@ -509,6 +527,27 @@ public final class PageDetailPanel extends JPanel {
     /** Meldet nach dem Laden Quelle und Space der angezeigten Seite. */
     public void onShown(java.util.function.BiConsumer<String, String> listener) {
         this.pageShown = listener;
+    }
+
+    /** So lange bleibt eine Erfolgs- oder Infomeldung in der Statuszeile stehen. */
+    static final int STATUS_MS = 8000;
+
+    /**
+     * Meldet den Stand des sichtbaren Reiters (etwa „50 Knoten, 51 Kanten“ oder „verweist auf 3 Seiten“) für die
+     * Statuszeile des Hauptfensters; " " ohne.
+     */
+    public void onStatus(java.util.function.Consumer<String> listener) {
+        this.statusShown = java.util.Objects.requireNonNull(listener, "listener");
+        showTabStatus();
+    }
+
+    private void tabStatus(String tab, String text) {
+        tabStatus.put(tab, text == null ? " " : text);
+        showTabStatus();
+    }
+
+    private void showTabStatus() {
+        statusShown.accept(tabStatus.getOrDefault(selectedTab(), " "));
     }
 
     private void show(Loaded loaded) {
