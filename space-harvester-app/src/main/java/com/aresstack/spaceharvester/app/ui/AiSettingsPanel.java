@@ -107,6 +107,12 @@ final class AiSettingsPanel {
     final ModelRetry modelRetry;
     /** Ob „Modelle laden“ über {@link #modelRetry} läuft (Assistent, Schritt „Modelle“ offen) statt einmal. */
     private boolean autoRetry;
+    /** Zählt jede Anfrage nach Modellen; nur die Antwort auf die jüngste zählt. */
+    private int modelsRequest;
+    /** Für welchen Dienst ({@link #serviceKey}) {@link #loaded} gilt. */
+    private String loadedService = "";
+    /** Für Tests: wie viele veraltete Antworten (älterer Dienst oder überholte Anfrage) verworfen wurden. */
+    int discardedModelAnswers;
     /** Grund des letzten gescheiterten Versuchs, für die Statuszeile der Wiederholung. */
     private String lastFailure = "";
 
@@ -502,14 +508,20 @@ final class AiSettingsPanel {
             }
             context.reload(() -> {
                 saving = false;
-                if (draft().withModels(draft().chatModel(), draft().embeddingModel(), draft.embeddingDimensions(),
-                        draft().rerankModel(), draft().chunkTokens(), draft().chunkOverlapSentences()).equals(draft)) {
+                AiDraft now = draft();
+                if (now.equals(draft)) {
                     render();
                 } else {
-                    // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen.
+                    // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen. Die gemessene
+                    // Dimension nur, wenn Feld und Embedding-Modell noch so sind wie beim Speichern.
                     apiKey.setText("");
-                    if (measured.draft().embeddingDimensions() != null && dimensions.getText().isBlank()) {
-                        dimensions.setText(measured.draft().embeddingDimensions());
+                    String measuredDimension = measured.draft().embeddingDimensions();
+                    if (measuredDimension != null
+                            && java.util.Objects.equals(blankToNull(now.embeddingDimensions()),
+                            blankToNull(draft.embeddingDimensions()))
+                            && java.util.Objects.equals(blankToNull(now.embeddingModel()),
+                            blankToNull(draft.embeddingModel()))) {
+                        dimensions.setText(measuredDimension);
                     }
                 }
                 if (measured.problem() == null) {
@@ -741,6 +753,8 @@ final class AiSettingsPanel {
         char[] typed = apiKey.getPassword();
         AiAccess chosenAccess = accessDraft();
         boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
+        int request = ++modelsRequest;
+        String service = serviceKey(draft, chosenAccess);
         loadModels.setEnabled(false);
         modelsFeedback.working(outcome != null && modelRetry.attempts() > 1
                 ? "Modelle werden geladen … (Versuch " + modelRetry.attempts() + ")" : "Modelle werden geladen …");
@@ -757,16 +771,50 @@ final class AiSettingsPanel {
             }
         }, loaded -> {
             Arrays.fill(typed, '\0');
+            if (stale(request, service, outcome)) {
+                return;
+            }
             loadModels.setEnabled(true);
             showModels(loaded);
+            loadedService = service;
             if (outcome != null) {
                 outcome.succeeded();
             }
         }, error -> {
             Arrays.fill(typed, '\0');
+            if (stale(request, service, outcome)) {
+                return;
+            }
             loadModels.setEnabled(true);
             modelsFailed(error, keyGiven[0], outcome);
         });
+    }
+
+    /** Wofür eine Modellliste gilt: Adresse und Bezugsart des Keys (nie der Key selbst). */
+    private static String serviceKey(AiDraft draft, AiAccess access) {
+        return String.valueOf(blankToNull(draft.baseUrl())) + "|" + access.mode() + "|" + access.entry();
+    }
+
+    private String currentService() {
+        return serviceKey(draft(), accessDraft());
+    }
+
+    /**
+     * Ob eine Antwort veraltet ist: Eine neuere Anfrage läuft, oder die Eingaben nennen inzwischen einen anderen
+     * Dienst. Dann zeigt sie nichts und wählt nichts vor; war es die jüngste Anfrage, gilt sie als Fehlschlag, nach
+     * dem die Wiederholung den neuen Dienst fragt.
+     */
+    private boolean stale(int request, String service, ModelRetry.Outcome outcome) {
+        boolean newest = request == modelsRequest;
+        if (newest && service.equals(currentService())) {
+            return false;
+        }
+        discardedModelAnswers++;
+        if (newest) {
+            loadModels.setEnabled(true);
+            failed(outcome, true);
+        }
+        return true;
     }
 
     /** Zeigt, warum „Modelle laden“ scheiterte, und sagt der Wiederholung, ob Warten helfen kann. */
@@ -802,6 +850,10 @@ final class AiSettingsPanel {
     /** Vergisst die geladene Liste, damit der Assistent beim nächsten Betreten von „Modelle“ neu lädt. */
     private void forgetModels() {
         loaded = List.of();
+        loadedService = "";
+        // Eine noch laufende Anfrage gilt dem alten Dienst; ihre Antwort verfällt.
+        modelsRequest++;
+        loadModels.setEnabled(true);
         pickChat.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
@@ -831,7 +883,7 @@ final class AiSettingsPanel {
      */
     void prepareModels() {
         autoRetry = true;
-        if (loaded.isEmpty() && !modelRetry.active() && loadModels.isEnabled()
+        if ((loaded.isEmpty() || !loadedService.equals(currentService())) && !modelRetry.active()
                 && blankToNull(baseUrl.getText()) != null) {
             modelRetry.start();
         }

@@ -164,6 +164,35 @@ class SetupWizardTest {
     }
 
     @Test
+    void closingLikeLaterSavesFirstAndIncompleteEntriesKeepTheWizardOpen() throws Exception {
+        SetupWizard[] wizard = new SetupWizard[1];
+        int[] closed = {0};
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            wizard[0].close = () -> closed[0]++;
+            wizard[0].show(SetupWizard.AI);
+            wizard[0].ai.access.setSelectedItem(AiSettingsPanel.MANUAL);
+            wizard[0].ai.baseUrl.setText("http://127.0.0.1:9/v1");
+            wizard[0].ai.dimensions.setText("keine Zahl");
+            // Escape und ✕ rufen dasselbe wie „Später“.
+            wizard[0].requestClose();
+            assertThat(closed[0]).as("unvollständig: bleibt offen").isZero();
+            assertThat(wizard[0].feedback.text()).contains("nicht übernommen", "Dimension");
+            wizard[0].ai.dimensions.setText("");
+            wizard[0].ai.visionModel.setText("vision-beim-schliessen");
+            wizard[0].requestClose();
+        });
+        long until = System.currentTimeMillis() + 120_000;
+        int[] seen = {0};
+        while (seen[0] == 0 && System.currentTimeMillis() < until) {
+            Thread.sleep(50);
+            SwingUtilities.invokeAndWait(() -> seen[0] = closed[0]);
+        }
+        assertThat(seen[0]).as("erst übernommen, dann geschlossen").isEqualTo(1);
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-beim-schliessen");
+    }
+
+    @Test
     void advancedHoldsDimensionAndChunkingAndInputsShareOneEdge() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             AiSettingsPanel panel = new AiSettingsPanel(context);

@@ -96,7 +96,7 @@ final class SetupWizard {
     private final Map<String, Boolean> tested = new LinkedHashMap<>();
     private int step;
     private boolean closed;
-    private Runnable close = () -> { };
+    Runnable close = () -> { };
 
     SetupWizard(AppContext context) {
         this.context = context;
@@ -180,8 +180,8 @@ final class SetupWizard {
         back.addActionListener(e -> show(step - 1));
         next.addActionListener(e -> show(step + 1));
         // Kein „Speichern“ im Assistenten: Offene Eingaben übernimmt er spätestens beim Schließen.
-        finish.addActionListener(e -> saveThen(() -> close.run()));
-        later.addActionListener(e -> saveThen(() -> close.run()));
+        finish.addActionListener(e -> requestClose());
+        later.addActionListener(e -> requestClose());
         show(0);
     }
 
@@ -190,8 +190,16 @@ final class SetupWizard {
         SetupWizard wizard = new SetupWizard(context);
         JDialog dialog = Dialogs.dialog(parent, TITLE);
         wizard.close = dialog::dispose;
-        Dialogs.frame(dialog, TITLE, wizard.component(), dialog::dispose);
+        // Escape, ✕ und das Schließen durch das System gehen wie „Später“ über das Übernehmen; unvollständige
+        // Eingaben halten den Assistenten mit einer Warnung offen, statt still verloren zu gehen.
+        Dialogs.frame(dialog, TITLE, wizard.component(), wizard::requestClose);
+        dialog.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                wizard.requestClose();
+            }
+
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.closed = true;
@@ -249,6 +257,14 @@ final class SetupWizard {
             ai.stopModels();
         }
         refresh();
+    }
+
+    /**
+     * „Fertig“, „Später“, Escape und ✕: erst die offenen KI-Eingaben übernehmen, dann schließen (und den Lauf in der
+     * Datei vermerken). Sind sie unvollständig oder scheitert das Speichern, bleibt der Assistent mit der Meldung offen.
+     */
+    void requestClose() {
+        saveThen(() -> close.run());
     }
 
     /** Übernimmt offene KI-Eingaben (ohne Änderung sofort) und führt dann {@code then} aus. */

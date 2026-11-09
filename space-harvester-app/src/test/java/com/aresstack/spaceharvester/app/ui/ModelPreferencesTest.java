@@ -162,4 +162,123 @@ class ModelPreferencesTest {
                     .doesNotContain("unerwartete Antwort");
         });
     }
+
+    private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {
+        byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private static com.sun.net.httpserver.HttpServer server() throws java.io.IOException {
+        return com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    }
+
+    private static void await(java.util.function.BooleanSupplier condition, String what) throws Exception {
+        long until = System.currentTimeMillis() + 120_000;
+        boolean[] met = {false};
+        while (System.currentTimeMillis() < until) {
+            SwingUtilities.invokeAndWait(() -> met[0] = condition.getAsBoolean());
+            if (met[0]) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Nicht eingetreten: " + what);
+    }
+
+    @Test
+    void aLateAnswerFromTheOldServiceIsDiscardedAndTheNewServiceLoads() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean askedA = new java.util.concurrent.atomic.AtomicBoolean();
+        com.sun.net.httpserver.HttpServer a = server();
+        a.createContext("/v1/models", exchange -> {
+            askedA.set(true);
+            try {
+                release.await(120, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, """
+                    {"object":"list","data":[{"id":"google/gemma-4-31B-it"},{"id":"modell-von-a"}]}""");
+        });
+        com.sun.net.httpserver.HttpServer b = server();
+        b.createContext("/v1/models", exchange -> respond(exchange, """
+                {"object":"list","data":[{"id":"modell-von-b"}]}"""));
+        a.start();
+        b.start();
+        try {
+            ModelRetryTest.FakeScheduler scheduler = new ModelRetryTest.FakeScheduler();
+            AiSettingsPanel[] panel = new AiSettingsPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new AiSettingsPanel(context, scheduler);
+                panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
+                panel[0].baseUrl.setText("http://127.0.0.1:" + a.getAddress().getPort() + "/v1");
+                panel[0].prepareModels();
+            });
+            await(askedA::get, "Anfrage an Dienst A");
+            SwingUtilities.invokeAndWait(() -> {
+                // Zurück zu „KI-Dienst“, andere Adresse, wieder „Modelle“: A läuft noch.
+                panel[0].stopModels();
+                panel[0].baseUrl.setText("http://127.0.0.1:" + b.getAddress().getPort() + "/v1");
+                panel[0].prepareModels();
+            });
+            await(() -> panel[0].loaded.stream().anyMatch(m -> m.id().equals("modell-von-b")), "Modelle von B");
+            release.countDown();
+            await(() -> panel[0].discardedModelAnswers == 1, "späte Antwort von A verworfen");
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(panel[0].loaded).extracting(AiModel::id).containsExactly("modell-von-b");
+                assertThat(panel[0].visionModel.getText()).as("nichts aus A vorgewählt").isEmpty();
+                assertThat(panel[0].loadModels.isEnabled()).isTrue();
+            });
+        } finally {
+            release.countDown();
+            a.stop(0);
+            b.stop(0);
+        }
+    }
+
+    @Test
+    void aDimensionTypedWhileSavingIsNotOverwrittenByTheMeasuredOne() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean measuring = new java.util.concurrent.atomic.AtomicBoolean();
+        com.sun.net.httpserver.HttpServer service = server();
+        service.createContext("/v1/embeddings", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            measuring.set(true);
+            try {
+                release.await(120, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, """
+                    {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0]}]}""");
+        });
+        service.start();
+        try {
+            AiSettingsPanel[] panel = new AiSettingsPanel[1];
+            boolean[] saved = {false};
+            Feedback feedback = new Feedback();
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new AiSettingsPanel(context);
+                panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
+                panel[0].baseUrl.setText("http://127.0.0.1:" + service.getAddress().getPort() + "/v1");
+                panel[0].apiKey.setText("sk-test");
+                panel[0].embeddingModel.setText("emb");
+                panel[0].autoSave(feedback, () -> saved[0] = true);
+            });
+            await(measuring::get, "Messung läuft");
+            SwingUtilities.invokeAndWait(() -> panel[0].dimensions.setText("999"));
+            release.countDown();
+            await(() -> saved[0], "übernommen");
+            SwingUtilities.invokeAndWait(() -> assertThat(panel[0].dimensions.getText())
+                    .as("eigene Eingabe bleibt").isEqualTo("999"));
+            assertThat(context.settings().ai().embeddingDimensions()).as("gespeichert wurde die Messung")
+                    .isEqualTo(3);
+        } finally {
+            release.countDown();
+            service.stop(0);
+        }
+    }
 }
