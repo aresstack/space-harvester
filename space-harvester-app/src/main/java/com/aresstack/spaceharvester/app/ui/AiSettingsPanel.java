@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
 import javax.swing.JComboBox;

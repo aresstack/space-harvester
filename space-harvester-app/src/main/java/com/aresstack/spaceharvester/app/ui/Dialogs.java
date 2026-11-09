@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
