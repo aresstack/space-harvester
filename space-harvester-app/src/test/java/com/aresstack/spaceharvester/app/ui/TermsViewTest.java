@@ -91,4 +91,68 @@ class TermsViewTest {
         view.reviewButtons().forEach(button -> flags.append(button.isEnabled() ? '1' : '0'));
         return flags.toString();
     }
+
+    @Test
+    void thePagerMergesNounsAndIdentifiersAlphabeticallyAcrossCursors() throws Exception {
+        java.util.Map<TermKind, List<List<String>>> pages = java.util.Map.of(
+                TermKind.NOUN, List.of(List.of("alpha", "delta"), List.of("foxtrott")),
+                TermKind.IDENTIFIER, List.of(List.of("bravo", "charlie", "echo")));
+        List<String> calls = new ArrayList<>();
+        TermsView.IdentifierPager pager = new TermsView.IdentifierPager((kind, cursor) -> {
+            calls.add(kind + ":" + cursor);
+            int index = cursor == null ? 0 : Integer.parseInt(cursor);
+            List<List<String>> kindPages = pages.get(kind);
+            List<TermQueries.TermSummary> terms = new ArrayList<>();
+            for (String term : kindPages.get(index)) {
+                terms.add(summary(term, kind));
+            }
+            return new TermQueries.TermList(terms, index + 1 < kindPages.size() ? String.valueOf(index + 1) : null);
+        }, null);
+        List<String> first = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
+        boolean moreAfterFirst = pager.hasMore();
+        List<String> second = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
+        assertThat(first).containsExactly("alpha", "bravo", "charlie", "delta");
+        assertThat(moreAfterFirst).isTrue();
+        assertThat(second).containsExactly("echo", "foxtrott");
+        assertThat(pager.hasMore()).isFalse();
+        assertThat(calls).containsExactly("NOUN:null", "IDENTIFIER:null", "NOUN:1");
+    }
+
+    @Test
+    void theLetterKeepsOnlyTermsStartingWithItIgnoringAccents() throws Exception {
+        TermsView.IdentifierPager pager = new TermsView.IdentifierPager((kind, cursor) -> new TermQueries.TermList(
+                kind == TermKind.NOUN ? List.of(summary("antrag", kind), summary("neuer antrag", kind),
+                        summary("\u00e1rea", kind)) : List.of(), null), "A");
+        assertThat(pager.next(10).stream().map(TermQueries.TermSummary::normalized).toList())
+                .containsExactly("antrag", "\u00e1rea");
+    }
+
+    @Test
+    void lettersToggleAndAllClearsAndAppendedRowsCount() throws Exception {
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView.Directory directory = new TermsView(null).identifiers();
+            List<String> chosen = new ArrayList<>();
+            directory.letters(letter -> chosen.add(String.valueOf(letter)));
+            directory.letterButton("B").doClick();
+            seen.add(directory.letter() + " " + directory.letterButton("B").isSelected() + " "
+                    + directory.letterButton(TermsView.Directory.ALL).isSelected());
+            directory.letterButton("B").doClick();
+            seen.add(directory.letter() + " " + directory.letterButton(TermsView.Directory.ALL).isSelected());
+            directory.letterButton("C").doClick();
+            directory.letterButton(TermsView.Directory.ALL).doClick();
+            seen.add(String.valueOf(directory.letter()));
+            seen.add(String.join(",", chosen));
+            directory.show(List.of(List.of("a", "-", "1")), TermsView.EMPTY);
+            directory.more(true);
+            directory.append(List.of(List.of("b", "-", "2")));
+            seen.add(directory.table().getRowCount() + " " + directory.hint());
+        });
+        assertThat(seen).containsExactly("B true false", "null true", "null", "B,null,C,null",
+                "2 2 Einträge · weitere laden beim Scrollen");
+    }
+
+    private static TermQueries.TermSummary summary(String term, TermKind kind) {
+        return new TermQueries.TermSummary(term, term, kind, 1, 1, 1, List.of(term), List.of());
+    }
 }

@@ -11,6 +11,8 @@ import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
+import javax.swing.SwingUtilities;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
@@ -20,7 +22,6 @@ import com.aresstack.spaceharvester.application.terms.TermRelations;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -74,6 +75,8 @@ public final class TermsView implements View {
     private final AppContext context;
     private int acronymRequest;
     private int identifierRequest;
+    private IdentifierPager identifierPager;
+    private boolean identifierLoading;
     private int relationRequest;
 
     /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
@@ -106,6 +109,8 @@ public final class TermsView implements View {
         if (context != null) {
             acronyms.onSearch(q -> loadAcronyms());
             identifiers.onSearch(q -> loadIdentifiers());
+            identifiers.letters(letter -> loadIdentifiers());
+            identifiers.onScrolledToEnd(this::moreIdentifiers);
             relations.onSearch(q -> loadRelations(null));
             onReview = this::reviewInCore;
         }
@@ -249,20 +254,129 @@ public final class TermsView implements View {
         });
     }
 
-    /** Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen. */
+    /**
+     * Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen: seitenweise je {@link #LIMIT}, die
+     * nächste Seite lädt beim Scrollen ans Ende; ein gewählter Anfangsbuchstabe grenzt zusätzlich ein.
+     */
     private void loadIdentifiers() {
         int request = ++identifierRequest;
         String q = identifiers.query();
-        load(identifiers, () -> {
-            List<TermQueries.TermSummary> all = new ArrayList<>(query(TermKind.NOUN, q));
-            all.addAll(query(TermKind.IDENTIFIER, q));
-            all.sort(Comparator.comparing(TermQueries.TermSummary::normalized));
-            return all.size() > LIMIT ? all.subList(0, LIMIT) : all;
-        }, rows -> {
+        String letter = identifiers.letter();
+        if (context.runtime() == null) {
+            identifiers.show(List.of(), NO_RUNTIME);
+            return;
+        }
+        String coreQuery = !q.isEmpty() ? q : letter;
+        identifierPager = new IdentifierPager((kind, cursor) -> context.runtime().workspace().terms(
+                new TermQueries.TermSearch(null, null, kind, coreQuery, false, LIMIT, cursor)), letter);
+        identifierLoading = false;
+        moreIdentifiers(request, true, q.isEmpty() && letter == null ? EMPTY : NO_MATCH);
+    }
+
+    /** Die nächste Seite Bezeichner, wenn noch welche da sind und gerade keine lädt. */
+    private void moreIdentifiers() {
+        IdentifierPager pager = identifierPager;
+        if (pager != null && !identifierLoading && pager.hasMore()) {
+            moreIdentifiers(identifierRequest, false, NO_MATCH);
+        }
+    }
+
+    private void moreIdentifiers(int request, boolean first, String emptyHint) {
+        IdentifierPager pager = identifierPager;
+        identifierLoading = true;
+        Background.run(() -> pager.next(LIMIT), terms -> {
+            if (request != identifierRequest) {
+                return;
+            }
+            identifierLoading = false;
+            if (first) {
+                identifiers.show(rows(terms), emptyHint);
+            } else {
+                identifiers.append(rows(terms));
+            }
+            identifiers.more(pager.hasMore());
+        }, failure -> {
             if (request == identifierRequest) {
-                identifiers.show(rows, q.isEmpty() ? EMPTY : NO_MATCH);
+                identifierLoading = false;
+                identifiers.message("Begriffe nicht lesbar: " + failure.getMessage());
             }
         });
+    }
+
+    /**
+     * Führt die Seiten der Arten Nomen und Kennung alphabetisch zusammen, jede mit eigenem Cursor des Core. Mit
+     * Anfangsbuchstaben bleiben nur Begriffe, deren Suchwert (ohne Akzente) so beginnt.
+     */
+    static final class IdentifierPager {
+
+        interface Fetch {
+            TermQueries.TermList fetch(TermKind kind, String cursor) throws Exception;
+        }
+
+        private final Fetch fetch;
+        private final String letter;
+        private final List<Stream> streams = List.of(new Stream(TermKind.NOUN), new Stream(TermKind.IDENTIFIER));
+
+        IdentifierPager(Fetch fetch, String letter) {
+            this.fetch = fetch;
+            this.letter = letter == null ? null : letter.toLowerCase(Locale.ROOT);
+        }
+
+        synchronized List<TermQueries.TermSummary> next(int count) throws Exception {
+            List<TermQueries.TermSummary> page = new ArrayList<>(count);
+            while (page.size() < count) {
+                Stream smallest = null;
+                for (Stream stream : streams) {
+                    stream.fill();
+                    if (!stream.buffer.isEmpty() && (smallest == null || stream.buffer.peekFirst().normalized()
+                            .compareTo(smallest.buffer.peekFirst().normalized()) < 0)) {
+                        smallest = stream;
+                    }
+                }
+                if (smallest == null) {
+                    break;
+                }
+                page.add(smallest.buffer.pollFirst());
+            }
+            return page;
+        }
+
+        synchronized boolean hasMore() {
+            return streams.stream().anyMatch(stream -> !stream.buffer.isEmpty() || !stream.done);
+        }
+
+        private boolean matches(TermQueries.TermSummary term) {
+            if (letter == null) {
+                return true;
+            }
+            String folded = java.text.Normalizer.normalize(term.normalized(), java.text.Normalizer.Form.NFD)
+                    .replaceAll("\\p{M}+", "");
+            return folded.startsWith(letter);
+        }
+
+        private final class Stream {
+            private final TermKind kind;
+            private final java.util.ArrayDeque<TermQueries.TermSummary> buffer = new java.util.ArrayDeque<>();
+            private String cursor;
+            private boolean done;
+
+            Stream(TermKind kind) {
+                this.kind = kind;
+            }
+
+            void fill() throws Exception {
+                while (buffer.isEmpty() && !done) {
+                    TermQueries.TermList list = fetch.fetch(kind, cursor);
+                    for (TermQueries.TermSummary term : list.terms()) {
+                        if (matches(term)) {
+                            buffer.addLast(term);
+                        }
+                    }
+                    cursor = list.nextCursor();
+                    done = cursor == null;
+                }
+            }
+        }
     }
 
     private List<TermQueries.TermSummary> query(TermKind kind, String q) {
@@ -331,6 +445,12 @@ public final class TermsView implements View {
         private final JLabel hint = Comic.muted(" ");
         private Consumer<String> onSearch;
         private final JPanel south = new JPanel(new BorderLayout(0, 6));
+        private final JPanel head = new JPanel(new BorderLayout(12, 0));
+        private javax.swing.JScrollPane scroll;
+        private final java.util.Map<String, ComposerToggleButton> letterButtons = new java.util.LinkedHashMap<>();
+        private String letter;
+        private boolean more;
+        private Runnable onScrolledToEnd;
 
         Directory(String title, String[] columns) {
             super(new BorderLayout(0, 8));
@@ -347,13 +467,24 @@ public final class TermsView implements View {
             lines.setOpaque(false);
             lines.add(heading, BorderLayout.NORTH);
             lines.add(Comic.muted("Alle berechtigten, aktuell indexierten Seiten"), BorderLayout.SOUTH);
-            JPanel head = new JPanel(new BorderLayout(12, 0));
             head.setOpaque(false);
             head.add(lines, BorderLayout.CENTER);
             head.add(search, BorderLayout.EAST);
 
             add(head, BorderLayout.NORTH);
-            add(Comic.scroll(table), BorderLayout.CENTER);
+            scroll = Comic.scroll(table);
+            scroll.getVerticalScrollBar().addAdjustmentListener(e -> {
+                if (!e.getValueIsAdjusting()) {
+                    nearEnd();
+                }
+            });
+            scroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    nearEnd();
+                }
+            });
+            add(scroll, BorderLayout.CENTER);
             south.setOpaque(false);
             south.add(hint, BorderLayout.NORTH);
             add(south, BorderLayout.SOUTH);
@@ -380,6 +511,99 @@ public final class TermsView implements View {
             onSearch = listener;
         }
 
+        /**
+         * Buchstabenleiste A–Z in zwei Reihen mittig zwischen Überschrift und Suchfeld; ein zweiter Klick auf den
+         * gewählten Buchstaben oder „Alle“ hebt die Auswahl auf. {@code listener} erhält den Buchstaben oder
+         * {@code null}.
+         */
+        void letters(Consumer<String> listener) {
+            JPanel rows = new JPanel(new java.awt.GridLayout(2, 14, 2, 2));
+            rows.setOpaque(false);
+            List<String> labels = new ArrayList<>();
+            labels.add(ALL);
+            for (char c = 'A'; c <= 'Z'; c++) {
+                labels.add(String.valueOf(c));
+            }
+            for (String label : labels) {
+                String tooltip = label.equals(ALL) ? "Alle Anfangsbuchstaben"
+                        : "Nur Einträge mit „" + label + "“ am Anfang";
+                ComposerToggleButton button = new ComposerToggleButton(null, label, tooltip);
+                button.setSelected(label.equals(ALL));
+                button.addActionListener(e -> {
+                    String chosen = label.equals(ALL) || label.equals(letter) ? null : label;
+                    selectLetter(chosen);
+                    listener.accept(chosen);
+                });
+                letterButtons.put(label, button);
+                rows.add(button);
+            }
+            JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+            center.setOpaque(false);
+            center.add(rows);
+            JPanel east = new JPanel(new BorderLayout(12, 0));
+            east.setOpaque(false);
+            head.remove(search);
+            east.add(center, BorderLayout.CENTER);
+            east.add(search, BorderLayout.EAST);
+            head.add(east, BorderLayout.EAST);
+        }
+
+        static final String ALL = "Alle";
+
+        private void selectLetter(String chosen) {
+            letter = chosen;
+            letterButtons.forEach((label, button) ->
+                    button.setSelected(chosen == null ? label.equals(ALL) : label.equals(chosen)));
+        }
+
+        /** Gewählter Anfangsbuchstabe oder {@code null} für alle. */
+        String letter() {
+            return letter;
+        }
+
+        ComposerToggleButton letterButton(String label) {
+            return letterButtons.get(label);
+        }
+
+        /** Ruft {@code listener}, wenn die Tabelle bis ans Ende gescrollt ist und es weitere Einträge gibt. */
+        void onScrolledToEnd(Runnable listener) {
+            onScrolledToEnd = listener;
+        }
+
+        /** Ob weitere Einträge beim Scrollen nachladen. */
+        void more(boolean more) {
+            this.more = more;
+            updateCount();
+            SwingUtilities.invokeLater(this::nearEnd);
+        }
+
+        boolean hasMore() {
+            return more;
+        }
+
+        /** Hängt Zeilen an, ohne die Auswahl zu verlieren. */
+        void append(List<List<String>> rows) {
+            model.append(rows);
+            updateCount();
+        }
+
+        private void updateCount() {
+            if (model.getRowCount() > 0) {
+                hint.setText(Texts.count(model.getRowCount(), "Eintrag", "Einträge")
+                        + (more ? " · weitere laden beim Scrollen" : ""));
+            }
+        }
+
+        private void nearEnd() {
+            if (!more || onScrolledToEnd == null || scroll == null) {
+                return;
+            }
+            javax.swing.JScrollBar bar = scroll.getVerticalScrollBar();
+            if (bar.getValue() + bar.getVisibleAmount() >= bar.getMaximum() - 4 * table.getRowHeight()) {
+                onScrolledToEnd.run();
+            }
+        }
+
         /** Schaltflächen unter der Tabelle. */
         void actions(JComponent actions) {
             south.add(actions, BorderLayout.SOUTH);
@@ -404,6 +628,7 @@ public final class TermsView implements View {
         /** Zeigt die Zeilen; {@code hint} steht unter der Tabelle, solange sie leer ist. */
         void show(List<List<String>> rows, String emptyHint) {
             model.set(rows);
+            more = false;
             hint.setText(rows.isEmpty() ? emptyHint : Texts.count(rows.size(), "Eintrag", "Einträge"));
         }
 
@@ -434,6 +659,24 @@ public final class TermsView implements View {
 
         Model(String[] columns) {
             this.columns = columns.clone();
+        }
+
+        void append(List<List<String>> rows) {
+            List<List<String>> joined = new ArrayList<>(all);
+            joined.addAll(rows);
+            all = List.copyOf(joined);
+            int before = visible.size();
+            List<List<String>> matching = new ArrayList<>(visible);
+            for (List<String> row : rows) {
+                if (query.isEmpty() || row.stream()
+                        .anyMatch(cell -> cell != null && cell.toLowerCase(Locale.ROOT).contains(query))) {
+                    matching.add(row);
+                }
+            }
+            visible = matching;
+            if (visible.size() > before) {
+                fireTableRowsInserted(before, visible.size() - 1);
+            }
         }
 
         void set(List<List<String>> rows) {
