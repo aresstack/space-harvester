@@ -18,8 +18,10 @@ public final class Feedback extends JPanel {
 
     private final ComicSectionPanel plate = new ComicSectionPanel(Comic.PALETTE);
     private final JLabel title = new JLabel();
-    private final JTextArea message = Comic.note("");
-    private final JTextArea technical = Comic.note("");
+    // Comic.wrapped statt Comic.note: nimmt die Breite, die er bekommt, und ist dann genau so hoch wie sein Text.
+    // Comic.note rechnete vor dem ersten Auslegen mit Breite 0 und dehnte die Platte über die ganze Seite.
+    private final JTextArea message = Comic.wrapped("", Comic.TEXT, 12.5f);
+    private final JTextArea technical = Comic.wrapped("", Comic.TEXT, 11f);
     private final ComposerButton details = Comic.button("Technische Details", "Klasse und Meldung der Ausnahme");
     /** Zeigt die Meldungen an dieser Stelle statt hier (ein Statusbereich für mehrere Ansichten, Assistent). */
     private Feedback target;
@@ -50,6 +52,12 @@ public final class Feedback extends JPanel {
         plate.add(body, BorderLayout.CENTER);
         add(plate, BorderLayout.CENTER);
         setVisible(false);
+    }
+
+    /** Nie höher als ihr Inhalt, auch in BoxLayout oder GridBag mit Füllung. */
+    @Override
+    public java.awt.Dimension getMaximumSize() {
+        return new java.awt.Dimension(Integer.MAX_VALUE, getPreferredSize().height);
     }
 
     public void working(String text) {
@@ -125,5 +133,9 @@ public final class Feedback extends JPanel {
         setVisible(true);
         revalidate();
         repaint();
+        if (getParent() != null) {
+            getParent().revalidate();
+            getParent().repaint();
+        }
     }
 }
