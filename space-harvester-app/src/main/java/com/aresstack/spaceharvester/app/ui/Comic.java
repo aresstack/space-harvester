@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiTypography;
+import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -206,59 +207,18 @@ public final class Comic {
     /**
      * Umbrechender Text ohne Rahmen, der seine Spalte nie breiter macht: Er nimmt die Breite, die er bekommt, und
      * wächst in die Höhe (Hinweise unter Formularfeldern, längere Erklärungen). Anders als {@link #note} drängt er
-     * nie nach rechts, deshalb entsteht in einem Formular kein waagerechter Scrollbalken.
+     * nie nach rechts, deshalb entsteht in einem Formular kein waagerechter Scrollbalken. Seine Höhe misst er selbst
+     * für die Breite, die er hat ({@link WrappedText}).
      */
-    public static JTextArea wrapped(String text, Color color, float size) {
-        JTextArea area = new JTextArea(text) {
-            @Override
-            public Dimension getPreferredSize() {
-                Dimension preferred = super.getPreferredSize();
-                if (getWidth() <= 0) {
-                    // Noch ohne Breite (vor dem ersten Auslegen, etwa beim pack() eines Fensters): die Höhe für eine
-                    // übliche Spaltenbreite schätzen, damit das Fenster von Anfang an Platz für den Umbruch hat.
-                    java.awt.FontMetrics metrics = getFontMetrics(getFont());
-                    int lines = 1;
-                    for (String paragraph : getText().split("\n", -1)) {
-                        lines += Math.max(1, (int) Math.ceil(metrics.stringWidth(paragraph) / (double) WRAP_GUESS));
-                    }
-                    lines -= 1;
-                    java.awt.Insets insets = getInsets();
-                    preferred.height = Math.max(preferred.height, lines * metrics.getHeight() + insets.top
-                            + insets.bottom);
-                }
-                return new Dimension(Math.min(preferred.width, 40), preferred.height);
-            }
-
-            @Override
-            public Dimension getMinimumSize() {
-                return getPreferredSize();
-            }
-
-            @Override
-            public void setBounds(int x, int y, int width, int height) {
-                super.setBounds(x, y, width, height);
-                // Mit der echten Breite bricht der Text um; braucht er mehr Zeilen, legt der Behälter neu aus.
-                if (width > 0 && super.getPreferredSize().height != height) {
-                    javax.swing.SwingUtilities.invokeLater(this::revalidate);
-                }
-            }
-        };
-        area.setEditable(false);
-        area.setFocusable(false);
-        area.setLineWrap(true);
-        area.setWrapStyleWord(true);
-        area.setOpaque(false);
+    public static WrappedText wrapped(String text, Color color, float size) {
+        WrappedText area = new WrappedText(text);
         area.setFont(regular(size));
         area.setForeground(color);
-        area.setBorder(BorderFactory.createEmptyBorder());
         return area;
     }
 
-    /** Spaltenbreite, mit der ein noch nicht ausgelegter {@link #wrapped} Text seine Höhe schätzt. */
-    private static final int WRAP_GUESS = 400;
-
     /** Grauer Hinweis unter einem Feld, umbrechend. */
-    public static JTextArea hint(String text) {
+    public static WrappedText hint(String text) {
         return wrapped(text, MUTED, 12f);
     }
 
