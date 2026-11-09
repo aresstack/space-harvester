@@ -396,6 +396,19 @@ public final class Workspace {
         return harvester.sourceManagement().remove(sourceId);
     }
 
+    /**
+     * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
+     * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
+     * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
+     * Der Fortschritt erscheint wie bei jedem Auftrag in Aktivitäten und Statuszeile.
+     */
+    public JobStatus purgeSourceData(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);

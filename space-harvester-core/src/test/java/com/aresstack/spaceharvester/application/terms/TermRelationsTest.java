@@ -221,6 +221,30 @@ class TermRelationsTest {
     }
 
     @Test
+    void purgingASourceRemovesItsRelationsAndEvidenceButKeepsOthersAndManualOnes() {
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+                proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
+                proposal("KPI", "Kennzahl", evidence("wiki-a", "1"), evidence("wiki-b", "1"))));
+        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), "g1",
+                List.of(proposal("ABC", "Alpha Beta Gamma", evidence("wiki-a", "1"))));
+        TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
+                RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of(evidence("wiki-a", "1"))));
+        TermRelation scopedManual = relations.add(EDITOR, new TermRelations.NewRelation("XY", "Iks Ypsilon",
+                RelationType.ABBREVIATION, new RelationScope("wiki-a", null), null, List.of()));
+
+        assertThat(relations.removeSource("wiki-a", "purge")).isEqualTo(3);
+
+        assertThat(store.all()).extracting(TermRelation::fromTerm).containsExactlyInAnyOrder("KPI", "ZV");
+        assertThat(store.all()).allSatisfy(relation -> assertThat(relation.evidence())
+                .noneMatch(e -> e.sourceId().equals("wiki-a")));
+        assertThat(relations.relation(EDITOR, manual.id()).evidence()).isEmpty();
+        assertThat(store.history(scopedManual.id())).extracting(TermRelationStore.AuditEntry::action)
+                .containsExactly("create", "purge");
+        // Ein zweiter Lauf findet nichts mehr.
+        assertThat(relations.removeSource("wiki-a", "purge")).isZero();
+    }
+
+    @Test
     void staleRevisionConflicts() {
         TermRelation created = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
                 RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of()));

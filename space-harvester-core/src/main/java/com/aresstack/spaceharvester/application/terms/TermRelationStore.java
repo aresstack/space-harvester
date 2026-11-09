@@ -33,7 +33,7 @@ public interface TermRelationStore {
      *
      * @param relationId Beziehung
      * @param action     {@code create}, {@code confirm}, {@code reject}, {@code restore}, {@code remove},
-     *                   {@code propose} oder {@code withdraw}
+     *                   {@code propose}, {@code withdraw} oder {@code purge}
      * @param actor      {@code AccessContext#jobOwner()} oder Kennung des Laufs
      * @param at         Zeitpunkt
      * @param status     Prüfstatus danach oder {@code null}, wenn entfernt

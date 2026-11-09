@@ -94,6 +94,17 @@ public final class FileResolutionCache implements ResolutionCache {
     @Override
     public synchronized void replace(String sourceId, Map<String, List<String>> entries) {
         bySource.put(sourceId, new TreeMap<>(entries));
+        store();
+    }
+
+    /** Vergisst alle Ergebnisse einer Quelle („Daten bereinigen“); ohne Einträge der Quelle ändert sich nichts. */
+    public synchronized void removeSource(String sourceId) {
+        if (bySource.remove(sourceId) != null) {
+            store();
+        }
+    }
+
+    private void store() {
         ObjectNode root = JSON.createObjectNode().put("schema", SCHEMA);
         ObjectNode sources = root.putObject("sources");
         bySource.forEach((source, map) -> {

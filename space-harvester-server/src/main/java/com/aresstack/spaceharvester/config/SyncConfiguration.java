@@ -99,12 +99,15 @@ class SyncConfiguration {
      * Nachholen listet sie die Metadaten des ganzen Space und findet so auch Löschungen und Verschiebungen. Ein
      * Konfigurationswechsel ersetzt den Zeitplan wie beim Nachholen.
      */
+    @Bean
+    InventoryLog inventoryLog(CacheProperties cache) {
+        // Bezugspunkte im Cache-Verzeichnis, damit Neustarts den Abstand nicht zurücksetzen; ohne Cache läuft keine.
+        return cache.directory() == null ? InventoryLog.inMemory() : new FileInventoryLog(cache.directory());
+    }
+
     @Bean(destroyMethod = "close")
     InventorySchedule inventorySchedule(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live,
-                                        CacheProperties cache) {
-        // Bezugspunkte im Cache-Verzeichnis, damit Neustarts den Abstand nicht zurücksetzen; ohne Cache läuft keine.
-        InventoryLog log = cache.directory() == null ? InventoryLog.inMemory()
-                : new FileInventoryLog(cache.directory());
+                                        InventoryLog log) {
         Reconciliation inventories = Reconciliation.inventories(syncJobs, null, Clock.systemUTC(), log);
         if (!syncJobs.available()) {
             if (!ConfiguredSchedules.planInventories(live.current(), catalog, false).isEmpty()) {

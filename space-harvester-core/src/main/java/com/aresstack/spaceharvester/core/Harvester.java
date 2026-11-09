@@ -106,6 +106,7 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -518,6 +519,7 @@ public final class Harvester implements AutoCloseable {
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
                     termProcessor.version());
+            FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
                     cache::findHeader, clock);
@@ -527,7 +529,7 @@ public final class Harvester implements AutoCloseable {
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
                     key -> cache.find(key).flatMap(projector::project), termRelations,
                     new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
-                            builder.userAgent), new FileResolutionCache(builder.dataDirectory.resolve("term-relations")),
+                            builder.userAgent), resolutionCache,
                     jobs, termProcessor.version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
@@ -689,12 +691,25 @@ public final class Harvester implements AutoCloseable {
                     exportSettings(manager));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
-                    exportWriter, clock);
+            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
+            FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
+            KnowledgeGraph graph = this.knowledgeGraph;
+            // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
+            SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
+                    .fillQueue(fillQueue)
+                    .pageCache(cache)
+                    .fullText(textIndex)
+                    .enrichments(enrichmentStore)
+                    .assets(assetStore, exportWriter, clock)
+                    .termRelations(termRelations, resolutionCache)
+                    .factEdits(factEditStore, clock)
+                    .knowledgeGraph(graphStore, graph::forgetInputs)
+                    .inventoryLog(inventoryLog)
+                    .build(), sourceId -> catalog.configs().stream().anyMatch(config -> config.id().equals(sourceId)));
+            this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
-            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
-            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, new FileInventoryLog(cacheDirectory));
+            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, inventoryLog);
             opened.add(inventories);
             if (fillQueue != null) {
                 // ADR 0016, Punkt 5: technisch, mit den Zugangsdaten der Quelle, unabhängig von sync.mode; je Quelle
