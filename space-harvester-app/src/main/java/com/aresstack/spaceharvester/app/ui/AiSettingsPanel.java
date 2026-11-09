@@ -209,10 +209,9 @@ final class AiSettingsPanel {
         releasedIds = current.externalProcessingSources();
         released.setText(releasedText(settings, releasedIds));
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
-        // Nichts gewählt: KeePass, wenn die App gekoppelt ist oder KeePass schon anderswo gewählt wurde (dieselbe
-        // Kopplung gilt überall), sonst Manuell.
+        // Nichts gewählt: KeePass, außer es liegt schon ein Key im Tresor.
         boolean manual = fileAccess.mode() == AiAccess.Mode.MANUAL
-                || fileAccess.mode() == null && !context.keePassPreferred();
+                || fileAccess.mode() == null && context.aiVault().has(KEY_ID, KEY_LOGIN);
         access.setSelectedItem(manual ? MANUAL : KEEPASS);
         String title = fileAccess.entry() == null ? AiAccess.DEFAULT_ENTRY : fileAccess.entry();
         if (titles.isEmpty()) {
@@ -223,10 +222,6 @@ final class AiSettingsPanel {
         entry.getEditor().setItem(title);
         keePassStatus.setText(context.keePass().paired() ? "Gekoppelt" : "Nicht gekoppelt");
         updateAccess();
-        if (!manual && context.keePass().paired() && titles.isEmpty()) {
-            // Schon gekoppelt (etwa bei einer Quelle): Einträge gleich lesen, ohne erneut zu koppeln.
-            pairKeePass();
-        }
         shownAccess = accessDraft();
         apiKey.setText("");
         boolean stored = context.aiKeyAvailable();
