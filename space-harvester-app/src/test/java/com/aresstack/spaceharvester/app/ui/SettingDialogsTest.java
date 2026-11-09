@@ -388,9 +388,14 @@ class SettingDialogsTest {
             panel[0].embeddingModel.setText("text-embedding-3-small");
             panel[0].dimensions.setText("1536");
             panel[0].save.doClick();
-            assertThat(panel[0].feedback.text()).contains("API-Key fehlt");
         });
+        awaitFeedback(panel[0], "API-Key fehlt");
         assertThat(Files.readString(config)).doesNotContain("ai-keepass-entry");
+        // Passwort in KeePass nachgetragen: Der nächste Versuch liest es neu und speichert.
+        keePass.entries.put("Ohne Key", new String[] {"https://kp.example.invalid/v1", "sk-nachgetragen"});
+        SwingUtilities.invokeAndWait(() -> panel[0].save.doClick());
+        awaitFeedback(panel[0], "übernommen");
+        assertThat(Files.readString(config)).contains("ai-keepass-entry: \"Ohne Key\"").doesNotContain("sk-nachgetragen");
     }
 
     @Test

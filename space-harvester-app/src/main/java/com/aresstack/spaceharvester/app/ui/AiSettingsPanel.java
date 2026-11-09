@@ -554,8 +554,24 @@ final class AiSettingsPanel {
             return;
         }
         if (chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
-            feedback.warning("API-Key fehlt", "Der KeePass-Eintrag „" + chosen.entry() + "“ hat kein Passwort. "
-                    + "Bitte den API-Key dort als Passwort eintragen.");
+            // Zuletzt ohne Passwort gelesen: erst neu lesen, denn vielleicht ist es inzwischen in KeePass nachgetragen.
+            String title = chosen.entry();
+            Background.run(() -> {
+                try (var read = context.keePass().readSilently(title)) {
+                    char[] password = read.copyPassword();
+                    boolean present = password.length > 0;
+                    Arrays.fill(password, '\0');
+                    return present;
+                }
+            }, present -> {
+                if (present && title.equals(entryTitle()) && keePassChosen()) {
+                    entryChosen(); // zeigt den Key wieder im Feld
+                    save(save, feedback, then, quiet);
+                } else {
+                    feedback.warning("API-Key fehlt", "Der KeePass-Eintrag „" + title + "“ hat kein Passwort. "
+                            + "Bitte den API-Key dort als Passwort eintragen und erneut speichern.");
+                }
+            }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
             return;
         }
         // Nur die Zerlegung für Embeddings übernimmt der Core erst beim Bauen; alles andere gilt ohne Neustart.
