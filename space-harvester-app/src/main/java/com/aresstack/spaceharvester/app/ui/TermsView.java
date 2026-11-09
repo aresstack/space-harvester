@@ -524,7 +524,7 @@ public final class TermsView implements View {
             lines.add(Comic.muted("Alle berechtigten, aktuell indexierten Seiten"), BorderLayout.SOUTH);
             head.setOpaque(false);
             head.add(lines, BorderLayout.CENTER);
-            head.add(search, BorderLayout.EAST);
+            head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search), BorderLayout.EAST);
 
             add(head, BorderLayout.NORTH);
             scroll = Comic.scroll(table);
@@ -597,9 +597,9 @@ public final class TermsView implements View {
             center.add(rows);
             JPanel east = new JPanel(new BorderLayout(12, 0));
             east.setOpaque(false);
-            head.remove(search);
+            head.remove(search.getParent());
             east.add(center, BorderLayout.CENTER);
-            east.add(search, BorderLayout.EAST);
+            east.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search), BorderLayout.EAST);
             head.add(east, BorderLayout.EAST);
         }
 
