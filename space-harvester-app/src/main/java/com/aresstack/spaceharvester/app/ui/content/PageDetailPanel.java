@@ -83,6 +83,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
+    private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> positionShown = position -> { };
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String REFERENCES = "Verweise";
@@ -367,7 +368,7 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Öffnet die Seite eines Absatzes über seine stabile Passage-ID (#452, wie ein {@code ReaderLink} mit Passage im
-     * Enterprise AI Client): Seite laden, Reiter „Absätze“ wählen, den Absatz hervorheben und im Lesetext markieren.
+     * Enterprise AI Client): Seite laden, den Absatz unter „Absätze“ wählen und im Lesetext markieren; der Reiter bleibt.
      * Gehört die ID zu einer älteren Fassung oder gibt es den Absatz nicht mehr, öffnet die Seite trotzdem mit einem
      * Hinweis; eine unbekannte oder nicht sichtbare Seite meldet sich wie jeder andere Ladefehler.
      */
@@ -469,6 +470,11 @@ public final class PageDetailPanel extends JPanel {
                 error -> Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, true),
                         found -> load(sourceId, found.header().key().pageId(), true),
                         e -> feedback.problem(e, Problems.Step.PAGE)));
+    }
+
+    /** Meldet den Pfad der angezeigten Seite, sobald er geladen ist; ohne Seitenbaum der Quelle nie. */
+    public void onPosition(java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {
+        this.positionShown = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     /** Meldet nach dem Laden Quelle und Space der angezeigten Seite. */
@@ -697,11 +703,11 @@ public final class PageDetailPanel extends JPanel {
     static final String PASSAGE_RECOMPUTED = "Die Absätze wurden seither neu berechnet. Angezeigt werden alle Absätze.";
 
     /**
-     * Zeigt den über seine Passage-ID geöffneten Absatz im Reiter „Absätze“ und markiert ihn im Lesetext, wie ein Klick
-     * auf ihn ohne Wechsel zum Text. Die Hinweise folgen den Fällen von {@code KnowledgeResourceReader} im Client.
+     * Zeigt den über seine Passage-ID geöffneten Absatz: im Reiter „Absätze“ gewählt und im Lesetext markiert, ohne den
+     * Reiter zu wechseln. Die Hinweise folgen den Fällen von {@code KnowledgeResourceReader} im Client.
      */
     void showPassage(PassageLookup lookup) {
-        tabs.select(PASSAGES);
+        // Der zuletzt gewählte Reiter bleibt vorne: „Text“ zeigt den markierten Absatz, „Absätze“ den gewählten.
         switch (lookup.match()) {
             case FOUND -> {
                 PassagesTab.Passage passage = passages.select(lookup.requested().value());
@@ -832,6 +838,7 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> runtime.workspace().position(source, id), position -> {
             if (shown == page) {
                 breadcrumbs.show(position);
+                positionShown.accept(position);
             }
         }, error -> {
             // Quellen ohne Seitenbaum und gesperrte Vorfahren: der Pfad fehlt, die Seite bleibt lesbar.

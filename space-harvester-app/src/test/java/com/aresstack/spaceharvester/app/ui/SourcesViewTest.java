@@ -48,7 +48,7 @@ class SourcesViewTest {
         start();
         SourcesView[] view = new SourcesView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
-        Container root = (Container) view[0].component();
+        Container root = all(view[0]);
 
         // Keine Knopfleiste mehr, weder über den Details noch über der Space-Tabelle.
         assertThat(find(root, AbstractButton.class)).noneMatch(b -> List.of("Verbindung prüfen", "Bearbeiten …",
@@ -112,7 +112,7 @@ class SourcesViewTest {
         start();
         SourcesView[] view = new SourcesView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
-        Container root = (Container) view[0].component();
+        Container root = all(view[0]);
         EditableProperty[] name = new EditableProperty[1];
         SwingUtilities.invokeAndWait(() -> {
             name[0] = find(root, EditableProperty.class).stream().filter(p -> p.name().equals("Anzeigename"))
@@ -165,7 +165,7 @@ class SourcesViewTest {
         int[] heights = new int[2];
         SwingUtilities.invokeAndWait(() -> {
             List<Component> cards = new ArrayList<>();
-            for (StatusMark mark : find((Container) view[0].component(), StatusMark.class)) {
+            for (StatusMark mark : find(all(view[0]), StatusMark.class)) {
                 cards.add(mark.getParent());
             }
             // Gleiche Breite; der lange Name braucht mehr Zeilen und damit mehr Höhe.
@@ -232,7 +232,7 @@ class SourcesViewTest {
         });
         SourcesView[] view = new SourcesView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
-        Container root = (Container) view[0].component();
+        Container root = all(view[0]);
         JTable spaces = find(root, JTable.class).get(0);
         await(() -> spaces.getRowCount() == 1);
         String key = String.valueOf(spaces.getValueAt(0, 2));
@@ -250,6 +250,14 @@ class SourcesViewTest {
         assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
         // Der Navigator startet die Downloads (Downloads.start); hier ist er ersetzt, also lief nichts an.
         assertThat(context.runtime().workspace().jobs()).isEmpty();
+    }
+
+    /** Detailfläche und Drawer mit den Quellenkarten in einem Behälter, wie das Hauptfenster sie zeigt. */
+    private static Container all(SourcesView view) {
+        javax.swing.JPanel both = new javax.swing.JPanel(new java.awt.BorderLayout());
+        both.add(view.drawer(), java.awt.BorderLayout.WEST);
+        both.add(view.component(), java.awt.BorderLayout.CENTER);
+        return both;
     }
 
     private void start() throws Exception {

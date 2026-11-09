@@ -153,6 +153,14 @@ public final class SearchView implements View {
         everywhere.addActionListener(e -> clearScope.run());
         context.onChange(ignored -> refreshSources());
         refreshSources();
+        // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
+        table.getSelectionModel().addListSelectionListener(e -> {
+            int row = table.getSelectedRow();
+            if (!e.getValueIsAdjusting() && row >= 0 && table.getSelectedRowCount() == 1) {
+                Hit hit = model.rows.get(table.convertRowIndexToModel(row));
+                context.navigator().revealPage(hit.sourceId(), hit.pageId());
+            }
+        });
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -348,10 +356,7 @@ public final class SearchView implements View {
     }
 
     private static JCheckBox checkBox(String text, String tooltip) {
-        JCheckBox box = new JCheckBox(text);
-        box.setOpaque(false);
-        box.setFont(Comic.regular(13f));
-        box.setForeground(Comic.INK);
+        JCheckBox box = Comic.checkBox(text);
         box.setToolTipText(tooltip);
         return box;
     }

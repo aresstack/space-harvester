@@ -100,7 +100,7 @@ public final class ContentView implements View {
     }
 
     /**
-     * Öffnet einen Absatz über seine stabile Passage-ID (#452): seine Seite im Reiter „Absätze“, der Absatz markiert.
+     * Öffnet einen Absatz über seine stabile Passage-ID (#452): seine Seite im zuletzt gewählten Reiter, der Absatz markiert.
      * {@code sourceId} ist die Quelle des Aufrufers (z. B. eines Suchtreffers); maßgeblich ist die ID selbst.
      */
     public void openPassage(String sourceId, String passageId) {
@@ -111,6 +111,12 @@ public final class ContentView implements View {
         this.sourceId = source;
         renderCrumbs();
         detail.openPassage(passageId);
+    }
+
+    /** Meldet den Pfad jeder angezeigten Seite, etwa damit der Explorer sie zeigt. */
+    public void onPosition(java.util.function.Consumer<
+            com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {
+        detail.onPosition(listener);
     }
 
     /** Nach dem Laden kennt die Seite ihren Space. */

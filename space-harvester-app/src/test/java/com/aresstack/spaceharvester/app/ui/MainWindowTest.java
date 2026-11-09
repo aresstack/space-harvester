@@ -199,6 +199,27 @@ class MainWindowTest {
         assertThat(labelTexts(AboutDialog.body(context))).contains(AboutDialog.TAGLINE);
     }
 
+    /** Zugeklappt bleibt ein schmaler Teiler: derselbe Doppelklick klappt den Drawer wieder auf. */
+    @Test
+    void aCollapsedDrawerKeepsAThinDividerToReopenIt() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            window.content(() -> { }, () -> { });
+            window.toggleDrawer();
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            window.toggleDrawer();
+            assertThat(window.split().isLeftCollapsed()).isFalse();
+            assertThat(window.split().getDividerSize()).isGreaterThan(0);
+        });
+    }
+
     @Test
     void closeRingsStayRoundAndTheCopyrightOpensTheReleases() throws Exception {
         Path config = home.resolve("app.yml");

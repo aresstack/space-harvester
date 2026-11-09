@@ -160,7 +160,7 @@ public final class AttachmentViewerPanel extends JPanel {
         textArea.setLineWrap(false);
         textArea.setBackground(ResearchUiPalette.LIGHT_CONTROL_BG);
         textArea.setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
-        textPane = new JScrollPane(textArea);
+        textPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(textArea);
         textPane.setBorder(BorderFactory.createEmptyBorder());
         textPane.setVisible(false);
 

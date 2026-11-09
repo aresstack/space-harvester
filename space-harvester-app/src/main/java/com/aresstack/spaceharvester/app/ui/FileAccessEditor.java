@@ -63,7 +63,7 @@ final class FileAccessEditor {
     final PlaceholderField path = new PlaceholderField(24, "D:\\Wissen oder \\\\server\\team\\wissen");
     final ComposerButton add = Comic.button(ADD_LABEL, "Den eingetragenen Ordner freigeben");
     final ComposerButton choose = Comic.button(CHOOSE_LABEL, "Einen Ordner im Dialog wählen und freigeben");
-    final JCheckBox allowAll = new JCheckBox(ALLOW_ALL_LABEL);
+    final JCheckBox allowAll = Comic.checkBox(ALLOW_ALL_LABEL);
     final ComposerButton save = Comic.primary("Speichern", "Dateizugriff in die Konfiguration schreiben");
     final Feedback feedback = new Feedback();
     private final JPanel panel = new JPanel(new BorderLayout(0, 8));
@@ -79,9 +79,6 @@ final class FileAccessEditor {
         panel.setOpaque(false);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        allowAll.setOpaque(false);
-        allowAll.setFont(Comic.regular(13f));
-        allowAll.setForeground(Comic.INK);
         allowAll.setToolTipText(ALLOW_ALL_HELP);
         JPanel pathRow = new JPanel(new BorderLayout(6, 0));
         pathRow.setOpaque(false);

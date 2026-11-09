@@ -68,7 +68,7 @@ class TermRelationsViewTest {
         workspace.page("handbuch", pageId, false);
         // Die Akronyme füllt die Anreicherung im Hintergrund; vorgeschlagen wird, sobald sie im Index stehen.
         int[] added = {0};
-        await(() -> (added[0] += workspace.proposeAcronymRelations("handbuch").added()) >= 2);
+        awaitOffEdt(() -> (added[0] += workspace.proposeAcronymRelations("handbuch").added()) >= 2);
         assertThat(added[0]).isEqualTo(2);
 
         TermsView[] view = new TermsView[1];
@@ -108,11 +108,23 @@ class TermRelationsViewTest {
         assertThat(TermsView.relationsMessage(TermsView.CONFLICT, false)).isEqualTo(TermsView.CONFLICT);
     }
 
+    /** Wartet auf einen Zustand; 120 s sind nur die Grenze für einen Hänger (die Anreicherung dauert unter Last). */
     private static void await(BooleanSupplier condition) throws Exception {
-        for (int i = 0; i < 600; i++) {
+        for (int i = 0; i < 2400; i++) {
             boolean[] done = new boolean[1];
             SwingUtilities.invokeAndWait(() -> done[0] = condition.getAsBoolean());
             if (done[0]) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Bedingung nicht erreicht");
+    }
+
+    /** Wie {@link #await}, aber außerhalb des EDT: für Aufrufe in den Core, die selbst Zeit brauchen. */
+    private static void awaitOffEdt(BooleanSupplier condition) throws Exception {
+        for (int i = 0; i < 2400; i++) {
+            if (condition.getAsBoolean()) {
                 return;
             }
             Thread.sleep(50);

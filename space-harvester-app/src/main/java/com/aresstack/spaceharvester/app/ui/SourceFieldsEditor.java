@@ -243,11 +243,7 @@ final class SourceFieldsEditor {
     }
 
     private static JCheckBox checkBox(String text) {
-        JCheckBox box = new JCheckBox(text);
-        box.setOpaque(false);
-        box.setFont(Comic.regular(13f));
-        box.setForeground(Comic.INK);
-        return box;
+        return Comic.checkBox(text);
     }
 
     /** „Erweitert“ auf- oder zuklappen. */

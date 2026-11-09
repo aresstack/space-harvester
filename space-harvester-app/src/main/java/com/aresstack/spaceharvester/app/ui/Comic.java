@@ -209,6 +209,17 @@ public final class Comic {
         return area;
     }
 
+    /** Kontrollkästchen im Comic-Stil: runde Box, blau mit Haken, wenn gewählt. */
+    public static javax.swing.JCheckBox checkBox(String text) {
+        javax.swing.JCheckBox box = new javax.swing.JCheckBox(text);
+        box.setOpaque(false);
+        box.setFont(regular(13f));
+        box.setForeground(INK);
+        box.setIcon(new com.aresstack.enterpriseai.ui.comic.paint.ResearchCheckIcon());
+        box.setIconTextGap(6);
+        return box;
+    }
+
     public static JTextField field(int columns) {
         JTextField field = new JTextField(columns);
         style(field);

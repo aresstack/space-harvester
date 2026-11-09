@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
+import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowHoldCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
@@ -57,12 +58,17 @@ public final class MainWindow implements AppContext.Navigator {
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
     /** Der dauerhafte Explorer links: Wissensquelle → Space → Seite → Unterseite. */
     private final Explorer explorer;
-    private final JPanel side = new JPanel(new BorderLayout());
+    /** Linker Drawer: der Explorer, unter Wissensquellen verwalten stattdessen die Quellenkarten. */
+    private final CardLayout sideCards = new CardLayout();
+    private final JPanel side = new JPanel(sideCards);
+    private static final String EXPLORER = "explorer";
+    /** Die nächste geladene Seite im Explorer zeigen (gesetzt von {@link #openPage} und {@link #openPassage}). */
+    private boolean revealOpened;
     /** Aktions- und Fortschrittszeilen der Bereiche, direkt über der Statusleiste. */
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actionDeck = new JPanel(actionCards);
-    private final javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT);
     static final int SIDEBAR_WIDTH = 280;
+    private ComicSplitPane split;
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
@@ -93,6 +99,13 @@ public final class MainWindow implements AppContext.Navigator {
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         searchView.onClearScope(explorer::clearSelection);
+        // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
+        content.onPosition(position -> {
+            if (revealOpened) {
+                revealOpened = false;
+                explorer.revealPage(position);
+            }
+        });
         views.put(AppContext.Section.STATUS, statusView);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
@@ -201,9 +214,9 @@ public final class MainWindow implements AppContext.Navigator {
         side.setBackground(Comic.SURFACE);
         side.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 10));
         side.setMinimumSize(new Dimension(0, 0));
-        side.add(explorer.component(), BorderLayout.CENTER);
+        side.add(explorer.component(), EXPLORER);
+        side.add(sources.drawer(), AppContext.Section.SOURCES.name());
         deck.setMinimumSize(new Dimension(320, 0));
-        split.setLeftComponent(side);
         // Aktionszeile und Suche gehören zur Arbeitsfläche: sie reichen nicht unter den Explorer.
         JPanel work = new JPanel(new BorderLayout());
         work.setBackground(Comic.SURFACE);
@@ -214,17 +227,20 @@ public final class MainWindow implements AppContext.Navigator {
         workFoot.add(findBar, BorderLayout.SOUTH);
         work.add(deck, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
-        split.setRightComponent(work);
-        split.setBorder(BorderFactory.createEmptyBorder());
+        split = new ComicSplitPane(side, work, 200, 520, Comic.PALETTE);
         split.setBackground(Comic.SURFACE);
         split.setContinuousLayout(true);
-        split.setOneTouchExpandable(true);
-        split.setResizeWeight(0);
-        split.setDividerLocation(SIDEBAR_WIDTH);
-        split.setDividerSize(8);
+        split.setPreferredLeftWidth(SIDEBAR_WIDTH);
+        // Einklappbar: Doppelklick auf den Teiler klappt den Drawer zu bzw. wieder auf.
         if (split.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
-            basic.getDivider().setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Comic.LINE));
-            basic.getDivider().setBackground(Comic.SURFACE);
+            basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (event.getClickCount() == 2) {
+                        toggleDrawer();
+                    }
+                }
+            });
         }
 
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
@@ -283,11 +299,30 @@ public final class MainWindow implements AppContext.Navigator {
         settings.showAi();
     }
 
+    /** Klappt den linken Drawer zu oder wieder auf. */
+    /** Breite des Teilers bei zugeklapptem Drawer: sichtbar und per Doppelklick erreichbar. */
+    static final int COLLAPSED_DIVIDER = 6;
+
+    void toggleDrawer() {
+        if (split.isLeftCollapsed()) {
+            split.openLeft();
+        } else {
+            split.collapseLeft();
+            // collapseLeft() nimmt den Teiler ganz weg; ein schmaler bleibt, damit ein Doppelklick wieder aufklappt.
+            split.setDividerSize(COLLAPSED_DIVIDER);
+        }
+    }
+
     @Override
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
         boolean changed = section != current;
         current = section;
+        // Keine zweite Leiste: Die Quellenkarten ersetzen im Drawer den Explorer, solange der Bereich offen ist.
+        sideCards.show(side, section == AppContext.Section.SOURCES ? section.name() : EXPLORER);
+        if (section == AppContext.Section.SOURCES && split != null && split.isLeftCollapsed()) {
+            split.openLeft();
+        }
         View view = views.get(section);
         boolean ownActions = view.actions() != null && view != activities;
         actionCards.show(actionDeck, ownActions ? section.name() : JOBS);
@@ -305,13 +340,20 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void openPage(String sourceId, String pageId) {
         show(AppContext.Section.CONTENT);
+        revealOpened = true;
         content.openPage(sourceId, pageId);
     }
 
     @Override
     public void openPassage(String sourceId, String passageId) {
         show(AppContext.Section.CONTENT);
+        revealOpened = true;
         content.openPassage(sourceId, passageId);
+    }
+
+    @Override
+    public void revealPage(String sourceId, String pageId) {
+        explorer.revealPage(sourceId, pageId);
     }
 
     @Override
@@ -446,6 +488,11 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: die Statuszeile. */
     StatusLine statusLine() {
         return statusLine;
+    }
+
+    /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */
+    com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane split() {
+        return split;
     }
 
     /** Für Tests: der Explorer links. */
