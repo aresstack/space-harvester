@@ -242,7 +242,8 @@ public final class AppSettingsLoader {
                 problems.add(APP_ROOT + ".inactive-roots: nur absolute Pfade sind erlaubt");
                 continue;
             }
-            inactive.add(root);
+            // Normalisiert wie die aktiven Ordner (LocalFileSettings), damit „/x/.“ nach dem Speichern als gleich gilt.
+            inactive.add(root.normalize());
         }
         return inactive;
     }

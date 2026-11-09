@@ -390,7 +390,7 @@ public final class ConfigFileEditor {
     public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots,
                                 List<String> inactiveRoots) {
         List<Path> expected = absolutePaths(roots);
-        List<Path> expectedInactive = absolutePaths(inactiveRoots);
+        List<Path> expectedInactive = absolutePaths(inactiveRoots).stream().map(Path::normalize).toList();
         String text = nested(base.text(), "local-files", "allow-all", indent -> indent + "allow-all: " + allowAll
                 + "\n");
         text = nested(text, "local-files", "roots", indent -> rootsYaml(indent, roots));

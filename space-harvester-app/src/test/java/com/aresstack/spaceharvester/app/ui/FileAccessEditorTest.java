@@ -186,7 +186,9 @@ class FileAccessEditorTest {
     @Test
     void uncheckedFoldersStayListedButAreSavedAsInactive() throws Exception {
         String active = home.resolve("aktiv").toString();
-        String paused = home.resolve("pause").toString();
+        // Mit Punkt getippt: die Datei hält auch abgeschaltete Ordner normalisiert, die Platte gilt danach als gespeichert.
+        String paused = home.resolve("pause").toString() + java.io.File.separator + ".";
+        String pausedSaved = home.resolve("pause").toString();
         FileAccessEditor[] editor = new FileAccessEditor[1];
         SwingUtilities.invokeAndWait(() -> {
             editor[0] = new FileAccessEditor(context, parent -> true);
@@ -202,19 +204,19 @@ class FileAccessEditorTest {
             editor[0].save();
         });
         await(() -> editor[0].feedback.text().contains("Dateizugriff übernommen"));
-        assertThat(Files.readString(config)).contains("inactive-roots: [", "roots:\n").contains(paused);
+        assertThat(Files.readString(config)).contains("inactive-roots: [", "roots:\n").contains(pausedSaved);
         assertThat(context.settings().localFiles().roots()).containsExactly(Path.of(active));
-        assertThat(context.settings().inactiveRoots()).containsExactly(Path.of(paused));
+        assertThat(context.settings().inactiveRoots()).containsExactly(Path.of(pausedSaved));
+        await(() -> !editor[0].changed());
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(editor[0].changed()).isFalse();
             // Ein neu geöffneter Dialog zeigt die gespeicherten Ordner (die leere Tabelle zählt nicht als Änderung).
             FileAccessEditor fresh = new FileAccessEditor(context, parent -> true);
-            assertThat(fresh.roots()).containsExactly(active, paused);
+            assertThat(fresh.roots()).containsExactly(active, pausedSaved);
             assertThat(fresh.table.getValueAt(1, FileAccessEditor.ACTIVE)).isEqualTo(false);
             assertThat(fresh.changed()).isFalse();
-            fresh.setActive(paused, true);
+            fresh.setActive(pausedSaved, true);
             assertThat(fresh.changed()).isTrue();
-            assertThat(fresh.activeRoots()).containsExactly(active, paused);
+            assertThat(fresh.activeRoots()).containsExactly(active, pausedSaved);
             assertThat(fresh.table.getValueAt(1, FileAccessEditor.ACTIVE)).isEqualTo(true);
         });
     }
