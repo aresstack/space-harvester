@@ -389,6 +389,14 @@ final class SourceForm {
     }
 
     /**
+     * Ob ein KeePass-Eintrag gewählt, aber noch nicht gelesen ist (Lesen läuft oder scheiterte): Dann ist die Adresse
+     * noch offen und darf nicht still durch die Confluence-Hilfe ersetzt werden.
+     */
+    private boolean keePassAddressPending() {
+        return keePassOrigin() && keePassUrl == null && !keePassTitle().isEmpty();
+    }
+
+    /**
      * Belegt die Anmeldeart aus dem gelesenen Eintrag vor: mit Benutzer Benutzer+Passwort, sonst Token. Nur eine
      * Vorbelegung, jede Art bleibt wählbar (auch „Ohne Anmeldung“). {@code user} {@code null}: noch kein Eintrag
      * gelesen, dann bleibt die Auswahl.
@@ -866,7 +874,7 @@ final class SourceForm {
         if (fromKeePass != null) {
             return fromKeePass;
         }
-        return keePassEntryWithoutAddress() ? "" : DEFAULT_URL;
+        return keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL;
     }
 
     /**
@@ -1151,6 +1159,12 @@ final class SourceForm {
     private List<String> problems() {
         SourceDraft source = draft();
         List<String> problems = new ArrayList<>(source.problems());
+        if (source.confluence() && baseUrl.getText().isBlank() && keePassAddressPending()) {
+            // Gewählter Eintrag, Adresse noch nicht gelesen: nicht still die Confluence-Hilfe speichern.
+            problems.replaceAll(problem -> problem.startsWith("Die Adresse fehlt")
+                    ? "Die Adresse ist noch nicht aus dem KeePass-Eintrag gelesen; kurz warten oder eintragen."
+                    : problem);
+        }
         if (source.generic() && !fields.active() && addressOption() != null) {
             String address = source.extraOptions().get(addressOption());
             if (address == null) {
@@ -1462,10 +1476,12 @@ final class SourceForm {
         // Platzhalter: die Adresse des KeePass-Eintrags, sonst die Confluence-Hilfe; ein Eintrag ohne Adresse keiner.
         String fromKeePass = keePassAddress();
         baseUrl.setPlaceholder(!confluence ? "" : fromKeePass != null ? fromKeePass
-                : keePassEntryWithoutAddress() ? "" : DEFAULT_URL);
+                : keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL);
         form.hint(baseUrl, !confluence ? "Adresse der Quelle (in der Datei options." + addressOption() + ")"
                 : fromKeePass != null ? "Leer gilt die Adresse des KeePass-Eintrags; eine Eingabe hier gewinnt"
                 : keePassEntryWithoutAddress() ? "Der KeePass-Eintrag hat keine Adresse; bitte hier eintragen"
+                : keePassAddressPending() ? "Leer gilt die Adresse des KeePass-Eintrags, sobald er gelesen ist; "
+                        + "oder hier eintragen"
                 : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
         form.visible(include, files);

@@ -652,7 +652,13 @@ class SourceFormTest {
             assertThat(form[0].origin.getSelectedItem()).isEqualTo("KeePass");
         });
         awaitOnEdt(() -> form[0].pairKeePass.isEnabled() && form[0].keePassEntry.getItemCount() == 2);
-        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki"));
+        SwingUtilities.invokeAndWait(() -> {
+            form[0].keePassEntry.setSelectedItem("Wiki");
+            // Noch nicht gelesen: kein stilles Ausweichen auf die Confluence-Hilfe, Speichern wartet.
+            assertThat(form[0].draft().baseUrl()).isNullOrEmpty();
+            assertThat(form[0].validateInput()).isFalse();
+            assertThat(form[0].error(form[0].baseUrl)).startsWith("Die Adresse ist noch nicht aus dem KeePass-Eintrag");
+        });
         awaitOnEdt(() -> form[0].keePassSecretRead());
         SwingUtilities.invokeAndWait(() -> {
             SourceForm f = form[0];
