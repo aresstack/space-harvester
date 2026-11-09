@@ -122,7 +122,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, 7, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 3, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -854,13 +854,13 @@ public final class ActivitiesView implements View {
     }
 
     /** Formate der Symbole in der Liste, in der Reihenfolge aus Angelos Skizze. */
-    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json-package", "analysis");
+    static final List<String> FORMATS = List.of("pdf", "docx", "markdown-package", "json-package", "analysis");
     private static final Map<String, String> EXPORT_TIPS = Map.of("pdf", "Als PDF exportieren", "docx",
-            "Als Word-Dokument exportieren", "markdown", "Als Markdown exportieren", "json-package",
+            "Als Word-Dokument exportieren", "markdown-package", "Als Markdown exportieren (ZIP mit Seiten und Bildern)", "json-package",
             "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)", "analysis",
-            "Analyse als JSON exportieren (Analysedaten je Seite, Originaldaten unverändert)");
+            "Analyse exportieren (analysis.json: Analysedaten je Seite, Originaldaten unverändert)");
     private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
-            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"),
+            FormatIcon.of("docx"), "markdown-package", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"),
             "analysis", FormatIcon.of("analysis"));
     private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();

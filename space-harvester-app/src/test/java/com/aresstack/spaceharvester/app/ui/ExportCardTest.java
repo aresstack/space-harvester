@@ -70,24 +70,24 @@ class ExportCardTest {
             view[0].show(job);
         });
         // Ein Klick auf das Format-Symbol der Zeile exportiert sofort; ohne Formatwahl und ohne Knopf.
-        await(() -> view[0].exportBlocked(job, "markdown") == null);
+        await(() -> view[0].exportBlocked(job, "markdown-package") == null);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(view[0].exportBlocked(job, "pdf")).isNull();
-            view[0].exportAs(job, "markdown");
+            view[0].exportAs(job, "markdown-package");
             assertThat(view[0].exportBlocked(job, "pdf")).as("ein Export je Download zugleich")
                     .contains("wird gerade erzeugt");
         });
-        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".md")));
+        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".zip")));
         // Nur die gewünschte Datei, keine technischen Dateien wie pages.json oder tree.json.
         assertThat(list(out)).singleElement().satisfies(p ->
-                assertThat(p.getFileName().toString()).startsWith(space).endsWith(".md"));
+                assertThat(p.getFileName().toString()).startsWith(space).endsWith(".zip"));
         // Die Kachel „Exportieren“ listet die erzeugte Datei.
-        await(() -> view[0].files.getText().contains(".md"));
+        await(() -> view[0].files.getText().contains(".zip"));
         await(() -> view[0].exportBlocked(job, "pdf") == null);
         // Das JSON-Symbol erzeugt das Paket mit Medien als ZIP.
         assertThat(ActivitiesView.FORMATS).contains("json-package").doesNotContain("json");
         SwingUtilities.invokeAndWait(() -> view[0].exportAs(job, "json-package"));
-        await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".zip")));
+        await(() -> list(out).stream().filter(p -> p.toString().endsWith(".zip")).count() == 2);
         // „Analyse“ (#359) erzeugt die Analysedaten als eigene JSON-Datei, ohne die übrigen Dateien zu berühren.
         await(() -> view[0].exportBlocked(job, "analysis") == null);
         SwingUtilities.invokeAndWait(() -> view[0].exportAs(job, "analysis"));
@@ -97,7 +97,7 @@ class ExportCardTest {
 
     @Test
     void analysisIsExactlyOneMoreRowButtonAfterTheFormats() {
-        assertThat(ActivitiesView.FORMATS).containsExactly("pdf", "docx", "markdown", "json-package", "analysis");
+        assertThat(ActivitiesView.FORMATS).containsExactly("pdf", "docx", "markdown-package", "json-package", "analysis");
         assertThat(ActivitiesView.Format.title("analysis")).isEqualTo("Analyse");
     }
 
