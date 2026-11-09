@@ -73,6 +73,7 @@ public final class MainWindow implements AppContext.Navigator {
     private ComicSplitPane split;
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
+    private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
     /** So lange bleibt eine kurze Meldung stehen. */
     private static final int NOTICE_MS = 8000;
@@ -270,7 +271,8 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        statusLine = new StatusLine(activities.progress(), viewStatus, status, activities.jobLine(), new CopyrightLink());
+        jobStatus = new JobStatusLine(context.events(), activities::cancelShownJob);
+        statusLine = new StatusLine(jobStatus.model(), viewStatus, status, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
