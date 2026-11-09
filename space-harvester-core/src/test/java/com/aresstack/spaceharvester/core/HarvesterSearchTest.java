@@ -137,8 +137,15 @@ class HarvesterSearchTest {
             // ADR 0015: search.prefetch-hits wirkt für den nächsten Stapel, ohne den Harvester neu zu bauen.
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
 
-            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
-                    50).hits()).extracting(KeywordSearch.Hit::pageId).containsExactlyInAnyOrder("102", "200");
+            // Unter CI-Last kann ein Abruf scheitern oder noch laden; die nächste Suche lädt ihn erneut. Gewartet wird
+            // auf den Zustand, die Grenze gilt nur gegen Hänger.
+            long deadline = System.nanoTime() + LOADED.toNanos();
+            List<String> found;
+            do {
+                found = harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                        50).hits().stream().map(KeywordSearch.Hit::pageId).toList();
+            } while (found.size() < 2 && System.nanoTime() < deadline);
+            assertThat(found).containsExactlyInAnyOrder("102", "200");
         }
     }
 

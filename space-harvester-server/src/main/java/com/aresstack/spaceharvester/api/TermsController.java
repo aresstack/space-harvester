@@ -67,9 +67,12 @@ public class TermsController {
                                   String spaceKey,
                                   @RequestParam(defaultValue = "50") int limit,
                                   @Parameter(description = "nextCursor der vorigen Antwort")
-                                  @RequestParam(required = false) String cursor) {
+                                  @RequestParam(required = false) String cursor,
+                                  @Parameter(description = "nur Begriffe, deren Suchwert so beginnt (etwa ein "
+                                          + "Buchstabe der A–Z-Leiste); nie ein Wort mitten im Begriff")
+                                  @RequestParam(required = false) String startsWith) {
         TermQueries.TermList list = terms.terms(caller, new TermQueries.TermSearch(blankToNull(sourceId),
-                blankToNull(spaceKey), kind(kind), q, exact, limit, blankToNull(cursor)));
+                blankToNull(spaceKey), kind(kind), q, exact, limit, blankToNull(cursor), blankToNull(startsWith)));
         return new TermListResponse(list.terms().stream().map(TermEntry::of).toList(), list.nextCursor());
     }
 

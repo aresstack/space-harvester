@@ -66,7 +66,10 @@ class TermRelationsViewTest {
         // Der Abgleich legt nur den Katalog an; das Lesen der Seite füllt den Begriffsindex.
         String pageId = workspace.liveMetadata("handbuch", space, null, 10).entries().get(0).page().pageId();
         workspace.page("handbuch", pageId, false);
-        assertThat(workspace.proposeAcronymRelations("handbuch").added()).isEqualTo(2);
+        // Die Akronyme füllt die Anreicherung im Hintergrund; vorgeschlagen wird, sobald sie im Index stehen.
+        int[] added = {0};
+        await(() -> (added[0] += workspace.proposeAcronymRelations("handbuch").added()) >= 2);
+        assertThat(added[0]).isEqualTo(2);
 
         TermsView[] view = new TermsView[1];
         SwingUtilities.invokeAndWait(() -> {
