@@ -15,7 +15,6 @@ import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JProgressBar;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
@@ -83,15 +82,14 @@ public final class SearchView implements View {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
-    private final JLabel status = Comic.muted(" ");
+    final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
-    /** Schmale Zeile unter dem Suchfeld, solange gefundene Seiten in den Cache laden: Balken und Zähler. */
-    final JProgressBar progress = new JProgressBar();
+    /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
     final JLabel progressText = Comic.muted(" ");
-    /** Mittig im Balken nach dem Ende: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“, wie im globalen Balken. */
+    /** Nach dem Ende: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“. */
     final JLabel endState = new JLabel(" ");
-    /** Aktionszeile über der Statusleiste: Fortschritt über die volle Breite, Zeile mit Stand, Abbrechen und „Weitere laden“. */
-    private final JPanel actions = new JPanel(new BorderLayout(12, 4));
+    /** Der Stand für die Statuszeile ({@link #statusInfo()}); die Ansicht hat keine eigene Aktionszeile mehr. */
+    private final JPanel statusInfo = new JPanel();
     final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
             + "bleibt im Cache");
     /** Fragt den Ladestand ab; steigt er, wird derselbe Stapel neu geordnet ({@link #refresh}). */
@@ -138,9 +136,6 @@ public final class SearchView implements View {
         more.setEnabled(false);
         poll.setRepeats(false);
         cancel.addActionListener(e -> cancelLoading());
-        progress.setPreferredSize(new java.awt.Dimension(200, 26));
-        progress.setStringPainted(false);
-        progress.setForeground(Comic.BLUE);
         endState.setFont(Comic.semiBold(13f));
         endState.setForeground(Comic.INK);
         endState.setVisible(false);
@@ -211,42 +206,38 @@ public final class SearchView implements View {
         head.add(middle, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         root.add(head, BorderLayout.NORTH);
-        root.add(Comic.scroll(table), BorderLayout.CENTER);
+        // „Weitere laden“ über die volle Breite, direkt unter der Trefferliste; nur, solange weitere Treffer folgen.
+        JPanel list = new JPanel(new BorderLayout(0, 6));
+        list.setOpaque(false);
+        list.add(Comic.scroll(table), BorderLayout.CENTER);
+        more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
+        list.add(more, BorderLayout.SOUTH);
+        root.add(list, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        // Derselbe Balken wie der globale der Aufträge: links der Stand, mittig Abbrechen bzw. der Endzustand.
-        actions.setOpaque(false);
-        JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
-        center.setOpaque(false);
-        center.add(cancel);
-        center.add(endState);
-        JPanel overlay = new JPanel(new BorderLayout());
-        overlay.setOpaque(false);
-        overlay.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
-        overlay.add(progressText, BorderLayout.WEST);
-        overlay.add(center, BorderLayout.CENTER);
-        JPanel layered = new JPanel();
-        layered.setOpaque(false);
-        layered.setLayout(new javax.swing.OverlayLayout(layered));
-        overlay.setAlignmentX(0.5f);
-        overlay.setAlignmentY(0.5f);
-        progress.setAlignmentX(0.5f);
-        progress.setAlignmentY(0.5f);
-        overlay.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-        progress.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-        layered.add(overlay);
-        layered.add(progress);
-        actions.add(layered, BorderLayout.CENTER);
-        JPanel side = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-        side.setOpaque(false);
-        side.add(status);
-        side.add(more);
-        actions.add(side, BorderLayout.EAST);
+        // Der Stand steht in der Statuszeile des Hauptfensters: Ladestand, Abbrechen bzw. Endzustand, Treffer.
+        // Wird es eng, kürzt nur der Hinweis rechts (mit „…“, ganz im Tooltip); Abbrechen bleibt immer sichtbar.
+        statusInfo.setOpaque(false);
+        statusInfo.setLayout(new javax.swing.BoxLayout(statusInfo, javax.swing.BoxLayout.X_AXIS));
+        for (JComponent part : List.of(progressText, cancel, endState)) {
+            part.setMinimumSize(part.getPreferredSize());
+            part.addPropertyChangeListener("text", e -> {
+                part.setMinimumSize(null);
+                part.setMinimumSize(part.getPreferredSize());
+            });
+            statusInfo.add(part);
+            statusInfo.add(javax.swing.Box.createHorizontalStrut(8));
+        }
+        status.setMinimumSize(new java.awt.Dimension(0, 0));
+        status.addPropertyChangeListener("text", e -> status.setToolTipText(
+                status.getText() == null || status.getText().isBlank() ? null : status.getText()));
+        statusInfo.add(status);
     }
 
     @Override
-    public JComponent actions() {
-        return actions;
+    public JComponent statusInfo() {
+        return statusInfo;
     }
 
     @Override
@@ -605,9 +596,6 @@ public final class SearchView implements View {
         tags.revalidate();
         tags.repaint();
         if (running != null && !variants.isEmpty()) {
-            progress.setIndeterminate(false);
-            progress.setMaximum(variants.size());
-            progress.setValue(finished);
             progressText.setText("Suche läuft · " + finished + " von " + Texts.count(variants.size(), "Suchanfrage",
                     "Suchanfragen") + " · " + Texts.count(model.rows.size(), "Treffer", "Treffer"));
         }
@@ -866,10 +854,7 @@ public final class SearchView implements View {
             finished(state.cancelled());
             return;
         }
-        // Unbestimmt, bis der Core einen Gesamtumfang nennt.
-        progress.setIndeterminate(state.total() <= 0);
-        progress.setMaximum(Math.max(1, state.total()));
-        progress.setValue(state.loaded() + state.failed());
+        progressText.setVisible(true);
         progressText.setText(progressLine(state.loaded(), state.total(), model.rows.size()));
         endState.setVisible(false);
         cancel.setVisible(true);
@@ -890,13 +875,13 @@ public final class SearchView implements View {
         idle(cancelled ? "Abgebrochen" : "Fertig");
         progressText.setText((cancelled ? "Laden abgebrochen" : DONE) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        // Die Zahl der Treffer nennt danach der Stand rechts daneben; keine zweite Zeile mit derselben Zahl.
+        progressText.setVisible(false);
         updateMore();
     }
 
     /** Leere Spur ohne Abbrechen; mittig der Endzustand, {@code null} ohne. */
     private void idle(String end) {
-        progress.setIndeterminate(false);
-        progress.setValue(0);
         cancel.setVisible(false);
         endState.setText(end == null ? " " : end);
         endState.setVisible(end != null);
@@ -904,9 +889,9 @@ public final class SearchView implements View {
 
     /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
     private void starting(String text) {
-        progress.setIndeterminate(true);
         endState.setVisible(false);
         progressText.setText(text);
+        progressText.setVisible(true);
         cancel.setVisible(false);
         more.setVisible(false);
         more.setEnabled(false);
