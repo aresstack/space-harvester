@@ -282,6 +282,22 @@ class SettingDialogsTest {
     }
 
     @Test
+    void keePassIsPreselectedWhenASourceAlreadyUsesItEvenIfNotPaired() throws Exception {
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(new FakeKeePass(),
+                () -> paired[0]));
+        Files.writeString(config, Files.readString(config).replace("space-harvester-app:\n",
+                "space-harvester-app:\n  source-keepass-entries:\n    wiki: Wiki-Zugang\n"));
+        reload();
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].access.getSelectedItem()).as("Quelle bezieht aus KeePass: KeePass vorgewählt")
+                    .isEqualTo(AiSettingsPanel.KEEPASS);
+        });
+    }
+
+    @Test
     void keePassWhenPairedAndOnlyTheEntryNameReachesTheFile() throws Exception {
         FakeKeePass keePass = new FakeKeePass();
         keePass.entries.put("Enterprise AI API", new String[] {"https://kp.example.invalid/v1", "sk-aus-keepass"});
