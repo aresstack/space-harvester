@@ -8,7 +8,6 @@ import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
-import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -175,11 +174,8 @@ final class SourceFieldsEditor {
                 text.setText(value);
                 ComposerButton choose = Comic.button("Verzeichnis wählen …", null);
                 choose.addActionListener(e -> chooseDirectory(text));
-                JPanel line = new JPanel(new BorderLayout(6, 0));
-                line.setOpaque(false);
-                line.add(text, BorderLayout.CENTER);
-                line.add(choose, BorderLayout.EAST);
-                add(label, line, hint, advanced);
+                // Der Knopf sitzt im Feld, nicht daneben.
+                add(label, Comic.fieldWithButton(text, choose), hint, advanced);
                 return text;
             }
             default -> {
@@ -223,11 +219,7 @@ final class SourceFieldsEditor {
                 certificateAlias.setText(chosen);
             }
         });
-        JPanel line = new JPanel(new BorderLayout(6, 0));
-        line.setOpaque(false);
-        line.add(certificateAlias, BorderLayout.CENTER);
-        line.add(certificateChoose, BorderLayout.EAST);
-        add(field.label(), line, null, field.advanced());
+        add(field.label(), Comic.fieldWithButton(certificateAlias, certificateChoose), null, field.advanced());
         specs.put(field.key(), field);
         certificateUse.addActionListener(e -> enableCertificate());
         enableCertificate();

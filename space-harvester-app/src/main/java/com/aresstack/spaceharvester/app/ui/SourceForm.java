@@ -226,7 +226,7 @@ final class SourceForm {
         form.row("Art", kind);
         int mainFields = form.reserve(SourceFieldsEditor.ROWS);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
-        form.row("Ordner", row(directory, browse(directory, true)), null);
+        form.row("Ordner", Comic.fieldWithButton(directory, browse(directory, true)), null);
         form.row("Dateien", include, "Muster, durch Komma getrennt");
         form.row("Anzeigename", title, "So heißt die Quelle in der App; leer lassen für den Vorschlag");
         onEdit(baseUrl, this::derive);
@@ -269,9 +269,9 @@ final class SourceForm {
         sourceAdvanced.addActionListener(e -> sourceAdvanced(!sourceAdvancedOpen));
         form.header(certificateSection);
         form.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
-        form.row("Alias", row(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
+        form.row("Alias", Comic.fieldWithButton(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
         form.row("Fingerabdruck", thumbprint, "Optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
-        form.row("PKCS#12-Datei", row(certificatePath, browse(certificatePath, false)), null);
+        form.row("PKCS#12-Datei", Comic.fieldWithButton(certificatePath, browse(certificatePath, false)), null);
         form.row("Passwort-Platzhalter", certificatePasswordVariable,
                 "Java-Property oder Umgebungsvariable mit dem Zertifikatspasswort");
         chooseCertificate.addActionListener(e -> {
@@ -1448,13 +1448,6 @@ final class SourceForm {
                 + "der Datei" : "Gilt bis zum Schließen der App, nie in der Datei");
     }
 
-    private JPanel row(JTextField field, ComposerButton button) {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.setOpaque(false);
-        row.add(field, BorderLayout.CENTER);
-        row.add(button, BorderLayout.EAST);
-        return row;
-    }
 
     private ComposerButton browse(JTextField target, boolean directories) {
         ComposerButton button = Comic.button("Durchsuchen …", null);
