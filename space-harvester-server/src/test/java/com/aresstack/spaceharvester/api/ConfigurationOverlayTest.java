@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
@@ -46,6 +47,29 @@ class ConfigurationOverlayTest {
 
         assertThat(parsed.problems()).isEmpty();
         assertThat(parsed.configuration()).isEqualTo(FULL.withNetwork(NetworkSettings.DEFAULT));
+    }
+
+    @Test
+    void exportAttachmentSettingsHaveDefaultsAndCanBeChangedLive() {
+        HarvesterConfiguration base = HarvesterConfiguration.DEFAULT;
+        assertThat(base.export()).isEqualTo(ExportSettings.DEFAULT);
+        assertThat(base.export().permits("application/vnd.openxmlformats-officedocument.presentationml.presentation"))
+                .isTrue();
+        assertThat(base.export().permits("text/plain; charset=UTF-8")).isTrue();
+        assertThat(base.export().permits("application/vnd.ms-outlook")).isTrue();
+        assertThat(base.export().permits("application/zip")).isFalse();
+
+        HarvesterConfiguration changed = ConfigurationOverlay.overlay(base, Map.of(
+                "space-harvester.export.attachments.enabled", false,
+                "export.attachments.media-types", List.of("application/pdf", "TEXT/*"),
+                "export.attachments.max-size", "5MB")).orThrow();
+        assertThat(changed.export()).isEqualTo(new ExportSettings(false, List.of("application/pdf", "text/*"),
+                5L * 1024 * 1024));
+        // Rundreise über Properties, wie Server und App sie schreiben.
+        assertThat(HarvesterConfiguration.fromProperties(ConfigurationOverlay.toProperties(changed)).orThrow()
+                .export()).isEqualTo(changed.export());
+        assertThat(ConfigurationOverlay.overlay(base, Map.of("export.attachments.max-size", "viel")).problems())
+                .extracting(ConfigurationProblem::key).containsExactly(ExportSettings.ATTACHMENTS_MAX_SIZE);
     }
 
     @Test

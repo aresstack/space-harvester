@@ -31,9 +31,11 @@ import java.util.regex.Pattern;
  * @param network Proxy und TLS
  * @param storage Speicherort; nur nach Neustart wirksam
  * @param localFiles freigegebene Ordner für lokale Dateien
+ * @param export  Dateianhänge im Export (ADR 0023)
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
-                                     NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles) {
+                                     NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
+                                     ExportSettings export) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
@@ -41,12 +43,18 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     /** Ohne KI-Dienst, Schlagwortsuche, bedarfsgesteuerter Abgleich, ohne Proxy. */
     public static final HarvesterConfiguration DEFAULT = new HarvesterConfiguration(AiServiceSettings.NONE,
             SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
-            LocalFileSettings.DEFAULT);
+            LocalFileSettings.DEFAULT, ExportSettings.DEFAULT);
 
     /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                   NetworkSettings network, StorageSettings storage) {
         this(ai, search, sync, network, storage, LocalFileSettings.DEFAULT);
+    }
+
+    /** Mit den Standardwerten für Anhänge im Export ({@link ExportSettings#DEFAULT}); {@link #withExport} ergänzt sie. */
+    public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
+                                  NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles) {
+        this(ai, search, sync, network, storage, localFiles, ExportSettings.DEFAULT);
     }
 
     public HarvesterConfiguration {
@@ -56,6 +64,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         network = network == null ? NetworkSettings.DEFAULT : network;
         storage = storage == null ? StorageSettings.DEFAULT : storage;
         localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
+        export = export == null ? ExportSettings.DEFAULT : export;
     }
 
     /** Ob die semantische Suche tatsächlich läuft: Haken gesetzt und Embedding-Modell eingestellt. */
@@ -89,27 +98,31 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     }
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
-        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles);
+        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
-        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles);
+        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
-        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles);
+        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles);
+        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles);
+        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export);
     }
 
     public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, value);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, value, export);
+    }
+
+    public HarvesterConfiguration withExport(ExportSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value);
     }
 
     /**
@@ -199,6 +212,10 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                         "Jeder freigegebene Ordner braucht einen absoluten Pfad"));
             }
         }
+        if (export.maxSize() < 0) {
+            problems.add(new ConfigurationProblem(ExportSettings.ATTACHMENTS_MAX_SIZE,
+                    "Die Größe darf nicht negativ sein"));
+        }
         return problems.stream().distinct().toList();
     }
 
@@ -266,8 +283,13 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
         LocalFileSettings localFiles = new LocalFileSettings(read.bool(LocalFileSettings.ALLOW_ALL, false),
                 read.paths(LocalFileSettings.ROOTS));
+        List<String> mediaTypes = read.list(ExportSettings.ATTACHMENTS_MEDIA_TYPES);
+        ExportSettings export = new ExportSettings(read.bool(ExportSettings.ATTACHMENTS_ENABLED, true),
+                read.value(ExportSettings.ATTACHMENTS_MEDIA_TYPES) == null && mediaTypes.isEmpty()
+                        ? ExportSettings.DEFAULT_MEDIA_TYPES : mediaTypes,
+                read.size(ExportSettings.ATTACHMENTS_MAX_SIZE, ExportSettings.DEFAULT_MAX_SIZE));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage, localFiles);
+                storage, localFiles, export);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);
@@ -441,6 +463,32 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                     problems.add(new ConfigurationProblem(key, "Erwartet eine Dauer wie PT6H, 30m oder 1d"));
                 }
                 return simple;
+            }
+        }
+
+        /** Bytes, auch mit Einheit wie Springs {@code DataSize}: {@code B}, {@code KB}, {@code MB}, {@code GB} (je 1024). */
+        long size(String key, long fallback) {
+            String value = value(key);
+            if (value == null) {
+                return fallback;
+            }
+            Matcher m = Pattern.compile("(?i)(\\d+)\\s*(b|kb|kib|mb|mib|gb|gib)?").matcher(value);
+            if (!m.matches()) {
+                problems.add(new ConfigurationProblem(key, "Erwartet eine Größe wie 20MB oder 512KB"));
+                return fallback;
+            }
+            String unit = m.group(2) == null ? "b" : m.group(2).toLowerCase(Locale.ROOT);
+            long factor = switch (unit.charAt(0)) {
+                case 'k' -> 1024L;
+                case 'm' -> 1024L * 1024;
+                case 'g' -> 1024L * 1024 * 1024;
+                default -> 1L;
+            };
+            try {
+                return Math.multiplyExact(Long.parseLong(m.group(1)), factor);
+            } catch (ArithmeticException | NumberFormatException e) {
+                problems.add(new ConfigurationProblem(key, "Die Größe ist zu groß"));
+                return fallback;
             }
         }
 

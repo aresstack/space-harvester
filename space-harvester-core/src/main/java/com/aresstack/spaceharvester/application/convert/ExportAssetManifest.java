@@ -8,6 +8,10 @@ import java.util.Objects;
  * dem abgelegten Stand im Asset-Speicher (Version, Größe, {@code sha256}) oder dem Grund, warum es fehlt. Die Bytes
  * liegen nur im Asset-Speicher, SHA-256-adressiert; das unveränderte Raw-JSON der Seiten bleibt unberührt.
  *
+ * <p>Dokument-Anhänge (ADR 0023: PDF, Office, Mails …) stehen im selben Manifest mit {@link Kind#DOCUMENT}, damit
+ * Beschaffung, Anmeldung, Ablage und Statuswerte dieselben bleiben. {@link #forPage} und {@link #images()} liefern
+ * nur die Bilder, wie bisher; {@link #documents()} die Dokumente.
+ *
  * @param complete ob jede gefundene Referenz abgelegt (oder als {@link Status#REDUNDANT} überflüssig) ist und jede
  *                 Seite geprüft werden konnte
  */
@@ -19,9 +23,19 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
         assets = List.copyOf(assets);
     }
 
-    /** Die Einträge einer Seite in ihrer Reihenfolge. */
+    /** Die Bild-Einträge einer Seite in ihrer Reihenfolge, ohne Dokument-Anhänge. */
     public List<Entry> forPage(String pageId) {
-        return assets.stream().filter(entry -> entry.pageId().equals(pageId)).toList();
+        return assets.stream().filter(entry -> entry.pageId().equals(pageId) && !entry.document()).toList();
+    }
+
+    /** Alle Bild-Einträge (ohne {@link Kind#DOCUMENT}) in ihrer Reihenfolge. */
+    public List<Entry> images() {
+        return assets.stream().filter(entry -> !entry.document()).toList();
+    }
+
+    /** Alle Dokument-Anhänge ({@link Kind#DOCUMENT}) in ihrer Reihenfolge (ADR 0023). */
+    public List<Entry> documents() {
+        return assets.stream().filter(Entry::document).toList();
     }
 
     /**
@@ -60,17 +74,22 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
             return status == Status.STORED && sha256 != null;
         }
 
-        /** Abgelegt oder bewusst nicht geladen ({@link Status#REDUNDANT}): fehlt nicht. */
+        /** Abgelegt oder bewusst nicht geladen ({@link Status#REDUNDANT}, {@link Status#EXCLUDED}): fehlt nicht. */
         public boolean present() {
-            return stored() || status == Status.REDUNDANT;
+            return stored() || status == Status.REDUNDANT || status == Status.EXCLUDED;
+        }
+
+        /** Ob der Eintrag ein Dokument-Anhang ist (ADR 0023). */
+        public boolean document() {
+            return reference.kind() == Kind.DOCUMENT;
         }
     }
 
     /**
      * Wo die Referenz in der Seite steht.
      *
-     * @param attachmentId bei {@link Kind#ATTACHMENT}: ID des Anhangs
-     * @param filename     bei {@link Kind#ATTACHMENT}: Dateiname, wie ihn das Storage-Format referenziert
+     * @param attachmentId bei {@link Kind#ATTACHMENT} und {@link Kind#DOCUMENT}: ID des Anhangs
+     * @param filename     bei {@link Kind#ATTACHMENT} und {@link Kind#DOCUMENT}: Dateiname des Anhangs
      * @param src          bei {@link Kind#VIEW_IMAGE}: Adresse in der Lese-Ansicht, ohne Anmeldedaten
      * @param index        bei {@link Kind#MERMAID}: das wievielte Mermaid-Diagramm der Seite, ab 0
      * @param source       bei {@link Kind#MERMAID}: der Diagrammtext
@@ -84,6 +103,11 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
 
         public static Reference attachment(String attachmentId, String filename) {
             return new Reference(Kind.ATTACHMENT, attachmentId, filename, null, null, null);
+        }
+
+        /** Ein Dokument-Anhang (ADR 0023). */
+        public static Reference document(String attachmentId, String filename) {
+            return new Reference(Kind.DOCUMENT, attachmentId, filename, null, null, null);
         }
 
         public static Reference viewImage(String src) {
@@ -122,7 +146,9 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
 
     /** Art der Referenz; in {@code assets.json} klein mit Bindestrich ({@code view-image}). */
     public enum Kind {
-        ATTACHMENT("attachment"), VIEW_IMAGE("view-image"), MERMAID("mermaid");
+        ATTACHMENT("attachment"), VIEW_IMAGE("view-image"), MERMAID("mermaid"),
+        /** Dokument-Anhang (PDF, Office, Mail …), ADR 0023. */
+        DOCUMENT("document");
 
         private final String json;
 
@@ -162,6 +188,11 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
          * Bewusst nicht geladen: die Vorschau ({@code <Name>.png}) eines draw.io-Diagramms, dessen Quelldaten abgelegt
          * und gezeichnet sind (ADR 0018). Fehlt nicht.
          */
-        REDUNDANT
+        REDUNDANT,
+        /**
+         * Bewusst nicht geladen: ein Dokument-Anhang außerhalb der Einstellung {@code export.attachments.*}
+         * (Medientyp nicht zugelassen oder größer als die Grenze, ADR 0023). Fehlt nicht.
+         */
+        EXCLUDED
     }
 }

@@ -31,7 +31,8 @@ public record ExportDatasetInfo(String exportId, String sourceId, String spaceKe
      * @param missing        nicht beschafft (fehlt, verboten, zu groß, nicht erreichbar)
      * @param signInRequired wegen fehlender Anmeldung (Einmalcode) nicht beschafft; Nachholen über
      *                       {@link ExportConversions#collectImages}
-     * @param redundant      bewusst nicht geladen, etwa die Vorschau eines gezeichneten draw.io-Diagramms
+     * @param redundant      bewusst nicht geladen, etwa die Vorschau eines gezeichneten draw.io-Diagramms oder ein
+     *                       Dokument-Anhang außerhalb der Einstellung (ADR 0023)
      */
     public record Media(int stored, int missing, int signInRequired, int redundant) {
 
@@ -51,7 +52,7 @@ public record ExportDatasetInfo(String exportId, String sourceId, String spaceKe
                 switch (entry.status()) {
                     case STORED -> stored++;
                     case SIGN_IN_REQUIRED -> signIn++;
-                    case REDUNDANT -> redundant++;
+                    case REDUNDANT, EXCLUDED -> redundant++;
                     default -> missing++;
                 }
             }

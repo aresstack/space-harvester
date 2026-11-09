@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.api.ConfigurationResponse;
 import com.aresstack.spaceharvester.api.NetworkDescription;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
@@ -120,11 +121,20 @@ class ConfigurationManagerConfiguration {
                                 String.join(LocalFileSettings.SEPARATOR, roots));
                     }
                 });
+        // Anhänge im Export (ADR 0023): Medientypen als Text mit Kommas oder als YAML-Liste.
+        for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE)) {
+            binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
+                    .ifBound(value -> properties.setProperty(key, value));
+        }
+        binder.bind(HarvesterConfiguration.PREFIX + ExportSettings.ATTACHMENTS_MEDIA_TYPES,
+                Bindable.listOf(String.class)).ifBound(types ->
+                properties.setProperty(ExportSettings.ATTACHMENTS_MEDIA_TYPES, String.join(",", types)));
         binder.bind(HarvesterConfiguration.PREFIX + SyncSettings.SOURCES, SOURCE_RULES).ifBound(rules ->
                 rules.forEach((id, fields) -> fields.forEach((field, value) ->
                         properties.setProperty(SourceSyncOverride.key(id, field), value))));
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
-        return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles());
+        return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles())
+                .withExport(read.export());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(
