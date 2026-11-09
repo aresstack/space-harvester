@@ -93,6 +93,11 @@ final class StatementsTab extends JPanel {
     private Consumer<String> onStatus = text -> { };
     /** Die Aussagen als Text für die Zwischenablage, wie angezeigt. */
     private final StringBuilder copyText = new StringBuilder();
+
+    /** Der Inhalt des Reiters für die Zwischenablage; leer ohne angezeigte Aussagen. */
+    String copyText() {
+        return copyText.toString();
+    }
     /** Die Erläuterung zum Stand, ob sie im Reiter oder in der Statuszeile steht. */
     private String explanation = " ";
     private PageSnapshot snapshot;
@@ -348,6 +353,7 @@ final class StatementsTab extends JPanel {
         cancelRun();
         snapshot = null;
         text = null;
+        copyText.setLength(0);
         syntax.setText("");
         showSyntax(false);
         syntaxPanel.setVisible(false);
@@ -478,6 +484,7 @@ final class StatementsTab extends JPanel {
         list.removeAll();
         lines.clear();
         jumps.clear();
+        copyText.setLength(0);
         hint.setText(" ");
         list.revalidate();
         list.repaint();
