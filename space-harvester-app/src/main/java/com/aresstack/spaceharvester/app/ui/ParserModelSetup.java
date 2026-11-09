@@ -51,6 +51,7 @@ public final class ParserModelSetup {
     private final List<Consumer<Status>> listeners = new ArrayList<>();
     private Status status;
     private AtomicBoolean running;
+    private ParserModelInstaller active;
 
     /** @param installers liefert den Installer mit den aktuellen Einstellungen, leer ohne hinterlegtes Modell */
     public ParserModelSetup(Supplier<Optional<ParserModelInstaller>> installers) {
@@ -117,6 +118,7 @@ public final class ParserModelSetup {
         ParserModelInstaller installer = found.get();
         AtomicBoolean cancelled = new AtomicBoolean();
         running = cancelled;
+        active = installer;
         update(new Status(State.INSTALLING, "Wird vorbereitet …", false, -1));
         runner.run(() -> {
             installer.install(new ParserModelInstaller.Progress() {
@@ -138,9 +140,11 @@ public final class ParserModelSetup {
             return Boolean.TRUE;
         }, ok -> {
             running = null;
+            active = null;
             update(probe("Parsermodell installiert; „Mit MaltParser analysieren“ ist bereit.", false));
         }, error -> {
             running = null;
+            active = null;
             if (error instanceof CancellationException || cancelled.get()) {
                 update(probe("Installation abgebrochen; nichts geändert.", false));
                 return;
@@ -156,6 +160,14 @@ public final class ParserModelSetup {
         AtomicBoolean run = running;
         if (run != null) {
             run.set(true);
+            ParserModelInstaller installer = active;
+            if (installer != null) {
+                // Schließt den Datenstrom aus dem Hintergrund, damit auch ein hängender Download endet.
+                Background.run(() -> {
+                    installer.abort();
+                    return Boolean.TRUE;
+                }, ok -> { }, error -> { });
+            }
             update(new Status(State.INSTALLING, "Wird abgebrochen …", false, -1));
         }
     }

@@ -615,6 +615,9 @@ public final class AppContext {
                                         AppRuntime.proxy(current.proxy(), secrets()), current.tls(),
                                         "space-harvester-app/" + version())));
             });
+            // Die Einstellungen laden erst nach dem Fenster: danach (und nach jeder Änderung) neu prüfen.
+            ParserModelSetup setup = parserModel;
+            onChange(context -> setup.refresh());
         }
         return parserModel;
     }

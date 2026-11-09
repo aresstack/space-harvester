@@ -32,6 +32,8 @@ import javax.net.ssl.TrustManager;
 public final class HttpModelDownload implements ParserModelInstaller.Download {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
+    /** Höchstens so lange auf die Antwortköpfe warten; ein hängender Datenstrom endet über „Abbrechen“. */
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
 
     private final ProxySettings proxy;
     private final TrustSettings tls;
@@ -79,13 +81,16 @@ public final class HttpModelDownload implements ParserModelInstaller.Download {
 
     @Override
     public ParserModelInstaller.Body open(URI target) throws IOException {
-        HttpRequest request = HttpRequest.newBuilder(target).header("User-Agent", userAgent).GET().build();
+        HttpRequest request = HttpRequest.newBuilder(target).header("User-Agent", userAgent)
+                .timeout(RESPONSE_TIMEOUT).GET().build();
         HttpResponse<InputStream> response;
         try {
             response = client().send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Download unterbrochen", e);
+        } catch (java.io.UncheckedIOException e) {
+            throw e.getCause();
         }
         if (response.statusCode() / 100 != 2) {
             response.body().close();
@@ -108,6 +113,11 @@ public final class HttpModelDownload implements ParserModelInstaller.Download {
         @Override
         public List<Proxy> select(URI uri) {
             HttpRoute route = routes.routeFor(uri);
+            if (route.isUnavailable()) {
+                // Wie RouteConnections: ohne gültige Proxy-Regel (PAC gescheitert) nie direkt verbinden.
+                throw new java.io.UncheckedIOException(new IOException("Kein Netzweg zu " + uri.getHost() + ": "
+                        + route.describe()));
+            }
             if (route.isProxy()) {
                 return List.of(new Proxy(Proxy.Type.HTTP,
                         InetSocketAddress.createUnresolved(route.proxyHost(), route.proxyPort())));

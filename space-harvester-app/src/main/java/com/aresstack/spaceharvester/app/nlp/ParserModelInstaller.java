@@ -58,6 +58,8 @@ public final class ParserModelInstaller {
     private final Path directory;
     private final GermanParserModelPin.Release release;
     private final Download download;
+    /** Der gerade gelesene Datenstrom; {@link #abort} schließt ihn, damit ein hängender Download endet. */
+    private volatile InputStream current;
 
     /**
      * @param directory Zielverzeichnis, siehe {@link MaltStatementAnalyzer#defaultDirectory}
@@ -127,20 +129,47 @@ public final class ParserModelInstaller {
             throw new IOException(e);
         }
         Body body = download.open(URI.create(release.download()));
+        current = body.content();
+        if (cancelled.getAsBoolean()) {
+            body.content().close();
+        }
         try (InputStream in = new DigestInputStream(body.content(), digest);
              OutputStream out = Files.newOutputStream(zip)) {
             byte[] buffer = new byte[64 * 1024];
             long done = 0;
             progress.bytes(0, body.length());
             int n;
-            while ((n = in.read(buffer)) > 0) {
+            while (true) {
+                try {
+                    n = in.read(buffer);
+                } catch (IOException e) {
+                    check(cancelled);
+                    throw e;
+                }
                 check(cancelled);
+                if (n < 0) {
+                    break;
+                }
                 out.write(buffer, 0, n);
                 done += n;
                 progress.bytes(done, body.length());
             }
+        } finally {
+            current = null;
         }
         return HexFormat.of().formatHex(digest.digest());
+    }
+
+    /** Beendet einen laufenden Download sofort (aus einem anderen Thread); {@link #install} meldet dann den Abbruch. */
+    public void abort() {
+        InputStream stream = current;
+        if (stream != null) {
+            try {
+                stream.close();
+            } catch (IOException ignored) {
+                // Der Abbruch zählt trotzdem; das Lesen endet mit einem Fehler.
+            }
+        }
     }
 
     private static void unzip(Path zip, Path target, BooleanSupplier cancelled) throws IOException {

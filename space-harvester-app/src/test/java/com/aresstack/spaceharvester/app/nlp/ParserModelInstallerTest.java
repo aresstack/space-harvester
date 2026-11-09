@@ -94,6 +94,53 @@ class ParserModelInstallerTest {
     }
 
     @Test
+    void abortEndsAStalledDownload() throws Exception {
+        // Wie der Datenstrom des HttpClient: read() hängt, bis close() ihn mit einer IOException beendet.
+        java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
+        java.io.InputStream stalled = new java.io.InputStream() {
+            @Override
+            public int read() throws IOException {
+                try {
+                    closed.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IOException("closed");
+            }
+
+            @Override
+            public void close() {
+                closed.countDown();
+            }
+        };
+        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        GermanParserModelPin.Release release = new GermanParserModelPin.Release("aresstack/space-harvester",
+                "maltparser-de-gsd-v1.0.0", "maltparser-de-gsd-v1.0.0.zip", "0".repeat(64));
+        java.util.concurrent.CountDownLatch opened = new java.util.concurrent.CountDownLatch(1);
+        ParserModelInstaller installer = new ParserModelInstaller(
+                data.resolve("nlp-model").resolve("maltparser-de-gsd-v1.0.0"), release, target -> {
+                    opened.countDown();
+                    return new ParserModelInstaller.Body(stalled, -1);
+                });
+        java.util.concurrent.CompletableFuture<Throwable> result = java.util.concurrent.CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        installer.install(progress((d, t) -> { }), cancelled::get);
+                        return null;
+                    } catch (Throwable e) {
+                        return e;
+                    }
+                });
+        assertThat(opened.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(100);
+        cancelled.set(true);
+        installer.abort();
+
+        assertThat(result.get(5, java.util.concurrent.TimeUnit.SECONDS)).isInstanceOf(CancellationException.class);
+        assertThat(leftovers()).isEmpty();
+    }
+
+    @Test
     void reinstallReplacesTheModel() throws Exception {
         byte[] zip = zip("model-manifest.json", "{}", "maltparser-de-gsd.mco", "new");
         ParserModelInstaller installer = installer(zip, sha(zip), new ArrayList<>());
