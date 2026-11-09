@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
+import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses.PageAnalysis;
@@ -12,8 +13,12 @@ import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.io.OutputStream;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.JsonNode;
@@ -33,7 +38,8 @@ import tools.jackson.databind.json.JsonMapper;
  *               "facts": [{ "id", "type", "role", "origin", "review", "state", "processorId",
  *                           "processorVersion", "inputSha256", "revision", "payload", "arguments", "anchor" }],
  *               "images": [{ "attachmentId", "title", "mediaType", "sha256", "describer", "modelVersion",
- *                            "createdAt", "description" }] }] }
+ *                            "createdAt", "description" }] }],
+ *   "attachments": [{ "pageId", "attachmentId", "title", "mediaType", "sha256", "status", "reason", "text" }] }
  * </pre>
  *
  * Seiten linear in Baumreihenfolge wie {@link JsonArrayConverter}; die Hierarchie steht nur in {@code parentPageId}.
@@ -48,11 +54,17 @@ import tools.jackson.databind.json.JsonMapper;
  * ein manueller bei gleichem {@code inputSha256}. Unter {@code images} jedes exportierte Bild der Seite
  * ({@code assets.json}), für dessen Bytes eine Beschreibung vorliegt, auch wenn sie ohne Bildanalyse der Seite
  * entstand; über {@code sha256} gehört sie genau zu den exportierten Bytes.
+ *
+ * <p>{@code attachments} (ADR 0023) steht neben {@code pages}, nicht in der Seitenstruktur: je Dokument-Anhang einer
+ * exportierten Seite der beim Beschaffen gelesene Text. {@code text} gibt es nur für abgelegte Anhänge mit nicht leerem
+ * Text; sonst ist er {@code null} und {@code status}/{@code reason} sagen warum, wie in {@code attachments.json}
+ * ({@code text-unavailable}, wenn ein abgelegter Anhang keinen lesbaren Text hat). Die Texte werden je Eintrag erst
+ * beim Schreiben aus der Ablage gelesen und nicht gesammelt.
  */
 public final class AnalysisConverter implements ExportConverter {
 
     public static final String FORMAT = "analysis";
-    public static final String VERSION = "analysis/2";
+    public static final String VERSION = "analysis/3";
     public static final String SCHEMA = "space-harvester/analysis-export/v1";
 
     private final JsonMapper json = JsonMapper.builder().build();
@@ -101,7 +113,9 @@ public final class AnalysisConverter implements ExportConverter {
             generator.writeEndArray();
             generator.writeName("pages");
             generator.writeStartArray();
+            Set<String> exported = new HashSet<>();
             input.forEachPage(page -> {
+                exported.add(page.pageId());
                 PageMetadata metadata = page.header().metadata();
                 PageAnalysis analysis = analyses.of(page.snapshot());
                 generator.writeStartObject();
@@ -142,7 +156,46 @@ public final class AnalysisConverter implements ExportConverter {
                 generator.writeEndObject();
             });
             generator.writeEndArray();
+            generator.writeName("attachments");
+            generator.writeStartArray();
+            ExportAssets assets = input.assets();
+            for (ExportAssetManifest.Entry entry : assets.manifest()
+                    .map(ExportAssetManifest::documents).orElse(List.of())) {
+                // Rechte wie die Seite: nur Anhänge exportierter Seiten.
+                if (exported.contains(entry.pageId())) {
+                    attachment(generator, entry, assets);
+                }
+            }
+            generator.writeEndArray();
             generator.writeEndObject();
+        }
+    }
+
+    /** Ein Dokument-Anhang; sein Text wird erst hier gelesen und gleich geschrieben (ADR 0023). */
+    private static void attachment(JsonGenerator generator, ExportAssetManifest.Entry entry, ExportAssets assets) {
+        Optional<String> text = entry.stored() ? text(assets, entry) : Optional.empty();
+        String reason = entry.reason();
+        if (entry.stored() && text.isEmpty() && reason == null) {
+            reason = "text-unavailable";
+        }
+        generator.writeStartObject();
+        generator.writeStringProperty("pageId", entry.pageId());
+        generator.writeStringProperty("attachmentId", entry.attachmentId());
+        generator.writeStringProperty("title", entry.title());
+        generator.writeStringProperty("mediaType", entry.mediaType());
+        generator.writeStringProperty("sha256", entry.stored() ? entry.sha256() : null);
+        generator.writeStringProperty("status", entry.status().name());
+        generator.writeStringProperty("reason", reason);
+        generator.writeStringProperty("text", text.orElse(null));
+        generator.writeEndObject();
+    }
+
+    /** Leerer Text gilt wie in {@code attachments.json} als nicht lesbar; ein Lesefehler ebenso. */
+    private static Optional<String> text(ExportAssets assets, ExportAssetManifest.Entry entry) {
+        try {
+            return assets.text(entry).filter(t -> !t.isBlank());
+        } catch (RuntimeException e) {
+            return Optional.empty();
         }
     }
 
