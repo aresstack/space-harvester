@@ -168,8 +168,8 @@ class ContentViewTest {
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
 
-        // „Aussagen“ zeigt bis zur Analyse einen Hinweis; statementsTab ersetzt ihn, null stellt ihn wieder her.
-        assertThat(onEdt(() -> labelText(detail.statements()))).isEqualTo(PageDetailPanel.STATEMENTS_PLACEHOLDER);
+        // „Aussagen“ zeigt den eingebauten Reiter der Aussagenanalyse; statementsTab ersetzt ihn, null zeigt den Hinweis.
+        assertThat(onEdt(() -> detail.statements().getComponent(0))).isInstanceOf(StatementsTab.class);
         javax.swing.JPanel plugged = onEdt(javax.swing.JPanel::new);
         onEdt(() -> {
             view.statementsTab(plugged);
