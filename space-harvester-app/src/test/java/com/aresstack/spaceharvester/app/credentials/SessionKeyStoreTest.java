@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class SessionKeyStoreTest {
 
     /** Eine Ablage, die nie etwas behält (Schreibfehler). */
-    private static final class FailingStore implements KeePassPairingKeyStore {
+    private static class FailingStore implements KeePassPairingKeyStore {
         int clears;
 
         @Override
@@ -32,7 +32,7 @@ class SessionKeyStoreTest {
     @Test
     void keepsTheKeyForTheSessionWhenTheFileFails() {
         FailingStore file = new FailingStore();
-        KeePassLink.SessionKeyStore store = new KeePassLink.SessionKeyStore(file);
+        KeePassLink.SessionKeyStore store = new KeePassLink.SessionKeyStore(file, () -> true);
         char[] key = new char[64];
         Arrays.fill(key, 'b'); // Testwert, kein echter Schlüssel
 
@@ -48,5 +48,24 @@ class SessionKeyStoreTest {
         assertThat(store.load()).isNull();
         assertThat(store.held()).isFalse();
         assertThat(file.clears).isEqualTo(1);
+    }
+
+    @Test
+    void writesNothingWhenTheDirectoryCannotBeRestricted() {
+        int[] saves = {0};
+        KeePassPairingKeyStore file = new FailingStore() {
+            @Override
+            public void save(char[] sessionKey) {
+                saves[0]++;
+            }
+        };
+        KeePassLink.SessionKeyStore store = new KeePassLink.SessionKeyStore(file, () -> false);
+        char[] key = new char[64];
+        Arrays.fill(key, 'c'); // Testwert
+
+        store.save(key);
+
+        assertThat(saves[0]).as("kein Klartext in einem offenen Ordner").isZero();
+        assertThat(store.load()).containsOnly('c');
     }
 }

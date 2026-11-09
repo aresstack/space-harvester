@@ -17,13 +17,15 @@ import java.util.function.Supplier;
 /**
  * Die KeePass-Anbindung der App über KeePassRPC aus dem Enterprise AI Client: koppeln (SRP-Pairing, KeePass zeigt ein
  * Einmal-Passwort), Einträge auflisten, lesen und neu anlegen. Der Pairing-Schlüssel liegt wie im EAC in einer Datei
- * nur für den Besitzer ({@link FilePairingKeyStore}), nicht im DPAPI-Tresor. Alles hier blockiert, also nur im
+ * ({@link FilePairingKeyStore}), nicht im DPAPI-Tresor, und zwar in einem Ordner mit einer ACL nur für das eigene Konto
+ * ({@link OwnerOnlyDirectory}); gelingt die nicht, nur im Speicher. Alles hier blockiert, also nur im
  * Hintergrund aufrufen.
  */
 public final class KeePassLink {
 
-    /** Dateiname des Pairing-Schlüssels neben der Konfigurationsdatei. */
-    public static final String PAIRING_FILE = "keepass-pairing.key";
+    /** Ordner (neben der Konfigurationsdatei, nur für das eigene Konto) und Datei des Pairing-Schlüssels. */
+    public static final String PAIRING_DIRECTORY = "keepass";
+    static final String PAIRING_FILE = "pairing.key";
     /** Wie der Client in KeePass heißt; KeePassRPC verlangt einen {@code chrome-extension://}-Origin. */
     static final KeePassRpcConfig CONFIG = KeePassRpcConfig.builder()
             .origin("chrome-extension://spaceharvester")
@@ -36,11 +38,14 @@ public final class KeePassLink {
     private final Supplier<Boolean> pairedCheck;
 
     /**
-     * @param pairingFile  Datei für den Pairing-Schlüssel
+     * @param pairingDirectory Ordner für den Pairing-Schlüssel; lässt er sich nicht auf das eigene Konto beschränken,
+     *                         gilt die Kopplung nur bis zum Beenden der App
      * @param prompt       fragt beim Koppeln nach dem Einmal-Passwort, das KeePass anzeigt ({@code null}: abgebrochen)
      */
-    public KeePassLink(java.nio.file.Path pairingFile, KeePassPairingCallback prompt) {
-        SessionKeyStore keys = new SessionKeyStore(new FilePairingKeyStore(pairingFile));
+    public KeePassLink(java.nio.file.Path pairingDirectory, KeePassPairingCallback prompt) {
+        java.nio.file.Path pairingFile = pairingDirectory.resolve(PAIRING_FILE);
+        SessionKeyStore keys = new SessionKeyStore(new FilePairingKeyStore(pairingFile),
+                () -> OwnerOnlyDirectory.secure(pairingDirectory));
         this.pairedCheck = () -> keys.held() || java.nio.file.Files.isRegularFile(pairingFile);
         this.interactive = new KeePassRpcSecretProvider(CONFIG, keys, prompt);
         // Beim Start und beim Lesen des Keys nie ungefragt einen Kopplungsdialog öffnen.
@@ -98,10 +103,13 @@ public final class KeePassLink {
     static final class SessionKeyStore implements KeePassPairingKeyStore {
 
         private final KeePassPairingKeyStore file;
+        private final java.util.function.BooleanSupplier persistable;
         private char[] memory;
 
-        SessionKeyStore(KeePassPairingKeyStore file) {
+        /** @param persistable vor jedem Schreiben: ob die Datei nur für das eigene Konto lesbar sein wird */
+        SessionKeyStore(KeePassPairingKeyStore file, java.util.function.BooleanSupplier persistable) {
             this.file = file;
+            this.persistable = persistable;
         }
 
         synchronized boolean held() {
@@ -128,7 +136,9 @@ public final class KeePassLink {
                 return;
             }
             memory = Arrays.copyOf(sessionKey, sessionKey.length);
-            file.save(Arrays.copyOf(sessionKey, sessionKey.length));
+            if (persistable.getAsBoolean()) {
+                file.save(Arrays.copyOf(sessionKey, sessionKey.length));
+            }
         }
 
         @Override
