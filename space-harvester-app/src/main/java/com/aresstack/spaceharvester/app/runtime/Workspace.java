@@ -128,6 +128,11 @@ public final class Workspace {
         return harvester.navigation().references(caller, sourceId, pageId);
     }
 
+    /** Fundstellen eines Begriffs auf sichtbaren Seiten ({@code TermQueries.occurrences}, #119). */
+    public TermQueries.OccurrenceList occurrences(TermQueries.OccurrenceSearch search) {
+        return harvester.terms().occurrences(caller, search);
+    }
+
     /** Ein Stapel des Begriffsverzeichnisses über alle sichtbaren Seiten ({@code TermQueries.terms}, #119). */
     public TermQueries.TermList terms(TermQueries.TermSearch search) {
         return harvester.terms().terms(caller, search);
@@ -198,6 +203,24 @@ public final class Workspace {
     /** Entfernen ({@code DELETE …/{id}?revision=}): eine manuelle löscht der Core, jede andere lehnt er ab. */
     public Optional<TermRelation> removeRelation(String id, long revision) {
         return harvester.termRelations().remove(caller, id, revision);
+    }
+
+    /**
+     * Legt eine Beziehung manuell an ({@code POST /api/v1/term-relations}): {@code MANUAL} und {@code CONFIRMED};
+     * gibt es den Schlüssel schon, bestätigt der Core ihn.
+     */
+    public TermRelation addRelation(TermRelations.NewRelation relation) {
+        return harvester.termRelations().add(caller, relation);
+    }
+
+    /** Hebt eine Ablehnung auf ({@code POST …/{id}/restore}): automatisch wieder Vorschlag, manuell bestätigt. */
+    public TermRelation restoreRelation(String id) {
+        return harvester.termRelations().restore(caller, id, null);
+    }
+
+    /** Bestätigen ohne Revisionsprüfung, für das Rückgängigmachen eines eben entfernten Eintrags. */
+    public TermRelation confirmRelation(String id) {
+        return harvester.termRelations().confirm(caller, id, null);
     }
 
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
