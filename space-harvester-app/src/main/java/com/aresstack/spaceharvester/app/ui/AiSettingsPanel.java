@@ -483,6 +483,9 @@ final class AiSettingsPanel {
             javax.swing.JCheckBox box = Comic.checkBox(title == null || title.isBlank() ? source.id() : title);
             box.putClientProperty("sourceId", source.id());
             box.setSelected(ids.contains(source.id()));
+            // Nur ein angefasstes Häkchen überschreibt die Datei; sonst gilt, was das Quellenformular inzwischen
+            // dort eingetragen hat.
+            box.addActionListener(e -> box.putClientProperty(TOUCHED, Boolean.TRUE));
             releaseBoxes.add(box);
             released.add(box);
         }
@@ -490,19 +493,22 @@ final class AiSettingsPanel {
         released.repaint();
     }
 
+    /** Markiert ein Häkchen der Freigabe, das jemand angeklickt hat. */
+    private static final String TOUCHED = "space-harvester.touched";
+
     /**
-     * Die Freigaben für die Datei: die Häkchen der gezeigten Quellen; Freigaben für Quellen, die gerade nicht in
-     * der Liste stehen, bleiben erhalten. Hat das Quellenformular inzwischen eine Freigabe geändert, gilt die Datei,
-     * solange hier niemand das Häkchen anfasst.
+     * Die Freigaben für die Datei: der Stand der Datei, überschrieben nur durch Häkchen, die hier jemand angeklickt
+     * hat. Freigaben für Quellen, die gerade nicht in der Liste stehen, bleiben erhalten, und was das Quellenformular
+     * inzwischen geändert hat, geht nicht verloren.
      */
     private List<String> releasedDraft() {
         AppSettings settings = context.settings();
         List<String> file = settings == null ? releasedIds : settings.ai().externalProcessingSources();
-        if (releaseBoxes.isEmpty()) {
-            return file;
-        }
         List<String> ids = new ArrayList<>(file);
         for (javax.swing.JCheckBox box : releaseBoxes) {
+            if (!Boolean.TRUE.equals(box.getClientProperty(TOUCHED))) {
+                continue;
+            }
             String id = (String) box.getClientProperty("sourceId");
             ids.remove(id);
             if (box.isSelected()) {

@@ -203,6 +203,38 @@ class SettingDialogsTest {
     }
 
     @Test
+    void releaseCheckboxesWriteTheSourceReleaseAndLeaveUntouchedOnesToTheFile() throws Exception {
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].releaseBoxes()).hasSize(1);
+            assertThat(panel[0].releaseBoxes().get(0).getText()).as("Anzeigename der Quelle").isEqualTo("Firmenwiki");
+            assertThat(panel[0].releaseBoxes().get(0).isSelected()).isFalse();
+            assertThat(panel[0].draft().externalProcessingSources()).isEmpty();
+            panel[0].releaseBoxes().get(0).doClick();
+            assertThat(panel[0].draft().externalProcessingSources()).as("angeklickt: freigegeben").containsExactly("wiki");
+            assertThat(panel[0].changed()).isTrue();
+        });
+        // Ein nicht angefasstes Häkchen überschreibt nicht, was das Quellenformular inzwischen in die Datei schrieb.
+        SwingUtilities.invokeAndWait(() -> {
+            AiSettingsPanel fresh = new AiSettingsPanel(context);
+            assertThat(fresh.releaseBoxes().get(0).isSelected()).isFalse();
+            assertThat(fresh.changed()).isFalse();
+        });
+        Files.writeString(config, Files.readString(config).replace("space-harvester:\n", "space-harvester:\n  ai:\n"
+                + "    external-processing-sources: [wiki]\n"));
+        reload();
+        SwingUtilities.invokeAndWait(() -> {
+            AiSettingsPanel stale = panel[0];
+            // Das Häkchen dieses Panels ist angeklickt (an) – und die Datei sagt inzwischen ebenfalls an.
+            assertThat(stale.draft().externalProcessingSources()).containsExactly("wiki");
+            AiSettingsPanel untouched = new AiSettingsPanel(context);
+            assertThat(untouched.releaseBoxes().get(0).isSelected()).as("aus der Datei").isTrue();
+            assertThat(untouched.changed()).isFalse();
+        });
+    }
+
+    @Test
     void aiSettingsKeepTheApiKeyInItsOwnVaultAndNeverInTheFile() throws Exception {
         AiSettingsPanel[] panel = new AiSettingsPanel[1];
         SwingUtilities.invokeAndWait(() -> {

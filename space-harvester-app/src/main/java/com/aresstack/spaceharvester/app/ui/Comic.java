@@ -213,6 +213,19 @@ public final class Comic {
             @Override
             public Dimension getPreferredSize() {
                 Dimension preferred = super.getPreferredSize();
+                if (getWidth() <= 0) {
+                    // Noch ohne Breite (vor dem ersten Auslegen, etwa beim pack() eines Fensters): die Höhe für eine
+                    // übliche Spaltenbreite schätzen, damit das Fenster von Anfang an Platz für den Umbruch hat.
+                    java.awt.FontMetrics metrics = getFontMetrics(getFont());
+                    int lines = 1;
+                    for (String paragraph : getText().split("\n", -1)) {
+                        lines += Math.max(1, (int) Math.ceil(metrics.stringWidth(paragraph) / (double) WRAP_GUESS));
+                    }
+                    lines -= 1;
+                    java.awt.Insets insets = getInsets();
+                    preferred.height = Math.max(preferred.height, lines * metrics.getHeight() + insets.top
+                            + insets.bottom);
+                }
                 return new Dimension(Math.min(preferred.width, 40), preferred.height);
             }
 
@@ -240,6 +253,9 @@ public final class Comic {
         area.setBorder(BorderFactory.createEmptyBorder());
         return area;
     }
+
+    /** Spaltenbreite, mit der ein noch nicht ausgelegter {@link #wrapped} Text seine Höhe schätzt. */
+    private static final int WRAP_GUESS = 400;
 
     /** Grauer Hinweis unter einem Feld, umbrechend. */
     public static JTextArea hint(String text) {
