@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.app.ui;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
 import java.awt.Color;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -50,13 +49,10 @@ public final class Facts extends JPanel {
         right.fill = GridBagConstraints.HORIZONTAL;
         right.anchor = GridBagConstraints.NORTHWEST;
         right.insets = new Insets(2, 0, 2, 0);
-        JTextField text = new JTextField(value == null || value.isEmpty() ? "–" : value);
-        text.setEditable(false);
-        text.setBorder(null);
-        text.setOpaque(false);
-        text.setFont(Comic.regular(12.5f));
-        text.setForeground(color);
-        text.setCaretPosition(0);
+        // Umbrechend statt abgeschnitten: lange Pfade und Adressen bleiben ganz lesbar (Angelo, 09.11.).
+        javax.swing.JTextArea text = Comic.wrapped(value == null || value.isEmpty() ? "–" : value, color, 12.5f);
+        text.setToolTipText(value == null || value.isEmpty() ? null : value);
+        text.setFocusable(true); // per Tab erreichbar, markieren und mit Strg+C kopieren wie das Textfeld zuvor
         super.add(text, right);
         if (action != null) {
             GridBagConstraints trailing = new GridBagConstraints();

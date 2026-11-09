@@ -53,6 +53,45 @@ class SourceFormLayoutTest {
         check(null, true, screenshot == null ? null : screenshot.replace(".png", "-keepass.png"));
     }
 
+    /**
+     * Eine Meldung nach „Verbindung testen“ nimmt nur die Höhe ihres Texts ein, schon beim ersten Einblenden; das
+     * Formular bleibt sichtbar und bedienbar (Angelo, 09.11. 20:19: Die Box füllte den ganzen Dialog).
+     */
+    @Test
+    void aMessageKeepsTheFormVisibleOnFirstAppearance() throws Exception {
+        AppContext context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home),
+                home.resolve("app.yml"), "test");
+        try {
+            java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+            SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+            assertThat(started.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            SwingUtilities.invokeAndWait(() -> {
+                SourceForm form = new SourceForm(context);
+                JComponent root = form.component();
+                root.setSize(form.preferredSize());
+                // Wie im angezeigten Dialog: Die noch unsichtbare Meldung wird mit Breite 0 mit ausgelegt.
+                root.addNotify();
+                root.validate();
+                JScrollPane scroll = find(root, JScrollPane.class).get(0);
+                int before = scroll.getHeight();
+
+                form.feedback.warning("Verbindung fehlgeschlagen", "Zertifikat fehlt oder wird nicht vertraut");
+                root.validate();
+
+                int line = form.feedback.getFontMetrics(Comic.regular(12.5f)).getHeight();
+                assertThat(form.feedback.getHeight()).as("Meldung nur so hoch wie Überschrift und eine Zeile Text")
+                        .isLessThanOrEqualTo(3 * line + 40);
+                assertThat(scroll.getY()).as("Formular beginnt oben").isZero();
+                assertThat(scroll.getHeight()).as("Formular gibt nur die Höhe der Meldung ab")
+                        .isGreaterThanOrEqualTo(before - form.feedback.getHeight() - 16);
+                assertThat(form.test.getY() + form.test.getParent().getY() + form.test.getParent().getParent().getY())
+                        .as("Knopfleiste bleibt im Fenster").isLessThan(root.getHeight());
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
     private void check(String yaml, boolean keePass, String screenshot) throws Exception {
         Path config = home.resolve("app.yml");
         Files.createDirectories(home);
@@ -87,6 +126,15 @@ class SourceFormLayoutTest {
             assertThat(size.width).isEqualTo(720);
             root.setSize(size);
             layout(root);
+            if (keePass) {
+                // Reihenfolge (Angelo, 09.11.): Art, Zugangsdaten über, KeePass-Eintrag, Anmeldung, Adresse, Name.
+                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.keePassEntry, root),
+                        y(form.auth, root), y(form.baseUrl, root), y(form.title, root)))
+                        .as("Anmeldung vor Adresse und Name").isSorted();
+            } else {
+                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.auth, root), y(form.baseUrl, root),
+                        y(form.title, root))).as("Anmeldung vor Adresse und Name").isSorted();
+            }
 
             JScrollPane scroll = find(root, JScrollPane.class).get(0);
             JViewport viewport = scroll.getViewport();
@@ -144,6 +192,11 @@ class SourceFormLayoutTest {
         } finally {
             context.shutdown();
         }
+    }
+
+    /** Senkrechte Lage eines Felds im Fenster, für die Reihenfolge der Zeilen. */
+    private static int y(Component field, Component root) {
+        return SwingUtilities.convertPoint(field.getParent(), field.getLocation(), root).y;
     }
 
     private static boolean visible(Component component) {
