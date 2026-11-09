@@ -65,11 +65,16 @@ class TermConfiguration {
                 reader.getIfAvailable()), relations, termsVersion(sentences), Clock.systemUTC());
     }
 
+    /** Ergebnis-Cache der KI-Akronymauflösung neben der Beziehungsablage; auch „Daten bereinigen“ leert ihn. */
+    @Bean
+    FileResolutionCache acronymResolutionCache(
+            @Value("${space-harvester.term-relations.directory:data/term-relations}") Path directory) {
+        return new FileResolutionCache(directory);
+    }
+
     @Bean
     AcronymResolution acronymResolution(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
-                                        TermRelations relations, Jobs jobs,
-                                        @Value("${space-harvester.term-relations.directory:data/term-relations}")
-                                        Path directory,
+                                        TermRelations relations, Jobs jobs, FileResolutionCache resolutions,
                                         ObjectProvider<AcronymExpansionModel> model,
                                         ObjectProvider<SnapshotRepository> repository,
                                         ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
@@ -80,7 +85,7 @@ class TermConfiguration {
         PageTextProjector projector = projector();
         return new AcronymResolution(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), relations,
-                model.getIfAvailable(() -> AcronymExpansionModel.NONE), new FileResolutionCache(directory), jobs,
+                model.getIfAvailable(() -> AcronymExpansionModel.NONE), resolutions, jobs,
                 termsVersion(sentences),
                 Clock.systemUTC());
     }

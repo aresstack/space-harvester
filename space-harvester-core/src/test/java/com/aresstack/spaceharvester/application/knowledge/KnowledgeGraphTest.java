@@ -52,6 +52,22 @@ class KnowledgeGraphTest {
     }
 
     @Test
+    void statementsOfADisabledSourceStayStoredButInvisible() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");
+        KnowledgeGraph withoutWiki = new KnowledgeGraph(store, access, key -> Optional.ofNullable(cache.get(key)),
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
+                (caller, term, sourceId) -> expansions.expansions(caller, term, sourceId),
+                sourceId -> !sourceId.equals("wiki"));
+
+        assertThat(withoutWiki.search(CALLER, "Beleg", 50).hits()).extracting(hit -> hit.page().key().sourceId())
+                .containsExactly("handbuch");
+        assertThat(withoutWiki.pages(CALLER)).extracting(page -> page.key().sourceId()).containsExactly("handbuch");
+        assertThat(store.all()).hasSize(2);
+        assertThat(graph().pages(CALLER)).hasSize(2);
+    }
+
+    @Test
     void theSameWordOnTwoPagesIsOnlyALexicalCandidateNeverAnIdentity() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
         analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");
