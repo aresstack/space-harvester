@@ -1,0 +1,170 @@
+// Übernommen aus aresstack/askai (gradle/oss-licenses.gradle, dort aus dem MainframeMate-Lizenzbaukasten):
+// Sammelt alle Bibliotheken, die die Desktop-App ausliefert, und schreibt oss-licenses.json in die Ressourcen der
+// App für Einstellungen › Bibliotheken. Eigene Module zählen nicht; Gruppen ohne Eintrag in der Tabelle nehmen den
+// Lizenznamen aus dem POM der Bibliothek (oder dem der Eltern-POMs).
+// Vorher in der Wurzel ossLicenseTargetProjectPath setzen.
+
+def ossTargetPath = rootProject.ext.has('ossLicenseTargetProjectPath')
+        ? rootProject.ext.ossLicenseTargetProjectPath.toString()
+        : ':'
+def ossTargetProject = rootProject.project(ossTargetPath)
+def ossOutputDir = ossTargetProject.layout.buildDirectory.dir('generated-resources/oss-licenses').get().asFile
+
+def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
+    group = 'documentation'
+    description = 'Sammelt die ausgelieferten Bibliotheken und schreibt oss-licenses.json für Einstellungen › Bibliotheken.'
+
+    outputs.dir(ossOutputDir)
+    // Auch nach einer reinen Versionsänderung neu erzeugen.
+    outputs.upToDateWhen { false }
+
+    doLast {
+        def knownLicenses = [
+                'org.springframework'        : 'Apache-2.0',
+                'tools.jackson'              : 'Apache-2.0',
+                'com.fasterxml.jackson'      : 'Apache-2.0',
+                'org.apache.commons'         : 'Apache-2.0',
+                'org.apache.poi'             : 'Apache-2.0',
+                'org.apache.pdfbox'          : 'Apache-2.0',
+                'org.apache.lucene'          : 'Apache-2.0',
+                'org.apache.opennlp'         : 'Apache-2.0',
+                'org.apache.logging.log4j'   : 'Apache-2.0',
+                'org.apache.httpcomponents'  : 'Apache-2.0',
+                'io.netty'                   : 'Apache-2.0',
+                'io.projectreactor'          : 'Apache-2.0',
+                'org.yaml'                   : 'Apache-2.0',
+                'org.jsoup'                  : 'MIT',
+                'org.slf4j'                  : 'MIT',
+                'ch.qos.logback'             : 'EPL-1.0 / LGPL-2.1',
+                'ch.qos.reload4j'            : 'Apache-2.0',
+                'org.maltparser'             : 'BSD-3-Clause',
+                'de.bwaldvogel'              : 'BSD-3-Clause',
+                'tw.edu.ntu.csie'            : 'BSD-3-Clause',
+                'org.junit'                  : 'EPL-2.0',
+                'org.assertj'                : 'Apache-2.0'
+        ]
+
+        def seen = new LinkedHashSet<String>()
+        def entries = []
+
+        // Welche eigenen Module die App einbindet: aus ihrem Laufzeit-Klassenpfad, nicht aus allen Projekten (der
+        // Dienst, das Training und die Vergleichstests liefern nichts in die App).
+        def shipped = [] as Set
+        ossTargetProject.configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+            def component = artifact.id.componentIdentifier
+            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+                shipped << component.projectPath
+            }
+        }
+        // Die Bibliotheksmodule zuerst (alphabetisch), die App zuletzt: „verwendet von“ nennt so das Modul, das die
+        // Bibliothek wirklich braucht, nicht das Bündel, das sie nur mitnimmt.
+        def modules = rootProject.allprojects.findAll { it.path in shipped }.sort { it.path } + [ossTargetProject]
+
+        modules.each { moduleProject ->
+            moduleProject.configurations.each { configuration ->
+                if (!configuration.canBeResolved ||
+                        !(configuration.name in ['runtimeClasspath', 'compileClasspath'])) {
+                    return
+                }
+                try {
+                    configuration.resolvedConfiguration.resolvedArtifacts.each { artifact ->
+                        if (artifact.id.componentIdentifier instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+                            return
+                        }
+                        def id = artifact.moduleVersion.id
+                        def key = "${id.group}:${id.name}:${id.version}"
+                        if (seen.add(key)) {
+                            def license = 'Unknown'
+                            for (mapping in knownLicenses) {
+                                if (id.group == mapping.key || id.group.startsWith(mapping.key + '.')) {
+                                    license = mapping.value
+                                    break
+                                }
+                            }
+                            entries << [
+                                    group   : id.group,
+                                    artifact: id.name,
+                                    version : id.version,
+                                    license : license,
+                                    module  : moduleProject.name
+                            ]
+                        }
+                    }
+                } catch (Exception exception) {
+                    logger.warn("[OSSLicenses] Could not resolve ${moduleProject.path}:${configuration.name}: ${exception.message}")
+                }
+            }
+        }
+
+        // Gruppen ohne Tabelleneintrag: Lizenzname aus dem POM der Bibliothek, sonst aus den Eltern-POMs.
+        def pomCache = [:]
+        def loadPom = { String coordinates ->
+            if (!pomCache.containsKey(coordinates)) {
+                def pom = null
+                try {
+                    def poms = rootProject.configurations.detachedConfiguration(
+                            rootProject.dependencies.create("${coordinates}@pom"))
+                    poms.transitive = false
+                    def files = poms.resolvedConfiguration.lenientConfiguration.files
+                    if (!files.isEmpty()) {
+                        pom = new groovy.xml.XmlSlurper(false, false).parse(files.iterator().next())
+                    }
+                } catch (Exception exception) {
+                    logger.warn("[OSSLicenses] Could not read the POM ${coordinates}: ${exception.message}")
+                }
+                pomCache[coordinates] = pom
+            }
+            return pomCache[coordinates]
+        }
+        entries.findAll { it.license == 'Unknown' }.each { entry ->
+            def coordinates = "${entry.group}:${entry.artifact}:${entry.version}".toString()
+            for (int depth = 0; depth < 6 && coordinates != null; depth++) {
+                def pom = loadPom(coordinates)
+                if (pom == null) {
+                    break
+                }
+                def names = pom.licenses.license.name*.text().collect { it.trim() }.findAll { it }
+                if (!names.isEmpty()) {
+                    entry.license = names.join(' / ')
+                    break
+                }
+                def parent = pom.parent
+                coordinates = parent.artifactId.text()
+                        ? "${parent.groupId.text()}:${parent.artifactId.text()}:${parent.version.text()}".toString()
+                        : null
+            }
+        }
+
+        // Was die App erst zur LAUFZEIT lädt (auf keinem Gradle-Klassenpfad), von Hand gelistet: das Parsermodell
+        // (docs/NLP_MODEL_LICENSE.md), Download nur auf Klick unter Einstellungen › Modelle.
+        def runtimeDownloads = [
+                [group: 'github.com/aresstack/space-harvester', artifact: 'maltparser-de-gsd', version: '1.0.0',
+                 license: 'CC BY-SA 4.0', module: 'nlp-parser (Download auf Klick)']
+        ]
+        runtimeDownloads.each { download ->
+            if (seen.add("${download.group}:${download.artifact}:${download.version}".toString())) {
+                entries << download
+            }
+        }
+
+        entries.sort { left, right ->
+            def groupOrder = left.group <=> right.group
+            if (groupOrder != 0) return groupOrder
+            def artifactOrder = left.artifact <=> right.artifact
+            return artifactOrder != 0 ? artifactOrder : left.version <=> right.version
+        }
+
+        ossOutputDir.mkdirs()
+        def outputFile = new File(ossOutputDir, 'oss-licenses.json')
+        outputFile.setText(new groovy.json.JsonBuilder(entries).toPrettyString(), 'UTF-8')
+        logger.lifecycle("[OSSLicenses] Generated ${outputFile} (${entries.size()} dependencies).")
+    }
+}
+
+// Das erzeugte JSON liegt im normalen Klassenpfad der App.
+ossTargetProject.plugins.withId('java') {
+    ossTargetProject.sourceSets.main.resources.srcDir(ossOutputDir)
+    ossTargetProject.tasks.named('processResources') {
+        dependsOn(ossReportTask)
+    }
+}

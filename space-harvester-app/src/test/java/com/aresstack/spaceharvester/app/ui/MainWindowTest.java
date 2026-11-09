@@ -318,13 +318,25 @@ class MainWindowTest {
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
                     SettingsView.AI, SettingsView.MODELS, SettingsView.NETWORK, SettingsView.CACHE,
-                    SettingsView.SECURITY);
+                    SettingsView.SECURITY, SettingsView.LIBRARIES);
             layoutAll(surface);
             List<Integer> ys = new ArrayList<>();
             for (SettingsNavRow row : settings.navRows()) {
                 ys.add(SwingUtilities.convertPoint(row.getParent(), row.getLocation(), settings.drawer()).y);
             }
             assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
+            // „Bibliotheken“ klebt am Boden des Drawers: unter dem Scrollbereich der Bereiche, über „Zurück“.
+            SettingsNavRow libraries = settings.navRows().get(6);
+            int librariesY = ys.get(6);
+            int backY = SwingUtilities.convertPoint(settings.back.getParent(), settings.back.getLocation(),
+                    settings.drawer()).y;
+            assertThat(librariesY + libraries.getHeight()).isLessThanOrEqualTo(backY);
+            assertThat(backY - librariesY).as("direkt über Zurück").isLessThan(libraries.getHeight() + 24);
+            assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, libraries))
+                    .as("scrollt nicht mit").isNull();
+            assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, settings.navRows().get(0)))
+                    .isNotNull();
+            assertThat(librariesY).isGreaterThan(ys.get(5) + settings.navRows().get(5).getHeight());
             assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
 
             // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.
