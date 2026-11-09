@@ -512,6 +512,16 @@ public final class Workspace {
         return harvester.statementAnalysisJobs().start(caller, scope, options);
     }
 
+    /**
+     * Exportiert vorhandene Analysen als JSON-LD in {@code <Exportordner>/knowledge-graph} (#499, ADR 0024); stößt
+     * nie eine Analyse an. Fortschritt und Abbruch wie bei jedem Auftrag.
+     */
+    public JobStatus startKnowledgeGraphExport(
+            com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase.Scope scope,
+            boolean includeStale) {
+        return harvester.startKnowledgeGraphExport(caller, scope, includeStale);
+    }
+
     /** Fokussierter Teilgraph einer Seite für „Analysen → Graph“; begrenzt, rechtegeprüft, rechnet nie. */
     public GraphNeighbourhood.Subgraph knowledgeGraphOfPage(PageKey key, GraphNeighbourhood.Options options) {
         return new GraphNeighbourhood(harvester.knowledgeGraph()).page(caller, key, options);

@@ -169,6 +169,7 @@ import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
+import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
@@ -282,6 +283,8 @@ public final class Harvester implements AutoCloseable {
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
     private final StatementAnalysisJobs statementAnalysisJobs;
+    private final KnowledgeGraphExportUseCase knowledgeGraphExport;
+    private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -705,6 +708,9 @@ public final class Harvester implements AutoCloseable {
                 }
             }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
                     access, OWNER);
+            this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
+                    key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
+            this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -1278,6 +1284,21 @@ public final class Harvester implements AutoCloseable {
      */
     public StatementAnalysisJobs statementAnalysisJobs() {
         return statementAnalysisJobs;
+    }
+
+    /**
+     * JSON-LD-Export des Knowledge Graph als Auftrag (#499 Abschnitt G, ADR 0024); liest nur vorhandene Analysen und
+     * stößt nie eine an.
+     */
+    public KnowledgeGraphExportUseCase knowledgeGraphExport() {
+        return knowledgeGraphExport;
+    }
+
+    /** Startet den Graph-Export in {@code <exportDirectory>/knowledge-graph}; der Aufrufer wartet nicht. */
+    public JobStatus startKnowledgeGraphExport(AccessContext caller, KnowledgeGraphExportUseCase.Scope scope,
+                                               boolean includeStale) {
+        return knowledgeGraphExport.start(caller,
+                new KnowledgeGraphExportUseCase.Request(scope, includeStale, knowledgeGraphExportDirectory));
     }
 
     /**
