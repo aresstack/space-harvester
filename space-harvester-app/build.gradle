@@ -19,6 +19,9 @@ dependencies {
     // Nur die Bibliothek, nie :space-harvester-server (#103)
     implementation project(':space-harvester-core')
     implementation project(':comic-controls')
+    // Aussagenanalyse auf Knopfdruck (#499, ADR 0024): MaltParser und OpenNLP nur in der App, nie im Core oder Dienst;
+    // das Modell lädt die App erst beim ersten Klick aus <Datenverzeichnis>/nlp-model, nie aus dem Netz
+    implementation project(':nlp-parser')
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     implementation libs.snakeyaml
@@ -42,6 +45,8 @@ dependencies {
     testImplementation 'org.assertj:assertj-core'
     testImplementation testFixtures(project(':space-harvester-core'))
     testImplementation testFixtures(project(':enterprise-ai-sources'))
+    // Kleines MaltParser-Testmodell (nicht das GSD-Modell) für den Adapter-Test
+    testImplementation testFixtures(project(':nlp-parser'))
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
