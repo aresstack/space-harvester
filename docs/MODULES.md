@@ -58,7 +58,7 @@ Kein Paket aus `application`, `source`, `persistence`, `output` oder `embedding`
 
 | Paket | Begründung |
 | --- | --- |
-| `application.*` (access, acquisition, assets, compat, configuration, convert, diagrams, enrichment, export, facts, harvest, images, jobs, navigation, passages, query, ranking, reading, searchrun, signin, snapshot, sources, sync, terms, tree, `ServiceInfo`) | Anwendungsfälle, Ports und Domänentypen; frameworkneutral |
+| `application.*` (access, acquisition, assets, compat, configuration, convert, diagrams, enrichment, export, facts, harvest, images, jobs, knowledge, navigation, passages, query, ranking, reading, searchrun, signin, snapshot, sources, sync, terms, tree, `ServiceInfo`) | Anwendungsfälle, Ports und Domänentypen; frameworkneutral |
 | `source`, `source.confluence`, `source.network` | Quellenadapter (confluence, files, git, ftp, jes, ndv, sharepoint, betaview, outlook, mediawiki; [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md#auswahl)), Proxy/PAC, mTLS, asynchroner Transport; ohne sie kann die Bibliothek nichts ernten |
 | `persistence.lucene`, `persistence.files` | Umsetzung der Ports SnapshotRepository, PageCacheReader, PageSearchIndex, JobStore, SyncBaselineStore, EnrichmentStore, AssetStore |
 | `output.convert`, `output.export` | Konverter JSON/Markdown/DOCX/PDF und Exportdateien |

@@ -35,4 +35,12 @@ class CoreModuleTest {
             .and().doNotHaveFullyQualifiedName(WebClientConfluenceTransport.class.getName() + "$Client")
             .should().dependOnClassesThat().resideInAPackage("org.springframework..")
             .because("Spring WebClient ist die einzige dokumentierte Spring-Abhängigkeit des Core (docs/MODULES.md)");
+
+    @ArchTest
+    static final ArchRule noParserModelInTheCore = noClasses()
+            .should().dependOnClassesThat().resideInAnyPackage("com.aresstack.spaceharvester.nlp..",
+                    "org.maltparser..", "opennlp.tools.postag..", "opennlp.tools.lemmatizer..",
+                    "opennlp.tools.tokenize..")
+            .because("MaltParser und die OpenNLP-Modelle laufen nur in der Desktop-App auf Anforderung (#499, ADR 0024); "
+                    + "der Core kennt nur den Port StatementAnalyzer");
 }
