@@ -45,6 +45,11 @@ class LibrariesViewTest {
                 .as("das Parsermodell, das die App erst auf Klick lädt").extracting(OssLibrary::license)
                 .containsExactly("CC BY-SA 4.0");
         assertThat(all).extracting(OssLibrary::group).doesNotContain("com.aresstack.spaceharvester");
+        // Nur die ausgelieferte Fassung je Bibliothek: was ein Modul für sich allein wählte, zählt nicht.
+        assertThat(all).extracting(OssLibrary::name).doesNotHaveDuplicates();
+        assertThat(all).filteredOn(library -> library.artifact().equals("logback-classic"))
+                .as("Lizenz aus dem POM, nicht aus einer veralteten Tabelle").extracting(OssLibrary::license)
+                .containsExactly("EPL-2.0 / LGPL-2.1-only");
     }
 
     @Test

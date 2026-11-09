@@ -1,7 +1,8 @@
 // Übernommen aus aresstack/askai (gradle/oss-licenses.gradle, dort aus dem MainframeMate-Lizenzbaukasten):
 // Sammelt alle Bibliotheken, die die Desktop-App ausliefert, und schreibt oss-licenses.json in die Ressourcen der
-// App für Einstellungen › Bibliotheken. Eigene Module zählen nicht; Gruppen ohne Eintrag in der Tabelle nehmen den
-// Lizenznamen aus dem POM der Bibliothek (oder dem der Eltern-POMs).
+// App für Einstellungen › Bibliotheken. Eigene Module zählen nicht; maßgeblich ist der aufgelöste
+// Laufzeit-Klassenpfad der App (nur die ausgelieferten Fassungen). Gruppen ohne Eintrag in der Tabelle nehmen den
+// Lizenznamen aus dem POM der Bibliothek (oder dem der Eltern-POMs); in die Tabelle gehören nur sichere Zuordnungen.
 // Vorher in der Wurzel ossLicenseTargetProjectPath setzen.
 
 def ossTargetPath = rootProject.ext.has('ossLicenseTargetProjectPath')
@@ -35,7 +36,6 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
                 'org.yaml'                   : 'Apache-2.0',
                 'org.jsoup'                  : 'MIT',
                 'org.slf4j'                  : 'MIT',
-                'ch.qos.logback'             : 'EPL-1.0 / LGPL-2.1',
                 'ch.qos.reload4j'            : 'Apache-2.0',
                 'org.maltparser'             : 'BSD-3-Clause',
                 'de.bwaldvogel'              : 'BSD-3-Clause',
@@ -47,20 +47,43 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
         def seen = new LinkedHashSet<String>()
         def entries = []
 
-        // Welche eigenen Module die App einbindet: aus ihrem Laufzeit-Klassenpfad, nicht aus allen Projekten (der
-        // Dienst, das Training und die Vergleichstests liefern nichts in die App).
-        def shipped = [] as Set
+        // Maßgeblich ist allein der aufgelöste Laufzeit-Klassenpfad der App: genau die Fassungen, die ins JAR kommen
+        // (nach Konfliktauflösung und Boot-BOM). Was die Bibliotheksmodule für sich allein wählten, zählt nicht,
+        // sonst stünden ältere Fassungen daneben, die nie ausgeliefert werden.
+        def shippedModules = [] as Set
+        def byName = [:]
         ossTargetProject.configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
             def component = artifact.id.componentIdentifier
             if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
-                shipped << component.projectPath
+                shippedModules << component.projectPath
+                return
+            }
+            def id = artifact.moduleVersion.id
+            def key = "${id.group}:${id.name}:${id.version}".toString()
+            if (seen.add(key)) {
+                def license = 'Unknown'
+                for (mapping in knownLicenses) {
+                    if (id.group == mapping.key || id.group.startsWith(mapping.key + '.')) {
+                        license = mapping.value
+                        break
+                    }
+                }
+                def entry = [
+                        group   : id.group,
+                        artifact: id.name,
+                        version : id.version,
+                        license : license,
+                        module  : ossTargetProject.name
+                ]
+                entries << entry
+                byName["${id.group}:${id.name}".toString()] = entry
             }
         }
-        // Die Bibliotheksmodule zuerst (alphabetisch), die App zuletzt: „verwendet von“ nennt so das Modul, das die
-        // Bibliothek wirklich braucht, nicht das Bündel, das sie nur mitnimmt.
-        def modules = rootProject.allprojects.findAll { it.path in shipped }.sort { it.path } + [ossTargetProject]
 
-        modules.each { moduleProject ->
+        // „Verwendet von“: das erste Bibliotheksmodul (alphabetisch), auf dessen Klassenpfad die Bibliothek liegt,
+        // in welcher Fassung auch immer; nur die Zuordnung kommt von dort, nie ein Eintrag. Ohne Treffer bleibt die App.
+        def attributed = [] as Set
+        rootProject.allprojects.findAll { it.path in shippedModules }.sort { it.path }.each { moduleProject ->
             moduleProject.configurations.each { configuration ->
                 if (!configuration.canBeResolved ||
                         !(configuration.name in ['runtimeClasspath', 'compileClasspath'])) {
@@ -72,22 +95,10 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
                             return
                         }
                         def id = artifact.moduleVersion.id
-                        def key = "${id.group}:${id.name}:${id.version}"
-                        if (seen.add(key)) {
-                            def license = 'Unknown'
-                            for (mapping in knownLicenses) {
-                                if (id.group == mapping.key || id.group.startsWith(mapping.key + '.')) {
-                                    license = mapping.value
-                                    break
-                                }
-                            }
-                            entries << [
-                                    group   : id.group,
-                                    artifact: id.name,
-                                    version : id.version,
-                                    license : license,
-                                    module  : moduleProject.name
-                            ]
+                        def name = "${id.group}:${id.name}".toString()
+                        def entry = byName[name]
+                        if (entry != null && attributed.add(name)) {
+                            entry.module = moduleProject.name
                         }
                     }
                 } catch (Exception exception) {
