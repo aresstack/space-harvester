@@ -2,7 +2,11 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
+import com.aresstack.spaceharvester.app.event.Severity;
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
@@ -75,6 +79,18 @@ public final class Explorer {
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
     static final String PAGE_ONLY = "Nur diese Seite herunterladen";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
+    static final String ANALYZE = "Analysieren";
+    static final String ANALYZE_TIP = "Aussagen lokal mit MaltParser analysieren; mehrere Seiten erst nach Bestätigung,"
+            + " Fortschritt unter Aufträge";
+    static final String ANALYZE_PAGE = "Nur diese Seite analysieren";
+    static final String ANALYZE_PAGE_TIP = "Nur diese Seite ohne Unterseiten analysieren; Auftrag startet sofort";
+    static final String ANALYZE_UNAVAILABLE = "Nicht verfügbar: In dieser Installation ist kein Satzanalysator "
+            + "(MaltParser-Modell) eingerichtet";
+    static final String ANALYZE_NOT_STARTED = "Nicht verfügbar: Die Laufzeit ist nicht gestartet";
+    static final String REANALYZE = "Bereits analysierte Seiten erneut analysieren";
+    /** Sicherheitsgrenze: bis hierhin zählt die Schätzung, darüber fragt der Dialog ausdrücklich nach allen Seiten. */
+    static final int ANALYSIS_LIMIT = 500;
+    private static final int NOTICE_MS = 8000;
 
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
     public record Scope(String sourceId, String spaceKey) {
@@ -171,6 +187,59 @@ public final class Explorer {
     private int revealRequest;
     /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
     private int hoverRow = -1;
+    /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
+    private Analyses analyses = new WorkspaceAnalyses();
+    /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
+    private AnalysisConfirmation confirmation = (parent, title, text, action) ->
+            Dialogs.confirm(parent, title, text, REANALYZE, action);
+
+    /** Was „Analysieren“ vom Core braucht. */
+    interface Analyses {
+        /** {@code null}, wenn Analysieren möglich ist, sonst der Grund für den Hinweis am Menüeintrag. */
+        String unavailable();
+
+        StatementAnalysisJobs.Estimate estimate(StatementAnalysisJobs.Scope scope, int limit);
+
+        JobStatus start(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options);
+    }
+
+    /** Fragt vor einem großen Analyseauftrag; {@code null} heißt abgebrochen, sonst „erneut analysieren“. */
+    interface AnalysisConfirmation {
+        Boolean ask(java.awt.Component parent, String title, String text, String action);
+    }
+
+    private final class WorkspaceAnalyses implements Analyses {
+        @Override
+        public String unavailable() {
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                return ANALYZE_NOT_STARTED;
+            }
+            try {
+                return runtime.workspace().statementAnalysisJobsAvailable() ? null : ANALYZE_UNAVAILABLE;
+            } catch (RuntimeException e) {
+                return ANALYZE_UNAVAILABLE;
+            }
+        }
+
+        @Override
+        public StatementAnalysisJobs.Estimate estimate(StatementAnalysisJobs.Scope scope, int limit) {
+            return runtime().workspace().estimateStatementAnalysis(scope, limit);
+        }
+
+        @Override
+        public JobStatus start(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
+            return runtime().workspace().startStatementAnalysis(scope, options);
+        }
+
+        private AppRuntime runtime() {
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                throw new IllegalStateException("Die Laufzeit ist nicht gestartet");
+            }
+            return runtime;
+        }
+    }
 
     public Explorer(AppContext context) {
         this.context = context;
@@ -969,8 +1038,15 @@ public final class Explorer {
         if (!tree.isPathSelected(path)) {
             tree.setSelectionPath(path);
         }
+        javax.swing.JPopupMenu menu = menu(node.item());
+        if (menu.getComponentCount() > 0) {
+            menu.show(tree, event.getX(), event.getY());
+        }
+    }
+
+    /** Das Kontextmenü eines Knotens (für Tests ohne Mausereignis). */
+    javax.swing.JPopupMenu menu(Item item) {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        Item item = node.item();
         if (item instanceof PageItem page) {
             javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
             open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
@@ -982,6 +1058,21 @@ public final class Explorer {
             download.addActionListener(e -> download(item));
             menu.add(download);
         }
+        if (analysisScope(item, false) != null) {
+            String unavailable = analyses.unavailable();
+            javax.swing.JMenuItem analyze = new javax.swing.JMenuItem(ANALYZE);
+            analyze.setEnabled(unavailable == null);
+            analyze.setToolTipText(unavailable == null ? ANALYZE_TIP : unavailable);
+            analyze.addActionListener(e -> analyze(item, false));
+            menu.add(analyze);
+            if (item instanceof PageItem page && !leafPage(page)) {
+                javax.swing.JMenuItem only = new javax.swing.JMenuItem(ANALYZE_PAGE);
+                only.setEnabled(unavailable == null);
+                only.setToolTipText(unavailable == null ? ANALYZE_PAGE_TIP : unavailable);
+                only.addActionListener(e -> analyze(item, true));
+                menu.add(only);
+            }
+        }
         if (item instanceof PageItem page) {
             javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
             only.setToolTipText(PAGE_ONLY_TIP);
@@ -989,9 +1080,116 @@ public final class Explorer {
                     page.pageId(), false));
             menu.add(only);
         }
-        if (menu.getComponentCount() > 0) {
-            menu.show(tree, event.getX(), event.getY());
+        return menu;
+    }
+
+    /** Blattseite: die Quelle sagt ausdrücklich, dass sie keine Kinder hat (wie die Darstellung im Baum). */
+    static boolean leafPage(PageItem page) {
+        return Boolean.FALSE.equals(page.hasChildren());
+    }
+
+    /**
+     * Umfang von „Analysieren“: Blattseite bzw. {@code pageOnly} → nur die Seite, übergeordnete Seite → samt allen
+     * Nachfahren, Space und Quelle vollständig; {@code null} für Hilfseinträge („Weitere laden …“, Hinweise).
+     */
+    static StatementAnalysisJobs.Scope analysisScope(Item item, boolean pageOnly) {
+        return switch (item) {
+            case SourceItem source -> new StatementAnalysisJobs.Scope.Source(source.sourceId());
+            case SpaceItem space -> new StatementAnalysisJobs.Scope.Space(space.sourceId(), space.spaceKey());
+            case PageItem page -> pageOnly || leafPage(page)
+                    ? new StatementAnalysisJobs.Scope.SinglePage(page.sourceId(), page.spaceKey(), page.pageId())
+                    : new StatementAnalysisJobs.Scope.Subtree(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> null;
+        };
+    }
+
+    /**
+     * „Analysieren“: eine einzelne Seite startet sofort; größere Umfänge zählt der Core erst im Hintergrund, dann
+     * fragt der Dialog mit der Zahl (exakt, „mehr als“ oder Schätzung) und „erneut analysieren“.
+     */
+    private void analyze(Item item, boolean pageOnly) {
+        StatementAnalysisJobs.Scope scope = analysisScope(item, pageOnly);
+        if (scope == null) {
+            return;
         }
+        if (scope instanceof StatementAnalysisJobs.Scope.SinglePage) {
+            startAnalysis(scope, StatementAnalysisJobs.Options.DEFAULT);
+            return;
+        }
+        notice("Umfang der Analyse wird ermittelt …", Severity.INFO);
+        String where = analysisWhere(item);
+        Background.run(() -> analyses.estimate(scope, ANALYSIS_LIMIT), estimate -> {
+            if (estimate.exact() && estimate.pages() == 0) {
+                notice("Keine Seiten zum Analysieren", Severity.INFO);
+                return;
+            }
+            Boolean reanalyze = confirmation.ask(tree, ANALYZE, analysisQuestion(estimate, where),
+                    estimate.exceeded() ? "Alle analysieren" : ANALYZE);
+            if (reanalyze == null) {
+                return;
+            }
+            // Über der Grenze hat der Benutzer ausdrücklich alle bestätigt; sonst schützt die Grenze davor, dass
+            // der Umfang bis zum Start unbemerkt wächst (der Auftrag scheitert dann vor der ersten Analyse).
+            startAnalysis(scope, new StatementAnalysisJobs.Options(reanalyze,
+                    estimate.exceeded() ? 0 : ANALYSIS_LIMIT));
+        }, error -> notice("Analyse ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
+    }
+
+    private void startAnalysis(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
+        notice("Analyse wird gestartet …", Severity.INFO);
+        Background.run(() -> analyses.start(scope, options), started -> {
+            notice(scope instanceof StatementAnalysisJobs.Scope.SinglePage ? "Analyse der Seite gestartet"
+                    : "Analyse gestartet", Severity.INFO);
+            if (context.navigator() != null) {
+                context.navigator().showJob(started.id());
+            }
+        }, error -> notice("Analyse ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
+    }
+
+    /** Wo analysiert wird, für den Bestätigungsdialog. */
+    static String analysisWhere(Item item) {
+        return switch (item) {
+            case SourceItem source -> "Quelle „" + source.title() + "“ mit allen Spaces und Seiten";
+            case SpaceItem space -> "Space „" + space + "“ der Quelle " + space.sourceId() + " mit allen Seiten";
+            case PageItem page -> "Seite „" + page.title() + "“ samt allen Unterseiten (Quelle " + page.sourceId()
+                    + (page.spaceKey() == null ? "" : " · Space " + page.spaceKey()) + ")";
+            default -> "";
+        };
+    }
+
+    /** Text des Bestätigungsdialogs: exakte Zahl, „mehr als“ über der Grenze oder Schätzung bei Lücken. */
+    static String analysisQuestion(StatementAnalysisJobs.Estimate estimate, String where) {
+        String pages = Texts.count(estimate.pages(), "Seite", "Seiten");
+        StringBuilder text = new StringBuilder();
+        if (estimate.exceeded()) {
+            text.append("Mehr als ").append(pages).append(" analysieren?");
+        } else if (estimate.incomplete()) {
+            text.append(estimate.pages() == 0 ? "Umfang noch unbekannt (Schätzung). Analysieren?"
+                    : "Etwa " + pages + " analysieren? (Schätzung)");
+        } else {
+            text.append(pages).append(" analysieren?");
+        }
+        text.append("\n\nUmfang: ").append(where).append('.');
+        if (estimate.exceeded()) {
+            text.append("\n\nDas ist mehr als die Sicherheitsgrenze von ").append(ANALYSIS_LIMIT)
+                    .append(" Seiten. Nach Bestätigung werden alle Seiten des Umfangs analysiert.");
+        } else if (estimate.incomplete()) {
+            text.append("\n\nDer Umfang ließ sich nicht vollständig ermitteln; der Auftrag meldet fehlende Teile.");
+        }
+        text.append("\n\nFehlende Inhalte werden dafür heruntergeladen. Die Analyse läuft lokal und braucht Speicher "
+                + "und Rechenzeit; Fortschritt und Abbruch unter Aufträge.");
+        return text.toString();
+    }
+
+    /** Eine kurze Meldung in der Statuszeile (wie beim Herunterladen). */
+    private void notice(String text, Severity severity) {
+        context.events().publish(new StatusMessageEvent(text, NOTICE_MS, severity));
+    }
+
+    /** Für Tests. */
+    void analyses(Analyses analyses, AnalysisConfirmation confirmation) {
+        this.analyses = analyses;
+        this.confirmation = confirmation;
     }
 
     private static void bindEnter(JComponent component, Runnable action) {
