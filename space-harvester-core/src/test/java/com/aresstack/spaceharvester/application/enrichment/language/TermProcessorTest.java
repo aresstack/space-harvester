@@ -35,6 +35,50 @@ class TermProcessorTest {
     }
 
     @Test
+    void wordsCapitalizedOnlyAtTheStartOfAListItemAreNoNouns() {
+        List<TermPayload.Entry> terms = terms("""
+                Erlaubt sind nur geprüfte Belege.
+                Ermöglicht wird der Abruf.
+                Angeboten wird ein Verfahren.
+                Zentral ist die Prüfung.
+                Siehe auch die Prüfung.
+                Bericht
+                Der Bericht wird erstellt.""");
+
+        assertThat(terms).extracting(TermPayload.Entry::normalized)
+                .doesNotContain("erlaubt", "ermöglicht", "angeboten", "zentral", "siehe")
+                .contains("bericht", "belege", "prüfung", "verfahren");
+    }
+
+    @Test
+    void aFirstElementWithHyphenIsNoTermOfItsOwn() {
+        List<TermPayload.Entry> terms = terms("Die Bundes- und Landesbehörden prüfen den Bundes-Haushalt.");
+
+        assertThat(terms).extracting(TermPayload.Entry::normalized).doesNotContain("bundes")
+                .contains("bundes-haushalt");
+    }
+
+    @Test
+    void aGenitiveFoldsIntoTheBaseFormWhenTheBaseFormIsOnThePage() {
+        List<TermPayload.Entry> terms = terms("Der Plan des Haushalts und des Ansatzes. Der Haushalt hat einen Ansatz. "
+                + "Die Prüfung des Vertrags.");
+
+        assertThat(entry(terms, "haushalt", TermKind.NOUN).count()).isEqualTo(2);
+        assertThat(entry(terms, "haushalt", TermKind.NOUN).term()).isEqualTo("Haushalt");
+        assertThat(entry(terms, "ansatz", TermKind.NOUN).count()).isEqualTo(2);
+        assertThat(terms).extracting(TermPayload.Entry::normalized).doesNotContain("haushalts", "ansatzes")
+                .contains("vertrags");
+    }
+
+    @Test
+    void anSPluralIsNoGenitiveAndStaysItsOwnTerm() {
+        List<TermPayload.Entry> terms = terms("Das Auto steht bereit. Die Autos werden geprüft.");
+
+        assertThat(entry(terms, "auto", TermKind.NOUN).count()).isEqualTo(1);
+        assertThat(entry(terms, "autos", TermKind.NOUN).count()).isEqualTo(1);
+    }
+
+    @Test
     void singularAndPluralStayTwoTerms() {
         List<TermPayload.Entry> terms = terms("Der Beleg wird geprüft. Die Belege werden archiviert.");
 
