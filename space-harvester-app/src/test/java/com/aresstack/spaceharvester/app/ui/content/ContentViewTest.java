@@ -158,6 +158,95 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
     }
 
+    @Test
+    void analysesGroupThePageAnalysesAsSubTabsAndLoadTheVisibleOneLazily() throws Exception {
+        PageDetailPanel detail = view.detail();
+        // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
+        assertThat(onEdt(() -> detail.tabs().names()))
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+        assertThat(onEdt(() -> detail.analysisTabs().names()))
+                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
+
+        // „Aussagen“ zeigt bis zur Analyse einen Hinweis; statementsTab ersetzt ihn, null stellt ihn wieder her.
+        assertThat(onEdt(() -> labelText(detail.statements()))).isEqualTo(PageDetailPanel.STATEMENTS_PLACEHOLDER);
+        javax.swing.JPanel plugged = onEdt(javax.swing.JPanel::new);
+        onEdt(() -> {
+            view.statementsTab(plugged);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.statements().getComponentCount())).isEqualTo(1);
+        assertThat(onEdt(() -> detail.statements().getComponent(0))).isSameAs(plugged);
+        onEdt(() -> {
+            detail.statementsTab(null);
+            return null;
+        });
+        assertThat(onEdt(() -> labelText(detail.statements()))).isEqualTo(PageDetailPanel.STATEMENTS_PLACEHOLDER);
+
+        // „Graph“ ebenso: Hinweis, bis knowledgeGraphTab den Wissensgraphen einsetzt.
+        assertThat(onEdt(() -> labelText(detail.knowledgeGraph()))).isEqualTo(PageDetailPanel.GRAPH_PLACEHOLDER);
+        javax.swing.JPanel graph = onEdt(javax.swing.JPanel::new);
+        onEdt(() -> {
+            view.knowledgeGraphTab(graph);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.knowledgeGraph().getComponentCount())).isEqualTo(1);
+        assertThat(onEdt(() -> detail.knowledgeGraph().getComponent(0))).isSameAs(graph);
+        assertThat(onEdt(() -> labelText(detail.statements()))).as("Aussagen unberührt")
+                .isEqualTo(PageDetailPanel.STATEMENTS_PLACEHOLDER);
+        onEdt(() -> {
+            detail.knowledgeGraphTab(null);
+            return null;
+        });
+        assertThat(onEdt(() -> labelText(detail.knowledgeGraph()))).isEqualTo(PageDetailPanel.GRAPH_PLACEHOLDER);
+
+        // Verweise laden erst, wenn der Unterreiter sichtbar wird – auch über den Wechsel des Hauptreiters.
+        String space = space("handbuch");
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        onEdt(() -> {
+            detail.analysisTabs().select("Verweise");
+            view.openPage("handbuch", pages.get(0));
+            return null;
+        });
+        await(() -> detail.shownPage() != null);
+        assertThat(onEdt(() -> detail.references().hint())).as("Unterreiter verdeckt").isBlank();
+        onEdt(() -> {
+            detail.tabs().select("Analysen");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.references().hint())).isNotBlank();
+        assertThat(onEdt(detail::selectedTab)).isEqualTo("Verweise");
+
+        // Haupt- und Unterreiter bleiben beim Laden der nächsten Seite; der sichtbare Unterreiter lädt nach.
+        onEdt(() -> {
+            view.openPage("handbuch", pages.get(1));
+            return null;
+        });
+        await(() -> detail.shownPage() != null && pages.get(1).equals(detail.shownPage().header().metadata().pageId()));
+        await(() -> !detail.references().hint().isBlank());
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
+        assertThat(onEdt(() -> detail.analysisTabs().selected())).isEqualTo("Verweise");
+
+        // Ein Unterreiter über seinen Namen wählt auch den Hauptreiter „Analysen“.
+        onEdt(() -> {
+            detail.selectTab("Text");
+            detail.selectTab("Absätze");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
+        assertThat(onEdt(detail::selectedTab)).isEqualTo("Absätze");
+    }
+
+    private static String labelText(java.awt.Container container) {
+        for (java.awt.Component component : container.getComponents()) {
+            if (component instanceof javax.swing.JLabel label) {
+                return label.getText();
+            }
+        }
+        return null;
+    }
+
     private String space(String sourceId) {
         return context.runtime().workspace().spaces(sourceId).get(0).key();
     }
