@@ -18,4 +18,12 @@ public interface View {
     default JComponent actions() {
         return null;
     }
+
+    /**
+     * Stand des Bereichs (etwa „25 Treffer · weitere vorhanden“) für die Statuszeile des Hauptfensters, links neben
+     * dem Stand der App; {@code null}, wenn er keinen hat. Sichtbar nur, solange der Bereich gezeigt wird.
+     */
+    default JComponent statusInfo() {
+        return null;
+    }
 }
