@@ -467,7 +467,7 @@ public final class PageDetailPanel extends JPanel {
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
-        statementsView.page(null, null);
+        statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
         acronymHint.setText(" ");
         closeAttachmentOverlay();
@@ -510,6 +510,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             feedback.problem(error, Problems.Step.PAGE);
+            statementsView.unavailable();
             page = null;
             acronymHint.setText(" ");
         });

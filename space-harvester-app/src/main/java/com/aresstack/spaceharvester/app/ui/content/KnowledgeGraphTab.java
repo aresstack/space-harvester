@@ -134,11 +134,15 @@ final class KnowledgeGraphTab extends JPanel {
     private Entry entry;
     /** Danach gezielt erweiterte Knoten, in Reihenfolge; Filterwechsel wiederholen auch sie. */
     private final List<String> expansions = new ArrayList<>();
+    /** Gewünschte Erweiterungen inklusive noch laufender; sofort fortgeschrieben, damit keine verloren geht. */
+    private final List<String> requested = new ArrayList<>();
+    /** Ob eine Abfrage läuft; dann ist der Bildschirm nicht auf dem Stand der Filter. */
+    private boolean loading;
     private String focus;
     private String selected;
     private GraphNeighbourhood.Edge selectedEdge;
     private boolean truncated;
-    /** Weggelassene Knoten; nach Erweiterungen eine Untergrenze („mindestens“). */
+    /** Weggelassene Knoten des Einstiegs; nach Erweiterungen nicht mehr genau bekannt ({@link #merged}). */
     private int hidden;
     private boolean merged;
     private int generation;
@@ -263,6 +267,8 @@ final class KnowledgeGraphTab extends JPanel {
         clear();
         entry = null;
         expansions.clear();
+        requested.clear();
+        loading = false;
         if (isShowing() && page != null) {
             showPage();
         } else {
@@ -292,21 +298,24 @@ final class KnowledgeGraphTab extends JPanel {
         load(start, List.of(), true);
     }
 
-    /** Lädt nur die Nachbarn des gewählten Knotens dazu. */
+    /**
+     * Lädt die Nachbarn des gewählten Knotens dazu. Nur wenn die Anzeige auf dem Stand ist (nichts läuft, Filter
+     * unverändert), genügt die eine Abfrage; sonst wiederholt der Reiter Einstieg und alle gewünschten Erweiterungen.
+     */
     private void expandSelected() {
         String nodeId = selected;
         if (nodeId == null || entry == null) {
             return;
         }
-        List<String> next = new ArrayList<>(expansions);
-        next.add(nodeId);
-        load(entry, next, false);
+        requested.add(nodeId);
+        boolean current = !loading && filters().equals(appliedFilters);
+        load(entry, List.copyOf(requested), !current);
     }
 
     /** Filter geändert: dieselbe Einstiegsabfrage samt aller Erweiterungen mit den neuen Filtern. */
     private void reloadFocus() {
         if (entry != null) {
-            load(entry, List.copyOf(expansions), true);
+            load(entry, List.copyOf(requested), true);
         } else if (page != null && pageLoaded) {
             showPage();
         }
@@ -323,6 +332,11 @@ final class KnowledgeGraphTab extends JPanel {
         List<String> steps = List.copyOf(expanded);
         List<String> run = replay || steps.isEmpty() ? steps : List.of(steps.getLast());
         int mine = ++generation;
+        loading = true;
+        if (replay && start != entry) {
+            requested.clear();
+            requested.addAll(steps);
+        }
         status.setText("Lädt Teilgraph …");
         runner.run(() -> {
             Actions current = actionsOrThrow();
@@ -341,19 +355,30 @@ final class KnowledgeGraphTab extends JPanel {
             if (mine != generation) {
                 return;
             }
+            loading = false;
             if (!nodes.isEmpty() || entry != null) {
                 history.push(snapshot());
             }
             entry = start;
             expansions.clear();
-            expansions.addAll(steps);
             this.appliedFilters = filters;
             if (loaded.base() != null) {
                 apply(loaded.base(), false);
             }
-            for (GraphNeighbourhood.Subgraph subgraph : loaded.more()) {
-                apply(subgraph, true);
+            for (int i = 0; i < loaded.more().size(); i++) {
+                String step = run.get(i);
+                // Blenden die Filter den erweiterten Knoten aus, entfällt auch seine Erweiterung.
+                if (!nodes.containsKey(step)) {
+                    continue;
+                }
+                expansions.add(step);
+                apply(loaded.more().get(i), true);
             }
+            if (!replay) {
+                expansions.addAll(0, steps.subList(0, steps.size() - run.size()));
+            }
+            requested.clear();
+            requested.addAll(expansions);
             if (loaded.emptyHint() != null) {
                 details.setText(loaded.emptyHint());
             }
@@ -361,6 +386,11 @@ final class KnowledgeGraphTab extends JPanel {
             canvas.fit();
         }, error -> {
             if (mine == generation) {
+                loading = false;
+                // Anzeige bleibt beim letzten Stand: Filter und Erweiterungen wieder passend dazu.
+                requested.clear();
+                requested.addAll(expansions);
+                restore(appliedFilters);
                 status.setText("Graph nicht geladen: " + Problems.describe(error).title());
             }
         });
@@ -402,10 +432,11 @@ final class KnowledgeGraphTab extends JPanel {
 
     private Filters appliedFilters;
 
+    /** Die Filter, wie sie die Abfrage tatsächlich anwendet („Nur diese Quelle“ nur mit geöffneter Seite). */
     private Filters filters() {
         return new Filters(documents.isSelected(), statements.isSelected(), mentions.isSelected(),
                 roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), stale.isSelected(),
-                thisSource.isSelected());
+                thisSource.isSelected() && page != null);
     }
 
     /** Setzt die Filter ohne neues Laden ({@code setSelected} löst keine ActionListener aus). */
@@ -440,8 +471,9 @@ final class KnowledgeGraphTab extends JPanel {
         }
         truncated = merge ? truncated || subgraph.truncated() : subgraph.truncated();
         // Teilgraphen können dieselben weggelassenen Knoten zählen: nach Erweiterungen nur eine Untergrenze.
-        hidden = merge ? Math.max(hidden, subgraph.hidden()) : subgraph.hidden();
-        merged = merge ? merged || subgraph.hidden() > 0 : false;
+        // Teilgraphen zählen unabhängig voneinander: nach einer Erweiterung keine Zahl mehr behaupten.
+        hidden = merge ? hidden : subgraph.hidden();
+        merged = merge;
         layout(anchor == null ? focus : anchor, subgraph, merge ? before : Set.of());
     }
 
@@ -451,11 +483,17 @@ final class KnowledgeGraphTab extends JPanel {
      * überdeckt; der Ringabstand richtet sich nach der breitesten Beschriftung.
      */
     private void layout(String anchor, GraphNeighbourhood.Subgraph subgraph, Set<String> before) {
-        Point2D center = anchor != null && positions.containsKey(anchor) ? positions.get(anchor)
-                : new Point2D.Double(0, 0);
-        if (anchor != null) {
-            positions.putIfAbsent(anchor, center);
+        if (anchor != null && !positions.containsKey(anchor)) {
+            if (positions.isEmpty()) {
+                positions.put(anchor, new Point2D.Double(0, 0));
+            } else {
+                // Nie auf einen vorhandenen Knoten legen: freien Platz am Rand suchen.
+                place(List.of(anchor), new Point2D.Double(0, 0), -Math.PI / 2, 2 * Math.PI, 2,
+                        widest() + GAP_X, NODE_HEIGHT + GAP_Y);
+            }
         }
+        Point2D center = anchor != null ? positions.computeIfAbsent(anchor, id -> new Point2D.Double(0, 0))
+                : new Point2D.Double(0, 0);
         List<String> near = new ArrayList<>();
         List<String> far = new ArrayList<>();
         for (GraphNeighbourhood.Node node : subgraph.nodes()) {
@@ -556,6 +594,9 @@ final class KnowledgeGraphTab extends JPanel {
         entry = previous.entry();
         expansions.clear();
         expansions.addAll(previous.expansions());
+        requested.clear();
+        requested.addAll(expansions);
+        loading = false;
         appliedFilters = previous.filters();
         restore(previous.filters());
         selected = null;
@@ -751,8 +792,8 @@ final class KnowledgeGraphTab extends JPanel {
             long stalePages = nodes.values().stream().filter(node -> node.page().state() == PageStatements.State.STALE)
                     .map(node -> node.page().key()).distinct().count();
             status.setText(nodes.size() + " Knoten, " + edges.size() + " Kanten"
-                    + (truncated ? " · gekürzt" + (hidden > 0 ? ", " + (merged ? "mindestens " : "") + hidden
-                    + " weitere Knoten" : "")
+                    + (truncated ? " · gekürzt" + (hidden > 0 && !merged ? ", "
+                    + (entry instanceof Entry.Term ? "mindestens " : "") + hidden + " weitere Knoten" : "")
                     + " – gezielt erweitern" : "")
                     + (stalePages > 0 ? " · " + stalePages + " veraltete Seite(n)" : ""));
         }
@@ -764,6 +805,7 @@ final class KnowledgeGraphTab extends JPanel {
         expand.setEnabled(selected != null);
         back.setEnabled(!history.isEmpty());
         pageButton.setEnabled(page != null);
+        thisSource.setEnabled(page != null);
         jump.setEnabled(jumpable(selected == null ? null : nodes.get(selected)));
     }
 
@@ -1141,7 +1183,8 @@ final class KnowledgeGraphTab extends JPanel {
             return switch (column) {
                 case 0 -> from == null ? row.node() : kindLabel(from.kind()) + " " + label(from.id());
                 case 1 -> edge == null ? "–" : typeLabel(edge.type())
-                        + (edge.type().crossPage() ? " (Kandidat)" : "");
+                        + (edge.type() == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE ? " (Kandidat)"
+                        : edge.type() == GraphNeighbourhood.EdgeType.CONFIRMED_TERM_RELATION ? " (bestätigt)" : "");
                 case 2 -> to == null ? "–" : kindLabel(to.kind()) + " " + label(to.id());
                 case 3 -> from == null ? "" : pageLabel(from) + (to != null && !to.page().key().equals(from.page()
                         .key()) ? " → " + pageLabel(to) : "");

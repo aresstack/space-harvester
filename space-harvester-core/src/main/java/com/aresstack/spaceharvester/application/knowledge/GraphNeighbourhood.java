@@ -108,7 +108,8 @@ public class GraphNeighbourhood {
      *
      * @param focus     Ausgangsknoten oder {@code null} bei einem Begriff ohne Treffer
      * @param truncated ob Knoten oder Kanten wegen der Grenzen fehlen
-     * @param hidden    Zahl der weggelassenen sichtbaren Knoten
+     * @param hidden    Zahl der weggelassenen sichtbaren Knoten (bei Begriffen eine Untergrenze: Aussagen zu Treffern
+     *                  jenseits der Grenze sind nicht mitgezählt)
      */
     public record Subgraph(String focus, List<Node> nodes, List<Edge> edges, boolean truncated, int hidden) {
 
@@ -164,7 +165,10 @@ public class GraphNeighbourhood {
         PageGraph.Node document = projection.nodes().getFirst();
         Builder builder = new Builder(options);
         builder.node(node(page, document));
-        List<KnowledgeGraph.Link> links = crossPageAllowed(options) ? graph.links(caller, key) : List.of();
+        // Platz nur freihalten, wenn nach den Filtern Verbindungen übrig bleiben.
+        List<KnowledgeGraph.Link> links = crossPageAllowed(options) ? graph.links(caller, key).stream()
+                .filter(link -> options.types().contains(type(link)) && admitted(link.target(), options))
+                .toList() : List.of();
         if (!links.isEmpty()) {
             builder.reserve(Math.max(1, options.maxNodes() / 5), Math.max(1, options.maxEdges() / 5));
         }
@@ -173,8 +177,49 @@ public class GraphNeighbourhood {
                 .filter(node -> node.kind() == PageGraph.NodeKind.STATEMENT).toList());
         statements.sort(Comparator.comparingInt((PageGraph.Node node) -> rank(page, node))
                 .thenComparingInt(PageGraph.Node::start));
+        statements(builder, page, projection, local, document.id(), statements);
+        // 2. Verbindungen zu anderen Seiten.
+        builder.release();
+        candidates(caller, page, null, links, builder, mentionId -> local.containsKey(mentionId)
+                && attach(builder, page, projection, document.id(), local.get(mentionId)));
+        // 3. Nicht verbrauchter Platz geht zuerst an Aussagen, die in Schritt 1 keinen Platz fanden.
+        statements(builder, page, projection, local, document.id(), statements);
+        // 4. Nominale Bezüge (auch Ketten), dann übrige Erwähnungen.
+        boolean grown = true;
+        while (grown) {
+            grown = false;
+            for (PageGraph.Edge edge : projection.edges()) {
+                if (edge.kind() != PageGraph.EdgeKind.NOMINAL || builder.has(edge.from()) == builder.has(edge.to())) {
+                    continue;
+                }
+                String missing = builder.has(edge.from()) ? edge.to() : edge.from();
+                grown |= builder.connect(edge(edge), node(page, local.get(missing)));
+            }
+        }
+        for (PageGraph.Node mention : projection.nodes()) {
+            if (mention.kind() == PageGraph.NodeKind.MENTION && !builder.connected(mention.id())) {
+                attach(builder, page, projection, document.id(), mention);
+            }
+        }
+        // 5. Kanten zwischen schon aufgenommenen Knoten nachtragen: Rollen zuerst, dann nominale Bezüge.
+        for (boolean roles : new boolean[] {true, false}) {
+            for (PageGraph.Edge edge : projection.edges()) {
+                Edge mapped = edge(edge);
+                boolean wanted = roles ? mapped.type().role() : mapped.type() == EdgeType.NOMINAL;
+                if (wanted && builder.has(edge.from()) && builder.has(edge.to())) {
+                    builder.connect(mapped, node(page, local.get(edge.to())));
+                }
+            }
+        }
+        return builder.build(document.id());
+    }
+
+    /** Aussagen in der gegebenen Reihenfolge, jede mit ihren Rollenkanten und Beteiligten, soweit Platz ist. */
+    private static void statements(Builder builder, KnowledgeGraph.AnalysedPage page, PageGraph projection,
+                                   Map<String, PageGraph.Node> local, String document,
+                                   List<PageGraph.Node> statements) {
         for (PageGraph.Node statement : statements) {
-            if (!attach(builder, page, projection, document.id(), statement)) {
+            if (!attach(builder, page, projection, document, statement)) {
                 continue;
             }
             for (PageGraph.Edge role : projection.edgesOf(statement.id())) {
@@ -183,27 +228,11 @@ public class GraphNeighbourhood {
                 }
             }
         }
-        // 2. Verbindungen zu anderen Seiten.
-        builder.release();
-        candidates(caller, page, null, links, builder, mentionId -> local.containsKey(mentionId)
-                && attach(builder, page, projection, document.id(), local.get(mentionId)));
-        // 3. Nominale Bezüge zwischen und zu Erwähnungen, dann übrige Erwähnungen.
-        for (PageGraph.Edge edge : projection.edges()) {
-            if (edge.kind() == PageGraph.EdgeKind.NOMINAL) {
-                Edge nominal = edge(edge);
-                if (builder.has(edge.from())) {
-                    builder.connect(nominal, node(page, local.get(edge.to())));
-                } else if (builder.has(edge.to())) {
-                    builder.connect(nominal, node(page, local.get(edge.from())));
-                }
-            }
-        }
-        for (PageGraph.Node mention : projection.nodes()) {
-            if (mention.kind() == PageGraph.NodeKind.MENTION && !builder.connected(mention.id())) {
-                attach(builder, page, projection, document.id(), mention);
-            }
-        }
-        return builder.build(document.id());
+    }
+
+    private static EdgeType type(KnowledgeGraph.Link link) {
+        return link.match() == KnowledgeGraph.Match.LEXICAL ? EdgeType.LEXICAL_CANDIDATE
+                : EdgeType.CONFIRMED_TERM_RELATION;
     }
 
     /**
@@ -256,6 +285,14 @@ public class GraphNeighbourhood {
             ParsedStatements.Mention mention = hit.mention();
             if (!builder.node(new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(), mention.lemma(),
                     hit.page(), mention.start(), mention.end(), false))) {
+                for (KnowledgeGraph.Participation participation : hit.statements()) {
+                    ParsedStatements.Statement statement = participation.statement();
+                    if (builder.options.types().contains(EdgeType.valueOf(participation.role().name()))) {
+                        builder.omit(new Node(statement.id(), PageGraph.NodeKind.STATEMENT,
+                                statement.predicateText(), statement.predicateLemma(), hit.page(), statement.start(),
+                                statement.end(), statement.core()));
+                    }
+                }
                 continue;
             }
             focus = focus == null ? mention.id() : focus;
@@ -282,8 +319,7 @@ public class GraphNeighbourhood {
                             List<KnowledgeGraph.Link> links, Builder builder,
                             java.util.function.Predicate<String> source) {
         for (KnowledgeGraph.Link link : links) {
-            EdgeType type = link.match() == KnowledgeGraph.Match.LEXICAL ? EdgeType.LEXICAL_CANDIDATE
-                    : EdgeType.CONFIRMED_TERM_RELATION;
+            EdgeType type = type(link);
             if (!builder.options.types().contains(type) || !admitted(link.target(), builder.options)
                     || mentionId != null && !link.mentions().contains(mentionId)) {
                 continue;
@@ -306,6 +342,8 @@ public class GraphNeighbourhood {
                     if (source.test(start)) {
                         builder.connect(new Edge(start, targetId, type, link.term(), null, null, null, false),
                                 targetNode);
+                    } else {
+                        builder.omit(targetNode); // Ausgangserwähnung ohne Platz: Ziel fehlt ebenso
                     }
                 }
             }
@@ -430,6 +468,14 @@ public class GraphNeighbourhood {
         /** Ob der Knoten schon an einer Kante hängt. */
         boolean connected(String id) {
             return linked.contains(id);
+        }
+
+        /** Ein sichtbarer Knoten, der aus Platzgründen gar nicht erst angeboten wird, zählt als weggelassen. */
+        void omit(Node node) {
+            if (node != null && options.kinds().contains(node.kind()) && !nodes.containsKey(node.id())) {
+                omitted.add(node.id());
+                truncated = true;
+            }
         }
 
         /** @return ob der Knoten (jetzt oder schon) im Teilgraphen ist */

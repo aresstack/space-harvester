@@ -61,7 +61,7 @@ class KnowledgeGraphTabTest {
 
         assertThat(actions.calls).containsExactly("page wiki/1", "node " + BELEG);
         assertThat(tab.nodeIds()).contains(DOC, BELEG, OTHER);
-        assertThat(tab.statusText()).contains("1 veraltete Seite(n)").contains("gekürzt, mindestens 4 weitere Knoten");
+        assertThat(tab.statusText()).contains("1 veraltete Seite(n)").contains("gekürzt").doesNotContain("weitere Knoten");
         int candidateRow = -1;
         for (int i = 0; i < tab.tableRows(); i++) {
             if (String.valueOf(tab.tableValue(i, 1)).contains("Kandidat")) {
@@ -176,6 +176,48 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void aSecondExpandWhileTheFirstIsRunningKeepsBothAndAFilterChangeReplaysThem() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+
+        tab.selectNode(BELEG);
+        tab.clickExpand();
+        tab.selectNode(STATEMENT);
+        tab.clickExpand();
+        runner.runAll();
+
+        assertThat(actions.calls).as("zweite Erweiterung wiederholt alles, die erste geht nicht verloren")
+                .containsExactly("page wiki/1", "node " + BELEG, "page wiki/1", "node " + BELEG,
+                        "node " + STATEMENT);
+        assertThat(tab.nodeIds()).contains(OTHER);
+
+        actions.calls.clear();
+        tab.toggleShowStale();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1", "node " + BELEG, "node " + STATEMENT);
+    }
+
+    @Test
+    void confirmedRelationsAreNotLabelledAsCandidates() {
+        actions.confirmed = true;
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.selectNode(BELEG);
+        tab.clickExpand();
+        runner.runAll();
+
+        boolean confirmedRow = false;
+        for (int i = 0; i < tab.tableRows(); i++) {
+            String type = String.valueOf(tab.tableValue(i, 1));
+            assertThat(type).doesNotContain("Kandidat");
+            confirmedRow |= type.equals("Begriffsbeziehung (bestätigt)");
+        }
+        assertThat(confirmedRow).isTrue();
+    }
+
+    @Test
     void closingThePageClearsTableStatusAndButtons() {
         tab.page(WIKI);
         tab.showPageNow();
@@ -193,6 +235,7 @@ class KnowledgeGraphTabTest {
         final List<String> calls = new ArrayList<>();
         boolean empty;
         boolean pageStale;
+        boolean confirmed;
         GraphNeighbourhood.Options lastOptions;
 
         @Override
@@ -227,7 +270,9 @@ class KnowledgeGraphTabTest {
             GraphNeighbourhood.Node other = new GraphNeighbourhood.Node(OTHER, PageGraph.NodeKind.MENTION, "Beleg",
                     "Beleg", OTHER_REF, 20, 25, false);
             return new GraphNeighbourhood.Subgraph(BELEG, List.of(beleg, other), List.of(
-                    new GraphNeighbourhood.Edge(BELEG, OTHER, GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE, "beleg",
+                    new GraphNeighbourhood.Edge(BELEG, OTHER, confirmed
+                            ? GraphNeighbourhood.EdgeType.CONFIRMED_TERM_RELATION
+                            : GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE, "beleg",
                             null, null, null, false)), true, 4);
         }
 

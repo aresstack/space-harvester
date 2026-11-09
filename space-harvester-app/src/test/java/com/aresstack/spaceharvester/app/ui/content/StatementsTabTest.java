@@ -119,8 +119,68 @@ class StatementsTabTest {
         runner.runAll();
 
         assertThat(tab.stateLabel()).isEqualTo("Veraltet");
-        assertThat(tab.hintText()).startsWith("Der Text der Seite hat sich seit der Analyse geändert.");
+        assertThat(tab.hintText()).startsWith("Der Text der Seite hat sich seit der Analyse geändert.")
+                .endsWith(StatementsTab.NO_EVIDENCE);
         assertThat(tab.lines()).contains("Kernaussagen");
+        assertThat(tab.lines()).as("alte Spannen nie aus dem neuen Text schneiden")
+                .noneMatch(line -> line.contains("Beleg: „"));
+        assertThat(tab.jumpCount()).isZero();
+    }
+
+    @Test
+    void cancelKeepsAnalyseLockedUntilTheRunHasReallyEnded() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+
+        tab.clickCancel();
+
+        assertThat(tab.analyzeOffered()).as("kein zweiter Lauf, solange der erste noch rechnet").isFalse();
+        assertThat(tab.progressText()).isEqualTo("Wird abgebrochen …");
+        runner.runAll();
+        assertThat(tab.analyzeOffered()).isTrue();
+        assertThat(tab.progressText()).startsWith("Abgebrochen");
+    }
+
+    @Test
+    void reloadingTheSamePageKeepsARunningAnalysis() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+
+        tab.pending(new PageKey("wiki", "1"));
+        tab.page(page("1"), text());
+        runner.runAll();
+
+        assertThat(actions.lastCancelled.getAsBoolean()).isFalse();
+        assertThat(tab.stateLabel()).isEqualTo("Aktuell");
+    }
+
+    @Test
+    void loadingAndFailedPagesClaimNothingAboutTheAnalysis() {
+        tab.pending(new PageKey("wiki", "1"));
+        assertThat(tab.hintText()).isEqualTo(StatementsTab.LOADING_PAGE);
+        assertThat(tab.stateLabel()).isBlank();
+        assertThat(tab.analyzeOffered()).isFalse();
+
+        tab.unavailable();
+        assertThat(tab.hintText()).isEqualTo(StatementsTab.PAGE_UNAVAILABLE);
+    }
+
+    @Test
+    void aNewAnalysisReplacesOpenSyntaxDetails() {
+        actions.stored = analysed();
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickSyntax();
+        runner.runAll();
+        assertThat(tab.syntaxText()).isEqualTo("1\tDer\n");
+
+        actions.syntax = "1\tNeu\n";
+        tab.clickAnalyze();
+        runner.runAll();
+
+        assertThat(tab.syntaxText()).isEqualTo("1\tNeu\n");
     }
 
     @Test
@@ -216,6 +276,9 @@ class StatementsTabTest {
             if (failure != null) {
                 throw failure;
             }
+            if (cancelled.getAsBoolean()) {
+                throw new java.util.concurrent.CancellationException(); // wie der Parser zwischen zwei Sätzen
+            }
             PageStatements result = analysed();
             if (!cancelled.getAsBoolean()) {
                 stored = result;
@@ -223,9 +286,11 @@ class StatementsTabTest {
             return result;
         }
 
+        String syntax = "1\tDer\n";
+
         @Override
         public Optional<String> syntaxDetails(PageSnapshot page) {
-            return Optional.of("1\tDer\n");
+            return Optional.of(syntax);
         }
     }
 

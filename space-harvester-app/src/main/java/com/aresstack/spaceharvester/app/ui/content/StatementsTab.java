@@ -54,6 +54,10 @@ final class StatementsTab extends JPanel {
             + "lokal; beim ersten Mal wird das Modell geladen (einige Sekunden).";
     static final String NOT_AVAILABLE = "In dieser Installation ist kein Parsermodell hinterlegt.";
     static final String RUNNING = "Wird analysiert … (beim ersten Mal wird das Modell geladen)";
+    static final String NO_PAGE = "Keine Seite geladen.";
+    static final String LOADING_PAGE = "Seite wird geladen …";
+    static final String PAGE_UNAVAILABLE = "Seite nicht geladen – Aussagen nicht verfügbar.";
+    static final String NO_EVIDENCE = "Belege und Sprünge entfallen, weil sich der Text geändert hat.";
 
     private final Supplier<Actions> workspace;
     private final Runner runner;
@@ -76,6 +80,9 @@ final class StatementsTab extends JPanel {
     private PageText text;
     /** Steigt bei jeder Seite; Ergebnisse mit anderer Nummer gehören zu einer verlassenen Seite. */
     private int generation;
+    /** Steigt bei jeder Seite und jeder Analyse; späte Syntaxdetails einer früheren Fassung werden verworfen. */
+    private int syntaxGeneration;
+    /** Laufende Analyse; bleibt nach „Abbrechen“ gesetzt, bis ihr Lauf wirklich endet. */
     private AtomicBoolean running;
 
     /** @param workspace die Aktionen der laufenden App oder {@code null}, solange keine läuft */
@@ -145,14 +152,25 @@ final class StatementsTab extends JPanel {
      * Analyse der vorigen Seite wird abgebrochen, ihr Ergebnis verworfen.
      */
     void page(PageSnapshot page, PageText readerText) {
+        if (page != null && sameRunningPage(page.key())) {
+            // Dieselbe Seite neu geladen (Anmeldung, „Aktualität prüfen“): die laufende Analyse läuft weiter.
+            snapshot = page;
+            text = readerText;
+            return;
+        }
+        if (page == null) {
+            neutral(NO_PAGE);
+            return;
+        }
         generation++;
+        syntaxGeneration++;
         cancelRun();
         snapshot = page;
         text = readerText;
         syntax.setText("");
         showSyntax(false);
         Actions actions = workspace.get();
-        if (page == null || actions == null) {
+        if (actions == null) {
             render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
             return;
         }
@@ -177,6 +195,45 @@ final class StatementsTab extends JPanel {
         });
     }
 
+    /**
+     * Eine Seite wird geladen: neutraler Zustand ohne Aussage über die Analyse. Läuft gerade eine Analyse genau
+     * dieser Seite, bleibt sie und ihr Stand stehen.
+     */
+    void pending(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        if (key != null && sameRunningPage(key)) {
+            return;
+        }
+        neutral(LOADING_PAGE);
+    }
+
+    /** Die Seite konnte nicht geladen werden: keine Aussage über ihre Analyse. */
+    void unavailable() {
+        neutral(PAGE_UNAVAILABLE);
+    }
+
+    private boolean sameRunningPage(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return running != null && !running.get() && snapshot != null && snapshot.key().equals(key);
+    }
+
+    private void neutral(String message) {
+        generation++;
+        syntaxGeneration++;
+        cancelRun();
+        snapshot = null;
+        text = null;
+        syntax.setText("");
+        showSyntax(false);
+        syntaxPanel.setVisible(false);
+        list.removeAll();
+        lines.clear();
+        jumps.clear();
+        setState(" ", Comic.MUTED);
+        hint.setText(message);
+        analyze.setEnabled(false);
+        list.revalidate();
+        list.repaint();
+    }
+
     private void analyze() {
         Actions actions = workspace.get();
         PageSnapshot page = snapshot;
@@ -197,7 +254,13 @@ final class StatementsTab extends JPanel {
             if (mine != generation) {
                 return;
             }
+            // Neue Analyse: Syntaxdetails der vorigen gelten nicht mehr; ein offenes Feld lädt neu.
+            syntaxGeneration++;
+            syntax.setText("");
             render(loaded.statements(), loaded.links());
+            if (syntaxPanel.getComponentCount() > 1) {
+                loadSyntax();
+            }
         }, error -> {
             finished(cancelled);
             if (mine != generation) {
@@ -214,42 +277,52 @@ final class StatementsTab extends JPanel {
         });
     }
 
+    /** Der Lauf ist wirklich zu Ende: erst jetzt ist „Analysieren“ wieder möglich. */
     private void finished(AtomicBoolean run) {
         if (running == run) {
             running = null;
-            analyze.setEnabled(true);
+            analyze.setEnabled(snapshot != null);
             cancel.setVisible(false);
             progress.setText(" ");
         }
     }
 
+    /**
+     * Bittet die laufende Analyse aufzuhören. Bis ihr Lauf endet ({@link #finished}), bleibt „Analysieren“ gesperrt:
+     * nie zwei Läufe zugleich, und ein abgebrochener Lauf überschreibt keinen neuen.
+     */
     private void cancelRun() {
         AtomicBoolean run = running;
-        if (run != null) {
+        if (run != null && !run.get()) {
             run.set(true);
-            running = null;
-            analyze.setEnabled(true);
+            analyze.setEnabled(false);
             cancel.setVisible(false);
-            progress.setText(" ");
+            progress.setText("Wird abgebrochen …");
         }
     }
 
     private void toggleSyntax() {
         boolean show = syntaxPanel.getComponentCount() < 2;
         showSyntax(show);
+        if (show && syntax.getText().isEmpty()) {
+            loadSyntax();
+        }
+    }
+
+    private void loadSyntax() {
         Actions actions = workspace.get();
         PageSnapshot page = snapshot;
-        if (!show || actions == null || page == null || !syntax.getText().isEmpty()) {
+        if (actions == null || page == null) {
             return;
         }
-        int mine = generation;
+        int mine = syntaxGeneration;
         runner.run(() -> actions.syntaxDetails(page), raw -> {
-            if (mine == generation) {
+            if (mine == syntaxGeneration) {
                 syntax.setText(raw.orElse("Keine Syntaxdetails gespeichert."));
                 syntax.setCaretPosition(0);
             }
         }, error -> {
-            if (mine == generation) {
+            if (mine == syntaxGeneration) {
                 syntax.setText("Syntaxdetails nicht geladen: " + Problems.describe(error).title());
             }
         });
@@ -293,6 +366,12 @@ final class StatementsTab extends JPanel {
         hint.setText(hint(statements));
         if (statements.analysis() != null) {
             boolean stale = statements.state() == PageStatements.State.STALE;
+            // Spannen gelten nur für denselben Lesetext: aktuell, oder veraltet nur wegen des Analysators.
+            boolean offsets = statements.state() == PageStatements.State.CURRENT
+                    || stale && PageStatements.ANALYZER_CHANGED.equals(statements.reason());
+            if (!offsets) {
+                hint.setText(hint.getText() + " " + NO_EVIDENCE);
+            }
             ParsedStatements result = statements.analysis().result();
             Map<String, ParsedStatements.Mention> mentions = new LinkedHashMap<>();
             result.mentions().forEach(mention -> mentions.put(mention.id(), mention));
@@ -300,19 +379,19 @@ final class StatementsTab extends JPanel {
                     .filter(ParsedStatements.Statement::core).toList();
             List<ParsedStatements.Statement> other = result.statements().stream()
                     .filter(statement -> !statement.core()).toList();
-            section("Kernaussagen", core, result, mentions, stale);
-            section("Weitere Aussagen", other, result, mentions, stale);
+            section("Kernaussagen", core, result, mentions, stale, offsets);
+            section("Weitere Aussagen", other, result, mentions, stale, offsets);
             if (result.statements().isEmpty()) {
                 list.add(Comic.muted("Keine Aussagen mit Vollverb erkannt."));
             }
-            links(links, mentions);
+            links(links, mentions, offsets);
         }
         list.revalidate();
         list.repaint();
     }
 
     private void section(String heading, List<ParsedStatements.Statement> statements, ParsedStatements result,
-                         Map<String, ParsedStatements.Mention> mentions, boolean stale) {
+                         Map<String, ParsedStatements.Mention> mentions, boolean stale, boolean offsets) {
         if (statements.isEmpty()) {
             return;
         }
@@ -322,15 +401,16 @@ final class StatementsTab extends JPanel {
         list.add(label);
         lines.add(heading);
         for (ParsedStatements.Statement statement : statements) {
-            List<String> body = describe(statement, result, mentions, sentence(result, statement));
+            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null);
             lines.add(String.join(" | ", body));
-            list.add(entry(body, stale, span(result, statement)));
+            list.add(entry(body, stale, offsets ? span(result, statement) : null));
             list.add(Box.createVerticalStrut(4));
         }
         list.add(Box.createVerticalStrut(8));
     }
 
-    private void links(List<KnowledgeGraph.Link> links, Map<String, ParsedStatements.Mention> mentions) {
+    private void links(List<KnowledgeGraph.Link> links, Map<String, ParsedStatements.Mention> mentions,
+                       boolean offsets) {
         JLabel label = Comic.text("Verbindungen zu anderen analysierten Seiten");
         label.setFont(Comic.semiBold(13f));
         label.setAlignmentX(LEFT_ALIGNMENT);
@@ -349,7 +429,7 @@ final class StatementsTab extends JPanel {
             List<TermsTab.Span> spans = link.mentions().stream().map(mentions::get).filter(Objects::nonNull)
                     .map(mention -> new TermsTab.Span(mention.start(), mention.end())).toList();
             list.add(entry(List.of(line), link.target().state() == PageStatements.State.STALE,
-                    spans.isEmpty() ? null : spans));
+                    spans.isEmpty() || !offsets ? null : spans));
         }
     }
 
@@ -636,6 +716,22 @@ final class StatementsTab extends JPanel {
 
     void clickCancel() {
         cancel.doClick();
+    }
+
+    String progressText() {
+        return progress.getText();
+    }
+
+    int jumpCount() {
+        return jumps.size();
+    }
+
+    void clickSyntax() {
+        syntaxToggle.doClick();
+    }
+
+    String syntaxText() {
+        return syntax.getText();
     }
 
     void clickFirstEntry() {

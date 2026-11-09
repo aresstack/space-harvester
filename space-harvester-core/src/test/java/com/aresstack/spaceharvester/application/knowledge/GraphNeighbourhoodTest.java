@@ -176,6 +176,7 @@ class GraphNeighbourhoodTest {
     @Test
     void hiddenCountsEachMissingNodeExactlyOnce() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg. Der Kunde prüft den Antrag.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg und den Antrag.");
         PageKey key = new PageKey("wiki", "1");
         GraphNeighbourhood.Options all = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
                 GraphNeighbourhood.MAX_LIMIT, EnumSet.allOf(PageGraph.NodeKind.class),
@@ -187,6 +188,42 @@ class GraphNeighbourhoodTest {
                     GraphNeighbourhood.MAX_LIMIT, all.kinds(), all.types(), true, null, null));
             assertThat(cut.nodes().size() + cut.hidden()).as("Grenze %d", limit).isEqualTo(total);
         }
+    }
+
+    @Test
+    void linksRemovedByFiltersReserveNothingAndUnusedSpaceGoesToStatementsFirst() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            text.append("Der Sachbearbeiter übermittelt den Antrag. ");
+        }
+        text.append("Die Buchhaltung prüft den Beleg.");
+        analyse("wiki", "1", text.toString());
+        analyse("handbuch", "7", "Der Kunde prüft den Beleg.");
+        EnumSet<GraphNeighbourhood.EdgeType> noCrossPage = EnumSet.allOf(GraphNeighbourhood.EdgeType.class);
+        noCrossPage.removeIf(GraphNeighbourhood.EdgeType::crossPage);
+
+        GraphNeighbourhood.Subgraph onlyWiki = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                new GraphNeighbourhood.Options(50, 100, EnumSet.allOf(PageGraph.NodeKind.class),
+                        EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, "wiki", null));
+        GraphNeighbourhood.Subgraph withoutLinks = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                new GraphNeighbourhood.Options(50, 100, EnumSet.allOf(PageGraph.NodeKind.class), noCrossPage, true,
+                        null, null));
+
+        assertThat(onlyWiki.nodes()).extracting(GraphNeighbourhood.Node::id)
+                .containsExactlyElementsOf(withoutLinks.nodes().stream().map(GraphNeighbourhood.Node::id).toList());
+        assertThat(onlyWiki.nodes()).filteredOn(node -> node.kind() == PageGraph.NodeKind.STATEMENT)
+                .as("Aussagen vor bloßen Erwähnungen").hasSizeGreaterThanOrEqualTo(16);
+    }
+
+    @Test
+    void nominalChainsKeepAllTheirEdgesEvenWithoutStatements() {
+        analyse("wiki", "1", "Antrag des Kunden des Amtes.");
+
+        GraphNeighbourhood.Subgraph subgraph = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                GraphNeighbourhood.Options.DEFAULT);
+
+        assertThat(subgraph.edges()).filteredOn(edge -> edge.type() == GraphNeighbourhood.EdgeType.NOMINAL)
+                .hasSize(2);
     }
 
     @Test
