@@ -613,6 +613,36 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Setzt oder entfernt den KeePass-Eintrag einer Quelle ({@code space-harvester-app.source-keepass-entries}, eine
+     * Zeile als Flow-Map); nur der Titel, nie Benutzer oder Geheimnis.
+     *
+     * @param entry Titel oder {@code null} für „Manuell“
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSourceKeePass(Path file, Draft base, String sourceId, String entry) {
+        Map<String, String> entries = new java.util.TreeMap<>(base.settings().sourceKeePass());
+        if (entry == null || entry.isBlank()) {
+            entries.remove(sourceId);
+        } else {
+            entries.put(sourceId, entry.strip());
+        }
+        StringBuilder line = new StringBuilder("source-keepass-entries: {");
+        entries.forEach((id, title) -> line.append(line.charAt(line.length() - 1) == '{' ? "" : ", ")
+                .append(quoted(id)).append(": ").append(quoted(title)));
+        String text = appValue(base.text(), "sourcekeepassentries", entries.isEmpty() ? null : line + "}");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.sourceKeePass().equals(entries)) {
+            throw new IllegalArgumentException("Der KeePass-Eintrag der Quelle ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.source-keepass-entries von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
+    private static String quoted(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
     /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
     static String outputDirectory(String text, String directory) {
         return appValue(text, "outputdirectory", directory == null ? null

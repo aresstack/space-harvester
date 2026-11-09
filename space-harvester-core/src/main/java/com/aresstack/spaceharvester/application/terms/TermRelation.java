@@ -98,6 +98,13 @@ public record TermRelation(String id, String fromTerm, String toTerm, RelationTy
                 createdBy, createdAt, reviewedBy, reviewedAt, revision + 1);
     }
 
+    /** Dieselbe Beziehung ohne die Belege einer Quelle („Daten bereinigen“). */
+    TermRelation withoutEvidenceOf(String sourceId) {
+        List<RelationEvidence> kept = evidence.stream().filter(e -> !e.sourceId().equals(sourceId)).toList();
+        return new TermRelation(id, fromTerm, toTerm, type, scope, origin, status, kept, note, generation,
+                evidenceStale, createdBy, createdAt, reviewedBy, reviewedAt, revision + 1);
+    }
+
     TermRelation stale(boolean stale) {
         return new TermRelation(id, fromTerm, toTerm, type, scope, origin, status, evidence, note, generation, stale,
                 createdBy, createdAt, reviewedBy, reviewedAt, revision + 1);

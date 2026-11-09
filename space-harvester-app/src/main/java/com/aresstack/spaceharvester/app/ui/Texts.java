@@ -81,6 +81,7 @@ public final class Texts {
             case EXPORT -> "Export";
             case ENRICHMENT -> "Anreicherung";
             case ASSETS -> "Bilder beschaffen";
+            case PURGE -> "Daten bereinigen";
         };
     }
 

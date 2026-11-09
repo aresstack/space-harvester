@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query.progressive;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Completion;
@@ -228,6 +229,7 @@ public final class SearchOrchestrator implements AutoCloseable {
         private int successes;
         private int newInWave;
         private boolean budgetHit;
+        private volatile AiServiceException.Reason failure;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -327,7 +329,21 @@ public final class SearchOrchestrator implements AutoCloseable {
                 }
             } catch (RuntimeException | Error e) {
                 LOG.log(System.Logger.Level.WARNING, "Progressive Suche gescheitert ({0})", e.getClass().getName());
+                noteFailure(e);
                 finish(Completion.FAILED);
+            }
+        }
+
+        /** Merkt die Fehlerart; eine Meldung des KI-Dienstes schlägt eine abgelaufene Frist. */
+        private void noteFailure(Throwable e) {
+            for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+                if (t instanceof AiServiceException ai) {
+                    failure = ai.reason();
+                    return;
+                }
+            }
+            if (e instanceof TimeoutException && failure == null) {
+                failure = AiServiceException.Reason.TIMEOUT;
             }
         }
 
@@ -410,6 +426,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 }
             } catch (TimeoutException e) {
                 states.set(index, Status.FAILED);
+                noteFailure(e);
                 late.put(index, future);
                 if (until >= deadline) {
                     budgetHit = true;
@@ -418,6 +435,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             } catch (ExecutionException | CompletionException e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 LOG.log(System.Logger.Level.INFO, "Suchanfrage gescheitert ({0})", cause.getClass().getName());
+                noteFailure(cause);
                 states.set(index, Status.FAILED);
                 publishVariants();
             } catch (InterruptedException e) {
@@ -455,6 +473,12 @@ public final class SearchOrchestrator implements AutoCloseable {
                 iterator.remove();
                 if (!future.isCompletedExceptionally()) {
                     release(entry.getKey(), future.join());
+                } else {
+                    // Eine späte Meldung des KI-Dienstes ersetzt die vorläufige Frist.
+                    future.exceptionally(failure -> {
+                        noteFailure(failure);
+                        return null;
+                    });
                 }
             }
         }
@@ -630,7 +654,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 loads.forEach(this::cancelLoading);
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
-                    Duration.ofNanos(System.nanoTime() - started));
+                    Duration.ofNanos(System.nanoTime() - started), failure);
             record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));

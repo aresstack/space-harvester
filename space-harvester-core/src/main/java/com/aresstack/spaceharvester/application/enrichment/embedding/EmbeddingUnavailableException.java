@@ -6,4 +6,9 @@ public class EmbeddingUnavailableException extends RuntimeException {
     public EmbeddingUnavailableException(String message) {
         super(message);
     }
+
+    /** Mit Ursache, etwa der {@link com.aresstack.spaceharvester.ai.AiServiceException} mit der Fehlerart. */
+    public EmbeddingUnavailableException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

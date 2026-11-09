@@ -405,6 +405,19 @@ public final class Workspace {
         return harvester.sourceManagement().remove(sourceId);
     }
 
+    /**
+     * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
+     * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
+     * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
+     * Der Fortschritt erscheint wie bei jedem Auftrag in Aktivitäten und Statuszeile.
+     */
+    public JobStatus purgeSourceData(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
@@ -753,7 +766,7 @@ public final class Workspace {
     /** Die jüngsten Diagnoseereignisse aller sichtbaren Aufträge dieser App, neueste zuerst. */
     public List<JobEvent> recentEvents(int limit) {
         return harvester.recentEvents(limit).stream()
-                .filter(event -> access.permits(caller, ResourceScope.space(event.sourceId(), event.partitionKey()),
+                .filter(event -> access.permits(caller, scope(event.sourceId(), event.partitionKey()),
                         event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC))
                 .toList();
     }
@@ -879,9 +892,14 @@ public final class Workspace {
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {
-        if (!access.permits(caller, ResourceScope.space(status.sourceId(), status.partitionKey()), kind)) {
+        if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {
             throw new UnknownJobException(status.id());
         }
+    }
+
+    /** Space eines Auftrags oder, ohne Space (etwa „Daten bereinigen“), die ganze Quelle. */
+    private static ResourceScope scope(String sourceId, String partitionKey) {
+        return partitionKey == null ? ResourceScope.source(sourceId) : ResourceScope.space(sourceId, partitionKey);
     }
 
     private void ownExport(String exportId) {

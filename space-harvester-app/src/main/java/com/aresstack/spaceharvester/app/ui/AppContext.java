@@ -533,8 +533,19 @@ public final class AppContext {
         }
         unlockProxy(loaded.proxy().authentication());
         for (AppSettings.SourceEntry entry : loaded.sources()) {
-            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
-                    || !vault.has(entry.id())) {
+            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)) {
+                continue;
+            }
+            String keePassEntry = loaded.keePassEntry(entry.id());
+            // Ein Wert aus JVM-Property oder Umgebung (${VAR}) geht KeePass vor; die App fragt KeePass nur, wenn er fehlt.
+            if (keePassEntry != null && !entry.secretMissing()) {
+                continue;
+            }
+            if (keePassEntry != null) {
+                unlockFromKeePass(entry, keePassEntry);
+                continue;
+            }
+            if (!vault.has(entry.id())) {
                 continue;
             }
             try {
@@ -550,6 +561,36 @@ public final class AppContext {
                         e.getMessage());
             }
         }
+    }
+
+    /**
+     * Passwort bzw. Token einer Quelle aus ihrem KeePass-Eintrag, ohne Kopplungsdialog: Ist die App gekoppelt, gilt
+     * dieselbe Kopplung wie für den KI-Dienst. Ohne Kopplung oder Eintrag fragt die App wie bisher.
+     */
+    private void unlockFromKeePass(AppSettings.SourceEntry entry, String title) {
+        if (!keePass().paired()) {
+            return;
+        }
+        try (com.aresstack.enterpriseai.adyton.VaultEntryDraft read = keePass().readSilently(title)) {
+            char[] value = read.copyPassword();
+            if (value != null && value.length > 0) {
+                secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
+            }
+        } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException | RuntimeException e) {
+            // Nur Quelle und Ausnahmeklasse, nie Eintrag oder Wert.
+            LOG.warn("Zugangsdaten der Quelle {} ließen sich nicht aus KeePass lesen: {}", entry.id(),
+                    e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Ob „KeePass“ überall vorgewählt wird: Die App ist gekoppelt oder KeePass ist schon für den KI-Dienst oder eine
+     * Quelle gewählt; sonst „Manuell“.
+     */
+    public boolean keePassPreferred() {
+        AppSettings current = settings;
+        return keePass().paired() || current != null
+                && (current.aiAccess().fromKeePass() || !current.sourceKeePass().isEmpty());
     }
 
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */

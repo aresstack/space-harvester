@@ -7,7 +7,8 @@ import java.util.Locale;
 
 /**
  * Kopie von {@code ModelPreselection} aus dem Einrichtungsassistenten des Enterprise AI Client (exedra), unverändert bis
- * auf das Paket.
+ * auf das Paket; dazu {@link #present(List, String)} für Rollen, die nur ein vorhandenes Vorzugsmodell vorwählen
+ * (Vision, Rerank), ohne Ersatzwahl.
  * <p>
  * Picks the model the setup wizard selects by itself: keep a current choice that is still offered, else take the
  * preferred model, else the single offered model containing all match words (by default the last path segment of
@@ -61,6 +62,45 @@ final class ModelPreselection {
             }
         }
         return available.get(0);
+    }
+
+    /**
+     * Das angebotene Modell, das dem Vorzugsmodell entspricht, oder leer: ohne Rücksicht auf Groß-/Kleinschreibung,
+     * mit oder ohne Katalogpräfix ({@code <catalog>:}) und auch ohne Anbieterteil ({@code google/}) auf einer der
+     * beiden Seiten. Eine genaue Kennung geht vor einer, die nur ohne Anbieter passt. Keine Ersatzwahl.
+     */
+    static String present(List<String> available, String preferred) {
+        String wanted = preferred == null ? "" : normalized(preferred);
+        if (available == null || wanted.isEmpty()) {
+            return "";
+        }
+        for (String model : available) {
+            if (model != null && normalized(model).equals(wanted)) {
+                return model;
+            }
+        }
+        String wantedTail = tail(wanted);
+        for (String model : available) {
+            if (model != null && !wantedTail.isEmpty() && tail(normalized(model)).equals(wantedTail)) {
+                return model;
+            }
+        }
+        return "";
+    }
+
+    /** Kleingeschrieben, ohne Katalogpräfix vor dem ersten „:“, wenn davor kein „/“ steht. */
+    private static String normalized(String id) {
+        String value = id.trim().toLowerCase(Locale.ROOT);
+        int colon = value.indexOf(':');
+        int slash = value.indexOf('/');
+        if (colon > 0 && (slash < 0 || colon < slash)) {
+            value = value.substring(colon + 1);
+        }
+        return value;
+    }
+
+    private static String tail(String id) {
+        return id.substring(id.lastIndexOf('/') + 1);
     }
 
     private static boolean containsAll(String model, List<String> words) {

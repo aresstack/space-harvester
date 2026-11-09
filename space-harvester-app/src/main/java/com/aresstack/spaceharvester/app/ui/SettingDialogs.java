@@ -1203,8 +1203,15 @@ final class SettingDialogs {
             right.gridx = 1;
             right.gridy = y;
             right.weightx = 1;
-            right.fill = GridBagConstraints.HORIZONTAL;
-            right.insets = new Insets(4, 0, 0, 0);
+            right.anchor = GridBagConstraints.WEST;
+            // Eingaben (Textfeld, Auswahl, Feld mit ▾) füllen die Spalte und beginnen an derselben Kante; ein
+            // einzelner Knopf behält seine Breite.
+            right.fill = field instanceof javax.swing.AbstractButton ? GridBagConstraints.NONE
+                    : GridBagConstraints.HORIZONTAL;
+            // Eine FlowLayout-Zeile beginnt mit ihrem Abstand; zurückgenommen steht sie bündig mit den Feldern.
+            int lead = field instanceof JPanel panel && panel.getLayout() instanceof java.awt.FlowLayout flow
+                    && flow.getAlignment() == java.awt.FlowLayout.LEFT ? flow.getHgap() : 0;
+            right.insets = new Insets(4, -lead, 0, 0);
             add(field, right);
             JLabel hintLabel = Comic.muted(hint == null ? " " : hint);
             GridBagConstraints below = new GridBagConstraints();
@@ -1214,6 +1221,23 @@ final class SettingDialogs {
             below.fill = GridBagConstraints.HORIZONTAL;
             add(hintLabel, below);
             rows.add(new Row(label, field, hintLabel));
+        }
+
+        /**
+         * Eine Zeile über beide Spalten, linksbündig, etwa die aufklappbare Überschrift „▸ Erweitert“; ein- und
+         * ausblenden wie {@link #add}.
+         */
+        void wide(JComponent field) {
+            int y = rows.size() * 2;
+            GridBagConstraints all = new GridBagConstraints();
+            all.gridx = 0;
+            all.gridy = y;
+            all.gridwidth = 2;
+            all.anchor = GridBagConstraints.WEST;
+            all.insets = new Insets(10, 0, 2, 0);
+            add(field, all);
+            JLabel none = new JLabel();
+            rows.add(new Row(none, field, new JLabel()));
         }
 
         private Row find(JComponent field) {

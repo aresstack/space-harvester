@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
@@ -173,6 +175,49 @@ class SourceManagementTest {
             assertThat(sources.enabled("wiki")).isTrue();
             assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10).pages()).hasSize(1);
             assertThatThrownBy(() -> sources.setEnabled("fehlt", true)).isInstanceOf(UnknownSourceException.class);
+        }
+    }
+
+    @Test
+    void purgingDeletesTheDataOfOneSourceAndKeepsTheSourceAndTheOthers() throws Exception {
+        URI elsewhere = URI.create(SERVER.baseUrl().toString().replace("127.0.0.1", "localhost"));
+        SourceSettingsConfig second = new SourceSettingsConfig("zweit", "confluence", "Zweit", elsewhere,
+                SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000"));
+        try (Harvester harvester = Harvester.builder().source(wiki(SERVER.baseUrl())).source(second)
+                .dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30));
+            harvester.await(harvester.sync("zweit", "DEV").id(), Duration.ofSeconds(30));
+
+            JobStatus started = sources.purge("wiki", Harvester.OWNER);
+            assertThat(started.type()).isEqualTo(JobType.PURGE);
+            JobStatus done = harvester.await(started.id(), Duration.ofSeconds(30));
+            assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(done.progress().discovered()).isEqualTo(sources.purgedStores().size());
+            assertThat(done.progress().written()).isEqualTo(sources.purgedStores().size());
+            assertThat(sources.purgedStores()).contains("Seiten-Cache, Katalog und Abgleichstände", "Volltextindex",
+                    "Anhänge und Bilder", "Begriffsbeziehungen", "Geprüfte Fakten", "Aussagen (Knowledge Graph)");
+
+            // Die Quelle bleibt eingerichtet, ihr Bestand ist leer; die andere Quelle behält ihren.
+            assertThat(sources.sources()).extracting(SourceSettingsConfig::id).containsExactly("wiki", "zweit");
+            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
+                    .isInstanceOf(CacheMissException.class);
+            assertThat(harvester.pages().pages(harvester.caller(), "zweit", "DEV", null, 10).pages()).hasSize(1);
+
+            // Auch eine abgeschaltete Quelle lässt sich bereinigen.
+            sources.setEnabled("zweit", false);
+            assertThat(harvester.await(sources.purge("zweit", Harvester.OWNER).id(), Duration.ofSeconds(30))
+                    .state()).isEqualTo(JobState.COMPLETED);
+            sources.setEnabled("zweit", true);
+            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "zweit", "DEV", null, 10))
+                    .isInstanceOf(CacheMissException.class);
+
+            // Danach lässt sich neu einlesen.
+            assertThat(harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10).pages()).hasSize(1);
+            assertThatThrownBy(() -> sources.purge("fehlt", Harvester.OWNER))
+                    .isInstanceOf(UnknownSourceException.class);
         }
     }
 

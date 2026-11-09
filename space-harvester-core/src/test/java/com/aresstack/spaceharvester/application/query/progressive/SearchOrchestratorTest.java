@@ -169,6 +169,49 @@ class SearchOrchestratorTest {
                 KeywordSearch.Query.of(ORIGINAL), SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
 
         assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isNull();
+    }
+
+    @Test
+    void aFailedSearchNamesTheKindOfFailureTheAiServiceReported() throws Exception {
+        search.onCall(ORIGINAL, () -> {
+            throw new com.aresstack.spaceharvester.ai.AiServiceException(
+                    com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "POST /embeddings: HTTP 401");
+        });
+
+        ProgressiveResult result = orchestrator(List.of(), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isEqualTo(com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED);
+
+        search.onCall(ORIGINAL, () -> { });
+        search.results(ORIGINAL, found("o"));
+        ProgressiveResult fine = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
+        assertThat(fine.failure()).isNull();
+    }
+
+    @Test
+    void aServiceFailureArrivingAfterTheVariantTimeoutReplacesTheTimeout() throws Exception {
+        search.onCall(ORIGINAL, () -> {
+            try {
+                TimeUnit.MILLISECONDS.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException("weg",
+                    new com.aresstack.spaceharvester.ai.AiServiceException(
+                            com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "HTTP 401"));
+        });
+        SearchProfile profile = SearchProfile.defaults().withBudget(Duration.ofSeconds(5), 12)
+                .withExecution(new SearchExecutionPolicy(1, 1, Duration.ofMillis(50), 0));
+
+        ProgressiveResult result = orchestrator(List.of(), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isEqualTo(com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED);
     }
 
     @Test
