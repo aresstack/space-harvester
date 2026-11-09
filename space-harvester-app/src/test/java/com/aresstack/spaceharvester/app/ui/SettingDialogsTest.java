@@ -318,7 +318,13 @@ class SettingDialogsTest {
             panel[0].pair.doClick();
         });
         await(() -> panel[0].baseUrl.getText().equals("https://kp.example.invalid/v1"));
+        // Der Key des Eintrags steht gelesen, maskiert und schreibgeschützt im Feld, zählt aber nicht als eingetippt.
+        await(() -> panel[0].keyFromKeePass);
         SwingUtilities.invokeAndWait(() -> {
+            assertThat(new String(panel[0].apiKey.getPassword())).isEqualTo("sk-aus-keepass");
+            assertThat(panel[0].apiKey.isEditable()).isFalse();
+            assertThat(panel[0].rows.hint(panel[0].apiKey)).startsWith("Aus KeePass gelesen");
+            assertThat(panel[0].typedKey()).isEmpty();
             assertThat(panel[0].keePassStatus.getText()).startsWith("Gekoppelt");
             assertThat(panel[0].titles).containsExactly("Enterprise AI API");
             panel[0].embeddingModel.setText("text-embedding-3-small");
@@ -338,6 +344,8 @@ class SettingDialogsTest {
             panel[0].entry.getEditor().setItem("Mein Dienst");
             panel[0].save.doClick();
             assertThat(panel[0].feedback.text()).contains("API-Key fehlt");
+            assertThat(panel[0].apiKey.getPassword()).as("der Key des alten Eintrags ist aus dem Feld").isEmpty();
+            assertThat(panel[0].apiKey.isEditable()).isTrue();
             panel[0].apiKey.setText("sk-neu");
             panel[0].save.doClick();
         });
@@ -358,6 +366,36 @@ class SettingDialogsTest {
         context.reload(reloaded::countDown);
         assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(context.aiKeyAvailable()).isFalse();
+    }
+
+    @Test
+    void aKeePassEntryWithoutPasswordStopsSavingWithAClearMessage() throws Exception {
+        FakeKeePass keePass = new FakeKeePass();
+        keePass.entries.put("Ohne Key", new String[] {"https://kp.example.invalid/v1", ""});
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            panel[0].access.setSelectedItem(AiSettingsPanel.KEEPASS);
+            panel[0].pair.doClick();
+        });
+        await(() -> panel[0].titles.contains("Ohne Key"));
+        SwingUtilities.invokeAndWait(() -> panel[0].entry.setSelectedItem("Ohne Key"));
+        await(() -> Boolean.FALSE.equals(panel[0].keePassKeyPresent));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].rows.hint(panel[0].apiKey)).contains("„Ohne Key“ hat kein Passwort");
+            assertThat(panel[0].apiKey.getPassword()).isEmpty();
+            panel[0].embeddingModel.setText("text-embedding-3-small");
+            panel[0].dimensions.setText("1536");
+            panel[0].save.doClick();
+        });
+        awaitFeedback(panel[0], "API-Key fehlt");
+        assertThat(Files.readString(config)).doesNotContain("ai-keepass-entry");
+        // Passwort in KeePass nachgetragen: Der nächste Versuch liest es neu und speichert.
+        keePass.entries.put("Ohne Key", new String[] {"https://kp.example.invalid/v1", "sk-nachgetragen"});
+        SwingUtilities.invokeAndWait(() -> panel[0].save.doClick());
+        awaitFeedback(panel[0], "übernommen");
+        assertThat(Files.readString(config)).contains("ai-keepass-entry: \"Ohne Key\"").doesNotContain("sk-nachgetragen");
     }
 
     @Test
