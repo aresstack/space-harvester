@@ -260,7 +260,7 @@ class SearchViewTest {
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
         await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
-        AbstractButton semantic = button(whole(view[0]), SearchView.SEMANTIC);
+        AbstractButton semantic = view[0].semantic;
         JTable table = find(whole(view[0]), JTable.class).get(0);
         List<String> columns = new ArrayList<>();
         for (int column = 0; column < table.getModel().getColumnCount(); column++) {
@@ -271,6 +271,8 @@ class SearchViewTest {
         // Ohne Embedding-Modell gibt es keine semantische Suche: der Haken ist gesperrt und nennt den Grund.
         assertThat(semantic.isEnabled()).isFalse();
         assertThat(semantic.getToolTipText()).contains("Gesperrt", "Embedding-Modell");
+        // Der Grund steht auch lesbar im Popup der Suchoptionen (#515).
+        assertThat(view[0].semanticNote.getText()).contains("Gesperrt", "Embedding-Modell");
         assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
         assertThat(columns).containsExactly("Titel", "Quelle", "Space", "Auszug", "Geändert");
         assertThat(find(whole(view[0]), AbstractButton.class)).extracting(AbstractButton::getText)
@@ -325,13 +327,11 @@ class SearchViewTest {
         await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
         assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
-        assertThat(view[0].everywhere.isVisible()).isFalse();
         SwingUtilities.invokeAndWait(() -> {
             view[0].scope(List.of(new Explorer.Scope("beta", null)));
             view[0].search("betrieb");
         });
         assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta");
-        assertThat(view[0].everywhere.isVisible()).isTrue();
         assertThat(view[0].chosenSources()).containsExactly("beta");
         assertThat(view[0].chosenSpaces()).isEmpty();
         JTable table = find(whole(view[0]), JTable.class).get(0);
@@ -346,7 +346,7 @@ class SearchViewTest {
         assertThat(sourcesSeen).containsExactly("beta");
         assertThat(view[0].statusText()).doesNotContain("Dateien");
 
-        // „Überall suchen“ hebt die Auswahl auf: Suche ohne sourceIds.
+        // „Überall suchen“ übergeht die Auswahl: Suche ohne sourceIds.
         SwingUtilities.invokeAndWait(() -> {
             view[0].everywhere.doClick();
             view[0].search("betrieb");
@@ -354,6 +354,63 @@ class SearchViewTest {
         assertThat(view[0].chosenSources()).isEmpty();
         assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
         loadAll(table, more, 2 * PAGES_PER_SOURCE);
+    }
+
+    /**
+     * Abnahmetest aus #515: „Überall suchen“ bleibt aktiviert, auch wenn danach andere Knoten im Explorer gewählt
+     * werden, und hebt die Auswahl nicht auf; erst ausgeschaltet gilt wieder die aktuelle Auswahl.
+     */
+    @Test
+    void searchEverywhereStaysOnWhileTheExplorerSelectionChangesAndOffUsesTheCurrentSelection() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
+            view[0].everywhere.doClick();
+            assertThat(view[0].everywhere.isSelected()).isTrue();
+            assertThat(view[0].chosenSources()).isEmpty();
+            // Neue Auswahl im Explorer: die Option bleibt, die nächste Suche geht über alle Quellen.
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            assertThat(view[0].everywhere.isSelected()).isTrue();
+            assertThat(view[0].chosenSources()).isEmpty();
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
+            // Ausgeschaltet gilt sofort die aktuelle (inzwischen andere) Auswahl.
+            view[0].everywhere.doClick();
+            assertThat(view[0].chosenSources()).containsExactly("alpha");
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alpha");
+            // Ohne Auswahl bleibt es bei allen Quellen.
+            view[0].scope(List.of());
+            assertThat(view[0].chosenSources()).isEmpty();
+        });
+    }
+
+    /** Das Popup am Pfeil des Suchfelds trägt die Optionen und Hinweise; Umschalten lässt den Suchtext stehen. */
+    @Test
+    void theOptionsPopupHoldsBothCheckboxesAndTheHintsAndKeepsTheQuery() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(find(view[0].options, AbstractButton.class)).extracting(AbstractButton::getText)
+                    .contains("Überall suchen", SearchView.SEMANTIC);
+            assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
+                    .anySatisfy(text -> assertThat(text).contains("Hinweise zur Suche", "space-harvester://"));
+            assertThat(view[0].optionsButton.getAccessibleContext().getAccessibleName()).isEqualTo("Suchoptionen");
+            // Die Optionen sind Menüpunkte mit dem Modell der Häkchen: per Tastatur erreichbar und gleich geschaltet.
+            javax.swing.JCheckBoxMenuItem item = find(view[0].options, javax.swing.JCheckBoxMenuItem.class).get(0);
+            item.doClick();
+            assertThat(view[0].everywhere.isSelected()).isTrue();
+            item.doClick();
+            // Keine zweite Eingabezeile und keine Umfang-/Modus-Zeile über der Tabelle.
+            assertThat(find(whole(view[0]), javax.swing.JTextField.class)).isEmpty();
+            assertThat(SwingUtilities.isDescendingFrom(view[0].scopeLabel, view[0].component())).isFalse();
+            view[0].search("betrieb");
+            view[0].everywhere.doClick();
+            assertThat(view[0].queryText()).isEqualTo("betrieb");
+        });
     }
 
     private void start(boolean withOffline) throws Exception {
