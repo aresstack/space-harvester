@@ -336,6 +336,7 @@ public final class Explorer {
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());
+        showCurrent.setEnabled(false);
         showCurrent.addActionListener(e -> showCurrent());
         JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
@@ -364,6 +365,7 @@ public final class Explorer {
     /** Merkt sich die in der Leseansicht gezeigte Seite (ohne den Baum zu ändern). */
     public void currentPage(PageNavigation.Position position) {
         this.current = position;
+        showCurrent.setEnabled(position != null);
     }
 
     /** Klappt alle Knoten zu; die Wissensquellen bleiben sichtbar. */
@@ -379,7 +381,13 @@ public final class Explorer {
             return;
         }
         cards.show(deck, TREE);
-        collapseAll();
+        // Beim Zuklappen wandert die Auswahl kurz zur Quelle; das darf den Suchumfang nicht verbreitern.
+        revealing = true;
+        try {
+            collapseAll();
+        } finally {
+            revealing = false;
+        }
         revealPage(current);
     }
 

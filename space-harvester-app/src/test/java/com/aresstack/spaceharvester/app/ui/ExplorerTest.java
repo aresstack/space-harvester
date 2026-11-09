@@ -192,5 +192,27 @@ class ExplorerTest {
         }
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
         assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted);
+
+        // Fadenkreuz bei gewählter Seite: das Zuklappen verbreitert den Suchumfang nicht auf die ganze Quelle.
+        int before = scopeCalls[0];
+        SwingUtilities.invokeAndWait(() -> explorer[0].showCurrentButton().doClick());
+        for (int i = 0; i < 200; i++) {
+            SwingUtilities.invokeAndWait(() -> {
+                javax.swing.tree.TreePath path = explorer[0].tree().getSelectionPath();
+                selected[0] = path == null ? null : ((Explorer.Node) path.getLastPathComponent()).item();
+            });
+            if (selected[0] instanceof Explorer.PageItem page && page.pageId().equals(wanted)) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
+        assertThat(scopeCalls[0]).as("Suchumfang bleibt").isEqualTo(before);
+
+        // Ohne gezeigte Seite (etwa eine Quelle ohne Seitenbaum) hat das Fadenkreuz kein altes Ziel.
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0].currentPage(null);
+            assertThat(explorer[0].showCurrentButton().isEnabled()).isFalse();
+        });
     }
 }

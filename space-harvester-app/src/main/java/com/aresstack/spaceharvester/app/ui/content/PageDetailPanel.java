@@ -327,6 +327,7 @@ public final class PageDetailPanel extends JPanel {
         imagesLoaded = false;
         readingPane.clear(" ");
         breadcrumbs.clear();
+        positionShown.accept(null);
         references.message(" ");
         views = List.of();
         showReader(null, false);
@@ -397,6 +398,7 @@ public final class PageDetailPanel extends JPanel {
         this.page = null;
         readingPane.clear(" ");
         breadcrumbs.clear();
+        positionShown.accept(null);
         references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
