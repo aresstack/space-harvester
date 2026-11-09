@@ -86,7 +86,7 @@ final class SourceForm {
     final PlaceholderField title = new PlaceholderField(24, "");
     /** „Erweitert“ am Ende: Kennung und Zertifikate, die automatisch gesetzt sind und selten jemand ändert. */
     final javax.swing.JButton sourceAdvanced = Comic.disclosure("Erweitert",
-            "Technische Kennung und Zertifikate; alles ist automatisch gesetzt");
+            "Technische Kennung und Serverzertifikate; alles ist automatisch gesetzt");
     private boolean sourceAdvancedOpen;
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
@@ -139,7 +139,6 @@ final class SourceForm {
     final SourceFieldsEditor fields;
     /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
     private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
-    private final JLabel certificateSection = Form.section("Client-Zertifikat");
     private final JLabel trustSection = Form.section("Serverzertifikate");
 
     final ComposerButton test = Comic.button("Verbindung testen", "Spaces live laden, bevor gespeichert wird");
@@ -250,6 +249,20 @@ final class SourceForm {
         form.row("Anmeldung", auth);
         form.row("Benutzer", username);
         form.row("Token", sessionValue, " ");
+        // Das Client-Zertifikat gehört zur Anmeldung und steht sichtbar hier, nicht unter „Erweitert“ (Angelo, 09.11.
+        // 22:34: dort wird es vergessen).
+        form.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
+        form.row("Alias", Comic.fieldWithButton(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
+        form.row("Fingerabdruck", thumbprint, "Optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
+        form.row("PKCS#12-Datei", Comic.fieldWithButton(certificatePath, browse(certificatePath, false)), null);
+        form.row("Passwort-Platzhalter", certificatePasswordVariable,
+                "Java-Property oder Umgebungsvariable mit dem Zertifikatspasswort");
+        chooseCertificate.addActionListener(e -> {
+            String chosen = CertificateChooser.choose(root, alias.getText().trim());
+            if (chosen != null) {
+                alias.setText(chosen);
+            }
+        });
 
         form.header(sourceSection);
         int mainFields = form.reserve(SourceFieldsEditor.ROWS);
@@ -287,20 +300,6 @@ final class SourceForm {
             }
         });
         sourceAdvanced.addActionListener(e -> sourceAdvanced(!sourceAdvancedOpen));
-        form.header(certificateSection);
-        form.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
-        form.row("Alias", Comic.fieldWithButton(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
-        form.row("Fingerabdruck", thumbprint, "Optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
-        form.row("PKCS#12-Datei", Comic.fieldWithButton(certificatePath, browse(certificatePath, false)), null);
-        form.row("Passwort-Platzhalter", certificatePasswordVariable,
-                "Java-Property oder Umgebungsvariable mit dem Zertifikatspasswort");
-        chooseCertificate.addActionListener(e -> {
-            String chosen = CertificateChooser.choose(root, alias.getText().trim());
-            if (chosen != null) {
-                alias.setText(chosen);
-            }
-        });
-
         form.header(trustSection);
         form.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten dieser Quelle glaubt; „Wie für alle Quellen“ "
                 + "ist unter Einstellungen › Serverzertifikate festgelegt, eigene Truststores unter spring.ssl.bundle");
@@ -683,8 +682,7 @@ final class SourceForm {
 
     /** Ob das Feld unter „Erweitert“ steht (dann klappt ein Fehler dort „Erweitert“ auf). */
     private boolean advancedField(JComponent field) {
-        return field == id || field == variable || field == certificate || field == alias || field == thumbprint
-                || field == certificatePath || field == certificatePasswordVariable || field == trust;
+        return field == id || field == variable || field == trust;
     }
 
     boolean sourceAdvancedOpen() {
@@ -1488,15 +1486,15 @@ final class SourceForm {
         boolean login = confluence || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));
         boolean tlsType = confluence || generic && SourceFields.tls(selectedType());
-        // Zertifikate stehen unter „Erweitert“: sichtbar nur aufgeklappt.
-        boolean tls = tlsType && sourceAdvancedOpen;
+        // Das Client-Zertifikat steht bei der Anmeldung; nur die Serverzertifikate liegen unter „Erweitert“.
+        boolean tls = tlsType;
+        boolean trusted = tlsType && sourceAdvancedOpen;
         form.visible(id, sourceAdvancedOpen);
         form.visible(notes, sourceAdvancedOpen);
         aiSection.setVisible(!releaseAdvanced || sourceAdvancedOpen);
         form.visible(release, !releaseAdvanced || sourceAdvancedOpen);
-        loginSection.setVisible(login);
-        certificateSection.setVisible(tls);
-        trustSection.setVisible(tls);
+        loginSection.setVisible(login || tls);
+        trustSection.setVisible(trusted);
         form.visible(auth, login);
         boolean basic = BASIC.equals(auth.getSelectedItem());
         boolean anonymous = NONE.equals(auth.getSelectedItem());
@@ -1529,7 +1527,7 @@ final class SourceForm {
         chooseCertificate.setVisible(windows);
         form.visible(certificatePath, pkcs12);
         form.visible(certificatePasswordVariable, pkcs12);
-        form.visible(trust, tls);
+        form.visible(trust, trusted);
         if (tlsType && PKCS12.equals(certificate.getSelectedItem()) && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");
