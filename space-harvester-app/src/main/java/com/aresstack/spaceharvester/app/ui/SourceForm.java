@@ -122,8 +122,7 @@ final class SourceForm {
     final ComposerButton chooseCertificate = Comic.button("Wählen …",
             "Aus dem Windows-Zertifikatsspeicher wählen (nur öffentliche Zertifikate, keine Schlüssel)");
     /** Freigabe für den KI-Dienst ({@code space-harvester.ai.external-processing-sources}); Vorgabe aus. */
-    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen (Embeddings, "
-            + "Reranking)");
+    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen");
     /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung); unter „Erweitert“. */
     final JTextArea notes = Comic.wrapped("", Comic.TEXT, 12.5f);
     private final Form form = new Form();
@@ -249,7 +248,7 @@ final class SourceForm {
         if (aiConfigured) {
             form.header(aiSection);
             form.row("Freigabe", release, "Vorgabe aus; ohne Freigabe keine Embeddings und kein Reranking für diese "
-                    + "Quelle");
+                    + "Quelle, also keine semantische Suche in ihr");
         }
 
         // Alles Ableitbare steht eingeklappt unter „Erweitert“ (linksbündig wie im Assistenten): die automatisch
