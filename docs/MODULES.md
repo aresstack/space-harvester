@@ -141,7 +141,14 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    - `test`: „Verbindung testen“, live, ohne Ablage.
    - `add` und `change`: an Ort und Stelle; bei neuem Ziel (Typ oder Basisadresse) werden die alten Daten entfernt.
    - `remove`: entfernt die Quelle samt ihrer Daten, also offene Aufträge, Seiten-Cache mit Suchindex und
-     Abgleichständen, Anreicherungen mit Embeddings und Lese-Ansichten sowie Assets. Exporte bleiben mit ihren Bildern.
+     Abgleichständen, Anreicherungen mit Embeddings und Lese-Ansichten, Assets, Begriffsbeziehungen der Quelle samt
+     ihren Belegen, geprüfte Fakten, Aussagen (Knowledge Graph), Füllschlange und Inventurzeitpunkte
+     (`SourceDataStores`). Exporte bleiben mit ihren Bildern.
+   - `purge`: „Daten bereinigen“, löscht dieselben Daten als Auftrag `PURGE` mit Fortschritt je Ablage, behält aber die
+     Quelle mit Einstellungen und Schalter (auch abgeschaltet); andere Quellen bleiben unberührt (`SourceDataPurge`).
+     Im Dienst `DELETE /api/v1/sources/{sourceId}/data` → 202, Stand unter `…/data/purges/{jobId}`, nur für Clients
+     mit `manage-configuration`. Nicht gelöscht: Exporte, Auftragsverlauf, Suchlauf-Protokoll, Git-Arbeitskopien und
+     manuelle, quellübergreifende Begriffsbeziehungen (nur ihre Belege aus der Quelle).
    - `setEnabled`: schaltet eine Quelle ab oder wieder ein (EAC `setEnabled`). Abgeschaltet behält sie Einstellungen und
      Daten, ist für Suche, Lesen, Aufträge und Export aber unbekannt, auch für einen Export aus dem schon eingelesenen
      Stand; ihre offenen Aufträge werden abgebrochen.

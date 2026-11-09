@@ -357,7 +357,8 @@ public final class ActivitiesView implements View {
         JobProgress p = status.progress();
         Step step = Step.of(status.type(), phase, p);
         boolean running = !status.state().terminal();
-        String subject = Texts.type(status.type()) + " " + status.partitionKey();
+        String subject = Texts.type(status.type()) + " "
+                + (status.partitionKey() != null ? status.partitionKey() : status.sourceId());
         String text;
         long done = 0;
         long total = 0;
@@ -912,6 +913,10 @@ public final class ActivitiesView implements View {
                 return new Step((phase == null ? "Anreichern" : phase) + " · " + p.processed() + " von " + total
                         + " Schritten", p.processed(), total);
             }
+            if (type == JobType.PURGE) {
+                return new Step((phase == null ? "Ablagen leeren" : phase) + " · " + p.processed() + " von " + total
+                        + " Ablagen", p.processed(), total);
+            }
             if (type == JobType.ASSETS) {
                 return new Step("Bilder beschaffen · " + p.processed() + " von " + total + " Bildern geprüft, "
                         + p.written() + " abgelegt", p.processed(), total);
@@ -946,6 +951,7 @@ public final class ActivitiesView implements View {
                         "Fehlgeschlagen");
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
+                case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

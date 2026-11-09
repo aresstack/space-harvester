@@ -415,6 +415,44 @@ public class TermRelations {
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
     }
 
+    /**
+     * „Daten bereinigen“ einer Quelle, ohne Rechteprüfung: Beziehungen mit Geltungsbereich in dieser Quelle entfallen
+     * ganz, alle übrigen verlieren ihre Belege aus dieser Quelle. Eine automatische Beziehung (Regel, KI) ohne
+     * verbleibenden Beleg entfällt ebenfalls; eine manuelle, quellübergreifende bleibt, sie stammt vom Bearbeiter.
+     *
+     * @param actor Kennung des Laufs für das Protokoll
+     * @return Anzahl der entfernten Beziehungen
+     */
+    public synchronized int removeSource(String sourceId, String actor) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(actor, "actor");
+        List<TermRelation> put = new ArrayList<>();
+        List<String> removed = new ArrayList<>();
+        List<TermRelationStore.AuditEntry> audit = new ArrayList<>();
+        var now = clock.instant();
+        for (TermRelation relation : store.all()) {
+            boolean scoped = sourceId.equals(relation.scope().sourceId());
+            boolean evidenced = relation.evidence().stream().anyMatch(e -> e.sourceId().equals(sourceId));
+            if (!scoped && !evidenced) {
+                continue;
+            }
+            TermRelation stripped = relation.withoutEvidenceOf(sourceId);
+            if (scoped || stripped.evidence().isEmpty() && relation.origin() != RelationOrigin.MANUAL) {
+                removed.add(relation.id());
+                audit.add(new TermRelationStore.AuditEntry(relation.id(), "purge", actor, now, null,
+                        relation.revision() + 1));
+            } else {
+                put.add(stripped);
+                audit.add(new TermRelationStore.AuditEntry(relation.id(), "purge", actor, now, stripped.status(),
+                        stripped.revision()));
+            }
+        }
+        if (!put.isEmpty() || !removed.isEmpty()) {
+            store.write(put, removed, audit);
+        }
+        return removed.size();
+    }
+
     /** Die Beziehungen einer Herkunft in genau diesem Geltungsbereich, ohne Rechteprüfung; nur für Vorschlagsläufe. */
     List<TermRelation> automatic(RelationOrigin origin, RelationScope scope) {
         List<TermRelation> found = new ArrayList<>();

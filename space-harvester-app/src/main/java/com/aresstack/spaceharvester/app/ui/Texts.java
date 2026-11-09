@@ -82,6 +82,7 @@ public final class Texts {
             case ENRICHMENT -> "Anreicherung";
             case ASSETS -> "Bilder beschaffen";
             case STATEMENT_ANALYSIS -> "Aussagenanalyse";
+            case PURGE -> "Daten bereinigen";
         };
     }
 

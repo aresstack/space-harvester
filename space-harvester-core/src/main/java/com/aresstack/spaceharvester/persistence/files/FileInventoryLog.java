@@ -54,6 +54,20 @@ public final class FileInventoryLog implements InventoryLog {
     @Override
     public synchronized void mark(String sourceId, String spaceKey, Instant at) {
         marks.setProperty(key(sourceId, spaceKey), Objects.requireNonNull(at, "at").toString());
+        store();
+    }
+
+    /** Vergisst die Zeitpunkte aller Spaces einer Quelle („Daten bereinigen“). */
+    public synchronized void removeSource(String sourceId) {
+        String prefix = Objects.requireNonNull(sourceId, "sourceId") + "/";
+        if (marks.stringPropertyNames().stream().noneMatch(key -> key.startsWith(prefix))) {
+            return;
+        }
+        marks.stringPropertyNames().stream().filter(key -> key.startsWith(prefix)).toList().forEach(marks::remove);
+        store();
+    }
+
+    private void store() {
         Path temp = file.resolveSibling(FILE + "." + UUID.randomUUID() + ".tmp");
         try {
             Files.createDirectories(file.getParent());
