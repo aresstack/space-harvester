@@ -102,9 +102,21 @@ final class AiSettingsPanel {
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
+    /** Wiederholt „Modelle laden“ im Assistenten, solange „Modelle“ offen ist und der Dienst nicht erreichbar ist. */
+    final ModelRetry modelRetry;
+    /** Ob „Modelle laden“ über {@link #modelRetry} läuft (Assistent, Schritt „Modelle“ offen) statt einmal. */
+    private boolean autoRetry;
+    /** Grund des letzten gescheiterten Versuchs, für die Statuszeile der Wiederholung. */
+    private String lastFailure = "";
 
     AiSettingsPanel(AppContext context) {
+        this(context, ModelRetry.SWING);
+    }
+
+    /** Mit eigener Zeitplanung für die Wiederholung von „Modelle laden“; für Tests. */
+    AiSettingsPanel(AppContext context, ModelRetry.Scheduler scheduler) {
         this.context = context;
+        this.modelRetry = new ModelRetry(scheduler, this::attemptModels, this::retrying);
         this.modelsFeedback = new Feedback();
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
@@ -438,8 +450,14 @@ final class AiSettingsPanel {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
+            boolean serviceChanged = key.length > 0 || !chosen.equals(shownAccess)
+                    || !java.util.Objects.equals(blankToNull(draft.baseUrl()), blankToNull(current.baseUrl()));
             Arrays.fill(key, '\0');
             save.setEnabled(true);
+            if (serviceChanged) {
+                // Anderer Dienst oder Key: Beim nächsten Betreten von „Modelle“ lädt der Assistent neu.
+                forgetModels();
+            }
             context.reload(() -> {
                 render();
                 if (measured.problem() == null) {
@@ -535,7 +553,8 @@ final class AiSettingsPanel {
                     model);
             return new Measured(withDimensions(draft, String.valueOf(measured)), null);
         } catch (AiServiceException e) {
-            return new Measured(without, "Die Dimension ließ sich nicht messen: " + reason(e) + ".");
+            boolean keyGiven = key.length > 0 || stored != null && stored.length > 0;
+            return new Measured(without, "Die Dimension ließ sich nicht messen: " + reason(e, keyGiven) + ".");
         } catch (RuntimeException e) {
             return new Measured(without, "Die Dimension ließ sich nicht messen: " + Problems.describe(e).title()
                     + ".");
@@ -558,44 +577,111 @@ final class AiSettingsPanel {
                 draft.dimensions(), draft.timeout(), null, Set.of());
     }
 
-    /** {@code AiServiceException.Reason} verständlich, ohne Adresse oder Schlüssel. */
+    static final String UNAUTHENTICATED = "Nicht authentifiziert (401/403): API-Key prüfen";
+    static final String NOT_SIGNED_IN = "Nicht angemeldet – API-Key fehlt";
+    private static final java.util.regex.Pattern HTTP_STATUS = java.util.regex.Pattern.compile("HTTP (\\d{3})");
+
+    /** Wie {@link #reason(AiServiceException, boolean)} mit eingetragenem Key. */
     static String reason(AiServiceException e) {
+        return reason(e, true);
+    }
+
+    /**
+     * {@code AiServiceException.Reason} verständlich, ohne Adresse oder Schlüssel. Abgelehnt ohne Key heißt „nicht
+     * angemeldet“, mit Key „nicht authentifiziert“. Meldet der Core 401/403 noch als unerwartete Antwort, erkennt das
+     * der HTTP-Status in seiner Meldung ({@link #httpStatus(Throwable)}).
+     *
+     * @param keyGiven ob die Anfrage einen API-Key trug
+     */
+    static String reason(AiServiceException e, boolean keyGiven) {
+        if (unauthorized(e)) {
+            return keyGiven ? UNAUTHENTICATED : NOT_SIGNED_IN;
+        }
+        int status = httpStatus(e);
         return switch (e.reason()) {
             case NOT_CONFIGURED -> "kein Dienst eingetragen";
-            case UNAUTHORIZED -> "API-Key abgelehnt";
+            case UNAUTHORIZED -> keyGiven ? UNAUTHENTICATED : NOT_SIGNED_IN;
             case UNREACHABLE -> "Dienst nicht erreichbar";
             case TIMEOUT -> "keine Antwort in der Frist";
-            case INVALID_RESPONSE -> "unerwartete Antwort des Dienstes";
+            case INVALID_RESPONSE -> "unerwartete Antwort des Dienstes" + (status > 0 ? " (HTTP " + status + ")" : "");
         };
+    }
+
+    /** Ob der Dienst den Zugang abgelehnt hat: Grund {@code UNAUTHORIZED} oder HTTP 401/403 in der Meldung. */
+    static boolean unauthorized(Throwable error) {
+        if (!(error instanceof AiServiceException ai)) {
+            return false;
+        }
+        int status = httpStatus(ai);
+        return ai.reason() == AiServiceException.Reason.UNAUTHORIZED || status == 401 || status == 403;
+    }
+
+    /** Ob Warten helfen kann: nur ein nicht erreichbarer oder zu langsamer Dienst. */
+    static boolean retryable(Throwable error) {
+        return error instanceof AiServiceException ai && !unauthorized(ai)
+                && (ai.reason() == AiServiceException.Reason.UNREACHABLE
+                || ai.reason() == AiServiceException.Reason.TIMEOUT);
+    }
+
+    /** Der HTTP-Status aus der Meldung des Core („… HTTP 401“), sonst 0; die Meldung nennt nie den Key. */
+    static int httpStatus(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        if (message == null) {
+            return 0;
+        }
+        java.util.regex.Matcher matcher = HTTP_STATUS.matcher(message);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
     }
 
-    /** Fragt die Modelle mit den aktuellen Eingaben ab; der API-Key bleibt im Speicher. */
-    private void loadModels() {
+    /**
+     * „Modelle laden“: im Assistenten (Schritt „Modelle“ offen) beginnt die Wiederholung neu, mit kurzer Wartezeit;
+     * sonst ein einzelner Versuch.
+     */
+    void loadModels() {
+        if (autoRetry) {
+            modelRetry.start();
+        } else {
+            attemptModels(null);
+        }
+    }
+
+    /**
+     * Fragt die Modelle mit den aktuellen Eingaben ab; der API-Key bleibt im Speicher.
+     *
+     * @param outcome erfährt das Ende, wenn die Wiederholung den Versuch startet; sonst {@code null}
+     */
+    private void attemptModels(ModelRetry.Outcome outcome) {
         AiDraft draft = draft();
         if (blankToNull(draft.baseUrl()) == null) {
             modelsFeedback.warning("Basisadresse fehlt", "Erst die Adresse des KI-Dienstes eintragen.");
+            failed(outcome, false);
             return;
         }
         if (!draft.problems().isEmpty()) {
             modelsFeedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            failed(outcome, false);
             return;
         }
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             modelsFeedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Allgemein.");
+            failed(outcome, false);
             return;
         }
         char[] typed = apiKey.getPassword();
         AiAccess chosenAccess = accessDraft();
         boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
         loadModels.setEnabled(false);
-        modelsFeedback.working("Modelle werden geladen …");
+        modelsFeedback.working(outcome != null && modelRetry.attempts() > 1
+                ? "Modelle werden geladen … (Versuch " + modelRetry.attempts() + ")" : "Modelle werden geladen …");
+        boolean[] keyGiven = {false};
         Background.run(() -> {
             char[] key = currentKey(typed, chosenAccess, knownEntry);
+            keyGiven[0] = key != null && key.length > 0;
             try {
                 return runtime.workspace().aiModels(service(draft, key));
             } finally {
@@ -607,15 +693,53 @@ final class AiSettingsPanel {
             Arrays.fill(typed, '\0');
             loadModels.setEnabled(true);
             showModels(loaded);
+            if (outcome != null) {
+                outcome.succeeded();
+            }
         }, error -> {
             Arrays.fill(typed, '\0');
             loadModels.setEnabled(true);
-            if (error instanceof AiServiceException ai) {
-                modelsFeedback.warning("Modelle nicht geladen", reason(ai) + ".");
-            } else {
-                modelsFeedback.problem(error);
-            }
+            modelsFailed(error, keyGiven[0], outcome);
         });
+    }
+
+    /** Zeigt, warum „Modelle laden“ scheiterte, und sagt der Wiederholung, ob Warten helfen kann. */
+    void modelsFailed(Throwable error, boolean keyGiven, ModelRetry.Outcome outcome) {
+        if (error instanceof AiServiceException ai) {
+            lastFailure = reason(ai, keyGiven);
+            modelsFeedback.warning("Modelle nicht geladen", lastFailure + ".");
+        } else {
+            lastFailure = Problems.describe(error).title();
+            modelsFeedback.problem(error);
+        }
+        failed(outcome, retryable(error));
+    }
+
+    private static void failed(ModelRetry.Outcome outcome, boolean retryable) {
+        if (outcome != null) {
+            outcome.failed(retryable);
+        }
+    }
+
+    /** Statuszeile der Wiederholung: „Versuch 3 – nächster in 20 s …“ mit dem Grund. */
+    private void retrying(int attempt, Duration next) {
+        modelsFeedback.warning("Versuch " + attempt + " – nächster in " + next.toSeconds() + " s …",
+                "Modelle nicht geladen: " + lastFailure + ". „Modelle laden“ versucht es sofort.");
+    }
+
+    /** Beendet die Wiederholung, etwa beim Verlassen von „Modelle“ oder Schließen des Assistenten. */
+    void stopModels() {
+        autoRetry = false;
+        modelRetry.stop();
+    }
+
+    /** Vergisst die geladene Liste, damit der Assistent beim nächsten Betreten von „Modelle“ neu lädt. */
+    private void forgetModels() {
+        loaded = List.of();
+        pickChat.setEnabled(false);
+        pickEmbedding.setEnabled(false);
+        pickRerank.setEnabled(false);
+        pickVision.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
@@ -633,12 +757,15 @@ final class AiSettingsPanel {
     }
 
     /**
-     * Lädt die Modelle einmal von selbst, wenn ein Dienst eingetragen ist und noch nichts geladen wurde; der
+     * Lädt die Modelle von selbst, wenn ein Dienst eingetragen ist und noch nichts geladen wurde, und wiederholt das
+     * bei nicht erreichbarem Dienst langsam ({@link ModelRetry}), bis es gelingt oder {@link #stopModels()} kommt; der
      * Assistent ruft es beim Betreten von „Modelle“ auf, wie der Enterprise AI Client nach dem Verbindungstest.
      */
     void prepareModels() {
-        if (loaded.isEmpty() && loadModels.isEnabled() && blankToNull(baseUrl.getText()) != null) {
-            loadModels();
+        autoRetry = true;
+        if (loaded.isEmpty() && !modelRetry.active() && loadModels.isEnabled()
+                && blankToNull(baseUrl.getText()) != null) {
+            modelRetry.start();
         }
     }
 
@@ -646,6 +773,8 @@ final class AiSettingsPanel {
         this.loaded = List.copyOf(loaded);
         preselect(chatModel, AiModel.CHAT, "chat");
         preselect(embeddingModel, AiModel.EMBEDDING, "embedding");
+        preselectIfPresent(visionModel, "vision");
+        preselectIfPresent(rerankModel, "rerank");
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
@@ -699,6 +828,20 @@ final class AiSettingsPanel {
         List<String> ids = choices(category).stream().map(AiModel::id).toList();
         String chosen = ModelPreselection.choose(ids, field.getText(), preferred.model(kind), preferred.match(kind));
         if (!chosen.isEmpty() && !chosen.equals(field.getText().strip())) {
+            choose(field, chosen);
+        }
+    }
+
+    /**
+     * Vision und Rerank: nur ein leeres Feld, und nur mit dem Vorzugsmodell aus {@code setup-models.properties}, wenn
+     * der Dienst es anbietet ({@link ModelPreselection#present}); keine Ersatzwahl, eine Eingabe bleibt immer.
+     */
+    private void preselectIfPresent(JTextField field, String kind) {
+        if (!field.getText().isBlank()) {
+            return;
+        }
+        String chosen = ModelPreselection.present(loaded.stream().map(AiModel::id).toList(), preferred.model(kind));
+        if (!chosen.isEmpty()) {
             choose(field, chosen);
         }
     }

@@ -67,7 +67,7 @@ final class SetupWizard {
     private static final int SHIP_WIDTH = 190;
 
     private final AppContext context;
-    private final AiSettingsPanel ai;
+    final AiSettingsPanel ai;
     private final JPanel root = new JPanel(new BorderLayout(14, 10));
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
@@ -193,6 +193,7 @@ final class SetupWizard {
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.closed = true;
+                wizard.ai.stopModels();
                 wizard.completed();
             }
         });
@@ -225,6 +226,9 @@ final class SetupWizard {
         }
         if (step == MODELS) {
             ai.prepareModels();
+        } else {
+            // „Modelle laden“ wiederholt sich nur, solange der Schritt offen ist.
+            ai.stopModels();
         }
         refresh();
     }
