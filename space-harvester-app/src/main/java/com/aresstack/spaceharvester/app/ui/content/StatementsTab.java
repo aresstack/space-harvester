@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
@@ -61,6 +62,17 @@ final class StatementsTab extends JPanel {
 
     private final Supplier<Actions> workspace;
     private final Runner runner;
+    /** Installation des Parsermodells; {@code null} in Tests ohne Installation. */
+    private final ParserModelSetup setup;
+    /** Meldung „Parsermodell fehlt“ mit Link, Anleitung und „Jetzt installieren“; sonst unsichtbar. */
+    final JPanel modelBanner = new JPanel(new BorderLayout(0, 6));
+    final JTextArea modelText = note();
+    final JLabel modelLink = new JLabel();
+    final JLabel modelProgress = Comic.muted(" ");
+    final com.aresstack.enterpriseai.ui.comic.control.ComposerButton installModel = Comic.button(
+            ParserModelSetup.INSTALL_NOW, "Lädt das deutsche MaltParser-Modell aus dem GitHub-Release, prüft es und "
+                    + "entpackt es ins Datenverzeichnis");
+    private ParserModelSetup.State modelState = ParserModelSetup.State.INSTALLED;
     private final JLabel state = new JLabel(" ");
     private final JLabel progress = Comic.muted(" ");
     private final JTextArea hint = note();
@@ -87,19 +99,24 @@ final class StatementsTab extends JPanel {
     private AtomicBoolean running;
 
     /** @param workspace die Aktionen der laufenden App oder {@code null}, solange keine läuft */
-    StatementsTab(Supplier<Workspace> workspace) {
+    StatementsTab(Supplier<Workspace> workspace, ParserModelSetup setup) {
         this(() -> Actions.of(workspace.get()), new Runner() {
             @Override
             public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
                 Background.run(work, onSuccess, onFailure);
             }
-        });
+        }, setup);
     }
 
     StatementsTab(Supplier<Actions> workspace, Runner runner) {
+        this(workspace, runner, null);
+    }
+
+    StatementsTab(Supplier<Actions> workspace, Runner runner, ParserModelSetup setup) {
         super(new BorderLayout(0, 10));
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.runner = Objects.requireNonNull(runner, "runner");
+        this.setup = setup;
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         JPanel head = new JPanel(new BorderLayout());
@@ -135,12 +152,113 @@ final class StatementsTab extends JPanel {
         syntaxToggle.addActionListener(e -> toggleSyntax());
         JPanel body = new JPanel(new BorderLayout(0, 8));
         body.setOpaque(false);
-        body.add(hint, BorderLayout.NORTH);
+        JPanel north = new JPanel(new BorderLayout(0, 8));
+        north.setOpaque(false);
+        north.add(modelBanner(), BorderLayout.NORTH);
+        north.add(hint, BorderLayout.CENTER);
+        body.add(north, BorderLayout.NORTH);
         body.add(list, BorderLayout.CENTER);
         body.add(syntaxPanel, BorderLayout.SOUTH);
         add(head, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
         render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
+        if (setup != null) {
+            setup.listen(this::modelStatus);
+        }
+    }
+
+    /** Baut die Meldung „Parsermodell fehlt“ (Strang F stellt sie auf den MessageBanner der Bibliothek um). */
+    private JComponent modelBanner() {
+        modelBanner.setOpaque(true);
+        modelBanner.setBackground(new Color(0xFFF7E6));
+        modelBanner.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 3, 0, 0, Comic.ORANGE),
+                BorderFactory.createEmptyBorder(8, 10, 8, 10)));
+        JLabel heading = Comic.text("Parsermodell nicht installiert");
+        heading.setFont(Comic.semiBold(13f));
+        modelText.setOpaque(false);
+        modelLink.setForeground(Comic.BLUE);
+        modelLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        modelLink.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (setup != null) {
+                    setup.releasePage().ifPresent(StatementsTab::browse);
+                }
+            }
+        });
+        installModel.addActionListener(e -> {
+            if (setup == null) {
+                return;
+            }
+            if (setup.status().state() == ParserModelSetup.State.INSTALLING) {
+                setup.cancel();
+            } else {
+                setup.install();
+            }
+        });
+        JPanel text = new JPanel(new BorderLayout(0, 4));
+        text.setOpaque(false);
+        text.add(heading, BorderLayout.NORTH);
+        text.add(modelText, BorderLayout.CENTER);
+        text.add(modelLink, BorderLayout.SOUTH);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        actions.setOpaque(false);
+        actions.add(installModel);
+        actions.add(modelProgress);
+        modelBanner.add(text, BorderLayout.CENTER);
+        modelBanner.add(actions, BorderLayout.SOUTH);
+        modelBanner.setVisible(false);
+        return modelBanner;
+    }
+
+    /** Stand der Installation: Meldung zeigen, solange das Modell fehlt; nach Erfolg ausblenden. */
+    void modelStatus(ParserModelSetup.Status status) {
+        modelState = status.state();
+        boolean installing = status.state() == ParserModelSetup.State.INSTALLING;
+        boolean show = status.state() == ParserModelSetup.State.NOT_INSTALLED || installing;
+        if (show) {
+            String directory = setup == null ? "" : setup.directory().map(Object::toString).orElse("");
+            modelText.setText("„" + ANALYZE + "“ braucht das deutsche MaltParser-Modell. „"
+                    + ParserModelSetup.INSTALL_NOW + "“ lädt es aus dem GitHub-Release und richtet es ein. Manuell: "
+                    + "die ZIP " + (setup == null ? "" : setup.zipName()) + " von der Release-Seite herunterladen "
+                    + "und nach " + directory + " entpacken.");
+            String page = setup == null ? "" : setup.releasePage().orElse("");
+            modelLink.setText("<html><u>Release-Seite öffnen</u></html>");
+            modelLink.setToolTipText(page);
+            installModel.setText(installing ? ParserModelSetup.CANCEL : ParserModelSetup.INSTALL_NOW);
+            String message = status.message() == null ? " " : status.message();
+            if (installing && status.percent() >= 0) {
+                message = status.percent() + " % – " + message;
+            }
+            modelProgress.setText(message);
+            modelProgress.setForeground(status.failed() ? Comic.ORANGE : Comic.MUTED);
+        }
+        modelBanner.setVisible(show);
+        if (status.state() == ParserModelSetup.State.INSTALLED && NOT_AVAILABLE_MODEL.equals(hint.getText())) {
+            hint.setText(status.message() == null ? " " : status.message());
+        }
+        analyze.setEnabled(running == null && snapshot != null && !show);
+        modelBanner.revalidate();
+        modelBanner.repaint();
+    }
+
+    private static final String NOT_AVAILABLE_MODEL = "Das Parsermodell fehlt; siehe Meldung oben.";
+
+    private boolean modelMissing() {
+        return modelState == ParserModelSetup.State.NOT_INSTALLED
+                || modelState == ParserModelSetup.State.INSTALLING;
+    }
+
+    private static void browse(String target) {
+        try {
+            if (java.awt.Desktop.isDesktopSupported()
+                    && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                java.awt.Desktop.getDesktop().browse(java.net.URI.create(target));
+            }
+        } catch (Exception ignored) {
+            // Ohne Browser bleibt die Adresse im Tooltip lesbar.
+        }
     }
 
     /** Meldet eine neu gespeicherte Analyse (etwa damit der Graph-Reiter neu lädt). */
@@ -169,6 +287,10 @@ final class StatementsTab extends JPanel {
         if (page == null) {
             neutral(NO_PAGE);
             return;
+        }
+        if (setup != null) {
+            // Ein von Hand entpacktes Modell gilt ab der nächsten Seite ohne Neustart.
+            setup.refresh();
         }
         generation++;
         syntaxGeneration++;
@@ -281,7 +403,11 @@ final class StatementsTab extends JPanel {
             }
             progress.setText(error instanceof CancellationException ? "Abgebrochen; die bisherige Analyse bleibt."
                     : " ");
-            if (error instanceof AnalyzerUnavailableException unavailable) {
+            if (error instanceof AnalyzerUnavailableException unavailable && setup != null
+                    && unavailable.reason() == AnalyzerUnavailableException.Reason.MODEL_MISSING) {
+                setup.refresh();
+                hint.setText(NOT_AVAILABLE_MODEL);
+            } else if (error instanceof AnalyzerUnavailableException unavailable) {
                 hint.setText(unavailable.getMessage());
             } else if (!(error instanceof CancellationException)) {
                 hint.setText("Analyse fehlgeschlagen: " + Problems.describe(error).title()
@@ -294,7 +420,7 @@ final class StatementsTab extends JPanel {
     private void finished(AtomicBoolean run) {
         if (running == run) {
             running = null;
-            analyze.setEnabled(snapshot != null);
+            analyze.setEnabled(snapshot != null && !modelMissing());
             cancel.setVisible(false);
             progress.setText(" ");
         }
@@ -366,7 +492,7 @@ final class StatementsTab extends JPanel {
 
     /** Zeigt Stand, Aussagen und Verbindungen; veraltete Aussagen bleiben lesbar, aber ausgegraut. */
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
-        analyze.setEnabled(running == null && snapshot != null);
+        analyze.setEnabled(running == null && snapshot != null && !modelMissing());
         list.removeAll();
         lines.clear();
         jumps.clear();

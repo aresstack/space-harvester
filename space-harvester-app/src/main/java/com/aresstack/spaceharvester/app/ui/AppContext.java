@@ -593,6 +593,32 @@ public final class AppContext {
                 && (current.aiAccess().fromKeePass() || !current.sourceKeePass().isEmpty());
     }
 
+    private ParserModelSetup parserModel;
+
+    /**
+     * Die Installation des MaltParser-Modells (ADR 0024), gemeinsam für Assistent, Einstellungen und Reiter
+     * „Aussagen“. Ziel ist {@code <Datenverzeichnis>/nlp-model/<Tag>}; geladen wird über Proxy und TLS der App.
+     */
+    public synchronized ParserModelSetup parserModel() {
+        if (parserModel == null) {
+            parserModel = new ParserModelSetup(() -> {
+                AppSettings current = settings();
+                if (current == null) {
+                    return java.util.Optional.empty();
+                }
+                return com.aresstack.spaceharvester.nlp.malt.GermanParserModelPin.release().map(release ->
+                        new com.aresstack.spaceharvester.app.nlp.ParserModelInstaller(
+                                com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer.defaultDirectory(
+                                        current.storage().dataDirectory()),
+                                release,
+                                new com.aresstack.spaceharvester.app.nlp.HttpModelDownload(
+                                        AppRuntime.proxy(current.proxy(), secrets()), current.tls(),
+                                        "space-harvester-app/" + version())));
+            });
+        }
+        return parserModel;
+    }
+
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */
     public void shutdown() {
         if (runtime != null) {

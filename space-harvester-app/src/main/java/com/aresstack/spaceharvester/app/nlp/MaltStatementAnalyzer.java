@@ -45,8 +45,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Das Modell wird erst beim ersten {@link #analyze} geladen (rund 7 s, rund 225 MB Heap) und bleibt danach für die
  * laufende Sitzung geladen; {@link #version()} lädt nichts. Fehlt das Modell oder passt es nicht (Manifest, Version,
- * SHA-256), meldet der Aufruf {@link AnalyzerUnavailableException} mit Installationshinweis; nichts wird
- * heruntergeladen und es gibt keinen stillen Rückfall. Ein fehlgeschlagener Ladeversuch wird nicht gemerkt, damit ein
+ * SHA-256), meldet der Aufruf {@link AnalyzerUnavailableException} mit Installationshinweis; die Analyse selbst
+ * lädt nichts herunter (das macht nur {@link ParserModelInstaller} auf Klick) und es gibt keinen stillen Rückfall. Ein fehlgeschlagener Ladeversuch wird nicht gemerkt, damit ein
  * nachträglich installiertes Modell beim nächsten Klick greift. Threadsicher.
  */
 public final class MaltStatementAnalyzer implements StatementAnalyzer {
@@ -57,7 +57,7 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
     static final String ADAPTER_VERSION = "1";
     /** Systemeigenschaft für ein anderes Modellverzeichnis als {@link #defaultDirectory}. */
     public static final String DIRECTORY_PROPERTY = "spaceharvester.nlpModelDir";
-    /** Release-Seite des gepinnten Modells, nur für den Hinweis; die App lädt nichts aus dem Netz. */
+    /** Release-Seite des gepinnten Modells für den Hinweis zur manuellen Installation. */
     static final String RELEASES = "https://github.com/aresstack/space-harvester/releases/tag/";
 
     private static final Logger LOG = LoggerFactory.getLogger(MaltStatementAnalyzer.class);
@@ -162,8 +162,8 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
 
     private String install() {
         return "Zum Installieren die ZIP " + tag(expected) + ".zip von " + RELEASES + tag(expected)
-                + " in dieses Verzeichnis entpacken (oder ./gradlew :nlp-parser:downloadGermanParserModel); "
-                + "die App lädt nichts aus dem Netz.";
+                + " in dieses Verzeichnis entpacken oder unter Einstellungen › Modelle › Parsermodell "
+                + "„Installieren“ wählen.";
     }
 
     static String tag(ExpectedModel model) {

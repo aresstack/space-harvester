@@ -187,7 +187,7 @@ public final class PageDetailPanel extends JPanel {
         super(new BorderLayout(0, 8));
         this.context = context;
         this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
-                : context.runtime().workspace());
+                : context.runtime().workspace(), context.parserModel());
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         setBackground(Comic.SURFACE);
