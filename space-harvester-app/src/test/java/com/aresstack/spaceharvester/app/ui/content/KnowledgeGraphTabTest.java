@@ -43,9 +43,10 @@ class KnowledgeGraphTabTest {
         assertThat(tab.nodeIds()).containsExactly(DOC, STATEMENT, BELEG);
         assertThat(tab.edgeCount()).isEqualTo(3);
         assertThat(tab.statusText()).startsWith("3 Knoten, 3 Kanten");
-        assertThat(tab.tableRows()).isEqualTo(3);
-        assertThat(tab.tableValue(1, 1)).isEqualTo("Betroffen");
-        assertThat(tab.tableValue(1, 4)).isEqualTo("sicher");
+        assertThat(tab.tableRows()).as("je Knoten und je Kante eine Zeile").isEqualTo(6);
+        assertThat(tab.tableValue(0, 0)).isEqualTo("Dokument „Seite 1“");
+        assertThat(tab.tableValue(4, 1)).isEqualTo("Betroffen");
+        assertThat(tab.tableValue(4, 4)).isEqualTo("sicher");
     }
 
     @Test
@@ -60,7 +61,7 @@ class KnowledgeGraphTabTest {
 
         assertThat(actions.calls).containsExactly("page wiki/1", "node " + BELEG);
         assertThat(tab.nodeIds()).contains(DOC, BELEG, OTHER);
-        assertThat(tab.statusText()).contains("1 veraltete Seite(n)").contains("gekürzt, 4 weitere Knoten");
+        assertThat(tab.statusText()).contains("1 veraltete Seite(n)").contains("gekürzt, mindestens 4 weitere Knoten");
         int candidateRow = -1;
         for (int i = 0; i < tab.tableRows(); i++) {
             if (String.valueOf(tab.tableValue(i, 1)).contains("Kandidat")) {
@@ -121,14 +122,88 @@ class KnowledgeGraphTabTest {
         assertThat(options.types()).contains(GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE);
     }
 
+    @Test
+    void aFilterChangeRepeatsTheTermSearchAndBackRestoresFiltersWithTheView() {
+        tab.page(WIKI);
+        tab.searchTerm("Beleg");
+        runner.runAll();
+        assertThat(tab.nodeIds()).containsExactly(BELEG, OTHER);
+
+        tab.toggleShowStale();
+        runner.runAll();
+
+        assertThat(actions.calls).containsExactly("term Beleg", "term Beleg");
+        assertThat(actions.lastOptions.includeStale()).isFalse();
+        assertThat(tab.nodeIds()).as("Begriffsansicht bleibt, nur gefiltert").containsExactly(BELEG);
+
+        tab.clickBack();
+        assertThat(tab.nodeIds()).containsExactly(BELEG, OTHER);
+        assertThat(tab.options().includeStale()).as("Filter der wiederhergestellten Ansicht").isTrue();
+    }
+
+    @Test
+    void aPageHiddenByFiltersSaysSoInsteadOfNotAnalysed() {
+        tab.page(WIKI);
+        tab.setShowStale(false);
+        actions.pageStale = true;
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(tab.nodeIds()).isEmpty();
+        assertThat(tab.detailsText()).isEqualTo(KnowledgeGraphTab.FILTERED);
+
+        actions.empty = true;
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.detailsText()).isEqualTo(KnowledgeGraphTab.NOT_ANALYSED);
+    }
+
+    @Test
+    void everyNodeHasATableRowAndTheRowFollowsTheGraphSelection() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+
+        tab.selectTableRow(2);
+        assertThat(tab.selectedNode()).isEqualTo(BELEG);
+        assertThat(tab.jumpOffered()).as("Erwähnung per Tastatur erreichbar").isTrue();
+
+        tab.selectNode(STATEMENT);
+        assertThat(tab.selectedTableRow()).isEqualTo(1);
+        tab.pressEnterInTable();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1", "node " + STATEMENT);
+    }
+
+    @Test
+    void closingThePageClearsTableStatusAndButtons() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+
+        tab.page(null);
+
+        assertThat(tab.nodeIds()).isEmpty();
+        assertThat(tab.tableRows()).isZero();
+        assertThat(tab.statusText()).isEqualTo("Keine Seite geöffnet.");
+    }
+
     private static final class FakeActions implements KnowledgeGraphTab.Actions {
 
         final List<String> calls = new ArrayList<>();
         boolean empty;
+        boolean pageStale;
+        GraphNeighbourhood.Options lastOptions;
 
         @Override
         public GraphNeighbourhood.Subgraph page(PageKey key, GraphNeighbourhood.Options options) {
-            calls.add("page " + key.sourceId() + "/" + key.pageId());
+            if (options.maxNodes() > 1) {
+                calls.add("page " + key.sourceId() + "/" + key.pageId());
+                lastOptions = options;
+            }
+            if (empty || pageStale && !options.includeStale()) {
+                return GraphNeighbourhood.Subgraph.empty();
+            }
             GraphNeighbourhood.Node doc = new GraphNeighbourhood.Node(DOC, PageGraph.NodeKind.DOCUMENT, "Seite 1", null,
                     WIKI_REF, -1, -1, false);
             GraphNeighbourhood.Node statement = new GraphNeighbourhood.Node(STATEMENT, PageGraph.NodeKind.STATEMENT,
@@ -158,8 +233,19 @@ class KnowledgeGraphTabTest {
 
         @Override
         public GraphNeighbourhood.Subgraph term(String term, GraphNeighbourhood.Options options) {
-            calls.add("term " + term);
-            return GraphNeighbourhood.Subgraph.empty();
+            if (options.maxNodes() > 1) {
+                calls.add("term " + term);
+                lastOptions = options;
+            }
+            if (empty) {
+                return GraphNeighbourhood.Subgraph.empty();
+            }
+            GraphNeighbourhood.Node beleg = new GraphNeighbourhood.Node(BELEG, PageGraph.NodeKind.MENTION, "den Beleg",
+                    "Beleg", WIKI_REF, 58, 67, false);
+            GraphNeighbourhood.Node other = new GraphNeighbourhood.Node(OTHER, PageGraph.NodeKind.MENTION, "Beleg",
+                    "Beleg", OTHER_REF, 20, 25, false);
+            return new GraphNeighbourhood.Subgraph(BELEG, options.includeStale() ? List.of(beleg, other)
+                    : List.of(beleg), List.of(), false, 0);
         }
     }
 

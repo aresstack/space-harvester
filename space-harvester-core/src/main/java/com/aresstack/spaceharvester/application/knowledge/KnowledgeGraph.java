@@ -202,6 +202,16 @@ public class KnowledgeGraph {
      * @param limit 1 bis {@link #MAX_LIMIT}
      */
     public Search search(AccessContext caller, String term, int limit) {
+        return search(caller, term, limit, page -> true);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, String, int)}, aber nur auf Seiten, die {@code pages} zulässt (etwa eine Quelle,
+     * ein Space oder nur aktuelle Analysen); Treffer und Zähler beziehen sich dann nur auf diese Seiten. Der Filter
+     * schränkt die sichtbaren Seiten weiter ein, erweitert sie nie.
+     */
+    public Search search(AccessContext caller, String term, int limit, java.util.function.Predicate<PageRef> pages) {
+        Objects.requireNonNull(pages, "pages");
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new IllegalArgumentException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
@@ -211,8 +221,11 @@ public class KnowledgeGraph {
         }
         List<Hit> hits = new ArrayList<>();
         int total = 0;
-        int pages = 0;
+        int matchedPages = 0;
         for (AnalysedPage page : visible(caller)) {
+            if (!pages.test(page.page())) {
+                continue;
+            }
             Map<String, Match> wanted = new LinkedHashMap<>();
             wanted.put(normalized, Match.LEXICAL);
             for (String other : expansions.expansions(caller, term, page.page().key().sourceId())) {
@@ -232,10 +245,10 @@ public class KnowledgeGraph {
                 }
             }
             if (found) {
-                pages++;
+                matchedPages++;
             }
         }
-        return new Search(normalized, hits, total, pages);
+        return new Search(normalized, hits, total, matchedPages);
     }
 
     /**

@@ -148,6 +148,87 @@ class GraphNeighbourhoodTest {
     }
 
     @Test
+    void aLongPageStillShowsParticipantsRoleEdgesAndCandidatesWithinTheDefaultLimits() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 70; i++) {
+            text.append("Der Sachbearbeiter übermittelt den Antrag. ");
+        }
+        text.append("Die Buchhaltung prüft den Beleg.");
+        analyse("wiki", "1", text.toString());
+        analyse("handbuch", "7", "Der Kunde prüft den Beleg.");
+
+        GraphNeighbourhood.Subgraph subgraph = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                GraphNeighbourhood.Options.DEFAULT);
+
+        assertThat(subgraph.nodes()).hasSizeLessThanOrEqualTo(GraphNeighbourhood.DEFAULT_MAX_NODES);
+        assertThat(subgraph.edges()).hasSizeLessThanOrEqualTo(GraphNeighbourhood.DEFAULT_MAX_EDGES);
+        assertThat(subgraph.truncated()).isTrue();
+        assertThat(subgraph.nodes()).filteredOn(node -> node.kind() == PageGraph.NodeKind.MENTION).isNotEmpty();
+        assertThat(subgraph.edges()).anyMatch(edge -> edge.type().role());
+        assertThat(subgraph.edges()).as("Verbindung zur anderen Seite trotz voller Seite")
+                .anyMatch(edge -> edge.type() == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE);
+        assertThat(subgraph.edges()).allSatisfy(edge -> {
+            assertThat(subgraph.nodes()).anyMatch(node -> node.id().equals(edge.from()));
+            assertThat(subgraph.nodes()).anyMatch(node -> node.id().equals(edge.to()));
+        });
+    }
+
+    @Test
+    void hiddenCountsEachMissingNodeExactlyOnce() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg. Der Kunde prüft den Antrag.");
+        PageKey key = new PageKey("wiki", "1");
+        GraphNeighbourhood.Options all = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
+                GraphNeighbourhood.MAX_LIMIT, EnumSet.allOf(PageGraph.NodeKind.class),
+                EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null, null);
+        int total = neighbourhood.page(CALLER, key, all).nodes().size();
+
+        for (int limit = 1; limit < total; limit++) {
+            GraphNeighbourhood.Subgraph cut = neighbourhood.page(CALLER, key, new GraphNeighbourhood.Options(limit,
+                    GraphNeighbourhood.MAX_LIMIT, all.kinds(), all.types(), true, null, null));
+            assertThat(cut.nodes().size() + cut.hidden()).as("Grenze %d", limit).isEqualTo(total);
+        }
+    }
+
+    @Test
+    void sourceAndStaleFiltersApplyBeforeTheSearchLimit() {
+        for (int i = 1; i <= 4; i++) {
+            analyse("archiv", String.valueOf(i), "Die Buchhaltung prüft den Beleg.");
+        }
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
+        GraphNeighbourhood.Options onlyWiki = new GraphNeighbourhood.Options(2, 100,
+                EnumSet.allOf(PageGraph.NodeKind.class), EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true,
+                "wiki", null);
+
+        GraphNeighbourhood.Subgraph subgraph = neighbourhood.term(CALLER, "Beleg", onlyWiki);
+
+        assertThat(subgraph.focus()).startsWith("wiki/1@");
+        assertThat(subgraph.nodes()).allMatch(node -> node.page().key().sourceId().equals("wiki"));
+        assertThat(subgraph.hidden()).as("nur fehlende Knoten im gewählten Umfang").isLessThanOrEqualTo(1);
+    }
+
+    @Test
+    void anEdgeFilterAlsoHidesTheNodesOnlyThatEdgeWouldReach() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");
+        EnumSet<GraphNeighbourhood.EdgeType> noCrossPage = EnumSet.allOf(GraphNeighbourhood.EdgeType.class);
+        noCrossPage.removeIf(GraphNeighbourhood.EdgeType::crossPage);
+        GraphNeighbourhood.Options withoutLinks = new GraphNeighbourhood.Options(50, 100,
+                EnumSet.allOf(PageGraph.NodeKind.class), noCrossPage, true, null, null);
+        EnumSet<GraphNeighbourhood.EdgeType> noRoles = EnumSet.allOf(GraphNeighbourhood.EdgeType.class);
+        noRoles.removeIf(GraphNeighbourhood.EdgeType::role);
+        GraphNeighbourhood.Options withoutRoles = new GraphNeighbourhood.Options(50, 100,
+                EnumSet.allOf(PageGraph.NodeKind.class), noRoles, true, null, null);
+
+        GraphNeighbourhood.Subgraph page = neighbourhood.page(CALLER, new PageKey("wiki", "1"), withoutLinks);
+        GraphNeighbourhood.Subgraph mention = neighbourhood.node(CALLER, mention("wiki", "1", "Beleg"), withoutRoles);
+        GraphNeighbourhood.Subgraph term = neighbourhood.term(CALLER, "Beleg", withoutRoles);
+
+        assertThat(page.nodes()).noneMatch(node -> node.page().key().sourceId().equals("handbuch"));
+        assertThat(mention.nodes()).noneMatch(node -> node.kind() == PageGraph.NodeKind.STATEMENT);
+        assertThat(term.nodes()).noneMatch(node -> node.kind() == PageGraph.NodeKind.STATEMENT);
+    }
+
+    @Test
     void nodeIdsAreParsedIntoTheirPage() {
         assertThat(GraphNeighbourhood.pageOf("wiki/12@0123456789ab#s1.t2")).contains(new PageKey("wiki", "12"));
         assertThat(GraphNeighbourhood.pageOf("wiki/a/b@0123456789ab")).contains(new PageKey("wiki", "a/b"));

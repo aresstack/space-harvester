@@ -146,33 +146,70 @@ public class GraphNeighbourhood {
         }
     }
 
-    /** Eine Seite als Fokus: Dokument, seine Aussagen (Kern zuerst) und Erwähnungen, dazu Kandidaten anderer Seiten. */
+    /**
+     * Eine Seite als Fokus. Aussagen kommen mit ihren Beteiligten: erst jede Kernaussage samt Rollenkanten und
+     * beteiligten Erwähnungen, dann die übrigen Aussagen ebenso, jeweils in Textreihenfolge. Ein Fünftel beider Grenzen
+     * bleibt für Verbindungen zu anderen Seiten frei, solange es welche gibt. Was danach noch Platz hat: nominale
+     * Bezüge und übrige Erwähnungen; Enthält-Kanten vom Dokument zu Erwähnungen nur für sonst unverbundene Erwähnungen.
+     */
     public Subgraph page(AccessContext caller, PageKey key, Options options) {
-        Optional<KnowledgeGraph.AnalysedPage> page = graph.page(caller, key);
-        if (page.isEmpty() || !admitted(page.get().page(), options)) {
+        Optional<KnowledgeGraph.AnalysedPage> found = graph.page(caller, key);
+        if (found.isEmpty() || !admitted(found.get().page(), options)) {
             return Subgraph.empty();
         }
+        KnowledgeGraph.AnalysedPage page = found.get();
+        PageGraph projection = page.graph();
+        Map<String, PageGraph.Node> local = new LinkedHashMap<>();
+        projection.nodes().forEach(node -> local.put(node.id(), node));
+        PageGraph.Node document = projection.nodes().getFirst();
         Builder builder = new Builder(options);
-        PageGraph projection = page.get().graph();
-        String document = projection.nodes().getFirst().id();
-        builder.node(node(page.get(), projection.nodes().getFirst()));
-        // Kern zuerst, dann übrige Aussagen, dann Erwähnungen in Textreihenfolge.
-        List<PageGraph.Node> ordered = new ArrayList<>(projection.nodes().subList(1, projection.nodes().size()));
-        ordered.sort(Comparator.comparingInt((PageGraph.Node node) -> rank(page.get(), node))
+        builder.node(node(page, document));
+        List<KnowledgeGraph.Link> links = crossPageAllowed(options) ? graph.links(caller, key) : List.of();
+        if (!links.isEmpty()) {
+            builder.reserve(Math.max(1, options.maxNodes() / 5), Math.max(1, options.maxEdges() / 5));
+        }
+        // 1. Aussagen mit ihren Beteiligten, Kern zuerst.
+        List<PageGraph.Node> statements = new ArrayList<>(projection.nodes().stream()
+                .filter(node -> node.kind() == PageGraph.NodeKind.STATEMENT).toList());
+        statements.sort(Comparator.comparingInt((PageGraph.Node node) -> rank(page, node))
                 .thenComparingInt(PageGraph.Node::start));
-        for (PageGraph.Node node : ordered) {
-            builder.node(node(page.get(), node));
+        for (PageGraph.Node statement : statements) {
+            if (!attach(builder, page, projection, document.id(), statement)) {
+                continue;
+            }
+            for (PageGraph.Edge role : projection.edgesOf(statement.id())) {
+                if (role.from().equals(statement.id()) && edge(role).type().role()) {
+                    builder.connect(edge(role), node(page, local.get(role.to())));
+                }
+            }
         }
+        // 2. Verbindungen zu anderen Seiten.
+        builder.release();
+        candidates(caller, page, null, links, builder, mentionId -> local.containsKey(mentionId)
+                && attach(builder, page, projection, document.id(), local.get(mentionId)));
+        // 3. Nominale Bezüge zwischen und zu Erwähnungen, dann übrige Erwähnungen.
         for (PageGraph.Edge edge : projection.edges()) {
-            builder.edge(edge(edge));
+            if (edge.kind() == PageGraph.EdgeKind.NOMINAL) {
+                Edge nominal = edge(edge);
+                if (builder.has(edge.from())) {
+                    builder.connect(nominal, node(page, local.get(edge.to())));
+                } else if (builder.has(edge.to())) {
+                    builder.connect(nominal, node(page, local.get(edge.from())));
+                }
+            }
         }
-        candidates(caller, page.get(), null, builder);
-        return builder.build(document);
+        for (PageGraph.Node mention : projection.nodes()) {
+            if (mention.kind() == PageGraph.NodeKind.MENTION && !builder.connected(mention.id())) {
+                attach(builder, page, projection, document.id(), mention);
+            }
+        }
+        return builder.build(document.id());
     }
 
     /**
      * Ein Knoten als Fokus mit seinen direkten Nachbarn: Aussage → Beteiligte und Dokument; Erwähnung → Aussagen, an
-     * denen sie beteiligt ist, nominale Bezüge, Dokument und Kandidaten anderer Seiten; Dokument wie {@link #page}.
+     * denen sie beteiligt ist, nominale Bezüge, Dokument und Kandidaten anderer Seiten; Dokument wie {@link #page}. Ein
+     * Nachbar kommt nur mit einer Kante, die die Filter zeigen.
      */
     public Subgraph node(AccessContext caller, String nodeId, Options options) {
         Optional<PageKey> key = pageOf(nodeId);
@@ -195,53 +232,59 @@ public class GraphNeighbourhood {
         }
         Builder builder = new Builder(options);
         builder.node(node(page.get(), focus));
-        List<PageGraph.Edge> touching = projection.edgesOf(nodeId);
-        for (PageGraph.Edge edge : touching) {
+        for (PageGraph.Edge edge : projection.edgesOf(nodeId)) {
             String other = edge.from().equals(nodeId) ? edge.to() : edge.from();
-            builder.node(node(page.get(), nodes.get(other)));
+            builder.connect(edge(edge), node(page.get(), nodes.get(other)));
         }
-        for (PageGraph.Edge edge : touching) {
-            builder.edge(edge(edge));
-        }
-        if (focus.kind() == PageGraph.NodeKind.MENTION) {
-            candidates(caller, page.get(), nodeId, builder);
+        if (focus.kind() == PageGraph.NodeKind.MENTION && crossPageAllowed(options)) {
+            candidates(caller, page.get(), nodeId, graph.links(caller, key.get()), builder, builder::has);
         }
         return builder.build(nodeId);
     }
 
-    /** Ein Begriff als Fokus: passende Erwähnungen auf sichtbaren Seiten mit den Aussagen, an denen sie beteiligt sind. */
+    /**
+     * Ein Begriff als Fokus: passende Erwähnungen auf sichtbaren Seiten, die die Filter zulassen, mit den Aussagen, an
+     * denen sie beteiligt sind. Quelle, Space und „veraltet“ gelten schon bei der Suche, damit die Grenze nur Treffer im
+     * gewählten Umfang zählt.
+     */
     public Subgraph term(AccessContext caller, String term, Options options) {
-        KnowledgeGraph.Search search = graph.search(caller, term, Math.min(options.maxNodes(), KnowledgeGraph.MAX_LIMIT));
+        KnowledgeGraph.Search search = graph.search(caller, term,
+                Math.min(options.maxNodes(), KnowledgeGraph.MAX_LIMIT), page -> admitted(page, options));
         Builder builder = new Builder(options);
         String focus = null;
         for (KnowledgeGraph.Hit hit : search.hits()) {
-            if (!admitted(hit.page(), options)) {
+            ParsedStatements.Mention mention = hit.mention();
+            if (!builder.node(new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(), mention.lemma(),
+                    hit.page(), mention.start(), mention.end(), false))) {
                 continue;
             }
-            ParsedStatements.Mention mention = hit.mention();
-            builder.node(new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(), mention.lemma(),
-                    hit.page(), mention.start(), mention.end(), false));
             focus = focus == null ? mention.id() : focus;
             for (KnowledgeGraph.Participation participation : hit.statements()) {
                 ParsedStatements.Statement statement = participation.statement();
-                builder.node(new Node(statement.id(), PageGraph.NodeKind.STATEMENT, statement.predicateText(),
-                        statement.predicateLemma(), hit.page(), statement.start(), statement.end(),
-                        statement.core()));
-                builder.edge(new Edge(statement.id(), mention.id(), EdgeType.valueOf(participation.role().name()),
-                        null, null, null, "s" + statement.sentence(), participation.certain()));
+                builder.connect(new Edge(statement.id(), mention.id(),
+                                EdgeType.valueOf(participation.role().name()), null, null, null,
+                                "s" + statement.sentence(), participation.certain()),
+                        new Node(statement.id(), PageGraph.NodeKind.STATEMENT, statement.predicateText(),
+                                statement.predicateLemma(), hit.page(), statement.start(), statement.end(),
+                                statement.core()));
             }
         }
-        if (search.total() > search.hits().size()) {
-            builder.hidden += search.total() - search.hits().size();
-        }
+        builder.extraHidden = Math.max(0, search.total() - search.hits().size());
         return builder.build(focus);
     }
 
-    /** Kandidaten-Kanten von Erwähnungen dieser Seite (oder nur von {@code mentionId}) zu anderen Seiten. */
+    /**
+     * Kandidaten-Kanten von Erwähnungen dieser Seite (oder nur von {@code mentionId}) zu anderen Seiten.
+     * {@code source} stellt die Ausgangserwähnung bereit (fügt sie bei Bedarf hinzu) und meldet, ob sie im Teilgraphen
+     * ist; nur dann kommen Kante und Zielknoten hinzu.
+     */
     private void candidates(AccessContext caller, KnowledgeGraph.AnalysedPage origin, String mentionId,
-                            Builder builder) {
-        for (KnowledgeGraph.Link link : graph.links(caller, origin.page().key())) {
-            if (!admitted(link.target(), builder.options)
+                            List<KnowledgeGraph.Link> links, Builder builder,
+                            java.util.function.Predicate<String> source) {
+        for (KnowledgeGraph.Link link : links) {
+            EdgeType type = link.match() == KnowledgeGraph.Match.LEXICAL ? EdgeType.LEXICAL_CANDIDATE
+                    : EdgeType.CONFIRMED_TERM_RELATION;
+            if (!builder.options.types().contains(type) || !admitted(link.target(), builder.options)
                     || mentionId != null && !link.mentions().contains(mentionId)) {
                 continue;
             }
@@ -251,21 +294,50 @@ public class GraphNeighbourhood {
             }
             Map<String, ParsedStatements.Mention> there = new LinkedHashMap<>();
             target.get().analysis().result().mentions().forEach(mention -> there.put(mention.id(), mention));
-            EdgeType type = link.match() == KnowledgeGraph.Match.LEXICAL ? EdgeType.LEXICAL_CANDIDATE
-                    : EdgeType.CONFIRMED_TERM_RELATION;
             List<String> from = mentionId != null ? List.of(mentionId) : link.mentions();
             for (String targetId : link.targetMentions()) {
                 ParsedStatements.Mention mention = there.get(targetId);
                 if (mention == null) {
                     continue;
                 }
-                builder.node(new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(), mention.lemma(),
-                        target.get().page(), mention.start(), mention.end(), false));
-                for (String source : from) {
-                    builder.edge(new Edge(source, targetId, type, link.term(), null, null, null, false));
+                Node targetNode = new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(),
+                        mention.lemma(), target.get().page(), mention.start(), mention.end(), false);
+                for (String start : from) {
+                    if (source.test(start)) {
+                        builder.connect(new Edge(start, targetId, type, link.term(), null, null, null, false),
+                                targetNode);
+                    }
                 }
             }
         }
+    }
+
+    private static boolean crossPageAllowed(Options options) {
+        return options.kinds().contains(PageGraph.NodeKind.MENTION)
+                && (options.types().contains(EdgeType.LEXICAL_CANDIDATE)
+                || options.types().contains(EdgeType.CONFIRMED_TERM_RELATION));
+    }
+
+    /**
+     * Nimmt einen Knoten der Seite mit seiner Enthält-Kante vom Dokument auf; zeigen die Filter Dokument oder
+     * Enthält-Kanten nicht, den Knoten allein.
+     */
+    private static boolean attach(Builder builder, KnowledgeGraph.AnalysedPage page, PageGraph projection,
+                                  String document, PageGraph.Node node) {
+        PageGraph.Edge contains = containsEdge(projection, document, node.id());
+        if (contains != null && builder.has(document) && builder.options.types().contains(EdgeType.CONTAINS)) {
+            return builder.connect(edge(contains), node(page, node));
+        }
+        return builder.node(node(page, node));
+    }
+
+    private static PageGraph.Edge containsEdge(PageGraph projection, String document, String nodeId) {
+        for (PageGraph.Edge edge : projection.edgesOf(nodeId)) {
+            if (edge.kind() == PageGraph.EdgeKind.CONTAINS && edge.from().equals(document)) {
+                return edge;
+            }
+        }
+        return null;
     }
 
     private static boolean admitted(KnowledgeGraph.PageRef page, Options options) {
@@ -320,51 +392,103 @@ public class GraphNeighbourhood {
         return Optional.of(new PageKey(document.substring(0, slash), document.substring(slash + 1, at)));
     }
 
-    /** Sammelt Knoten und Kanten bis zu den Grenzen; Kanten nur zwischen aufgenommenen Knoten. */
+    /**
+     * Sammelt Knoten und Kanten bis zu den Grenzen; Kanten nur zwischen aufgenommenen Knoten. Jeder weggelassene
+     * sichtbare Knoten zählt einmal, auch wenn er mehrfach angeboten wird.
+     */
     private static final class Builder {
 
         private final Options options;
         private final Map<String, Node> nodes = new LinkedHashMap<>();
         private final Map<String, Edge> edges = new LinkedHashMap<>();
-        private int hidden;
+        private final Set<String> omitted = new java.util.HashSet<>();
+        private final Set<String> linked = new java.util.HashSet<>();
+        private int reservedNodes;
+        private int reservedEdges;
+        private int extraHidden;
         private boolean truncated;
 
         Builder(Options options) {
             this.options = options;
         }
 
-        void node(Node node) {
-            if (node == null || nodes.containsKey(node.id()) || !options.kinds().contains(node.kind())) {
-                return;
-            }
-            if (nodes.size() >= options.maxNodes()) {
-                hidden++;
-                truncated = true;
-                return;
-            }
-            nodes.put(node.id(), node);
+        /** Hält Platz für eine spätere Phase frei, bis {@link #release()}. */
+        void reserve(int nodes, int edges) {
+            reservedNodes = Math.min(nodes, options.maxNodes() - 1);
+            reservedEdges = Math.min(edges, options.maxEdges());
         }
 
-        void edge(Edge edge) {
-            if (!options.types().contains(edge.type()) || !nodes.containsKey(edge.from())
-                    || !nodes.containsKey(edge.to())) {
-                return;
+        void release() {
+            reservedNodes = 0;
+            reservedEdges = 0;
+        }
+
+        boolean has(String id) {
+            return nodes.containsKey(id);
+        }
+
+        /** Ob der Knoten schon an einer Kante hängt. */
+        boolean connected(String id) {
+            return linked.contains(id);
+        }
+
+        /** @return ob der Knoten (jetzt oder schon) im Teilgraphen ist */
+        boolean node(Node node) {
+            if (node == null || !options.kinds().contains(node.kind())) {
+                return false;
+            }
+            if (nodes.containsKey(node.id())) {
+                return true;
+            }
+            if (nodes.size() >= options.maxNodes() - reservedNodes) {
+                omitted.add(node.id());
+                truncated = true;
+                return false;
+            }
+            nodes.put(node.id(), node);
+            return true;
+        }
+
+        /**
+         * Nimmt {@code other} nur zusammen mit {@code edge} auf (das andere Ende muss schon da sein): ohne sichtbare
+         * Kante kein Knoten, ohne Platz für die Kante auch nicht.
+         *
+         * @return ob {@code other} danach im Teilgraphen ist
+         */
+        boolean connect(Edge edge, Node other) {
+            if (other == null || !options.types().contains(edge.type())
+                    || !options.kinds().contains(other.kind())) {
+                return false;
+            }
+            String anchor = edge.from().equals(other.id()) ? edge.to() : edge.from();
+            if (!nodes.containsKey(anchor)) {
+                return false;
             }
             String key = edge.from() + "|" + edge.to() + "|" + edge.type();
             if (edges.containsKey(key)) {
-                return;
+                return true;
             }
-            if (edges.size() >= options.maxEdges()) {
+            if (edges.size() >= options.maxEdges() - reservedEdges) {
                 truncated = true;
-                return;
+                if (!nodes.containsKey(other.id())) {
+                    omitted.add(other.id());
+                }
+                return false;
+            }
+            if (!node(other)) {
+                return false;
             }
             edges.put(key, edge);
+            linked.add(edge.from());
+            linked.add(edge.to());
+            return true;
         }
 
         Subgraph build(String focus) {
             if (focus != null && !nodes.containsKey(focus)) {
                 focus = null;
             }
+            int hidden = (int) omitted.stream().filter(id -> !nodes.containsKey(id)).count() + extraHidden;
             return new Subgraph(focus, List.copyOf(nodes.values()), List.copyOf(edges.values()),
                     truncated || hidden > 0, hidden);
         }
