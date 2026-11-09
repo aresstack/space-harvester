@@ -78,10 +78,11 @@ final class FindBar extends JPanel {
         controls.add(counter);
         controls.add(previousButton);
         controls.add(nextButton);
-        JLabel icon = new JLabel(ComposerIcons.magnifier());
-        add(icon, BorderLayout.WEST);
-        add(field, BorderLayout.CENTER);
-        add(controls, BorderLayout.EAST);
+        // Ein Feld mit allem darin (AskAI-ComicFindBar): Lupe, Text, ✕ bei Text, Zähler, vorheriger/nächster Treffer.
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame frame =
+                com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(field);
+        frame.addButton(controls);
+        add(frame, BorderLayout.CENTER);
         updateCounter();
     }
 

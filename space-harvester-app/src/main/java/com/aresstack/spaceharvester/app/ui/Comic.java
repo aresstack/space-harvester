@@ -365,13 +365,15 @@ public final class Comic {
         }
     }
 
-    /** Eingabefeld mit Knopf daneben (etwa ▾): das Feld füllt die Breite, der Knopf steht rechts. */
+    /** Eingabefeld mit Knopf IM Feld (etwa ▾): das Feld füllt die Breite, der Knopf sitzt rechts innen. */
     public static JPanel fieldWithButton(JComponent field, JComponent button) {
-        JPanel line = new JPanel(new BorderLayout(6, 0));
-        line.setOpaque(false);
-        line.add(field, BorderLayout.CENTER);
-        line.add(button, BorderLayout.EAST);
-        return line;
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame frame =
+                new com.aresstack.spaceharvester.app.ui.controls.InputFrame(field);
+        if (button instanceof javax.swing.AbstractButton b) {
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.styleFlat(b);
+        }
+        frame.addButton(button);
+        return frame;
     }
 
     public static JTextField field(int columns) {
@@ -380,8 +382,13 @@ public final class Comic {
         return field;
     }
 
+    /** Der Rahmen aller Eingabefelder, auch der Felder mit integrierten Knöpfen ({@code InputFrame}). */
+    public static javax.swing.border.Border fieldBorder() {
+        return ComicBorder.roundedBorder(PALETTE, 4);
+    }
+
     public static void style(JTextComponent field) {
-        field.setBorder(ComicBorder.roundedBorder(PALETTE, 4));
+        field.setBorder(fieldBorder());
         field.setForeground(INK);
         field.setCaretColor(INK);
         field.setBackground(Color.WHITE);

@@ -85,9 +85,11 @@ public final class SearchView implements View {
     final JCheckBox everywhere = checkBox("Überall suchen", "Sucht in allen Wissensquellen, unabhängig von der "
             + "Auswahl im Explorer; die Auswahl bleibt bestehen");
     /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
-    private final JPanel searchBar = new JPanel(new BorderLayout(0, 0));
+    private final com.aresstack.spaceharvester.app.ui.controls.InputFrame searchBar =
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query);
     /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
-    final javax.swing.JButton optionsButton = new javax.swing.JButton("\u25BE");
+    final javax.swing.JButton optionsButton =
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("\u25BE", "Suchoptionen");
     /** Die Suchoptionen als Popup am Suchfeld: Überall suchen, Semantische Suche, Umfang, Modus, Hinweise. */
     final javax.swing.JPopupMenu options = new javax.swing.JPopupMenu();
     /** Warum die semantische Suche gesperrt ist bzw. woher ihre Varianten kommen, lesbar im Popup. */
@@ -239,14 +241,12 @@ public final class SearchView implements View {
     /** Suchfeld mit Pfeil rechts; der Pfeil öffnet die Suchoptionen unter dem Feld (#515). */
     private void buildSearchBar() {
         query.getAccessibleContext().setAccessibleName("Suchbegriff");
-        searchBar.setOpaque(false);
-        searchBar.add(query, BorderLayout.CENTER);
         optionsButton.setToolTipText("Suchoptionen");
         optionsButton.getAccessibleContext().setAccessibleName("Suchoptionen");
         optionsButton.setFocusable(true);
-        optionsButton.setMargin(new java.awt.Insets(0, 6, 0, 6));
         optionsButton.addActionListener(e -> showOptions());
-        searchBar.add(optionsButton, BorderLayout.EAST);
+        // Wie in AskAI: Lupe links, ✕ (bei Text) und ▾ rechts IM Feld, kein loser Knopf daneben.
+        searchBar.addButton(optionsButton);
         // Pfeil nach unten bzw. Alt+Pfeil nach unten im Feld öffnet die Optionen auch per Tastatur.
         query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("alt DOWN"), "searchOptions");
         query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("DOWN"), "searchOptions");
