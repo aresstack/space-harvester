@@ -162,7 +162,11 @@ class SearchViewTest {
     void provisionalHitsOfABatchAreReplacedByTheFinishedBatch() {
         SearchView.HitsModel model = new SearchView.HitsModel();
         model.set(List.of(hit("a"), hit("b")));
-        model.add(List.of(hit("c"), hit("d")));
+        // Ein vorläufiger Fund für eine schon gezeigte Seite ändert die geprüfte Zeile nicht (Codex-Befund #557).
+        model.append(List.of(new SearchView.Hit("s", "a", "nur Quelle", null, "", null), hit("c"), hit("d"),
+                hit("c")));
+        assertThat(pageIds(model)).containsExactly("a", "b", "c", "d");
+        assertThat(model.getValueAt(0, 0)).isEqualTo("Seite a");
         model.truncate(2);
         assertThat(pageIds(model)).containsExactly("a", "b");
         model.add(List.of(hit("d"), hit("e")));

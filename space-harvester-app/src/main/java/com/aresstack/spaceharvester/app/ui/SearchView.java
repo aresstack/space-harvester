@@ -615,12 +615,16 @@ public final class SearchView implements View {
         });
     }
 
-    /** Vorläufige Treffer einer Quelle, noch während die anderen suchen. */
+    /**
+     * Vorläufige Treffer einer Quelle, noch während die anderen suchen: nur angehängt, nie an die Stelle einer schon
+     * gezeigten Zeile, denn ein geprüfter Treffer eines früheren Stapels weiß mehr (Space, Auszug, Anhang) als der
+     * Fund der Quelle.
+     */
     private void arrived(List<KeywordSearch.Hit> hits) {
         if (hits.isEmpty()) {
             return;
         }
-        model.add(hits.stream().map(Hit::of).toList());
+        model.append(hits.stream().map(Hit::of).toList());
         status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · weitere Quellen antworten noch");
         status.setForeground(Comic.MUTED);
     }
@@ -1235,6 +1239,21 @@ public final class SearchView implements View {
             if (replaced) {
                 fireTableDataChanged();
             } else if (!appended.isEmpty()) {
+                fireTableRowsInserted(first, rows.size() - 1);
+            }
+        }
+
+        /** Hängt nur Treffer an, deren Seite noch nicht in der Liste steht; vorhandene Zeilen bleiben unverändert. */
+        void append(List<Hit> hits) {
+            List<Hit> appended = new ArrayList<>();
+            for (Hit hit : hits) {
+                if (indexOf(hit) < 0 && appended.stream().noneMatch(other -> same(other, hit))) {
+                    appended.add(hit);
+                }
+            }
+            if (!appended.isEmpty()) {
+                int first = rows.size();
+                rows.addAll(appended);
                 fireTableRowsInserted(first, rows.size() - 1);
             }
         }
