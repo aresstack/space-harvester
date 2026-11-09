@@ -464,13 +464,19 @@ final class SourceForm {
             keePassEntries = entries;
             List<String> titles = entries.stream().map(com.aresstack.enterpriseai.adyton.VaultEntry::title)
                     .filter(t -> t != null && !t.isBlank()).distinct().toList();
-            keePassEntry.removeAllItems();
-            titles.forEach(keePassEntry::addItem);
-            if (!keep.isEmpty() && !titles.contains(keep)) {
-                keePassEntry.addItem(keep);
+            // Die Liste neu aufbauen ist keine Wahl von Hand: Anmeldeart und Vorschlag bleiben, wie sie sind.
+            suggesting = true;
+            try {
+                keePassEntry.removeAllItems();
+                titles.forEach(keePassEntry::addItem);
+                if (!keep.isEmpty() && !titles.contains(keep)) {
+                    keePassEntry.addItem(keep);
+                }
+                keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
+                keePassEntry.getEditor().setItem(keep);
+            } finally {
+                suggesting = false;
             }
-            keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
-            keePassEntry.getEditor().setItem(keep);
             keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge")
                     + "; Eintrag wählen oder Namen eintippen";
             form.hint(keePassRow, keePassStatus);
@@ -546,7 +552,7 @@ final class SourceForm {
         }
     }
 
-    private boolean keePassSecretRead() {
+    boolean keePassSecretRead() {
         return keePassSecret != null && keePassSecret.length > 0;
     }
 
