@@ -96,6 +96,8 @@ final class SourceForm {
     private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
+    /** Ob das Feld Passwort/Token gerade den Wert aus KeePass zeigt (maskiert, schreibgeschützt, zählt nicht als Eingabe). */
+    private boolean secretFromKeePass;
     /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
     private String keePassUser;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
@@ -471,9 +473,23 @@ final class SourceForm {
 
     private void forgetKeePassSecret() {
         keePassUser = null;
+        showKeePassSecret(false);
         if (keePassSecret != null) {
             java.util.Arrays.fill(keePassSecret, '\0');
             keePassSecret = null;
+        }
+    }
+
+    /** Setzt den Wert aus KeePass ins Feld oder nimmt ihn wieder heraus; ein eingetippter Wert bleibt unberührt. */
+    private void showKeePassSecret(boolean show) {
+        if (show && !secretFromKeePass) {
+            secretFromKeePass = true;
+            sessionValue.setText(new String(keePassSecret));
+            sessionValue.setEditable(false);
+        } else if (!show && secretFromKeePass) {
+            secretFromKeePass = false;
+            sessionValue.setText("");
+            sessionValue.setEditable(true);
         }
     }
 
@@ -558,7 +574,7 @@ final class SourceForm {
 
     /** Ob Token bzw. Passwort eingegeben ist (ohne den Wert zu kopieren). */
     private boolean typed() {
-        return sessionValue.getDocument().getLength() > 0;
+        return !secretFromKeePass && sessionValue.getDocument().getLength() > 0;
     }
 
     /**
@@ -1289,9 +1305,12 @@ final class SourceForm {
         }
         form.visible(username, login && basic);
         form.visible(variable, login && !anonymous && !keePass);
-        form.visible(sessionValue, login && !anonymous && !keePass);
+        // Bei KeePass zeigt das Feld den gelesenen Wert maskiert und schreibgeschützt, damit man sieht, dass er da ist.
+        boolean shown = keePass && !anonymous && keePassSecretRead();
+        showKeePassSecret(shown);
+        form.visible(sessionValue, login && !anonymous && (!keePass || shown));
         form.label(sessionValue, basic ? "Passwort" : "Token");
-        form.hint(sessionValue, secretHint());
+        form.hint(sessionValue, shown ? "Aus KeePass gelesen; bleibt nur im Speicher" : secretHint());
         form.visible(certificate, tls);
         boolean windows = tls && WINDOWS_MY.equals(certificate.getSelectedItem());
         boolean pkcs12 = tls && PKCS12.equals(certificate.getSelectedItem());
