@@ -234,7 +234,7 @@ public final class SourcesView implements View {
         JPanel spacesTools = new JPanel(new BorderLayout(6, 0));
         spacesTools.setOpaque(false);
         spacesTools.add(Comic.muted("Filter"), BorderLayout.WEST);
-        spacesTools.add(filter, BorderLayout.CENTER);
+        spacesTools.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
         JPanel spacesTop = new JPanel(new BorderLayout(0, 6));
         spacesTop.setOpaque(false);
         spacesTop.add(spacesTools, BorderLayout.NORTH);

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
 import javax.swing.JComboBox;
@@ -14,7 +15,6 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
@@ -59,30 +59,54 @@ final class AiSettingsPanel {
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
     final JTextField dimensions = Comic.field(6);
-    /** Wie viele Quellen Inhalte an den Dienst geben dürfen; festgelegt im Formular jeder Quelle. */
-    final JLabel released = Comic.text(" ");
-    /** Die Freigaben aus der Datei; dieses Panel ändert sie nicht. */
+    /**
+     * Welche Quellen Inhalte an den Dienst geben dürfen: je Quelle ein Häkchen (Vorgabe aus), derselbe Schlüssel wie
+     * das Häkchen im Formular der Quelle; ohne Quellen eine Zeile Text.
+     */
+    final JPanel released = new JPanel();
+    private final List<javax.swing.JCheckBox> releaseBoxes = new ArrayList<>();
+    /** Die Freigaben aus der Datei (für Quellen, die gerade nicht in der Liste stehen). */
     private List<String> releasedIds = List.of();
     private Duration timeout;
     /** „Zugangsdaten beziehen über“: KeePass (Vorgabe) oder Manuell, wie im Enterprise AI Client. */
     final JComboBox<String> access = Comic.combo();
     static final String KEEPASS = "KeePass";
     static final String MANUAL = "Manuell";
-    final JLabel keePassStatus = Comic.text("Nicht gekoppelt");
-    final ComposerButton pair = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein "
-            + "Einmal-Passwort");
-    final JPanel keePassRow = Comic.row(keePassStatus, pair);
+    /**
+     * Rechts IM Eintragsfeld: „Koppeln“, solange die App nicht gekoppelt ist (dieselbe Kopplung wie unter Sicherheit ›
+     * KeePass, hier an Ort und Stelle), sonst „Einträge laden“. Die Kopplung selbst (Stand, Neu koppeln, Entkoppeln)
+     * steht unter Einstellungen › Sicherheit ({@link KeePassPairingPanel}), denn sie gilt auch für die Quellen.
+     */
+    final ComposerButton pair = Comic.button(KeePassPairingPanel.PAIR, "Mit KeePass koppeln (KeePassRPC); KeePass "
+            + "zeigt dabei ein Einmal-Passwort");
+    static final String LOAD_ENTRIES = "Einträge laden";
+    static final String ENTRY_HINT = "Bestehenden Eintrag wählen oder einen neuen Namen eintippen; ein neuer Eintrag "
+            + "entsteht beim Speichern mit Basisadresse und API-Key";
+    static final String NOT_PAIRED_HINT = "Nicht gekoppelt · „Koppeln“ verbindet mit KeePass (muss laufen, mit dem "
+            + "Plugin KeePassRPC) und gilt dann auch für die Wissensquellen";
     /** Editierbar: einen bestehenden Eintrag wählen oder einen neuen Titel eintippen. */
     final JComboBox<String> entry = Comic.combo();
+    /** Eintragsfeld mit dem Knopf {@link #pair} rechts IM Feld (InputFrame). */
+    final JPanel entryRow = Comic.fieldWithButton(entry, pair);
+    /** Wird nach einer Kopplung von hier aus gerufen, damit Sicherheit › KeePass den Stand zeigt. */
+    private Runnable pairingChanged = () -> { };
     /** Die beim Koppeln gelesenen Titel; leer, solange nicht gekoppelt. */
     List<String> titles = List.of();
+    /** Ob das Feld „API-Key“ gerade den aus KeePass gelesenen Key zeigt (dann zählt er nicht als eingetippt). */
+    boolean keyFromKeePass;
+    /** Ob der gewählte KeePass-Eintrag ein Passwort hat; {@code null}: noch nicht gelesen. */
+    Boolean keePassKeyPresent;
+    /** Der Eintrag, dessen Key gelesen wird oder im Feld steht; {@code null}: keiner. */
+    private String keyTitle;
+    /** Zählt die Lesevorgänge, damit eine späte Antwort für einen anderen Eintrag nichts überschreibt. */
+    private int keyRead;
     /** Bezugsart, wie {@link #render()} sie zeigte; Maßstab für „geändert“. */
     private AiAccess shownAccess = AiAccess.NONE;
     final JTextField rerankModel = Comic.field(24);
     final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
-    private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
+    final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
     private final JPanel models = new JPanel(new BorderLayout(0, 10));
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen; gilt ohne Neustart");
@@ -98,8 +122,13 @@ final class AiSettingsPanel {
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
-    final javax.swing.JButton advanced = Comic.disclosure("▸ Erweitert",
+    final javax.swing.JButton advanced = Comic.disclosure("Erweitert",
             "Dimension, Abschnittsgröße und Überlappung für Embeddings");
+    /** Stand des MaltParser-Modells (ADR 0024); nur lesbar, der Knopf steht im Feld. */
+    final JTextField parserStatus = Comic.field(24);
+    final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
+            "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
+                    + "entpackt es ins Datenverzeichnis");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
@@ -128,20 +157,37 @@ final class AiSettingsPanel {
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
+        PasswordReveal.install(apiKey);
         access.addItem(KEEPASS);
         access.addItem(MANUAL);
         entry.setEditable(true);
         rows.add("Zugangsdaten beziehen über", access, "KeePass liest Basisadresse und API-Key aus einem Eintrag; "
                 + "Manuell legt den Key im Tresor dieses Windows-Kontos ab");
-        rows.add("KeePass", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
-        rows.add("Eintrag", entry, "Bestehenden Eintrag wählen oder einen neuen Namen eintippen; ein neuer Eintrag "
-                + "entsteht beim Speichern mit Basisadresse und API-Key");
+        rows.add("Eintrag", entryRow, ENTRY_HINT);
         access.addActionListener(e -> updateAccess());
         pair.addActionListener(e -> pairKeePass());
         entry.addActionListener(e -> entryChosen());
+        if (entry.getEditor().getEditorComponent() instanceof javax.swing.text.JTextComponent editor) {
+            // Ein anderer Name im Eintragsfeld nimmt den gelesenen Key sofort heraus, damit man den Key tippen kann.
+            editor.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override
+                public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                    javax.swing.SwingUtilities.invokeLater(AiSettingsPanel.this::entryEdited);
+                }
+
+                @Override
+                public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                    javax.swing.SwingUtilities.invokeLater(AiSettingsPanel.this::entryEdited);
+                }
+
+                @Override
+                public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                }
+            });
+        }
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
+        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
@@ -152,6 +198,20 @@ final class AiSettingsPanel {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
+            parserStatus.setEditable(false);
+            parserStatus.setFocusable(false);
+            modelRows.add(ParserModelSetup.LABEL, Comic.fieldWithButton(parserStatus, parserInstall),
+                    "MaltParser (deutsch) für „Analysen › Aussagen“; wird nur auf Klick aus dem GitHub-Release geladen "
+                            + "und läuft danach lokal");
+            parserInstall.addActionListener(e -> {
+                ParserModelSetup setup = context.parserModel();
+                if (setup.status().state() == ParserModelSetup.State.INSTALLING) {
+                    setup.cancel();
+                } else {
+                    setup.install();
+                }
+            });
+            context.parserModel().listen(this::parserModel);
             // Wie im Assistenten von AskAI: linksbündige Überschrift, die aufgeklappten Felder im selben Raster.
             modelRows.wide(advanced);
             modelRows.add("Dimension", dimensions, "Vektorlänge des Embedding-Modells; leer: wird beim Übernehmen "
@@ -172,8 +232,9 @@ final class AiSettingsPanel {
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
         pickVision.addActionListener(e -> pick(pickVision, visionModel, AiModel.VISION));
-        rows.add("Freigegeben", released, "Je Quelle im Formular unter Wissensquellen › Bearbeiten …; ohne Freigabe "
-                + "keine Embeddings und kein Reranking");
+        released.setOpaque(false);
+        released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
+        rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
         root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die "
                 + "Modelle wählst du unter „Modelle“. Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der "
                 + "Konfigurationsdatei."), BorderLayout.NORTH);
@@ -226,9 +287,8 @@ final class AiSettingsPanel {
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
         timeout = current.timeout();
-        // Freigaben gehören zur Quelle; dieses Panel zeigt nur ihre Zahl und schreibt sie unverändert zurück.
         releasedIds = current.externalProcessingSources();
-        released.setText(releasedText(settings, releasedIds));
+        renderReleased(settings, releasedIds);
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
         // Nichts gewählt: KeePass, wenn die App schon gekoppelt ist oder KeePass für eine Quelle gewählt wurde
         // (dieselbe Kopplung gilt weiter, kein neues Koppeln), sonst Manuell; ein Key im Tresor spricht für Manuell.
@@ -243,19 +303,49 @@ final class AiSettingsPanel {
         }
         entry.setSelectedItem(title);
         entry.getEditor().setItem(title);
-        keePassStatus.setText(context.keePass().paired() ? "Gekoppelt" : "Nicht gekoppelt");
-        updateAccess();
-        shownAccess = accessDraft();
+        clearKeePassKey();
         apiKey.setText("");
-        boolean stored = context.aiKeyAvailable();
-        rows.hint(apiKey, stored ? "Gespeichert; leer lassen, um ihn zu behalten"
+        // Setzt auch den Hinweis zum Key und liest bei KeePass den gewählten Eintrag.
+        updateAccess();
+        refreshPairing();
+        shownAccess = accessDraft();
+        removeKey.setVisible(context.aiKeyAvailable() && !keePassChosen());
+    }
+
+    private String manualHint() {
+        return context.aiKeyAvailable() ? "Gespeichert; leer lassen, um ihn zu behalten"
                 : context.aiVault().available() ? "Fehlt; wird verschlüsselt im Tresor abgelegt"
-                : "Fehlt; ohne Windows-Tresor gilt er nur bis zum Schließen der App");
-        removeKey.setVisible(stored && !keePassChosen());
-        if (keePassChosen()) {
-            rows.hint(apiKey, titles.contains(entryTitle()) ? "Aus KeePass; leer lassen, um den Key des Eintrags "
-                    + "zu nutzen" : "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+                : "Fehlt; ohne Windows-Tresor gilt er nur bis zum Schließen der App";
+    }
+
+    /** Der eingetippte Key; der aus KeePass gelesene zählt nicht, er wird bei Bedarf frisch gelesen. */
+    char[] typedKey() {
+        entryEdited();
+        return keyFromKeePass ? new char[0] : apiKey.getPassword();
+    }
+
+    /** Gilt der gelesene Key nicht mehr für den eingetragenen Namen, liest das den neuen Eintrag (oder leert nur). */
+    private void entryEdited() {
+        if (keyTitle != null && !keyTitle.equals(entryTitle())) {
+            entryChosen();
         }
+    }
+
+    /** Nimmt einen aus KeePass gelesenen Key wieder aus dem Feld; ein eingetippter bleibt. */
+    private void clearKeePassKey() {
+        keyRead++;
+        if (keyFromKeePass) {
+            apiKey.setText("");
+        }
+        keyFromKeePass = false;
+        keePassKeyPresent = null;
+        keyTitle = null;
+        apiKey.setEditable(true);
+    }
+
+    /** Ein Eintrag aus der Liste von KeePass, oder der gespeicherte, solange die App gekoppelt ist. */
+    private boolean knownEntry(String title) {
+        return titles.contains(title) || title.equals(savedAccess().entry()) && context.keePass().paired();
     }
 
     private AiAccess savedAccess() {
@@ -279,10 +369,31 @@ final class AiSettingsPanel {
                 : new AiAccess(AiAccess.Mode.MANUAL, null);
     }
 
+    void onPairingChange(Runnable pairingChanged) {
+        this.pairingChanged = pairingChanged;
+    }
+
+    /**
+     * Knopf und Hinweis am Eintragsfeld nach dem gespeicherten Kopplungsstand: nicht gekoppelt → „Koppeln“ mit Hinweis
+     * an Ort und Stelle, sonst „Einträge laden“. Auch nach Koppeln oder Entkoppeln unter Sicherheit.
+     */
+    void refreshPairing() {
+        boolean paired = context.keePass().paired();
+        pair.setText(paired ? LOAD_ENTRIES : KeePassPairingPanel.PAIR);
+        pair.setToolTipText(paired ? "Die Einträge aus KeePass für das Auswahlfeld lesen"
+                : "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein Einmal-Passwort");
+        rows.hint(entryRow, paired ? ENTRY_HINT : NOT_PAIRED_HINT);
+    }
+
     private void updateAccess() {
         boolean keePass = keePassChosen();
-        rows.visible(keePassRow, keePass);
-        rows.visible(entry, keePass);
+        rows.visible(entryRow, keePass);
+        if (keePass) {
+            entryChosen();
+        } else {
+            clearKeePassKey();
+            rows.hint(apiKey, manualHint());
+        }
         root.revalidate();
         root.repaint();
     }
@@ -290,7 +401,7 @@ final class AiSettingsPanel {
     /** Koppelt (KeePass zeigt ein Einmal-Passwort) und liest die Einträge für das Auswahlfeld. */
     void pairKeePass() {
         pair.setEnabled(false);
-        keePassStatus.setText("Verbinde mit KeePass …");
+        rows.hint(entryRow, "Verbinde mit KeePass …");
         String keep = entryTitle();
         Background.run(() -> context.keePass().titles(), read -> {
             pair.setEnabled(true);
@@ -302,34 +413,72 @@ final class AiSettingsPanel {
             }
             entry.setSelectedItem(keep.isEmpty() && !read.isEmpty() ? read.get(0) : keep);
             entry.getEditor().setItem(entry.getSelectedItem());
-            keePassStatus.setText("Gekoppelt · " + Texts.count(read.size(), "Eintrag", "Einträge") + " lesbar");
+            refreshPairing();
+            rows.hint(entryRow, "Gekoppelt · " + Texts.count(read.size(), "Eintrag", "Einträge") + " lesbar; "
+                    + "Eintrag wählen oder neuen Namen eintippen");
             entryChosen();
+            pairingChanged.run();
         }, error -> {
             pair.setEnabled(true);
-            keePassStatus.setText("Nicht gekoppelt");
+            refreshPairing();
             feedback.warning("KeePass nicht erreichbar", keePassReason(error));
+            pairingChanged.run();
         });
     }
 
-    /** Ein bestehender Eintrag liefert die Basisadresse; ein neuer Titel verlangt den API-Key. */
+    /**
+     * Ein bestehender Eintrag liefert Basisadresse und API-Key (sein Passwort): Der Key steht danach maskiert und
+     * schreibgeschützt im Feld, damit man sieht, dass er gelesen wurde; er bleibt nur im Speicher. Ein neuer Titel
+     * verlangt den API-Key. Ohne Kopplungsdialog: Gekoppelt wird nur über „Koppeln“.
+     */
     private void entryChosen() {
         String title = entryTitle();
-        if (!keePassChosen() || title.isEmpty() || !titles.contains(title)) {
-            if (keePassChosen()) {
-                rows.hint(apiKey, "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
-            }
+        clearKeePassKey();
+        if (!keePassChosen()) {
             return;
         }
-        rows.hint(apiKey, "Aus KeePass; leer lassen, um den Key des Eintrags zu nutzen");
+        if (title.isEmpty() || !knownEntry(title)) {
+            rows.hint(apiKey, "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+            return;
+        }
+        rows.hint(apiKey, "Wird aus dem KeePass-Eintrag „" + title + "“ gelesen …");
+        keyTitle = title;
+        int request = keyRead;
         Background.run(() -> {
-            try (var read = context.keePass().read(title)) {
-                return read.location();
+            try (var read = context.keePass().readSilently(title)) {
+                return new EntryRead(read.location(), read.copyPassword());
             }
-        }, location -> {
-            if (title.equals(entryTitle()) && location != null && !location.isBlank()) {
-                baseUrl.setText(location);
+        }, read -> {
+            try {
+                if (request != keyRead || !keePassChosen() || !title.equals(entryTitle())) {
+                    return;
+                }
+                if (read.location() != null && !read.location().isBlank()) {
+                    baseUrl.setText(read.location());
+                }
+                if (read.key().length == 0) {
+                    keePassKeyPresent = false;
+                    rows.hint(apiKey, "Der Eintrag „" + title + "“ hat kein Passwort; bitte den API-Key in "
+                            + "KeePass als Passwort eintragen");
+                    return;
+                }
+                apiKey.setText(new String(read.key()));
+                keyFromKeePass = true;
+                keePassKeyPresent = true;
+                apiKey.setEditable(false);
+                rows.hint(apiKey, "Aus KeePass gelesen (Eintrag „" + title + "“); bleibt nur im Speicher");
+            } finally {
+                Arrays.fill(read.key(), '\0');
             }
-        }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
+        }, error -> {
+            if (request == keyRead && keePassChosen() && title.equals(entryTitle())) {
+                rows.hint(apiKey, "Nicht aus KeePass lesbar: " + keePassReason(error));
+            }
+        });
+    }
+
+    /** Adresse und Passwort eines Eintrags; der Empfänger überschreibt das Passwort nach Gebrauch. */
+    private record EntryRead(String location, char[] key) {
     }
 
     static String keePassReason(Throwable error) {
@@ -364,12 +513,62 @@ final class AiSettingsPanel {
     }
 
     AiDraft draft() {
-        // Die Freigaben aus der Datei, nicht vom letzten render(): Das Quellenformular ändert sie unabhängig davon.
-        AppSettings settings = context.settings();
-        List<String> released = settings == null ? releasedIds : settings.ai().externalProcessingSources();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, released, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
+                timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
                 visionModel.getText());
+    }
+
+    /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
+    private void renderReleased(AppSettings settings, List<String> ids) {
+        released.removeAll();
+        releaseBoxes.clear();
+        List<AppSettings.SourceEntry> sources = settings == null ? List.of() : settings.sources();
+        if (sources.isEmpty()) {
+            released.add(Comic.muted("Noch keine Wissensquelle angelegt"));
+        }
+        for (AppSettings.SourceEntry source : sources) {
+            String title = source.config().title();
+            javax.swing.JCheckBox box = Comic.checkBox(title == null || title.isBlank() ? source.id() : title);
+            box.putClientProperty("sourceId", source.id());
+            box.setSelected(ids.contains(source.id()));
+            // Nur ein angefasstes Häkchen überschreibt die Datei; sonst gilt, was das Quellenformular inzwischen
+            // dort eingetragen hat.
+            box.addActionListener(e -> box.putClientProperty(TOUCHED, Boolean.TRUE));
+            releaseBoxes.add(box);
+            released.add(box);
+        }
+        released.revalidate();
+        released.repaint();
+    }
+
+    /** Markiert ein Häkchen der Freigabe, das jemand angeklickt hat. */
+    private static final String TOUCHED = "space-harvester.touched";
+
+    /**
+     * Die Freigaben für die Datei: der Stand der Datei, überschrieben nur durch Häkchen, die hier jemand angeklickt
+     * hat. Freigaben für Quellen, die gerade nicht in der Liste stehen, bleiben erhalten, und was das Quellenformular
+     * inzwischen geändert hat, geht nicht verloren.
+     */
+    private List<String> releasedDraft() {
+        AppSettings settings = context.settings();
+        List<String> file = settings == null ? releasedIds : settings.ai().externalProcessingSources();
+        List<String> ids = new ArrayList<>(file);
+        for (javax.swing.JCheckBox box : releaseBoxes) {
+            if (!Boolean.TRUE.equals(box.getClientProperty(TOUCHED))) {
+                continue;
+            }
+            String id = (String) box.getClientProperty("sourceId");
+            ids.remove(id);
+            if (box.isSelected()) {
+                ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    /** Die Häkchen der Freigabe, in der Reihenfolge der Quellen (für Tests). */
+    List<javax.swing.JCheckBox> releaseBoxes() {
+        return List.copyOf(releaseBoxes);
     }
 
     /** „2 von 3 Quellen“ mit ihren Namen, oder „keine“. */
@@ -397,7 +596,7 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || apiKey.getPassword().length > 0 || !accessDraft().equals(shownAccess);
+        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess);
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -412,6 +611,16 @@ final class AiSettingsPanel {
     void wizardMode() {
         save.setVisible(false);
         saveModels.setVisible(false);
+    }
+
+    /**
+     * Wie {@link #wizardMode()}, zusätzlich mit genau einem Statusbereich: Meldungen beider Schritte erscheinen in
+     * {@code shared} (im Assistenten über der Knopfleiste), nicht mehr in den scrollenden Inhalten.
+     */
+    void wizardMode(Feedback shared) {
+        wizardMode();
+        feedback.forwardTo(shared);
+        modelsFeedback.forwardTo(shared);
     }
 
     /**
@@ -435,7 +644,7 @@ final class AiSettingsPanel {
                     String.join(" ", draft.problems()));
             return;
         }
-        char[] key = apiKey.getPassword();
+        char[] key = typedKey();
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
@@ -455,6 +664,27 @@ final class AiSettingsPanel {
         if (chosen.fromKeePass() && !known && key.length == 0) {
             feedback.warning("API-Key fehlt", "Für den neuen KeePass-Eintrag „" + chosen.entry() + "“ bitte den "
                     + "API-Key eingeben; er wird nur in KeePass gespeichert.");
+            return;
+        }
+        if (chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
+            // Zuletzt ohne Passwort gelesen: erst neu lesen, denn vielleicht ist es inzwischen in KeePass nachgetragen.
+            String title = chosen.entry();
+            Background.run(() -> {
+                try (var read = context.keePass().readSilently(title)) {
+                    char[] password = read.copyPassword();
+                    boolean present = password.length > 0;
+                    Arrays.fill(password, '\0');
+                    return present;
+                }
+            }, present -> {
+                if (present && title.equals(entryTitle()) && keePassChosen()) {
+                    entryChosen(); // zeigt den Key wieder im Feld
+                    save(save, feedback, then, quiet);
+                } else {
+                    feedback.warning("API-Key fehlt", "Der KeePass-Eintrag „" + title + "“ hat kein Passwort. "
+                            + "Bitte den API-Key dort als Passwort eintragen und erneut speichern.");
+                }
+            }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
             return;
         }
         // Nur die Zerlegung für Embeddings übernimmt der Core erst beim Bauen; alles andere gilt ohne Neustart.
@@ -514,7 +744,9 @@ final class AiSettingsPanel {
                 } else {
                     // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen. Die gemessene
                     // Dimension nur, wenn Feld und Embedding-Modell noch so sind wie beim Speichern.
-                    apiKey.setText("");
+                    if (!keyFromKeePass) {
+                        apiKey.setText("");
+                    }
                     String measuredDimension = measured.draft().embeddingDimensions();
                     if (measuredDimension != null
                             && java.util.Objects.equals(blankToNull(now.embeddingDimensions()),
@@ -750,7 +982,7 @@ final class AiSettingsPanel {
             failed(outcome, false);
             return;
         }
-        char[] typed = apiKey.getPassword();
+        char[] typed = typedKey();
         AiAccess chosenAccess = accessDraft();
         boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
         int request = ++modelsRequest;
@@ -862,11 +1094,34 @@ final class AiSettingsPanel {
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
     /** Erweitert auf- oder zuklappen; eigene Werte bleiben sichtbar, damit nichts verdeckt wirkt. */
+    /** Zeigt den Stand des Parsermodells in der Zeile; Fortschritt und Fehler im Statusbereich der Modelle. */
+    void parserModel(ParserModelSetup.Status status) {
+        switch (status.state()) {
+            case INSTALLED -> parserStatus.setText(ParserModelSetup.INSTALLED);
+            case NOT_INSTALLED -> parserStatus.setText(ParserModelSetup.NOT_INSTALLED);
+            case INSTALLING -> parserStatus.setText(status.percent() >= 0
+                    ? "Wird installiert … " + status.percent() + " %" : "Wird installiert …");
+            case UNAVAILABLE -> parserStatus.setText("Nicht verfügbar");
+        }
+        boolean installing = status.state() == ParserModelSetup.State.INSTALLING;
+        parserInstall.setText(installing ? ParserModelSetup.CANCEL : ParserModelSetup.INSTALL);
+        parserInstall.setVisible(status.state() == ParserModelSetup.State.NOT_INSTALLED || installing);
+        if (installing) {
+            modelsFeedback.working(LABEL_PARSER + status.message());
+        } else if (status.message() != null && status.failed()) {
+            modelsFeedback.warning("Parsermodell nicht installiert", status.message());
+        } else if (status.message() != null) {
+            modelsFeedback.success(status.message());
+        }
+    }
+
+    private static final String LABEL_PARSER = "Parsermodell: ";
+
     void advanced(boolean open) {
         modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
-        advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
     }
@@ -904,7 +1159,7 @@ final class AiSettingsPanel {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
         } else {
             modelsFeedback.success(Texts.count(this.loaded.size(), "Modell", "Modelle") + " geladen"
-                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über ▾");
+                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über das Auswahlmenü rechts");
         }
     }
 

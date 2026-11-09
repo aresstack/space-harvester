@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Future;
 
 /**
  * Globale Suche als reine Schlagwortsuche über den Cache ({@code KeywordSearch} des Core, ADR 0013): Die native Suche
@@ -50,6 +52,8 @@ import java.util.TreeSet;
  * Liste ändern.
  */
 public final class SearchView implements View {
+
+    private static final System.Logger LOG = System.getLogger(SearchView.class.getName());
 
     /**
      * Treffer je Stapel: ein Bildschirm voll statt des Höchstwerts des Core ({@link KeywordSearch#MAX_LIMIT}), damit
@@ -76,12 +80,35 @@ public final class SearchView implements View {
     final JLabel scopeLabel = Comic.muted(" ");
     /** Der Modus der nächsten Suche: Schlagwortsuche oder semantisch, wie der Core ihn meldet. */
     final JLabel modeLabel = Comic.muted(" ");
-    final ComposerButton everywhere = Comic.button("Überall suchen", "Auswahl im Explorer aufheben und in allen "
-            + "Wissensquellen suchen");
+    /**
+     * „Überall suchen“ (#515): übergeht bei der nächsten Suche die Auswahl im Explorer, ohne sie aufzuheben; nur der
+     * Benutzer schaltet es um, keine Baumauswahl und keine Konfigurationsänderung.
+     */
+    final JCheckBox everywhere = checkBox("Überall suchen", "Sucht in allen Wissensquellen, unabhängig von der "
+            + "Auswahl im Explorer; die Auswahl bleibt bestehen");
+    /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
+    private final com.aresstack.spaceharvester.app.ui.controls.InputFrame searchBar =
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query);
+    /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
+    final javax.swing.JButton optionsButton =
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("\u25BE", "Suchoptionen");
+    /** Die Suchoptionen als Popup am Suchfeld: Überall suchen, Semantische Suche, Umfang, Modus, Hinweise. */
+    final javax.swing.JPopupMenu options = new javax.swing.JPopupMenu();
+    /** Warum die semantische Suche gesperrt ist bzw. woher ihre Varianten kommen, lesbar im Popup. */
+    final JLabel semanticNote = Comic.muted(" ");
+    /** Läuft vor jeder Suche aus dem Suchfeld: das Hauptfenster zeigt die Trefferansicht. */
+    private Runnable onSubmit = () -> { };
     private final ComposerButton run = Comic.primary("Suchen", "Im gewählten Umfang suchen (Titel und Inhalt)");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
+    /**
+     * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
+     * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
+     */
+    final BusyOverlay overlay = new BusyOverlay(Comic.scroll(table));
+    /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
+    private Future<?> searching;
     final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
@@ -123,14 +150,15 @@ public final class SearchView implements View {
     private final Set<String> spaces = new TreeSet<>();
     /** Gewählte Knoten mit Namen für die Umfangszeile. */
     private List<Explorer.Scope> scopes = List.of();
-    /** Hebt die Auswahl im Explorer auf („Überall suchen“). */
-    private Runnable clearScope = () -> scope(List.of());
 
     public SearchView(AppContext context) {
         this.context = context;
         root.setBackground(Comic.SURFACE);
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
-        query.addActionListener(e -> search());
+        query.addActionListener(e -> {
+            onSubmit.run();
+            search();
+        });
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
@@ -145,7 +173,8 @@ public final class SearchView implements View {
         semantic.addItemListener(e -> mode());
         tags.setOpaque(false);
         tags.setVisible(false);
-        everywhere.addActionListener(e -> clearScope.run());
+        everywhere.setSelected(false);
+        everywhere.addItemListener(e -> scope(scopes));
         context.onChange(ignored -> refreshSources());
         refreshSources();
         // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
@@ -173,43 +202,19 @@ public final class SearchView implements View {
         });
         table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
 
-        // Eine Suchleiste, daneben die semantische Suche; Erklärungen stehen im Tooltip des Infosymbols.
-        JLabel info = new JLabel(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.info());
-        info.setToolTipText("<html>Schlagwortsuche über Titel und Inhalt, direkt in den Quellen. Wo gesucht wird, "
-                + "wählst du im Explorer links:<br>eine Wissensquelle, einen Space oder mit Strg-Klick mehrere; "
-                + "ohne Auswahl in allen.<br>"
-                + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) im Suchfeld öffnet die Seite direkt."
-                + "<br>Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage geordnet."
-                + "<br>Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>");
-        info.getAccessibleContext().setAccessibleName("Hinweise zur Suche");
-        JPanel bar = new JPanel(new BorderLayout(10, 0));
-        bar.setOpaque(false);
-        bar.add(query, BorderLayout.CENTER);
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        options.setOpaque(false);
-        options.add(semantic);
-        options.add(info);
-        options.add(run);
-        bar.add(options, BorderLayout.EAST);
-        JPanel scopeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        scopeRow.setOpaque(false);
-        scopeRow.add(scopeLabel);
-        scopeRow.add(everywhere);
-        scopeRow.add(modeLabel);
+        buildSearchBar();
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
-        head.add(bar, BorderLayout.NORTH);
-        JPanel middle = new JPanel(new BorderLayout(0, 6));
-        middle.setOpaque(false);
-        middle.add(scopeRow, BorderLayout.NORTH);
-        middle.add(tags, BorderLayout.CENTER);
-        head.add(middle, BorderLayout.CENTER);
+        head.add(tags, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         root.add(head, BorderLayout.NORTH);
         // „Weitere laden“ über die volle Breite, direkt unter der Trefferliste; nur, solange weitere Treffer folgen.
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setOpaque(false);
-        list.add(Comic.scroll(table), BorderLayout.CENTER);
+        overlay.setHighlight(Comic.BLUE);
+        overlay.setVeilColor(Comic.SURFACE);
+        overlay.onCancel(this::cancelSearch);
+        list.add(overlay, BorderLayout.CENTER);
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
         list.add(more, BorderLayout.SOUTH);
@@ -233,6 +238,88 @@ public final class SearchView implements View {
         status.addPropertyChangeListener("text", e -> status.setToolTipText(
                 status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
+    }
+
+    /** Hinweise zur Suche, früher im Tooltip des Infosymbols, jetzt lesbar im Popup. */
+    static final String HELP = "<html><b>Hinweise zur Suche</b><br>"
+            + "Schlagwortsuche über Titel und Inhalt, direkt in den Quellen.<br>"
+            + "Wo gesucht wird, wählst du im Explorer links: eine Wissensquelle, einen Space<br>"
+            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen. „Überall suchen“ übergeht die Auswahl.<br>"
+            + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
+            + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
+            + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
+            + "Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>";
+
+    /** Suchfeld mit Pfeil rechts; der Pfeil öffnet die Suchoptionen unter dem Feld (#515). */
+    private void buildSearchBar() {
+        query.getAccessibleContext().setAccessibleName("Suchbegriff");
+        optionsButton.setToolTipText("Suchoptionen");
+        optionsButton.getAccessibleContext().setAccessibleName("Suchoptionen");
+        optionsButton.setFocusable(true);
+        optionsButton.addActionListener(e -> showOptions());
+        // Wie in AskAI: Lupe links, ✕ (bei Text) und ▾ rechts IM Feld, kein loser Knopf daneben.
+        searchBar.addButton(optionsButton);
+        // Pfeil nach unten bzw. Alt+Pfeil nach unten im Feld öffnet die Optionen auch per Tastatur.
+        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("alt DOWN"), "searchOptions");
+        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("DOWN"), "searchOptions");
+        query.getActionMap().put("searchOptions", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                showOptions();
+            }
+        });
+        JPanel panel = new JPanel();
+        panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS));
+        panel.setBackground(Comic.SURFACE);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+        JLabel help = new JLabel(HELP);
+        help.setForeground(Comic.MUTED);
+        // Menüpunkte mit demselben Modell wie die Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet,
+        // das Popup bleibt beim Umschalten offen.
+        for (JCheckBox box : List.of(everywhere, semantic)) {
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+            item.setModel(box.getModel());
+            item.setToolTipText(box.getToolTipText());
+            box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
+            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+            item.setEnabled(box.isEnabled());
+            box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
+            options.add(item);
+        }
+        for (JComponent part : List.of(semanticNote, scopeLabel, modeLabel, help)) {
+            part.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+            panel.add(part);
+            panel.add(javax.swing.Box.createVerticalStrut(part == help ? 0 : 4));
+        }
+        options.add(panel);
+        options.getAccessibleContext().setAccessibleName("Suchoptionen");
+    }
+
+    /** Öffnet die Optionen rechtsbündig unter dem Suchfeld; Swing hält das Popup im Bildschirm. */
+    void showOptions() {
+        if (!searchBar.isShowing()) {
+            return;
+        }
+        java.awt.Dimension size = options.getPreferredSize();
+        options.show(searchBar, Math.max(0, searchBar.getWidth() - size.width), searchBar.getHeight());
+        // Der erste Menüpunkt ist gleich gewählt, damit die Tastatur sofort darauf wirkt.
+        javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
+                new javax.swing.MenuElement[] {options, (javax.swing.MenuElement) options.getComponent(0)});
+    }
+
+    /** Die Suchleiste für die Kopfzeile des Hauptfensters; es gibt nur dieses eine Suchfeld. */
+    public JComponent searchBar() {
+        return searchBar;
+    }
+
+    /** Läuft, bevor eine Suche aus dem Suchfeld startet; das Hauptfenster wechselt damit zur Trefferansicht. */
+    public void onSubmit(Runnable action) {
+        this.onSubmit = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Der Text im Suchfeld. */
+    String queryText() {
+        return query.getText();
     }
 
     @Override
@@ -281,25 +368,19 @@ public final class SearchView implements View {
             // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
             spaces.clear();
         }
-        scopeLabel.setText(scopes.isEmpty() ? "In: Alle Wissensquellen" : "In: " + String.join(", ",
-                scopes.stream().map(scope -> title(scope.sourceId())
+        scopeLabel.setText(everywhere.isSelected() || scopes.isEmpty() ? "In: Alle Wissensquellen"
+                : "In: " + String.join(", ", scopes.stream().map(scope -> title(scope.sourceId())
                         + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
-        everywhere.setVisible(!scopes.isEmpty());
     }
 
-    /** Hebt beim Klick auf „Überall suchen“ die Auswahl im Explorer auf; der meldet dann den leeren Umfang. */
-    public void onClearScope(Runnable action) {
-        this.clearScope = java.util.Objects.requireNonNull(action, "action");
-    }
-
-    /** Die Quellen des Umfangs; leer heißt alle. */
+    /** Die Quellen, in denen die nächste Suche sucht; leer heißt alle. „Überall suchen“ übergeht die Auswahl. */
     Set<String> chosenSources() {
-        return Set.copyOf(chosen);
+        return everywhere.isSelected() ? Set.of() : Set.copyOf(chosen);
     }
 
-    /** Die Spaces des Umfangs; leer heißt alle. */
+    /** Die Spaces, in denen die nächste Suche sucht; leer heißt alle. */
     Set<String> chosenSpaces() {
-        return Set.copyOf(spaces);
+        return everywhere.isSelected() ? Set.of() : Set.copyOf(spaces);
     }
 
     private Set<String> knownSources() {
@@ -316,8 +397,11 @@ public final class SearchView implements View {
         if (!available) {
             semantic.setSelected(false);
         }
-        semantic.setToolTipText(semanticTip(runtime == null ? null : available, runtime != null
-                && runtime.workspace().aiVariants()));
+        semantic.setToolTipText(available || runtime == null
+                ? semanticTip(runtime == null ? null : available, runtime != null && runtime.workspace().aiVariants())
+                : lockedTip(runtime.settings().ai()));
+        String tip = semantic.getToolTipText();
+        semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
         scope(scopes);
     }
@@ -339,6 +423,23 @@ public final class SearchView implements View {
                 + "nach ihrer Nähe zur ursprünglichen Anfrage"
                 : "Sucht semantisch mit Varianten der Anfrage nach Regeln (kein Chat-Modell eingerichtet, unter "
                 + "Einstellungen › Modelle) und ordnet alle Treffer nach ihrer Nähe zur ursprünglichen Anfrage";
+    }
+
+    /**
+     * Warum die semantische Suche gesperrt ist, genau nach der Bedingung des Core ({@code AiServiceSettings
+     * .embeddings()}: Adresse, Modell und Vektorlänge): ein eingetragenes Modell ohne Vektorlänge heißt nicht „kein
+     * Modell“ (#515).
+     */
+    static String lockedTip(com.aresstack.spaceharvester.app.settings.AppSettings.AiSettings ai) {
+        if (ai == null || ai.baseUrl() == null) {
+            return "Gesperrt: kein KI-Dienst eingerichtet (Einstellungen › Modelle); ohne Embedding-Modell sucht die "
+                    + "App nach Schlagwörtern";
+        }
+        if (ai.embeddingModel() != null && ai.embeddingDimensions() == null) {
+            return "Gesperrt: Für das Embedding-Modell „" + ai.embeddingModel() + "“ fehlt die Vektorlänge "
+                    + "(Einstellungen › Modelle, „Modell prüfen“ misst sie); bis dahin sucht die App nach Schlagwörtern";
+        }
+        return semanticTip(false, false);
     }
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
@@ -371,10 +472,11 @@ public final class SearchView implements View {
         more.setVisible(false);
         feedback.clear();
         starting("Adresse wird aufgelöst …");
-        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+        searching = Background.start(() -> runtime.workspace().resolveAddress(address), resolution -> {
             if (id != request) {
                 return;
             }
+            searching = null;
             run.setEnabled(true);
             stopLoading();
             states.clear();
@@ -399,6 +501,7 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
             run.setEnabled(true);
             stopLoading();
             feedback.problem(error);
@@ -428,9 +531,10 @@ public final class SearchView implements View {
         KeywordSearch.Query q;
         try {
             // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
-            String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, chosen.size() > 1 ? Set.copyOf(chosen) : Set.of(),
-                    Set.copyOf(spaces));
+            // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
+            Set<String> sources = chosenSources();
+            String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
@@ -445,11 +549,18 @@ public final class SearchView implements View {
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
+        // Die alte Liste geht; die Funde der Quellen füllen die neue, sobald eine Quelle antwortet.
+        model.set(List.of());
+        states.clear();
+        status.setText(" ");
         starting("Suche läuft …");
-        Background.run(() -> runtime.workspace().keywordSearch(q, null, LIMIT), results -> {
+        searching = Background.start(() -> runtime.workspace().keywordSearch(q, null, LIMIT, observer(id)), results -> {
             if (id != request) {
+                discard(results);
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             states.clear();
             incomplete = false;
@@ -481,12 +592,54 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             model.set(List.of());
             states.clear();
             reset();
             feedback.problem(error);
         });
+    }
+
+    /**
+     * Der Beobachter der Suche Nummer {@code id}: Die Funde einer Quelle erscheinen in der Liste, sobald die Quelle
+     * geantwortet hat; der fertige Stapel ersetzt sie dann in der Rangfolge des Core. Meldungen einer überholten Suche
+     * verfallen.
+     */
+    private KeywordSearch.Found observer(int id) {
+        return (sourceId, hits) -> SwingUtilities.invokeLater(() -> {
+            if (id == request) {
+                arrived(hits);
+            }
+        });
+    }
+
+    /**
+     * Vorläufige Treffer einer Quelle, noch während die anderen suchen: nur angehängt, nie an die Stelle einer schon
+     * gezeigten Zeile, denn ein geprüfter Treffer eines früheren Stapels weiß mehr (Space, Auszug, Anhang) als der
+     * Fund der Quelle.
+     */
+    private void arrived(List<KeywordSearch.Hit> hits) {
+        if (hits.isEmpty()) {
+            return;
+        }
+        model.append(hits.stream().map(Hit::of).toList());
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · weitere Quellen antworten noch");
+        status.setForeground(Comic.MUTED);
+    }
+
+    /**
+     * Ein Stapel, dessen Suche überholt oder abgebrochen wurde: Sein Laden in den Cache endet, sonst lüde der Core
+     * Seiten für eine Liste, die niemand mehr sieht.
+     */
+    private void discard(KeywordSearch.Results results) {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Progress progress = results.progress();
+        if (runtime != null && progress != null && !progress.done()) {
+            Background.run(() -> runtime.workspace().cancelKeywordSearch(progress.id()), ignored -> { },
+                    ignored -> { });
+        }
     }
 
     /**
@@ -551,6 +704,7 @@ public final class SearchView implements View {
     /** Ende der semantischen Suche: Endliste, Grund in der Fortschrittszeile, Hinweis bei keinen Treffern. */
     private void ended(ProgressiveResult result) {
         running = null;
+        overlay.setBusy(false);
         showRanked(result.hits());
         showVariants(result.variants());
         idle(switch (result.reason()) {
@@ -561,12 +715,32 @@ public final class SearchView implements View {
         progressText.setText(completion(result.reason()) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
-            feedback.warning("Suche fehlgeschlagen", "Keine Suchanfrage ließ sich ausführen; die Quellen waren "
-                    + "nicht erreichbar.");
+            LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
+                    result.variants().size());
+            // Die semantische Suche scheitert meist am KI-Dienst (Embeddings), nicht an den Quellen (#515).
+            feedback.warning("Suche fehlgeschlagen", failureText(result.failure()));
         } else if (model.rows.isEmpty() && result.reason() != ProgressiveResult.Completion.CANCELLED) {
             feedback.info("Keine Treffer", "Weder die Anfrage noch ihre Varianten fanden eine Seite, die du lesen "
                     + "darfst.");
         }
+    }
+
+    /** Der Grund einer gescheiterten semantischen Suche, wie der Core ihn meldet ({@code ProgressiveResult#failure}). */
+    static String failureText(com.aresstack.spaceharvester.ai.AiServiceException.Reason reason) {
+        String fallback = " Ohne „Semantische Suche“ geht die Schlagwortsuche weiter.";
+        if (reason == null) {
+            return "Keine Suchanfrage ließ sich ausführen; die Quellen waren nicht erreichbar." + fallback;
+        }
+        return switch (reason) {
+            case NOT_CONFIGURED -> "Kein Embedding-Modell eingerichtet (Einstellungen › Modelle).";
+            case UNAUTHORIZED -> "Der KI-Dienst lehnt die Anmeldung ab: API-Key fehlt oder ist ungültig "
+                    + "(Einstellungen › Modelle).";
+            case UNREACHABLE -> "Der KI-Dienst für das Embedding-Modell ist nicht erreichbar (Adresse, Proxy, "
+                    + "Netzwerk).";
+            case TIMEOUT -> "Der KI-Dienst hat nicht rechtzeitig geantwortet.";
+            case INVALID_RESPONSE -> "Der KI-Dienst lieferte unbrauchbare Embeddings, etwa mit falscher Vektorlänge "
+                    + "(„Modell prüfen“ misst sie neu).";
+        } + fallback;
     }
 
     static String completion(ProgressiveResult.Completion reason) {
@@ -639,13 +813,20 @@ public final class SearchView implements View {
         run.setEnabled(false);
         feedback.clear();
         starting("Weitere Treffer werden geladen …");
-        Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
+        int from = model.rows.size();
+        searching = Background.start(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT, observer(id)),
+                results -> {
             if (id != request) {
+                discard(results);
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             shownCursor = cursor;
-            batchStart = model.rows.size();
+            batchStart = from;
+            // Die vorläufigen Funde dieses Stapels weichen dem fertigen Stapel in der Rangfolge des Core.
+            model.truncate(from);
             model.add(hits(results));
             show(q, results);
             track(results.progress());
@@ -660,6 +841,8 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
             run.setEnabled(true);
             reset();
@@ -766,12 +949,46 @@ public final class SearchView implements View {
                 error -> finished(true));
     }
 
+    /**
+     * „Stopp“ im Ring über der Liste: Was auch immer gerade läuft, hört auf, und die Treffer, die schon da sind,
+     * bleiben stehen und bedienbar. Eine semantische Suche beendet der Core selbst ({@code completed(CANCELLED)}); eine
+     * laufende Schlagwortsuche wird unterbrochen, ihr spätes Ergebnis verfällt; danach endet das Laden in den Cache.
+     */
+    void cancelSearch() {
+        if (running != null) {
+            running.cancel();
+            cancel.setEnabled(false);
+            return;
+        }
+        if (searching != null) {
+            request++;
+            searching.cancel(true);
+            searching = null;
+            overlay.setBusy(false);
+            run.setEnabled(true);
+            awaitingHits = false;
+            // Ohne fertigen Stapel gibt es keinen Cursor: „Weitere laden“ gilt erst wieder nach einer vollständigen
+            // Suche.
+            nextCursor = null;
+            finished(true);
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · Suche abgebrochen");
+            status.setForeground(Comic.MUTED);
+            return;
+        }
+        cancelLoading();
+    }
+
     /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
     private void stopLoading() {
         if (running != null) {
             running.cancel();
             running = null;
         }
+        if (searching != null) {
+            searching.cancel(true);
+            searching = null;
+        }
+        overlay.setBusy(false);
         AppRuntime runtime = context.runtime();
         String id = progressId;
         poll.stop();
@@ -889,6 +1106,7 @@ public final class SearchView implements View {
 
     /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
     private void starting(String text) {
+        overlay.setBusy(true);
         endState.setVisible(false);
         progressText.setText(text);
         progressText.setVisible(true);
@@ -1022,6 +1240,30 @@ public final class SearchView implements View {
                 fireTableDataChanged();
             } else if (!appended.isEmpty()) {
                 fireTableRowsInserted(first, rows.size() - 1);
+            }
+        }
+
+        /** Hängt nur Treffer an, deren Seite noch nicht in der Liste steht; vorhandene Zeilen bleiben unverändert. */
+        void append(List<Hit> hits) {
+            List<Hit> appended = new ArrayList<>();
+            for (Hit hit : hits) {
+                if (indexOf(hit) < 0 && appended.stream().noneMatch(other -> same(other, hit))) {
+                    appended.add(hit);
+                }
+            }
+            if (!appended.isEmpty()) {
+                int first = rows.size();
+                rows.addAll(appended);
+                fireTableRowsInserted(first, rows.size() - 1);
+            }
+        }
+
+        /** Nimmt alle Zeilen ab {@code from} weg; davor bleibt alles. */
+        void truncate(int from) {
+            if (from < rows.size()) {
+                int last = rows.size() - 1;
+                rows = new ArrayList<>(rows.subList(0, Math.max(0, from)));
+                fireTableRowsDeleted(Math.max(0, from), last);
             }
         }
 

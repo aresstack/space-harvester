@@ -36,6 +36,7 @@ public final class KeePassLink {
     private final SecretVault interactive;
     private final SecretVault silent;
     private final Supplier<Boolean> pairedCheck;
+    private final Runnable unpair;
 
     /**
      * @param pairingDirectory Ordner für den Pairing-Schlüssel; lässt er sich nicht auf das eigene Konto beschränken,
@@ -47,6 +48,7 @@ public final class KeePassLink {
         SessionKeyStore keys = new SessionKeyStore(new FilePairingKeyStore(pairingFile),
                 () -> OwnerOnlyDirectory.secure(pairingDirectory));
         this.pairedCheck = () -> keys.held() || java.nio.file.Files.isRegularFile(pairingFile);
+        this.unpair = keys::clear;
         this.interactive = new KeePassRpcSecretProvider(CONFIG, keys, prompt);
         // Beim Start und beim Lesen des Keys nie ungefragt einen Kopplungsdialog öffnen.
         this.silent = new KeePassRpcSecretProvider(CONFIG, keys, KeePassPairingCallback.unavailable());
@@ -54,9 +56,15 @@ public final class KeePassLink {
 
     /** Für Tests: ein beliebiger Passwortspeicher statt KeePassRPC. */
     public KeePassLink(SecretVault vault, Supplier<Boolean> paired) {
+        this(vault, paired, () -> { });
+    }
+
+    /** Für Tests: wie {@link #KeePassLink(SecretVault, Supplier)}, mit dem, was „Entkoppeln“ auslöst. */
+    public KeePassLink(SecretVault vault, Supplier<Boolean> paired, Runnable unpair) {
         this.interactive = vault;
         this.silent = vault;
         this.pairedCheck = paired;
+        this.unpair = unpair;
     }
 
     /**
@@ -65,6 +73,14 @@ public final class KeePassLink {
      */
     public boolean paired() {
         return Boolean.TRUE.equals(pairedCheck.get());
+    }
+
+    /**
+     * Hebt die Kopplung auf: überschreibt und löscht die Datei {@value #PAIRING_FILE} und vergisst den Schlüssel im
+     * Speicher. Der Eintrag in KeePass selbst bleibt; die nächste Anfrage koppelt neu (mit Dialog). Darf auf dem EDT laufen.
+     */
+    public void unpair() {
+        unpair.run();
     }
 
     /** Koppelt bei Bedarf (mit Dialog) und liefert die Titel aller Einträge, sortiert wie KeePass sie liefert. */
@@ -76,6 +92,11 @@ public final class KeePassLink {
             }
         }
         return titles;
+    }
+
+    /** Koppelt bei Bedarf (mit Dialog) und liefert alle Einträge ohne Geheimnisse (Titel, Benutzer, Adresse). */
+    public List<VaultEntry> entries() throws SecretUnavailableException {
+        return List.copyOf(interactive.list());
     }
 
     /** Liest einen Eintrag (Adresse und Passwort); der Aufrufer schließt ihn. */

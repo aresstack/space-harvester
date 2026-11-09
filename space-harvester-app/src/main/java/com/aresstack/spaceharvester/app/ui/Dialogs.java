@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
@@ -117,6 +118,7 @@ public final class Dialogs {
         JDialog dialog = dialog(parent, title);
         JPasswordField field = new JPasswordField(28);
         Comic.style(field);
+        PasswordReveal.install(field);
         ComposerButton ok = Comic.primary(accept, null);
         ComposerButton cancel = Comic.button("Abbrechen", null);
         ok.addActionListener(e -> {

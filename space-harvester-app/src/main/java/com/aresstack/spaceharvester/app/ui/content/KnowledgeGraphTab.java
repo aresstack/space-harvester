@@ -209,7 +209,7 @@ final class KnowledgeGraphTab extends JPanel {
         search.setToolTipText("Begriff, Grundform oder Wortlaut; Enter sucht");
         search.addActionListener(e -> showTerm(search.getText()));
         tools.add(Comic.muted("Suche"));
-        tools.add(search);
+        tools.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search));
         tools.add(pageButton);
         tools.add(expand);
         tools.add(back);

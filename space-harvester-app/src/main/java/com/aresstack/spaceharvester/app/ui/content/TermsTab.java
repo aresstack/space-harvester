@@ -88,7 +88,7 @@ final class TermsTab extends JPanel {
         JLabel listTitle = Comic.text("Erkannte Begriffe und ihre Fundstellen");
         listTitle.setFont(Comic.semiBold(13f));
         listHead.add(listTitle, BorderLayout.WEST);
-        listHead.add(filter, BorderLayout.EAST);
+        listHead.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.EAST);
 
         JPanel top = new JPanel();
         top.setOpaque(false);

@@ -93,7 +93,7 @@ class SourceFormTest {
             f.directory.setText(handbuch.toString());
             assertThat(f.error(f.directory)).as("Tippen nimmt den Hinweis weg").isNull();
             assertThat(f.id.getText()).as("Kennung aus dem Ordner, schon vergeben").isEqualTo("handbuch-2");
-            assertThat(f.title.getText()).isEqualTo("handbuch");
+            assertThat(f.titleValue()).isEqualTo("handbuch");
             f.id.setText("handbuch");
             assertThat(f.validateInput()).as("Kennung vergeben").isFalse();
             assertThat(f.error(f.id)).isEqualTo("Diese Kennung ist schon vergeben.");
@@ -155,7 +155,14 @@ class SourceFormTest {
             assertThat(host.isVisible()).isTrue();
             assertThat(port.isVisible()).as("unter Erweitert").isFalse();
             assertThat(port.getText()).as("Vorgabe des Typs").isEqualTo("21");
-            assertThat(f.fields.advancedToggle().getText()).isEqualTo("▸ Erweitert");
+            assertThat(f.fields.advancedToggle().isVisible()).as("ein gemeinsames Erweitert").isFalse();
+            assertThat(f.sourceAdvanced.getText()).isEqualTo("Erweitert");
+            assertThat(Comic.disclosed(f.sourceAdvanced)).as("zugeklappt").isFalse();
+            f.sourceAdvanced(true);
+            assertThat(port.isVisible()).as("Typ-Felder unter dem gemeinsamen Erweitert").isTrue();
+            assertThat(f.id.isVisible()).isTrue();
+            f.sourceAdvanced(false);
+            assertThat(port.isVisible()).isFalse();
             assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
             assertThat(f.auth.getSelectedItem()).as("JES verlangt Zugangsdaten").isEqualTo("Benutzer und Passwort");
             assertThat(f.username.isVisible()).isTrue();
@@ -166,7 +173,7 @@ class SourceFormTest {
             assertThat(f.error(f.username)).isEqualTo("Bitte den Benutzernamen eintragen.");
             host.setText("mvs.example.org");
             assertThat(f.id.getText()).isEqualTo("mvs-example-org");
-            assertThat(f.title.getText()).isEqualTo("mvs.example.org");
+            assertThat(f.titleValue()).isEqualTo("mvs.example.org");
             f.username.setText("batch");
             assertThat(f.validateInput()).isTrue();
             assertThat(f.draft().yaml("    ")).contains("type: jes", "options:\n", "host: \"mvs.example.org\"",
@@ -467,7 +474,7 @@ class SourceFormTest {
             assertThat(f.error(f.id)).isNull();
             f.baseUrl.setText("https://wiki.example.org");
             assertThat(f.id.getText()).as("selbst eingetragen, bleibt").isEqualTo("wiki");
-            assertThat(f.title.getText()).isEqualTo("wiki.example.org");
+            assertThat(f.titleValue()).as("Vorschlag = eingetippte Adresse").isEqualTo("https://wiki.example.org");
             assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(f.variable.getText()).isEqualTo("WIKI_TOKEN");
             assertThat(f.validateInput()).as("Token fehlt").isFalse();
@@ -510,7 +517,11 @@ class SourceFormTest {
             assertThat(f.baseUrl.getText()).isEmpty();
             assertThat(f.baseUrl.placeholder()).isEqualTo("https://confluence.atlassian.com");
             assertThat(f.id.getText()).isEqualTo("confluence-atlassian");
-            assertThat(f.title.getText()).isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.title.getText()).as("Anzeigename nicht vorbelegt").isEmpty();
+            assertThat(f.title.placeholder()).as("Vorschlag grau im Feld").isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.titleValue()).isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.id.isVisible()).as("Kennung nur unter Erweitert").isFalse();
+            assertThat(f.sourceAdvancedOpen()).isFalse();
             assertThat(f.auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
             assertThat(f.validateInput()).isTrue();
             assertThat(f.draft().baseUrl()).isEqualTo("https://confluence.atlassian.com");
@@ -518,7 +529,7 @@ class SourceFormTest {
 
             f.baseUrl.setText("https://www.confluence.example.org/wiki");
             assertThat(f.id.getText()).isEqualTo("confluence-example");
-            assertThat(f.title.getText()).isEqualTo("confluence.example.org");
+            assertThat(f.titleValue()).isEqualTo("https://www.confluence.example.org/wiki");
             assertThat(f.auth.getSelectedItem()).as("eigene Instanz: mit Token").isEqualTo("Personal Access Token");
             f.auth.setSelectedItem("Ohne Anmeldung");
             f.baseUrl.setText("https://confluence.atlassian.com/");
@@ -584,9 +595,19 @@ class SourceFormTest {
             assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(f.validateInput()).as("noch kein Eintrag").isFalse();
         });
-        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 1);
-        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki"));
+        // Der Eintrag mit passender Adresse wird ohne weiteren Schritt vorgeschlagen und gelesen.
         awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Wiki");
+            // Der Eintrag belegt die Anmeldeart nur vor: alle drei Arten bleiben wählbar.
+            assertThat(form[0].auth.isEnabled()).isTrue();
+            assertThat(java.util.stream.IntStream.range(0, form[0].auth.getItemCount())
+                    .mapToObj(form[0].auth::getItemAt).toList())
+                    .containsExactly("Personal Access Token", "Benutzer und Passwort", "Ohne Anmeldung");
+            // Das Token steht maskiert und schreibgeschützt im Feld: sichtbar gelesen, aber keine eigene Eingabe.
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token-aus-keepass");
+            assertThat(form[0].sessionValue.isEditable()).isFalse();
+        });
         SwingUtilities.invokeAndWait(() -> form[0].save());
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
 
@@ -608,6 +629,70 @@ class SourceFormTest {
         assertThat(context.keePassPreferred()).isTrue();
     }
 
+    /**
+     * Bei KeePass liefert der Eintrag die Adresse: Sie steht als Platzhalter im leeren Adressfeld und gilt beim
+     * Speichern; eine Eingabe gewinnt. Ein Eintrag ohne Adresse macht die Adresse zur Pflicht (Angelo, 09.11. 20:31).
+     */
+    @Test
+    void theAddressComesFromTheKeePassEntryUnlessTyped() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Wiki", new String[] {"https://wiki.example.invalid/", "token-aus-keepass"});
+        keePass.entries.put("Ohne Adresse", new String[] {"", "geheim"});
+        start(config, null);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SourceForm(context);
+            assertThat(form[0].origin.getSelectedItem()).isEqualTo("KeePass");
+        });
+        awaitOnEdt(() -> form[0].pairKeePass.isEnabled() && form[0].keePassEntry.getItemCount() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            form[0].keePassEntry.setSelectedItem("Wiki");
+            // Noch nicht gelesen: kein stilles Ausweichen auf die Confluence-Hilfe, Speichern wartet.
+            assertThat(form[0].draft().baseUrl()).isNullOrEmpty();
+            assertThat(form[0].validateInput()).isFalse();
+            assertThat(form[0].error(form[0].baseUrl)).startsWith("Die Adresse ist noch nicht aus dem KeePass-Eintrag");
+        });
+        awaitOnEdt(() -> form[0].keePassSecretRead());
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = form[0];
+            assertThat(f.baseUrl.getText()).as("nichts eingetragen").isEmpty();
+            assertThat(f.baseUrl.placeholder()).isEqualTo("https://wiki.example.invalid/");
+            assertThat(f.draft().baseUrl()).isEqualTo("https://wiki.example.invalid/");
+            assertThat(f.title.placeholder()).as("Eintragstitel als Vorschlag").isEqualTo("Wiki");
+            assertThat(f.id.getText()).isEqualTo("wiki-example");
+            assertThat(f.validateInput()).as("Adresse aus KeePass genügt").isTrue();
+            // Eine Eingabe gewinnt immer, auch wenn der Eintrag eine Adresse hat.
+            f.baseUrl.setText("https://intern.example.org");
+            assertThat(f.draft().baseUrl()).isEqualTo("https://intern.example.org");
+            assertThat(f.title.placeholder()).as("Name folgt der eingetippten Adresse").isEqualTo("https://intern.example.org");
+            assertThat(f.keePassEntry.getSelectedItem()).as("von Hand gewählter Eintrag bleibt").isEqualTo("Wiki");
+            f.baseUrl.setText("");
+            assertThat(f.draft().baseUrl()).isEqualTo("https://wiki.example.invalid/");
+            // Zurück auf Manuell: wieder die Confluence-Hilfe als Vorgabe.
+            f.origin.setSelectedItem("Manuell");
+            assertThat(f.baseUrl.placeholder()).isEqualTo("https://confluence.atlassian.com");
+            f.origin.setSelectedItem("KeePass"); // lädt die Einträge neu
+        });
+        awaitOnEdt(() -> form[0].pairKeePass.isEnabled() && form[0].keePassSecretRead());
+        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Ohne Adresse"));
+        awaitOnEdt(() -> form[0].keePassSecretRead());
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = form[0];
+            assertThat(f.baseUrl.placeholder()).as("kein Platzhalter ohne Adresse im Eintrag").isNullOrEmpty();
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.error(f.baseUrl)).isEqualTo("Die Adresse fehlt.");
+            f.baseUrl.setText("https://wiki.example.invalid");
+            assertThat(f.validateInput()).isTrue();
+        });
+    }
+
     private static void awaitOnEdt(java.util.function.BooleanSupplier condition) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(120);
         boolean[] met = {false};
@@ -620,5 +705,70 @@ class SourceFormTest {
                 Thread.sleep(20);
             }
         }
+    }
+
+    @Test
+    void keePassIsUsableRightInTheDialogEvenForTheConfluenceDefaultWithoutLogin() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Confluence", new String[] {"https://wiki.example.invalid", "token"});
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> paired[0]));
+
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            form[0] = f;
+            assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
+            f.origin.setSelectedItem("KeePass");
+            // KeePass und „Ohne Anmeldung“ zugleich: Koppeln steht bereit, ist aber keine Pflicht.
+            assertThat(f.auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            assertThat(f.pairKeePass.isShowing() || f.pairKeePass.isVisible()).isTrue();
+            assertThat(f.pairKeePass.getText()).isEqualTo("Mit KeePass koppeln …");
+            assertThat(f.validateInput()).as("ohne Anmeldung kein Eintrag nötig").isTrue();
+            f.auth.setSelectedItem("Personal Access Token");
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.feedback.text()).contains("Mit KeePass koppeln");
+            f.baseUrl.setText("https://wiki.example.invalid");
+            paired[0] = true;
+            f.pairKeePass.doClick();
+        });
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Confluence");
+            // Ein Vorschlag gilt nur, solange die Adresse passt: eine fremde Adresse bekommt nie diese Zugangsdaten.
+            form[0].baseUrl.setText("https://www.example.org");
+            assertThat(form[0].keePassEntry.getEditor().getItem().toString()).isEmpty();
+            assertThat(form[0].validateInput()).isFalse();
+            // Passt die Adresse wieder, gilt der Vorschlag wieder.
+            form[0].baseUrl.setText("https://wiki.example.invalid");
+        });
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            // Von Hand umgestellt: dasselbe Passwort aus dem Eintrag, jetzt als Passwort; „Ohne Anmeldung“ braucht nichts.
+            form[0].auth.setSelectedItem("Benutzer und Passwort");
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Benutzer und Passwort");
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            form[0].auth.setSelectedItem("Ohne Anmeldung");
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            // „Einträge neu laden“ ist keine Wahl von Hand: die gewählte Anmeldeart bleibt.
+            form[0].pairKeePass.doClick();
+        });
+        // Liste geladen und Eintrag neu gelesen (der Wert wird beim Lesen erst vergessen, dann gesetzt).
+        awaitOnEdt(() -> form[0].pairKeePass.isEnabled() && form[0].keePassSecretRead());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            form[0].auth.setSelectedItem("Personal Access Token");
+            // Wechsel auf „Manuell“: Der Wert aus KeePass verlässt das Feld, man tippt selbst.
+            form[0].origin.setSelectedItem("Manuell");
+            assertThat(form[0].sessionValue.getPassword()).isEmpty();
+            assertThat(form[0].sessionValue.isEditable()).isTrue();
+        });
     }
 }

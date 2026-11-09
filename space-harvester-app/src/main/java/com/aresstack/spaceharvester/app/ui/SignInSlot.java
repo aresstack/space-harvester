@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComicButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicSectionPanel;
@@ -100,6 +101,7 @@ public final class SignInSlot extends JPanel {
         codeLabel.setFont(Comic.regular(13f));
         codeLabel.setLabelFor(codeField);
         codeField.setBorder(ComicBorder.roundedBorder(palette, 4));
+        PasswordReveal.install(codeField);
         row.add(codeLabel);
         row.add(Box.createHorizontalStrut(8));
         row.add(codeField);

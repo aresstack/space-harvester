@@ -5,7 +5,6 @@ import com.aresstack.spaceharvester.app.runtime.Acquisition.Pause;
 import com.aresstack.spaceharvester.app.runtime.Acquisition.SourceCounts;
 import org.junit.jupiter.api.Test;
 
-import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.time.Instant;
@@ -54,7 +53,7 @@ class BackgroundPlateTest {
     private static List<String> texts(BackgroundPlate plate) {
         List<String> texts = new ArrayList<>();
         for (Component c : plate.facts().getComponents()) {
-            if (c instanceof JTextField field) {
+            if (c instanceof javax.swing.text.JTextComponent field) {
                 texts.add(field.getText());
             }
         }

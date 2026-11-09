@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
@@ -103,6 +104,7 @@ final class SettingDialogs {
         username.setText(current.username() == null ? "" : current.username());
         JPasswordField secret = new JPasswordField(24);
         Comic.style(secret);
+        PasswordReveal.install(secret);
         Rows rows = new Rows();
         rows.add("Anmeldung", auth, null);
         rows.add("Benutzer", username, null);
@@ -697,6 +699,7 @@ final class SettingDialogs {
         user.setText(current.proxyUser() == null ? "" : current.proxyUser());
         JPasswordField password = new JPasswordField(24);
         Comic.style(password);
+        PasswordReveal.install(password);
         JTextArea script = Comic.code();
         script.setEditable(true);
         script.setRows(5);
@@ -1178,7 +1181,7 @@ final class SettingDialogs {
     /** Beschriftung, Feld und graue Hinweiszeile je Zeile; Zeilen lassen sich ausblenden. */
     static final class Rows extends JPanel {
 
-        private record Row(JLabel label, JComponent field, JLabel hint) {
+        private record Row(JLabel label, JComponent field, javax.swing.text.JTextComponent hint) {
         }
 
         private final List<Row> rows = new ArrayList<>();
@@ -1213,12 +1216,15 @@ final class SettingDialogs {
                     && flow.getAlignment() == java.awt.FlowLayout.LEFT ? flow.getHgap() : 0;
             right.insets = new Insets(4, -lead, 0, 0);
             add(field, right);
-            JLabel hintLabel = Comic.muted(hint == null ? " " : hint);
+            // Hinweise brechen um statt mit „…“ abgeschnitten zu werden.
+            javax.swing.JTextArea hintLabel = Comic.hint(hint == null ? " " : hint);
             GridBagConstraints below = new GridBagConstraints();
             below.gridx = 1;
             below.gridy = y + 1;
+            below.weightx = 1;
             below.anchor = GridBagConstraints.WEST;
             below.fill = GridBagConstraints.HORIZONTAL;
+            below.insets = new Insets(1, 2 - lead, 0, 0);
             add(hintLabel, below);
             rows.add(new Row(label, field, hintLabel));
         }
@@ -1237,7 +1243,7 @@ final class SettingDialogs {
             all.insets = new Insets(10, 0, 2, 0);
             add(field, all);
             JLabel none = new JLabel();
-            rows.add(new Row(none, field, new JLabel()));
+            rows.add(new Row(none, field, Comic.hint("")));
         }
 
         private Row find(JComponent field) {

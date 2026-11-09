@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AiDraft;
@@ -69,7 +70,7 @@ final class SourceForm {
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
     /** Kein eigenes Bundle: das Vertrauen aller Quellen ({@code space-harvester.network.tls}, #189). */
-    static final String NETWORK_TRUST = "Wie für alle Quellen (Einstellungen › Serverzertifikate)";
+    static final String NETWORK_TRUST = "Wie für alle Quellen";
     /** Öffentliche Confluence-Instanz (Atlassian-Dokumentation), lesbar ohne Anmeldung: Vorgabe zum Ausprobieren. */
     static final String DEFAULT_URL = "https://confluence.atlassian.com";
     static final String DEFAULT_TITLE = "Confluence-Hilfe (Atlassian)";
@@ -81,18 +82,36 @@ final class SourceForm {
 
     final JComboBox<String> kind = Comic.combo();
     final JTextField id = Comic.field(24);
-    final JTextField title = Comic.field(24);
+    /** Leer mit grauem Vorschlag (aus Adresse oder Ordner); leer gespeichert gilt der Vorschlag. */
+    final PlaceholderField title = new PlaceholderField(24, "");
+    /** „Erweitert“ am Ende: Kennung und Zertifikate, die automatisch gesetzt sind und selten jemand ändert. */
+    final javax.swing.JButton sourceAdvanced = Comic.disclosure("Erweitert",
+            "Technische Kennung und Serverzertifikate; alles ist automatisch gesetzt");
+    private boolean sourceAdvancedOpen;
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
     /** Woher Benutzer und Passwort bzw. Token kommen: KeePass-Eintrag oder Manuell (Tresor), wie beim KI-Dienst. */
     final JComboBox<String> origin = Comic.combo();
     final JComboBox<String> keePassEntry = Comic.combo();
-    final ComposerButton pairKeePass = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC) und die Einträge "
-            + "lesen; einmal gekoppelt gilt es für alle Quellen und den KI-Dienst");
-    private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
+    final ComposerButton pairKeePass = Comic.button(PAIR_TEXT, "KeePass zeigt einen Code, den du hier einträgst; "
+            + "einmal gekoppelt gilt es für alle Quellen und den KI-Dienst");
+    private static final String PAIR_TEXT = "Mit KeePass koppeln …";
+    /** Zuletzt gelesene Einträge (ohne Geheimnisse), um einen passenden zur Adresse vorzuschlagen. */
+    private List<com.aresstack.enterpriseai.adyton.VaultEntry> keePassEntries = List.of();
+    /** Auswahl des Eintrags mit dem Koppeln-/Neu-laden-Knopf rechts IM Feld (InputFrame). */
+    private final JPanel keePassRow = Comic.fieldWithButton(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
+    /** Ob das Feld Passwort/Token gerade den Wert aus KeePass zeigt (maskiert, schreibgeschützt, zählt nicht als Eingabe). */
+    private boolean secretFromKeePass;
+    /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
+    private String keePassUser;
+    /** Adresse des gelesenen Eintrags ("" ohne Adresse); {@code null}: keiner gelesen. Leeres Adressfeld = sie gilt. */
+    private String keePassUrl;
+    /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
+    private String suggestedEntry;
+    private boolean suggesting;
     private String keePassStatus = "";
     final JComboBox<String> auth = Comic.combo();
     final JTextField username = Comic.field(24);
@@ -107,17 +126,19 @@ final class SourceForm {
     final ComposerButton chooseCertificate = Comic.button("Wählen …",
             "Aus dem Windows-Zertifikatsspeicher wählen (nur öffentliche Zertifikate, keine Schlüssel)");
     /** Freigabe für den KI-Dienst ({@code space-harvester.ai.external-processing-sources}); Vorgabe aus. */
-    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen (Embeddings, "
-            + "Reranking)");
-    /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung). */
-    final JTextArea notes = Comic.note("");
+    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen");
+    /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung); unter „Erweitert“. */
+    final JTextArea notes = Comic.wrapped("", Comic.TEXT, 12.5f);
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
+    private final JLabel sourceSection = Form.section("Quelle");
+    private final JLabel aiSection = Form.section("KI-Dienst");
+    /** Ob die KI-Freigabe unter „Erweitert“ steht (kein KI-Dienst eingetragen). */
+    private boolean releaseAdvanced;
     /** Die Felder des Typs bei Arten ohne eigenes Formular. */
     final SourceFieldsEditor fields;
     /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
     private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
-    private final JLabel certificateSection = Form.section("Client-Zertifikat");
     private final JLabel trustSection = Form.section("Serverzertifikate");
 
     final ComposerButton test = Comic.button("Verbindung testen", "Spaces live laden, bevor gespeichert wird");
@@ -129,6 +150,8 @@ final class SourceForm {
     private String suggestedId = "";
     private String suggestedTitle = "";
     private boolean authChosen;
+    /** Ob die Anmeldeart bei KeePass von Hand gewählt wurde; dann belegt ein gelesener Eintrag sie nicht mehr vor. */
+    private boolean authPickedInKeePass;
     private boolean deriving;
     private Runnable close = () -> { };
     private Consumer<String> saved = ignored -> { };
@@ -143,8 +166,8 @@ final class SourceForm {
         this.editing = editing;
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
-        root.setPreferredSize(new Dimension(680, 600));
         Comic.style(sessionValue);
+        PasswordReveal.install(sessionValue);
 
         for (SourceType type : sourceTypes(context)) {
             String label = label(type);
@@ -163,6 +186,10 @@ final class SourceForm {
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();
+            if (keePassChosen() && !authPickedInKeePass) {
+                // Der neue Typ setzt die Anmeldeart zurück; bei KeePass belegt sie weiter der gelesene Eintrag vor.
+                deriveAuthFromKeePass(keePassUser);
+            }
             updateVisibility();
             derive();
         });
@@ -179,51 +206,55 @@ final class SourceForm {
             keePassEntry.setSelectedItem(knownEntry);
         }
         origin.addActionListener(e -> {
-            updateVisibility();
-            if (keePassChosen()) {
-                loadKeePassEntries(!context.keePass().paired());
+            if (keePassChosen() && !authPickedInKeePass) {
+                deriveAuthFromKeePass(keePassUser);
             }
-        });
-        pairKeePass.addActionListener(e -> loadKeePassEntries(true));
-        keePassEntry.addActionListener(e -> readKeePassEntry());
-        auth.addActionListener(e -> {
-            authChosen |= !deriving;
-            suggestVariable();
             updateVisibility();
-            if (keePassChosen() && keePassEntry.getItemCount() == 0 && pairKeePass.isEnabled()) {
-                // Erst jetzt braucht die Quelle Zugangsdaten: bei bestehender Kopplung die Einträge lesen.
+            derive(); // Adresse und Vorschläge: mit KeePass aus dem Eintrag, sonst aus dem Feld
+            if (keePassChosen() && context.keePass().paired()) {
                 loadKeePassEntries(false);
             }
         });
+        pairKeePass.addActionListener(e -> loadKeePassEntries(true));
+        keePassEntry.addActionListener(e -> {
+            if (!suggesting) {
+                suggestedEntry = null;
+                // Ein von Hand gewählter Eintrag belegt die Anmeldeart wieder vor.
+                authPickedInKeePass = false;
+            }
+            readKeePassEntry();
+        });
+        auth.addActionListener(e -> {
+            authChosen |= !deriving;
+            if (!deriving && AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem())) {
+                authPickedInKeePass = true;
+                if (BASIC.equals(auth.getSelectedItem()) && keePassUser != null && !keePassUser.isBlank()
+                        && username.getText().isBlank()) {
+                    // Von Hand auf Benutzer und Passwort: der Benutzer kommt aus dem gelesenen Eintrag.
+                    username.setText(keePassUser.strip());
+                }
+            }
+            suggestVariable();
+            updateVisibility();
+        });
         certificate.addActionListener(e -> updateVisibility());
 
-        form.header(Form.section("Quelle"));
+        // Reihenfolge nach Entscheidung (Angelo, 09.11.): erst die Art, dann woher die Zugangsdaten kommen und der
+        // KeePass-Eintrag, daraus die Anmeldung vorbelegt; erst danach Adresse (bei KeePass aus dem Eintrag) und Name.
         form.row("Art", kind);
-        int mainFields = form.reserve(SourceFieldsEditor.ROWS);
-        form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
-        form.row("Ordner", row(directory, browse(directory, true)), null);
-        form.row("Dateien", include, "Muster, durch Komma getrennt");
-        form.row("Anzeigename", title, "So heißt die Quelle in der App");
-        form.row("Technische Kennung", id, "Wird aus der Adresse vorgeschlagen; nur ändern, wenn nötig");
-        fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
-        onEdit(baseUrl, this::derive);
-        onEdit(directory, this::derive);
-        onEdit(id, this::suggestVariable);
-
         form.header(loginSection);
-        form.row("Zugangsdaten beziehen über", origin, "KeePass liest Benutzer und Passwort bzw. Token aus einem "
-                + "Eintrag; Manuell legt sie im Tresor ab");
-        form.row("Anmeldung", auth);
+        form.row("Zugangsdaten beziehen über", origin, "KeePass liefert Adresse, Benutzer und Passwort bzw. Token aus "
+                + "einem Eintrag; Manuell legt sie im Tresor ab");
         form.row("KeePass-Eintrag", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
+        form.row("Anmeldung", auth);
         form.row("Benutzer", username);
         form.row("Token", sessionValue, " ");
-        form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
-
-        form.header(certificateSection);
+        // Das Client-Zertifikat gehört zur Anmeldung und steht sichtbar hier, nicht unter „Erweitert“ (Angelo, 09.11.
+        // 22:34: dort wird es vergessen).
         form.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
-        form.row("Alias", row(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
+        form.row("Alias", Comic.fieldWithButton(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
         form.row("Fingerabdruck", thumbprint, "Optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
-        form.row("PKCS#12-Datei", row(certificatePath, browse(certificatePath, false)), null);
+        form.row("PKCS#12-Datei", Comic.fieldWithButton(certificatePath, browse(certificatePath, false)), null);
         form.row("Passwort-Platzhalter", certificatePasswordVariable,
                 "Java-Property oder Umgebungsvariable mit dem Zertifikatspasswort");
         chooseCertificate.addActionListener(e -> {
@@ -233,20 +264,56 @@ final class SourceForm {
             }
         });
 
-        form.header(trustSection);
-        form.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten dieser Quelle glaubt; eigene Truststores "
-                + "unter spring.ssl.bundle");
+        form.header(sourceSection);
+        int mainFields = form.reserve(SourceFieldsEditor.ROWS);
+        form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
+        form.row("Ordner", Comic.fieldWithButton(directory, browse(directory, true)), null);
+        form.row("Dateien", include, "Muster, durch Komma getrennt");
+        form.row("Anzeigename", title, "So heißt die Quelle in der App; leer lassen für den Vorschlag");
+        onEdit(baseUrl, this::derive);
+        onEdit(directory, this::derive);
+        onEdit(id, this::suggestVariable);
 
-        form.header(Form.section("KI-Dienst"));
+        // Die Freigabe ist eine Entscheidung, solange ein KI-Dienst da ist; ohne Dienst wirkt sie nicht und steht
+        // unter „Erweitert“.
         boolean aiConfigured = settings != null && settings.ai().configured();
-        form.row("Freigabe", release, aiConfigured ? "Vorgabe aus; ohne Freigabe keine Embeddings und kein Reranking "
-                + "für diese Quelle" : "Wirkt erst, wenn unter Einstellungen › KI-Dienst ein Dienst eingetragen ist");
+        releaseAdvanced = !aiConfigured;
+        if (aiConfigured) {
+            form.header(aiSection);
+            form.row("Freigabe", release, "Vorgabe aus; ohne Freigabe keine Embeddings und kein Reranking für diese "
+                    + "Quelle, also keine semantische Suche in ihr");
+        }
+
+        // Alles Ableitbare steht eingeklappt unter „Erweitert“ (linksbündig wie im Assistenten): die automatisch
+        // vergebene Kennung, der Platzhalter in der Datei, die weiteren Felder des Typs, Client-Zertifikat (Vorgabe
+        // keins), Serverzertifikate (Vorgabe wie für alle Quellen) und was Speichern wohin schreibt.
+        JPanel sourceToggle = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        sourceToggle.setOpaque(false);
+        sourceToggle.add(sourceAdvanced);
+        form.wide(sourceToggle, 14);
+        form.row("Technische Kennung", id, "Wird automatisch vergeben; nur ändern, wenn nötig");
+        form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
+        fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
+        fields.shareAdvanced(open -> {
+            if (open != sourceAdvancedOpen) {
+                sourceAdvanced(open);
+            }
+        });
+        sourceAdvanced.addActionListener(e -> sourceAdvanced(!sourceAdvancedOpen));
+        form.header(trustSection);
+        form.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten dieser Quelle glaubt; „Wie für alle Quellen“ "
+                + "ist unter Einstellungen › Serverzertifikate festgelegt, eigene Truststores unter spring.ssl.bundle");
+        if (!aiConfigured) {
+            form.header(aiSection);
+            form.row("Freigabe", release, "Wirkt erst, wenn unter Einstellungen › KI-Dienst ein Dienst eingetragen "
+                    + "ist");
+        }
+        form.wide(notes, 14);
+
         sessionValue.getDocument().addDocumentListener(changes(this::renderNotes));
 
-        JPanel content = new JPanel(new BorderLayout(0, 10));
-        content.setOpaque(false);
-        content.add(form, BorderLayout.NORTH);
-        content.add(notes, BorderLayout.CENTER);
+        // Das Formular nimmt die Breite des Fensters ein (Hinweise brechen um); gescrollt wird nur senkrecht.
+        Form.Sheet content = new Form.Sheet(form);
         content.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttons.setOpaque(false);
@@ -268,19 +335,142 @@ final class SourceForm {
         if (editing != null) {
             prefill(editing.draft());
         }
-        updateVisibility();
+        // Beim Bearbeiten aufgeklappt, wenn die Quelle eigene Zertifikate hat, damit nichts verborgen wirkt.
+        sourceAdvanced(editing != null && (editing.draft().certificateType() != null
+                || editing.draft().trustBundle() != null));
         derive();
         suggestVariable();
         renderNotes();
-        if (keePassChosen() && context.keePass().paired()) {
-            // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
-            loadKeePassEntries(false);
+        if (keePassChosen()) {
+            updateVisibility();
+            if (context.keePass().paired()) {
+                // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
+                loadKeePassEntries(false);
+            }
+        }
+        onEdit(baseUrl, this::suggestKeePassEntry);
+    }
+
+    /** Ob die Werte aus KeePass kommen: KeePass gewählt bei einer Art, die eine Anmeldung kennt. */
+    boolean keePassChosen() {
+        if (!AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem())) {
+            return false;
+        }
+        for (int i = 0; i < auth.getItemCount(); i++) {
+            if (!NONE.equals(auth.getItemAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Ob KeePass die Zugangsdaten liefert: KeePass gewählt und eine Anmeldung außer „Ohne Anmeldung“. */
+    private boolean keePassLogin() {
+        return keePassChosen() && !NONE.equals(auth.getSelectedItem());
+    }
+
+    /** Ob KeePass gewählt ist, unabhängig von der Anmeldeart (auch „Ohne Anmeldung“ nutzt die Adresse des Eintrags). */
+    private boolean keePassOrigin() {
+        return AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem());
+    }
+
+    /**
+     * Die Adresse des gelesenen KeePass-Eintrags, solange KeePass gewählt ist und der Eintrag eine hat; sonst
+     * {@code null}. Sie gilt, wenn das Adressfeld leer bleibt; eine Eingabe im Feld gewinnt immer.
+     */
+    private String keePassAddress() {
+        return keePassOrigin() && keePassUrl != null && !keePassUrl.isBlank() ? keePassUrl : null;
+    }
+
+    /** Ob ein KeePass-Eintrag gelesen ist, der keine Adresse hat: dann ist die Adresse Pflicht. */
+    private boolean keePassEntryWithoutAddress() {
+        return keePassOrigin() && keePassUrl != null && keePassUrl.isBlank();
+    }
+
+    /**
+     * Ob ein KeePass-Eintrag gewählt, aber noch nicht gelesen ist (Lesen läuft oder scheiterte): Dann ist die Adresse
+     * noch offen und darf nicht still durch die Confluence-Hilfe ersetzt werden.
+     */
+    private boolean keePassAddressPending() {
+        return keePassOrigin() && keePassUrl == null && !keePassTitle().isEmpty();
+    }
+
+    /**
+     * Belegt die Anmeldeart aus dem gelesenen Eintrag vor: mit Benutzer Benutzer+Passwort, sonst Token. Nur eine
+     * Vorbelegung, jede Art bleibt wählbar (auch „Ohne Anmeldung“). {@code user} {@code null}: noch kein Eintrag
+     * gelesen, dann bleibt die Auswahl.
+     */
+    private void deriveAuthFromKeePass(String user) {
+        if (user == null) {
+            return;
+        }
+        boolean pat = offered(PAT);
+        boolean basic = offered(BASIC);
+        String wanted = !user.isBlank() && basic ? BASIC : pat ? PAT : basic ? BASIC : null;
+        if (wanted != null && !wanted.equals(auth.getSelectedItem())) {
+            boolean before = deriving;
+            deriving = true;
+            try {
+                auth.setSelectedItem(wanted);
+            } finally {
+                deriving = before;
+            }
         }
     }
 
-    /** Ob die Werte aus KeePass kommen: KeePass gewählt und eine Anmeldung mit Geheimnis. */
-    boolean keePassChosen() {
-        return AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem()) && !NONE.equals(auth.getSelectedItem());
+    private boolean offered(String item) {
+        for (int i = 0; i < auth.getItemCount(); i++) {
+            if (item.equals(auth.getItemAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Schlägt den Eintrag vor, dessen Adresse zum Host der Quelle passt (sonst einen, dessen Titel den ganzen Host
+     * enthält), solange keiner von Hand gewählt ist. Ein Vorschlag wird bei jeder Änderung der Adresse neu geprüft und
+     * verschwindet, wenn er nicht mehr passt: Beim Tippen trifft ein halber Host sonst einen fremden Eintrag, dessen
+     * Zugangsdaten dann an die fertige Adresse gingen.
+     */
+    private void suggestKeePassEntry() {
+        String current = keePassTitle();
+        boolean auto = suggestedEntry != null && suggestedEntry.equals(current);
+        if (!keePassChosen() || !current.isEmpty() && !auto || keePassEntries.isEmpty()) {
+            return;
+        }
+        String match = keePassMatch(host(address()));
+        if (java.util.Objects.equals(match, current.isEmpty() ? null : current)) {
+            return;
+        }
+        suggesting = true;
+        try {
+            suggestedEntry = match;
+            keePassEntry.getEditor().setItem(match == null ? "" : match);
+            keePassEntry.setSelectedItem(match); // liest den Eintrag über den ActionListener (oder vergisst ihn)
+        } finally {
+            suggesting = false;
+        }
+    }
+
+    /** Der Eintrag zu einem Host: gleicher Host in der Adresse, sonst ein Titel, der den ganzen Host enthält. */
+    private String keePassMatch(String host) {
+        if (host == null || host.isBlank()) {
+            return null;
+        }
+        String wanted = host.toLowerCase(java.util.Locale.ROOT);
+        String byTitle = null;
+        for (var entry : keePassEntries) {
+            String entryHost = host(entry.location() == null ? "" : entry.location());
+            if (entryHost != null && entryHost.equalsIgnoreCase(wanted)) {
+                return entry.title();
+            }
+            if (byTitle == null && wanted.contains(".") && entry.title() != null
+                    && entry.title().toLowerCase(java.util.Locale.ROOT).contains(wanted)) {
+                byTitle = entry.title();
+            }
+        }
+        return byTitle;
     }
 
     private String keePassTitle() {
@@ -300,19 +490,32 @@ final class SourceForm {
         keePassStatus = "Verbinde mit KeePass …";
         form.hint(keePassRow, keePassStatus);
         String keep = keePassTitle();
-        Background.run(() -> context.keePass().titles(), titles -> {
+        Background.run(() -> context.keePass().entries(), entries -> {
             pairKeePass.setEnabled(true);
-            keePassEntry.removeAllItems();
-            titles.forEach(keePassEntry::addItem);
-            if (!keep.isEmpty() && !titles.contains(keep)) {
-                keePassEntry.addItem(keep);
+            pairKeePass.setText("Einträge neu laden");
+            keePassEntries = entries;
+            List<String> titles = entries.stream().map(com.aresstack.enterpriseai.adyton.VaultEntry::title)
+                    .filter(t -> t != null && !t.isBlank()).distinct().toList();
+            // Die Liste neu aufbauen ist keine Wahl von Hand: Anmeldeart und Vorschlag bleiben, wie sie sind.
+            suggesting = true;
+            try {
+                keePassEntry.removeAllItems();
+                titles.forEach(keePassEntry::addItem);
+                if (!keep.isEmpty() && !titles.contains(keep)) {
+                    keePassEntry.addItem(keep);
+                }
+                keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
+                keePassEntry.getEditor().setItem(keep);
+            } finally {
+                suggesting = false;
             }
-            keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
-            keePassEntry.getEditor().setItem(keep);
-            keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge") + "; Eintrag wählen";
+            keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge")
+                    + "; Eintrag wählen oder Namen eintippen";
             form.hint(keePassRow, keePassStatus);
             if (!keep.isEmpty()) {
                 readKeePassEntry();
+            } else {
+                suggestKeePassEntry();
             }
         }, error -> {
             pairKeePass.setEnabled(true);
@@ -324,25 +527,41 @@ final class SourceForm {
     /** Liest Benutzer und Passwort bzw. Token des gewählten Eintrags; der Benutzer landet im Feld, der Rest im Speicher. */
     private void readKeePassEntry() {
         String title = keePassTitle();
+        boolean hadAddress = keePassUrl != null;
         forgetKeePassSecret();
+        if (hadAddress) {
+            // Der alte Eintrag galt als Adresse: Platzhalter und Vorschläge zurücksetzen.
+            updateVisibility();
+            derive();
+        }
         if (title.isEmpty() || !context.keePass().paired()) {
             return;
         }
         Background.run(() -> {
             try (var read = context.keePass().read(title)) {
-                return new Object[] {read.userName(), read.copyPassword()};
+                return new Object[] {read.userName(), read.copyPassword(), read.location()};
             }
         }, read -> {
-            if (!title.equals(keePassTitle())) {
+            if (!keePassChosen() || !title.equals(keePassTitle())) {
+                // Inzwischen „Manuell“ oder ein anderer Eintrag: das Ergebnis ändert nichts mehr.
                 java.util.Arrays.fill((char[]) read[1], '\0');
                 return;
             }
             String user = (String) read[0];
+            keePassUser = user == null ? "" : user;
+            keePassUrl = read[2] == null ? "" : ((String) read[2]).strip();
+            if (!authPickedInKeePass) {
+                deriveAuthFromKeePass(keePassUser);
+            }
             if (user != null && !user.isBlank() && BASIC.equals(auth.getSelectedItem())) {
                 username.setText(user.strip());
             }
             keePassSecret = (char[]) read[1];
-            keePassStatus = keePassSecret.length == 0 ? "Der Eintrag hat kein Passwort." : "Aus KeePass gelesen";
+            keePassStatus = keePassSecret.length == 0 ? "Der Eintrag hat kein Passwort."
+                    : BASIC.equals(auth.getSelectedItem()) ? "Benutzer und Passwort kommen aus KeePass"
+                    : "Das Token kommt aus KeePass";
+            updateVisibility();
+            derive(); // Adresse, Name und Kennung folgen dem Eintrag, solange das Adressfeld leer ist
             form.hint(keePassRow, keePassStatus);
             renderNotes();
         }, error -> {
@@ -352,13 +571,29 @@ final class SourceForm {
     }
 
     private void forgetKeePassSecret() {
+        keePassUser = null;
+        keePassUrl = null;
+        showKeePassSecret(false);
         if (keePassSecret != null) {
             java.util.Arrays.fill(keePassSecret, '\0');
             keePassSecret = null;
         }
     }
 
-    private boolean keePassSecretRead() {
+    /** Setzt den Wert aus KeePass ins Feld oder nimmt ihn wieder heraus; ein eingetippter Wert bleibt unberührt. */
+    private void showKeePassSecret(boolean show) {
+        if (show && !secretFromKeePass) {
+            secretFromKeePass = true;
+            sessionValue.setText(new String(keePassSecret));
+            sessionValue.setEditable(false);
+        } else if (!show && secretFromKeePass) {
+            secretFromKeePass = false;
+            sessionValue.setText("");
+            sessionValue.setEditable(true);
+        }
+    }
+
+    boolean keePassSecretRead() {
         return keePassSecret != null && keePassSecret.length > 0;
     }
 
@@ -377,11 +612,49 @@ final class SourceForm {
         Dialogs.frame(dialog, heading, form.component(), dialog::dispose);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
+            public void windowOpened(java.awt.event.WindowEvent e) {
+                form.firstField().requestFocusInWindow();
+            }
+
+            @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 form.clearSecret();
             }
         });
-        Dialogs.present(dialog, new Dimension(680, 680));
+        form.root.setPreferredSize(form.preferredSize());
+        Dialogs.present(dialog, new Dimension(560, 420));
+    }
+
+    /**
+     * Breite für Beschriftung, Feld und einen Hinweis in einer Zeile; die Höhe zeigt das ganze Formular, soweit der
+     * Bildschirm es hergibt, sonst wird gescrollt.
+     */
+    Dimension preferredSize() {
+        int width = 720;
+        int height = root.getPreferredSize().height + 24;
+        if (!GraphicsEnvironment.isHeadless()) {
+            java.awt.Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+            height = Math.min(height, screen.height - 120);
+            width = Math.min(width, screen.width - 80);
+        }
+        return new Dimension(width, Math.max(height, 420));
+    }
+
+    /** Das erste Feld, das jemand ausfüllt: die Adresse bzw. der Ordner, beim Bearbeiten der Anzeigename. */
+    JComponent firstField() {
+        if (editing == null) {
+            if (baseUrl.isVisible()) {
+                return baseUrl;
+            }
+            if (directory.isVisible()) {
+                return directory;
+            }
+            JTextField address = fields.address();
+            if (address != null) {
+                return address;
+            }
+        }
+        return title;
     }
 
     JComponent component() {
@@ -390,6 +663,30 @@ final class SourceForm {
 
     void onSaved(Consumer<String> saved) {
         this.saved = saved;
+    }
+
+    /** Der eingetragene Anzeigename, leer der graue Vorschlag. */
+    String titleValue() {
+        String typed = title.getText();
+        String proposed = title.placeholder();
+        return typed.isBlank() && proposed != null ? proposed : typed;
+    }
+
+    /** „Erweitert“ auf- oder zuklappen. */
+    void sourceAdvanced(boolean open) {
+        sourceAdvancedOpen = open;
+        Comic.disclose(sourceAdvanced, open);
+        fields.advanced(open);
+        updateVisibility();
+    }
+
+    /** Ob das Feld unter „Erweitert“ steht (dann klappt ein Fehler dort „Erweitert“ auf). */
+    private boolean advancedField(JComponent field) {
+        return field == id || field == variable || field == trust;
+    }
+
+    boolean sourceAdvancedOpen() {
+        return sourceAdvancedOpen;
     }
 
     /** Die Eingaben als Eintrag für die Datei. */
@@ -414,7 +711,7 @@ final class SourceForm {
         SourceDraft draft;
         if (tls || kept == null) {
             draft = new SourceDraft(id.getText(), type,
-                    title.getText(), confluence ? address() : null,
+                    titleValue(), confluence ? address() : null,
                     files ? directory.getText() : null, files ? include.getText() : null, authType,
                     authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                     authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
@@ -423,7 +720,7 @@ final class SourceForm {
                     certificateType == null ? null : thumbprint.getText(),
                     !tls || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
         } else {
-            draft = new SourceDraft(id.getText(), type, title.getText(), null, null, null, authType,
+            draft = new SourceDraft(id.getText(), type, titleValue(), null, null, null, authType,
                     authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                     authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(),
                     kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
@@ -439,7 +736,7 @@ final class SourceForm {
 
     /** Ob Token bzw. Passwort eingegeben ist (ohne den Wert zu kopieren). */
     private boolean typed() {
-        return sessionValue.getDocument().getLength() > 0;
+        return !secretFromKeePass && sessionValue.getDocument().getLength() > 0;
     }
 
     /**
@@ -563,8 +860,19 @@ final class SourceForm {
     }
 
     /** Die eingetragene Adresse; leer heißt die öffentliche Confluence-Hilfe. */
+    /**
+     * Die Adresse: die Eingabe; leer die Adresse des KeePass-Eintrags; ohne KeePass-Eintrag die Confluence-Hilfe. Ein
+     * gelesener Eintrag ohne Adresse liefert leer, damit „Die Adresse fehlt“ am Feld steht.
+     */
     private String address() {
-        return baseUrl.getText().isBlank() ? DEFAULT_URL : baseUrl.getText();
+        if (!baseUrl.getText().isBlank()) {
+            return baseUrl.getText();
+        }
+        String fromKeePass = keePassAddress();
+        if (fromKeePass != null) {
+            return fromKeePass;
+        }
+        return keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL;
     }
 
     /**
@@ -589,6 +897,9 @@ final class SourceForm {
         for (String problem : problems) {
             JComponent field = field(problem);
             fields.reveal(field);
+            if (advancedField(field) && !sourceAdvancedOpen) {
+                sourceAdvanced(true);
+            }
             if (form.has(field)) {
                 form.error(field, shortly(problem));
                 first = first == null ? field : first;
@@ -655,7 +966,7 @@ final class SourceForm {
             return;
         }
         SourceDraft source = draft();
-        boolean fromKeePass = keePassChosen();
+        boolean fromKeePass = keePassLogin();
         String keePassTitle = fromKeePass ? keePassTitle() : null;
         // Aus KeePass gelesene Werte gehen nur in die Sitzung, nie in den Tresor.
         char[] value = fromKeePass ? new char[0] : sessionValue.getPassword();
@@ -809,7 +1120,7 @@ final class SourceForm {
 
     /** Ob für Token bzw. Passwort schon ein Wert da ist: eingegeben, in der Sitzung, im Tresor oder als Property. */
     private boolean secretAvailable(SourceDraft source) {
-        if (keePassChosen()) {
+        if (keePassLogin()) {
             return keePassSecretRead() || sessionMatchesKeePassEntry(source);
         }
         return SourceSaving.secretAvailable(context, editing, source, sessionValue.getPassword().length > 0);
@@ -831,11 +1142,11 @@ final class SourceForm {
         // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
         secrets.proxyPassword(context.secrets().proxyPassword());
         String sourceId = source.id();
-        char[] value = keePassChosen() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
+        char[] value = keePassLogin() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
                 : sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, SourceSaving.login(source), value);
-        } else if (sourceId != null && (keePassChosen() ? sessionMatchesKeePassEntry(source)
+        } else if (sourceId != null && (keePassLogin() ? sessionMatchesKeePassEntry(source)
                 : context.secrets().has(sourceId, SourceSaving.login(source))
                 && !SourceSaving.loginChanged(editing, source))) {
             return context.secrets();
@@ -846,6 +1157,12 @@ final class SourceForm {
     private List<String> problems() {
         SourceDraft source = draft();
         List<String> problems = new ArrayList<>(source.problems());
+        if (source.confluence() && baseUrl.getText().isBlank() && keePassAddressPending()) {
+            // Gewählter Eintrag, Adresse noch nicht gelesen: nicht still die Confluence-Hilfe speichern.
+            problems.replaceAll(problem -> problem.startsWith("Die Adresse fehlt")
+                    ? "Die Adresse ist noch nicht aus dem KeePass-Eintrag gelesen; kurz warten oder eintragen."
+                    : problem);
+        }
         if (source.generic() && !fields.active() && addressOption() != null) {
             String address = source.extraOptions().get(addressOption());
             if (address == null) {
@@ -854,9 +1171,12 @@ final class SourceForm {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         }
-        if (keePassChosen() && keePassTitle().isEmpty()) {
+        // Bei „Ohne Anmeldung“ braucht es weder Kopplung noch Eintrag, auch wenn KeePass gewählt ist.
+        if (keePassLogin() && !context.keePass().paired()) {
+            problems.add("Noch nicht mit KeePass gekoppelt: bitte auf „" + PAIR_TEXT + "“ klicken.");
+        } else if (keePassLogin() && keePassTitle().isEmpty()) {
             problems.add("Kein KeePass-Eintrag gewählt.");
-        } else if (keePassChosen() && !secretAvailable(source)) {
+        } else if (keePassLogin() && !secretAvailable(source)) {
             problems.add("Der KeePass-Eintrag ist noch nicht gelesen; KeePass starten und koppeln.");
         } else if ((source.confluence() || source.authType() == SourceSettingsConfig.AuthType.PAT)
                 && !secretAvailable(source)) {
@@ -968,19 +1288,27 @@ final class SourceForm {
             boolean folder = !generic || addressField != null
                     && fields.spec(addressOption()).kind() == SourceFieldSpec.Kind.DIRECTORY;
             String folderPath = generic ? genericAddress : directory.getText();
-            String proposedTitle = confluence ? titleFor(address()) : folder ? folderName(folderPath)
-                    : genericTitle(genericAddress);
+            // Der Name hängt an der Adresse (Angelo, 09.11.): eine eingetippte Adresse ist auch der Vorschlag für den
+            // Namen; leer gilt der Titel des KeePass-Eintrags bzw. die Confluence-Hilfe.
+            boolean fromKeePass = confluence && baseUrl.getText().isBlank() && keePassAddress() != null
+                    && !keePassTitle().isEmpty();
+            String proposedTitle = fromKeePass ? keePassTitle()
+                    : confluence ? (baseUrl.getText().isBlank() ? titleFor(address()) : baseUrl.getText().strip())
+                    : folder ? folderName(folderPath) : genericTitle(genericAddress);
             String proposedId = unique(confluence ? idForUrl(address()) : folder ? slug(folderName(folderPath))
                     : genericId(genericAddress));
-            if (title.getText().isBlank() || title.getText().equals(suggestedTitle)) {
-                title.setText(proposedTitle);
-                suggestedTitle = proposedTitle;
+            // Der Vorschlag steht grau im leeren Feld, nicht als Text: wer tippt, überschreibt nichts.
+            if (title.getText().equals(suggestedTitle)) {
+                title.setText("");
             }
+            title.setPlaceholder(proposedTitle);
+            suggestedTitle = "";
             if (id.getText().isBlank() || id.getText().equals(suggestedId)) {
                 id.setText(proposedId);
                 suggestedId = proposedId;
             }
-            if (confluence && !authChosen) {
+            // Bis ein KeePass-Eintrag gelesen ist, gilt die übliche Vorbelegung nach Adresse.
+            if (confluence && !authChosen && (keePassUser == null || !keePassChosen())) {
                 auth.setSelectedItem(DEFAULT_URL.equals(normalized(address())) ? NONE : PAT);
             }
         } finally {
@@ -1114,6 +1442,10 @@ final class SourceForm {
                         editing.plaintextSecrets())).append("; dort steht künftig nur der Platzhalter.");
             }
         }
+        if (source.confluence() && baseUrl.getText().isBlank() && keePassAddress() != null) {
+            text.append("\nDie Adresse ").append(keePassAddress()).append(" kommt aus dem KeePass-Eintrag „")
+                    .append(keePassTitle()).append("“ und steht so in der Datei; eine Eingabe im Feld gewinnt.");
+        }
         if (source.secretVariable() != null) {
             String what = source.secretName();
             text.append("\n").append(Character.toUpperCase(what.charAt(0))).append(what.substring(1))
@@ -1139,28 +1471,54 @@ final class SourceForm {
         boolean generic = !confluence && !files;
         // Bei Arten mit Feldern ist die Adresse eins davon; das Adressfeld bleibt für Arten ohne Felder.
         form.visible(baseUrl, confluence || generic && !fields.active() && addressOption() != null);
-        baseUrl.setPlaceholder(confluence ? DEFAULT_URL : "");
-        form.hint(baseUrl, confluence ? "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe"
-                : "Adresse der Quelle (in der Datei options." + addressOption() + ")");
+        // Platzhalter: die Adresse des KeePass-Eintrags, sonst die Confluence-Hilfe; ein Eintrag ohne Adresse keiner.
+        String fromKeePass = keePassAddress();
+        baseUrl.setPlaceholder(!confluence ? "" : fromKeePass != null ? fromKeePass
+                : keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL);
+        form.hint(baseUrl, !confluence ? "Adresse der Quelle (in der Datei options." + addressOption() + ")"
+                : fromKeePass != null ? "Leer gilt die Adresse des KeePass-Eintrags; eine Eingabe hier gewinnt"
+                : keePassEntryWithoutAddress() ? "Der KeePass-Eintrag hat keine Adresse; bitte hier eintragen"
+                : keePassAddressPending() ? "Leer gilt die Adresse des KeePass-Eintrags, sobald er gelesen ist; "
+                        + "oder hier eintragen"
+                : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
         form.visible(include, files);
         boolean login = confluence || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));
-        boolean tls = confluence || generic && SourceFields.tls(selectedType());
-        loginSection.setVisible(login);
-        certificateSection.setVisible(tls);
-        trustSection.setVisible(tls);
+        boolean tlsType = confluence || generic && SourceFields.tls(selectedType());
+        // Das Client-Zertifikat steht bei der Anmeldung; nur die Serverzertifikate liegen unter „Erweitert“.
+        boolean tls = tlsType;
+        boolean trusted = tlsType && sourceAdvancedOpen;
+        form.visible(id, sourceAdvancedOpen);
+        form.visible(notes, sourceAdvancedOpen);
+        aiSection.setVisible(!releaseAdvanced || sourceAdvancedOpen);
+        form.visible(release, !releaseAdvanced || sourceAdvancedOpen);
+        loginSection.setVisible(login || tls);
+        trustSection.setVisible(trusted);
         form.visible(auth, login);
         boolean basic = BASIC.equals(auth.getSelectedItem());
         boolean anonymous = NONE.equals(auth.getSelectedItem());
         boolean keePass = login && keePassChosen();
         form.visible(origin, login);
         form.visible(keePassRow, keePass);
+        // Bei KeePass belegt der Eintrag die Anmeldeart nur vor; jede Art bleibt wählbar.
+        form.hint(auth, keePass ? "Wird aus dem KeePass-Eintrag vorbelegt; hier umstellen, falls nötig" : " ");
+        if (keePass && pairKeePass.isEnabled() && keePassEntries.isEmpty()) {
+            boolean paired = context.keePass().paired();
+            pairKeePass.setText(paired ? "Einträge laden" : PAIR_TEXT);
+            if (keePassStatus.isEmpty()) {
+                form.hint(keePassRow, paired ? "Gekoppelt" : "Nicht gekoppelt · KeePass muss laufen, mit dem Plugin "
+                        + "KeePassRPC");
+            }
+        }
         form.visible(username, login && basic);
-        form.visible(variable, login && !anonymous && !keePass);
-        form.visible(sessionValue, login && !anonymous && !keePass);
+        form.visible(variable, login && !anonymous && !keePass && sourceAdvancedOpen);
+        // Bei KeePass zeigt das Feld den gelesenen Wert maskiert und schreibgeschützt, damit man sieht, dass er da ist.
+        boolean shown = keePass && !anonymous && keePassSecretRead();
+        showKeePassSecret(shown);
+        form.visible(sessionValue, login && !anonymous && (!keePass || shown));
         form.label(sessionValue, basic ? "Passwort" : "Token");
-        form.hint(sessionValue, secretHint());
+        form.hint(sessionValue, shown ? "Aus KeePass gelesen; bleibt nur im Speicher" : secretHint());
         form.visible(certificate, tls);
         boolean windows = tls && WINDOWS_MY.equals(certificate.getSelectedItem());
         boolean pkcs12 = tls && PKCS12.equals(certificate.getSelectedItem());
@@ -1169,8 +1527,8 @@ final class SourceForm {
         chooseCertificate.setVisible(windows);
         form.visible(certificatePath, pkcs12);
         form.visible(certificatePasswordVariable, pkcs12);
-        form.visible(trust, tls);
-        if (pkcs12 && certificatePasswordVariable.getText().isBlank()) {
+        form.visible(trust, trusted);
+        if (tlsType && PKCS12.equals(certificate.getSelectedItem()) && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");
             certificatePasswordVariable.setText(base + "_CLIENT_PASSWORD");
@@ -1192,13 +1550,6 @@ final class SourceForm {
                 + "der Datei" : "Gilt bis zum Schließen der App, nie in der Datei");
     }
 
-    private JPanel row(JTextField field, ComposerButton button) {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
-        row.setOpaque(false);
-        row.add(field, BorderLayout.CENTER);
-        row.add(button, BorderLayout.EAST);
-        return row;
-    }
 
     private ComposerButton browse(JTextField target, boolean directories) {
         ComposerButton button = Comic.button("Durchsuchen …", null);
@@ -1227,8 +1578,13 @@ final class SourceForm {
         private final List<Row> rows = new ArrayList<>();
         private int y;
 
-        private record Row(JComponent key, JLabel label, JComponent field, JLabel hint, String text) {
+        private record Row(JComponent key, JLabel label, JComponent field, JTextArea hint, String text) {
         }
+
+        /** Breite der Beschriftungsspalte, damit alle Felder bündig stehen. */
+        static final int LABEL_WIDTH = 190;
+        /** Schmaler wird kein Feld; darunter beginnt der waagerechte Bildlauf. */
+        static final int FIELD_MIN_WIDTH = 160;
 
         Form() {
             super(new GridBagLayout());
@@ -1254,6 +1610,63 @@ final class SourceForm {
 
         void row(String label, JComponent field) {
             row(label, field, null);
+        }
+
+        /**
+         * Eine Zeile über beide Spalten, linksbündig und in voller Breite, etwa die aufklappbare Überschrift
+         * „▸ Erweitert“ oder ein umbrechender Hinweis; {@code top} ist der Abstand zur Zeile davor.
+         */
+        void wide(JComponent component, int top) {
+            GridBagConstraints c = new GridBagConstraints();
+            c.gridx = 0;
+            c.gridy = y++;
+            c.gridwidth = 2;
+            c.weightx = 1;
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST;
+            c.insets = new Insets(top, 0, 0, 0);
+            add(component, c);
+        }
+
+        /**
+         * Die Fläche im Bildlauf: so breit wie das Fenster, damit nichts rechts herausläuft und kein waagerechter
+         * Scrollbalken entsteht; nur wenn das Fenster schmaler ist als die Felder mindestens brauchen, scrollt sie
+         * waagerecht.
+         */
+        static final class Sheet extends JPanel implements javax.swing.Scrollable {
+
+            Sheet(Form form) {
+                super(new BorderLayout());
+                setOpaque(false);
+                add(form, BorderLayout.NORTH);
+            }
+
+            @Override
+            public Dimension getPreferredScrollableViewportSize() {
+                return getPreferredSize();
+            }
+
+            @Override
+            public int getScrollableUnitIncrement(java.awt.Rectangle visible, int orientation, int direction) {
+                return 16;
+            }
+
+            @Override
+            public int getScrollableBlockIncrement(java.awt.Rectangle visible, int orientation, int direction) {
+                return orientation == javax.swing.SwingConstants.VERTICAL ? visible.height : visible.width;
+            }
+
+            @Override
+            public boolean getScrollableTracksViewportWidth() {
+                return !(getParent() instanceof javax.swing.JViewport viewport)
+                        || viewport.getWidth() >= getMinimumSize().width - 8;
+            }
+
+            @Override
+            public boolean getScrollableTracksViewportHeight() {
+                return getParent() instanceof javax.swing.JViewport viewport
+                        && viewport.getHeight() > getPreferredSize().height;
+            }
         }
 
         /** Hält Platz für bis zu {@code count} Zeilen frei, die später kommen ({@link #build}); leer ohne Höhe. */
@@ -1294,11 +1707,17 @@ final class SourceForm {
             JLabel label = new JLabel(text);
             label.setFont(Comic.semiBold(12.5f));
             label.setForeground(Comic.TEXT);
+            // Feste Beschriftungsspalte: Felder stehen bündig, eine lange Beschriftung bekommt Punkte und Tooltip.
+            label.setPreferredSize(new Dimension(LABEL_WIDTH, label.getPreferredSize().height));
+            label.setMinimumSize(label.getPreferredSize());
+            if (label.getFontMetrics(label.getFont()).stringWidth(text) > LABEL_WIDTH - 14) {
+                label.setToolTipText(text);
+            }
             GridBagConstraints left = new GridBagConstraints();
             left.gridx = 0;
             left.gridy = y;
-            left.anchor = GridBagConstraints.WEST;
-            left.insets = new Insets(4, 0, 0, 14);
+            left.anchor = GridBagConstraints.NORTHWEST;
+            left.insets = new Insets(4 + 5, 0, 0, 14);
             add(label, left);
             GridBagConstraints right = new GridBagConstraints();
             right.gridx = 1;
@@ -1306,14 +1725,19 @@ final class SourceForm {
             right.weightx = 1;
             right.fill = GridBagConstraints.HORIZONTAL;
             right.insets = new Insets(4, 0, 0, 0);
+            // Ein Feld darf schmaler werden als sein Wunschmaß (lange Auswahltexte, Feld mit Knopf): So bestimmt
+            // das Fenster die Breite, nie das Feld, und ein waagerechter Scrollbalken entsteht nicht.
+            field.setMinimumSize(new Dimension(FIELD_MIN_WIDTH, field.getPreferredSize().height));
             add(field, right);
             // Die Hinweiszeile ist immer da (notfalls leer), damit ein Fehler Platz hat, ohne etwas zu verschieben.
-            JLabel hintLabel = Comic.muted(hint == null ? " " : hint);
+            JTextArea hintLabel = Comic.hint(hint == null ? " " : hint);
             GridBagConstraints below = new GridBagConstraints();
             below.gridx = 1;
             below.gridy = y + 1;
+            below.weightx = 1;
             below.anchor = GridBagConstraints.WEST;
             below.fill = GridBagConstraints.HORIZONTAL;
+            below.insets = new Insets(1, 2, 0, 0);
             add(hintLabel, below);
             y += 2;
             JComponent key = field instanceof JPanel panel && panel.getComponentCount() > 0
@@ -1378,12 +1802,18 @@ final class SourceForm {
         }
 
         void visible(JComponent field, boolean visible) {
+            boolean found = false;
             for (Row row : rows) {
                 if (row.key() == field || row.field() == field) {
                     row.label().setVisible(visible);
                     row.field().setVisible(visible);
                     row.hint().setVisible(visible);
+                    found = true;
                 }
+            }
+            if (!found) {
+                // Eine Zeile über beide Spalten ({@link #wide}).
+                field.setVisible(visible);
             }
         }
     }

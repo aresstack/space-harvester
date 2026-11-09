@@ -203,13 +203,45 @@ class SettingDialogsTest {
     }
 
     @Test
+    void releaseCheckboxesWriteTheSourceReleaseAndLeaveUntouchedOnesToTheFile() throws Exception {
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].releaseBoxes()).hasSize(1);
+            assertThat(panel[0].releaseBoxes().get(0).getText()).as("Anzeigename der Quelle").isEqualTo("Firmenwiki");
+            assertThat(panel[0].releaseBoxes().get(0).isSelected()).isFalse();
+            assertThat(panel[0].draft().externalProcessingSources()).isEmpty();
+            panel[0].releaseBoxes().get(0).doClick();
+            assertThat(panel[0].draft().externalProcessingSources()).as("angeklickt: freigegeben").containsExactly("wiki");
+            assertThat(panel[0].changed()).isTrue();
+        });
+        // Ein nicht angefasstes Häkchen überschreibt nicht, was das Quellenformular inzwischen in die Datei schrieb.
+        SwingUtilities.invokeAndWait(() -> {
+            AiSettingsPanel fresh = new AiSettingsPanel(context);
+            assertThat(fresh.releaseBoxes().get(0).isSelected()).isFalse();
+            assertThat(fresh.changed()).isFalse();
+        });
+        Files.writeString(config, Files.readString(config).replace("space-harvester:\n", "space-harvester:\n  ai:\n"
+                + "    external-processing-sources: [wiki]\n"));
+        reload();
+        SwingUtilities.invokeAndWait(() -> {
+            AiSettingsPanel stale = panel[0];
+            // Das Häkchen dieses Panels ist angeklickt (an) – und die Datei sagt inzwischen ebenfalls an.
+            assertThat(stale.draft().externalProcessingSources()).containsExactly("wiki");
+            AiSettingsPanel untouched = new AiSettingsPanel(context);
+            assertThat(untouched.releaseBoxes().get(0).isSelected()).as("aus der Datei").isTrue();
+            assertThat(untouched.changed()).isFalse();
+        });
+    }
+
+    @Test
     void aiSettingsKeepTheApiKeyInItsOwnVaultAndNeverInTheFile() throws Exception {
         AiSettingsPanel[] panel = new AiSettingsPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new AiSettingsPanel(context);
             panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
             // Die Freigabe gehört zur Quelle; hier steht nur, wie viele freigegeben sind.
-            assertThat(panel[0].released.getText()).as("Vorgabe: keine Quelle freigegeben").isEqualTo("keine Quelle");
+            assertThat(panel[0].releaseBoxes()).as("Vorgabe: keine Quelle freigegeben").allMatch(box -> !box.isSelected());
             panel[0].baseUrl.setText("sk-abcdefghijklmnopqrstuvwxyz0123");
             panel[0].save.doClick();
             assertThat(panel[0].feedback.text()).as("Schlüssel im Adressfeld").contains("wie ein API-Key");
@@ -308,18 +340,30 @@ class SettingDialogsTest {
             panel[0] = new AiSettingsPanel(context);
             assertThat(panel[0].access.getSelectedItem()).as("nicht gekoppelt: Manuell")
                     .isEqualTo(AiSettingsPanel.MANUAL);
-            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Nicht gekoppelt");
-            // Schon gekoppelt: KeePass vorgewählt, die Kopplung gilt weiter.
+            panel[0].access.setSelectedItem(AiSettingsPanel.KEEPASS);
+            // Nicht gekoppelt: „Koppeln“ im Eintragsfeld, Hinweis an Ort und Stelle; die Kopplung selbst steht unter
+            // Sicherheit › KeePass, nicht mehr als eigene Zeile hier.
+            assertThat(panel[0].pair.getText()).isEqualTo(KeePassPairingPanel.PAIR);
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).startsWith("Nicht gekoppelt");
+            assertThat(panel[0].rows.shows(panel[0].entryRow)).isTrue();
+            // Schon gekoppelt: KeePass vorgewählt, die Kopplung gilt weiter; der Knopf lädt nur noch die Einträge.
             paired[0] = true;
             panel[0] = new AiSettingsPanel(context);
             assertThat(panel[0].access.getSelectedItem()).isEqualTo(AiSettingsPanel.KEEPASS);
-            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Gekoppelt");
+            assertThat(panel[0].pair.getText()).isEqualTo(AiSettingsPanel.LOAD_ENTRIES);
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).isEqualTo(AiSettingsPanel.ENTRY_HINT);
             assertThat(panel[0].entry.isEditable()).isTrue();
             panel[0].pair.doClick();
         });
         await(() -> panel[0].baseUrl.getText().equals("https://kp.example.invalid/v1"));
+        // Der Key des Eintrags steht gelesen, maskiert und schreibgeschützt im Feld, zählt aber nicht als eingetippt.
+        await(() -> panel[0].keyFromKeePass);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(panel[0].keePassStatus.getText()).startsWith("Gekoppelt");
+            assertThat(new String(panel[0].apiKey.getPassword())).isEqualTo("sk-aus-keepass");
+            assertThat(panel[0].apiKey.isEditable()).isFalse();
+            assertThat(panel[0].rows.hint(panel[0].apiKey)).startsWith("Aus KeePass gelesen");
+            assertThat(panel[0].typedKey()).isEmpty();
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).startsWith("Gekoppelt · 1 Eintrag lesbar");
             assertThat(panel[0].titles).containsExactly("Enterprise AI API");
             panel[0].embeddingModel.setText("text-embedding-3-small");
             panel[0].dimensions.setText("1536");
@@ -338,6 +382,8 @@ class SettingDialogsTest {
             panel[0].entry.getEditor().setItem("Mein Dienst");
             panel[0].save.doClick();
             assertThat(panel[0].feedback.text()).contains("API-Key fehlt");
+            assertThat(panel[0].apiKey.getPassword()).as("der Key des alten Eintrags ist aus dem Feld").isEmpty();
+            assertThat(panel[0].apiKey.isEditable()).isTrue();
             panel[0].apiKey.setText("sk-neu");
             panel[0].save.doClick();
         });
@@ -358,6 +404,36 @@ class SettingDialogsTest {
         context.reload(reloaded::countDown);
         assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(context.aiKeyAvailable()).isFalse();
+    }
+
+    @Test
+    void aKeePassEntryWithoutPasswordStopsSavingWithAClearMessage() throws Exception {
+        FakeKeePass keePass = new FakeKeePass();
+        keePass.entries.put("Ohne Key", new String[] {"https://kp.example.invalid/v1", ""});
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            panel[0].access.setSelectedItem(AiSettingsPanel.KEEPASS);
+            panel[0].pair.doClick();
+        });
+        await(() -> panel[0].titles.contains("Ohne Key"));
+        SwingUtilities.invokeAndWait(() -> panel[0].entry.setSelectedItem("Ohne Key"));
+        await(() -> Boolean.FALSE.equals(panel[0].keePassKeyPresent));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].rows.hint(panel[0].apiKey)).contains("„Ohne Key“ hat kein Passwort");
+            assertThat(panel[0].apiKey.getPassword()).isEmpty();
+            panel[0].embeddingModel.setText("text-embedding-3-small");
+            panel[0].dimensions.setText("1536");
+            panel[0].save.doClick();
+        });
+        awaitFeedback(panel[0], "API-Key fehlt");
+        assertThat(Files.readString(config)).doesNotContain("ai-keepass-entry");
+        // Passwort in KeePass nachgetragen: Der nächste Versuch liest es neu und speichert.
+        keePass.entries.put("Ohne Key", new String[] {"https://kp.example.invalid/v1", "sk-nachgetragen"});
+        SwingUtilities.invokeAndWait(() -> panel[0].save.doClick());
+        awaitFeedback(panel[0], "übernommen");
+        assertThat(Files.readString(config)).contains("ai-keepass-entry: \"Ohne Key\"").doesNotContain("sk-nachgetragen");
     }
 
     @Test
@@ -418,7 +494,7 @@ class SettingDialogsTest {
         }
     }
 
-    private static void await(BooleanSupplier condition) throws Exception {
+    static void await(BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 30_000;
         boolean[] met = {false};
         while (System.currentTimeMillis() < until) {

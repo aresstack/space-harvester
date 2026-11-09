@@ -8,7 +8,6 @@ import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
-import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -32,8 +31,6 @@ final class SourceFieldsEditor {
 
     /** Markiert ein Häkchen, dessen Schlüssel in der Datei fehlte. */
     private static final String UNSET_FLAG = "space-harvester.unsetFlag";
-    static final String ADVANCED_CLOSED = "▸ Erweitert";
-    static final String ADVANCED_OPEN = "▾ Erweitert";
     /** Höchstzahl Zeilen je Bereich (ein Verzeichnis oder Zertifikat braucht eine Zeile, der Schalter eine). */
     static final int ROWS = 40;
 
@@ -50,9 +47,11 @@ final class SourceFieldsEditor {
     /** Alle Zeilen (Schlüsselkomponente je Zeile), zum Abbauen beim Typwechsel. */
     private final List<JComponent> rows = new ArrayList<>();
     private final List<JComponent> advancedRows = new ArrayList<>();
-    private final ComposerButton advancedToggle = Comic.button(ADVANCED_CLOSED,
+    private final javax.swing.JButton advancedToggle = Comic.disclosure("Erweitert",
             "Weitere Angaben; leer lassen genügt in der Regel");
     private boolean expanded;
+    /** Gesetzt, wenn das Formular ein gemeinsames „Erweitert“ hat: dann zeigt der Editor keinen eigenen Knopf. */
+    private java.util.function.Consumer<Boolean> sharedAdvanced;
     private SourceFieldSpec certificateField;
     private JCheckBox certificateUse;
     private JTextField certificateAlias;
@@ -114,8 +113,10 @@ final class SourceFieldsEditor {
                 }
             }
         });
-        form.visible(advancedToggle, !advanced.isEmpty());
-        expanded = false;
+        form.visible(advancedToggle, !advanced.isEmpty() && sharedAdvanced == null);
+        if (sharedAdvanced == null) {
+            expanded = false;
+        }
         showAdvanced();
         JComponent address = addressKey == null ? null : inputs.get(addressKey);
         if (address instanceof JTextField text) {
@@ -173,11 +174,8 @@ final class SourceFieldsEditor {
                 text.setText(value);
                 ComposerButton choose = Comic.button("Verzeichnis wählen …", null);
                 choose.addActionListener(e -> chooseDirectory(text));
-                JPanel line = new JPanel(new BorderLayout(6, 0));
-                line.setOpaque(false);
-                line.add(text, BorderLayout.CENTER);
-                line.add(choose, BorderLayout.EAST);
-                add(label, line, hint, advanced);
+                // Der Knopf sitzt im Feld, nicht daneben.
+                add(label, Comic.fieldWithButton(text, choose), hint, advanced);
                 return text;
             }
             default -> {
@@ -221,11 +219,7 @@ final class SourceFieldsEditor {
                 certificateAlias.setText(chosen);
             }
         });
-        JPanel line = new JPanel(new BorderLayout(6, 0));
-        line.setOpaque(false);
-        line.add(certificateAlias, BorderLayout.CENTER);
-        line.add(certificateChoose, BorderLayout.EAST);
-        add(field.label(), line, null, field.advanced());
+        add(field.label(), Comic.fieldWithButton(certificateAlias, certificateChoose), null, field.advanced());
         specs.put(field.key(), field);
         certificateUse.addActionListener(e -> enableCertificate());
         enableCertificate();
@@ -250,6 +244,18 @@ final class SourceFieldsEditor {
     void advanced(boolean open) {
         expanded = open;
         showAdvanced();
+        if (sharedAdvanced != null) {
+            sharedAdvanced.accept(open);
+        }
+    }
+
+    /**
+     * Die weiteren Felder des Typs stehen unter dem „Erweitert“ des Formulars statt unter einem eigenen Knopf;
+     * {@code opened} erfährt, wenn ein Hinweis es aufklappt ({@link #reveal}).
+     */
+    void shareAdvanced(java.util.function.Consumer<Boolean> opened) {
+        this.sharedAdvanced = opened;
+        form.visible(advancedToggle, false);
     }
 
     boolean advancedOpen() {
@@ -260,7 +266,7 @@ final class SourceFieldsEditor {
         for (JComponent row : advancedRows) {
             form.visible(row, expanded);
         }
-        advancedToggle.setText(expanded ? ADVANCED_OPEN : ADVANCED_CLOSED);
+        Comic.disclose(advancedToggle, expanded);
         form.revalidate();
         form.repaint();
     }
@@ -354,7 +360,7 @@ final class SourceFieldsEditor {
         return null;
     }
 
-    ComposerButton advancedToggle() {
+    javax.swing.JButton advancedToggle() {
         return advancedToggle;
     }
 
