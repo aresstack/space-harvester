@@ -144,6 +144,19 @@ class ExportAssetCollectionAttachmentsTest {
     }
 
     @Test
+    void aBlankTextCountsAsUnavailableWithoutAnEmptyTextFile() throws Exception {
+        source.blankText = true;
+        Result result = export(ExportSettings.DEFAULT);
+
+        JsonNode txt = find(result.json("attachments.json"), "notiz.txt");
+        assertThat(txt.path("status").asString()).isEqualTo("STORED");
+        assertThat(txt.path("reason").asString()).isEqualTo("text-unavailable");
+        assertThat(txt.path("textPath").isNull()).isTrue();
+        assertThat(result.files).containsKey(txt.path("path").asString());
+        assertThat(result.files.keySet()).noneMatch(name -> name.endsWith("notiz.txt.txt"));
+    }
+
+    @Test
     void disabledThereAreNoAttachmentEntriesAndNoDocumentIsDownloaded() throws Exception {
         Result result = export(new ExportSettings(false, ExportSettings.DEFAULT_MEDIA_TYPES,
                 ExportSettings.DEFAULT_MAX_SIZE));
@@ -235,6 +248,7 @@ class ExportAssetCollectionAttachmentsTest {
         final Set<String> downloaded = new HashSet<>();
         boolean brokenPdf;
         boolean awkward;
+        boolean blankText;
 
         @Override
         public String id() {
@@ -299,6 +313,7 @@ class ExportAssetCollectionAttachmentsTest {
                 case "d1" -> brokenPdf ? "%PDF-1.7\nkaputt".getBytes(StandardCharsets.US_ASCII) : PDF;
                 case "d3" -> ZIP;
                 case "d4" -> BIG;
+                case "d2" -> blankText ? " \n\t ".getBytes(StandardCharsets.UTF_8) : TXT;
                 default -> TXT;
             };
             return new AttachmentFile(attachment, content, Instant.parse("2026-11-09T01:00:00Z"));

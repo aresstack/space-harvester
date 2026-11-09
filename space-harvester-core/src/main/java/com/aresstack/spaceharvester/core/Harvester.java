@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -278,6 +279,14 @@ public final class Harvester implements AutoCloseable {
     private final String userAgent;
     /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
     private final boolean networkFollows;
+    /**
+     * Die Einstellung für Dokument-Anhänge im Export (ADR 0023), je Auftrag aus der gerade wirksamen Konfiguration
+     * gelesen (ADR 0015); ohne {@link ConfigurationManager} die Standardwerte.
+     */
+    static java.util.function.Supplier<ExportSettings> exportSettings(ConfigurationManager manager) {
+        return () -> manager == null ? ExportSettings.DEFAULT : manager.current().configuration().export();
+    }
+
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
     /** Textprojektion wie in Anreicherungen und Volltextindex: Confluence, lokale Dateien, Dokumente. */
@@ -652,7 +661,9 @@ public final class Harvester implements AutoCloseable {
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
                     (owner, sourceId) -> OWNER.equals(owner)
-                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns);
+                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns,
+                    // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
+                    exportSettings(manager));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,

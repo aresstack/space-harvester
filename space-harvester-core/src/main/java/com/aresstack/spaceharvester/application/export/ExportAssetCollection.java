@@ -294,7 +294,9 @@ public class ExportAssetCollection {
         }
         Map<String, ExportAssetManifest.Entry> before = new java.util.LinkedHashMap<>();
         for (ExportAssetManifest.Entry entry : previous.get().assets()) {
-            if (entry.present()) {
+            // Nur wirklich Abgelegtes (oder bewusst Überflüssiges) ersetzt einen gescheiterten Versuch; ein früherer
+            // Ausschluss nach Einstellung (EXCLUDED) verdeckt nie einen fehlgeschlagenen Download.
+            if (entry.present() && entry.status() != ExportAssetManifest.Status.EXCLUDED) {
                 before.putIfAbsent(key(entry), entry);
             }
         }

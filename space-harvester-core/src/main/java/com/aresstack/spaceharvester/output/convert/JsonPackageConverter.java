@@ -176,7 +176,8 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeStartArray();
         for (Entry entry : documents) {
             Optional<byte[]> content = entry.stored() ? assets.content(entry) : Optional.empty();
-            Optional<String> text = content.isPresent() ? assets.text(entry) : Optional.empty();
+            // Leerer Text gilt als nicht lesbar: keine leere .txt-Datei.
+            boolean text = content.isPresent() && assets.text(entry).filter(t -> !t.isBlank()).isPresent();
             String path = null;
             String textPath = null;
             String reason = entry.reason();
@@ -185,11 +186,12 @@ public final class JsonPackageConverter implements ExportConverter {
                 path = unique(base + attachmentName(entry), used);
                 String original = path;
                 files.add(() -> file(zip, original, assets.content(entry)));
-                if (text.isPresent()) {
+                if (text) {
                     textPath = unique(path + ".txt", used);
-                    byte[] bytes = text.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     String target = textPath;
-                    files.add(() -> file(zip, target, Optional.of(bytes)));
+                    // Wie die Originale erst beim Schreiben erneut aus der Ablage lesen, nicht bis dahin halten.
+                    files.add(() -> file(zip, target, assets.text(entry).filter(t -> !t.isBlank())
+                            .map(t -> t.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
                 } else if (reason == null) {
                     reason = "text-unavailable";
                 }
