@@ -95,6 +95,47 @@ class TermRelationsViewTest {
         await(() -> view[0].relations().table().getRowCount() == 2
                 && "Abgelehnt".equals(view[0].relations().table().getValueAt(1, 3)));
         assertThat(workspace.termRelations(null, null, 10).relations()).hasSize(1);
+        // Nach dem Ablehnen bleibt die Zeile gewählt, grau hinterlegt.
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].relations().table().getSelectedRow()).isEqualTo(1);
+            java.awt.Component cell = view[0].relations().table().prepareRenderer(
+                    view[0].relations().table().getCellRenderer(0, 4), 0, 4);
+            assertThat(((javax.swing.JLabel) cell).getHorizontalAlignment()).isEqualTo(javax.swing.SwingConstants.LEFT);
+            view[0].createRelation("REST", com.aresstack.spaceharvester.application.terms.RelationType.RELATED,
+                    "HTTP");
+        });
+        await(() -> view[0].relations().table().getRowCount() == 3);
+        int[] row = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            row[0] = view[0].relations().table().getSelectedRow();
+            assertThat(view[0].relations().table().getValueAt(row[0], 0)).isEqualTo("REST");
+            assertThat(view[0].relations().table().getValueAt(row[0], 3)).isEqualTo("Bestätigt");
+            assertThat(view[0].relations().table().getValueAt(row[0], 4)).isEqualTo("Manuell");
+            view[0].reviewButtons().get(2).doClick();
+        });
+        // Entfernt bleibt die Zeile stehen; die Schaltfläche heißt jetzt Rückgängig.
+        await(() -> TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
+        assertThat(workspace.termRelations("REST", null, 10).relations()).isEmpty();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].relations().table().getRowCount()).isEqualTo(3);
+            view[0].reviewButtons().get(2).doClick();
+        });
+        await(() -> TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
+                && view[0].relations().table().getSelectedRow() >= 0);
+        assertThat(workspace.termRelations("REST", null, 10).relations()).hasSize(1);
+        // Spaltenköpfe sortieren.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].relations().table().getRowSorter().toggleSortOrder(0);
+            view[0].relations().table().getRowSorter().toggleSortOrder(0);
+            assertThat(view[0].relations().table().getValueAt(0, 0)).isEqualTo("SSO");
+        });
+    }
+
+    @Test
+    void newRelationsNeedTwoDifferentTerms() {
+        assertThat(TermsView.invalidNewRelation(" ", "API")).isNotNull();
+        assertThat(TermsView.invalidNewRelation("api", "API ")).isNotNull();
+        assertThat(TermsView.invalidNewRelation("REST", "API")).isNull();
     }
 
     @Test

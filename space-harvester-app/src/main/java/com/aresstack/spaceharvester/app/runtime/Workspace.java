@@ -200,6 +200,24 @@ public final class Workspace {
         return harvester.termRelations().remove(caller, id, revision);
     }
 
+    /**
+     * Legt eine Beziehung manuell an ({@code POST /api/v1/term-relations}): {@code MANUAL} und {@code CONFIRMED};
+     * gibt es den Schlüssel schon, bestätigt der Core ihn.
+     */
+    public TermRelation addRelation(TermRelations.NewRelation relation) {
+        return harvester.termRelations().add(caller, relation);
+    }
+
+    /** Hebt eine Ablehnung auf ({@code POST …/{id}/restore}): automatisch wieder Vorschlag, manuell bestätigt. */
+    public TermRelation restoreRelation(String id) {
+        return harvester.termRelations().restore(caller, id, null);
+    }
+
+    /** Bestätigen ohne Revisionsprüfung, für das Rückgängigmachen eines eben entfernten Eintrags. */
+    public TermRelation confirmRelation(String id) {
+        return harvester.termRelations().confirm(caller, id, null);
+    }
+
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
     public PageMetadataListing liveMetadata(String sourceId, String spaceKey, String cursor, int limit) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);

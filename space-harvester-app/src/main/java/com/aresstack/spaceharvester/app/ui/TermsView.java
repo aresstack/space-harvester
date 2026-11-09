@@ -18,7 +18,10 @@ import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.application.terms.RelationOrigin;
+import com.aresstack.spaceharvester.application.terms.RelationType;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
@@ -69,7 +72,20 @@ public final class TermsView implements View {
             + "abgelehnt sichtbar und kommt nicht wieder");
     private final ComposerButton remove = Comic.button(REMOVE, "Eine manuelle Beziehung ganz löschen, jede andere "
             + "ablehnen");
+    static final String UNDO = "Rückgängig";
+    static final String NEW_RELATION = "Neue Beziehung …";
+    private final ComposerButton create = Comic.button(NEW_RELATION, "Eine eigene Beziehung zwischen zwei Begriffen "
+            + "anlegen; sie gilt sofort als bestätigt");
     private List<Relation> shownRelations = List.of();
+    /** Beziehungen der Liste nach Kennung, für Auswahl und Darstellung. */
+    private final java.util.Map<String, Relation> byId = new java.util.HashMap<>();
+    /** Stand im Core je Kennung, damit Rückgängig eine entfernte Beziehung wiederherstellen kann. */
+    private final java.util.Map<String, TermRelation> loaded = new java.util.HashMap<>();
+    /** Eben entfernte Beziehungen: bleiben durchgestrichen stehen, bis Reiter oder Bereich wechseln. */
+    private final java.util.Map<String, Relation> removed = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, TermRelation> removedCore = new java.util.HashMap<>();
+    /** Nach dem Neuladen wieder zu wählende Beziehung. */
+    private String keepSelected;
     private java.util.function.BiConsumer<String, Relation> onReview = (action, relation) -> { };
 
     private final AppContext context;
@@ -102,6 +118,15 @@ public final class TermsView implements View {
             review.add(button);
         }
         relations.actions(review);
+        relations.sortable();
+        RelationRenderer renderer = new RelationRenderer();
+        for (int c = 0; c < relations.table().getColumnCount(); c++) {
+            relations.table().getColumnModel().getColumn(c).setCellRenderer(renderer);
+        }
+        relations.middle(create);
+        create.addActionListener(e -> askNewRelation());
+        create.setEnabled(context != null);
+        tabs.onSelect(name -> forgetRemoved());
         relations.table().getSelectionModel().addListSelectionListener(e -> selectionChanged());
         confirm.addActionListener(e -> review(CONFIRM));
         reject.addActionListener(e -> review(REJECT));
@@ -121,7 +146,19 @@ public final class TermsView implements View {
         if (context != null) {
             loadAcronyms();
             loadIdentifiers();
+            removed.clear();
+            removedCore.clear();
             loadRelations(null);
+        }
+    }
+
+    /** Ein Wechsel von Reiter oder Bereich besiegelt das Entfernen: die durchgestrichenen Zeilen verschwinden. */
+    private void forgetRemoved() {
+        if (!removed.isEmpty()) {
+            removed.clear();
+            removedCore.clear();
+            showRelations(shownRelations.stream().filter(r -> byId.containsKey(r.id()) && loaded.containsKey(r.id()))
+                    .toList(), NO_RELATIONS);
         }
     }
 
@@ -147,11 +184,20 @@ public final class TermsView implements View {
             TermRelations.RelationList open = runtime.workspace().termRelations(term, null, RELATION_LIMIT);
             TermRelations.RelationList rejected = runtime.workspace().termRelations(term, ReviewStatus.REJECTED,
                     RELATION_LIMIT);
-            open.relations().forEach(r -> all.add(Relation.of(r)));
-            rejected.relations().forEach(r -> all.add(Relation.of(r)));
-            return new LoadedRelations(all, open.nextCursor() != null || rejected.nextCursor() != null);
+            java.util.Map<String, TermRelation> core = new java.util.HashMap<>();
+            for (TermRelation r : open.relations()) {
+                all.add(Relation.of(r));
+                core.put(r.id(), r);
+            }
+            for (TermRelation r : rejected.relations()) {
+                all.add(Relation.of(r));
+                core.put(r.id(), r);
+            }
+            return new LoadedRelations(all, core, open.nextCursor() != null || rejected.nextCursor() != null);
         }, found -> {
             if (request == relationRequest) {
+                loaded.clear();
+                loaded.putAll(found.core());
                 showRelations(found.list(), q.isEmpty() ? NO_RELATIONS : NO_MATCH);
                 // Der Core liefert je Status höchstens RELATION_LIMIT; mehr nur mit Hinweis, nicht still gekürzt.
                 String message = relationsMessage(notice, found.more());
@@ -171,7 +217,7 @@ public final class TermsView implements View {
         return notice == null ? more ? MORE_RELATIONS : null : more ? notice + " " + MORE_RELATIONS : notice;
     }
 
-    private record LoadedRelations(List<Relation> list, boolean more) {
+    private record LoadedRelations(List<Relation> list, java.util.Map<String, TermRelation> core, boolean more) {
     }
 
     /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
@@ -180,27 +226,193 @@ public final class TermsView implements View {
         if (runtime == null) {
             return;
         }
+        TermRelation before = removed.containsKey(relation.id()) ? removedCore.get(relation.id())
+                : loaded.get(relation.id());
+        keepSelected = relation.id();
         Background.run(() -> {
             switch (action) {
                 case CONFIRM -> runtime.workspace().confirmRelation(relation.id(), relation.revision());
                 case REJECT -> runtime.workspace().rejectRelation(relation.id(), relation.revision());
+                case UNDO -> undoRemove(runtime.workspace(), relation, before);
                 default -> runtime.workspace().removeRelation(relation.id(), relation.revision());
             }
             return relation;
-        }, done -> loadRelations(null), failure -> loadRelations(failure instanceof RelationConflictException
+        }, done -> {
+            if (REMOVE.equals(action)) {
+                removed.put(relation.id(), relation);
+                if (before != null) {
+                    removedCore.put(relation.id(), before);
+                }
+            } else if (UNDO.equals(action)) {
+                removed.remove(relation.id());
+                removedCore.remove(relation.id());
+            }
+            loadRelations(null);
+        }, failure -> loadRelations(failure instanceof RelationConflictException
                 ? CONFLICT : action + " nicht möglich: " + failure.getMessage()));
+    }
+
+    /**
+     * Stellt den Stand vor dem Entfernen wieder her: Eine manuelle Beziehung hat der Core gelöscht, sie entsteht neu
+     * (gleicher Schlüssel, gleiche Kennung); eine automatische hat er abgelehnt, die Ablehnung wird aufgehoben.
+     */
+    private static void undoRemove(com.aresstack.spaceharvester.app.runtime.Workspace workspace, Relation relation,
+                                   TermRelation before) {
+        if (before == null) {
+            throw new IllegalStateException("der frühere Stand ist nicht bekannt");
+        }
+        if (before.origin() == RelationOrigin.MANUAL) {
+            TermRelation again = workspace.addRelation(new TermRelations.NewRelation(before.fromTerm(),
+                    before.toTerm(), before.type(), before.scope(), before.note(), before.evidence()));
+            if (before.status() == ReviewStatus.REJECTED) {
+                workspace.rejectRelation(again.id(), again.revision());
+            }
+        } else if (before.status() != ReviewStatus.REJECTED) {
+            workspace.restoreRelation(relation.id());
+            if (before.status() == ReviewStatus.CONFIRMED) {
+                workspace.confirmRelation(relation.id());
+            }
+        }
+    }
+
+    /** Dialog „Neue Beziehung“: Begriff, Art, Zu Begriff. */
+    private void askNewRelation() {
+        javax.swing.JDialog dialog = Dialogs.dialog(root, "Neue Beziehung");
+        javax.swing.JTextField from = Comic.field(20);
+        javax.swing.JTextField to = Comic.field(20);
+        javax.swing.JComboBox<String> type = Comic.combo();
+        for (RelationType t : RelationType.values()) {
+            type.addItem(Relation.typeText(t.name()));
+        }
+        JLabel problem = Comic.muted(" ");
+        JPanel form = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
+        form.setOpaque(false);
+        form.add(Comic.caption("Begriff"));
+        form.add(from);
+        form.add(Comic.caption("Beziehung"));
+        form.add(type);
+        form.add(Comic.caption("Zu Begriff"));
+        form.add(to);
+        form.add(problem);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        ComposerButton ok = Comic.primary("Anlegen", "Die Beziehung anlegen und bestätigen");
+        cancel.addActionListener(e -> dialog.dispose());
+        ok.addActionListener(e -> {
+            String invalid = invalidNewRelation(from.getText(), to.getText());
+            if (invalid != null) {
+                problem.setText(invalid);
+                return;
+            }
+            dialog.dispose();
+            createRelation(from.getText(), RelationType.values()[type.getSelectedIndex()], to.getText());
+        });
+        Dialogs.show(dialog, "Neue Beziehung", form, cancel, ok);
+    }
+
+    /** {@code null}, wenn die Eingaben taugen, sonst der Grund in Worten. */
+    static String invalidNewRelation(String from, String to) {
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            return "Beide Begriffe angeben.";
+        }
+        if (from.trim().equalsIgnoreCase(to.trim())) {
+            return "Die Begriffe müssen sich unterscheiden.";
+        }
+        return null;
+    }
+
+    /** Legt die Beziehung im Core an (manuell, bestätigt, global) und wählt sie danach in der Liste. */
+    void createRelation(String from, RelationType type, String to) {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().addRelation(new TermRelations.NewRelation(from.trim(), to.trim(),
+                type, null, null, null)), created -> {
+            keepSelected = created.id();
+            loadRelations(null);
+        }, failure -> relations.message("Anlegen nicht möglich: " + failure.getMessage()));
+    }
+
+    /** Grau hinterlegt: abgelehnte; zusätzlich durchgestrichen: eben entfernte. Alle Spalten linksbündig. */
+    private final class RelationRenderer extends DefaultTableCellRenderer {
+
+        RelationRenderer() {
+            setHorizontalAlignment(SwingConstants.LEFT);
+        }
+
+        @Override
+        public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
+                                                                boolean focus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, selected, focus, row, column);
+            Relation relation = relationAtView(row);
+            boolean gone = relation != null && removed.containsKey(relation.id());
+            boolean grey = gone || relation != null && "REJECTED".equals(relation.status());
+            if (!selected) {
+                setBackground(grey ? REJECTED_BACKGROUND : table.getBackground());
+                setForeground(gone ? Comic.MUTED : table.getForeground());
+            }
+            java.awt.Font font = table.getFont();
+            if (gone) {
+                java.util.Map<java.awt.font.TextAttribute, Object> attributes = new java.util.HashMap<>();
+                attributes.put(java.awt.font.TextAttribute.STRIKETHROUGH, java.awt.font.TextAttribute.STRIKETHROUGH_ON);
+                font = font.deriveFont(attributes);
+            }
+            setFont(font);
+            return this;
+        }
+    }
+
+    static final java.awt.Color REJECTED_BACKGROUND = new java.awt.Color(0xECEDEF);
+
+    /** Ob die Beziehung eben entfernt wurde und noch durchgestrichen dasteht. */
+    boolean isRemoved(String id) {
+        return removed.containsKey(id);
+    }
+
+    ComposerButton createButton() {
+        return create;
     }
 
     /** Zeigt Beziehungen; {@code hint} steht da, solange es keine gibt. */
     void showRelations(List<Relation> list, String hint) {
-        shownRelations = List.copyOf(list);
-        List<List<String>> rows = new ArrayList<>(list.size());
-        for (Relation relation : list) {
+        Relation current = selectedRelation();
+        String select = keepSelected != null ? keepSelected : current == null ? null : current.id();
+        keepSelected = null;
+        List<Relation> merged = new ArrayList<>(list);
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        list.forEach(r -> ids.add(r.id()));
+        // Entfernte bleiben stehen, bis Reiter oder Bereich wechseln, damit Rückgängig möglich bleibt.
+        removed.values().stream().filter(r -> !ids.contains(r.id())).forEach(merged::add);
+        shownRelations = List.copyOf(merged);
+        byId.clear();
+        List<List<String>> rows = new ArrayList<>(merged.size());
+        for (Relation relation : merged) {
+            byId.put(relation.id(), relation);
+            // Die Kennung steht unsichtbar hinter den Spalten.
             rows.add(List.of(relation.fromTerm(), Relation.typeText(relation.type()), relation.toTerm(),
-                    Relation.statusText(relation.status()), Relation.originText(relation.origin())));
+                    Relation.statusText(relation.status()), Relation.originText(relation.origin()), relation.id()));
         }
         relations.show(rows, hint);
+        if (select != null) {
+            JTable table = relations.table();
+            for (int row = 0; row < table.getRowCount(); row++) {
+                Relation relation = relationAtView(row);
+                if (relation != null && relation.id().equals(select)) {
+                    table.setRowSelectionInterval(row, row);
+                    table.scrollRectToVisible(table.getCellRect(row, 0, true));
+                    break;
+                }
+            }
+        }
         selectionChanged();
+    }
+
+    private Relation relationAtView(int row) {
+        if (row < 0 || row >= relations.table().getRowCount()) {
+            return null;
+        }
+        List<String> cells = relations.visibleRow(relations.table().convertRowIndexToModel(row));
+        return cells.size() > 5 ? byId.get(cells.get(5)) : null;
     }
 
     /** {@code listener} bekommt Aktion ({@link #CONFIRM}, {@link #REJECT}, {@link #REMOVE}) und Beziehung. */
@@ -211,35 +423,23 @@ public final class TermsView implements View {
     /** Die Schaltflächen passen zum Stand der gewählten Beziehung; Rechte prüft der Core. */
     private void selectionChanged() {
         Relation selected = selectedRelation();
-        confirm.setEnabled(selected != null && !"CONFIRMED".equals(selected.status()));
-        reject.setEnabled(selected != null && !"REJECTED".equals(selected.status()));
+        boolean gone = selected != null && removed.containsKey(selected.id());
+        confirm.setEnabled(selected != null && !gone && !"CONFIRMED".equals(selected.status()));
+        reject.setEnabled(selected != null && !gone && !"REJECTED".equals(selected.status()));
         remove.setEnabled(selected != null);
+        remove.setText(gone ? UNDO : REMOVE);
+        remove.setToolTipText(gone ? "Das Entfernen zurücknehmen" : "Eine manuelle Beziehung ganz löschen, jede "
+                + "andere ablehnen");
     }
 
     private Relation selectedRelation() {
-        int row = relations.table().getSelectedRow();
-        if (row < 0) {
-            return null;
-        }
-        int model = relations.table().convertRowIndexToModel(row);
-        List<String> cells = relations.visibleRow(model);
-        // Die Tabelle filtert nur ohne Core-Suche; die Zuordnung geht über die gezeigten Zellen.
-        for (Relation relation : shownRelations) {
-            // Stand und Herkunft gehören dazu: dasselbe Paar kann abgelehnt und neu vorgeschlagen dastehen.
-            if (cells.get(0).equals(relation.fromTerm()) && cells.get(2).equals(relation.toTerm())
-                    && cells.get(1).equals(Relation.typeText(relation.type()))
-                    && cells.get(3).equals(Relation.statusText(relation.status()))
-                    && cells.get(4).equals(Relation.originText(relation.origin()))) {
-                return relation;
-            }
-        }
-        return null;
+        return relationAtView(relations.table().getSelectedRow());
     }
 
     private void review(String action) {
         Relation selected = selectedRelation();
         if (selected != null) {
-            onReview.accept(action, selected);
+            onReview.accept(REMOVE.equals(action) && removed.containsKey(selected.id()) ? UNDO : action, selected);
         }
     }
 
@@ -604,6 +804,37 @@ public final class TermsView implements View {
             }
         }
 
+        /** Spaltenköpfe sortieren: aufsteigend, absteigend, dann wieder die Reihenfolge der Liste. */
+        void sortable() {
+            javax.swing.table.TableRowSorter<Model> sorter = new javax.swing.table.TableRowSorter<>(model) {
+                @Override
+                public void toggleSortOrder(int column) {
+                    List<? extends javax.swing.RowSorter.SortKey> keys = getSortKeys();
+                    if (!keys.isEmpty() && keys.get(0).getColumn() == column
+                            && keys.get(0).getSortOrder() == javax.swing.SortOrder.DESCENDING) {
+                        setSortKeys(null);
+                    } else {
+                        super.toggleSortOrder(column);
+                    }
+                }
+            };
+            table.setRowSorter(sorter);
+        }
+
+        /** Ein Element mittig zwischen Überschrift und Suchfeld. */
+        void middle(JComponent component) {
+            JPanel lines = (JPanel) ((BorderLayout) head.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+            head.remove(lines);
+            head.add(lines, BorderLayout.WEST);
+            JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+            center.setOpaque(false);
+            center.add(component);
+            JPanel wrap = new JPanel(new java.awt.GridBagLayout());
+            wrap.setOpaque(false);
+            wrap.add(center);
+            head.add(wrap, BorderLayout.CENTER);
+        }
+
         /** Schaltflächen unter der Tabelle. */
         void actions(JComponent actions) {
             south.add(actions, BorderLayout.SOUTH);
@@ -668,7 +899,7 @@ public final class TermsView implements View {
             int before = visible.size();
             List<List<String>> matching = new ArrayList<>(visible);
             for (List<String> row : rows) {
-                if (query.isEmpty() || row.stream()
+                if (query.isEmpty() || row.stream().limit(columns.length)
                         .anyMatch(cell -> cell != null && cell.toLowerCase(Locale.ROOT).contains(query))) {
                     matching.add(row);
                 }
@@ -688,7 +919,7 @@ public final class TermsView implements View {
             query = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
             List<List<String>> matching = new ArrayList<>();
             for (List<String> row : all) {
-                if (query.isEmpty() || row.stream()
+                if (query.isEmpty() || row.stream().limit(columns.length)
                         .anyMatch(cell -> cell != null && cell.toLowerCase(Locale.ROOT).contains(query))) {
                     matching.add(row);
                 }
