@@ -70,6 +70,11 @@ public final class PillTabs extends JPanel {
         this.listener = listener;
     }
 
+    /** Namen der Reiter in der Reihenfolge der Leiste. */
+    public java.util.List<String> names() {
+        return java.util.List.copyOf(buttons.keySet());
+    }
+
     public ComposerToggleButton button(String name) {
         return buttons.get(name);
     }

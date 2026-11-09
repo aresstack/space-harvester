@@ -171,7 +171,7 @@ class ReaderAcronymsTest {
 
         // Reiter „Bilder“ (#362): ohne Vision-Modell nennt er den Grund des Core und bietet kein Beschreiben an.
         onEdt(() -> {
-            panel.tabs().select("Bilder");
+            panel.selectTab("Bilder");
             return null;
         });
         awaitTrue(() -> onEdt(() -> panel.images().hint()).equals(ImagesTab.NO_MODEL));

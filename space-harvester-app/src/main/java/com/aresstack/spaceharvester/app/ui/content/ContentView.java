@@ -103,6 +103,16 @@ public final class ContentView implements View {
         detail.openPassage(passageId);
     }
 
+    /** Setzt den Inhalt des Unterreiters „Analysen → Aussagen“ (#499), siehe {@link PageDetailPanel#statementsTab}. */
+    public void statementsTab(JComponent component) {
+        detail.statementsTab(component);
+    }
+
+    /** Setzt den Inhalt des Unterreiters „Analysen → Graph“ (#499), siehe {@link PageDetailPanel#knowledgeGraphTab}. */
+    public void knowledgeGraphTab(JComponent component) {
+        detail.knowledgeGraphTab(component);
+    }
+
     /** Meldet den Pfad jeder angezeigten Seite, etwa damit der Explorer sie zeigt. */
     public void onPosition(java.util.function.Consumer<
             com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {

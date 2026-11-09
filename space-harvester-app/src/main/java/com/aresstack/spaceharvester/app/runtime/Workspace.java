@@ -36,6 +36,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
@@ -146,7 +147,12 @@ public final class Workspace {
      * vorgeschlagene und bestätigte, wie im Dienst.
      */
     public TermRelations.RelationList termRelations(String term, ReviewStatus status, int limit) {
-        return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, null, status, null,
+        return termRelations(term, null, status, limit);
+    }
+
+    /** Wie {@link #termRelations(String, ReviewStatus, int)}, nur Beziehungen der Art {@code type} ({@code null}: alle). */
+    public TermRelations.RelationList termRelations(String term, RelationType type, ReviewStatus status, int limit) {
+        return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, type, status, null,
                 null, limit, null));
     }
 

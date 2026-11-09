@@ -241,6 +241,86 @@ class MainWindowTest {
         });
     }
 
+    /**
+     * Die Einstellungen haben keine Reiterleiste mehr: Ihre Bereiche stehen untereinander im linken Drawer an Stelle
+     * des Explorers, rechts nur der gewählte Bereich; wer die Einstellungen verlässt, sieht wieder den Explorer.
+     */
+    @Test
+    void theSettingsListTheirSectionsInTheDrawerAndLeavingRestoresTheExplorer() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            window.show(AppContext.Section.CONTENT);
+            assertThat(window.explorer().component().isVisible()).isTrue();
+            SettingsView settings = window.settings();
+            assertThat(find(settings.component(), PillTabs.class)).as("keine Reiterleiste mehr").isEmpty();
+
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(settings.drawer().getParent()).isSameAs(window.side());
+            assertThat(settings.drawer().isVisible()).isTrue();
+            assertThat(window.explorer().component().isVisible()).isFalse();
+            assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
+                    SettingsView.AI, SettingsView.MODELS, SettingsView.NETWORK, SettingsView.CACHE,
+                    SettingsView.SECURITY);
+            layoutAll(surface);
+            List<Integer> ys = new ArrayList<>();
+            for (SettingsNavRow row : settings.navRows()) {
+                ys.add(SwingUtilities.convertPoint(row.getParent(), row.getLocation(), settings.drawer()).y);
+            }
+            assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
+            assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
+
+            // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.
+            SettingsNavRow network = settings.navRows().get(3);
+            network.dispatchEvent(new MouseEvent(network, MouseEvent.MOUSE_PRESSED, 0, MouseEvent.BUTTON1_DOWN_MASK,
+                    5, 5, 1, false, MouseEvent.BUTTON1));
+            assertThat(settings.selected()).isEqualTo(SettingsView.NETWORK);
+            assertThat(settings.navRows()).filteredOn(SettingsNavRow::selected).extracting(SettingsNavRow::title)
+                    .containsExactly(SettingsView.NETWORK);
+            assertThat(visibleTexts(settings.component())).contains("Netz und Zertifikate")
+                    .doesNotContain("Konfiguration", "Tresor");
+
+            // „Zurück“ führt zum vorigen Bereich; der Explorer kehrt in den Drawer zurück.
+            settings.back.doClick();
+            assertThat(window.explorer().component().isVisible()).isTrue();
+            assertThat(settings.drawer().isVisible()).isFalse();
+            assertThat(window.deck().getComponent(AppContext.Section.CONTENT.ordinal()).isVisible()).isTrue();
+
+            // Ein anderer Bereich der Icon-Leiste verlässt die Einstellungen genauso.
+            window.showAiSettings();
+            assertThat(settings.drawer().isVisible()).isTrue();
+            assertThat(settings.selected()).isEqualTo(SettingsView.AI);
+            window.show(AppContext.Section.SEARCH);
+            assertThat(window.explorer().component().isVisible()).isTrue();
+            assertThat(settings.drawer().isVisible()).isFalse();
+        });
+    }
+
+    /** Überschriften der sichtbaren Platten (nur Komponenten, die samt Eltern sichtbar sind). */
+    private static List<String> visibleTexts(Container container) {
+        List<String> texts = new ArrayList<>();
+        for (Component child : container.getComponents()) {
+            if (!child.isVisible()) {
+                continue;
+            }
+            if (child instanceof com.aresstack.enterpriseai.ui.comic.control.ComicSectionPanel plate
+                    && plate.getComponentCount() > 0 && plate.getComponent(0) instanceof JLabel title) {
+                texts.add(title.getText());
+            }
+            if (child instanceof Container nested) {
+                texts.addAll(visibleTexts(nested));
+            }
+        }
+        return texts;
+    }
+
     @Test
     void at960PixelsTheSearchKeepsAbbrechenVisibleAndShortensOnlyTheHint() throws Exception {
         Path config = home.resolve("app.yml");
