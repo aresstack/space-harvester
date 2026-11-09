@@ -29,12 +29,16 @@ Wunsch je Quelle (`includeAttachments`, Standard aus) als eigene Ressourcen.
    `…media-types` (Standard: PDF, Office, OpenDocument, RTF, `message/rfc822`, `application/vnd.ms-outlook`,
    `text/*`) und `…max-size` (Standard 20 MiB, die Grenze der Textextraktion). Größere oder andere Dateien stehen
    im Manifest mit Status und Grund, ohne Inhalt. Live änderbar wie alle Einstellungen (ADR 0015).
-3. **Original und Text.** Das JSON-Paket legt das Original unter `media/` ab und daneben den mit Tika gelesenen
-   Text als `<name>.txt`; das Manifest nennt beide Pfade und den SHA-256 des Originals. Kann Tika die Datei nicht
-   lesen, bleibt das Original mit Hinweis `text-unavailable`.
-4. **Analyse-Export additiv.** Je Seite `attachments: [{attachmentId, title, mediaType, sha256, text}]` neben
-   `images` (ADR 0021); `analysis-export/v1` bleibt, der Konverter hebt seine Version an. Word, PDF und Markdown
-   nennen die Anhänge am Kapitelende mit Namen, ohne Text.
+3. **Eigene Datei, nicht im Seiten-JSON.** Wie heute die Medien (`pages.json` bleibt unverändert, Bilder stehen in
+   `assets.json` mit Dateien unter `assets/<Seiten-ID>/`, ADR 0018) bekommt das JSON-Paket eine eigene
+   `attachments.json` (Format `attachments/v1`): je Anhang `pageId`, `attachmentId`, `title`, `mediaType`, `size`,
+   `sha256`, `status`, `reason`, `path` (Original) und `textPath`. Die Dateien liegen unter
+   `attachments/<Seiten-ID>/`: das Original und daneben der mit Tika gelesene Text als `<name>.txt`. Kann Tika die
+   Datei nicht lesen, bleibt das Original mit Grund `text-unavailable` und `textPath: null`.
+4. **Analyse-Export getrennt von den Seiten.** Ein eigener Block `attachments` auf oberster Ebene neben `pages`
+   (je Eintrag `pageId`, `attachmentId`, `title`, `mediaType`, `sha256`, `text`), nicht in der Seitenstruktur;
+   `analysis-export/v1` bleibt additiv, der Konverter hebt seine Version an. Word, PDF und Markdown nennen die
+   Anhänge am Kapitelende mit Namen, ohne Text.
 5. **Grenzen wie gehabt.** Bilder laufen weiter über ADR 0021. Anhänge nicht freigegebener Quellen gehen nie an
    einen KI-Dienst; der Export enthält keine Zugangsdaten. Rechte wie die Seite: kein Anhang ohne lesbare Seite.
 
