@@ -31,7 +31,7 @@ class SourceFormLayoutTest {
 
     @Test
     void theFormFillsTheDialogWidthWithoutHorizontalScrolling() throws Exception {
-        check(null, System.getenv("SOURCEFORM_SCREENSHOT"));
+        check(null, false, System.getenv("SOURCEFORM_SCREENSHOT"));
     }
 
     /** Mit KI-Dienst steht die Freigabe (lange Häkchen-Zeile) im Hauptteil; auch sie sprengt die Breite nicht. */
@@ -43,10 +43,17 @@ class SourceFormLayoutTest {
                   ai:
                     base-url: https://ai.example.invalid/v1
                     embedding-model: text-embedding-3-small
-                """, screenshot == null ? null : screenshot.replace(".png", "-ki.png"));
+                """, false, screenshot == null ? null : screenshot.replace(".png", "-ki.png"));
     }
 
-    private void check(String yaml, String screenshot) throws Exception {
+    /** Im KeePass-Modus sitzt der Koppeln-Knopf IM Auswahlfeld des Eintrags (InputFrame), nicht daneben. */
+    @Test
+    void theKeePassRowKeepsItsButtonInsideTheField() throws Exception {
+        String screenshot = System.getenv("SOURCEFORM_SCREENSHOT");
+        check(null, true, screenshot == null ? null : screenshot.replace(".png", "-keepass.png"));
+    }
+
+    private void check(String yaml, boolean keePass, String screenshot) throws Exception {
         Path config = home.resolve("app.yml");
         Files.createDirectories(home);
         if (yaml != null) {
@@ -65,6 +72,16 @@ class SourceFormLayoutTest {
             assertThat(form.release.isVisible()).as("Freigabe nur mit KI-Dienst im Hauptteil").isEqualTo(ai);
             assertThat(form.id.isVisible()).as("Kennung unter Erweitert").isFalse();
             assertThat(form.certificate.isVisible()).as("Zertifikat unter Erweitert").isFalse();
+            if (keePass) {
+                form.origin.setSelectedItem(AiSettingsPanel.KEEPASS);
+                assertThat(form.pairKeePass.isVisible()).as("Koppeln-Knopf sichtbar").isTrue();
+                assertThat(SwingUtilities.getAncestorOfClass(com.aresstack.spaceharvester.app.ui.controls.InputFrame.class,
+                        form.pairKeePass)).as("Koppeln-Knopf im Feld").isNotNull();
+                assertThat(SwingUtilities.getAncestorOfClass(com.aresstack.spaceharvester.app.ui.controls.InputFrame.class,
+                        form.keePassEntry)).as("Eintrag im selben Feld")
+                        .isSameAs(SwingUtilities.getAncestorOfClass(
+                                com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, form.pairKeePass));
+            }
             JComponent root = form.component();
             Dimension size = form.preferredSize();
             assertThat(size.width).isEqualTo(720);
