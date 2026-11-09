@@ -792,6 +792,28 @@ public final class SourcesView implements View {
                 : "Quelle " + id + " abgeschaltet; Bestand bleibt"), feedback::problem);
     }
 
+    /**
+     * „Daten bereinigen“: löscht nach Rückfrage alle lokal gespeicherten Daten dieser einen Quelle als Auftrag
+     * ({@code SourceManagement.purge}); Einstellungen, Zugangsdaten und Schalter bleiben, andere Quellen auch. Der
+     * Fortschritt läuft in der Statuszeile.
+     */
+    private void purge(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
+        if (!Dialogs.confirm(root, "Daten bereinigen", "Alle gespeicherten Daten der Quelle " + name + " löschen? "
+                + "Der Index muss danach neu aufgebaut werden, das kann lange dauern.", "Löschen")) {
+            return;
+        }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        feedback.working("Daten der Quelle " + name + " werden gelöscht …");
+        Background.run(() -> runtime.workspace().purgeSourceData(id),
+                started -> feedback.success("Daten der Quelle " + name + " werden gelöscht; Fortschritt in der "
+                        + "Statuszeile"), feedback::problem);
+    }
+
     private void remove(AppSettings.SourceEntry entry) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
@@ -1190,6 +1212,13 @@ public final class SourcesView implements View {
                 secret.addActionListener(e -> askSecret(entry));
                 menu.add(secret);
             }
+            JMenuItem purge = new JMenuItem("Daten bereinigen …");
+            purge.setToolTipText("Alle lokal gespeicherten Daten dieser Quelle löschen; die Quelle bleibt eingerichtet");
+            // Auch abgeschaltet; nur nicht, solange der Core die Quelle nicht geöffnet hat (wartet auf ihr Geheimnis).
+            purge.setEnabled(context.runtime() != null
+                    && !context.runtime().waitingForSecret().contains(entry.id()));
+            purge.addActionListener(e -> SourcesView.this.purge(entry));
+            menu.add(purge);
             return menu;
         }
 

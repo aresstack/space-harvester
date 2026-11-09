@@ -222,6 +222,41 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void quiescingASourceDropsItsWaitingBackgroundPagesAndWaitsForItsRunningLoads() throws Exception {
+        gate("1");
+        AcquisitionScheduler planner = scheduler(4, 1, 4);
+        AcquisitionScheduler.Ticket runningLoad = planner.request(SERVER, key("1"),
+                AcquisitionScheduler.Priority.BACKGROUND);
+        awaitRunning("1");
+        AcquisitionScheduler.Ticket waiting = planner.request(SERVER, key("2"),
+                AcquisitionScheduler.Priority.BACKGROUND);
+        AcquisitionScheduler.Ticket other = planner.request(SERVER, new PageKey("handbuch", "9"),
+                AcquisitionScheduler.Priority.BACKGROUND);
+
+        java.util.concurrent.CompletableFuture<AutoCloseable> quiesced = java.util.concurrent.CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return planner.quiesce("wiki", Duration.ofSeconds(10));
+                    } catch (InterruptedException e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
+        assertThat(waiting.done().handle((stored, error) -> error)
+                .get(10, TimeUnit.SECONDS)).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(quiesced).isNotDone();
+
+        release("1");
+        AutoCloseable pause = quiesced.get(10, TimeUnit.SECONDS);
+        assertThat(runningLoad.done().get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(started).containsExactly("1");
+
+        // Danach geht der Hintergrund weiter, die andere Quelle hat ihren Platz behalten.
+        pause.close();
+        assertThat(other.done().get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(started).containsExactly("1", "9");
+    }
+
+    @Test
     void cancellingTheOnlyRequestOfAWaitingPageDropsIt() throws Exception {
         gate("x");
         AcquisitionScheduler planner = scheduler(1, 1, 4);

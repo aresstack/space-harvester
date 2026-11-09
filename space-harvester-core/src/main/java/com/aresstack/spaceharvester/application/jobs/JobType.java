@@ -17,7 +17,12 @@ public enum JobType {
      * Bilder eines veröffentlichten Exports beschaffen und im Asset-Speicher ablegen ({@code assets.json}), als eigener
      * Auftrag; der Export wartet nicht darauf.
      */
-    ASSETS;
+    ASSETS,
+    /**
+     * Alle lokal gespeicherten Daten einer Quelle löschen („Daten bereinigen“), ohne die Quelle selbst zu entfernen;
+     * beendet vorher die übrigen Aufträge der Quelle.
+     */
+    PURGE;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie

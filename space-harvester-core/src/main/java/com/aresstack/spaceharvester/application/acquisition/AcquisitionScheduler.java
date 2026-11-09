@@ -16,6 +16,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
@@ -314,6 +315,53 @@ public final class AcquisitionScheduler implements AutoCloseable {
             }
             dispatch();
         };
+    }
+
+    /**
+     * Für „Daten bereinigen“: hält den Hintergrund an, verwirft wartende Hintergrund-Abrufe der Quelle (ihre Anfragen
+     * gelten als abgebrochen; Seiten, auf die der Vordergrund wartet, bleiben) und wartet höchstens {@code timeout},
+     * bis kein Abruf der Quelle mehr läuft. Laufende Abrufe enden regulär. Die Rückgabe gibt den Hintergrund frei.
+     *
+     * @return wie {@link #pauseBackground()}
+     */
+    public AutoCloseable quiesce(String sourceId, Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(timeout, "timeout");
+        AutoCloseable pause = pauseBackground();
+        List<Ticket> dropped = new ArrayList<>();
+        synchronized (lock) {
+            for (Iterator<Entry> it = backgroundQueue.iterator(); it.hasNext(); ) {
+                Entry entry = it.next();
+                if (entry.key.sourceId().equals(sourceId) && entry.foreground.isEmpty()) {
+                    it.remove();
+                    entries.remove(entry.key, entry);
+                    dropped.addAll(entry.tickets());
+                }
+            }
+        }
+        dropped.forEach(ticket -> ticket.done.cancel(false));
+        try {
+            synchronized (lock) {
+                long deadline = System.nanoTime() + timeout.toNanos();
+                while (runningPerSource.containsKey(sourceId)) {
+                    long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                    if (left <= 0) {
+                        LOG.log(System.Logger.Level.WARNING, "Abrufe der Quelle {0} laufen nach {1} s noch",
+                                sourceId, timeout.toSeconds());
+                        break;
+                    }
+                    lock.wait(left);
+                }
+            }
+        } catch (InterruptedException e) {
+            try {
+                pause.close();
+            } catch (Exception ignored) {
+                // pauseBackground wirft nicht
+            }
+            throw e;
+        }
+        return pause;
     }
 
     /** Ob der Vordergrund auf einen Abruf wartet, der auf einem Platz des Hintergrunds läuft. Unter {@link #lock}. */
