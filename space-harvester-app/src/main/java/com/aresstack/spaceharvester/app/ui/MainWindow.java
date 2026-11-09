@@ -118,7 +118,7 @@ public final class MainWindow implements AppContext.Navigator {
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
-        searchView.onClearScope(explorer::clearSelection);
+        searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
             explorer.currentPage(position);
@@ -240,6 +240,8 @@ public final class MainWindow implements AppContext.Navigator {
                 BorderFactory.createEmptyBorder(8, 16, 8, 10)));
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
+        // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
+        top.add(SearchBarLayout.wrap(searchView.searchBar()), BorderLayout.CENTER);
         ComicWindowDragger.install(top);
 
         side.setBackground(Comic.SURFACE);
@@ -553,6 +555,11 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Für Tests: die Statuszeile. */
     /** Für Tests: der Bereich Suche. */
+    /** Der gezeigte Bereich; für Tests. */
+    AppContext.Section current() {
+        return current;
+    }
+
     SearchView searchView() {
         return searchView;
     }
