@@ -250,4 +250,27 @@ class AppSettingsLoaderTest {
                 .anyMatch(p -> p.contains("sync.background-fill"));
         assertThat(wrong.sync().backgroundParallelism()).isEqualTo(2);
     }
+
+    @Test
+    void readsSyncSpacesLikeTheServer() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    spaces:
+                      - wiki/DOC
+                      - handbuch/OPS
+                """, Map.of());
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sync().spaces()).containsExactly("wiki/DOC", "handbuch/OPS");
+
+        AppSettings wrong = load("""
+                space-harvester:
+                  sync:
+                    spaces:
+                      - wiki/DOC
+                      - ohne-space
+                """, Map.of());
+        assertThat(wrong.problems()).anyMatch(p -> p.contains("sync.spaces") && p.contains("ohne-space"));
+        assertThat(wrong.sync().spaces()).containsExactly("wiki/DOC");
+    }
 }
