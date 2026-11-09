@@ -1290,6 +1290,12 @@ public class Assets {
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
         }
+        if (content.length == 0 && attachment.fileSize() != null && attachment.fileSize() > 0) {
+            // Leere Antwort für eine Datei mit Größe: der Download ging ins Leere (etwa ein Pfad, den der Server anders
+            // liest). Nicht als fertig ablegen, sonst gilt der Anhang überall als vorhanden und leer.
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Anhang: leere Antwort, erwartet " + attachment.fileSize() + " Bytes", null);
+        }
         PageAttachment described = file.attachment();
         String version = described.version() != null ? described.version() : attachment.version();
         String declaredType = described.mediaType() != null && !described.mediaType().isBlank()

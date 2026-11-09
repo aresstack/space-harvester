@@ -297,6 +297,19 @@ class AssetsTest {
     }
 
     @Test
+    void anEmptyAnswerForAFileWithASizeIsNotStored() {
+        Assets assets = assets(100_000);
+        source.file("att1", "1", "");
+        PageAttachment declared = new PageAttachment("att1", "test:wiki/attachment/att1", "Peilschiff&Seeboden.JPG",
+                "image/jpeg", 18L, "1", null, null);
+
+        // Ein Download, der ins Leere ging, gilt nicht als abgelegt und nicht als leere Datei.
+        assertThat(assets.harvest(list(declared)).entries().get(0).code()).isEqualTo("source-invalid-response");
+        assertThatThrownBy(() -> assets.content(list(declared), "att1"))
+                .isInstanceOf(SourceAccessException.class);
+    }
+
+    @Test
     void aThirdLargeFileWaitsAtTheGateAndFailsTransientlyWhileTwoAreHeld() throws Exception {
         LargeFileGate gate = new LargeFileGate(4, 2, java.time.Duration.ofMillis(200));
         Assets assets = assets(1000, null, null, gate);
