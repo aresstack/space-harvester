@@ -98,7 +98,7 @@ final class SourceForm {
     final ComposerButton chooseCertificate = Comic.button("Wählen …",
             "Aus dem Windows-Zertifikatsspeicher wählen (nur öffentliche Zertifikate, keine Schlüssel)");
     /** Freigabe für den KI-Dienst ({@code space-harvester.ai.external-processing-sources}); Vorgabe aus. */
-    final JCheckBox release = new JCheckBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen (Embeddings, "
+    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen (Embeddings, "
             + "Reranking)");
     /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung). */
     final JTextArea notes = Comic.note("");
@@ -151,9 +151,6 @@ final class SourceForm {
             settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
         include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
-        release.setOpaque(false);
-        release.setFont(Comic.regular(13f));
-        release.setForeground(Comic.INK);
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();

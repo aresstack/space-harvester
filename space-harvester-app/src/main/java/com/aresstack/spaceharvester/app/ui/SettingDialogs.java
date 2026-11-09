@@ -666,10 +666,8 @@ final class SettingDialogs {
     }
 
     private static JCheckBox checkbox(String text, boolean selected) {
-        JCheckBox box = new JCheckBox(text, selected);
-        box.setOpaque(false);
-        box.setFont(Comic.regular(13f));
-        box.setForeground(Comic.INK);
+        JCheckBox box = Comic.checkBox(text);
+        box.setSelected(selected);
         return box;
     }
 

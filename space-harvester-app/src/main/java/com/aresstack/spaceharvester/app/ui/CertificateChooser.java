@@ -99,7 +99,7 @@ final class CertificateChooser {
     static final class Picker {
 
         final JTable table = Comic.table(new JTable());
-        final JCheckBox expired = new JCheckBox("Auch abgelaufene Zertifikate anzeigen");
+        final JCheckBox expired = Comic.checkBox("Auch abgelaufene Zertifikate anzeigen");
         private final List<Entry> all;
         private final List<Entry> shown = new ArrayList<>();
         private final JComponent component;
@@ -107,7 +107,6 @@ final class CertificateChooser {
 
         Picker(String currentAlias, List<Entry> all) {
             this.all = all;
-            expired.setOpaque(false);
             expired.setFont(Comic.regular(12.5f));
             // Ein abgelaufenes, aber eingetragenes Zertifikat bleibt sichtbar, damit es nicht still verschwindet.
             expired.setSelected(all.stream().anyMatch(entry -> !entry.valid() && entry.alias().equals(currentAlias)));

@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
@@ -77,6 +76,8 @@ public final class SourcesView implements View {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
+    /** Die Quellenkarten; das Hauptfenster zeigt sie im linken Drawer statt des Explorers. */
+    private final JPanel drawer = new JPanel(new BorderLayout(0, 6));
     private final List<AppSettings.SourceEntry> sources = new ArrayList<>();
     private final Map<String, SourceCard> cards = new LinkedHashMap<>();
     private final CardsPanel cardsPanel = new CardsPanel();
@@ -133,9 +134,8 @@ public final class SourcesView implements View {
         this.context = context;
         root.setBackground(Comic.SURFACE);
 
-        JPanel left = new JPanel(new BorderLayout(0, 6));
-        left.setBackground(Comic.SURFACE);
-        left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
+        JPanel left = drawer;
+        left.setOpaque(false);
         left.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
         JScrollPane cardsScroll = Comic.scroll(cardsPanel);
         cardsScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
@@ -319,7 +319,7 @@ public final class SourcesView implements View {
         detail.add(header, BorderLayout.NORTH);
         detail.add(tabsFrame, BorderLayout.CENTER);
 
-        root.add(new ComicSplitPane(left, detail, 240, 460), BorderLayout.CENTER);
+        root.add(detail, BorderLayout.CENTER);
         context.onChange(ignored -> refresh());
         refresh();
     }
@@ -327,6 +327,11 @@ public final class SourcesView implements View {
     @Override
     public JComponent component() {
         return root;
+    }
+
+    /** Die Quellenkarten mit „Quelle hinzufügen …“ für den linken Drawer des Hauptfensters. */
+    public JComponent drawer() {
+        return drawer;
     }
 
     /** Wählt eine Quelle aus (z. B. von der Übersicht). */

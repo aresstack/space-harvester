@@ -171,6 +171,7 @@ public final class Explorer {
         tree.setToggleClickCount(0);
         tree.setOpaque(false);
         tree.setRowHeight(0);
+        tree.setFont(Comic.regular(13f));
         tree.getAccessibleContext().setAccessibleName("Wissensquellen");
         tree.setCellRenderer(new Renderer());
         tree.addTreeWillExpandListener(new TreeWillExpandListener() {
@@ -245,6 +246,9 @@ public final class Explorer {
             }
         });
         matches.setOpaque(false);
+        matches.setFont(Comic.regular(13f));
+        matches.setSelectionBackground(Comic.YELLOW);
+        matches.setSelectionForeground(Comic.INK);
         matches.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
             @Override
             public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
@@ -303,7 +307,12 @@ public final class Explorer {
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
         root.setOpaque(false);
-        root.add(filter, BorderLayout.NORTH);
+        // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
+        JPanel head = new JPanel(new BorderLayout(0, 6));
+        head.setOpaque(false);
+        head.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
+        head.add(filter, BorderLayout.CENTER);
+        root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         root.add(note, BorderLayout.SOUTH);
         note.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 0));
@@ -711,8 +720,12 @@ public final class Explorer {
         private int width;
 
         Renderer() {
+            // Auswahl wie die gewählte Quellenkarte: Comic-Gelb mit Tinte.
             setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
+            setBackgroundSelectionColor(Comic.YELLOW);
+            setTextSelectionColor(Comic.INK);
             setBorderSelectionColor(null);
+            setFont(Comic.regular(13f));
         }
 
         @Override

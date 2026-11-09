@@ -348,10 +348,7 @@ public final class SearchView implements View {
     }
 
     private static JCheckBox checkBox(String text, String tooltip) {
-        JCheckBox box = new JCheckBox(text);
-        box.setOpaque(false);
-        box.setFont(Comic.regular(13f));
-        box.setForeground(Comic.INK);
+        JCheckBox box = Comic.checkBox(text);
         box.setToolTipText(tooltip);
         return box;
     }
