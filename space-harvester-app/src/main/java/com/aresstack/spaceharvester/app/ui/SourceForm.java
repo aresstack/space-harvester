@@ -153,6 +153,7 @@ final class SourceForm {
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(680, 600));
         Comic.style(sessionValue);
+        PasswordReveal.install(sessionValue);
 
         for (SourceType type : sourceTypes(context)) {
             String label = label(type);
