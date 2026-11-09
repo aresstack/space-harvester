@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
@@ -80,6 +81,8 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
+    private final BusyOverlay overlay = new BusyOverlay(Comic.scroll(pane));
     private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
 
@@ -115,18 +118,32 @@ final class ReadingPane extends JPanel {
                 pane.setToolTipText(image ? "Klicken zum Vergrößern" : null);
             }
         });
+        overlay.setHighlight(Comic.BLUE);
+        overlay.setVeilColor(Comic.SURFACE);
         add(hint, BorderLayout.NORTH);
-        add(Comic.scroll(pane), BorderLayout.CENTER);
+        add(overlay, BorderLayout.CENTER);
         clear(" ");
     }
 
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
+        overlay.setBusy(false);
         originals = Map.of();
         details = "";
         pane.setText("");
         hint.setText(text);
         hint.setForeground(Comic.TEXT);
+    }
+
+    /** Leert die Ansicht und zeigt den drehenden Ring über dem Textbereich, bis {@link #show} oder {@link #clear}. */
+    void loading() {
+        clear(" ");
+        overlay.setBusy(true);
+    }
+
+    /** Ob der Ring gerade gezeigt wird, für Tests. */
+    boolean loadingShown() {
+        return overlay.isBusy();
     }
 
     /** Für Tests: der angezeigte Hinweis und das HTML, aus dem die Ansicht gebaut ist. */
@@ -144,6 +161,7 @@ final class ReadingPane extends JPanel {
      * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt.
      */
     void show(Prepared prepared) {
+        overlay.setBusy(false);
         originals = prepared.originals();
         boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
         details = prepared.html().isEmpty() ? "" : prepared.note();

@@ -883,7 +883,7 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         readingLoaded = true;
-        readingPane.clear("Leseansicht wird geladen …");
+        readingPane.loading();
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;

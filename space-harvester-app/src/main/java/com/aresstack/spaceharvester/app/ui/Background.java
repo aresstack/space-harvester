@@ -4,6 +4,7 @@ import javax.swing.SwingUtilities;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 /**
@@ -20,7 +21,15 @@ public final class Background {
     }
 
     public static <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
-        EXECUTOR.execute(() -> {
+        start(work, onSuccess, onFailure);
+    }
+
+    /**
+     * Wie {@link #run}; die Rückgabe bricht die Arbeit ab ({@link Future#cancel(boolean) cancel(true)} unterbricht
+     * ihren Thread). Eine abgebrochene Arbeit meldet sich, wenn überhaupt, als Fehler.
+     */
+    public static <T> Future<?> start(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+        return EXECUTOR.submit(() -> {
             try {
                 T result = work.call();
                 SwingUtilities.invokeLater(() -> onSuccess.accept(result));
