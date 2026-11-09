@@ -533,7 +533,7 @@ public final class PageDetailPanel extends JPanel {
         PageSnapshot snapshot = page.snapshot();
         PageMetadata metadata = page.header().metadata();
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
-        graphView.page(snapshot.key());
+        graphView.page(snapshot.key(), snapshot.spaceKey());
         pageShown.accept(sourceId, metadata.partitionKey());
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()

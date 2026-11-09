@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -242,6 +244,100 @@ class KnowledgeGraphTabTest {
         assertThat(tab.statusText()).isEqualTo("Keine Seite geöffnet.");
     }
 
+    @Test
+    void theExportOffersPageSubtreeSpaceSourceAndAllAndNeverLoadsOrAnalyses() {
+        tab.page(WIKI, "DEV");
+
+        List<KnowledgeGraphTab.ExportChoice> choices = tab.exportChoices();
+        assertThat(choices).extracting(KnowledgeGraphTab.ExportChoice::label).containsExactly("Diese Seite",
+                "Unterzweig ab dieser Seite", "Space „DEV“", "Quelle „wiki“", "Gesamter Graph");
+        assertThat(choices).extracting(KnowledgeGraphTab.ExportChoice::scope).containsExactly(
+                new KnowledgeGraphExportUseCase.Scope.Page("wiki", "1"),
+                new KnowledgeGraphExportUseCase.Scope.Subtree("wiki", "1"),
+                new KnowledgeGraphExportUseCase.Scope.Space("wiki", "DEV"),
+                new KnowledgeGraphExportUseCase.Scope.Source("wiki"),
+                new KnowledgeGraphExportUseCase.Scope.All());
+
+        tab.startExport(choices.get(1));
+        assertThat(tab.exportEnabled()).as("gesperrt, solange der Start läuft").isFalse();
+        runner.runAll();
+
+        assertThat(actions.exports).as("veraltete nur auf ausdrücklichen Wunsch, auch wenn die Ansicht sie zeigt")
+                .containsExactly("zweig wiki 1 nur aktuelle");
+        assertThat(actions.calls).as("Export lädt keinen Teilgraphen und analysiert nichts").isEmpty();
+        assertThat(tab.exportNoteText()).isEqualTo(KnowledgeGraphTab.EXPORT_STARTED);
+        assertThat(tab.exportEnabled()).isTrue();
+    }
+
+    @Test
+    void withoutAnOpenPageOnlyTheWholeGraphCanBeExported() {
+        tab.page(null);
+
+        assertThat(tab.exportChoices()).filteredOn(choice -> choice.scope() != null)
+                .extracting(KnowledgeGraphTab.ExportChoice::label).containsExactly("Gesamter Graph");
+        tab.page(WIKI);
+        assertThat(tab.exportChoices().get(2).scope()).as("ohne bekannten Space kein Space-Umfang").isNull();
+    }
+
+    @Test
+    void staleAnalysesAreExportedOnlyWhenExplicitlyIncluded() {
+        tab.page(WIKI, "DEV");
+        tab.toggleShowStale();
+        runner.runAll();
+        tab.includeStaleInExport(true);
+
+        tab.startExport(tab.exportChoices().get(2));
+        runner.runAll();
+
+        assertThat(actions.exports).as("unabhängig vom Ansichtsfilter").containsExactly("space wiki DEV mit veralteten");
+    }
+
+    @Test
+    void theExportNoteIsClearedOnAPageChangeAndALateCallbackDoesNotWriteIt() {
+        tab.page(WIKI, "DEV");
+        tab.startExport(tab.exportChoices().get(0));
+        runner.runAll();
+        assertThat(tab.exportNoteText()).isEqualTo(KnowledgeGraphTab.EXPORT_STARTED);
+
+        tab.page(new PageKey("wiki", "2"), "DEV");
+        assertThat(tab.exportNoteText()).isEmpty();
+
+        tab.startExport(tab.exportChoices().get(0));
+        tab.page(WIKI, "DEV");
+        runner.runAll();
+        assertThat(tab.exportNoteText()).as("Rückmeldung zur vorigen Seite bleibt weg").isEmpty();
+        assertThat(tab.exportEnabled()).isTrue();
+    }
+
+    @Test
+    void graphInteractionsWhileTheExportStartsDoNotSwallowItsOutcome() {
+        tab.page(WIKI, "DEV");
+        tab.showPageNow();
+        runner.runAll();
+        actions.exportFailure = new IllegalStateException("Warteschlange voll");
+
+        tab.startExport(tab.exportChoices().get(4));
+        tab.toggleShowStale();
+        tab.searchTerm("Beleg");
+        runner.runAll();
+
+        assertThat(tab.exportNoteText()).isEqualTo("Export nicht gestartet: Warteschlange voll");
+    }
+
+    @Test
+    void aSecondExportWhileStartingIsIgnoredAndAFailureNamesTheReason() {
+        tab.page(WIKI, "DEV");
+        actions.exportFailure = new IllegalStateException("Exportordner nicht beschreibbar");
+
+        tab.startExport(tab.exportChoices().get(4));
+        tab.startExport(tab.exportChoices().get(4));
+        runner.runAll();
+
+        assertThat(actions.exports).hasSize(1);
+        assertThat(tab.exportNoteText()).isEqualTo("Export nicht gestartet: Exportordner nicht beschreibbar");
+        assertThat(tab.exportEnabled()).isTrue();
+    }
+
     private static final class FakeActions implements KnowledgeGraphTab.Actions {
 
         final List<String> calls = new ArrayList<>();
@@ -249,6 +345,17 @@ class KnowledgeGraphTabTest {
         boolean pageStale;
         boolean confirmed;
         GraphNeighbourhood.Options lastOptions;
+        final List<String> exports = new ArrayList<>();
+        RuntimeException exportFailure;
+
+        @Override
+        public JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale) {
+            exports.add(scope.describe() + (includeStale ? " mit veralteten" : " nur aktuelle"));
+            if (exportFailure != null) {
+                throw exportFailure;
+            }
+            return null;
+        }
 
         @Override
         public GraphNeighbourhood.Subgraph page(PageKey key, GraphNeighbourhood.Options options) {
