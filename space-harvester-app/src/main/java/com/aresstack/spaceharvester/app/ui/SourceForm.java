@@ -99,7 +99,8 @@ final class SourceForm {
     private static final String PAIR_TEXT = "Mit KeePass koppeln …";
     /** Zuletzt gelesene Einträge (ohne Geheimnisse), um einen passenden zur Adresse vorzuschlagen. */
     private List<com.aresstack.enterpriseai.adyton.VaultEntry> keePassEntries = List.of();
-    private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
+    /** Auswahl des Eintrags mit dem Koppeln-/Neu-laden-Knopf rechts IM Feld (InputFrame). */
+    private final JPanel keePassRow = Comic.fieldWithButton(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
     /** Ob das Feld Passwort/Token gerade den Wert aus KeePass zeigt (maskiert, schreibgeschützt, zählt nicht als Eingabe). */

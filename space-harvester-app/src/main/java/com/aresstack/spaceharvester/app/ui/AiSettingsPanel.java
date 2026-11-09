@@ -76,7 +76,13 @@ final class AiSettingsPanel {
     final JLabel keePassStatus = Comic.text("Nicht gekoppelt");
     final ComposerButton pair = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein "
             + "Einmal-Passwort");
-    final JPanel keePassRow = Comic.row(keePassStatus, pair);
+    /** Kopplungsstand als Feld mit dem Koppeln-Knopf rechts IM Feld (InputFrame), wie die übrigen Zeilen. */
+    final JPanel keePassRow = Comic.fieldWithButton(keePassStatus, pair);
+
+    {
+        // Innenabstand wie bei einem Textfeld im InputFrame, damit der Text nicht am Rahmen klebt.
+        keePassStatus.setBorder(new javax.swing.border.EmptyBorder(2, 4, 2, 4));
+    }
     /** Editierbar: einen bestehenden Eintrag wählen oder einen neuen Titel eintippen. */
     final JComboBox<String> entry = Comic.combo();
     /** Die beim Koppeln gelesenen Titel; leer, solange nicht gekoppelt. */
