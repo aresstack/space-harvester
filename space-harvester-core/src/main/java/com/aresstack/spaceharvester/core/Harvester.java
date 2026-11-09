@@ -682,7 +682,7 @@ public final class Harvester implements AutoCloseable {
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
                     clock);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
-                    termRelations::expansions);
+                    termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
                 @Override
                 public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,

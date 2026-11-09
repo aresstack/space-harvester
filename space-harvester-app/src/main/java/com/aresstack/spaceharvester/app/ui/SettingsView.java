@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
@@ -18,10 +19,11 @@ import java.nio.file.Path;
 import java.util.Locale;
 
 /**
- * Einstellungen und Diagnose in Reitern wie im Enterprise AI Client: „Allgemein“ (welche Datei gilt, was daran nicht
- * stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen, Versionen), „KI-Dienst“ und „Modelle“
- * ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für
- * gesperrte Seiten) und „Sicherheit“ (Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“. Jede
+ * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
+ * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
+ * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
+ * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und
+ * Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“ (Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“. Jede
  * Änderung schreibt die Datei und startet die Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
 public final class SettingsView implements View {
@@ -45,7 +47,18 @@ public final class SettingsView implements View {
     final Facts security = new Facts();
     private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
             "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
-    private final PillTabs tabs = new PillTabs();
+    /** Rechts: der gewählte Bereich. */
+    private final java.awt.CardLayout pages = new java.awt.CardLayout();
+    private final JPanel pageDeck = new JPanel(pages);
+    /** Links im Drawer: die Bereiche untereinander. */
+    private final JPanel drawer = new JPanel(new BorderLayout(0, 6));
+    private final JPanel navRows = new JPanel();
+    private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
+    private String selected;
+    /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
+    private Runnable leave = () -> { };
+    final ComposerButton back = Comic.button(ComposerIcons.chevronLeft(), "Zurück",
+            "Einstellungen verlassen und zum vorigen Bereich zurückkehren");
     private final AiSettingsPanel ai;
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
@@ -123,17 +136,17 @@ public final class SettingsView implements View {
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
-        tabs.tab(GENERAL, Comic.column(
+        page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)));
-        tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
-        tabs.tab(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
-        tabs.tab(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
+        page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
+        page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls))));
-        tabs.tab(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
+        page(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
@@ -142,24 +155,86 @@ public final class SettingsView implements View {
                 + "steht nur der Platzhalter ${NAME}. Ändern und entfernen an der Quelle, unter KI-Dienst bzw. Proxy."),
                 BorderLayout.NORTH);
         vault.add(security, BorderLayout.CENTER);
-        tabs.tab(SECURITY, Comic.column(Comic.plate("Tresor", Comic.RED, vault)));
-        tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
-        root.add(tabs, BorderLayout.CENTER);
+        page(SECURITY, Comic.column(Comic.plate("Tresor", Comic.RED, vault)));
+        pageDeck.setOpaque(false);
+        root.add(pageDeck, BorderLayout.CENTER);
+        buildDrawer();
+        select(GENERAL);
         context.onChange(ignored -> {
             render();
             fileAccess.render();
-            // Eingaben in den offenen Reitern „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
+            // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
-            if (!AI.equals(tabs.selected()) && !MODELS.equals(tabs.selected())) {
-                ai.render();
-            }
-        });
-        tabs.onSelect(name -> {
-            if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
+            if (!AI.equals(selected) && !MODELS.equals(selected)) {
                 ai.render();
             }
         });
         render();
+    }
+
+    private void page(String name, JComponent content) {
+        pageDeck.add(content, name);
+        SettingsNavRow row = new SettingsNavRow(name, () -> select(name));
+        row.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        rows.put(name, row);
+        navRows.add(row);
+        navRows.add(javax.swing.Box.createVerticalStrut(2));
+    }
+
+    /**
+     * Der Drawer wie im AskAI-Client ({@code ChatWorkspacePanel.renderSettingsRows} und {@code buildSettingsFooter}):
+     * Überschrift, die Bereiche als Zeilen untereinander, unten der Weg zurück.
+     */
+    private void buildDrawer() {
+        drawer.setOpaque(false);
+        drawer.add(Comic.caption(AppContext.Section.SETTINGS.title()), BorderLayout.NORTH);
+        navRows.setLayout(new javax.swing.BoxLayout(navRows, javax.swing.BoxLayout.Y_AXIS));
+        navRows.setOpaque(false);
+        navRows.setBorder(javax.swing.BorderFactory.createEmptyBorder(4, 0, 4, 0));
+        javax.swing.JScrollPane scroll = Comic.scroll(navRows);
+        scroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setBorder(javax.swing.BorderFactory.createEmptyBorder());
+        scroll.setOpaque(false);
+        scroll.getViewport().setOpaque(false);
+        drawer.add(scroll, BorderLayout.CENTER);
+        back.addActionListener(e -> leave.run());
+        JPanel foot = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        foot.setOpaque(false);
+        foot.add(back);
+        drawer.add(foot, BorderLayout.SOUTH);
+    }
+
+    /** Zeigt rechts den Bereich {@code name} und markiert ihn links im Drawer. */
+    void select(String name) {
+        if (!rows.containsKey(name)) {
+            return;
+        }
+        selected = name;
+        rows.forEach((title, row) -> row.setSelected(title.equals(name)));
+        pages.show(pageDeck, name);
+        if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
+            ai.render();
+        }
+    }
+
+    /** Der gewählte Bereich. */
+    String selected() {
+        return selected;
+    }
+
+    /** Die Navigation der Bereiche für den linken Drawer des Hauptfensters. */
+    public JComponent drawer() {
+        return drawer;
+    }
+
+    /** Was „Zurück“ im Drawer tut (das Hauptfenster zeigt den vorigen Bereich). */
+    public void onLeave(Runnable leave) {
+        this.leave = leave == null ? () -> { } : leave;
+    }
+
+    /** Für Tests: die Zeilen der Navigation in ihrer Reihenfolge. */
+    java.util.List<SettingsNavRow> navRows() {
+        return java.util.List.copyOf(rows.values());
     }
 
     private void renderSecurity(AppSettings settings) {
@@ -211,7 +286,7 @@ public final class SettingsView implements View {
 
     /** Öffnet den Reiter „KI-Dienst“, z. B. vom Hinweis an der semantischen Suche. */
     public void showAi() {
-        tabs.select(AI);
+        select(AI);
     }
 
     /** Für Tests. */

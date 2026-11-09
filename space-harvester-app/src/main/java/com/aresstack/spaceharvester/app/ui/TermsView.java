@@ -15,12 +15,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import javax.swing.SwingUtilities;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.terms.TermKind;
-import com.aresstack.spaceharvester.application.terms.RelationConflictException;
-import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
-import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
-import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationType;
 
 import java.awt.BorderLayout;
@@ -31,18 +27,22 @@ import java.util.function.Consumer;
 
 /**
  * Der Bereich „Begriffe“ (#339): die quellenübergreifende Sicht auf die je Seite ermittelten Begriffe, mit den
- * Reitern Akronyme, Bezeichner, Beziehungen und Fachglossar in dieser Reihenfolge. Akronyme, Bezeichner und
- * Beziehungen zeigen je ein Verzeichnis über alle berechtigten, aktuell indexierten Seiten mit Suchfeld. Akronyme und
- * Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des EDT abgefragt, sobald
- * der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld, ebenso die Beziehungen (#120). Für das Fachglossar gibt
- * es noch keinen Unterbau. Nur auf dem EDT.
+ * Reitern Akronyme, Bezeichner, Beziehungen, Synonyme, Fachglossar und Graph in dieser Reihenfolge. Akronyme,
+ * Bezeichner, Beziehungen und Synonyme zeigen je ein Verzeichnis über alle berechtigten, aktuell indexierten Seiten mit
+ * Suchfeld. Akronyme und Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des
+ * EDT abgefragt, sobald der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld, ebenso die Beziehungen (#120);
+ * Synonyme sind die Beziehungen der Arten Synonym und Schreibvariante ({@link RelationTab}). Der Graph zeigt einen
+ * Begriff mit seinen Nachbarn ({@link TermGraphView}). Für das Fachglossar gibt es noch keinen Unterbau. Nur auf dem
+ * EDT.
  */
 public final class TermsView implements View {
 
     static final String ACRONYMS = "Akronyme";
     static final String IDENTIFIERS = "Bezeichner";
     static final String RELATIONS = "Beziehungen";
+    static final String SYNONYMS = "Synonyme";
     static final String GLOSSARY = "Fachglossar";
+    static final String GRAPH = "Graph";
     static final String NOT_AVAILABLE = "Das Fachglossar ist noch nicht verfügbar.";
     static final String PENDING = "Das Verzeichnis füllt der Begriffsindex des Core; bis dahin stehen die Akronyme "
             + "einer Seite unter Inhalte › Begriffe.";
@@ -65,62 +65,49 @@ public final class TermsView implements View {
     static final String SHOW_OCCURRENCES = "Fundstellen zeigen";
     private final ComposerButton occurrences = Comic.button("Fundstellen …", SHOW_OCCURRENCES
             + " (auch per Doppelklick auf eine Zeile)");
-    private final Directory relations = new Directory("Beziehungen zwischen Begriffen",
-            new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"});
+    private final RelationTab relationTab;
+    private final RelationTab synonymTab;
+    private final TermGraphView graph;
     static final String CONFIRM = "Bestätigen";
     static final String REJECT = "Ablehnen";
     static final String REMOVE = "Entfernen";
-    private final ComposerButton confirm = Comic.button(CONFIRM, "Die gewählte Beziehung gilt");
-    private final ComposerButton reject = Comic.button(REJECT, "Die gewählte Beziehung gilt nicht; sie bleibt als "
-            + "abgelehnt sichtbar und kommt nicht wieder");
-    private final ComposerButton remove = Comic.button(REMOVE, "Eine manuelle Beziehung ganz löschen, jede andere "
-            + "ablehnen");
     static final String UNDO = "Rückgängig";
     static final String NEW_RELATION = "Neue Beziehung …";
-    private final ComposerButton create = Comic.button(NEW_RELATION, "Eine eigene Beziehung zwischen zwei Begriffen "
-            + "anlegen; sie gilt sofort als bestätigt");
-    private List<Relation> shownRelations = List.of();
-    /** Beziehungen der Liste nach Kennung, für Auswahl und Darstellung. */
-    private final java.util.Map<String, Relation> byId = new java.util.HashMap<>();
-    /** Stand im Core je Kennung, damit Rückgängig eine entfernte Beziehung wiederherstellen kann. */
-    private final java.util.Map<String, TermRelation> loaded = new java.util.HashMap<>();
-    /** Eben entfernte Beziehungen: bleiben durchgestrichen stehen, bis Reiter oder Bereich wechseln. */
-    private final java.util.Map<String, Relation> removed = new java.util.LinkedHashMap<>();
-    private final java.util.Map<String, TermRelation> removedCore = new java.util.HashMap<>();
-    /** Nach dem Neuladen wieder zu wählende Beziehung. */
-    private String keepSelected;
-    private java.util.function.BiConsumer<String, Relation> onReview = (action, relation) -> { };
 
     private final AppContext context;
     private int acronymRequest;
     private int identifierRequest;
     private IdentifierPager identifierPager;
     private boolean identifierLoading;
-    private int relationRequest;
 
     /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
     public TermsView(AppContext context) {
         this.context = context;
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
+        relationTab = new RelationTab(context, "Beziehungen zwischen Begriffen",
+                new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"},
+                r -> List.of(r.fromTerm(), Relation.typeText(r.type()), r.toTerm(), Relation.statusText(r.status()),
+                        Relation.originText(r.origin())),
+                List.of(), RelationType.ABBREVIATION, NO_RELATIONS);
+        synonymTab = new RelationTab(context, "Synonyme und Schreibvarianten",
+                new String[]{"Begriff", "Synonym", "Art", "Herkunft", "Status"},
+                r -> List.of(r.fromTerm(), r.toTerm(), Relation.typeText(r.type()), Relation.originText(r.origin()),
+                        Relation.statusText(r.status())),
+                SYNONYM_TYPES, RelationType.SYNONYM, NO_SYNONYMS);
+        graph = new TermGraphView(context);
         JLabel glossary = Comic.muted(NOT_AVAILABLE);
         glossary.setHorizontalAlignment(SwingConstants.CENTER);
         glossary.setFont(Comic.regular(14f));
         tabs.tab(ACRONYMS, acronyms)
                 .tab(IDENTIFIERS, identifiers)
-                .tab(RELATIONS, relations)
-                .tab(GLOSSARY, glossary);
+                .tab(RELATIONS, relationTab.directory())
+                .tab(SYNONYMS, synonymTab.directory())
+                .tab(GLOSSARY, glossary)
+                .tab(GRAPH, graph.component());
         root.add(Comic.plate("Begriffe", Comic.PETROL, tabs), BorderLayout.CENTER);
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
-        relations.show(List.of(), PENDING);
-        JPanel review = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-        review.setOpaque(false);
-        for (ComposerButton button : List.of(confirm, reject, remove)) {
-            button.setEnabled(false);
-            review.add(button);
-        }
-        relations.actions(review);
         JPanel identifierActions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
         identifierActions.setOpaque(false);
         identifierActions.add(occurrences);
@@ -137,26 +124,12 @@ public final class TermsView implements View {
                 }
             }
         });
-        relations.sortable();
-        RelationRenderer renderer = new RelationRenderer();
-        for (int c = 0; c < relations.table().getColumnCount(); c++) {
-            relations.table().getColumnModel().getColumn(c).setCellRenderer(renderer);
-        }
-        relations.middle(create);
-        create.addActionListener(e -> askNewRelation());
-        create.setEnabled(context != null);
-        tabs.onSelect(name -> forgetRemoved());
-        relations.table().getSelectionModel().addListSelectionListener(e -> selectionChanged());
-        confirm.addActionListener(e -> review(CONFIRM));
-        reject.addActionListener(e -> review(REJECT));
-        remove.addActionListener(e -> review(REMOVE));
+        tabs.onSelect(this::tabSelected);
         if (context != null) {
             acronyms.onSearch(q -> loadAcronyms());
             identifiers.onSearch(q -> loadIdentifiers());
             identifiers.letters(letter -> loadIdentifiers());
             identifiers.onScrolledToEnd(this::moreIdentifiers);
-            relations.onSearch(q -> loadRelations(null));
-            onReview = this::reviewInCore;
         }
     }
 
@@ -165,167 +138,42 @@ public final class TermsView implements View {
         if (context != null) {
             loadAcronyms();
             loadIdentifiers();
-            removed.clear();
-            removedCore.clear();
-            loadRelations(null);
+            relationTab.shown();
+            synonymTab.shown();
+            graph.shown();
         }
     }
 
-    /** Ein Wechsel von Reiter oder Bereich besiegelt das Entfernen: die durchgestrichenen Zeilen verschwinden. */
-    private void forgetRemoved() {
-        if (!removed.isEmpty()) {
-            removed.clear();
-            removedCore.clear();
-            showRelations(shownRelations.stream().filter(r -> byId.containsKey(r.id()) && loaded.containsKey(r.id()))
-                    .toList(), NO_RELATIONS);
+    /**
+     * Ein Wechsel des Reiters besiegelt das Entfernen; Beziehungen, Synonyme und Graph zeigen dieselben Beziehungen
+     * des Core, also lädt der gewählte neu, was im anderen geändert wurde.
+     */
+    private void tabSelected(String name) {
+        relationTab.forgetRemoved();
+        synonymTab.forgetRemoved();
+        if (context == null) {
+            return;
+        }
+        switch (name) {
+            case RELATIONS -> relationTab.load(null);
+            case SYNONYMS -> synonymTab.load(null);
+            case GRAPH -> graph.shown();
+            default -> { }
         }
     }
+
+    /** Die Arten des Reiters „Synonyme“. */
+    static final List<RelationType> SYNONYM_TYPES = List.of(RelationType.SYNONYM, RelationType.VARIANT);
 
     static final String NO_RELATIONS = "Noch keine Beziehungen. Vorschläge entstehen aus den Akronymen der Seiten; "
             + "bestätigte gelten für die Suche.";
+    static final String NO_SYNONYMS = "Noch keine Synonyme oder Schreibvarianten. „Neue Beziehung …“ legt eine an; "
+            + "bestätigte gelten für die Suche.";
     static final String CONFLICT = "Die Beziehung wurde inzwischen geändert; die Liste ist neu geladen.";
-
-    /**
-     * Vorgeschlagene und bestätigte Beziehungen, danach die abgelehnten (sie bleiben sichtbar und kommen nicht wieder),
-     * je nach Begriff gefiltert wie im Dienst.
-     */
-    private void loadRelations(String notice) {
-        if (context.runtime() == null) {
-            relations.show(List.of(), NO_RUNTIME);
-            return;
-        }
-        int request = ++relationRequest;
-        String q = relations.query();
-        String term = q.isEmpty() ? null : q;
-        AppRuntime runtime = context.runtime();
-        Background.run(() -> {
-            List<Relation> all = new ArrayList<>();
-            TermRelations.RelationList open = runtime.workspace().termRelations(term, null, RELATION_LIMIT);
-            TermRelations.RelationList rejected = runtime.workspace().termRelations(term, ReviewStatus.REJECTED,
-                    RELATION_LIMIT);
-            java.util.Map<String, TermRelation> core = new java.util.HashMap<>();
-            for (TermRelation r : open.relations()) {
-                all.add(Relation.of(r));
-                core.put(r.id(), r);
-            }
-            for (TermRelation r : rejected.relations()) {
-                all.add(Relation.of(r));
-                core.put(r.id(), r);
-            }
-            return new LoadedRelations(all, core, open.nextCursor() != null || rejected.nextCursor() != null);
-        }, found -> {
-            if (request == relationRequest) {
-                loaded.clear();
-                loaded.putAll(found.core());
-                showRelations(found.list(), q.isEmpty() ? NO_RELATIONS : NO_MATCH);
-                // Der Core liefert je Status höchstens RELATION_LIMIT; mehr nur mit Hinweis, nicht still gekürzt.
-                String message = relationsMessage(notice, found.more());
-                if (message != null) {
-                    relations.message(message);
-                }
-            }
-        }, failure -> {
-            if (request == relationRequest) {
-                showRelations(List.of(), "Beziehungen nicht lesbar: " + failure.getMessage());
-            }
-        });
-    }
 
     /** Hinweis unter der Liste: {@code notice} und, wenn der Core mehr hat, {@link #MORE_RELATIONS}. */
     static String relationsMessage(String notice, boolean more) {
         return notice == null ? more ? MORE_RELATIONS : null : more ? notice + " " + MORE_RELATIONS : notice;
-    }
-
-    private record LoadedRelations(List<Relation> list, java.util.Map<String, TermRelation> core, boolean more) {
-    }
-
-    /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
-    private void reviewInCore(String action, Relation relation) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
-            return;
-        }
-        TermRelation before = removed.containsKey(relation.id()) ? removedCore.get(relation.id())
-                : loaded.get(relation.id());
-        keepSelected = relation.id();
-        Background.run(() -> {
-            switch (action) {
-                case CONFIRM -> runtime.workspace().confirmRelation(relation.id(), relation.revision());
-                case REJECT -> runtime.workspace().rejectRelation(relation.id(), relation.revision());
-                case UNDO -> undoRemove(runtime.workspace(), relation, before);
-                default -> runtime.workspace().removeRelation(relation.id(), relation.revision());
-            }
-            return relation;
-        }, done -> {
-            if (REMOVE.equals(action)) {
-                removed.put(relation.id(), relation);
-                if (before != null) {
-                    removedCore.put(relation.id(), before);
-                }
-            } else if (UNDO.equals(action)) {
-                removed.remove(relation.id());
-                removedCore.remove(relation.id());
-            }
-            loadRelations(null);
-        }, failure -> loadRelations(failure instanceof RelationConflictException
-                ? CONFLICT : action + " nicht möglich: " + failure.getMessage()));
-    }
-
-    /**
-     * Stellt den Stand vor dem Entfernen wieder her: Eine manuelle Beziehung hat der Core gelöscht, sie entsteht neu
-     * (gleicher Schlüssel, gleiche Kennung); eine automatische hat er abgelehnt, die Ablehnung wird aufgehoben.
-     */
-    private static void undoRemove(com.aresstack.spaceharvester.app.runtime.Workspace workspace, Relation relation,
-                                   TermRelation before) {
-        if (before == null) {
-            throw new IllegalStateException("der frühere Stand ist nicht bekannt");
-        }
-        if (before.origin() == RelationOrigin.MANUAL) {
-            TermRelation again = workspace.addRelation(new TermRelations.NewRelation(before.fromTerm(),
-                    before.toTerm(), before.type(), before.scope(), before.note(), before.evidence()));
-            if (before.status() == ReviewStatus.REJECTED) {
-                workspace.rejectRelation(again.id(), again.revision());
-            }
-        } else if (before.status() != ReviewStatus.REJECTED) {
-            workspace.restoreRelation(relation.id());
-            if (before.status() == ReviewStatus.CONFIRMED) {
-                workspace.confirmRelation(relation.id());
-            }
-        }
-    }
-
-    /** Dialog „Neue Beziehung“: Begriff, Art, Zu Begriff. */
-    private void askNewRelation() {
-        javax.swing.JDialog dialog = Dialogs.dialog(root, "Neue Beziehung");
-        javax.swing.JTextField from = Comic.field(20);
-        javax.swing.JTextField to = Comic.field(20);
-        javax.swing.JComboBox<String> type = Comic.combo();
-        for (RelationType t : RelationType.values()) {
-            type.addItem(Relation.typeText(t.name()));
-        }
-        JLabel problem = Comic.muted(" ");
-        JPanel form = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
-        form.setOpaque(false);
-        form.add(Comic.caption("Begriff"));
-        form.add(from);
-        form.add(Comic.caption("Beziehung"));
-        form.add(type);
-        form.add(Comic.caption("Zu Begriff"));
-        form.add(to);
-        form.add(problem);
-        ComposerButton cancel = Comic.button("Abbrechen", null);
-        ComposerButton ok = Comic.primary("Anlegen", "Die Beziehung anlegen und bestätigen");
-        cancel.addActionListener(e -> dialog.dispose());
-        ok.addActionListener(e -> {
-            String invalid = invalidNewRelation(from.getText(), to.getText());
-            if (invalid != null) {
-                problem.setText(invalid);
-                return;
-            }
-            dialog.dispose();
-            createRelation(from.getText(), RelationType.values()[type.getSelectedIndex()], to.getText());
-        });
-        Dialogs.show(dialog, "Neue Beziehung", form, cancel, ok);
     }
 
     /** {@code null}, wenn die Eingaben taugen, sonst der Grund in Worten. */
@@ -339,131 +187,32 @@ public final class TermsView implements View {
         return null;
     }
 
-    /** Legt die Beziehung im Core an (manuell, bestätigt, global) und wählt sie danach in der Liste. */
+    /** Legt die Beziehung im Core an (manuell, bestätigt, global) und wählt sie unter Beziehungen. */
     void createRelation(String from, RelationType type, String to) {
-        AppRuntime runtime = context == null ? null : context.runtime();
-        if (runtime == null) {
-            return;
-        }
-        Background.run(() -> runtime.workspace().addRelation(new TermRelations.NewRelation(from.trim(), to.trim(),
-                type, null, null, null)), created -> {
-            // Neu angelegt ist sie nicht mehr entfernt, auch wenn sie eben noch durchgestrichen dastand.
-            removed.remove(created.id());
-            removedCore.remove(created.id());
-            keepSelected = created.id();
-            loadRelations(null);
-        }, failure -> relations.message("Anlegen nicht möglich: " + failure.getMessage()));
-    }
-
-    /** Grau hinterlegt: abgelehnte; zusätzlich durchgestrichen: eben entfernte. Alle Spalten linksbündig. */
-    private final class RelationRenderer extends DefaultTableCellRenderer {
-
-        RelationRenderer() {
-            setHorizontalAlignment(SwingConstants.LEFT);
-        }
-
-        @Override
-        public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
-                                                                boolean focus, int row, int column) {
-            super.getTableCellRendererComponent(table, value, selected, focus, row, column);
-            Relation relation = relationAtView(row);
-            boolean gone = relation != null && removed.containsKey(relation.id());
-            boolean grey = gone || relation != null && "REJECTED".equals(relation.status());
-            if (!selected) {
-                setBackground(grey ? REJECTED_BACKGROUND : table.getBackground());
-                setForeground(gone ? Comic.MUTED : table.getForeground());
-            }
-            java.awt.Font font = table.getFont();
-            if (gone) {
-                java.util.Map<java.awt.font.TextAttribute, Object> attributes = new java.util.HashMap<>();
-                attributes.put(java.awt.font.TextAttribute.STRIKETHROUGH, java.awt.font.TextAttribute.STRIKETHROUGH_ON);
-                font = font.deriveFont(attributes);
-            }
-            setFont(font);
-            return this;
-        }
+        relationTab.createRelation(from, type, to);
     }
 
     static final java.awt.Color REJECTED_BACKGROUND = new java.awt.Color(0xECEDEF);
 
-    /** Ob die Beziehung eben entfernt wurde und noch durchgestrichen dasteht. */
+    /** Ob die Beziehung unter Beziehungen eben entfernt wurde und noch durchgestrichen dasteht. */
     boolean isRemoved(String id) {
-        return removed.containsKey(id);
+        return relationTab.isRemoved(id);
     }
 
     ComposerButton createButton() {
-        return create;
+        return relationTab.createButton();
     }
 
-    /** Zeigt Beziehungen; {@code hint} steht da, solange es keine gibt. */
+    /** Zeigt Beziehungen unter Beziehungen; {@code hint} steht da, solange es keine gibt. */
     void showRelations(List<Relation> list, String hint) {
-        Relation current = selectedRelation();
-        String select = keepSelected != null ? keepSelected : current == null ? null : current.id();
-        keepSelected = null;
-        List<Relation> merged = new ArrayList<>(list);
-        java.util.Set<String> ids = new java.util.HashSet<>();
-        list.forEach(r -> ids.add(r.id()));
-        // Entfernte bleiben stehen, bis Reiter oder Bereich wechseln, damit Rückgängig möglich bleibt.
-        removed.values().stream().filter(r -> !ids.contains(r.id())).forEach(merged::add);
-        shownRelations = List.copyOf(merged);
-        byId.clear();
-        List<List<String>> rows = new ArrayList<>(merged.size());
-        for (Relation relation : merged) {
-            byId.put(relation.id(), relation);
-            // Die Kennung steht unsichtbar hinter den Spalten.
-            rows.add(List.of(relation.fromTerm(), Relation.typeText(relation.type()), relation.toTerm(),
-                    Relation.statusText(relation.status()), Relation.originText(relation.origin()), relation.id()));
-        }
-        relations.show(rows, hint);
-        if (select != null) {
-            JTable table = relations.table();
-            for (int row = 0; row < table.getRowCount(); row++) {
-                Relation relation = relationAtView(row);
-                if (relation != null && relation.id().equals(select)) {
-                    table.setRowSelectionInterval(row, row);
-                    table.scrollRectToVisible(table.getCellRect(row, 0, true));
-                    break;
-                }
-            }
-        }
-        selectionChanged();
-    }
-
-    private Relation relationAtView(int row) {
-        if (row < 0 || row >= relations.table().getRowCount()) {
-            return null;
-        }
-        List<String> cells = relations.visibleRow(relations.table().convertRowIndexToModel(row));
-        return cells.size() > 5 ? byId.get(cells.get(5)) : null;
+        relationTab.show(list, hint);
     }
 
     /** {@code listener} bekommt Aktion ({@link #CONFIRM}, {@link #REJECT}, {@link #REMOVE}) und Beziehung. */
     void onReview(java.util.function.BiConsumer<String, Relation> listener) {
-        onReview = java.util.Objects.requireNonNull(listener, "listener");
+        relationTab.onReview(listener);
     }
 
-    /** Die Schaltflächen passen zum Stand der gewählten Beziehung; Rechte prüft der Core. */
-    private void selectionChanged() {
-        Relation selected = selectedRelation();
-        boolean gone = selected != null && removed.containsKey(selected.id());
-        confirm.setEnabled(selected != null && !gone && !"CONFIRMED".equals(selected.status()));
-        reject.setEnabled(selected != null && !gone && !"REJECTED".equals(selected.status()));
-        remove.setEnabled(selected != null);
-        remove.setText(gone ? UNDO : REMOVE);
-        remove.setToolTipText(gone ? "Das Entfernen zurücknehmen" : "Eine manuelle Beziehung ganz löschen, jede "
-                + "andere ablehnen");
-    }
-
-    private Relation selectedRelation() {
-        return relationAtView(relations.table().getSelectedRow());
-    }
-
-    private void review(String action) {
-        Relation selected = selectedRelation();
-        if (selected != null) {
-            onReview.accept(REMOVE.equals(action) && removed.containsKey(selected.id()) ? UNDO : action, selected);
-        }
-    }
 
     /** Akronym, Bedeutung (Ausschreibungen neben dem Akronym), Fundstellen. */
     private void loadAcronyms() {
@@ -724,11 +473,19 @@ public final class TermsView implements View {
     }
 
     Directory relations() {
-        return relations;
+        return relationTab.directory();
     }
 
     List<ComposerButton> reviewButtons() {
-        return List.of(confirm, reject, remove);
+        return relationTab.reviewButtons();
+    }
+
+    RelationTab synonyms() {
+        return synonymTab;
+    }
+
+    TermGraphView graph() {
+        return graph;
     }
 
     /**

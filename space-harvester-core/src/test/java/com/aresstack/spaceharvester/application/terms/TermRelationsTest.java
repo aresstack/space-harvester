@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -39,7 +40,7 @@ class TermRelationsTest {
     private static final AccessContext READER = AccessContext.technicalClient("reader");
     private static final Instant T0 = Instant.parse("2026-10-19T00:00:00Z");
 
-    private final List<String> configured = List.of("wiki-a", "wiki-b");
+    private final List<String> configured = new ArrayList<>(List.of("wiki-a", "wiki-b"));
     private final SourceCatalog catalog = new SourceCatalog() {
         @Override
         public List<HarvestSource> all() {
@@ -218,6 +219,29 @@ class TermRelationsTest {
                 .isInstanceOf(UnknownRelationException.class);
         assertThat(store.history(manual.id())).extracting(TermRelationStore.AuditEntry::action)
                 .containsExactly("create", "remove");
+    }
+
+    @Test
+    void relationsAndEvidenceOfADisabledSourceAreHiddenUntilItIsBack() {
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+                proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
+                proposal("KPI", "Kennzahl", evidence("wiki-a", "1"), evidence("wiki-b", "1"))));
+        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), "g1",
+                List.of(proposal("ABC", "Alpha Beta Gamma", evidence("wiki-a", "1"))));
+        TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
+                RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of(evidence("wiki-a", "1"))));
+
+        configured.remove("wiki-a");
+
+        assertThat(all(EDITOR, null)).extracting(TermRelation::fromTerm).containsExactlyInAnyOrder("KPI", "ZV");
+        assertThat(all(EDITOR, null)).allSatisfy(relation -> assertThat(relation.evidence())
+                .noneMatch(e -> e.sourceId().equals("wiki-a")));
+        assertThat(relations.relation(EDITOR, manual.id()).evidence()).isEmpty();
+        assertThat(relations.expansions(READER, "RSL", "wiki-b")).isEmpty();
+        assertThat(store.all()).hasSize(4);
+
+        configured.add("wiki-a");
+        assertThat(all(EDITOR, null)).hasSize(4);
     }
 
     @Test

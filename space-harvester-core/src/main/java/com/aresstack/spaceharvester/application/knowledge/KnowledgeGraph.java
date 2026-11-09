@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Abfragen über den globalen Knowledge Graph (#499, ADR 0024): alle manuell analysierten Seiten aus allen Quellen und
@@ -140,6 +141,8 @@ public class KnowledgeGraph {
     private final Function<PageSnapshot, Optional<PageText>> texts;
     private final StatementAnalysis statements;
     private final TermExpansion expansions;
+    /** Ob eine Quelle eingeschaltet ist; Analysen abgeschalteter Quellen bleiben liegen, sind aber unsichtbar. */
+    private final Predicate<String> activeSources;
     /** Eingabe-Hash je Seite und Payload, damit nicht jede Abfrage jede Seite neu projiziert. */
     private final Map<PageKey, InputMemo> inputs = new ConcurrentHashMap<>();
 
@@ -152,6 +155,18 @@ public class KnowledgeGraph {
                           Function<PageKey, Optional<PageSnapshot>> snapshots,
                           Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
                           TermExpansion expansions) {
+        this(store, access, snapshots, texts, statements, expansions, sourceId -> true);
+    }
+
+    /**
+     * Wie oben, mit {@code activeSources}: Aussagen abgeschalteter Quellen erscheinen weder im Graph noch in Suche,
+     * Verknüpfung oder Export, bis die Quelle wieder eingeschaltet ist.
+     */
+    public KnowledgeGraph(KnowledgeGraphStore store, AccessGuard access,
+                          Function<PageKey, Optional<PageSnapshot>> snapshots,
+                          Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
+                          TermExpansion expansions, Predicate<String> activeSources) {
+        this.activeSources = Objects.requireNonNull(activeSources, "activeSources");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
@@ -290,6 +305,9 @@ public class KnowledgeGraph {
 
     private Optional<AnalysedPage> visible(AccessContext caller, PageStatementAnalysis analysis) {
         PageKey key = analysis.key();
+        if (!activeSources.test(key.sourceId())) {
+            return Optional.empty();
+        }
         Optional<PageSnapshot> snapshot = snapshots.apply(key);
         // Der aktuelle Space zählt, falls die Seite verschoben wurde; sonst der beim Analysieren.
         String spaceKey = snapshot.map(PageSnapshot::spaceKey).orElse(analysis.spaceKey());

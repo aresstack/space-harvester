@@ -266,6 +266,53 @@ class RemoteAiTest {
     }
 
     @Test
+    void withoutKeyARejectionIsAMissingSignInNotAnUnexpectedAnswer() {
+        status = 400;
+        AiServiceSettings withoutKey = new AiServiceSettings(base(), null, null, null, null, null, null, Set.of());
+
+        assertThatThrownBy(() -> remote(withoutKey).models()).isInstanceOfSatisfying(AiServiceException.class,
+                e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.UNAUTHORIZED));
+        // Mit Schlüssel bleibt ein 400 eine unerwartete Antwort; 401 und 403 sind immer eine Ablehnung.
+        assertThatThrownBy(() -> remote(settings(null, null)).models()).isInstanceOfSatisfying(
+                AiServiceException.class,
+                e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.INVALID_RESPONSE));
+        status = 401;
+        assertThatThrownBy(() -> remote(settings(null, null)).models()).isInstanceOfSatisfying(
+                AiServiceException.class,
+                e -> {
+                    assertThat(e.reason()).isEqualTo(AiServiceException.Reason.UNAUTHORIZED);
+                    assertThat(e.getMessage()).doesNotContain(KEY);
+                });
+    }
+
+    @Test
+    void anUnreachableModelListIsAskedAgainWithGrowingPauses() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        server.removeContext("/v1/models");
+        server.createContext("/v1/models", exchange -> {
+            // Zwei Mal 503 wie bei einem Neustart des Dienstes, dann die Liste.
+            int call = calls.incrementAndGet();
+            status = call <= 2 ? 503 : 200;
+            respond(exchange, """
+                    {"object":"list","data":[{"id":"gpt-x","capabilities":["chat"]}]}""");
+        });
+
+        assertThat(remote(settings(null, null)).models()).extracting(AiModel::id).containsExactly("gpt-x");
+        assertThat(calls).hasValue(3);
+
+        // Eine Ablehnung wird nicht wiederholt.
+        calls.set(0);
+        server.removeContext("/v1/models");
+        server.createContext("/v1/models", exchange -> {
+            calls.incrementAndGet();
+            status = 401;
+            respond(exchange, "{}");
+        });
+        assertThatThrownBy(() -> remote(settings(null, null)).models()).isInstanceOf(AiServiceException.class);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
     void withoutServiceOrModelNothingIsSent() {
         assertThatThrownBy(() -> remote(AiServiceSettings.NONE).models()).isInstanceOfSatisfying(
                 AiServiceException.class,
