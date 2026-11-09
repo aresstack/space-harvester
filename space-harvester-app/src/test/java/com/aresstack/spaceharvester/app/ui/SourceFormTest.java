@@ -559,4 +559,66 @@ class SourceFormTest {
         assertThat(context.runtime().waitingForSecret()).isEmpty();
         assertThat(context.secrets().has("wiki-example")).isTrue();
     }
+
+    @Test
+    void credentialsFromKeePassReuseThePairingAndNeverReachFileOrVault() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SecretVault vault = new SecretVault(home.resolve("secrets"), new SecretVaultTest.FakeDpapi());
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Wiki", new String[] {"https://wiki.example.invalid", "token-aus-keepass"});
+        start(config, vault);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+
+        SourceForm[] form = new SourceForm[1];
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            form[0] = f;
+            f.onSaved(id -> saved.countDown());
+            assertThat(f.origin.getSelectedItem()).as("schon gekoppelt: KeePass vorgewählt").isEqualTo("KeePass");
+            f.baseUrl.setText("https://wiki.example.invalid");
+            assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
+            assertThat(f.validateInput()).as("noch kein Eintrag").isFalse();
+        });
+        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 1);
+        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki"));
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> form[0].save());
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(Files.readString(config)).as("in der Datei nur Platzhalter und Eintragsname")
+                .contains("source-keepass-entries: {\"wiki-example\": \"Wiki\"}", "token: ${WIKI_EXAMPLE_TOKEN}")
+                .doesNotContain("token-aus-keepass");
+        assertThat(vault.has("wiki-example")).as("nichts im Tresor").isFalse();
+        assertThat(context.secrets().has("wiki-example")).isTrue();
+
+        // Neuer Start: Die bestehende Kopplung liefert das Token ohne Dialog.
+        context.shutdown();
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).isEmpty();
+        assertThat(context.settings().keePassEntry("wiki-example")).isEqualTo("Wiki");
+        assertThat(context.keePassPreferred()).isTrue();
+    }
+
+    private static void awaitOnEdt(java.util.function.BooleanSupplier condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(120);
+        boolean[] met = {false};
+        while (!met[0]) {
+            SwingUtilities.invokeAndWait(() -> met[0] = condition.getAsBoolean());
+            if (!met[0]) {
+                if (System.nanoTime() > deadline) {
+                    throw new AssertionError("Bedingung nicht erfüllt");
+                }
+                Thread.sleep(20);
+            }
+        }
+    }
 }
