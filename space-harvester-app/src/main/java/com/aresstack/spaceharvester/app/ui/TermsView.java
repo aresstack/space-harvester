@@ -485,9 +485,9 @@ public final class TermsView implements View {
             identifiers.show(List.of(), NO_RUNTIME);
             return;
         }
-        String coreQuery = !q.isEmpty() ? q : letter;
         identifierPager = new IdentifierPager((kind, cursor) -> context.runtime().workspace().terms(
-                new TermQueries.TermSearch(null, null, kind, coreQuery, false, LIMIT, cursor)), letter);
+                new TermQueries.TermSearch(null, null, kind, q.isEmpty() ? null : q, false, LIMIT, cursor,
+                        letter)));
         identifierLoading = false;
         moreIdentifiers(request, true, q.isEmpty() && letter == null ? EMPTY : NO_MATCH);
     }
@@ -523,8 +523,8 @@ public final class TermsView implements View {
     }
 
     /**
-     * Führt die Seiten der Arten Nomen und Kennung alphabetisch zusammen, jede mit eigenem Cursor des Core. Mit
-     * Anfangsbuchstaben bleiben nur Begriffe, deren Suchwert (ohne Akzente) so beginnt.
+     * Führt die Seiten der Arten Nomen und Kennung alphabetisch zusammen, jede mit eigenem Cursor des Core.
+     * Den Anfangsbuchstaben grenzt der Core ein ({@code TermSearch.startsWith}).
      */
     static final class IdentifierPager {
 
@@ -533,12 +533,10 @@ public final class TermsView implements View {
         }
 
         private final Fetch fetch;
-        private final String letter;
         private final List<Stream> streams = List.of(new Stream(TermKind.NOUN), new Stream(TermKind.IDENTIFIER));
 
-        IdentifierPager(Fetch fetch, String letter) {
+        IdentifierPager(Fetch fetch) {
             this.fetch = fetch;
-            this.letter = letter == null ? null : letter.toLowerCase(Locale.ROOT);
         }
 
         synchronized List<TermQueries.TermSummary> next(int count) throws Exception {
@@ -564,15 +562,6 @@ public final class TermsView implements View {
             return streams.stream().anyMatch(stream -> !stream.buffer.isEmpty() || !stream.done);
         }
 
-        private boolean matches(TermQueries.TermSummary term) {
-            if (letter == null) {
-                return true;
-            }
-            String folded = java.text.Normalizer.normalize(term.normalized(), java.text.Normalizer.Form.NFD)
-                    .replaceAll("\\p{M}+", "");
-            return folded.startsWith(letter);
-        }
-
         private final class Stream {
             private final TermKind kind;
             private final java.util.ArrayDeque<TermQueries.TermSummary> buffer = new java.util.ArrayDeque<>();
@@ -587,9 +576,7 @@ public final class TermsView implements View {
                 while (buffer.isEmpty() && !done) {
                     TermQueries.TermList list = fetch.fetch(kind, cursor);
                     for (TermQueries.TermSummary term : list.terms()) {
-                        if (matches(term)) {
-                            buffer.addLast(term);
-                        }
+                        buffer.addLast(term);
                     }
                     cursor = list.nextCursor();
                     done = cursor == null;

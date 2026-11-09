@@ -119,7 +119,7 @@ class TermsViewTest {
                 terms.add(summary(term, kind));
             }
             return new TermQueries.TermList(terms, index + 1 < kindPages.size() ? String.valueOf(index + 1) : null);
-        }, null);
+        });
         List<String> first = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
         boolean moreAfterFirst = pager.hasMore();
         List<String> second = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
@@ -128,15 +128,6 @@ class TermsViewTest {
         assertThat(second).containsExactly("echo", "foxtrott");
         assertThat(pager.hasMore()).isFalse();
         assertThat(calls).containsExactly("NOUN:null", "IDENTIFIER:null", "NOUN:1");
-    }
-
-    @Test
-    void theLetterKeepsOnlyTermsStartingWithItIgnoringAccents() throws Exception {
-        TermsView.IdentifierPager pager = new TermsView.IdentifierPager((kind, cursor) -> new TermQueries.TermList(
-                kind == TermKind.NOUN ? List.of(summary("antrag", kind), summary("neuer antrag", kind),
-                        summary("\u00e1rea", kind)) : List.of(), null), "A");
-        assertThat(pager.next(10).stream().map(TermQueries.TermSummary::normalized).toList())
-                .containsExactly("antrag", "\u00e1rea");
     }
 
     @Test
