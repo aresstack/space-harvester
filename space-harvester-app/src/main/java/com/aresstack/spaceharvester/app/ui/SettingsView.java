@@ -165,11 +165,11 @@ public final class SettingsView implements View {
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
-        vault.add(Comic.note("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
+        vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
                 + "KI-Dienstes und das Proxy-Passwort liegen im Tresor dieses Windows-Kontos (DPAPI), als Dateien nur "
                 + "für dieses Konto lesbar; in der Datei steht nur der Platzhalter ${NAME}. Der Knopf rechts löscht die "
                 + "lokal gespeicherten Zugangsdaten eines Eintrags sofort; ändern an der Quelle, unter KI-Dienst bzw. "
-                + "Proxy."), BorderLayout.NORTH);
+                + "Proxy.", Comic.TEXT, 12.5f), BorderLayout.NORTH);
         vault.add(security, BorderLayout.CENTER);
         vault.add(securityFeedback, BorderLayout.SOUTH);
         page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),

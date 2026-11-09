@@ -48,9 +48,9 @@ final class KeePassPairingPanel {
         }
         rows.add("Kopplung", field, "Eine Kopplung für den KI-Dienst und alle Wissensquellen; KeePass muss laufen, "
                 + "mit dem Plugin KeePassRPC");
-        root.add(Comic.note("Zugangsdaten, die „über KeePass“ bezogen werden, liest die App aus KeePass über diese "
+        root.add(Comic.wrapped("Zugangsdaten, die „über KeePass“ bezogen werden, liest die App aus KeePass über diese "
                 + "eine Kopplung. Der Kopplungsschlüssel liegt im Ordner „keepass“ neben der Konfigurationsdatei, nur "
-                + "für dieses Konto lesbar; Passwörter und Tokens bleiben in KeePass."), BorderLayout.NORTH);
+                + "für dieses Konto lesbar; Passwörter und Tokens bleiben in KeePass.", Comic.TEXT, 12.5f), BorderLayout.NORTH);
         root.add(rows, BorderLayout.CENTER);
         root.add(feedback, BorderLayout.SOUTH);
         pair.addActionListener(e -> pair());
