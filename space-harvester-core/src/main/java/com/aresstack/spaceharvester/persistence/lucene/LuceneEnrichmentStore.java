@@ -409,6 +409,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         if (filter.normalized() != null) {
             query.add(new TermQuery(new Term(TERM_NORMALIZED, filter.normalized())), BooleanClause.Occur.FILTER);
         }
+        if (filter.startsWith() != null) {
+            query.add(new PrefixQuery(new Term(TERM_NORMALIZED, filter.startsWith())), BooleanClause.Occur.FILTER);
+        }
         if (filter.prefix() != null) {
             org.apache.lucene.search.Query prefix = new BooleanQuery.Builder()
                     .add(new PrefixQuery(new Term(TERM_NORMALIZED, filter.prefix())), BooleanClause.Occur.SHOULD)
