@@ -17,7 +17,7 @@ public final class ObjectCentricExtraction {
      * Version der Regeln dieses Pakets. Steigt mit jeder Änderung, die andere Erwähnungen, Aussagen, Rollen oder
      * Hinweise liefert; gespeicherte Aussagenanalysen der Desktop-App (#499) gelten dann als veraltet.
      */
-    public static final String RULES_VERSION = "1";
+    public static final String RULES_VERSION = "2";
 
     private final ExtractionSettings settings;
 
