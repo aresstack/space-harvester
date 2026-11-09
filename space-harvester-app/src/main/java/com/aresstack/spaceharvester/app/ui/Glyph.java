@@ -16,11 +16,12 @@ import java.awt.geom.RoundRectangle2D;
 /**
  * Kleine Vektorsymbole für Icon-Knöpfe (16 × 16, skaliert mit der Bildschirmauflösung): Aktualisieren, Stift,
  * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
- * Übernehmen (Haken), Verwerfen (Kreuz). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
+ * Übernehmen (Haken), Verwerfen (Kreuz),
+ * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
  */
 enum Glyph implements Icon {
 
-    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT;
+    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR;
 
     private static final int SIZE = 16;
 
@@ -108,6 +109,18 @@ enum Glyph implements Icon {
                     head.lineTo(8, 2.2);
                     head.lineTo(11, 5.2);
                     g.draw(head);
+                }
+                case COLLAPSE_ALL -> {
+                    g.draw(new RoundRectangle2D.Double(2.5, 2.5, 11, 11, 3, 3));
+                    g.draw(new Line2D.Double(5.2, 8, 10.8, 8));
+                }
+                case CROSSHAIR -> {
+                    g.draw(new Ellipse2D.Double(3.5, 3.5, 9, 9));
+                    g.fill(new Ellipse2D.Double(6.6, 6.6, 2.8, 2.8));
+                    g.draw(new Line2D.Double(8, 0.8, 8, 3.5));
+                    g.draw(new Line2D.Double(8, 12.5, 8, 15.2));
+                    g.draw(new Line2D.Double(0.8, 8, 3.5, 8));
+                    g.draw(new Line2D.Double(12.5, 8, 15.2, 8));
                 }
                 case MORE -> {
                     for (double cx : new double[] {3, 8, 13}) {

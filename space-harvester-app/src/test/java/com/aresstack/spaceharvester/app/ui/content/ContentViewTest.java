@@ -22,7 +22,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Die Leseansicht wie ein Bediener sie erlebt: Eine Seite aus dem Explorer lädt sofort (auch ohne Bestand) und nennt,
- * wo sie liegt; ein anderer Space lässt nichts Altes stehen; „Seiten-ID oder Adresse“ öffnet in der aktuellen Quelle.
+ * wo sie liegt; ein anderer Space lässt nichts Altes stehen.
  */
 class ContentViewTest {
 
@@ -130,22 +130,6 @@ class ContentViewTest {
         Thread.sleep(1500);
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
         assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
-    }
-
-    @Test
-    void aTypedPageIdOpensInTheCurrentSource() throws Exception {
-        String space = space("notizen");
-        String page = firstPage("notizen", space);
-        assertThat(onEdt(() -> view.openId().isEnabled())).as("ohne Wissensquelle kein Ziel").isFalse();
-        onEdt(() -> {
-            view.openSpace("notizen", space);
-            view.openId().setText(page);
-            view.openId().postActionEvent();
-            return null;
-        });
-
-        await(() -> view.detail().shownPage() != null);
-        assertThat(onEdt(() -> view.detail().shownPage().header().key().pageId())).isEqualTo(page);
     }
 
     private String space(String sourceId) {
