@@ -140,6 +140,7 @@ final class AiSettingsPanel {
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
+        PasswordReveal.install(apiKey);
         access.addItem(KEEPASS);
         access.addItem(MANUAL);
         entry.setEditable(true);
