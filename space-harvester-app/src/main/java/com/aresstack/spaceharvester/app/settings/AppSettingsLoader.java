@@ -212,7 +212,19 @@ public final class AppSettingsLoader {
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
-                localFiles(map(get(root, "local-files")), problems));
+                localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems));
+    }
+
+    /** {@code space-harvester-app.source-keepass-entries}: Quellen-ID → Titel des KeePass-Eintrags. */
+    private Map<String, String> sourceKeePass(Map<?, ?> app, List<String> problems) {
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        map(get(app, "source-keepass-entries")).forEach((id, title) -> {
+            String text = text(title, problems);
+            if (id != null && text != null && !text.isBlank()) {
+                entries.put(String.valueOf(id), text.strip());
+            }
+        });
+        return entries;
     }
 
     /**
