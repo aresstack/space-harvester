@@ -297,10 +297,14 @@ class ObjectCentricExtractionTest {
         }
         assertEquals("den selbstständigen Zugriff", text(analysis, ermoeglicht.get(0).core(Role.AFFECTED_OBJECT)));
 
-        Statement anrufen = analysis.statements().stream()
-                .filter(statement -> statement.predicate().text().startsWith("ruft")).findFirst().orElseThrow();
-        assertEquals("ruft … an", anrufen.predicate().text(), "echte Partikel vor einem Relativsatz am Objekt bleibt");
-        assertEquals("anrufen", anrufen.predicate().lemma());
+        List<Statement> anrufen = analysis.statements().stream()
+                .filter(statement -> statement.predicate().text().startsWith("ruft")).toList();
+        assertEquals("ruft … an", anrufen.get(0).predicate().text(),
+                "echte Partikel vor einem Relativsatz am Objekt bleibt");
+        assertEquals("anrufen", anrufen.get(0).predicate().lemma());
+        assertEquals("ruft an", anrufen.get(1).predicate().text(),
+                "echte Partikel vor gereihtem Satz mit eigenem Subjekt bleibt");
+        assertEquals("anrufen", anrufen.get(1).predicate().lemma());
     }
 
     @Test

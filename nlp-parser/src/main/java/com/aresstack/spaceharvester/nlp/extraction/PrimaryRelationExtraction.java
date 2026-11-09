@@ -44,6 +44,8 @@ final class PrimaryRelationExtraction {
     /** Teile einer Phrase, die im Nachfeld stehen dürfen. */
     private static final Set<String> CLAUSAL_INSIDE = Set.of("acl", "advcl", "ccomp", "xcomp", "csubj",
             "parataxis", "punct");
+    /** Wortarten, mit denen eine gereihte Einheit ein eigener Satz ist. */
+    private static final Set<String> CLAUSE_HEADS = Set.of("VERB", "AUX", "PUNCT");
     /** STTS-Tags einer Präposition; eine so getaggte „Partikel“ ist keine. */
     private static final Set<String> PREPOSITION_TAGS = Set.of("APPR", "APPRART", "APPO", "APZR");
 
@@ -215,7 +217,8 @@ final class PrimaryRelationExtraction {
      * <ul>
      *   <li>als Präposition getaggt (STTS {@code APPR}, {@code APPRART}, …),</li>
      *   <li>mitten in einer Phrase eines anderen Beteiligten des Verbs (Wörter dieser Phrase davor und danach),</li>
-     *   <li>vor einer Reihung mit einem Nicht-Verb („auf und Austausch“); „ruft … an und reicht … ein“ bleibt.</li>
+     *   <li>vor einer Reihung, deren Kopf kein Verb ist („auf und Austausch“); „ruft … an und reicht … ein“ und
+     *       „ruft an und sie antwortet“ bleiben.</li>
      * </ul>
      * Der Parser hängt eine Präposition, deren Nomen per Koordination fehlt, sonst gern als Partikel an.
      */
@@ -237,9 +240,16 @@ final class PrimaryRelationExtraction {
             }
         }
         int size = sentence.tokens().size();
-        if (particle.id() + 2 <= size && "CCONJ".equals(sentence.token(particle.id() + 1).upos())) {
-            String after = sentence.token(particle.id() + 2).upos();
-            return "VERB".equals(after) || "AUX".equals(after) || "PUNCT".equals(after);
+        if (particle.id() + 1 <= size && "CCONJ".equals(sentence.token(particle.id() + 1).upos())) {
+            // Was wird gereiht? Der Kopf der Konjunktion: ein Verb („an und sie antwortet“) lässt die Partikel stehen,
+            // ein Nomen („auf und Austausch“) nicht.
+            Token conjunction = sentence.token(particle.id() + 1);
+            Token coordinated = conjunction.head() >= 1 && conjunction.head() <= size
+                    ? sentence.token(conjunction.head()) : null;
+            if (coordinated == null && particle.id() + 2 <= size) {
+                coordinated = sentence.token(particle.id() + 2);
+            }
+            return coordinated == null || CLAUSE_HEADS.contains(coordinated.upos());
         }
         return true;
     }
