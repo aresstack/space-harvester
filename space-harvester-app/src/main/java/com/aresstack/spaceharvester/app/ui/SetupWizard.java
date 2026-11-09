@@ -60,7 +60,7 @@ final class SetupWizard {
             "Optional: ein OpenAI-kompatibler KI-Dienst für die semantische Suche. Der API-Key liegt nur im Tresor "
                     + "dieses Windows-Kontos, nie in der Konfigurationsdatei.",
             "Die Modelle gelten zentral für alle Quellen. Ich lade sie beim Dienst und wähle die Vorzugsmodelle vor; "
-                    + "andere wählst du über ▾.",
+                    + "andere wählst du über das Auswahlmenü rechts neben dem Feld.",
             "Geschafft! Gesucht wird per Schlagwort im Cache; die semantische Suche schaltest du in der Suche per "
                     + "Haken ein. Den Assistenten findest du unter Einstellungen wieder."
     };

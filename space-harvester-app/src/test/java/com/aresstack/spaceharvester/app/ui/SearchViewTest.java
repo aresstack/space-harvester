@@ -310,6 +310,26 @@ class SearchViewTest {
     }
 
     @Test
+    void aLockedSemanticSearchNamesTheMissingPieceInsteadOfAlwaysTheModel() {
+        var none = com.aresstack.spaceharvester.app.settings.AppSettings.AiSettings.NONE;
+        assertThat(SearchView.lockedTip(none)).contains("kein KI-Dienst");
+        var noDimension = new com.aresstack.spaceharvester.app.settings.AppSettings.AiSettings("http://ai/v1", null,
+                "bge-m3", null, null, List.of());
+        assertThat(SearchView.lockedTip(noDimension)).contains("bge-m3", "Vektorlänge", "Modell prüfen");
+        var noModel = new com.aresstack.spaceharvester.app.settings.AppSettings.AiSettings("http://ai/v1", null,
+                null, null, null, List.of());
+        assertThat(SearchView.lockedTip(noModel)).contains("kein Embedding-Modell");
+    }
+
+    @Test
+    void aFailedSemanticSearchNamesTheReasonFromTheCore() {
+        var reason = com.aresstack.spaceharvester.ai.AiServiceException.Reason.class;
+        assertThat(SearchView.failureText(Enum.valueOf(reason, "UNAUTHORIZED"))).contains("API-Key");
+        assertThat(SearchView.failureText(Enum.valueOf(reason, "TIMEOUT"))).contains("nicht rechtzeitig");
+        assertThat(SearchView.failureText(null)).contains("Quellen");
+    }
+
+    @Test
     void everyEndOfTheProgressiveSearchReadsAsPlainWords() {
         assertThat(SearchView.completion(ProgressiveResult.Completion.QUALITY_REACHED))
                 .isEqualTo("Die Suche ist abgeschlossen · genug passende Treffer");

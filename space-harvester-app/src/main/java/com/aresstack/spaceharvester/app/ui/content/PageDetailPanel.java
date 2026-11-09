@@ -120,8 +120,8 @@ public final class PageDetailPanel extends JPanel {
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
     private final KnowledgeGraphTab graphView;
     private final JLabel state = Comic.muted(" ");
-    /** Das ⓘ neben dem Titel: öffnet die Seitendetails als Popup. */
-    private final JLabel info = new JLabel(new InfoIcon());
+    /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
+    private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
         @Override
@@ -312,51 +312,35 @@ public final class PageDetailPanel extends JPanel {
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
-        // Nur die fette Titelzeile bleibt stehen; Ort, Version, Herkunft und Bildzeile stehen hinter dem ⓘ.
-        info.setToolTipText("Details zur Seite");
-        info.getAccessibleContext().setAccessibleName("Details zur Seite");
-        info.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-        info.addMouseListener(new java.awt.event.MouseAdapter() {
+        // Nur die fette Titelzeile bleibt stehen; Ort, Version, Herkunft und Bildzeile erscheinen,
+        // sobald die Maus auf der Überschrift steht, und verschwinden, wenn sie Überschrift und Popup verlässt.
+        title.getAccessibleContext().setAccessibleDescription("Details zur Seite erscheinen beim Überfahren");
+        title.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent event) {
                 showDetails();
             }
-
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                showDetails();
-            }
         });
-        // Der Titel gibt nach (mit „…“), das ⓘ bleibt immer direkt daneben sichtbar.
+        // Die Überschrift ist nur so breit wie ihr Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         JPanel heading = new JPanel(null) {
-            private static final int GAP = 6;
-
             @Override
             public void doLayout() {
                 java.awt.Dimension t = title.getPreferredSize();
-                java.awt.Dimension i = info.getPreferredSize();
-                int h = getHeight();
-                int tw = Math.max(0, Math.min(t.width, getWidth() - i.width - GAP));
-                title.setBounds(0, (h - t.height) / 2, tw, t.height);
-                info.setBounds(tw + GAP, (h - i.height) / 2, i.width, i.height);
+                title.setBounds(0, (getHeight() - t.height) / 2, Math.min(t.width, getWidth()), t.height);
             }
 
             @Override
             public java.awt.Dimension getPreferredSize() {
-                java.awt.Dimension t = title.getPreferredSize();
-                java.awt.Dimension i = info.getPreferredSize();
-                return new java.awt.Dimension(t.width + GAP + i.width, Math.max(t.height, i.height));
+                return title.getPreferredSize();
             }
 
             @Override
             public java.awt.Dimension getMinimumSize() {
-                java.awt.Dimension i = info.getPreferredSize();
-                return new java.awt.Dimension(i.width, Math.max(title.getPreferredSize().height, i.height));
+                return new java.awt.Dimension(0, title.getPreferredSize().height);
             }
         };
         heading.setOpaque(false);
         heading.add(title);
-        heading.add(info);
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
         titleRow.add(heading, BorderLayout.CENTER);
@@ -1280,16 +1264,16 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void renderDetails() {
-        String text = details();
-        String html = text.isEmpty() ? null : "<html>" + text.replace("&", "&amp;").replace("<", "&lt;")
-                .replace("\n", "<br>") + "</html>";
-        title.setToolTipText(html);
-        info.setVisible(page != null || !text.isEmpty());
+        title.setCursor(page != null || !details().isEmpty()
+                ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR) : null);
     }
 
-    /** Popup mit den Details und den Aktionen der Seite. */
+    /** Popup mit den Details der Seite, geöffnet beim Überfahren der Überschrift. */
     private void showDetails() {
         renderDetails();
+        if (page == null && details().isEmpty()) {
+            return;
+        }
         if (detailsPopup != null && detailsPopup.isVisible()) {
             return;
         }
@@ -1318,22 +1302,64 @@ public final class PageDetailPanel extends JPanel {
         body.add(text, BorderLayout.CENTER);
         popup.add(body);
         popup.addSeparator();
-        javax.swing.JMenuItem copyBookmark = new javax.swing.JMenuItem("Lesezeichen kopieren");
-        copyBookmark.addActionListener(e -> copyBookmark());
-        javax.swing.JMenuItem openBrowser = new javax.swing.JMenuItem("Im Browser öffnen");
-        openBrowser.addActionListener(e -> browse());
-        openBrowser.setEnabled(page != null && page.header().metadata().url() != null);
+        // „Lesezeichen kopieren“ und „Im Browser öffnen“ stehen rechts in der Kopfzeile, hier nicht noch einmal.
         javax.swing.JMenuItem copyId = new javax.swing.JMenuItem("Seiten-ID kopieren");
         copyId.addActionListener(e -> copyPageId());
-        copyBookmark.setEnabled(page != null);
         copyId.setEnabled(pageId != null);
-        popup.add(copyBookmark);
-        popup.add(openBrowser);
         popup.add(copyId);
+        popup.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent event) {
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent event) {
+                detailsWatch.stop();
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent event) {
+            }
+        });
         detailsPopup = popup;
-        if (info.isShowing()) {
-            popup.show(info, 0, info.getHeight());
+        if (title.isShowing()) {
+            // Direkt unter der Überschrift, ohne Lücke, damit die Maus ins Popup wandern kann.
+            popup.show(title, 0, title.getHeight());
+            detailsWatch.restart();
         }
+    }
+
+    /** Schließt das Popup, sobald der Mauszeiger weder auf der Überschrift noch im Popup steht. */
+    private void hideDetailsWhenLeft() {
+        javax.swing.JPopupMenu popup = detailsPopup;
+        if (popup == null || !popup.isVisible()) {
+            detailsWatch.stop();
+            return;
+        }
+        java.awt.PointerInfo pointer = java.awt.MouseInfo.getPointerInfo();
+        if (pointer == null) {
+            return;
+        }
+        if (!pointerInside(pointer.getLocation(), title, popup)) {
+            popup.setVisible(false);
+            detailsWatch.stop();
+        }
+    }
+
+    /** Liegt der Bildschirmpunkt auf der Überschrift oder im Popup (mit 4 px Spielraum an den Kanten)? */
+    static boolean pointerInside(java.awt.Point screen, java.awt.Component... areas) {
+        for (java.awt.Component area : areas) {
+            if (area == null || !area.isShowing()) {
+                continue;
+            }
+            java.awt.Point origin = area.getLocationOnScreen();
+            java.awt.Rectangle bounds = new java.awt.Rectangle(origin, area.getSize());
+            bounds.grow(4, 4);
+            if (bounds.contains(screen)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private javax.swing.JPopupMenu detailsPopup;
@@ -1347,42 +1373,13 @@ public final class PageDetailPanel extends JPanel {
         feedback.success("Seiten-ID kopiert: " + pageId);
     }
 
-    /** Für Tests: das ⓘ und das zuletzt geöffnete Popup. */
-    JLabel infoIcon() {
-        return info;
+    /** Für Tests: die Überschrift (öffnet das Popup beim Überfahren) und das zuletzt geöffnete Popup. */
+    JLabel titleLabel() {
+        return title;
     }
 
     javax.swing.JPopupMenu detailsPopup() {
         return detailsPopup;
-    }
-
-    /** Ein kleines ⓘ im Comic-Stil: Kreis mit Punkt und Strich. */
-    private static final class InfoIcon implements javax.swing.Icon {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
-            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
-            try {
-                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-                g.translate(x, y);
-                g.setColor(Comic.MUTED);
-                g.setStroke(new java.awt.BasicStroke(1.5f));
-                g.draw(new java.awt.geom.Ellipse2D.Double(1.5, 1.5, 13, 13));
-                g.fill(new java.awt.geom.Ellipse2D.Double(7, 4, 2, 2));
-                g.draw(new java.awt.geom.Line2D.Double(8, 7.5, 8, 11.5));
-            } finally {
-                g.dispose();
-            }
-        }
-
-        @Override
-        public int getIconWidth() {
-            return 16;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return 16;
-        }
     }
 
     /** Legt das Lesezeichen des Core ({@code PageBookmark}, #178) in die Zwischenablage. */

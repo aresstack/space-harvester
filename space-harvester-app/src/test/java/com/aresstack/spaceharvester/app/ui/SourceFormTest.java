@@ -155,7 +155,8 @@ class SourceFormTest {
             assertThat(host.isVisible()).isTrue();
             assertThat(port.isVisible()).as("unter Erweitert").isFalse();
             assertThat(port.getText()).as("Vorgabe des Typs").isEqualTo("21");
-            assertThat(f.fields.advancedToggle().getText()).isEqualTo("▸ Erweitert");
+            assertThat(f.fields.advancedToggle().getText()).isEqualTo("Erweitert");
+            assertThat(Comic.disclosed(f.fields.advancedToggle())).as("zugeklappt").isFalse();
             assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
             assertThat(f.auth.getSelectedItem()).as("JES verlangt Zugangsdaten").isEqualTo("Benutzer und Passwort");
             assertThat(f.username.isVisible()).isTrue();
@@ -584,9 +585,15 @@ class SourceFormTest {
             assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(f.validateInput()).as("noch kein Eintrag").isFalse();
         });
-        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 1);
-        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki"));
+        // Der Eintrag mit passender Adresse wird ohne weiteren Schritt vorgeschlagen und gelesen.
         awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Wiki");
+            assertThat(form[0].auth.isEnabled()).as("Anmeldeart kommt aus dem Eintrag").isFalse();
+            // Das Token steht maskiert und schreibgeschützt im Feld: sichtbar gelesen, aber keine eigene Eingabe.
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token-aus-keepass");
+            assertThat(form[0].sessionValue.isEditable()).isFalse();
+        });
         SwingUtilities.invokeAndWait(() -> form[0].save());
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
 
@@ -620,5 +627,54 @@ class SourceFormTest {
                 Thread.sleep(20);
             }
         }
+    }
+
+    @Test
+    void keePassIsUsableRightInTheDialogEvenForTheConfluenceDefaultWithoutLogin() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Confluence", new String[] {"https://wiki.example.invalid", "token"});
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> paired[0]));
+
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            form[0] = f;
+            assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
+            f.origin.setSelectedItem("KeePass");
+            assertThat(f.auth.getSelectedItem()).as("bei KeePass nie „Ohne Anmeldung“")
+                    .isEqualTo("Personal Access Token");
+            assertThat(f.pairKeePass.isShowing() || f.pairKeePass.isVisible()).isTrue();
+            assertThat(f.pairKeePass.getText()).isEqualTo("Mit KeePass koppeln …");
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.feedback.text()).contains("Mit KeePass koppeln");
+            f.baseUrl.setText("https://wiki.example.invalid");
+            paired[0] = true;
+            f.pairKeePass.doClick();
+        });
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Confluence");
+            // Ein Vorschlag gilt nur, solange die Adresse passt: eine fremde Adresse bekommt nie diese Zugangsdaten.
+            form[0].baseUrl.setText("https://www.example.org");
+            assertThat(form[0].keePassEntry.getEditor().getItem().toString()).isEmpty();
+            assertThat(form[0].validateInput()).isFalse();
+            // Passt die Adresse wieder, gilt der Vorschlag wieder.
+            form[0].baseUrl.setText("https://wiki.example.invalid");
+        });
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            // Wechsel auf „Manuell“: Der Wert aus KeePass verlässt das Feld, man tippt selbst.
+            form[0].origin.setSelectedItem("Manuell");
+            assertThat(form[0].sessionValue.getPassword()).isEmpty();
+            assertThat(form[0].sessionValue.isEditable()).isTrue();
+        });
     }
 }

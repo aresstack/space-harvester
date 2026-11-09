@@ -76,13 +76,21 @@ final class AiSettingsPanel {
     final JComboBox<String> entry = Comic.combo();
     /** Die beim Koppeln gelesenen Titel; leer, solange nicht gekoppelt. */
     List<String> titles = List.of();
+    /** Ob das Feld „API-Key“ gerade den aus KeePass gelesenen Key zeigt (dann zählt er nicht als eingetippt). */
+    boolean keyFromKeePass;
+    /** Ob der gewählte KeePass-Eintrag ein Passwort hat; {@code null}: noch nicht gelesen. */
+    Boolean keePassKeyPresent;
+    /** Der Eintrag, dessen Key gelesen wird oder im Feld steht; {@code null}: keiner. */
+    private String keyTitle;
+    /** Zählt die Lesevorgänge, damit eine späte Antwort für einen anderen Eintrag nichts überschreibt. */
+    private int keyRead;
     /** Bezugsart, wie {@link #render()} sie zeigte; Maßstab für „geändert“. */
     private AiAccess shownAccess = AiAccess.NONE;
     final JTextField rerankModel = Comic.field(24);
     final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
-    private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
+    final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
     private final JPanel models = new JPanel(new BorderLayout(0, 10));
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen; gilt ohne Neustart");
@@ -98,7 +106,7 @@ final class AiSettingsPanel {
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
-    final javax.swing.JButton advanced = Comic.disclosure("▸ Erweitert",
+    final javax.swing.JButton advanced = Comic.disclosure("Erweitert",
             "Dimension, Abschnittsgröße und Überlappung für Embeddings");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
@@ -128,6 +136,7 @@ final class AiSettingsPanel {
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
+        PasswordReveal.install(apiKey);
         access.addItem(KEEPASS);
         access.addItem(MANUAL);
         entry.setEditable(true);
@@ -139,9 +148,27 @@ final class AiSettingsPanel {
         access.addActionListener(e -> updateAccess());
         pair.addActionListener(e -> pairKeePass());
         entry.addActionListener(e -> entryChosen());
+        if (entry.getEditor().getEditorComponent() instanceof javax.swing.text.JTextComponent editor) {
+            // Ein anderer Name im Eintragsfeld nimmt den gelesenen Key sofort heraus, damit man den Key tippen kann.
+            editor.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override
+                public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                    javax.swing.SwingUtilities.invokeLater(AiSettingsPanel.this::entryEdited);
+                }
+
+                @Override
+                public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                    javax.swing.SwingUtilities.invokeLater(AiSettingsPanel.this::entryEdited);
+                }
+
+                @Override
+                public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                }
+            });
+        }
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
+        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
@@ -244,18 +271,48 @@ final class AiSettingsPanel {
         entry.setSelectedItem(title);
         entry.getEditor().setItem(title);
         keePassStatus.setText(context.keePass().paired() ? "Gekoppelt" : "Nicht gekoppelt");
+        clearKeePassKey();
+        apiKey.setText("");
+        // Setzt auch den Hinweis zum Key und liest bei KeePass den gewählten Eintrag.
         updateAccess();
         shownAccess = accessDraft();
-        apiKey.setText("");
-        boolean stored = context.aiKeyAvailable();
-        rows.hint(apiKey, stored ? "Gespeichert; leer lassen, um ihn zu behalten"
+        removeKey.setVisible(context.aiKeyAvailable() && !keePassChosen());
+    }
+
+    private String manualHint() {
+        return context.aiKeyAvailable() ? "Gespeichert; leer lassen, um ihn zu behalten"
                 : context.aiVault().available() ? "Fehlt; wird verschlüsselt im Tresor abgelegt"
-                : "Fehlt; ohne Windows-Tresor gilt er nur bis zum Schließen der App");
-        removeKey.setVisible(stored && !keePassChosen());
-        if (keePassChosen()) {
-            rows.hint(apiKey, titles.contains(entryTitle()) ? "Aus KeePass; leer lassen, um den Key des Eintrags "
-                    + "zu nutzen" : "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+                : "Fehlt; ohne Windows-Tresor gilt er nur bis zum Schließen der App";
+    }
+
+    /** Der eingetippte Key; der aus KeePass gelesene zählt nicht, er wird bei Bedarf frisch gelesen. */
+    char[] typedKey() {
+        entryEdited();
+        return keyFromKeePass ? new char[0] : apiKey.getPassword();
+    }
+
+    /** Gilt der gelesene Key nicht mehr für den eingetragenen Namen, liest das den neuen Eintrag (oder leert nur). */
+    private void entryEdited() {
+        if (keyTitle != null && !keyTitle.equals(entryTitle())) {
+            entryChosen();
         }
+    }
+
+    /** Nimmt einen aus KeePass gelesenen Key wieder aus dem Feld; ein eingetippter bleibt. */
+    private void clearKeePassKey() {
+        keyRead++;
+        if (keyFromKeePass) {
+            apiKey.setText("");
+        }
+        keyFromKeePass = false;
+        keePassKeyPresent = null;
+        keyTitle = null;
+        apiKey.setEditable(true);
+    }
+
+    /** Ein Eintrag aus der Liste von KeePass, oder der gespeicherte, solange die App gekoppelt ist. */
+    private boolean knownEntry(String title) {
+        return titles.contains(title) || title.equals(savedAccess().entry()) && context.keePass().paired();
     }
 
     private AiAccess savedAccess() {
@@ -283,6 +340,12 @@ final class AiSettingsPanel {
         boolean keePass = keePassChosen();
         rows.visible(keePassRow, keePass);
         rows.visible(entry, keePass);
+        if (keePass) {
+            entryChosen();
+        } else {
+            clearKeePassKey();
+            rows.hint(apiKey, manualHint());
+        }
         root.revalidate();
         root.repaint();
     }
@@ -311,25 +374,59 @@ final class AiSettingsPanel {
         });
     }
 
-    /** Ein bestehender Eintrag liefert die Basisadresse; ein neuer Titel verlangt den API-Key. */
+    /**
+     * Ein bestehender Eintrag liefert Basisadresse und API-Key (sein Passwort): Der Key steht danach maskiert und
+     * schreibgeschützt im Feld, damit man sieht, dass er gelesen wurde; er bleibt nur im Speicher. Ein neuer Titel
+     * verlangt den API-Key. Ohne Kopplungsdialog: Gekoppelt wird nur über „Koppeln“.
+     */
     private void entryChosen() {
         String title = entryTitle();
-        if (!keePassChosen() || title.isEmpty() || !titles.contains(title)) {
-            if (keePassChosen()) {
-                rows.hint(apiKey, "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
-            }
+        clearKeePassKey();
+        if (!keePassChosen()) {
             return;
         }
-        rows.hint(apiKey, "Aus KeePass; leer lassen, um den Key des Eintrags zu nutzen");
+        if (title.isEmpty() || !knownEntry(title)) {
+            rows.hint(apiKey, "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+            return;
+        }
+        rows.hint(apiKey, "Wird aus dem KeePass-Eintrag „" + title + "“ gelesen …");
+        keyTitle = title;
+        int request = keyRead;
         Background.run(() -> {
-            try (var read = context.keePass().read(title)) {
-                return read.location();
+            try (var read = context.keePass().readSilently(title)) {
+                return new EntryRead(read.location(), read.copyPassword());
             }
-        }, location -> {
-            if (title.equals(entryTitle()) && location != null && !location.isBlank()) {
-                baseUrl.setText(location);
+        }, read -> {
+            try {
+                if (request != keyRead || !keePassChosen() || !title.equals(entryTitle())) {
+                    return;
+                }
+                if (read.location() != null && !read.location().isBlank()) {
+                    baseUrl.setText(read.location());
+                }
+                if (read.key().length == 0) {
+                    keePassKeyPresent = false;
+                    rows.hint(apiKey, "Der Eintrag „" + title + "“ hat kein Passwort; bitte den API-Key in "
+                            + "KeePass als Passwort eintragen");
+                    return;
+                }
+                apiKey.setText(new String(read.key()));
+                keyFromKeePass = true;
+                keePassKeyPresent = true;
+                apiKey.setEditable(false);
+                rows.hint(apiKey, "Aus KeePass gelesen (Eintrag „" + title + "“); bleibt nur im Speicher");
+            } finally {
+                Arrays.fill(read.key(), '\0');
             }
-        }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
+        }, error -> {
+            if (request == keyRead && keePassChosen() && title.equals(entryTitle())) {
+                rows.hint(apiKey, "Nicht aus KeePass lesbar: " + keePassReason(error));
+            }
+        });
+    }
+
+    /** Adresse und Passwort eines Eintrags; der Empfänger überschreibt das Passwort nach Gebrauch. */
+    private record EntryRead(String location, char[] key) {
     }
 
     static String keePassReason(Throwable error) {
@@ -397,7 +494,7 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || apiKey.getPassword().length > 0 || !accessDraft().equals(shownAccess);
+        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess);
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -435,7 +532,7 @@ final class AiSettingsPanel {
                     String.join(" ", draft.problems()));
             return;
         }
-        char[] key = apiKey.getPassword();
+        char[] key = typedKey();
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
@@ -455,6 +552,27 @@ final class AiSettingsPanel {
         if (chosen.fromKeePass() && !known && key.length == 0) {
             feedback.warning("API-Key fehlt", "Für den neuen KeePass-Eintrag „" + chosen.entry() + "“ bitte den "
                     + "API-Key eingeben; er wird nur in KeePass gespeichert.");
+            return;
+        }
+        if (chosen.fromKeePass() && known && Boolean.FALSE.equals(keePassKeyPresent)) {
+            // Zuletzt ohne Passwort gelesen: erst neu lesen, denn vielleicht ist es inzwischen in KeePass nachgetragen.
+            String title = chosen.entry();
+            Background.run(() -> {
+                try (var read = context.keePass().readSilently(title)) {
+                    char[] password = read.copyPassword();
+                    boolean present = password.length > 0;
+                    Arrays.fill(password, '\0');
+                    return present;
+                }
+            }, present -> {
+                if (present && title.equals(entryTitle()) && keePassChosen()) {
+                    entryChosen(); // zeigt den Key wieder im Feld
+                    save(save, feedback, then, quiet);
+                } else {
+                    feedback.warning("API-Key fehlt", "Der KeePass-Eintrag „" + title + "“ hat kein Passwort. "
+                            + "Bitte den API-Key dort als Passwort eintragen und erneut speichern.");
+                }
+            }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
             return;
         }
         // Nur die Zerlegung für Embeddings übernimmt der Core erst beim Bauen; alles andere gilt ohne Neustart.
@@ -514,7 +632,9 @@ final class AiSettingsPanel {
                 } else {
                     // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen. Die gemessene
                     // Dimension nur, wenn Feld und Embedding-Modell noch so sind wie beim Speichern.
-                    apiKey.setText("");
+                    if (!keyFromKeePass) {
+                        apiKey.setText("");
+                    }
                     String measuredDimension = measured.draft().embeddingDimensions();
                     if (measuredDimension != null
                             && java.util.Objects.equals(blankToNull(now.embeddingDimensions()),
@@ -750,7 +870,7 @@ final class AiSettingsPanel {
             failed(outcome, false);
             return;
         }
-        char[] typed = apiKey.getPassword();
+        char[] typed = typedKey();
         AiAccess chosenAccess = accessDraft();
         boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
         int request = ++modelsRequest;
@@ -866,7 +986,7 @@ final class AiSettingsPanel {
         modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
-        advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
     }
@@ -904,7 +1024,7 @@ final class AiSettingsPanel {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
         } else {
             modelsFeedback.success(Texts.count(this.loaded.size(), "Modell", "Modelle") + " geladen"
-                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über ▾");
+                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über das Auswahlmenü rechts");
         }
     }
 
