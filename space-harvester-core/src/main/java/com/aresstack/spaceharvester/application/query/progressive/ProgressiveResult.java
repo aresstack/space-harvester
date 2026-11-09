@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.query.progressive;
 
+import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import java.time.Duration;
 import java.util.List;
@@ -15,11 +16,22 @@ import java.util.Objects;
  * @param reason     warum die Suche endete
  * @param loads      Kennungen des Ladens in den Cache ({@link KeywordSearch#progress(String)})
  * @param elapsed    Dauer
+ * @param failure    nur bei {@link Completion#FAILED}: woran die Suchanfragen scheiterten, soweit der KI-Dienst es
+ *                   meldete ({@link AiServiceException.Reason}) oder die Frist ablief; sonst und wenn unbekannt
+ *                   {@code null}. Nennt nie Ursachentexte, Key oder Anfrage.
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
-                                Duration elapsed) {
+                                Duration elapsed, AiServiceException.Reason failure) {
+
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed) {
+        this(hits, variants, reason, loads, elapsed, null);
+    }
 
     public ProgressiveResult {
+        if (reason != Completion.FAILED) {
+            failure = null;
+        }
         hits = List.copyOf(hits);
         variants = List.copyOf(variants);
         Objects.requireNonNull(reason, "reason");

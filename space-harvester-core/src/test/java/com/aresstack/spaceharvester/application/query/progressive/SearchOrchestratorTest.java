@@ -169,6 +169,27 @@ class SearchOrchestratorTest {
                 KeywordSearch.Query.of(ORIGINAL), SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
 
         assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isNull();
+    }
+
+    @Test
+    void aFailedSearchNamesTheKindOfFailureTheAiServiceReported() throws Exception {
+        search.onCall(ORIGINAL, () -> {
+            throw new com.aresstack.spaceharvester.ai.AiServiceException(
+                    com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "POST /embeddings: HTTP 401");
+        });
+
+        ProgressiveResult result = orchestrator(List.of(), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isEqualTo(com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED);
+
+        search.onCall(ORIGINAL, () -> { });
+        search.results(ORIGINAL, found("o"));
+        ProgressiveResult fine = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
+        assertThat(fine.failure()).isNull();
     }
 
     @Test
