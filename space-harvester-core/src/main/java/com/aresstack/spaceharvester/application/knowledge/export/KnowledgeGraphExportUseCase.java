@@ -45,7 +45,7 @@ public class KnowledgeGraphExportUseCase {
     /** Komponente in Diagnoseereignissen. */
     public static final String COMPONENT = "Knowledge-Graph-Export";
     /** Quelle eines Auftrags über den ganzen Graphen (alle Quellen). */
-    public static final String ALL_SOURCES = "*";
+    public static final String ALL_SOURCES = Jobs.ALL_SOURCES;
 
     private final Jobs jobs;
     private final KnowledgeGraph graph;

@@ -61,10 +61,13 @@ class JobsTest {
                 JobTask.blocking(JobContext::checkpoint));
         JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));
         JobStatus other = jobs.submit(JobType.SYNC, "files", "DOCS", "client-a", JobTask.blocking(context -> { }));
+        JobStatus global = jobs.submit(JobType.KNOWLEDGE_GRAPH_EXPORT, Jobs.ALL_SOURCES, null, "client-a",
+                JobTask.blocking(context -> { }));
 
         // Der laufende endet erst an seinem nächsten Checkpoint.
         assertThat(jobs.cancelSource("confluence", Duration.ZERO)).isFalse();
         assertThat(jobs.status(queued.id()).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(jobs.status(global.id()).state()).isEqualTo(JobState.CANCELLED);
         executor.runNext();
 
         assertThat(jobs.status(running.id()).state()).isEqualTo(JobState.CANCELLED);
