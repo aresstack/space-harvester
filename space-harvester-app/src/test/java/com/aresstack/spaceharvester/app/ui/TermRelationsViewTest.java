@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.terms.RelationType;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
@@ -147,6 +149,78 @@ class TermRelationsViewTest {
             view[0].relations().table().getRowSorter().toggleSortOrder(0);
             assertThat(view[0].relations().table().getValueAt(0, 0)).isEqualTo("SSO");
         });
+    }
+
+    @Test
+    void synonymsListOnlySynonymsAndVariantsAndTheGraphDrawsTheNeighbourhood() throws Exception {
+        Path files = Files.createDirectories(home.resolve("leer"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: leer
+                      type: files
+                      title: Leer
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        for (Object[] r : new Object[][]{
+                {"API", RelationType.ABBREVIATION, "Application Programming Interface"},
+                {"Sachbearbeitung", RelationType.SYNONYM, "Fallbearbeitung"},
+                {"E-Mail", RelationType.VARIANT, "Email"},
+                {"Application Programming Interface", RelationType.RELATED, "REST"}}) {
+            workspace.addRelation(new TermRelations.NewRelation((String) r[0], (String) r[2], (RelationType) r[1],
+                    null, null, null));
+        }
+
+        TermsView[] view = new TermsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new TermsView(context);
+            view[0].shown();
+        });
+        javax.swing.JTable[] synonyms = new javax.swing.JTable[1];
+        SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].synonyms().directory().table());
+        await(() -> synonyms[0].getRowCount() == 2 && view[0].relations().table().getRowCount() == 4);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(synonyms[0].getValueAt(0, 0)).isEqualTo("E-Mail");
+            assertThat(synonyms[0].getValueAt(0, 1)).isEqualTo("Email");
+            assertThat(synonyms[0].getValueAt(0, 2)).isEqualTo("Schreibvariante");
+            assertThat(synonyms[0].getValueAt(1, 2)).isEqualTo("Synonym");
+            assertThat(synonyms[0].getValueAt(1, 3)).isEqualTo("Manuell");
+            assertThat(synonyms[0].getValueAt(1, 4)).isEqualTo("Bestätigt");
+            // Ablehnen im Reiter Synonyme: die Zeile bleibt gewählt und steht als abgelehnt am Ende.
+            synonyms[0].setRowSelectionInterval(1, 1);
+            view[0].synonyms().reviewButtons().get(1).doClick();
+        });
+        await(() -> synonyms[0].getRowCount() == 2 && "Abgelehnt".equals(synonyms[0].getValueAt(1, 4))
+                && synonyms[0].getSelectedRow() == 1);
+        // Neu angelegt im Reiter Synonyme erscheint sie dort gewählt.
+        SwingUtilities.invokeAndWait(() -> view[0].synonyms().createRelation("Schnittstelle", RelationType.SYNONYM,
+                "API"));
+        await(() -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
+                && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0)));
+
+        // Graph: API in der Mitte, Tiefe 2 bringt auch REST; die abgelehnte Beziehung fehlt.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].tabs().select(TermsView.GRAPH);
+            view[0].graph().showTerm("api");
+        });
+        await(() -> view[0].graph().canvas().labels().size() == 4);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].graph().canvas().labels()).containsExactly("API",
+                    "Application Programming Interface", "Schnittstelle", "REST");
+            assertThat(view[0].graph().canvas().graph().edges()).hasSize(3);
+            view[0].graph().depthChoice().setSelectedIndex(0);
+        });
+        await(() -> view[0].graph().canvas().labels().size() == 3);
+        assertThat(view[0].graph().centre()).isEqualTo("api");
     }
 
     @Test
