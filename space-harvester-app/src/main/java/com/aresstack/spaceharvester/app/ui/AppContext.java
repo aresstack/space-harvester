@@ -537,6 +537,10 @@ public final class AppContext {
                 continue;
             }
             String keePassEntry = loaded.keePassEntry(entry.id());
+            // Ein Wert aus JVM-Property oder Umgebung (${VAR}) geht KeePass vor; die App fragt KeePass nur, wenn er fehlt.
+            if (keePassEntry != null && !entry.secretMissing()) {
+                continue;
+            }
             if (keePassEntry != null) {
                 unlockFromKeePass(entry, keePassEntry);
                 continue;

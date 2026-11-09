@@ -590,7 +590,8 @@ class SourceFormTest {
         SwingUtilities.invokeAndWait(() -> form[0].save());
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(Files.readString(config)).contains("source-keepass-entries: {\"wiki-example\": \"Wiki\"}")
+        assertThat(Files.readString(config)).as("in der Datei nur Platzhalter und Eintragsname")
+                .contains("source-keepass-entries: {\"wiki-example\": \"Wiki\"}", "token: ${WIKI_EXAMPLE_TOKEN}")
                 .doesNotContain("token-aus-keepass");
         assertThat(vault.has("wiki-example")).as("nichts im Tresor").isFalse();
         assertThat(context.secrets().has("wiki-example")).isTrue();
