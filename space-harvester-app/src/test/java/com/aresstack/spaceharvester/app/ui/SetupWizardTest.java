@@ -123,6 +123,123 @@ class SetupWizardTest {
                 "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
     }
 
+    @Test
+    void theWizardHasNoSaveButtonAndTheSummaryShowsWhatStepsThreeAndFourEntered() throws Exception {
+        SetupWizard[] wizard = new SetupWizard[1];
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            assertThat(buttons(wizard[0].component())).as("kein „Speichern“ im Assistenten")
+                    .noneMatch(text -> text.contains("Speichern"));
+            wizard[0].show(SetupWizard.AI);
+            wizard[0].ai.access.setSelectedItem(AiSettingsPanel.MANUAL);
+            // Ein Port ohne Dienst: „Modelle“ lädt vergeblich, das Übernehmen hängt nicht davon ab.
+            wizard[0].ai.baseUrl.setText("http://127.0.0.1:9/v1");
+            wizard[0].ai.apiKey.setText("sk-wizard-geheim");
+            wizard[0].next.doClick();
+            assertThat(wizard[0].step()).isEqualTo(SetupWizard.MODELS);
+            wizard[0].ai.visionModel.setText("vision-x");
+            wizard[0].ai.rerankModel.setText("rerank-y");
+            wizard[0].next.doClick();
+            assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
+        });
+        long until = System.currentTimeMillis() + 120_000;
+        java.util.List<String> summary = new java.util.ArrayList<>();
+        while (System.currentTimeMillis() < until) {
+            SwingUtilities.invokeAndWait(() -> {
+                summary.clear();
+                summary.addAll(texts(wizard[0].summary));
+            });
+            if (summary.contains("rerank-y") && summary.contains("im Tresor")) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y",
+                "im Tresor").doesNotContain("fehlt");
+        assertThat(String.join("\n", summary)).doesNotContain("sk-wizard-geheim");
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-x", "rerank-y",
+                "http://127.0.0.1:9/v1").doesNotContain("sk-wizard-geheim");
+        SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].ai.modelRetry.active())
+                .as("„Modelle“ verlassen: keine Wiederholung").isFalse());
+    }
+
+    @Test
+    void closingLikeLaterSavesFirstAndIncompleteEntriesKeepTheWizardOpen() throws Exception {
+        SetupWizard[] wizard = new SetupWizard[1];
+        int[] closed = {0};
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            wizard[0].close = () -> closed[0]++;
+            wizard[0].show(SetupWizard.AI);
+            wizard[0].ai.access.setSelectedItem(AiSettingsPanel.MANUAL);
+            wizard[0].ai.baseUrl.setText("http://127.0.0.1:9/v1");
+            wizard[0].ai.dimensions.setText("keine Zahl");
+            // Escape und ✕ rufen dasselbe wie „Später“.
+            wizard[0].requestClose();
+            assertThat(closed[0]).as("unvollständig: bleibt offen").isZero();
+            assertThat(wizard[0].feedback.text()).contains("nicht übernommen", "Dimension");
+            wizard[0].ai.dimensions.setText("");
+            wizard[0].ai.visionModel.setText("vision-beim-schliessen");
+            wizard[0].requestClose();
+        });
+        long until = System.currentTimeMillis() + 120_000;
+        int[] seen = {0};
+        while (seen[0] == 0 && System.currentTimeMillis() < until) {
+            Thread.sleep(50);
+            SwingUtilities.invokeAndWait(() -> seen[0] = closed[0]);
+        }
+        assertThat(seen[0]).as("erst übernommen, dann geschlossen").isEqualTo(1);
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-beim-schliessen");
+    }
+
+    @Test
+    void advancedHoldsDimensionAndChunkingAndInputsShareOneEdge() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            AiSettingsPanel panel = new AiSettingsPanel(context);
+            javax.swing.JComponent models = panel.modelsComponent();
+            models.setSize(700, 600);
+            layout(models);
+            assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
+            assertThat(panel.chunkTokens.isVisible()).isFalse();
+            panel.advanced.doClick();
+            layout(models);
+            assertThat(panel.dimensions.isVisible()).isTrue();
+            int left = javax.swing.SwingUtilities.convertPoint(panel.chatModel, 0, 0, models).x;
+            for (javax.swing.JComponent field : java.util.List.of(panel.embeddingModel, panel.visionModel,
+                    panel.rerankModel, panel.dimensions, panel.chunkTokens)) {
+                assertThat(javax.swing.SwingUtilities.convertPoint(field, 0, 0, models).x).isEqualTo(left);
+            }
+            int right = javax.swing.SwingUtilities.convertPoint(panel.pickChat, panel.pickChat.getWidth(), 0,
+                    models).x;
+            assertThat(javax.swing.SwingUtilities.convertPoint(panel.dimensions, panel.dimensions.getWidth(), 0,
+                    models).x).as("gleiche rechte Kante wie Feld mit ▾").isEqualTo(right);
+            assertThat(javax.swing.SwingUtilities.convertPoint(panel.advanced, 0, 0, models).x)
+                    .as("„Erweitert“ linksbündig").isLessThan(left);
+        });
+    }
+
+    private static void layout(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container nested) {
+                layout(nested);
+            }
+        }
+    }
+
+    private static java.util.List<String> buttons(java.awt.Container container) {
+        java.util.List<String> texts = new java.util.ArrayList<>();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof javax.swing.AbstractButton button && button.isVisible()) {
+                texts.add(button.getText());
+            }
+            if (child instanceof java.awt.Container nested && child.isVisible()) {
+                texts.addAll(buttons(nested));
+            }
+        }
+        return texts;
+    }
+
     private static java.util.List<String> texts(java.awt.Container container) {
         java.util.List<String> texts = new java.util.ArrayList<>();
         for (java.awt.Component child : container.getComponents()) {

@@ -282,7 +282,7 @@ class SettingDialogsTest {
     }
 
     @Test
-    void keePassIsTheDefaultAndOnlyTheEntryNameReachesTheFile() throws Exception {
+    void keePassWhenPairedAndOnlyTheEntryNameReachesTheFile() throws Exception {
         FakeKeePass keePass = new FakeKeePass();
         keePass.entries.put("Enterprise AI API", new String[] {"https://kp.example.invalid/v1", "sk-aus-keepass"});
         boolean[] paired = {false};
@@ -290,11 +290,15 @@ class SettingDialogsTest {
         AiSettingsPanel[] panel = new AiSettingsPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new AiSettingsPanel(context);
-            assertThat(panel[0].access.getSelectedItem()).as("Vorgabe wie im Enterprise AI Client")
-                    .isEqualTo(AiSettingsPanel.KEEPASS);
+            assertThat(panel[0].access.getSelectedItem()).as("nicht gekoppelt: Manuell")
+                    .isEqualTo(AiSettingsPanel.MANUAL);
             assertThat(panel[0].keePassStatus.getText()).isEqualTo("Nicht gekoppelt");
-            assertThat(panel[0].entry.isEditable()).isTrue();
+            // Schon gekoppelt: KeePass vorgewählt, die Kopplung gilt weiter.
             paired[0] = true;
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].access.getSelectedItem()).isEqualTo(AiSettingsPanel.KEEPASS);
+            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Gekoppelt");
+            assertThat(panel[0].entry.isEditable()).isTrue();
             panel[0].pair.doClick();
         });
         await(() -> panel[0].baseUrl.getText().equals("https://kp.example.invalid/v1"));
