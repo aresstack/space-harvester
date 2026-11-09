@@ -17,7 +17,8 @@ import java.util.function.Consumer;
 /** Reiter als Pillen wie die Kategorien der Client-Einstellungen; der aktive Reiter ist dunkel gefüllt. */
 public final class PillTabs extends JPanel {
 
-    private final JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    /** Umbrechend: In einer schmalen Reiterzeile (Aktionen rechts, Explorer offen) bleiben alle Pillen sichtbar. */
+    private final JPanel bar = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 4, 0));
     private final JPanel row = new JPanel(new BorderLayout(8, 0));
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     private final CardLayout cards = new CardLayout();

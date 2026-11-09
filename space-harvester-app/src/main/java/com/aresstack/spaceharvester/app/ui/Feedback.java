@@ -63,6 +63,8 @@ public final class Feedback extends JPanel {
     private Feedback target;
     /** Nimmt Lauf-, Erfolgs- und Infomeldungen entgegen (Statuszeile); die Platte zeigt dann nur noch Probleme. */
     private java.util.function.BiConsumer<String, Color> statusLine;
+    /** Ob die zuletzt gezeigte Meldung in der Statuszeile steht (und {@link #clear()} sie dort beenden muss). */
+    private boolean inStatusLine;
     /** Die Höhe, die der Behälter zuletzt als Wunschhöhe bekommen hat. */
     private int reported = -1;
     private int checkedWidth = -1;
@@ -357,6 +359,11 @@ public final class Feedback extends JPanel {
             return;
         }
         setVisible(false);
+        if (statusLine != null && inStatusLine) {
+            // Die Laufmeldung („… wird geladen“) steht in der Statuszeile; sie endet mit dem Vorgang.
+            inStatusLine = false;
+            statusLine.accept("", Comic.MUTED);
+        }
     }
 
     /**
@@ -386,11 +393,13 @@ public final class Feedback extends JPanel {
             title.setText(heading);
             message.setText(text == null ? "" : text);
             setVisible(false);
+            inStatusLine = true;
             statusLine.accept(text == null || text.isEmpty() ? heading : heading + ": " + text, stripe);
             return;
         }
         if (statusLine != null) {
             // Eine Warnung oder ein Problem löst die Laufmeldung („… wird geladen“) in der Statuszeile ab.
+            inStatusLine = false;
             statusLine.accept("", stripe);
         }
         plate.setAccentStripe(stripe);
