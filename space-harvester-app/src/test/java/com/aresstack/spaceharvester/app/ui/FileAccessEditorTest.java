@@ -171,6 +171,13 @@ class FileAccessEditorTest {
             assertThat(editor[0].table.getRowCount()).isEqualTo(1);
             assertThat(editor[0].remove.isEnabled()).isFalse();
         });
+        // Ein entfernter und wieder aufgenommener Ordner wird neu geprüft: inzwischen angelegt → erreichbar.
+        Files.createDirectories(Path.of(missing));
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0].path.setText(missing);
+            editor[0].add.doClick();
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(1, 1)));
     }
 
     private static void await(java.util.function.BooleanSupplier condition) throws Exception {

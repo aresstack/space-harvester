@@ -73,7 +73,11 @@ final class FileAccessEditor {
     private final AppContext context;
     private final Confirmation confirmation;
     private final List<String> roots = new ArrayList<>();
-    /** Zuletzt ermittelter Status je Ordner, damit die Tabelle beim Neuaufbau nicht flackert. */
+    /**
+     * Zuletzt ermittelter Status je Ordner, damit die Tabelle beim Neuaufbau nicht flackert. Entfernte Ordner fallen
+     * heraus, und {@link #render()} (nach Speichern oder Neu laden) verwirft alles, damit ein wieder verbundenes
+     * Netzlaufwerk nicht dauerhaft als „Nicht erreichbar“ steht.
+     */
     private final Map<String, String> status = new HashMap<>();
     private final DefaultTableModel model = new DefaultTableModel(new Object[] {PATH_COLUMN, STATUS_COLUMN}, 0) {
         @Override
@@ -164,6 +168,8 @@ final class FileAccessEditor {
         roots.clear();
         roots.addAll(savedRoots());
         allowAll.setSelected(savedAllowAll());
+        // Erreichbarkeit ist kein Dauerzustand (Netzlaufwerk verbunden/getrennt): bei jedem Neuaufbau neu prüfen.
+        status.clear();
         refresh();
     }
 
@@ -202,6 +208,7 @@ final class FileAccessEditor {
 
     void revoke(String folder) {
         if (roots.remove(folder)) {
+            status.remove(folder);
             refresh();
         }
     }
@@ -217,6 +224,7 @@ final class FileAccessEditor {
             doomed.add(roots.get(table.convertRowIndexToModel(row)));
         }
         roots.removeAll(doomed);
+        doomed.forEach(status::remove);
         refresh();
     }
 
