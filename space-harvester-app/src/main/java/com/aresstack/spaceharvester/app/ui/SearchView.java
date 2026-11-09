@@ -51,6 +51,8 @@ import java.util.TreeSet;
  */
 public final class SearchView implements View {
 
+    private static final System.Logger LOG = System.getLogger(SearchView.class.getName());
+
     /**
      * Treffer je Stapel: ein Bildschirm voll statt des Höchstwerts des Core ({@link KeywordSearch#MAX_LIMIT}), damit
      * eine Suche nicht für jede Eingabe hundert Seiten in den Cache holt.
@@ -383,8 +385,9 @@ public final class SearchView implements View {
         if (!available) {
             semantic.setSelected(false);
         }
-        semantic.setToolTipText(semanticTip(runtime == null ? null : available, runtime != null
-                && runtime.workspace().aiVariants()));
+        semantic.setToolTipText(available || runtime == null
+                ? semanticTip(runtime == null ? null : available, runtime != null && runtime.workspace().aiVariants())
+                : lockedTip(runtime.settings().ai()));
         String tip = semantic.getToolTipText();
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
@@ -408,6 +411,23 @@ public final class SearchView implements View {
                 + "nach ihrer Nähe zur ursprünglichen Anfrage"
                 : "Sucht semantisch mit Varianten der Anfrage nach Regeln (kein Chat-Modell eingerichtet, unter "
                 + "Einstellungen › Modelle) und ordnet alle Treffer nach ihrer Nähe zur ursprünglichen Anfrage";
+    }
+
+    /**
+     * Warum die semantische Suche gesperrt ist, genau nach der Bedingung des Core ({@code AiServiceSettings
+     * .embeddings()}: Adresse, Modell und Vektorlänge): ein eingetragenes Modell ohne Vektorlänge heißt nicht „kein
+     * Modell“ (#515).
+     */
+    static String lockedTip(com.aresstack.spaceharvester.app.settings.AppSettings.AiSettings ai) {
+        if (ai == null || ai.baseUrl() == null) {
+            return "Gesperrt: kein KI-Dienst eingerichtet (Einstellungen › Modelle); ohne Embedding-Modell sucht die "
+                    + "App nach Schlagwörtern";
+        }
+        if (ai.embeddingModel() != null && ai.embeddingDimensions() == null) {
+            return "Gesperrt: Für das Embedding-Modell „" + ai.embeddingModel() + "“ fehlt die Vektorlänge "
+                    + "(Einstellungen › Modelle, „Modell prüfen“ misst sie); bis dahin sucht die App nach Schlagwörtern";
+        }
+        return semanticTip(false, false);
     }
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
@@ -631,8 +651,12 @@ public final class SearchView implements View {
         progressText.setText(completion(result.reason()) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
-            feedback.warning("Suche fehlgeschlagen", "Keine Suchanfrage ließ sich ausführen; die Quellen waren "
-                    + "nicht erreichbar.");
+            LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
+                    result.variants().size());
+            // Die semantische Suche scheitert meist am KI-Dienst (Embeddings), nicht an den Quellen (#515).
+            feedback.warning("Suche fehlgeschlagen", "Keine Suchanfrage ließ sich ausführen. Mögliche Ursachen: "
+                    + "KI-Dienst für das Embedding-Modell nicht erreichbar oder nicht angemeldet, Frist überschritten "
+                    + "oder Quellen nicht erreichbar. Ohne „Semantische Suche“ geht die Schlagwortsuche weiter.");
         } else if (model.rows.isEmpty() && result.reason() != ProgressiveResult.Completion.CANCELLED) {
             feedback.info("Keine Treffer", "Weder die Anfrage noch ihre Varianten fanden eine Seite, die du lesen "
                     + "darfst.");
