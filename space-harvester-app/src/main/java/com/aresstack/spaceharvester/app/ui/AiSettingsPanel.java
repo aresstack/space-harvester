@@ -98,7 +98,8 @@ final class AiSettingsPanel {
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
-    final ComposerButton advanced = Comic.button("▸ Erweitert", "Abschnittsgröße und Überlappung für Embeddings");
+    final javax.swing.JButton advanced = Comic.disclosure("▸ Erweitert",
+            "Dimension, Abschnittsgröße und Überlappung für Embeddings");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
@@ -135,23 +136,25 @@ final class AiSettingsPanel {
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
-        modelRows.add("Text-Modell", Comic.row(chatModel, pickChat),
+        modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
-        modelRows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
+        modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
-        modelRows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
-        modelRows.add("Vision-Modell", Comic.row(visionModel, pickVision),
+        modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
         {
-            modelRows.add("Rerank-Modell", Comic.row(rerankModel, pickRerank),
+            modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
-            modelRows.add("", advanced, "Zerlegung der Inhalte für Embeddings; die Vorgaben passen meistens");
+            // Wie im Assistenten von AskAI: linksbündige Überschrift, die aufgeklappten Felder im selben Raster.
+            modelRows.wide(advanced);
+            modelRows.add("Dimension", dimensions, "Vektorlänge des Embedding-Modells; leer: wird beim Übernehmen "
+                    + "beim Dienst gemessen");
             modelRows.add("Abschnittsgröße", chunkTokens, "Höchstens so viele Tokens je Abschnitt für Embeddings; "
                     + "leer: 350; wirkt nach Neustart");
             modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1; "
                     + "wirkt nach Neustart");
-            advanced.addActionListener(e -> advanced(!modelRows.shows(chunkTokens)));
+            advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
         pickChat.setEnabled(false);
@@ -175,7 +178,7 @@ final class AiSettingsPanel {
         south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         root.add(south, BorderLayout.SOUTH);
-        save.addActionListener(e -> save(save, feedback));
+        save.addActionListener(e -> save(save, feedback, () -> { }, false));
         removeKey.addActionListener(e -> removeKey());
         {
             models.setOpaque(false);
@@ -188,7 +191,7 @@ final class AiSettingsPanel {
             modelsSouth.add(Comic.row(saveModels), BorderLayout.NORTH);
             modelsSouth.add(modelsFeedback, BorderLayout.SOUTH);
             models.add(modelsSouth, BorderLayout.SOUTH);
-            saveModels.addActionListener(e -> save(saveModels, modelsFeedback));
+            saveModels.addActionListener(e -> save(saveModels, modelsFeedback, () -> { }, false));
         }
         render();
     }
@@ -221,9 +224,11 @@ final class AiSettingsPanel {
         releasedIds = current.externalProcessingSources();
         released.setText(releasedText(settings, releasedIds));
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
-        // Nichts gewählt: KeePass, außer es liegt schon ein Key im Tresor.
+        // Nichts gewählt: KeePass, wenn die App schon mit KeePass gekoppelt ist (die Kopplung gilt weiter, kein
+        // neues Koppeln), sonst Manuell; ein Key im Tresor spricht immer für Manuell.
         boolean manual = fileAccess.mode() == AiAccess.Mode.MANUAL
-                || fileAccess.mode() == null && context.aiVault().has(KEY_ID, KEY_LOGIN);
+                || fileAccess.mode() == null && (context.aiVault().has(KEY_ID, KEY_LOGIN)
+                || !context.keePass().paired());
         access.setSelectedItem(manual ? MANUAL : KEEPASS);
         String title = fileAccess.entry() == null ? AiAccess.DEFAULT_ENTRY : fileAccess.entry();
         if (titles.isEmpty()) {
@@ -389,10 +394,39 @@ final class AiSettingsPanel {
         return !draft().equals(current) || apiKey.getPassword().length > 0 || !accessDraft().equals(shownAccess);
     }
 
-    private void save(ComposerButton save, Feedback feedback) {
+    /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
+    private boolean saving;
+    /** Was nach dem laufenden Speichern noch übernommen werden soll; nur das letzte zählt. */
+    private Runnable queued;
+
+    /**
+     * Im Assistenten gibt es kein „Speichern“: Er übernimmt die Eingaben beim Schrittwechsel und spätestens bei
+     * „Fertig“ ({@link #autoSave}), wie der Assistent von AskAI.
+     */
+    void wizardMode() {
+        save.setVisible(false);
+        saveModels.setVisible(false);
+    }
+
+    /**
+     * Übernimmt geänderte Eingaben ohne Knopf, wie der Assistent von AskAI beim Verlassen eines Schritts;
+     * unverändert ohne Meldung. {@code then} läuft danach auf dem EDT, auch wenn nichts zu tun war, nicht aber, wenn
+     * die Eingaben unvollständig sind oder das Speichern scheitert; das meldet {@code feedback}.
+     */
+    void autoSave(Feedback feedback, Runnable then) {
+        if (saving) {
+            // Ein Speichern läuft schon (etwa vom Schrittwechsel): danach erneut prüfen, dann weiter.
+            queued = () -> autoSave(feedback, then);
+            return;
+        }
+        save(null, feedback, then, true);
+    }
+
+    private void save(javax.swing.JComponent save, Feedback feedback, Runnable then, boolean quiet) {
         AiDraft draft = draft();
         if (!draft.problems().isEmpty()) {
-            feedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            feedback.warning(quiet ? "KI-Einstellungen nicht übernommen" : "Bitte prüfen",
+                    String.join(" ", draft.problems()));
             return;
         }
         char[] key = apiKey.getPassword();
@@ -400,7 +434,10 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)) {
-            feedback.info("Nichts geändert", null);
+            if (!quiet) {
+                feedback.info("Nichts geändert", null);
+            }
+            then.run();
             return;
         }
         if (chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
@@ -421,8 +458,11 @@ final class AiSettingsPanel {
             Arrays.fill(key, '\0');
             return;
         }
-        save.setEnabled(false);
-        feedback.working("Wird gespeichert …");
+        if (save != null) {
+            save.setEnabled(false);
+        }
+        saving = true;
+        feedback.working(quiet ? "KI-Einstellungen werden übernommen …" : "Wird gespeichert …");
         boolean vault = context.aiVault().available();
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
@@ -453,24 +493,50 @@ final class AiSettingsPanel {
             boolean serviceChanged = key.length > 0 || !chosen.equals(shownAccess)
                     || !java.util.Objects.equals(blankToNull(draft.baseUrl()), blankToNull(current.baseUrl()));
             Arrays.fill(key, '\0');
-            save.setEnabled(true);
+            if (save != null) {
+                save.setEnabled(true);
+            }
             if (serviceChanged) {
                 // Anderer Dienst oder Key: Beim nächsten Betreten von „Modelle“ lädt der Assistent neu.
                 forgetModels();
             }
             context.reload(() -> {
-                render();
+                saving = false;
+                if (draft().withModels(draft().chatModel(), draft().embeddingModel(), draft.embeddingDimensions(),
+                        draft().rerankModel(), draft().chunkTokens(), draft().chunkOverlapSentences()).equals(draft)) {
+                    render();
+                } else {
+                    // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen.
+                    apiKey.setText("");
+                    if (measured.draft().embeddingDimensions() != null && dimensions.getText().isBlank()) {
+                        dimensions.setText(measured.draft().embeddingDimensions());
+                    }
+                }
                 if (measured.problem() == null) {
                     feedback.success("KI-Einstellungen übernommen");
                 } else {
                     feedback.warning("Gespeichert, semantische Suche bleibt aus", measured.problem());
                 }
+                then.run();
+                runQueued();
             });
         }, error -> {
             Arrays.fill(key, '\0');
-            save.setEnabled(true);
+            saving = false;
+            queued = null;
+            if (save != null) {
+                save.setEnabled(true);
+            }
             feedback.problem(error);
         });
+    }
+
+    private void runQueued() {
+        Runnable next = queued;
+        queued = null;
+        if (next != null) {
+            next.run();
+        }
     }
 
     /**
@@ -745,9 +811,11 @@ final class AiSettingsPanel {
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
     /** Erweitert auf- oder zuklappen; eigene Werte bleiben sichtbar, damit nichts verdeckt wirkt. */
     void advanced(boolean open) {
+        modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
         advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        models.repaint();
         models.revalidate();
     }
 

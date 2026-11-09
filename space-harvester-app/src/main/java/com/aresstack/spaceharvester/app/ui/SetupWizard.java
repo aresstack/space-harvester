@@ -101,6 +101,7 @@ final class SetupWizard {
     SetupWizard(AppContext context) {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
+        ai.wizardMode();
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(900, 600));
 
@@ -178,8 +179,9 @@ final class SetupWizard {
 
         back.addActionListener(e -> show(step - 1));
         next.addActionListener(e -> show(step + 1));
-        finish.addActionListener(e -> close.run());
-        later.addActionListener(e -> close.run());
+        // Kein „Speichern“ im Assistenten: Offene Eingaben übernimmt er spätestens beim Schließen.
+        finish.addActionListener(e -> saveThen(() -> close.run()));
+        later.addActionListener(e -> saveThen(() -> close.run()));
         show(0);
     }
 
@@ -215,7 +217,9 @@ final class SetupWizard {
     }
 
     void show(int index) {
+        int left = step;
         step = Math.max(0, Math.min(STEPS.length - 1, index));
+        boolean leavesAi = (left == AI || left == MODELS) && left != step;
         cards.show(pages, STEPS[step]);
         bubble.setText(LINES[step]);
         back.setEnabled(step > 0);
@@ -224,13 +228,33 @@ final class SetupWizard {
         if ((step == MODELS || step == AI) && !ai.changed()) {
             ai.render();
         }
-        if (step == MODELS) {
+        if (leavesAi) {
+            // Wie im Assistenten von AskAI: Der Schrittwechsel übernimmt die Eingaben, ein „Speichern“ gibt es
+            // nicht. „Modelle“ lädt erst danach, damit Adresse und Key schon gelten.
+            if (step != MODELS) {
+                ai.stopModels();
+            }
+            ai.autoSave(feedback, () -> {
+                if (!closed) {
+                    refresh();
+                    if (step == MODELS) {
+                        ai.prepareModels();
+                    }
+                }
+            });
+        } else if (step == MODELS) {
             ai.prepareModels();
         } else {
             // „Modelle laden“ wiederholt sich nur, solange der Schritt offen ist.
             ai.stopModels();
         }
         refresh();
+    }
+
+    /** Übernimmt offene KI-Eingaben (ohne Änderung sofort) und führt dann {@code then} aus. */
+    private void saveThen(Runnable then) {
+        ai.stopModels();
+        ai.autoSave(feedback, then);
     }
 
     /** Liest den aktuellen Stand neu: Übersichten und Häkchen der Schrittleiste. */
