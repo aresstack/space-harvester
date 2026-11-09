@@ -347,6 +347,9 @@ public final class TermsView implements View {
         }
         Background.run(() -> runtime.workspace().addRelation(new TermRelations.NewRelation(from.trim(), to.trim(),
                 type, null, null, null)), created -> {
+            // Neu angelegt ist sie nicht mehr entfernt, auch wenn sie eben noch durchgestrichen dastand.
+            removed.remove(created.id());
+            removedCore.remove(created.id());
             keepSelected = created.id();
             loadRelations(null);
         }, failure -> relations.message("Anlegen nicht möglich: " + failure.getMessage()));
@@ -642,7 +645,7 @@ public final class TermsView implements View {
             Directory list = new Directory("Fundstellen von „" + term + "“", new String[]{"Seite", "Quelle · Space",
                     "Kontext"});
             List<TermQueries.Occurrence> shown = found.occurrences();
-            list.show(occurrenceRows(shown), "Keine sichtbare Fundstelle.");
+            list.show(indexedOccurrenceRows(shown), "Keine sichtbare Fundstelle.");
             if (found.nextCursor() != null) {
                 list.message("Gezeigt werden die ersten " + OCCURRENCE_LIMIT + " Fundstellen.");
             }
@@ -652,7 +655,8 @@ public final class TermsView implements View {
                 public void mouseClicked(java.awt.event.MouseEvent e) {
                     int at = list.table().rowAtPoint(e.getPoint());
                     if (e.getClickCount() == 2 && at >= 0) {
-                        TermQueries.Occurrence hit = shown.get(list.table().convertRowIndexToModel(at));
+                        TermQueries.Occurrence hit = shown.get(occurrenceIndex(
+                                list.visibleRow(list.table().convertRowIndexToModel(at))));
                         dialog.dispose();
                         context.navigator().openPage(hit.sourceId(), hit.pageId());
                     }
@@ -663,6 +667,23 @@ public final class TermsView implements View {
             close.addActionListener(e -> dialog.dispose());
             Dialogs.show(dialog, "Fundstellen – Doppelklick öffnet die Seite", list, close);
         }, failure -> identifiers.message("Fundstellen nicht lesbar: " + failure.getMessage()));
+    }
+
+    /** Wie {@link #occurrenceRows}, dazu unsichtbar die Stelle in der Liste, damit Filtern die Zuordnung hält. */
+    static List<List<String>> indexedOccurrenceRows(List<TermQueries.Occurrence> occurrences) {
+        List<List<String>> rows = new ArrayList<>();
+        List<List<String>> plain = occurrenceRows(occurrences);
+        for (int i = 0; i < plain.size(); i++) {
+            List<String> row = new ArrayList<>(plain.get(i));
+            row.add(String.valueOf(i));
+            rows.add(List.copyOf(row));
+        }
+        return rows;
+    }
+
+    /** Stelle der Fundstelle einer gezeigten Zeile in der ungefilterten Liste. */
+    static int occurrenceIndex(List<String> cells) {
+        return Integer.parseInt(cells.get(3));
     }
 
     /** Seite, Quelle · Space und Kontext je Fundstelle. */

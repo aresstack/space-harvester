@@ -70,6 +70,24 @@ class TermsViewTest {
     }
 
     @Test
+    void aFilteredOccurrenceRowStillNamesItsOwnPage() throws Exception {
+        List<TermQueries.Occurrence> hits = List.of(
+                new TermQueries.Occurrence("q", "S", "p1", "Eins", TermKind.NOUN, "x", null, null, 0, 1, "1", "h",
+                        "v", null),
+                new TermQueries.Occurrence("q", "S", "p2", "Zwei", TermKind.NOUN, "x", null, null, 0, 1, "1", "h",
+                        "v", null));
+        int[] index = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView.Directory list = new TermsView.Directory("Fundstellen", new String[]{"Seite", "Quelle", "K"});
+            list.show(TermsView.indexedOccurrenceRows(hits), "");
+            list.search().setText("Zwei");
+            assertThat(list.table().getRowCount()).isEqualTo(1);
+            index[0] = TermsView.occurrenceIndex(list.visibleRow(list.table().convertRowIndexToModel(0)));
+        });
+        assertThat(hits.get(index[0]).pageId()).isEqualTo("p2");
+    }
+
+    @Test
     void relationsReadAsWordsAndTheReviewButtonsFollowTheSelectedRelation() throws Exception {
         Relation proposed = new Relation("r1", "API", "ABBREVIATION", "Application Programming Interface",
                 "PROPOSED", "RULE", 1);
