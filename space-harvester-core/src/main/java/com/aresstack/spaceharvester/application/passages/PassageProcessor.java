@@ -70,6 +70,15 @@ public class PassageProcessor implements EnrichmentProcessor {
         return embedding != null && embedding.background() && embedding.available();
     }
 
+    /**
+     * Eine nicht freigegebene Quelle geht nie ans Netz: Ihre Absätze nach Struktur entstehen sofort im Abgleich oder
+     * beim Öffnen der Seite, statt im begrenzten Hintergrund zu warten oder bei voller Warteschlange zu entfallen.
+     */
+    @Override
+    public boolean background(PageKey key) {
+        return background() && embedding.covers(key.sourceId());
+    }
+
     /** Ohne Seite weiß der Prozessor nicht, ob die Quelle freigegeben ist: nur nach Struktur. */
     @Override
     public EnrichmentOutput process(PageText text) {
