@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.app.ui;
+package com.aresstack.spaceharvester.app.ui.controls;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -20,9 +20,9 @@ import java.awt.Insets;
  */
 public final class PasswordReveal {
 
-    static final String SHOW = "👁";
-    static final String TOOLTIP_SHOW = "Anzeigen";
-    static final String TOOLTIP_HIDE = "Verbergen";
+    public static final String SHOW = "👁";
+    public static final String TOOLTIP_SHOW = "Anzeigen";
+    public static final String TOOLTIP_HIDE = "Verbergen";
 
     private PasswordReveal() {
     }
