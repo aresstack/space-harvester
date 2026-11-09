@@ -308,7 +308,7 @@ public final class AppRuntime implements AutoCloseable {
      * Der Proxy aus der Datei mit dem Proxy-Passwort aus Tresor oder Sitzung (#189); die Datei nennt nur den Benutzer.
      * Fehlt das Passwort, meldet sich der Core nicht an und der Proxy antwortet mit 407.
      */
-    static ProxySettings proxy(ProxySettings proxy, SessionSecrets secrets) {
+    public static ProxySettings proxy(ProxySettings proxy, SessionSecrets secrets) {
         ProxySettings.Authentication auth = proxy.authentication();
         char[] password = secrets.proxyPassword();
         if (auth == null || auth.password() != null || password == null) {

@@ -43,7 +43,7 @@ class MaltStatementAnalyzerTest {
                 .isInstanceOfSatisfying(AnalyzerUnavailableException.class, e -> {
                     assertThat(e.reason()).isEqualTo(AnalyzerUnavailableException.Reason.MODEL_MISSING);
                     assertThat(e.getMessage()).contains(empty.resolve("nlp-model").toString())
-                            .contains("maltparser-de-test-v0.1.0.zip").contains("lädt nichts aus dem Netz")
+                            .contains("maltparser-de-test-v0.1.0.zip").contains("Installieren")
                             .doesNotContain("Sachbearbeiter");
                 });
         assertThat(analyzer.loaded()).isFalse();

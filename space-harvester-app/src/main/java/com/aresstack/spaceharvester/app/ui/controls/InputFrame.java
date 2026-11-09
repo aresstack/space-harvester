@@ -48,6 +48,8 @@ public class InputFrame extends JPanel {
     private final JComponent field;
     private final JPanel eastPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     private boolean focused;
+    /** So viel Rand einer eingebetteten Auswahlliste wird nicht gezeichnet (ihr eigener Rahmen). */
+    private static final int COMBO_EDGE = 2;
 
     public InputFrame(JComponent field) {
         this(field, null);
@@ -70,7 +72,21 @@ public class InputFrame extends JPanel {
         if (west != null) {
             add(west, BorderLayout.WEST);
         }
-        add(field, BorderLayout.CENTER);
+        if (field instanceof javax.swing.JComboBox<?>) {
+            // Die Auswahlliste zeichnet ihren eigenen Rahmen (ComicComboBoxUI): beim Zeichnen den Rand
+            // abschneiden, damit nur der Rahmen dieses Felds bleibt; Pfeil, Popup und Tastatur bleiben unverändert.
+            add(new javax.swing.JLayer<>(field, new javax.swing.plaf.LayerUI<JComponent>() {
+                @Override
+                public void paint(Graphics g, JComponent c) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.clipRect(COMBO_EDGE, COMBO_EDGE, c.getWidth() - 2 * COMBO_EDGE, c.getHeight() - 2 * COMBO_EDGE);
+                    super.paint(g2, c);
+                    g2.dispose();
+                }
+            }), BorderLayout.CENTER);
+        } else {
+            add(field, BorderLayout.CENTER);
+        }
         add(eastPanel, BorderLayout.EAST);
         FocusAdapter repaintOnFocus = new FocusAdapter() {
             @Override
