@@ -148,6 +148,8 @@ final class SourceForm {
     private String suggestedId = "";
     private String suggestedTitle = "";
     private boolean authChosen;
+    /** Ob die Anmeldeart bei KeePass von Hand gewählt wurde; dann belegt ein gelesener Eintrag sie nicht mehr vor. */
+    private boolean authPickedInKeePass;
     private boolean deriving;
     private Runnable close = () -> { };
     private Consumer<String> saved = ignored -> { };
@@ -182,8 +184,8 @@ final class SourceForm {
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();
-            if (keePassChosen()) {
-                // Der neue Typ setzt die Anmeldeart zurück; bei KeePass gibt sie weiter der gelesene Eintrag vor.
+            if (keePassChosen() && !authPickedInKeePass) {
+                // Der neue Typ setzt die Anmeldeart zurück; bei KeePass belegt sie weiter der gelesene Eintrag vor.
                 deriveAuthFromKeePass(keePassUser);
             }
             updateVisibility();
@@ -202,8 +204,8 @@ final class SourceForm {
             keePassEntry.setSelectedItem(knownEntry);
         }
         origin.addActionListener(e -> {
-            if (keePassChosen()) {
-                deriveAuthFromKeePass(null);
+            if (keePassChosen() && !authPickedInKeePass) {
+                deriveAuthFromKeePass(keePassUser);
             }
             updateVisibility();
             if (keePassChosen() && context.keePass().paired()) {
@@ -214,11 +216,21 @@ final class SourceForm {
         keePassEntry.addActionListener(e -> {
             if (!suggesting) {
                 suggestedEntry = null;
+                // Ein von Hand gewählter Eintrag belegt die Anmeldeart wieder vor.
+                authPickedInKeePass = false;
             }
             readKeePassEntry();
         });
         auth.addActionListener(e -> {
             authChosen |= !deriving;
+            if (!deriving && AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem())) {
+                authPickedInKeePass = true;
+                if (BASIC.equals(auth.getSelectedItem()) && keePassUser != null && !keePassUser.isBlank()
+                        && username.getText().isBlank()) {
+                    // Von Hand auf Benutzer und Passwort: der Benutzer kommt aus dem gelesenen Eintrag.
+                    username.setText(keePassUser.strip());
+                }
+            }
             suggestVariable();
             updateVisibility();
         });
@@ -325,7 +337,6 @@ final class SourceForm {
         suggestVariable();
         renderNotes();
         if (keePassChosen()) {
-            deriveAuthFromKeePass(null);
             updateVisibility();
             if (context.keePass().paired()) {
                 // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
@@ -348,16 +359,23 @@ final class SourceForm {
         return false;
     }
 
+    /** Ob KeePass die Zugangsdaten liefert: KeePass gewählt und eine Anmeldung außer „Ohne Anmeldung“. */
+    private boolean keePassLogin() {
+        return keePassChosen() && !NONE.equals(auth.getSelectedItem());
+    }
+
     /**
-     * Bei KeePass gibt der Eintrag die Anmeldeart vor: mit Benutzer Benutzer+Passwort, sonst Token; „Ohne Anmeldung“
-     * gibt es dann nicht. {@code user} {@code null}: noch kein Eintrag gelesen, dann Token (bzw. was die Art anbietet).
+     * Belegt die Anmeldeart aus dem gelesenen Eintrag vor: mit Benutzer Benutzer+Passwort, sonst Token. Nur eine
+     * Vorbelegung, jede Art bleibt wählbar (auch „Ohne Anmeldung“). {@code user} {@code null}: noch kein Eintrag
+     * gelesen, dann bleibt die Auswahl.
      */
     private void deriveAuthFromKeePass(String user) {
+        if (user == null) {
+            return;
+        }
         boolean pat = offered(PAT);
         boolean basic = offered(BASIC);
-        String wanted = user != null && !user.isBlank() && basic ? BASIC
-                : user == null && BASIC.equals(auth.getSelectedItem()) ? BASIC
-                : pat ? PAT : basic ? BASIC : null;
+        String wanted = !user.isBlank() && basic ? BASIC : pat ? PAT : basic ? BASIC : null;
         if (wanted != null && !wanted.equals(auth.getSelectedItem())) {
             boolean before = deriving;
             deriving = true;
@@ -447,13 +465,19 @@ final class SourceForm {
             keePassEntries = entries;
             List<String> titles = entries.stream().map(com.aresstack.enterpriseai.adyton.VaultEntry::title)
                     .filter(t -> t != null && !t.isBlank()).distinct().toList();
-            keePassEntry.removeAllItems();
-            titles.forEach(keePassEntry::addItem);
-            if (!keep.isEmpty() && !titles.contains(keep)) {
-                keePassEntry.addItem(keep);
+            // Die Liste neu aufbauen ist keine Wahl von Hand: Anmeldeart und Vorschlag bleiben, wie sie sind.
+            suggesting = true;
+            try {
+                keePassEntry.removeAllItems();
+                titles.forEach(keePassEntry::addItem);
+                if (!keep.isEmpty() && !titles.contains(keep)) {
+                    keePassEntry.addItem(keep);
+                }
+                keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
+                keePassEntry.getEditor().setItem(keep);
+            } finally {
+                suggesting = false;
             }
-            keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
-            keePassEntry.getEditor().setItem(keep);
             keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge")
                     + "; Eintrag wählen oder Namen eintippen";
             form.hint(keePassRow, keePassStatus);
@@ -488,7 +512,9 @@ final class SourceForm {
             }
             String user = (String) read[0];
             keePassUser = user == null ? "" : user;
-            deriveAuthFromKeePass(user == null ? "" : user);
+            if (!authPickedInKeePass) {
+                deriveAuthFromKeePass(keePassUser);
+            }
             if (user != null && !user.isBlank() && BASIC.equals(auth.getSelectedItem())) {
                 username.setText(user.strip());
             }
@@ -527,7 +553,7 @@ final class SourceForm {
         }
     }
 
-    private boolean keePassSecretRead() {
+    boolean keePassSecretRead() {
         return keePassSecret != null && keePassSecret.length > 0;
     }
 
@@ -890,7 +916,7 @@ final class SourceForm {
             return;
         }
         SourceDraft source = draft();
-        boolean fromKeePass = keePassChosen();
+        boolean fromKeePass = keePassLogin();
         String keePassTitle = fromKeePass ? keePassTitle() : null;
         // Aus KeePass gelesene Werte gehen nur in die Sitzung, nie in den Tresor.
         char[] value = fromKeePass ? new char[0] : sessionValue.getPassword();
@@ -1044,7 +1070,7 @@ final class SourceForm {
 
     /** Ob für Token bzw. Passwort schon ein Wert da ist: eingegeben, in der Sitzung, im Tresor oder als Property. */
     private boolean secretAvailable(SourceDraft source) {
-        if (keePassChosen()) {
+        if (keePassLogin()) {
             return keePassSecretRead() || sessionMatchesKeePassEntry(source);
         }
         return SourceSaving.secretAvailable(context, editing, source, sessionValue.getPassword().length > 0);
@@ -1066,11 +1092,11 @@ final class SourceForm {
         // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
         secrets.proxyPassword(context.secrets().proxyPassword());
         String sourceId = source.id();
-        char[] value = keePassChosen() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
+        char[] value = keePassLogin() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
                 : sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, SourceSaving.login(source), value);
-        } else if (sourceId != null && (keePassChosen() ? sessionMatchesKeePassEntry(source)
+        } else if (sourceId != null && (keePassLogin() ? sessionMatchesKeePassEntry(source)
                 : context.secrets().has(sourceId, SourceSaving.login(source))
                 && !SourceSaving.loginChanged(editing, source))) {
             return context.secrets();
@@ -1089,11 +1115,12 @@ final class SourceForm {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         }
-        if (keePassChosen() && !context.keePass().paired()) {
+        // Bei „Ohne Anmeldung“ braucht es weder Kopplung noch Eintrag, auch wenn KeePass gewählt ist.
+        if (keePassLogin() && !context.keePass().paired()) {
             problems.add("Noch nicht mit KeePass gekoppelt: bitte auf „" + PAIR_TEXT + "“ klicken.");
-        } else if (keePassChosen() && keePassTitle().isEmpty()) {
+        } else if (keePassLogin() && keePassTitle().isEmpty()) {
             problems.add("Kein KeePass-Eintrag gewählt.");
-        } else if (keePassChosen() && !secretAvailable(source)) {
+        } else if (keePassLogin() && !secretAvailable(source)) {
             problems.add("Der KeePass-Eintrag ist noch nicht gelesen; KeePass starten und koppeln.");
         } else if ((source.confluence() || source.authType() == SourceSettingsConfig.AuthType.PAT)
                 && !secretAvailable(source)) {
@@ -1219,7 +1246,8 @@ final class SourceForm {
                 id.setText(proposedId);
                 suggestedId = proposedId;
             }
-            if (confluence && !authChosen && !keePassChosen()) {
+            // Bis ein KeePass-Eintrag gelesen ist, gilt die übliche Vorbelegung nach Adresse.
+            if (confluence && !authChosen && (keePassUser == null || !keePassChosen())) {
                 auth.setSelectedItem(DEFAULT_URL.equals(normalized(address())) ? NONE : PAT);
             }
         } finally {
@@ -1401,8 +1429,8 @@ final class SourceForm {
         boolean keePass = login && keePassChosen();
         form.visible(origin, login);
         form.visible(keePassRow, keePass);
-        // Bei KeePass gibt der Eintrag die Anmeldeart vor.
-        auth.setEnabled(!keePass);
+        // Bei KeePass belegt der Eintrag die Anmeldeart nur vor; jede Art bleibt wählbar.
+        form.hint(auth, keePass ? "Wird aus dem KeePass-Eintrag vorbelegt; hier umstellen, falls nötig" : " ");
         if (keePass && pairKeePass.isEnabled() && keePassEntries.isEmpty()) {
             boolean paired = context.keePass().paired();
             pairKeePass.setText(paired ? "Einträge laden" : PAIR_TEXT);

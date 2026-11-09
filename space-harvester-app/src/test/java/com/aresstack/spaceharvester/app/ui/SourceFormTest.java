@@ -599,7 +599,11 @@ class SourceFormTest {
         awaitOnEdt(() -> form[0].validateInput());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Wiki");
-            assertThat(form[0].auth.isEnabled()).as("Anmeldeart kommt aus dem Eintrag").isFalse();
+            // Der Eintrag belegt die Anmeldeart nur vor: alle drei Arten bleiben wählbar.
+            assertThat(form[0].auth.isEnabled()).isTrue();
+            assertThat(java.util.stream.IntStream.range(0, form[0].auth.getItemCount())
+                    .mapToObj(form[0].auth::getItemAt).toList())
+                    .containsExactly("Personal Access Token", "Benutzer und Passwort", "Ohne Anmeldung");
             // Das Token steht maskiert und schreibgeschützt im Feld: sichtbar gelesen, aber keine eigene Eingabe.
             assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token-aus-keepass");
             assertThat(form[0].sessionValue.isEditable()).isFalse();
@@ -658,10 +662,12 @@ class SourceFormTest {
             form[0] = f;
             assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
             f.origin.setSelectedItem("KeePass");
-            assertThat(f.auth.getSelectedItem()).as("bei KeePass nie „Ohne Anmeldung“")
-                    .isEqualTo("Personal Access Token");
+            // KeePass und „Ohne Anmeldung“ zugleich: Koppeln steht bereit, ist aber keine Pflicht.
+            assertThat(f.auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
             assertThat(f.pairKeePass.isShowing() || f.pairKeePass.isVisible()).isTrue();
             assertThat(f.pairKeePass.getText()).isEqualTo("Mit KeePass koppeln …");
+            assertThat(f.validateInput()).as("ohne Anmeldung kein Eintrag nötig").isTrue();
+            f.auth.setSelectedItem("Personal Access Token");
             assertThat(f.validateInput()).isFalse();
             assertThat(f.feedback.text()).contains("Mit KeePass koppeln");
             f.baseUrl.setText("https://wiki.example.invalid");
@@ -681,6 +687,20 @@ class SourceFormTest {
         awaitOnEdt(() -> form[0].validateInput());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            // Von Hand umgestellt: dasselbe Passwort aus dem Eintrag, jetzt als Passwort; „Ohne Anmeldung“ braucht nichts.
+            form[0].auth.setSelectedItem("Benutzer und Passwort");
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Benutzer und Passwort");
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            form[0].auth.setSelectedItem("Ohne Anmeldung");
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            // „Einträge neu laden“ ist keine Wahl von Hand: die gewählte Anmeldeart bleibt.
+            form[0].pairKeePass.doClick();
+        });
+        // Liste geladen und Eintrag neu gelesen (der Wert wird beim Lesen erst vergessen, dann gesetzt).
+        awaitOnEdt(() -> form[0].pairKeePass.isEnabled() && form[0].keePassSecretRead());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            form[0].auth.setSelectedItem("Personal Access Token");
             // Wechsel auf „Manuell“: Der Wert aus KeePass verlässt das Feld, man tippt selbst.
             form[0].origin.setSelectedItem("Manuell");
             assertThat(form[0].sessionValue.getPassword()).isEmpty();
