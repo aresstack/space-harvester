@@ -248,6 +248,25 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 4. Eine Seite einer zweiten Quelle mit derselben Seiten-ID öffnen: nur ihre eigenen Akronyme und Ausschreibungen.
 5. Erweitert › „Analyse“ › „Neu berechnen“: Markierungen bleiben bzw. erscheinen neu, keine der vorigen Seite.
 
+## Aussagenanalyse mit MaltParser (#499, ADR 0024)
+
+Experimentell und nur auf ausdrückliche Anforderung: „Mit MaltParser analysieren“ zerlegt die Sätze der geöffneten
+Seite lokal (OpenNLP + MaltParser aus `:nlp-parser`) in Erwähnungen, Aussagen und nominale Bezüge und übernimmt sie in
+den globalen Wissensgraphen unter `<Datenverzeichnis>/knowledge-graph`. Nichts davon läuft beim Start, Seitenöffnen,
+Abgleich, Suchen, Exportieren oder bei „Analysen neu berechnen“; der Dienst enthält den Parser nicht.
+
+- **Modell bereitstellen:** Die App lädt nichts aus dem Netz. Das gepinnte Modell `maltparser-de-gsd-v1.0.0` (#99)
+  gehört entpackt nach `<Datenverzeichnis>/nlp-model/maltparser-de-gsd-v1.0.0/` (Inhalt der Release-ZIP:
+  `model-manifest.json`, `maltparser-de-gsd.mco`, `LICENSE-MODEL.md`, `ATTRIBUTION.md`), z. B. aus
+  `./gradlew :nlp-parser:downloadGermanParserModel` (`nlp-parser/build/nlp-model/<tag>`). Ein anderes Verzeichnis
+  setzt `-Dspaceharvester.nlpModelDir=<Pfad>`. Manifest, Version und SHA-256 der `.mco` werden vor dem Laden geprüft;
+  fehlt das Modell oder passt es nicht, meldet der Knopf das mit diesem Installationshinweis, ohne Rückfall.
+- **Speicher und Dauer:** Das Modell wird beim ersten Klick geladen (rund 7 s, rund 225 MB Heap) und bleibt bis zum
+  Beenden der App geladen; danach rund 5 ms je Satz. Für die App mindestens `-Xmx1g` einplanen. Ohne Klick belegt der
+  Parser keinen Speicher.
+- **Lizenz:** Das Modell steht unter CC BY-SA 4.0 (UD German GSD, `docs/NLP_MODEL_LICENSE.md`); wer es mit ausliefert,
+  gibt `LICENSE-MODEL.md` und `ATTRIBUTION.md` aus der ZIP mit. Der Code bleibt MIT.
+
 ## Inhalte
 
 Inhalte ist die Leseansicht. Navigiert wird im Explorer links (Wissensquelle → Space → Seite → Unterseite, bedarfsgesteuert

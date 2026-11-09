@@ -70,7 +70,8 @@ import java.util.function.Consumer;
 
 /**
  * Eine Seite: zuerst ihr lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
- * daneben Eigenschaften und Anhänge; Analyse, Originaldaten, technische Angaben und die Aktionen dazu liegen unter
+ * daneben Eigenschaften und Anhänge. Unter „Analysen“ liegen Absätze, Begriffe, Verweise, Bilder, Aussagen und
+ * Graph als zweite Reiterzeile (#499); Analyse, Originaldaten, technische Angaben und die Aktionen dazu liegen unter
  * „Erweitert“. Ohne gewählte Seite steht dort nur ein Hinweis. Fehlt die Seite im lokalen Bestand, lädt sie live aus
  * der Quelle, ohne dass der Bediener etwas tun muss. Im Lesetext
  * sind die Akronyme markiert, die die Core-Analyse {@code acronyms} für genau diesen Text liefert ({@link PageAcronyms},
@@ -90,6 +91,11 @@ public final class PageDetailPanel extends JPanel {
     private static final String TERMS = "Begriffe";
     private static final String PASSAGES = "Absätze";
     private static final String IMAGES = "Bilder";
+    private static final String ANALYSES = "Analysen";
+    private static final String STATEMENTS = "Aussagen";
+    static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
+    private static final String GRAPH = "Graph";
+    static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
@@ -136,6 +142,12 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
+    /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
+    private final PillTabs analysisTabs = new PillTabs();
+    /** Inhalt des Unterreiters „Aussagen“; bis {@link #statementsTab(JComponent)} ein Hinweis. */
+    private final JPanel statements = new JPanel(new BorderLayout());
+    /** Inhalt des Unterreiters „Graph“ (Wissensgraph, #499 F); bis {@link #knowledgeGraphTab(JComponent)} ein Hinweis. */
+    private final JPanel graph = new JPanel(new BorderLayout());
     private final ComposerButton refresh = Comic.button("Aktualität prüfen",
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
@@ -245,27 +257,28 @@ public final class PageDetailPanel extends JPanel {
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
         // Leseansicht zuerst und damit Standard; ein gewählter Reiter bleibt beim Laden der nächsten Seite.
+        // Fachliche Analysen der Seite (#499) unter einem Hauptreiter; die Ansichten selbst bleiben dieselben.
+        statements.setOpaque(false);
+        statements.add(placeholder(STATEMENTS_PLACEHOLDER), BorderLayout.CENTER);
+        graph.setOpaque(false);
+        graph.add(placeholder(GRAPH_PLACEHOLDER), BorderLayout.CENTER);
+        analysisTabs.tab(PASSAGES, passages)
+                .tab(TERMS, terms)
+                .tab(REFERENCES, references)
+                .tab(IMAGES, images)
+                .tab(STATEMENTS, statements)
+                .tab(GRAPH, graph);
         tabs.tab(READING, readingPane)
                 .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(REFERENCES, references)
-                .tab(TERMS, terms)
-                .tab(PASSAGES, passages)
-                .tab(IMAGES, images)
+                .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced);
-        tabs.onSelect(name -> {
-            if (ATTACHMENTS.equals(name)) {
-                loadAssets(false);
-            }
-            if (READING.equals(name)) {
-                loadReading();
-            }
-            if (REFERENCES.equals(name)) {
-                loadReferences();
-            }
-            if (IMAGES.equals(name)) {
-                loadImages();
+        // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
+        tabs.onSelect(name -> loadVisible());
+        analysisTabs.onSelect(name -> {
+            if (ANALYSES.equals(tabs.selected())) {
+                loadVisible();
             }
         });
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
@@ -473,18 +486,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             show(loaded);
-            if (ATTACHMENTS.equals(tabs.selected())) {
-                loadAssets(false);
-            }
-            if (READING.equals(tabs.selected())) {
-                loadReading();
-            }
-            if (REFERENCES.equals(tabs.selected())) {
-                loadReferences();
-            }
-            if (IMAGES.equals(tabs.selected())) {
-                loadImages();
-            }
+            loadVisible();
             loadPosition();
             if (loaded.passage() != null) {
                 showPassage(loaded.passage());
@@ -714,6 +716,52 @@ public final class PageDetailPanel extends JPanel {
         tabs.select(READ);
         reader.requestFocusInWindow();
         mark(target);
+    }
+
+    /** Lädt nach, was der gerade sichtbare Reiter braucht (Haupt- oder Unterreiter unter „Analysen“). */
+    private void loadVisible() {
+        String visible = selectedTab();
+        if (ATTACHMENTS.equals(visible)) {
+            loadAssets(false);
+        }
+        if (READING.equals(visible)) {
+            loadReading();
+        }
+        if (REFERENCES.equals(visible)) {
+            loadReferences();
+        }
+        if (IMAGES.equals(visible)) {
+            loadImages();
+        }
+    }
+
+    /**
+     * Setzt den Inhalt des Unterreiters „Analysen → Aussagen“ (#499) und ersetzt damit den Platzhalter;
+     * {@code null} stellt den Platzhalter wieder her. Der gewählte Reiter bleibt.
+     */
+    public void statementsTab(JComponent component) {
+        replace(statements, component, STATEMENTS_PLACEHOLDER);
+    }
+
+    /**
+     * Setzt den Inhalt des Unterreiters „Analysen → Graph“ (Wissensgraph, #499 F) und ersetzt damit den Platzhalter;
+     * {@code null} stellt den Platzhalter wieder her. Der gewählte Reiter bleibt.
+     */
+    public void knowledgeGraphTab(JComponent component) {
+        replace(graph, component, GRAPH_PLACEHOLDER);
+    }
+
+    private static void replace(JPanel slot, JComponent component, String placeholder) {
+        slot.removeAll();
+        slot.add(component == null ? placeholder(placeholder) : component, BorderLayout.CENTER);
+        slot.revalidate();
+        slot.repaint();
+    }
+
+    private static JComponent placeholder(String text) {
+        JLabel hint = Comic.muted(text);
+        hint.setHorizontalAlignment(JLabel.CENTER);
+        return hint;
     }
 
     /** Markiert die Stelle im Lesetext, auch wenn gerade ein anderer Reiter vorne liegt. */
@@ -1439,6 +1487,40 @@ public final class PageDetailPanel extends JPanel {
 
     PillTabs tabs() {
         return tabs;
+    }
+
+    /** Für Tests: die Unterreiter unter „Analysen“. */
+    PillTabs analysisTabs() {
+        return analysisTabs;
+    }
+
+    /** Für Tests: der Inhalt des Unterreiters „Graph“. */
+    JPanel knowledgeGraph() {
+        return graph;
+    }
+
+    /** Für Tests: der Inhalt des Unterreiters „Aussagen“. */
+    JPanel statements() {
+        return statements;
+    }
+
+    /**
+     * Wählt einen Reiter über seinen Namen; ein Unterreiter von „Analysen“ (z. B. „Absätze“) wählt zuerst den
+     * Unterreiter und dann den Hauptreiter „Analysen“.
+     */
+    void selectTab(String name) {
+        if (analysisTabs.button(name) != null) {
+            analysisTabs.select(name);
+            tabs.select(ANALYSES);
+        } else {
+            tabs.select(name);
+        }
+    }
+
+    /** Der sichtbare Reiter: unter „Analysen“ der gewählte Unterreiter, sonst der Hauptreiter. */
+    String selectedTab() {
+        String main = tabs.selected();
+        return ANALYSES.equals(main) ? analysisTabs.selected() : main;
     }
 
     /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */

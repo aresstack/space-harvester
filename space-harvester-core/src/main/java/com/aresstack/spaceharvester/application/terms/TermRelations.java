@@ -563,13 +563,17 @@ public class TermRelations {
             if (scope.global()) {
                 return caller != null;
             }
+            // Abgeschaltete Quellen nehmen an nichts teil, auch nicht mit schon abgelegten Beziehungen.
+            if (catalog.find(scope.sourceId()).isEmpty()) {
+                return false;
+            }
             return access.permits(caller, scope.spaceKey() == null ? ResourceScope.source(scope.sourceId())
                     : ResourceScope.space(scope.sourceId(), scope.spaceKey()), AccessKind.METADATA);
         }
 
         private boolean readable(RelationEvidence evidence) {
             PageKey key = new PageKey(evidence.sourceId(), evidence.pageId());
-            return pages.computeIfAbsent(key, page -> headers.apply(page)
+            return pages.computeIfAbsent(key, page -> catalog.find(page.sourceId()).isPresent() && headers.apply(page)
                     .map(header -> access.canRead(caller, page.sourceId(), header.metadata().partitionKey(),
                             page.pageId()))
                     .orElse(false));

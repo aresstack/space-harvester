@@ -681,7 +681,7 @@ public final class Harvester implements AutoCloseable {
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
                     clock);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
-                    termRelations::expansions);
+                    termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,

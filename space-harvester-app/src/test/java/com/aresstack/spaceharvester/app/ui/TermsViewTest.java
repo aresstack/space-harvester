@@ -31,16 +31,45 @@ class TermsViewTest {
     }
 
     @Test
-    void theButtonsOfTheTabsAreAcronymsIdentifiersRelationsGlossary() throws Exception {
+    void theTabsAreAcronymsIdentifiersRelationsSynonymsGlossaryGraph() throws Exception {
         List<String> names = new ArrayList<>();
+        List<String> order = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             TermsView view = new TermsView(null);
-            for (String name : List.of(TermsView.ACRONYMS, TermsView.IDENTIFIERS, TermsView.RELATIONS,
-                    TermsView.GLOSSARY)) {
+            order.addAll(view.tabs().names());
+            for (String name : order) {
                 names.add(view.tabs().button(name).getText());
             }
         });
-        assertThat(names).containsExactly("Akronyme", "Bezeichner", "Beziehungen", "Fachglossar");
+        assertThat(order).containsExactly(TermsView.ACRONYMS, TermsView.IDENTIFIERS, TermsView.RELATIONS,
+                TermsView.SYNONYMS, TermsView.GLOSSARY, TermsView.GRAPH);
+        assertThat(names).containsExactly("Akronyme", "Bezeichner", "Beziehungen", "Synonyme", "Fachglossar",
+                "Graph");
+    }
+
+    @Test
+    void synonymsReadAsTermSynonymKindOriginStatusAndOfferOnlyTheirKinds() throws Exception {
+        Relation synonym = new Relation("r2", "Sachbearbeitung", "SYNONYM", "Fallbearbeitung", "REJECTED",
+                "AI", 3);
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            RelationTab synonyms = new TermsView(null).synonyms();
+            synonyms.show(List.of(synonym), TermsView.NO_SYNONYMS);
+            javax.swing.JTable table = synonyms.directory().table();
+            for (int column = 0; column < table.getColumnCount(); column++) {
+                seen.add(table.getColumnName(column) + "=" + table.getValueAt(0, column));
+            }
+            java.awt.Component cell = table.prepareRenderer(table.getCellRenderer(0, 3), 0, 3);
+            seen.add(String.valueOf(((javax.swing.JLabel) cell).getHorizontalAlignment()
+                    == javax.swing.SwingConstants.LEFT));
+            seen.add(String.valueOf(TermsView.REJECTED_BACKGROUND.equals(cell.getBackground())));
+            seen.add(String.valueOf(table.getRowSorter() instanceof javax.swing.table.TableRowSorter));
+        });
+        assertThat(seen).containsExactly("Begriff=Sachbearbeitung", "Synonym=Fallbearbeitung", "Art=Synonym",
+                "Herkunft=KI", "Status=Abgelehnt", "true", "true", "true");
+        assertThat(new TermsView(null).synonyms().dialogTypes()).containsExactly(
+                com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM,
+                com.aresstack.spaceharvester.application.terms.RelationType.VARIANT);
     }
 
     @Test

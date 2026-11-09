@@ -60,7 +60,10 @@ public final class MainWindow implements AppContext.Navigator {
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
     /** Der dauerhafte Explorer links: Wissensquelle → Space → Seite → Unterseite. */
     private final Explorer explorer;
-    /** Linker Drawer: der Explorer, unter Wissensquellen verwalten stattdessen die Quellenkarten. */
+    /**
+     * Linker Drawer: der Explorer, unter Wissensquellen verwalten stattdessen die Quellenkarten, unter Einstellungen die
+     * Bereiche der Einstellungen untereinander.
+     */
     private final CardLayout sideCards = new CardLayout();
     private final JPanel side = new JPanel(sideCards);
     private static final String EXPLORER = "explorer";
@@ -91,6 +94,8 @@ public final class MainWindow implements AppContext.Navigator {
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     private AppContext.Section current = AppContext.Section.SEARCH;
+    /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
+    private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -110,6 +115,7 @@ public final class MainWindow implements AppContext.Navigator {
         searchView = new SearchView(context);
         settings = new SettingsView(context);
         terms = new TermsView(context);
+        settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         searchView.onClearScope(explorer::clearSelection);
@@ -241,6 +247,7 @@ public final class MainWindow implements AppContext.Navigator {
         side.setMinimumSize(new Dimension(0, 0));
         side.add(explorer.component(), EXPLORER);
         side.add(sources.drawer(), AppContext.Section.SOURCES.name());
+        side.add(settings.drawer(), AppContext.Section.SETTINGS.name());
         deck.setMinimumSize(new Dimension(320, 0));
         // Aktionszeile und Suche gehören zur Arbeitsfläche: sie reichen nicht unter den Explorer.
         JPanel work = new JPanel(new BorderLayout());
@@ -319,7 +326,7 @@ public final class MainWindow implements AppContext.Navigator {
         });
     }
 
-    /** Einstellungen mit dem Reiter „KI“. */
+    /** Einstellungen mit dem Bereich „KI-Dienst“. */
     public void showAiSettings() {
         show(AppContext.Section.SETTINGS);
         settings.showAi();
@@ -343,10 +350,15 @@ public final class MainWindow implements AppContext.Navigator {
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
         boolean changed = section != current;
+        if (changed && current != AppContext.Section.SETTINGS) {
+            beforeSettings = current;
+        }
         current = section;
-        // Keine zweite Leiste: Die Quellenkarten ersetzen im Drawer den Explorer, solange der Bereich offen ist.
-        sideCards.show(side, section == AppContext.Section.SOURCES ? section.name() : EXPLORER);
-        if (section == AppContext.Section.SOURCES && split != null && split.isLeftCollapsed()) {
+        // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
+        // solange der Bereich offen ist.
+        boolean ownDrawer = section == AppContext.Section.SOURCES || section == AppContext.Section.SETTINGS;
+        sideCards.show(side, ownDrawer ? section.name() : EXPLORER);
+        if (ownDrawer && split != null && split.isLeftCollapsed()) {
             split.openLeft();
         }
         View view = views.get(section);
@@ -552,6 +564,16 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */
     com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane split() {
         return split;
+    }
+
+    /** Für Tests: der linke Drawer (Explorer, Quellenkarten oder Einstellungs-Navigation). */
+    JPanel side() {
+        return side;
+    }
+
+    /** Für Tests: die Einstellungen. */
+    SettingsView settings() {
+        return settings;
     }
 
     /** Für Tests: der Explorer links. */

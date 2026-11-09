@@ -338,6 +338,10 @@ public final class RemoteAi {
         }
     };
 
+    /** Versuche für {@code GET /models}, bei nicht erreichbarem Dienst; Abstand 0,5 s, 1 s, 2 s … */
+    static final int CATALOG_ATTEMPTS = 4;
+    static final long CATALOG_BACKOFF_MILLIS = 500;
+
     /**
      * Die Modelle des Dienstes ({@code GET /models}).
      *
@@ -347,11 +351,24 @@ public final class RemoteAi {
         if (!settings.configured()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein KI-Dienst eingerichtet");
         }
-        List<ModelDescriptor> descriptors;
-        try {
-            descriptors = new KipitzModelCatalogAdapter(catalogConfig()).models();
-        } catch (ModelCatalogException e) {
-            throw catalogFailure(e);
+        List<ModelDescriptor> descriptors = null;
+        // Ein kurz nicht erreichbarer Dienst (Neustart, 5xx) wird mit wachsendem Abstand erneut gefragt; Ablehnung,
+        // Frist und unlesbare Antworten nicht, sie ändern sich durch Warten nicht.
+        for (int attempt = 0; descriptors == null; attempt++) {
+            try {
+                descriptors = new KipitzModelCatalogAdapter(catalogConfig()).models();
+            } catch (ModelCatalogException e) {
+                AiServiceException failure = catalogFailure(e, settings.apiKey() != null);
+                if (failure.reason() != AiServiceException.Reason.UNREACHABLE || attempt + 1 >= CATALOG_ATTEMPTS) {
+                    throw failure;
+                }
+                try {
+                    Thread.sleep(CATALOG_BACKOFF_MILLIS << attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw failure;
+                }
+            }
         }
         List<AiModel> models = new ArrayList<>(descriptors.size());
         for (ModelDescriptor descriptor : descriptors) {
@@ -479,11 +496,18 @@ public final class RemoteAi {
                 + (e.statusCode() > 0 ? " (HTTP " + e.statusCode() + ")" : ""));
     }
 
-    private static AiServiceException catalogFailure(ModelCatalogException e) {
+    /**
+     * @param withKey ob ein API-Key mitging; ohne ihn ist jede Abweisung (4xx) oder eine unlesbare Antwort (etwa die
+     *                Anmeldeseite eines Gateways) eine fehlende Anmeldung, keine unerwartete Antwort
+     */
+    static AiServiceException catalogFailure(ModelCatalogException e, boolean withKey) {
         String message = String.valueOf(e.getMessage());
         AiServiceException.Reason reason;
-        if (message.contains("HTTP 401") || message.contains("HTTP 403")) {
+        if (message.contains("HTTP 401") || message.contains("HTTP 403")
+                || !withKey && (message.matches(".*HTTP 4\\d\\d.*") || message.contains("nicht lesbar"))) {
             reason = AiServiceException.Reason.UNAUTHORIZED;
+        } else if (message.matches(".*HTTP 5\\d\\d.*")) {
+            reason = AiServiceException.Reason.UNREACHABLE;
         } else if (message.contains("Timeout")) {
             reason = AiServiceException.Reason.TIMEOUT;
         } else if (message.contains("nicht lesbar") || message.contains("HTTP ")) {

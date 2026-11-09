@@ -97,13 +97,16 @@ class ReaderPassageLinkTest {
         // Wer zuletzt die Leseansicht bzw. „Absätze“ gewählt hatte, landet wieder dort.
         for (String tab : List.of("Leseansicht", "Absätze")) {
             onEdt(() -> {
-                panel.tabs().select(tab);
+                panel.selectTab(tab);
                 view.openPassage("wiki", target.id());
                 return null;
             });
             awaitTrue(() -> onEdt(() -> panel.shownPage() != null && panel.passages().selectedIndex() == 1));
-            assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo(tab);
+            assertThat(onEdt(() -> panel.selectedTab())).isEqualTo(tab);
         }
+        // „Absätze“ liegt seit #499 unter dem Hauptreiter „Analysen“: der Absatz ist dort gewählt (Analysen → Absätze).
+        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Analysen");
+        assertThat(onEdt(() -> panel.analysisTabs().selected())).isEqualTo("Absätze");
 
         // FOUND, aber der Reiter kennt den Absatz nicht (anderes Ergebnis als die Auflösung): Hinweis statt Stille.
         PassageLookup found = workspace.passage(target.id());

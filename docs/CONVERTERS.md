@@ -52,7 +52,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## Analyse-Export (#359)
 
-`format=analysis` schreibt `analysis.json` (Schema `space-harvester/analysis-export/v1`, Converter `analysis/2`):
+`format=analysis` schreibt `analysis.json` (Schema `space-harvester/analysis-export/v1`, Converter `analysis/3`):
 alle Analysedaten der exportierten Seiten, getrennt von den Originaldaten. Am sinnvollsten auf Abruf über die
 Konvertierung eines fertigen Exports (`ExportConversions.convert(…, "analysis", …)`, App: Knopf „Analyse“); dann
 entsteht die Datei erst beim Klick.
@@ -74,13 +74,27 @@ entsteht die Datei erst beim Klick.
                           "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }],
               "images": [{ "attachmentId": "att1", "title": "plan.png", "mediaType": "image/png",
                            "sha256": "sha256:…", "describer": "openai-compatible-vision-v1", "modelVersion": "…",
-                           "createdAt": "…", "description": "…" }] }] }
+                           "createdAt": "…", "description": "…" }] }],
+  "attachments": [{ "pageId": "100", "attachmentId": "att7", "title": "bericht.pdf",
+                    "mediaType": "application/pdf", "sha256": "sha256:…", "status": "STORED", "reason": null,
+                    "text": "…" },
+                  { "pageId": "100", "attachmentId": "att8", "title": "film.mp4", "mediaType": "video/mp4",
+                    "sha256": null, "status": "EXCLUDED", "reason": "…", "text": null }] }
 ```
 
 `images` nennt jedes exportierte Bild der Seite (`assets.json`), für dessen Bytes das eingestellte Vision-Modell schon
 eine Beschreibung abgelegt hat, auch ein einzeln beschriebenes ohne Bildanalyse der Seite (ADR 0021). Über `sha256`
 gehört sie genau zu den exportierten Bytes; ohne beschaffte Bilder oder ohne Beschreibung bleibt die Liste leer.
 Beschrieben wird dabei nichts.
+
+`attachments` (ADR 0023, seit `analysis/3`, Schema additiv) steht auf oberster Ebene neben `pages`, nicht in den
+Seitenobjekten: je Dokument-Anhang (PDF, Office, Mail …) einer exportierten Seite in der Reihenfolge von
+`attachments.json` `pageId`, `attachmentId`, `title`, `mediaType`, `sha256` und der beim Beschaffen gelesene `text`.
+`text` gibt es nur für abgelegte Anhänge (`status` `STORED`) mit nicht leerem Text; sonst ist er `null`, und `status`
+und `reason` sagen warum wie in `attachments.json` (`text-unavailable` bei abgelegtem Anhang ohne lesbaren Text,
+`sha256` `null`, wenn nichts abgelegt ist). Anhänge von Seiten außerhalb des Exports fehlen; ohne beschaffte Anhänge
+ist die Liste leer. Die Texte liest der Converter je Eintrag erst beim Schreiben aus der Ablage, ohne sie zu sammeln;
+gelesen oder umgewandelt wird dabei nichts Neues.
 
 - **Zuordnung.** Je Seite `sourceId`, `spaceKey`, `pageId`, die exportierte `revision` und `rawSha256` wie in
   `pages.json`; `inputSha256` ist der Eingabe-Hash dieser Version, wie ihn die Prozessoren bekämen. Seiten linear in

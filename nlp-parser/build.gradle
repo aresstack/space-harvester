@@ -3,6 +3,8 @@
 // Das deutsche Parsermodell kommt fertig aus #99 (GitHub-Release, Version und SHA-256 fest); hier wird nie trainiert.
 plugins {
     id 'java-library'
+    // Testmodell (TestModel) auch für die Tests der Desktop-App (#499)
+    id 'java-test-fixtures'
 }
 
 description = 'Deutscher UD-Parser (MaltParser) und objektzentrierte Satzauswertung (#98).'
@@ -148,7 +150,7 @@ tasks.register('trainTestParserModel', JavaExec) {
     doLast {
         copy {
             from new File(work, 'maltparser-de-test.mco')
-            into 'src/test/resources/com/aresstack/spaceharvester/nlp/malt/test-model'
+            into 'src/testFixtures/resources/com/aresstack/spaceharvester/nlp/malt/test-model'
         }
     }
 }
