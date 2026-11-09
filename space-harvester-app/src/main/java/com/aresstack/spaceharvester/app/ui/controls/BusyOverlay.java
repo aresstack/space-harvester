@@ -72,6 +72,8 @@ public final class BusyOverlay extends JPanel {
     private final Stop stop = new Stop();
     private final JLabel caption = new JLabel();
     private final Timer timer = new Timer(TICK_MILLIS, e -> tick());
+    /** Das kurze rote Aufleuchten nach Esc; läuft höchstens einmal zugleich. */
+    private final Timer flash = new Timer(FLASH_MILLIS, e -> flashed());
     private boolean busy;
     private String text = "";
     private int phase;
@@ -124,7 +126,8 @@ public final class BusyOverlay extends JPanel {
         this.busy = busy;
         phase = 0;
         stop.hover = false;
-        stop.flash = false;
+        // Ein Esc, das noch aufleuchtet, galt der vorigen Arbeit: Es darf die nächste nicht abbrechen.
+        stopFlash();
         veil.setVisible(busy);
         updateTimer();
         revalidate();
@@ -159,6 +162,7 @@ public final class BusyOverlay extends JPanel {
     public void onCancel(Runnable action) {
         this.action = action;
         stop.hover = false;
+        stopFlash();
         stop.setVisible(action != null);
         veil.revalidate();
         veil.repaint();
@@ -192,13 +196,24 @@ public final class BusyOverlay extends JPanel {
         }
         stop.flash = true;
         stop.repaint();
-        Timer flash = new Timer(FLASH_MILLIS, e -> {
-            stop.flash = false;
-            stop.repaint();
-            cancel();
-        });
         flash.setRepeats(false);
         flash.start();
+    }
+
+    /** Ende des Aufleuchtens: jetzt der Abbruch, sofern dieselbe Arbeit noch läuft. */
+    private void flashed() {
+        if (!stop.flash) {
+            return;
+        }
+        stop.flash = false;
+        stop.repaint();
+        cancel();
+    }
+
+    private void stopFlash() {
+        flash.stop();
+        stop.flash = false;
+        stop.repaint();
     }
 
     /** Ob die Fläche gerade nach Esc rot aufleuchtet, für Tests. */

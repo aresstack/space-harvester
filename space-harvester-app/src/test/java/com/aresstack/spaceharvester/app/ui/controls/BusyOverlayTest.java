@@ -164,6 +164,26 @@ class BusyOverlayTest {
         SwingUtilities.invokeAndWait(() -> { });
     }
 
+    /** Ein Esc, das noch aufleuchtet, bricht keine Arbeit ab, die danach begonnen hat (Codex-Befund #561). */
+    @Test
+    void aPendingEscapeDoesNotCancelTheNextBusyWork() throws Exception {
+        AtomicInteger cancelled = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            BusyOverlay overlay = new BusyOverlay(new JPanel());
+            overlay.onCancel(cancelled::incrementAndGet);
+            overlay.setBusy(true);
+            overlay.flashAndCancel();
+            assertThat(overlay.flashing()).isTrue();
+            // Neue Suche: Schleier weg und wieder da, noch während des Aufleuchtens.
+            overlay.setBusy(false);
+            assertThat(overlay.flashing()).isFalse();
+            overlay.setBusy(true);
+        });
+        Thread.sleep(BusyOverlay.FLASH_MILLIS * 3);
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(cancelled.get()).as("das alte Esc trifft die neue Arbeit nicht").isZero();
+    }
+
     @Test
     void theAnimationRunsOnlyWhileShownAndBusy() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
