@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.app.ui.controls;
 
-import javax.swing.JButton;
+import javax.swing.AbstractAction;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.KeyStroke;
 import javax.swing.Timer;
 import javax.swing.UIManager;
 import java.awt.Color;
@@ -10,19 +12,27 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.LayoutManager;
 import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.util.Objects;
 
 /**
  * Ein drehender Punktering über einem Inhalt, der noch nicht fertig ist („das kommt noch, bitte warten“): Der Inhalt
- * wird abgeblendet, bleibt aber sichtbar und bedienbar, denn der Schleier lässt die Maus durch. In der Mitte stehen
- * wahlweise ein Text oder ein Knopf „Abbrechen“ ({@link #onCancel}), der die Maus als Einziger fängt. Portiert aus
+ * wird abgeblendet, bleibt aber sichtbar und bedienbar, denn der Schleier lässt die Maus durch. Mit {@link #onCancel}
+ * sitzt in der Mitte des Rings eine runde, neutral gedämpfte Fläche mit der Taste „Esc“ als Beschriftung: Handcursor
+ * und Tooltip (nur die Beschreibung), unter der Maus leuchtet sie kräftig rot, ein Klick bricht ab, die Taste Esc
+ * ebenso (mit kurzem roten Aufleuchten), solange der Schleier zu sehen ist. Nur
+ * diese Fläche fängt die Maus. Ohne Abbrechen bleibt die Mitte leer. Der Ring ist überall gleich groß. Portiert aus
  * {@code BusyOverlay} des cam-tool (Qt): zwölf Punkte an festen Plätzen, nur ihre Helligkeit wandert alle 90 ms um
  * eine Stelle weiter, so liest sich der Ring als drehend.
  *
@@ -39,34 +49,60 @@ public final class BusyOverlay extends JPanel {
     private static final double DOT_RADIUS = 3.2;
     /** Kleinster Ringradius, auch wenn der Platz fehlt. */
     private static final double MIN_RADIUS = 14.0;
-    /** Ringradius, wenn Platz ist; wächst mit dem Text bzw. Knopf in der Mitte. */
+    /** Ringradius, wenn Platz ist; überall derselbe. */
     private static final double NORMAL_RADIUS = 30.0;
     /** Deckkraft des Schleiers über dem Inhalt (215 von 255). */
     static final int VEIL_ALPHA = 215;
-    public static final String CANCEL = "Abbrechen";
+    /** Abstand zwischen Ring und Text darunter. */
+    private static final int GAP = 10;
+    /** Durchmesser der Stopp-Fläche: füllt die Mitte des Rings, berührt die Punkte nicht. */
+    private static final int STOP_DIAMETER = (int) Math.round(2 * (NORMAL_RADIUS - DOT_RADIUS - 5));
+    /** Neutral gedämpfte Fläche in Ruhe (ein Grauton wie die verblassten Punkte) und leuchtendes Rot unter der Maus. */
+    static final Color STOP_MUTED = new Color(128, 132, 140, 150);
+    static final Color STOP_LIT = new Color(224, 32, 32);
+    public static final String CANCEL = "Abbrechen. Was schon gefunden ist, bleibt.";
+    /** Beschriftung der Fläche: die Taste selbst. */
+    public static final String STOP = "Esc";
+    /** So lange leuchtet die Fläche nach einem Druck auf Esc rot, bevor der Abbruch läuft. */
+    static final int FLASH_MILLIS = 200;
 
     private final JComponent content;
     private final Veil veil = new Veil();
-    private final JButton cancel = new JButton(CANCEL);
+    private final Ring ring = new Ring();
+    private final Stop stop = new Stop();
+    private final JLabel caption = new JLabel();
     private final Timer timer = new Timer(TICK_MILLIS, e -> tick());
+    /** Das kurze rote Aufleuchten nach Esc; läuft höchstens einmal zugleich. */
+    private final Timer flash = new Timer(FLASH_MILLIS, e -> flashed());
     private boolean busy;
     private String text = "";
     private int phase;
     private Color highlight;
     private Color veilColor;
+    private Runnable action;
 
     /** Legt den Schleier über {@code content}; anfangs nicht beschäftigt. */
     public BusyOverlay(JComponent content) {
         this.content = Objects.requireNonNull(content, "content");
         setOpaque(false);
         setLayout(new Stack());
-        cancel.setVisible(false);
-        cancel.setFocusable(false);
-        cancel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        cancel.setToolTipText("Nicht weiter warten; was schon da ist, bleibt");
-        cancel.getAccessibleContext().setAccessibleName(CANCEL);
-        veil.add(cancel);
+        caption.setVisible(false);
+        caption.setHorizontalAlignment(JLabel.CENTER);
+        stop.setVisible(false);
+        veil.add(stop);
+        veil.add(ring);
+        veil.add(caption);
         veil.setVisible(false);
+        // Esc bricht ab, solange der Schleier zu sehen ist: Swing löst Bindungen des Fensters nur für sichtbare
+        // Komponenten aus, und der Schleier ist nur bei busy sichtbar.
+        veil.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0, false),
+                "busyCancel");
+        veil.getActionMap().put("busyCancel", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                flashAndCancel();
+            }
+        });
         // Der Schleier zuerst: Index 0 liegt oben.
         add(veil);
         add(content);
@@ -89,6 +125,9 @@ public final class BusyOverlay extends JPanel {
         }
         this.busy = busy;
         phase = 0;
+        stop.hover = false;
+        // Ein Esc, das noch aufleuchtet, galt der vorigen Arbeit: Es darf die nächste nicht abbrechen.
+        stopFlash();
         veil.setVisible(busy);
         updateTimer();
         revalidate();
@@ -99,13 +138,15 @@ public final class BusyOverlay extends JPanel {
         return busy;
     }
 
-    /** Text in der Mitte des Rings; leer für keinen. Mit Knopf steht der Text darüber. */
+    /** Text unter dem Ring; leer für keinen. */
     public void setText(String text) {
         String next = text == null ? "" : text;
         if (next.equals(this.text)) {
             return;
         }
         this.text = next;
+        caption.setText(next);
+        caption.setVisible(!next.isEmpty());
         veil.revalidate();
         veil.repaint();
     }
@@ -115,29 +156,74 @@ public final class BusyOverlay extends JPanel {
     }
 
     /**
-     * Zeigt in der Mitte des Rings den Knopf „Abbrechen“, der {@code action} auslöst; {@code null} nimmt ihn weg. Nur
-     * der Knopf fängt die Maus, der übrige Schleier lässt sie zum Inhalt durch.
+     * Zeigt in der Mitte des Rings die Esc-Fläche, die {@code action} auslöst (Klick oder Esc); {@code null}
+     * nimmt sie weg. Nur die Fläche fängt die Maus, der übrige Schleier lässt sie zum Inhalt durch.
      */
     public void onCancel(Runnable action) {
-        for (java.awt.event.ActionListener listener : cancel.getActionListeners()) {
-            cancel.removeActionListener(listener);
-        }
-        cancel.setVisible(action != null);
-        if (action != null) {
-            cancel.addActionListener(e -> action.run());
-        }
+        this.action = action;
+        stop.hover = false;
+        stopFlash();
+        stop.setVisible(action != null);
         veil.revalidate();
         veil.repaint();
     }
 
-    /** Der Knopf in der Mitte, etwa für Tests oder einen anderen Text. */
-    public JButton cancelButton() {
-        return cancel;
+    /** Der Ring, etwa für Tests; er fängt nie die Maus. */
+    public JComponent ringControl() {
+        return ring;
     }
 
-    /** Ob der Knopf „Abbrechen“ im Ring gezeigt wird. */
+    /** Die Stopp-Fläche in der Mitte des Rings, etwa für Tests. */
+    public JComponent cancelControl() {
+        return stop;
+    }
+
+    /** Löst „Abbrechen“ aus, als wäre die Fläche geklickt; ohne Abbrechen oder ohne Schleier geschieht nichts. */
+    public void cancel() {
+        Runnable run = action;
+        if (run != null && busy) {
+            run.run();
+        }
+    }
+
+    /**
+     * Esc: Die Fläche leuchtet einmal kurz rot auf, wie unter der Maus, dann läuft der Abbruch. Ein zweiter Druck
+     * während des Aufleuchtens ändert nichts.
+     */
+    void flashAndCancel() {
+        if (action == null || !busy || stop.flash) {
+            return;
+        }
+        stop.flash = true;
+        stop.repaint();
+        flash.setRepeats(false);
+        flash.start();
+    }
+
+    /** Ende des Aufleuchtens: jetzt der Abbruch, sofern dieselbe Arbeit noch läuft. */
+    private void flashed() {
+        if (!stop.flash) {
+            return;
+        }
+        stop.flash = false;
+        stop.repaint();
+        cancel();
+    }
+
+    private void stopFlash() {
+        flash.stop();
+        stop.flash = false;
+        stop.repaint();
+    }
+
+    /** Ob die Fläche gerade nach Esc rot aufleuchtet, für Tests. */
+    boolean flashing() {
+        return stop.flash;
+    }
+
+    /** Ob die Stopp-Fläche im Ring gezeigt wird. */
     public boolean cancelShown() {
-        return cancel.isVisible();
+        return stop.isVisible();
     }
 
     /** Farbe der Punkte; ohne Angabe die Akzentfarbe der Oberfläche. */
@@ -161,6 +247,11 @@ public final class BusyOverlay extends JPanel {
         return timer.isRunning();
     }
 
+    /** Ob die Stopp-Fläche gerade unter der Maus liegt, für Tests. */
+    boolean hovering() {
+        return stop.hover;
+    }
+
     private void updateTimer() {
         if (busy && isShowing()) {
             if (!timer.isRunning()) {
@@ -173,7 +264,7 @@ public final class BusyOverlay extends JPanel {
 
     private void tick() {
         phase = (phase + 1) % DOTS;
-        veil.repaint();
+        ring.repaint();
     }
 
     private Color highlight() {
@@ -192,33 +283,60 @@ public final class BusyOverlay extends JPanel {
         return ui == null ? Color.LIGHT_GRAY : ui;
     }
 
+    private Color ink() {
+        Color ui = UIManager.getColor("Label.foreground");
+        return ui == null ? Color.BLACK : ui;
+    }
+
     private static Color withAlpha(Color color, int alpha) {
         return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
     }
 
-    /** Radius des Rings: um Text bzw. Knopf herum, wenn der Platz reicht; nie unter {@link #MIN_RADIUS}. */
-    private double radius(FontMetrics metrics, int width, int height) {
-        double wanted = metrics.stringWidth(text) / 2.0 + 20.0;
-        if (cancel.isVisible()) {
-            Dimension button = cancel.getPreferredSize();
-            wanted = Math.max(wanted, Math.hypot(button.width / 2.0 + 14.0, button.height / 2.0 + 14.0));
-        }
+    /** Radius des Rings: {@link #NORMAL_RADIUS}, wenn der Platz reicht; nie unter {@link #MIN_RADIUS}. */
+    private static double radius(int width, int height) {
         double fits = Math.min(width, height) / 2.0 - 6.0;
-        return Math.max(MIN_RADIUS, Math.min(Math.max(NORMAL_RADIUS, wanted), fits));
+        return Math.max(MIN_RADIUS, Math.min(NORMAL_RADIUS, fits));
     }
 
-    /** Der Schleier: zeichnet Abblendung, Ring und Text; fängt die Maus nur im Knopf. */
+    /** Der Schleier: blendet ab und trägt Ring, Text und Link; fängt die Maus nur in Ring und Link. */
     private final class Veil extends JComponent {
 
         Veil() {
             setOpaque(false);
-            setLayout(new Centered());
+            setLayout(new Column());
         }
 
-        /** Nur der Knopf gehört zum Schleier; sonst gehen Mausereignisse an den Inhalt darunter. */
+        /** Nur die Stopp-Fläche gehört zum Schleier; sonst gehen Mausereignisse an den Inhalt darunter. */
         @Override
         public boolean contains(int x, int y) {
-            return cancel.isVisible() && cancel.getBounds().contains(x, y);
+            return stop.isVisible() && stop.contains(x - stop.getX(), y - stop.getY());
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                // Abblenden statt verbergen: Was da ist, bleibt lesbar, nur sichtbar noch nicht fertig.
+                g.setColor(withAlpha(veilColor(), VEIL_ALPHA));
+                g.fillRect(0, 0, getWidth(), getHeight());
+            } finally {
+                g.dispose();
+            }
+        }
+    }
+
+    /** Der Punktering; reine Anzeige, fängt nie die Maus. */
+    private final class Ring extends JComponent {
+
+        Ring() {
+            setOpaque(false);
+            setFocusable(false);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int side = (int) Math.ceil(2 * (NORMAL_RADIUS + DOT_RADIUS)) + 4;
+            return new Dimension(side, side);
         }
 
         @Override
@@ -226,17 +344,9 @@ public final class BusyOverlay extends JPanel {
             Graphics2D g = (Graphics2D) graphics.create();
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                int width = getWidth();
-                int height = getHeight();
-                // Abblenden statt verbergen: Was da ist, bleibt lesbar, nur sichtbar noch nicht fertig.
-                g.setColor(withAlpha(veilColor(), VEIL_ALPHA));
-                g.fillRect(0, 0, width, height);
-
-                FontMetrics metrics = g.getFontMetrics(getFont());
-                double radius = radius(metrics, width, height);
-                double centerX = width / 2.0;
-                double centerY = height / 2.0;
+                double radius = radius(getWidth(), getHeight());
+                double centerX = getWidth() / 2.0;
+                double centerY = getHeight() / 2.0;
                 Color base = highlight();
                 for (int i = 0; i < DOTS; i++) {
                     // Der Punkt an der Phase ist am hellsten; die dahinter verblassen, so dreht sich der Ring.
@@ -249,26 +359,108 @@ public final class BusyOverlay extends JPanel {
                     g.setColor(withAlpha(base, (int) Math.round(alpha * 255.0)));
                     g.fill(new Ellipse2D.Double(x - DOT_RADIUS, y - DOT_RADIUS, 2 * DOT_RADIUS, 2 * DOT_RADIUS));
                 }
-
-                if (!text.isEmpty()) {
-                    g.setFont(getFont());
-                    Color ink = UIManager.getColor("Label.foreground");
-                    g.setColor(ink == null ? Color.BLACK : ink);
-                    int x = (int) Math.round(centerX - metrics.stringWidth(text) / 2.0);
-                    // Mit Knopf steht der Text über ihm, sonst genau in der Mitte.
-                    double baseline = cancel.isVisible()
-                            ? cancel.getY() - metrics.getDescent() - 6
-                            : centerY - metrics.getHeight() / 2.0 + metrics.getAscent();
-                    g.drawString(text, x, (int) Math.round(baseline));
-                }
             } finally {
                 g.dispose();
             }
         }
     }
 
-    /** Der Knopf genau in der Mitte des Schleiers, in seiner Wunschgröße. */
-    private static final class Centered implements LayoutManager {
+    /**
+     * Die Stopp-Fläche: ein neutral gedämpfter Kreis mit „Esc“ in Weiß, der die Mitte des Rings füllt; erst unter der
+     * Maus leuchtend rot. Rund auch für die Maus: Nur innerhalb des Kreises fängt sie.
+     */
+    private final class Stop extends JComponent {
+
+        boolean hover;
+        /** Kurz rot nach Esc. */
+        boolean flash;
+
+        Stop() {
+            setOpaque(false);
+            setFocusable(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setToolTipText(CANCEL);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    hover = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hover = false;
+                    repaint();
+                }
+
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    if (e.getButton() == MouseEvent.BUTTON1) {
+                        cancel();
+                    }
+                }
+            });
+        }
+
+        /** Ein {@link JComponent} hat von sich aus keinen Zugänglichkeitskontext; hier heißt die Fläche „Abbrechen“. */
+        @Override
+        public javax.accessibility.AccessibleContext getAccessibleContext() {
+            if (accessibleContext == null) {
+                accessibleContext = new AccessibleJComponent() {
+                    @Override
+                    public javax.accessibility.AccessibleRole getAccessibleRole() {
+                        return javax.accessibility.AccessibleRole.PUSH_BUTTON;
+                    }
+
+                    @Override
+                    public String getAccessibleName() {
+                        return CANCEL;
+                    }
+                };
+            }
+            return accessibleContext;
+        }
+
+        @Override
+        public boolean contains(int x, int y) {
+            double dx = x - getWidth() / 2.0;
+            double dy = y - getHeight() / 2.0;
+            return Math.hypot(dx, dy) <= STOP_DIAMETER / 2.0;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return new Dimension(STOP_DIAMETER, STOP_DIAMETER);
+        }
+
+        private Font font() {
+            Font base = getFont() == null ? UIManager.getFont("Label.font") : getFont();
+            return base.deriveFont(Font.BOLD, 10.5f);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                double x = (getWidth() - STOP_DIAMETER) / 2.0;
+                double y = (getHeight() - STOP_DIAMETER) / 2.0;
+                g.setColor(hover || flash ? STOP_LIT : STOP_MUTED);
+                g.fill(new Ellipse2D.Double(x, y, STOP_DIAMETER, STOP_DIAMETER));
+                g.setFont(font());
+                FontMetrics metrics = g.getFontMetrics();
+                g.setColor(Color.WHITE);
+                g.drawString(STOP, (getWidth() - metrics.stringWidth(STOP)) / 2,
+                        (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent());
+            } finally {
+                g.dispose();
+            }
+        }
+    }
+
+    /** Ring in der Mitte des Schleiers, die Stopp-Fläche in seiner Mitte; Text darunter, zentriert. */
+    private final class Column implements LayoutManager {
 
         @Override
         public void addLayoutComponent(String name, Component component) {
@@ -290,10 +482,17 @@ public final class BusyOverlay extends JPanel {
 
         @Override
         public void layoutContainer(Container parent) {
-            for (Component child : parent.getComponents()) {
-                Dimension size = child.getPreferredSize();
-                child.setBounds((parent.getWidth() - size.width) / 2, (parent.getHeight() - size.height) / 2,
-                        size.width, size.height);
+            Dimension size = ring.getPreferredSize();
+            int x = (parent.getWidth() - size.width) / 2;
+            int y = (parent.getHeight() - size.height) / 2;
+            ring.setBounds(x, y, size.width, size.height);
+            Dimension disc = stop.getPreferredSize();
+            stop.setBounds((parent.getWidth() - disc.width) / 2, (parent.getHeight() - disc.height) / 2, disc.width,
+                    disc.height);
+            if (caption.isVisible()) {
+                Dimension wanted = caption.getPreferredSize();
+                caption.setBounds((parent.getWidth() - wanted.width) / 2, y + size.height + GAP, wanted.width,
+                        wanted.height);
             }
         }
     }

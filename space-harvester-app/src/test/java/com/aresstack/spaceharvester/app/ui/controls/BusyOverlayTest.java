@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.swing.JPanel;
@@ -15,8 +17,9 @@ import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
 /**
- * Der Ring liegt über dem Inhalt, blendet ihn ab, lässt die Maus durch und fängt sie nur im Knopf „Abbrechen“; die
- * Animation läuft nur, solange der Schleier gezeigt wird.
+ * Der Ring liegt über dem Inhalt, blendet ihn ab und lässt die Maus durch; mit Abbrechen sitzt in seiner Mitte die
+ * Esc-Fläche (Handcursor, Tooltip, Klick, leuchtet rot unter der Maus), und Esc bricht ab. Die Animation läuft
+ * nur, solange der Schleier gezeigt wird.
  */
 class BusyOverlayTest {
 
@@ -50,33 +53,135 @@ class BusyOverlayTest {
     }
 
     @Test
-    void theMouseGoesThroughTheVeilExceptOnTheCancelButton() throws Exception {
+    void withoutCancelTheMouseGoesThroughEverywhereAndTheMiddleStaysEmpty() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JTextArea content = new JTextArea("Inhalt");
             BusyOverlay overlay = new BusyOverlay(content);
+            overlay.setVeilColor(new Color(240, 240, 240));
             layout(overlay, 300, 200);
             overlay.setBusy(true);
             layout(overlay, 300, 200);
 
-            assertThat(deepest(overlay, 10, 10)).as("ohne Knopf: alles geht an den Inhalt").isSameAs(content);
+            assertThat(deepest(overlay, 10, 10)).isSameAs(content);
+            assertThat(deepest(overlay, 150, 100)).as("auch mitten im Ring geht die Maus durch").isSameAs(content);
             assertThat(overlay.cancelShown()).isFalse();
+            Color middle = pixel(overlay, 150, 100);
+            assertThat(middle.getRed()).as("Mitte leer: nur der Schleier").isBetween(238, 243);
+        });
+    }
 
+    @Test
+    void withCancelOnlyTheEscDiscCatchesTheMouseAndGlowsRedUnderIt() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea content = new JTextArea("Inhalt");
+            BusyOverlay overlay = new BusyOverlay(content);
+            overlay.setHighlight(Color.BLUE);
+            overlay.setVeilColor(new Color(240, 240, 240));
             AtomicInteger cancelled = new AtomicInteger();
             overlay.onCancel(cancelled::incrementAndGet);
+            overlay.setBusy(true);
             layout(overlay, 300, 200);
-            assertThat(overlay.cancelShown()).isTrue();
-            Point middle = new Point(150, 100);
-            assertThat(overlay.cancelButton().getBounds().contains(middle)).as("der Knopf sitzt in der Mitte")
-                    .isTrue();
-            assertThat(deepest(overlay, middle.x, middle.y)).isSameAs(overlay.cancelButton());
-            assertThat(deepest(overlay, 10, 10)).as("neben dem Knopf weiter der Inhalt").isSameAs(content);
-            overlay.cancelButton().doClick(0);
-            assertThat(cancelled.get()).isEqualTo(1);
 
+            Component stop = overlay.cancelControl();
+            Point middle = new Point(150, 100);
+            assertThat(stop.getBounds().contains(middle)).as("die Fläche sitzt in der Mitte").isTrue();
+            assertThat(deepest(overlay, middle.x, middle.y)).isSameAs(stop);
+            assertThat(stop.getCursor().getType()).isEqualTo(Cursor.HAND_CURSOR);
+            assertThat(overlay.cancelControl().getToolTipText()).isEqualTo(BusyOverlay.CANCEL);
+            // Rund: in der Ecke des Rechtecks geht die Maus schon durch, der Ring selbst fängt nie.
+            assertThat(deepest(overlay, stop.getX() + 1, stop.getY() + 1)).isSameAs(content);
+            assertThat(deepest(overlay, 150, 100 - 30)).as("auf einem Punkt des Rings").isSameAs(content);
+            assertThat(deepest(overlay, 10, 10)).isSameAs(content);
+
+            // Neutral gedämpft in Ruhe (kein Rot), leuchtend rot erst unter der Maus; der Text ist weiß.
+            Color muted = pixel(overlay, 150, 100 - 12);
+            assertThat(Math.abs(muted.getRed() - muted.getGreen())).as("ein Grauton").isLessThan(12);
+            stop.dispatchEvent(new MouseEvent(stop, MouseEvent.MOUSE_ENTERED, 0, 0, 10, 10, 0, false));
+            assertThat(overlay.hovering()).isTrue();
+            Color lit = pixel(overlay, 150, 100 - 12);
+            assertThat(lit.getRed()).isGreaterThan(lit.getGreen() + 100);
+            stop.dispatchEvent(new MouseEvent(stop, MouseEvent.MOUSE_EXITED, 0, 0, 10, 10, 0, false));
+            assertThat(overlay.hovering()).isFalse();
+
+            overlay.cancel();
+            assertThat(cancelled.get()).isEqualTo(1);
+            overlay.setBusy(false);
+            overlay.cancel();
+            assertThat(cancelled.get()).as("ohne Schleier kein Abbrechen").isEqualTo(1);
+
+            overlay.setBusy(true);
             overlay.onCancel(null);
+            layout(overlay, 300, 200);
             assertThat(overlay.cancelShown()).isFalse();
             assertThat(deepest(overlay, middle.x, middle.y)).isSameAs(content);
+            overlay.cancel();
+            assertThat(cancelled.get()).isEqualTo(1);
         });
+    }
+
+    /** Eine Größe überall: Abbrechen macht den Ring nicht größer. */
+    @Test
+    void theRingHasTheSameSizeWithAndWithoutCancel() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            BusyOverlay overlay = new BusyOverlay(new JPanel());
+            overlay.setVeilColor(new Color(240, 240, 240));
+            overlay.setHighlight(Color.BLUE);
+            overlay.setBusy(true);
+            layout(overlay, 300, 200);
+            Color plain = pixel(overlay, 150, 100 - 30);
+            java.awt.Rectangle before = overlay.ringControl().getBounds();
+            overlay.onCancel(() -> { });
+            layout(overlay, 300, 200);
+            assertThat(overlay.ringControl().getBounds()).isEqualTo(before);
+            Color withCancel = pixel(overlay, 150, 100 - 30);
+            assertThat(withCancel).as("oberster Punkt an derselben Stelle").isEqualTo(plain);
+            assertThat(withCancel.getBlue()).isGreaterThan(withCancel.getRed() + 40);
+        });
+    }
+
+    @Test
+    void escapeIsBoundOnlyWhileTheVeilShows() throws Exception {
+        AtomicInteger cancelled = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            BusyOverlay overlay = new BusyOverlay(new JPanel());
+            overlay.onCancel(cancelled::incrementAndGet);
+            javax.swing.JComponent veil = (javax.swing.JComponent) overlay.getComponent(0);
+            Object key = veil.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+                    .get(javax.swing.KeyStroke.getKeyStroke("ESCAPE"));
+            assertThat(key).isNotNull();
+            assertThat(veil.isVisible()).as("nicht beschäftigt: Schleier und Esc-Bindung inaktiv").isFalse();
+            overlay.setBusy(true);
+            assertThat(veil.isVisible()).isTrue();
+            veil.getActionMap().get(key).actionPerformed(null);
+            // Erst leuchtet die Fläche kurz rot auf, dann läuft der Abbruch.
+            assertThat(overlay.flashing()).isTrue();
+            assertThat(cancelled.get()).isZero();
+        });
+        for (int i = 0; i < 50 && cancelled.get() == 0; i++) {
+            Thread.sleep(20);
+        }
+        assertThat(cancelled.get()).isEqualTo(1);
+        SwingUtilities.invokeAndWait(() -> { });
+    }
+
+    /** Ein Esc, das noch aufleuchtet, bricht keine Arbeit ab, die danach begonnen hat (Codex-Befund #561). */
+    @Test
+    void aPendingEscapeDoesNotCancelTheNextBusyWork() throws Exception {
+        AtomicInteger cancelled = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            BusyOverlay overlay = new BusyOverlay(new JPanel());
+            overlay.onCancel(cancelled::incrementAndGet);
+            overlay.setBusy(true);
+            overlay.flashAndCancel();
+            assertThat(overlay.flashing()).isTrue();
+            // Neue Suche: Schleier weg und wieder da, noch während des Aufleuchtens.
+            overlay.setBusy(false);
+            assertThat(overlay.flashing()).isFalse();
+            overlay.setBusy(true);
+        });
+        Thread.sleep(BusyOverlay.FLASH_MILLIS * 3);
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(cancelled.get()).as("das alte Esc trifft die neue Arbeit nicht").isZero();
     }
 
     @Test
@@ -97,6 +202,7 @@ class BusyOverlayTest {
         component.setSize(new Dimension(width, height));
         component.doLayout();
         for (Component child : ((java.awt.Container) component).getComponents()) {
+            child.setSize(width, height);
             child.doLayout();
         }
     }

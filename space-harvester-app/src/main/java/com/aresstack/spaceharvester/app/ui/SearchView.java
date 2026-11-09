@@ -103,8 +103,8 @@ public final class SearchView implements View {
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
     /**
-     * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit „Abbrechen“ in der Mitte: Die Treffer, die
-     * schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
+     * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
+     * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
      */
     final BusyOverlay overlay = new BusyOverlay(Comic.scroll(table));
     /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
@@ -950,7 +950,7 @@ public final class SearchView implements View {
     }
 
     /**
-     * „Abbrechen“ im Ring über der Liste: Was auch immer gerade läuft, hört auf, und die Treffer, die schon da sind,
+     * „Stopp“ im Ring über der Liste: Was auch immer gerade läuft, hört auf, und die Treffer, die schon da sind,
      * bleiben stehen und bedienbar. Eine semantische Suche beendet der Core selbst ({@code completed(CANCELLED)}); eine
      * laufende Schlagwortsuche wird unterbrochen, ihr spätes Ergebnis verfällt; danach endet das Laden in den Cache.
      */
