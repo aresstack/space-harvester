@@ -611,7 +611,7 @@ public class RelevanceSearch {
         } catch (EmbeddingUnavailableException e) {
             // Kein Anfragetext im Log.
             LOG.log(System.Logger.Level.WARNING, "Anfrage nicht eingebettet ({0})", e.getClass().getName());
-            throw new SemanticSearchUnavailableException("Der Embedding-Dienst ist gerade nicht verfügbar");
+            throw new SemanticSearchUnavailableException("Der Embedding-Dienst ist gerade nicht verfügbar", e);
         }
     }
 

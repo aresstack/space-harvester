@@ -193,6 +193,28 @@ class SearchOrchestratorTest {
     }
 
     @Test
+    void aServiceFailureArrivingAfterTheVariantTimeoutReplacesTheTimeout() throws Exception {
+        search.onCall(ORIGINAL, () -> {
+            try {
+                TimeUnit.MILLISECONDS.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException("weg",
+                    new com.aresstack.spaceharvester.ai.AiServiceException(
+                            com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "HTTP 401"));
+        });
+        SearchProfile profile = SearchProfile.defaults().withBudget(Duration.ofSeconds(5), 12)
+                .withExecution(new SearchExecutionPolicy(1, 1, Duration.ofMillis(50), 0));
+
+        ProgressiveResult result = orchestrator(List.of(), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.reason()).isEqualTo(Completion.FAILED);
+        assertThat(result.failure()).isEqualTo(com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED);
+    }
+
+    @Test
     void cancellingKeepsWhatWasFoundAndStopsTheLoading() throws Exception {
         CountDownLatch never = new CountDownLatch(1);
         search.put(ORIGINAL, new KeywordSearch.Results("wiki", List.of(), List.of(), null, false, 1,

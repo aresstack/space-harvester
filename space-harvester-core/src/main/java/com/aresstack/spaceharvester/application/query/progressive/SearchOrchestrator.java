@@ -473,6 +473,12 @@ public final class SearchOrchestrator implements AutoCloseable {
                 iterator.remove();
                 if (!future.isCompletedExceptionally()) {
                     release(entry.getKey(), future.join());
+                } else {
+                    // Eine späte Meldung des KI-Dienstes ersetzt die vorläufige Frist.
+                    future.exceptionally(failure -> {
+                        noteFailure(failure);
+                        return null;
+                    });
                 }
             }
         }

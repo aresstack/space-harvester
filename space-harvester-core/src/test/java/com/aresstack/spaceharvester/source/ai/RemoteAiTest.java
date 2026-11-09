@@ -126,7 +126,9 @@ class RemoteAiTest {
                 .hasMessageNotContaining(KEY);
         assertThatThrownBy(() -> ai.embeddings().embed(List.of("vertraulicher Text")))
                 .isInstanceOf(EmbeddingUnavailableException.class)
-                .hasMessageNotContaining(KEY).hasMessageNotContaining("vertraulich");
+                .hasMessageNotContaining(KEY).hasMessageNotContaining("vertraulich")
+                .cause().isInstanceOfSatisfying(AiServiceException.class,
+                        e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.UNAUTHORIZED));
     }
 
     @Test
