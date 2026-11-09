@@ -705,7 +705,8 @@ public final class Harvester implements AutoCloseable {
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
                     .inventoryLog(inventoryLog)
-                    .build(), sourceId -> catalog.configs().stream().anyMatch(config -> config.id().equals(sourceId)));
+                    .build(), sourceId -> catalog.config(sourceId).isPresent(),
+                    sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);

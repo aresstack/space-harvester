@@ -722,7 +722,7 @@ public final class Workspace {
     /** Die jüngsten Diagnoseereignisse aller sichtbaren Aufträge dieser App, neueste zuerst. */
     public List<JobEvent> recentEvents(int limit) {
         return harvester.recentEvents(limit).stream()
-                .filter(event -> access.permits(caller, ResourceScope.space(event.sourceId(), event.partitionKey()),
+                .filter(event -> access.permits(caller, scope(event.sourceId(), event.partitionKey()),
                         event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC))
                 .toList();
     }
@@ -848,9 +848,14 @@ public final class Workspace {
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {
-        if (!access.permits(caller, ResourceScope.space(status.sourceId(), status.partitionKey()), kind)) {
+        if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {
             throw new UnknownJobException(status.id());
         }
+    }
+
+    /** Space eines Auftrags oder, ohne Space (etwa „Daten bereinigen“), die ganze Quelle. */
+    private static ResourceScope scope(String sourceId, String partitionKey) {
+        return partitionKey == null ? ResourceScope.source(sourceId) : ResourceScope.space(sourceId, partitionKey);
     }
 
     private void ownExport(String exportId) {

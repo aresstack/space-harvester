@@ -66,17 +66,38 @@ public final class SourceDataPurge {
         }
     }
 
+    /**
+     * Hält Arbeit an, die außerhalb der Aufträge Daten der Quelle ablegt (Beschaffung, Hintergrundfüllung), bis die
+     * Rückgabe geschlossen wird; wartet auf laufende Abrufe der Quelle.
+     */
+    @FunctionalInterface
+    public interface Quiesce {
+
+        Quiesce NONE = sourceId -> () -> { };
+
+        AutoCloseable quiesce(String sourceId) throws Exception;
+    }
+
     private final Jobs jobs;
     private final List<Store> stores;
     private final Predicate<String> configured;
+    private final Quiesce quiesce;
 
     /**
      * @param configured ob eine Quelle eingerichtet ist, eingeschaltet oder abgeschaltet
      */
     public SourceDataPurge(Jobs jobs, List<Store> stores, Predicate<String> configured) {
+        this(jobs, stores, configured, Quiesce.NONE);
+    }
+
+    /**
+     * @param quiesce hält während des Löschens Beschaffung und Hintergrundfüllung der Quelle an
+     */
+    public SourceDataPurge(Jobs jobs, List<Store> stores, Predicate<String> configured, Quiesce quiesce) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.stores = List.copyOf(stores);
         this.configured = Objects.requireNonNull(configured, "configured");
+        this.quiesce = Objects.requireNonNull(quiesce, "quiesce");
     }
 
     /** Die Ablagen in der Reihenfolge, in der sie geleert werden. */
@@ -107,7 +128,11 @@ public final class SourceDataPurge {
                         + JOB_STOP_TIMEOUT.toSeconds() + " s noch; nichts gelöscht");
             }
             context.checkpoint();
-            Outcome outcome = run(sourceId, context);
+            context.phase(COMPONENT, "Beschaffung der Quelle anhalten");
+            Outcome outcome;
+            try (AutoCloseable paused = quiesce.quiesce(sourceId)) {
+                outcome = run(sourceId, context);
+            }
             if (!outcome.complete()) {
                 throw new JobFailedException(INCOMPLETE, "Nicht geleert: " + String.join(", ", outcome.failed()));
             }
@@ -124,7 +149,28 @@ public final class SourceDataPurge {
             LOG.log(System.Logger.Level.WARNING, "Aufträge der Quelle {0} laufen nach {1} s noch",
                     sourceId, JOB_STOP_TIMEOUT.toSeconds());
         }
-        return run(sourceId, null);
+        AutoCloseable paused = null;
+        try {
+            paused = quiesce.quiesce(sourceId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            // Nur das Anhalten scheiterte; gelöscht wird trotzdem.
+            LOG.log(System.Logger.Level.WARNING, "Beschaffung der Quelle {0} nicht angehalten ({1})", sourceId,
+                    e.getClass().getName());
+        }
+        try {
+            return run(sourceId, null);
+        } finally {
+            if (paused != null) {
+                try {
+                    paused.close();
+                } catch (Exception e) {
+                    LOG.log(System.Logger.Level.WARNING, "Beschaffung der Quelle {0} nicht freigegeben ({1})",
+                            sourceId, e.getClass().getName());
+                }
+            }
+        }
     }
 
     private Outcome run(String sourceId, JobContext context) {
@@ -133,6 +179,8 @@ public final class SourceDataPurge {
         int done = 0;
         for (Store store : stores) {
             if (context != null) {
+                // Abbruch und Laufzeitgrenze gelten zwischen den Ablagen; die schon geleerten bleiben leer.
+                context.checkpoint();
                 context.phase(COMPONENT, store.name());
             }
             try {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.facts.FactEditStore;
@@ -38,7 +39,8 @@ class SourceDataConfiguration {
                                     ObjectProvider<AssetStore> assets, ObjectProvider<ExportArtifactWriter> exports,
                                     ObjectProvider<TermRelations> relations,
                                     ObjectProvider<FileResolutionCache> resolutions,
-                                    ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory) {
+                                    ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
+                                    ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
         SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable());
         cache.ifAvailable(stores::pageCache);
@@ -53,6 +55,9 @@ class SourceDataConfiguration {
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {
             stores.inventoryLog(log);
         }
-        return new SourceDataPurge(jobs, stores.build(), sourceId -> catalog.config(sourceId).isPresent());
+        AcquisitionScheduler scheduler = acquisition.getIfAvailable();
+        return new SourceDataPurge(jobs, stores.build(), sourceId -> catalog.config(sourceId).isPresent(),
+                scheduler == null ? SourceDataPurge.Quiesce.NONE
+                        : sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
     }
 }
