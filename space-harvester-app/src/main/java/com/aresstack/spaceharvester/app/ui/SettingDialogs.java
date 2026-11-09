@@ -103,6 +103,7 @@ final class SettingDialogs {
         username.setText(current.username() == null ? "" : current.username());
         JPasswordField secret = new JPasswordField(24);
         Comic.style(secret);
+        PasswordReveal.install(secret);
         Rows rows = new Rows();
         rows.add("Anmeldung", auth, null);
         rows.add("Benutzer", username, null);
@@ -697,6 +698,7 @@ final class SettingDialogs {
         user.setText(current.proxyUser() == null ? "" : current.proxyUser());
         JPasswordField password = new JPasswordField(24);
         Comic.style(password);
+        PasswordReveal.install(password);
         JTextArea script = Comic.code();
         script.setEditable(true);
         script.setRows(5);

@@ -100,6 +100,7 @@ public final class SignInSlot extends JPanel {
         codeLabel.setFont(Comic.regular(13f));
         codeLabel.setLabelFor(codeField);
         codeField.setBorder(ComicBorder.roundedBorder(palette, 4));
+        PasswordReveal.install(codeField);
         row.add(codeLabel);
         row.add(Box.createHorizontalStrut(8));
         row.add(codeField);
