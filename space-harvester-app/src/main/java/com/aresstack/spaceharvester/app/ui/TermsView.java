@@ -11,16 +11,20 @@ import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
+import javax.swing.SwingUtilities;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.application.terms.RelationOrigin;
+import com.aresstack.spaceharvester.application.terms.RelationType;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -57,7 +61,10 @@ public final class TermsView implements View {
     private final Directory acronyms = new Directory("Globales Akronymverzeichnis",
             new String[]{"Akronym", "Bedeutung", "Fundstellen"});
     private final Directory identifiers = new Directory("Globales Bezeichnerverzeichnis",
-            new String[]{"Bezeichner", "Schreibweisen", "Fundstellen"});
+            new String[]{"Bezeichner", "Fundstellen"});
+    static final String SHOW_OCCURRENCES = "Fundstellen zeigen";
+    private final ComposerButton occurrences = Comic.button("Fundstellen …", SHOW_OCCURRENCES
+            + " (auch per Doppelklick auf eine Zeile)");
     private final Directory relations = new Directory("Beziehungen zwischen Begriffen",
             new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"});
     static final String CONFIRM = "Bestätigen";
@@ -68,12 +75,27 @@ public final class TermsView implements View {
             + "abgelehnt sichtbar und kommt nicht wieder");
     private final ComposerButton remove = Comic.button(REMOVE, "Eine manuelle Beziehung ganz löschen, jede andere "
             + "ablehnen");
+    static final String UNDO = "Rückgängig";
+    static final String NEW_RELATION = "Neue Beziehung …";
+    private final ComposerButton create = Comic.button(NEW_RELATION, "Eine eigene Beziehung zwischen zwei Begriffen "
+            + "anlegen; sie gilt sofort als bestätigt");
     private List<Relation> shownRelations = List.of();
+    /** Beziehungen der Liste nach Kennung, für Auswahl und Darstellung. */
+    private final java.util.Map<String, Relation> byId = new java.util.HashMap<>();
+    /** Stand im Core je Kennung, damit Rückgängig eine entfernte Beziehung wiederherstellen kann. */
+    private final java.util.Map<String, TermRelation> loaded = new java.util.HashMap<>();
+    /** Eben entfernte Beziehungen: bleiben durchgestrichen stehen, bis Reiter oder Bereich wechseln. */
+    private final java.util.Map<String, Relation> removed = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, TermRelation> removedCore = new java.util.HashMap<>();
+    /** Nach dem Neuladen wieder zu wählende Beziehung. */
+    private String keepSelected;
     private java.util.function.BiConsumer<String, Relation> onReview = (action, relation) -> { };
 
     private final AppContext context;
     private int acronymRequest;
     private int identifierRequest;
+    private IdentifierPager identifierPager;
+    private boolean identifierLoading;
     private int relationRequest;
 
     /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
@@ -99,6 +121,31 @@ public final class TermsView implements View {
             review.add(button);
         }
         relations.actions(review);
+        JPanel identifierActions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+        identifierActions.setOpaque(false);
+        identifierActions.add(occurrences);
+        occurrences.setEnabled(false);
+        identifiers.actions(identifierActions);
+        identifiers.table().getSelectionModel().addListSelectionListener(e ->
+                occurrences.setEnabled(context != null && identifiers.table().getSelectedRow() >= 0));
+        occurrences.addActionListener(e -> showOccurrences());
+        identifiers.table().addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && identifiers.table().rowAtPoint(e.getPoint()) >= 0) {
+                    showOccurrences();
+                }
+            }
+        });
+        relations.sortable();
+        RelationRenderer renderer = new RelationRenderer();
+        for (int c = 0; c < relations.table().getColumnCount(); c++) {
+            relations.table().getColumnModel().getColumn(c).setCellRenderer(renderer);
+        }
+        relations.middle(create);
+        create.addActionListener(e -> askNewRelation());
+        create.setEnabled(context != null);
+        tabs.onSelect(name -> forgetRemoved());
         relations.table().getSelectionModel().addListSelectionListener(e -> selectionChanged());
         confirm.addActionListener(e -> review(CONFIRM));
         reject.addActionListener(e -> review(REJECT));
@@ -106,6 +153,8 @@ public final class TermsView implements View {
         if (context != null) {
             acronyms.onSearch(q -> loadAcronyms());
             identifiers.onSearch(q -> loadIdentifiers());
+            identifiers.letters(letter -> loadIdentifiers());
+            identifiers.onScrolledToEnd(this::moreIdentifiers);
             relations.onSearch(q -> loadRelations(null));
             onReview = this::reviewInCore;
         }
@@ -116,7 +165,19 @@ public final class TermsView implements View {
         if (context != null) {
             loadAcronyms();
             loadIdentifiers();
+            removed.clear();
+            removedCore.clear();
             loadRelations(null);
+        }
+    }
+
+    /** Ein Wechsel von Reiter oder Bereich besiegelt das Entfernen: die durchgestrichenen Zeilen verschwinden. */
+    private void forgetRemoved() {
+        if (!removed.isEmpty()) {
+            removed.clear();
+            removedCore.clear();
+            showRelations(shownRelations.stream().filter(r -> byId.containsKey(r.id()) && loaded.containsKey(r.id()))
+                    .toList(), NO_RELATIONS);
         }
     }
 
@@ -142,11 +203,20 @@ public final class TermsView implements View {
             TermRelations.RelationList open = runtime.workspace().termRelations(term, null, RELATION_LIMIT);
             TermRelations.RelationList rejected = runtime.workspace().termRelations(term, ReviewStatus.REJECTED,
                     RELATION_LIMIT);
-            open.relations().forEach(r -> all.add(Relation.of(r)));
-            rejected.relations().forEach(r -> all.add(Relation.of(r)));
-            return new LoadedRelations(all, open.nextCursor() != null || rejected.nextCursor() != null);
+            java.util.Map<String, TermRelation> core = new java.util.HashMap<>();
+            for (TermRelation r : open.relations()) {
+                all.add(Relation.of(r));
+                core.put(r.id(), r);
+            }
+            for (TermRelation r : rejected.relations()) {
+                all.add(Relation.of(r));
+                core.put(r.id(), r);
+            }
+            return new LoadedRelations(all, core, open.nextCursor() != null || rejected.nextCursor() != null);
         }, found -> {
             if (request == relationRequest) {
+                loaded.clear();
+                loaded.putAll(found.core());
                 showRelations(found.list(), q.isEmpty() ? NO_RELATIONS : NO_MATCH);
                 // Der Core liefert je Status höchstens RELATION_LIMIT; mehr nur mit Hinweis, nicht still gekürzt.
                 String message = relationsMessage(notice, found.more());
@@ -166,7 +236,7 @@ public final class TermsView implements View {
         return notice == null ? more ? MORE_RELATIONS : null : more ? notice + " " + MORE_RELATIONS : notice;
     }
 
-    private record LoadedRelations(List<Relation> list, boolean more) {
+    private record LoadedRelations(List<Relation> list, java.util.Map<String, TermRelation> core, boolean more) {
     }
 
     /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
@@ -175,27 +245,196 @@ public final class TermsView implements View {
         if (runtime == null) {
             return;
         }
+        TermRelation before = removed.containsKey(relation.id()) ? removedCore.get(relation.id())
+                : loaded.get(relation.id());
+        keepSelected = relation.id();
         Background.run(() -> {
             switch (action) {
                 case CONFIRM -> runtime.workspace().confirmRelation(relation.id(), relation.revision());
                 case REJECT -> runtime.workspace().rejectRelation(relation.id(), relation.revision());
+                case UNDO -> undoRemove(runtime.workspace(), relation, before);
                 default -> runtime.workspace().removeRelation(relation.id(), relation.revision());
             }
             return relation;
-        }, done -> loadRelations(null), failure -> loadRelations(failure instanceof RelationConflictException
+        }, done -> {
+            if (REMOVE.equals(action)) {
+                removed.put(relation.id(), relation);
+                if (before != null) {
+                    removedCore.put(relation.id(), before);
+                }
+            } else if (UNDO.equals(action)) {
+                removed.remove(relation.id());
+                removedCore.remove(relation.id());
+            }
+            loadRelations(null);
+        }, failure -> loadRelations(failure instanceof RelationConflictException
                 ? CONFLICT : action + " nicht möglich: " + failure.getMessage()));
+    }
+
+    /**
+     * Stellt den Stand vor dem Entfernen wieder her: Eine manuelle Beziehung hat der Core gelöscht, sie entsteht neu
+     * (gleicher Schlüssel, gleiche Kennung); eine automatische hat er abgelehnt, die Ablehnung wird aufgehoben.
+     */
+    private static void undoRemove(com.aresstack.spaceharvester.app.runtime.Workspace workspace, Relation relation,
+                                   TermRelation before) {
+        if (before == null) {
+            throw new IllegalStateException("der frühere Stand ist nicht bekannt");
+        }
+        if (before.origin() == RelationOrigin.MANUAL) {
+            TermRelation again = workspace.addRelation(new TermRelations.NewRelation(before.fromTerm(),
+                    before.toTerm(), before.type(), before.scope(), before.note(), before.evidence()));
+            if (before.status() == ReviewStatus.REJECTED) {
+                workspace.rejectRelation(again.id(), again.revision());
+            }
+        } else if (before.status() != ReviewStatus.REJECTED) {
+            workspace.restoreRelation(relation.id());
+            if (before.status() == ReviewStatus.CONFIRMED) {
+                workspace.confirmRelation(relation.id());
+            }
+        }
+    }
+
+    /** Dialog „Neue Beziehung“: Begriff, Art, Zu Begriff. */
+    private void askNewRelation() {
+        javax.swing.JDialog dialog = Dialogs.dialog(root, "Neue Beziehung");
+        javax.swing.JTextField from = Comic.field(20);
+        javax.swing.JTextField to = Comic.field(20);
+        javax.swing.JComboBox<String> type = Comic.combo();
+        for (RelationType t : RelationType.values()) {
+            type.addItem(Relation.typeText(t.name()));
+        }
+        JLabel problem = Comic.muted(" ");
+        JPanel form = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
+        form.setOpaque(false);
+        form.add(Comic.caption("Begriff"));
+        form.add(from);
+        form.add(Comic.caption("Beziehung"));
+        form.add(type);
+        form.add(Comic.caption("Zu Begriff"));
+        form.add(to);
+        form.add(problem);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        ComposerButton ok = Comic.primary("Anlegen", "Die Beziehung anlegen und bestätigen");
+        cancel.addActionListener(e -> dialog.dispose());
+        ok.addActionListener(e -> {
+            String invalid = invalidNewRelation(from.getText(), to.getText());
+            if (invalid != null) {
+                problem.setText(invalid);
+                return;
+            }
+            dialog.dispose();
+            createRelation(from.getText(), RelationType.values()[type.getSelectedIndex()], to.getText());
+        });
+        Dialogs.show(dialog, "Neue Beziehung", form, cancel, ok);
+    }
+
+    /** {@code null}, wenn die Eingaben taugen, sonst der Grund in Worten. */
+    static String invalidNewRelation(String from, String to) {
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            return "Beide Begriffe angeben.";
+        }
+        if (from.trim().equalsIgnoreCase(to.trim())) {
+            return "Die Begriffe müssen sich unterscheiden.";
+        }
+        return null;
+    }
+
+    /** Legt die Beziehung im Core an (manuell, bestätigt, global) und wählt sie danach in der Liste. */
+    void createRelation(String from, RelationType type, String to) {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().addRelation(new TermRelations.NewRelation(from.trim(), to.trim(),
+                type, null, null, null)), created -> {
+            // Neu angelegt ist sie nicht mehr entfernt, auch wenn sie eben noch durchgestrichen dastand.
+            removed.remove(created.id());
+            removedCore.remove(created.id());
+            keepSelected = created.id();
+            loadRelations(null);
+        }, failure -> relations.message("Anlegen nicht möglich: " + failure.getMessage()));
+    }
+
+    /** Grau hinterlegt: abgelehnte; zusätzlich durchgestrichen: eben entfernte. Alle Spalten linksbündig. */
+    private final class RelationRenderer extends DefaultTableCellRenderer {
+
+        RelationRenderer() {
+            setHorizontalAlignment(SwingConstants.LEFT);
+        }
+
+        @Override
+        public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
+                                                                boolean focus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, selected, focus, row, column);
+            Relation relation = relationAtView(row);
+            boolean gone = relation != null && removed.containsKey(relation.id());
+            boolean grey = gone || relation != null && "REJECTED".equals(relation.status());
+            if (!selected) {
+                setBackground(grey ? REJECTED_BACKGROUND : table.getBackground());
+                setForeground(gone ? Comic.MUTED : table.getForeground());
+            }
+            java.awt.Font font = table.getFont();
+            if (gone) {
+                java.util.Map<java.awt.font.TextAttribute, Object> attributes = new java.util.HashMap<>();
+                attributes.put(java.awt.font.TextAttribute.STRIKETHROUGH, java.awt.font.TextAttribute.STRIKETHROUGH_ON);
+                font = font.deriveFont(attributes);
+            }
+            setFont(font);
+            return this;
+        }
+    }
+
+    static final java.awt.Color REJECTED_BACKGROUND = new java.awt.Color(0xECEDEF);
+
+    /** Ob die Beziehung eben entfernt wurde und noch durchgestrichen dasteht. */
+    boolean isRemoved(String id) {
+        return removed.containsKey(id);
+    }
+
+    ComposerButton createButton() {
+        return create;
     }
 
     /** Zeigt Beziehungen; {@code hint} steht da, solange es keine gibt. */
     void showRelations(List<Relation> list, String hint) {
-        shownRelations = List.copyOf(list);
-        List<List<String>> rows = new ArrayList<>(list.size());
-        for (Relation relation : list) {
+        Relation current = selectedRelation();
+        String select = keepSelected != null ? keepSelected : current == null ? null : current.id();
+        keepSelected = null;
+        List<Relation> merged = new ArrayList<>(list);
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        list.forEach(r -> ids.add(r.id()));
+        // Entfernte bleiben stehen, bis Reiter oder Bereich wechseln, damit Rückgängig möglich bleibt.
+        removed.values().stream().filter(r -> !ids.contains(r.id())).forEach(merged::add);
+        shownRelations = List.copyOf(merged);
+        byId.clear();
+        List<List<String>> rows = new ArrayList<>(merged.size());
+        for (Relation relation : merged) {
+            byId.put(relation.id(), relation);
+            // Die Kennung steht unsichtbar hinter den Spalten.
             rows.add(List.of(relation.fromTerm(), Relation.typeText(relation.type()), relation.toTerm(),
-                    Relation.statusText(relation.status()), Relation.originText(relation.origin())));
+                    Relation.statusText(relation.status()), Relation.originText(relation.origin()), relation.id()));
         }
         relations.show(rows, hint);
+        if (select != null) {
+            JTable table = relations.table();
+            for (int row = 0; row < table.getRowCount(); row++) {
+                Relation relation = relationAtView(row);
+                if (relation != null && relation.id().equals(select)) {
+                    table.setRowSelectionInterval(row, row);
+                    table.scrollRectToVisible(table.getCellRect(row, 0, true));
+                    break;
+                }
+            }
+        }
         selectionChanged();
+    }
+
+    private Relation relationAtView(int row) {
+        if (row < 0 || row >= relations.table().getRowCount()) {
+            return null;
+        }
+        List<String> cells = relations.visibleRow(relations.table().convertRowIndexToModel(row));
+        return cells.size() > 5 ? byId.get(cells.get(5)) : null;
     }
 
     /** {@code listener} bekommt Aktion ({@link #CONFIRM}, {@link #REJECT}, {@link #REMOVE}) und Beziehung. */
@@ -206,35 +445,23 @@ public final class TermsView implements View {
     /** Die Schaltflächen passen zum Stand der gewählten Beziehung; Rechte prüft der Core. */
     private void selectionChanged() {
         Relation selected = selectedRelation();
-        confirm.setEnabled(selected != null && !"CONFIRMED".equals(selected.status()));
-        reject.setEnabled(selected != null && !"REJECTED".equals(selected.status()));
+        boolean gone = selected != null && removed.containsKey(selected.id());
+        confirm.setEnabled(selected != null && !gone && !"CONFIRMED".equals(selected.status()));
+        reject.setEnabled(selected != null && !gone && !"REJECTED".equals(selected.status()));
         remove.setEnabled(selected != null);
+        remove.setText(gone ? UNDO : REMOVE);
+        remove.setToolTipText(gone ? "Das Entfernen zurücknehmen" : "Eine manuelle Beziehung ganz löschen, jede "
+                + "andere ablehnen");
     }
 
     private Relation selectedRelation() {
-        int row = relations.table().getSelectedRow();
-        if (row < 0) {
-            return null;
-        }
-        int model = relations.table().convertRowIndexToModel(row);
-        List<String> cells = relations.visibleRow(model);
-        // Die Tabelle filtert nur ohne Core-Suche; die Zuordnung geht über die gezeigten Zellen.
-        for (Relation relation : shownRelations) {
-            // Stand und Herkunft gehören dazu: dasselbe Paar kann abgelehnt und neu vorgeschlagen dastehen.
-            if (cells.get(0).equals(relation.fromTerm()) && cells.get(2).equals(relation.toTerm())
-                    && cells.get(1).equals(Relation.typeText(relation.type()))
-                    && cells.get(3).equals(Relation.statusText(relation.status()))
-                    && cells.get(4).equals(Relation.originText(relation.origin()))) {
-                return relation;
-            }
-        }
-        return null;
+        return relationAtView(relations.table().getSelectedRow());
     }
 
     private void review(String action) {
         Relation selected = selectedRelation();
         if (selected != null) {
-            onReview.accept(action, selected);
+            onReview.accept(REMOVE.equals(action) && removed.containsKey(selected.id()) ? UNDO : action, selected);
         }
     }
 
@@ -249,20 +476,116 @@ public final class TermsView implements View {
         });
     }
 
-    /** Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen. */
+    /**
+     * Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen: seitenweise je {@link #LIMIT}, die
+     * nächste Seite lädt beim Scrollen ans Ende; ein gewählter Anfangsbuchstabe grenzt zusätzlich ein.
+     */
     private void loadIdentifiers() {
         int request = ++identifierRequest;
         String q = identifiers.query();
-        load(identifiers, () -> {
-            List<TermQueries.TermSummary> all = new ArrayList<>(query(TermKind.NOUN, q));
-            all.addAll(query(TermKind.IDENTIFIER, q));
-            all.sort(Comparator.comparing(TermQueries.TermSummary::normalized));
-            return all.size() > LIMIT ? all.subList(0, LIMIT) : all;
-        }, rows -> {
+        String letter = identifiers.letter();
+        if (context.runtime() == null) {
+            identifiers.show(List.of(), NO_RUNTIME);
+            return;
+        }
+        identifierPager = new IdentifierPager((kind, cursor) -> context.runtime().workspace().terms(
+                new TermQueries.TermSearch(null, null, kind, q.isEmpty() ? null : q, false, LIMIT, cursor,
+                        letter)));
+        identifierLoading = false;
+        moreIdentifiers(request, true, q.isEmpty() && letter == null ? EMPTY : NO_MATCH);
+    }
+
+    /** Die nächste Seite Bezeichner, wenn noch welche da sind und gerade keine lädt. */
+    private void moreIdentifiers() {
+        IdentifierPager pager = identifierPager;
+        if (pager != null && !identifierLoading && pager.hasMore()) {
+            moreIdentifiers(identifierRequest, false, NO_MATCH);
+        }
+    }
+
+    private void moreIdentifiers(int request, boolean first, String emptyHint) {
+        IdentifierPager pager = identifierPager;
+        identifierLoading = true;
+        Background.run(() -> pager.next(LIMIT), terms -> {
+            if (request != identifierRequest) {
+                return;
+            }
+            identifierLoading = false;
+            if (first) {
+                identifiers.show(identifierRows(terms), emptyHint);
+            } else {
+                identifiers.append(identifierRows(terms));
+            }
+            identifiers.more(pager.hasMore());
+        }, failure -> {
             if (request == identifierRequest) {
-                identifiers.show(rows, q.isEmpty() ? EMPTY : NO_MATCH);
+                identifierLoading = false;
+                identifiers.message("Begriffe nicht lesbar: " + failure.getMessage());
             }
         });
+    }
+
+    /**
+     * Führt die Seiten der Arten Nomen und Kennung alphabetisch zusammen, jede mit eigenem Cursor des Core.
+     * Den Anfangsbuchstaben grenzt der Core ein ({@code TermSearch.startsWith}).
+     */
+    static final class IdentifierPager {
+
+        interface Fetch {
+            TermQueries.TermList fetch(TermKind kind, String cursor) throws Exception;
+        }
+
+        private final Fetch fetch;
+        private final List<Stream> streams = List.of(new Stream(TermKind.NOUN), new Stream(TermKind.IDENTIFIER));
+
+        IdentifierPager(Fetch fetch) {
+            this.fetch = fetch;
+        }
+
+        synchronized List<TermQueries.TermSummary> next(int count) throws Exception {
+            List<TermQueries.TermSummary> page = new ArrayList<>(count);
+            while (page.size() < count) {
+                Stream smallest = null;
+                for (Stream stream : streams) {
+                    stream.fill();
+                    if (!stream.buffer.isEmpty() && (smallest == null || stream.buffer.peekFirst().normalized()
+                            .compareTo(smallest.buffer.peekFirst().normalized()) < 0)) {
+                        smallest = stream;
+                    }
+                }
+                if (smallest == null) {
+                    break;
+                }
+                page.add(smallest.buffer.pollFirst());
+            }
+            return page;
+        }
+
+        synchronized boolean hasMore() {
+            return streams.stream().anyMatch(stream -> !stream.buffer.isEmpty() || !stream.done);
+        }
+
+        private final class Stream {
+            private final TermKind kind;
+            private final java.util.ArrayDeque<TermQueries.TermSummary> buffer = new java.util.ArrayDeque<>();
+            private String cursor;
+            private boolean done;
+
+            Stream(TermKind kind) {
+                this.kind = kind;
+            }
+
+            void fill() throws Exception {
+                while (buffer.isEmpty() && !done) {
+                    TermQueries.TermList list = fetch.fetch(kind, cursor);
+                    for (TermQueries.TermSummary term : list.terms()) {
+                        buffer.addLast(term);
+                    }
+                    cursor = list.nextCursor();
+                    done = cursor == null;
+                }
+            }
+        }
     }
 
     private List<TermQueries.TermSummary> query(TermKind kind, String q) {
@@ -290,6 +613,95 @@ public final class TermsView implements View {
                     String.valueOf(term.occurrences())));
         }
         return rows;
+    }
+
+    /** Bezeichner und Zahl der Fundstellen; Suchwert und Art stehen unsichtbar dahinter, für die Fundstellen. */
+    static List<List<String>> identifierRows(List<TermQueries.TermSummary> terms) {
+        List<List<String>> rows = new ArrayList<>(terms.size());
+        for (TermQueries.TermSummary term : terms) {
+            rows.add(List.of(term.term(), String.valueOf(term.occurrences()), term.normalized(), term.kind().name()));
+        }
+        return rows;
+    }
+
+    /** Höchstens so viele Fundstellen zeigt der Dialog. */
+    static final int OCCURRENCE_LIMIT = TermQueries.MAX_LIMIT;
+
+    /** Fundstellen des gewählten Bezeichners im Dialog; ein Doppelklick dort öffnet die Seite im Leser. */
+    private void showOccurrences() {
+        int row = identifiers.table().getSelectedRow();
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (row < 0 || runtime == null) {
+            return;
+        }
+        List<String> cells = identifiers.visibleRow(identifiers.table().convertRowIndexToModel(row));
+        if (cells.size() < 4) {
+            return;
+        }
+        String term = cells.get(0);
+        TermKind kind = TermKind.valueOf(cells.get(3));
+        Background.run(() -> runtime.workspace().occurrences(new TermQueries.OccurrenceSearch(cells.get(2), kind,
+                null, null, OCCURRENCE_LIMIT, null, 80)), found -> {
+            Directory list = new Directory("Fundstellen von „" + term + "“", new String[]{"Seite", "Quelle · Space",
+                    "Kontext"});
+            List<TermQueries.Occurrence> shown = found.occurrences();
+            list.show(indexedOccurrenceRows(shown), "Keine sichtbare Fundstelle.");
+            if (found.nextCursor() != null) {
+                list.message("Gezeigt werden die ersten " + OCCURRENCE_LIMIT + " Fundstellen.");
+            }
+            javax.swing.JDialog dialog = Dialogs.dialog(root, "Fundstellen");
+            list.table().addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    int at = list.table().rowAtPoint(e.getPoint());
+                    if (e.getClickCount() == 2 && at >= 0) {
+                        TermQueries.Occurrence hit = shown.get(occurrenceIndex(
+                                list.visibleRow(list.table().convertRowIndexToModel(at))));
+                        dialog.dispose();
+                        context.navigator().openPage(hit.sourceId(), hit.pageId());
+                    }
+                }
+            });
+            list.setPreferredSize(new java.awt.Dimension(720, 380));
+            ComposerButton close = Comic.button("Schließen", null);
+            close.addActionListener(e -> dialog.dispose());
+            Dialogs.show(dialog, "Fundstellen – Doppelklick öffnet die Seite", list, close);
+        }, failure -> identifiers.message("Fundstellen nicht lesbar: " + failure.getMessage()));
+    }
+
+    /** Wie {@link #occurrenceRows}, dazu unsichtbar die Stelle in der Liste, damit Filtern die Zuordnung hält. */
+    static List<List<String>> indexedOccurrenceRows(List<TermQueries.Occurrence> occurrences) {
+        List<List<String>> rows = new ArrayList<>();
+        List<List<String>> plain = occurrenceRows(occurrences);
+        for (int i = 0; i < plain.size(); i++) {
+            List<String> row = new ArrayList<>(plain.get(i));
+            row.add(String.valueOf(i));
+            rows.add(List.copyOf(row));
+        }
+        return rows;
+    }
+
+    /** Stelle der Fundstelle einer gezeigten Zeile in der ungefilterten Liste. */
+    static int occurrenceIndex(List<String> cells) {
+        return Integer.parseInt(cells.get(3));
+    }
+
+    /** Seite, Quelle · Space und Kontext je Fundstelle. */
+    static List<List<String>> occurrenceRows(List<TermQueries.Occurrence> occurrences) {
+        List<List<String>> rows = new ArrayList<>(occurrences.size());
+        for (TermQueries.Occurrence o : occurrences) {
+            String title = o.title() == null || o.title().isBlank() ? o.pageId() : o.title();
+            String where = o.spaceKey() == null ? o.sourceId() : o.sourceId() + " · " + o.spaceKey();
+            TermQueries.Snippet s = o.snippet();
+            String context = s == null ? "–" : (s.truncatedBefore() ? "…" : "") + s.before() + s.match() + s.after()
+                    + (s.truncatedAfter() ? "…" : "");
+            rows.add(List.of(title, where, context.replaceAll("\\s+", " ").trim()));
+        }
+        return rows;
+    }
+
+    ComposerButton occurrencesButton() {
+        return occurrences;
     }
 
     @Override
@@ -331,6 +743,12 @@ public final class TermsView implements View {
         private final JLabel hint = Comic.muted(" ");
         private Consumer<String> onSearch;
         private final JPanel south = new JPanel(new BorderLayout(0, 6));
+        private final JPanel head = new JPanel(new BorderLayout(12, 0));
+        private javax.swing.JScrollPane scroll;
+        private final java.util.Map<String, ComposerToggleButton> letterButtons = new java.util.LinkedHashMap<>();
+        private String letter;
+        private boolean more;
+        private Runnable onScrolledToEnd;
 
         Directory(String title, String[] columns) {
             super(new BorderLayout(0, 8));
@@ -347,13 +765,24 @@ public final class TermsView implements View {
             lines.setOpaque(false);
             lines.add(heading, BorderLayout.NORTH);
             lines.add(Comic.muted("Alle berechtigten, aktuell indexierten Seiten"), BorderLayout.SOUTH);
-            JPanel head = new JPanel(new BorderLayout(12, 0));
             head.setOpaque(false);
             head.add(lines, BorderLayout.CENTER);
             head.add(search, BorderLayout.EAST);
 
             add(head, BorderLayout.NORTH);
-            add(Comic.scroll(table), BorderLayout.CENTER);
+            scroll = Comic.scroll(table);
+            scroll.getVerticalScrollBar().addAdjustmentListener(e -> {
+                if (!e.getValueIsAdjusting()) {
+                    nearEnd();
+                }
+            });
+            scroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    nearEnd();
+                }
+            });
+            add(scroll, BorderLayout.CENTER);
             south.setOpaque(false);
             south.add(hint, BorderLayout.NORTH);
             add(south, BorderLayout.SOUTH);
@@ -380,6 +809,130 @@ public final class TermsView implements View {
             onSearch = listener;
         }
 
+        /**
+         * Buchstabenleiste A–Z in zwei Reihen mittig zwischen Überschrift und Suchfeld; ein zweiter Klick auf den
+         * gewählten Buchstaben oder „Alle“ hebt die Auswahl auf. {@code listener} erhält den Buchstaben oder
+         * {@code null}.
+         */
+        void letters(Consumer<String> listener) {
+            JPanel rows = new JPanel(new java.awt.GridLayout(2, 14, 2, 2));
+            rows.setOpaque(false);
+            List<String> labels = new ArrayList<>();
+            labels.add(ALL);
+            for (char c = 'A'; c <= 'Z'; c++) {
+                labels.add(String.valueOf(c));
+            }
+            for (String label : labels) {
+                String tooltip = label.equals(ALL) ? "Alle Anfangsbuchstaben"
+                        : "Nur Einträge mit „" + label + "“ am Anfang";
+                ComposerToggleButton button = new ComposerToggleButton(null, label, tooltip);
+                button.setSelected(label.equals(ALL));
+                button.addActionListener(e -> {
+                    String chosen = label.equals(ALL) || label.equals(letter) ? null : label;
+                    selectLetter(chosen);
+                    listener.accept(chosen);
+                });
+                letterButtons.put(label, button);
+                rows.add(button);
+            }
+            JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+            center.setOpaque(false);
+            center.add(rows);
+            JPanel east = new JPanel(new BorderLayout(12, 0));
+            east.setOpaque(false);
+            head.remove(search);
+            east.add(center, BorderLayout.CENTER);
+            east.add(search, BorderLayout.EAST);
+            head.add(east, BorderLayout.EAST);
+        }
+
+        static final String ALL = "Alle";
+
+        private void selectLetter(String chosen) {
+            letter = chosen;
+            letterButtons.forEach((label, button) ->
+                    button.setSelected(chosen == null ? label.equals(ALL) : label.equals(chosen)));
+        }
+
+        /** Gewählter Anfangsbuchstabe oder {@code null} für alle. */
+        String letter() {
+            return letter;
+        }
+
+        ComposerToggleButton letterButton(String label) {
+            return letterButtons.get(label);
+        }
+
+        /** Ruft {@code listener}, wenn die Tabelle bis ans Ende gescrollt ist und es weitere Einträge gibt. */
+        void onScrolledToEnd(Runnable listener) {
+            onScrolledToEnd = listener;
+        }
+
+        /** Ob weitere Einträge beim Scrollen nachladen. */
+        void more(boolean more) {
+            this.more = more;
+            updateCount();
+            SwingUtilities.invokeLater(this::nearEnd);
+        }
+
+        boolean hasMore() {
+            return more;
+        }
+
+        /** Hängt Zeilen an, ohne die Auswahl zu verlieren. */
+        void append(List<List<String>> rows) {
+            model.append(rows);
+            updateCount();
+        }
+
+        private void updateCount() {
+            if (model.getRowCount() > 0) {
+                hint.setText(Texts.count(model.getRowCount(), "Eintrag", "Einträge")
+                        + (more ? " · weitere laden beim Scrollen" : ""));
+            }
+        }
+
+        private void nearEnd() {
+            if (!more || onScrolledToEnd == null || scroll == null) {
+                return;
+            }
+            javax.swing.JScrollBar bar = scroll.getVerticalScrollBar();
+            if (bar.getValue() + bar.getVisibleAmount() >= bar.getMaximum() - 4 * table.getRowHeight()) {
+                onScrolledToEnd.run();
+            }
+        }
+
+        /** Spaltenköpfe sortieren: aufsteigend, absteigend, dann wieder die Reihenfolge der Liste. */
+        void sortable() {
+            javax.swing.table.TableRowSorter<Model> sorter = new javax.swing.table.TableRowSorter<>(model) {
+                @Override
+                public void toggleSortOrder(int column) {
+                    List<? extends javax.swing.RowSorter.SortKey> keys = getSortKeys();
+                    if (!keys.isEmpty() && keys.get(0).getColumn() == column
+                            && keys.get(0).getSortOrder() == javax.swing.SortOrder.DESCENDING) {
+                        setSortKeys(null);
+                    } else {
+                        super.toggleSortOrder(column);
+                    }
+                }
+            };
+            table.setRowSorter(sorter);
+        }
+
+        /** Ein Element mittig zwischen Überschrift und Suchfeld. */
+        void middle(JComponent component) {
+            JPanel lines = (JPanel) ((BorderLayout) head.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+            head.remove(lines);
+            head.add(lines, BorderLayout.WEST);
+            JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+            center.setOpaque(false);
+            center.add(component);
+            JPanel wrap = new JPanel(new java.awt.GridBagLayout());
+            wrap.setOpaque(false);
+            wrap.add(center);
+            head.add(wrap, BorderLayout.CENTER);
+        }
+
         /** Schaltflächen unter der Tabelle. */
         void actions(JComponent actions) {
             south.add(actions, BorderLayout.SOUTH);
@@ -404,6 +957,7 @@ public final class TermsView implements View {
         /** Zeigt die Zeilen; {@code hint} steht unter der Tabelle, solange sie leer ist. */
         void show(List<List<String>> rows, String emptyHint) {
             model.set(rows);
+            more = false;
             hint.setText(rows.isEmpty() ? emptyHint : Texts.count(rows.size(), "Eintrag", "Einträge"));
         }
 
@@ -436,6 +990,24 @@ public final class TermsView implements View {
             this.columns = columns.clone();
         }
 
+        void append(List<List<String>> rows) {
+            List<List<String>> joined = new ArrayList<>(all);
+            joined.addAll(rows);
+            all = List.copyOf(joined);
+            int before = visible.size();
+            List<List<String>> matching = new ArrayList<>(visible);
+            for (List<String> row : rows) {
+                if (query.isEmpty() || row.stream().limit(columns.length)
+                        .anyMatch(cell -> cell != null && cell.toLowerCase(Locale.ROOT).contains(query))) {
+                    matching.add(row);
+                }
+            }
+            visible = matching;
+            if (visible.size() > before) {
+                fireTableRowsInserted(before, visible.size() - 1);
+            }
+        }
+
         void set(List<List<String>> rows) {
             all = List.copyOf(rows);
             filter(query);
@@ -445,7 +1017,7 @@ public final class TermsView implements View {
             query = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
             List<List<String>> matching = new ArrayList<>();
             for (List<String> row : all) {
-                if (query.isEmpty() || row.stream()
+                if (query.isEmpty() || row.stream().limit(columns.length)
                         .anyMatch(cell -> cell != null && cell.toLowerCase(Locale.ROOT).contains(query))) {
                     matching.add(row);
                 }

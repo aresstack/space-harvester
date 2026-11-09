@@ -58,6 +58,36 @@ class TermsViewTest {
     }
 
     @Test
+    void identifiersShowNoSpellingsColumnAndOccurrencesReadAsPlaces() {
+        assertThat(new TermsView(null).identifiers().table().getColumnCount()).isEqualTo(2);
+        assertThat(TermsView.identifierRows(List.of(new TermQueries.TermSummary("Sachbearbeitung",
+                "sachbearbeitung", TermKind.NOUN, 5, 3, 1, List.of("Sachbearbeitung"), List.of()))))
+                .containsExactly(List.of("Sachbearbeitung", "5", "sachbearbeitung", "NOUN"));
+        assertThat(TermsView.occurrenceRows(List.of(new TermQueries.Occurrence("handbuch", "HB", "p1", "Start",
+                TermKind.NOUN, "Sachbearbeitung", null, null, 4, 19, "1", "x", "v",
+                new TermQueries.Snippet("Die ", "Sachbearbeitung", " prüft\n", true, false)))))
+                .containsExactly(List.of("Start", "handbuch · HB", "…Die Sachbearbeitung prüft"));
+    }
+
+    @Test
+    void aFilteredOccurrenceRowStillNamesItsOwnPage() throws Exception {
+        List<TermQueries.Occurrence> hits = List.of(
+                new TermQueries.Occurrence("q", "S", "p1", "Eins", TermKind.NOUN, "x", null, null, 0, 1, "1", "h",
+                        "v", null),
+                new TermQueries.Occurrence("q", "S", "p2", "Zwei", TermKind.NOUN, "x", null, null, 0, 1, "1", "h",
+                        "v", null));
+        int[] index = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView.Directory list = new TermsView.Directory("Fundstellen", new String[]{"Seite", "Quelle", "K"});
+            list.show(TermsView.indexedOccurrenceRows(hits), "");
+            list.search().setText("Zwei");
+            assertThat(list.table().getRowCount()).isEqualTo(1);
+            index[0] = TermsView.occurrenceIndex(list.visibleRow(list.table().convertRowIndexToModel(0)));
+        });
+        assertThat(hits.get(index[0]).pageId()).isEqualTo("p2");
+    }
+
+    @Test
     void relationsReadAsWordsAndTheReviewButtonsFollowTheSelectedRelation() throws Exception {
         Relation proposed = new Relation("r1", "API", "ABBREVIATION", "Application Programming Interface",
                 "PROPOSED", "RULE", 1);
@@ -90,5 +120,60 @@ class TermsViewTest {
         StringBuilder flags = new StringBuilder();
         view.reviewButtons().forEach(button -> flags.append(button.isEnabled() ? '1' : '0'));
         return flags.toString();
+    }
+
+    @Test
+    void thePagerMergesNounsAndIdentifiersAlphabeticallyAcrossCursors() throws Exception {
+        java.util.Map<TermKind, List<List<String>>> pages = java.util.Map.of(
+                TermKind.NOUN, List.of(List.of("alpha", "delta"), List.of("foxtrott")),
+                TermKind.IDENTIFIER, List.of(List.of("bravo", "charlie", "echo")));
+        List<String> calls = new ArrayList<>();
+        TermsView.IdentifierPager pager = new TermsView.IdentifierPager((kind, cursor) -> {
+            calls.add(kind + ":" + cursor);
+            int index = cursor == null ? 0 : Integer.parseInt(cursor);
+            List<List<String>> kindPages = pages.get(kind);
+            List<TermQueries.TermSummary> terms = new ArrayList<>();
+            for (String term : kindPages.get(index)) {
+                terms.add(summary(term, kind));
+            }
+            return new TermQueries.TermList(terms, index + 1 < kindPages.size() ? String.valueOf(index + 1) : null);
+        });
+        List<String> first = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
+        boolean moreAfterFirst = pager.hasMore();
+        List<String> second = pager.next(4).stream().map(TermQueries.TermSummary::normalized).toList();
+        assertThat(first).containsExactly("alpha", "bravo", "charlie", "delta");
+        assertThat(moreAfterFirst).isTrue();
+        assertThat(second).containsExactly("echo", "foxtrott");
+        assertThat(pager.hasMore()).isFalse();
+        assertThat(calls).containsExactly("NOUN:null", "IDENTIFIER:null", "NOUN:1");
+    }
+
+    @Test
+    void lettersToggleAndAllClearsAndAppendedRowsCount() throws Exception {
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView.Directory directory = new TermsView(null).identifiers();
+            List<String> chosen = new ArrayList<>();
+            directory.letters(letter -> chosen.add(String.valueOf(letter)));
+            directory.letterButton("B").doClick();
+            seen.add(directory.letter() + " " + directory.letterButton("B").isSelected() + " "
+                    + directory.letterButton(TermsView.Directory.ALL).isSelected());
+            directory.letterButton("B").doClick();
+            seen.add(directory.letter() + " " + directory.letterButton(TermsView.Directory.ALL).isSelected());
+            directory.letterButton("C").doClick();
+            directory.letterButton(TermsView.Directory.ALL).doClick();
+            seen.add(String.valueOf(directory.letter()));
+            seen.add(String.join(",", chosen));
+            directory.show(List.of(List.of("a", "-", "1")), TermsView.EMPTY);
+            directory.more(true);
+            directory.append(List.of(List.of("b", "-", "2")));
+            seen.add(directory.table().getRowCount() + " " + directory.hint());
+        });
+        assertThat(seen).containsExactly("B true false", "null true", "null", "B,null,C,null",
+                "2 2 Einträge · weitere laden beim Scrollen");
+    }
+
+    private static TermQueries.TermSummary summary(String term, TermKind kind) {
+        return new TermQueries.TermSummary(term, term, kind, 1, 1, 1, List.of(term), List.of());
     }
 }
