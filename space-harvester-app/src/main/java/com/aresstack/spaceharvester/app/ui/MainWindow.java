@@ -62,6 +62,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final CardLayout sideCards = new CardLayout();
     private final JPanel side = new JPanel(sideCards);
     private static final String EXPLORER = "explorer";
+    /** Die nächste geladene Seite im Explorer zeigen (gesetzt von {@link #openPage} und {@link #openPassage}). */
+    private boolean revealOpened;
     /** Aktions- und Fortschrittszeilen der Bereiche, direkt über der Statusleiste. */
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actionDeck = new JPanel(actionCards);
@@ -97,6 +99,13 @@ public final class MainWindow implements AppContext.Navigator {
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         searchView.onClearScope(explorer::clearSelection);
+        // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
+        content.onPosition(position -> {
+            if (revealOpened) {
+                revealOpened = false;
+                explorer.revealPage(position);
+            }
+        });
         views.put(AppContext.Section.STATUS, statusView);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
@@ -326,13 +335,20 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void openPage(String sourceId, String pageId) {
         show(AppContext.Section.CONTENT);
+        revealOpened = true;
         content.openPage(sourceId, pageId);
     }
 
     @Override
     public void openPassage(String sourceId, String passageId) {
         show(AppContext.Section.CONTENT);
+        revealOpened = true;
         content.openPassage(sourceId, passageId);
+    }
+
+    @Override
+    public void revealPage(String sourceId, String pageId) {
+        explorer.revealPage(sourceId, pageId);
     }
 
     @Override

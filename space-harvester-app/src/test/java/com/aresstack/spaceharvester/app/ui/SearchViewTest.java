@@ -119,6 +119,28 @@ class SearchViewTest {
         assertThat(view[0].statusText()).doesNotContain("unvollständig");
         assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
+
+        // Ein Klick (Auswahl) zeigt die Seite des Treffers schon im Explorer, ohne sie zu öffnen.
+        List<String> revealed = new ArrayList<>();
+        List<String> opened = new ArrayList<>();
+        context.setNavigator(new AppContext.Navigator() {
+            @Override public void show(AppContext.Section section) { }
+            @Override public void openPage(String sourceId, String pageId) { opened.add(pageId); }
+            @Override public void openSpace(String sourceId, String spaceKey) { }
+            @Override public void showJob(String jobId) { }
+            @Override public void showDiagnosis(String jobId) { }
+            @Override public void download(String sourceId, List<String> spaceKeys) { }
+            @Override public void search(String text) { }
+            @Override public void revealPage(String sourceId, String pageId) { revealed.add(sourceId + "/" + pageId); }
+        });
+        String[] expected = new String[1];
+        SwingUtilities.invokeAndWait(() -> {
+            table.setRowSelectionInterval(1, 1);
+            expected[0] = table.getModel().getValueAt(table.convertRowIndexToModel(1), 1) + "/"
+                    + ((SearchView.HitsModel) table.getModel()).rows.get(table.convertRowIndexToModel(1)).pageId();
+        });
+        assertThat(revealed).containsExactly(expected[0]);
+        assertThat(opened).isEmpty();
     }
 
     @Test

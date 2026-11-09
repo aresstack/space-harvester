@@ -23,6 +23,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +35,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Sprung per Passage-ID (#452) mit echter Laufzeit: Die ID eines Absatzes aus der Antwort des Core öffnet seine Seite
- * im Reiter „Absätze“, der Absatz ist gewählt und im Lesetext markiert. Nach einer Änderung der Seite öffnet dieselbe ID
+ * im zuletzt gewählten Reiter, der Absatz ist unter „Absätze“ gewählt und im Lesetext markiert. Nach einer Änderung der Seite öffnet dieselbe ID
  * die Seite mit dem Hinweis auf die ältere Fassung; eine unbekannte Seite meldet sich wie ein Ladefehler.
  */
 class ReaderPassageLinkTest {
@@ -86,11 +87,23 @@ class ReaderPassageLinkTest {
             return null;
         });
         awaitTrue(() -> onEdt(() -> panel.passages().selectedIndex() == 1));
-        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Absätze");
+        // Der zuletzt gewählte Reiter bleibt vorne (hier „Text“); dort ist der Absatz markiert.
+        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> panel.reader().getSelectionStart())).isEqualTo(target.start());
         assertThat(onEdt(() -> panel.reader().getSelectionEnd())).isEqualTo(target.end());
         assertThat(onEdt(() -> panel.feedback().isVisible())).isFalse();
         assertThat(onEdt(view::chosenSource)).isEqualTo("wiki");
+
+        // Wer zuletzt die Leseansicht bzw. „Absätze“ gewählt hatte, landet wieder dort.
+        for (String tab : List.of("Leseansicht", "Absätze")) {
+            onEdt(() -> {
+                panel.tabs().select(tab);
+                view.openPassage("wiki", target.id());
+                return null;
+            });
+            awaitTrue(() -> onEdt(() -> panel.shownPage() != null && panel.passages().selectedIndex() == 1));
+            assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo(tab);
+        }
 
         // FOUND, aber der Reiter kennt den Absatz nicht (anderes Ergebnis als die Auflösung): Hinweis statt Stille.
         PassageLookup found = workspace.passage(target.id());
@@ -117,7 +130,7 @@ class ReaderPassageLinkTest {
         });
         awaitTrue(() -> onEdt(() -> panel.shownPage() != null && panel.feedback().isVisible()));
         assertThat(onEdt(() -> panel.feedback().text())).startsWith(PageDetailPanel.PASSAGE_OLDER);
-        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Absätze");
+        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> panel.passages().selectedIndex())).isEqualTo(-1);
         assertThat(onEdt(() -> panel.passages().titles())).isNotEmpty();
 

@@ -161,6 +161,8 @@ public final class Explorer {
     private List<String> shownSources = List.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
     private int filterRequest;
+    /** Während {@link #revealPage} wählt der Baum selbst; der Suchumfang bleibt dann, wie er ist. */
+    private boolean revealing;
     /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
     private int hoverRow = -1;
 
@@ -188,7 +190,11 @@ public final class Explorer {
         });
         tree.getSelectionModel().setSelectionMode(
                 javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
-        tree.addTreeSelectionListener(e -> scopeListener.accept(scopes()));
+        tree.addTreeSelectionListener(e -> {
+            if (!revealing) {
+                scopeListener.accept(scopes());
+            }
+        });
         MouseAdapter mouse = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -354,6 +360,78 @@ public final class Explorer {
             source.then = select;
             tree.expandPath(new TreePath(source.getPath()));
         }
+    }
+
+    /**
+     * Zeigt eine geöffnete Seite im Baum: Quelle, Space und Vorfahren aufklappen (Kinder werden bei Bedarf geladen) und
+     * die Seite wählen. Fehlt ein Schritt im Baum (etwa auf einem noch nicht geladenen Stapel), bleibt der tiefste
+     * gefundene Knoten gewählt. Der Suchumfang ändert sich dadurch nicht.
+     */
+    public void revealPage(PageNavigation.Position position) {
+        if (position == null || position.page() == null) {
+            return;
+        }
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(position.sourceId()));
+        if (source == null) {
+            return;
+        }
+        List<java.util.function.Predicate<Item>> steps = new ArrayList<>();
+        steps.add(item -> item instanceof SpaceItem s && s.spaceKey().equals(position.spaceKey()));
+        for (HarvestSource.PageNode ancestor : position.ancestors()) {
+            steps.add(item -> item instanceof PageItem p && p.pageId().equals(ancestor.pageId()));
+        }
+        String pageId = position.page().pageId();
+        steps.add(item -> item instanceof PageItem p && p.pageId().equals(pageId));
+        descend(source, steps, 0);
+    }
+
+    /** Wie {@link #revealPage(PageNavigation.Position)}; den Pfad der Seite holt der Core im Hintergrund. */
+    public void revealPage(String sourceId, String pageId) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || sourceId == null || pageId == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().position(sourceId, pageId), this::revealPage, error -> {
+            // Quellen ohne Seitenbaum: nichts zu zeigen.
+        });
+    }
+
+    private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index) {
+        Runnable next = () -> {
+            Node child = index < steps.size() ? child(node, steps.get(index)) : null;
+            if (child == null && index < steps.size() - 1 && node.item() instanceof SpaceItem) {
+                // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
+                child = child(node, steps.get(steps.size() - 1));
+                if (child != null) {
+                    select(child);
+                    return;
+                }
+            }
+            if (child == null || index == steps.size() - 1) {
+                select(child == null ? node : child);
+            } else {
+                descend(child, steps, index + 1);
+            }
+        };
+        TreePath path = new TreePath(node.getPath());
+        if (node.loaded) {
+            tree.expandPath(path);
+            next.run();
+        } else {
+            node.then = next;
+            tree.expandPath(path);
+        }
+    }
+
+    private void select(Node node) {
+        TreePath path = new TreePath(node.getPath());
+        revealing = true;
+        try {
+            tree.setSelectionPath(path);
+        } finally {
+            revealing = false;
+        }
+        tree.scrollPathToVisible(path);
     }
 
     private static Node child(Node parent, java.util.function.Predicate<Item> match) {

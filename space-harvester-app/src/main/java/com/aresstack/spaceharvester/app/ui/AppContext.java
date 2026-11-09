@@ -75,6 +75,10 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /** Zeigt eine Seite im Explorer (aufgeklappt und gewählt), ohne sie zu öffnen; ohne Explorer ohne Wirkung. */
+        default void revealPage(String sourceId, String pageId) {
+        }
+
         void showJob(String jobId);
 
         /** Status mit der Diagnose genau dieses Auftrags. */
