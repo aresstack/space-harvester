@@ -62,6 +62,7 @@ import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -487,6 +488,27 @@ public final class Workspace {
     /** Erwähnungen eines Begriffs auf allen manuell analysierten, sichtbaren Seiten. */
     public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit) {
         return harvester.knowledgeGraph().search(caller, term, limit);
+    }
+
+    /** Ob „Analysieren“ im Baum angeboten werden kann (Analysator eingerichtet); lädt kein Modell. */
+    public boolean statementAnalysisJobsAvailable() {
+        return harvester.statementAnalysisJobs().available();
+    }
+
+    /**
+     * Zählt den Umfang eines Analyseauftrags für den Bestätigungsdialog, höchstens {@code limit + 1} Seiten weit;
+     * lädt keine Inhalte und analysiert nichts. Fragt die Quelle nach Kindseiten, also nie auf dem EDT.
+     */
+    public StatementAnalysisJobs.Estimate estimateStatementAnalysis(StatementAnalysisJobs.Scope scope, int limit) {
+        return harvester.statementAnalysisJobs().estimate(caller, scope, limit);
+    }
+
+    /**
+     * „Analysieren“ aus dem Baum: startet den Auftrag {@code STATEMENT_ANALYSIS} für Seite, Unterzweig, Space oder
+     * Quelle; Fortschritt und Abbruch wie bei jedem Auftrag.
+     */
+    public JobStatus startStatementAnalysis(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
+        return harvester.statementAnalysisJobs().start(caller, scope, options);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */

@@ -19,6 +19,11 @@ public enum JobType {
      */
     ASSETS,
     /**
+     * MaltParser-Aussagenanalyse einer Seite, eines Unterzweigs, Space oder einer Quelle, nur auf ausdrückliche
+     * Anforderung in der Desktop-App (#499, ADR 0024); nie Folgeauftrag eines Abgleichs oder Exports.
+     */
+    STATEMENT_ANALYSIS,
+    /**
      * Alle lokal gespeicherten Daten einer Quelle löschen („Daten bereinigen“), ohne die Quelle selbst zu entfernen;
      * beendet vorher die übrigen Aufträge der Quelle.
      */

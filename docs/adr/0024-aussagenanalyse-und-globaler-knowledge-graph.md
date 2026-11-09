@@ -64,7 +64,19 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
    aktuellen Stand passen; sonst `STALE` mit Grund `text-changed`, `analyzer-changed`, `no-text` oder (im Graphen)
    `page-missing`. Ohne eingerichteten Analysator zählt nur der Text. Veraltete Seiten erscheinen gekennzeichnet,
    nicht als aktuelle Aussagen; ersetzt werden sie erst durch den nächsten Klick.
-9. **Datenschutz.** Kein Text und keine Aussage geht an einen externen Dienst; der Analysator rechnet lokal. Dateinamen
+9. **Ausdrücklicher Auftrag für einen Umfang (#499 Abschnitt E).** `StatementAnalysisJobs` analysiert eine Seite,
+   eine Seite mit allen Nachfahren, einen Space oder eine Quelle als Auftrag `STATEMENT_ANALYSIS` über `Jobs`
+   (Fortschritt, Abbruch, Diagnose). Er ermittelt die Seiten mit `PageNavigation#children` samt aller Cursor, nie
+   über den sichtbar geladenen Baum der App und ohne dessen Grenze; Zyklen und doppelte Seiten zählen einmal. Seiten
+   ohne Inhaltsrecht werden weder geladen noch gezählt noch in Ereignissen genannt, Spaces ohne Freigabe still
+   übergangen. Erst nach vollständiger Ermittlung lädt der Auftrag je Seite den Inhalt über den geschützten
+   Seitenabruf (`PageQueries#page`, Cache sonst Quelle) und ruft `StatementAnalysis#analyze` – jede Seite für sich
+   atomar; ein Abbruch behält fertige Seiten. Aktuelle Seiten werden übersprungen, außer bei „Neu analysieren“.
+   `estimate` zählt für den Bestätigungsdialog bis zur Sicherheitsgrenze, ohne Inhalte zu laden; überschreitet der
+   Umfang die bestätigte Grenze, scheitert der Auftrag vor der ersten Analyse (`SCOPE_TOO_LARGE`), nie still gekürzt.
+   Nicht ermittelbare Zweige melden `INCOMPLETE`, nachdem die gefundenen Seiten verarbeitet sind. Seiten laufen
+   nacheinander; das Modell wird einmal geladen und geteilt. Kein Abgleich, Zeitplan oder Folgeauftrag startet ihn.
+10. **Datenschutz.** Kein Text und keine Aussage geht an einen externen Dienst; der Analysator rechnet lokal. Dateinamen
    enthalten keine Kennungen im Klartext. Protokolle nennen bei unlesbaren Dateien nur die Ausnahmeklasse, nie Inhalt,
    Suchbegriffe oder Seitentitel.
 
@@ -93,4 +105,4 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
 ## Nicht Teil dieser Entscheidung
 
 Wissensgraphgestützter Chat, Entitäts- und Koreferenzauflösung, Ontologie, grafisches Layout, KI-Verifikation,
-automatische Analyse ganzer Spaces, MaltParser-Neutraining, REST-Endpunkte für den Graphen im Dienst.
+automatische (nicht ausdrücklich gestartete) Analyse ganzer Spaces, MaltParser-Neutraining, REST-Endpunkte für den Graphen im Dienst.
