@@ -184,7 +184,16 @@ final class SetupWizard {
         finish.addActionListener(e -> requestClose());
         later.addActionListener(e -> requestClose());
         show(0);
+        // Endet die Installation des Parsermodells, während die Zusammenfassung offen ist, zeigt sie das sofort.
+        context.parserModel().listen(parserListener);
     }
+
+    /** Hält die Zusammenfassung beim Stand des Parsermodells; beim Schließen abgemeldet. */
+    private final java.util.function.Consumer<ParserModelSetup.Status> parserListener = status -> {
+        if (step == SUMMARY && !closed) {
+            render();
+        }
+    };
 
     /** Öffnet den Assistenten modal; beim Schließen merkt sich die Datei, dass er lief. */
     static void open(Component parent, AppContext context) {
@@ -204,6 +213,7 @@ final class SetupWizard {
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.closed = true;
+                context.parserModel().unlisten(wizard.parserListener);
                 wizard.ai.stopModels();
                 wizard.completed();
             }

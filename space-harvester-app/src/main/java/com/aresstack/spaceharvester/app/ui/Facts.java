@@ -45,6 +45,7 @@ public final class Facts extends JPanel {
         // Umbrechend statt abgeschnitten: lange Pfade und Adressen bleiben ganz lesbar (Angelo, 09.11.).
         javax.swing.JTextArea text = Comic.wrapped(value == null || value.isEmpty() ? "–" : value, color, 12.5f);
         text.setToolTipText(value == null || value.isEmpty() ? null : value);
+        text.setFocusable(true); // per Tab erreichbar, markieren und mit Strg+C kopieren wie das Textfeld zuvor
         super.add(text, right);
         row++;
         return this;
