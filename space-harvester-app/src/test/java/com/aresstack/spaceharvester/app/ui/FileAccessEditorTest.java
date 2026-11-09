@@ -94,7 +94,7 @@ class FileAccessEditorTest {
         FileAccessEditor[] editor = new FileAccessEditor[1];
         SwingUtilities.invokeAndWait(() -> {
             editor[0] = new FileAccessEditor(context, parent -> true);
-            assertThat(editor[0].list().getComponentCount()).as("nur der Hinweis „Noch kein Ordner“").isEqualTo(1);
+            assertThat(editor[0].table.getRowCount()).as("leere Tabelle").isZero();
             editor[0].path.setText("  " + projects + " ");
             editor[0].add.doClick();
             editor[0].path.setText(team);
@@ -102,11 +102,15 @@ class FileAccessEditorTest {
             editor[0].path.setText(projects);
             editor[0].add.doClick();
             assertThat(editor[0].roots()).containsExactly(projects, team);
-            assertThat(editor[0].list().getComponentCount()).isEqualTo(2);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(2);
+            assertThat(editor[0].table.getValueAt(0, 0)).isEqualTo(projects);
             assertThat(editor[0].path.getText()).isEmpty();
 
-            editor[0].revoke(projects);
+            editor[0].table.setRowSelectionInterval(0, 0);
+            assertThat(editor[0].remove.isEnabled()).isTrue();
+            editor[0].remove.doClick();
             assertThat(editor[0].roots()).containsExactly(team);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(1);
             editor[0].allowAll.doClick();
             editor[0].save();
         });
@@ -139,6 +143,41 @@ class FileAccessEditorTest {
         await(() -> editor[0].feedback.text().contains("Dateizugriff übernommen"));
         assertThat(context.settings().localFiles().roots()).containsExactly(home.resolve("wissen"));
         await(() -> !editor[0].changed());
+    }
+
+    /** Mehrere markierte Zeilen gehen mit einem Klick; die Statusspalte meldet, ob der Ordner erreichbar ist. */
+    @Test
+    void selectedRowsAreRemovedTogetherAndStatusShowsReachability() throws Exception {
+        String existing = Files.createDirectories(home.resolve("vorhanden")).toString();
+        String missing = home.resolve("fehlt").toString();
+        String kept = Files.createDirectories(home.resolve("bleibt")).toString();
+        FileAccessEditor[] editor = new FileAccessEditor[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0] = new FileAccessEditor(context, parent -> true);
+            assertThat(editor[0].remove.isEnabled()).as("ohne Markierung gesperrt").isFalse();
+            for (String folder : List.of(existing, missing, kept)) {
+                editor[0].path.setText(folder);
+                editor[0].add.doClick();
+            }
+            assertThat(editor[0].table.getRowCount()).isEqualTo(3);
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(0, 1))
+                && FileAccessEditor.STATUS_UNREACHABLE.equals(editor[0].table.getValueAt(1, 1))
+                && FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(2, 1)));
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0].table.setRowSelectionInterval(0, 1);
+            editor[0].removeSelected();
+            assertThat(editor[0].roots()).containsExactly(kept);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(1);
+            assertThat(editor[0].remove.isEnabled()).isFalse();
+        });
+        // Ein entfernter und wieder aufgenommener Ordner wird neu geprüft: inzwischen angelegt → erreichbar.
+        Files.createDirectories(Path.of(missing));
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0].path.setText(missing);
+            editor[0].add.doClick();
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(1, 1)));
     }
 
     private static void await(java.util.function.BooleanSupplier condition) throws Exception {
