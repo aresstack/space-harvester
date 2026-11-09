@@ -155,7 +155,8 @@ class SourceFormTest {
             assertThat(host.isVisible()).isTrue();
             assertThat(port.isVisible()).as("unter Erweitert").isFalse();
             assertThat(port.getText()).as("Vorgabe des Typs").isEqualTo("21");
-            assertThat(f.fields.advancedToggle().getText()).isEqualTo("▸ Erweitert");
+            assertThat(f.fields.advancedToggle().getText()).isEqualTo("Erweitert");
+            assertThat(Comic.disclosed(f.fields.advancedToggle())).as("zugeklappt").isFalse();
             assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
             assertThat(f.auth.getSelectedItem()).as("JES verlangt Zugangsdaten").isEqualTo("Benutzer und Passwort");
             assertThat(f.username.isVisible()).isTrue();

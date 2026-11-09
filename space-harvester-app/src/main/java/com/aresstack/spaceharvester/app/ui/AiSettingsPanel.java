@@ -98,7 +98,7 @@ final class AiSettingsPanel {
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
-    final javax.swing.JButton advanced = Comic.disclosure("▸ Erweitert",
+    final javax.swing.JButton advanced = Comic.disclosure("Erweitert",
             "Dimension, Abschnittsgröße und Überlappung für Embeddings");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
@@ -141,7 +141,7 @@ final class AiSettingsPanel {
         entry.addActionListener(e -> entryChosen());
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
+        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
@@ -866,7 +866,7 @@ final class AiSettingsPanel {
         modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
-        advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
     }
@@ -904,7 +904,7 @@ final class AiSettingsPanel {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
         } else {
             modelsFeedback.success(Texts.count(this.loaded.size(), "Modell", "Modelle") + " geladen"
-                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über ▾");
+                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über das Auswahlmenü rechts");
         }
     }
 

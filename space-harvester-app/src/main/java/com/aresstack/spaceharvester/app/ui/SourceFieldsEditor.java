@@ -32,8 +32,6 @@ final class SourceFieldsEditor {
 
     /** Markiert ein Häkchen, dessen Schlüssel in der Datei fehlte. */
     private static final String UNSET_FLAG = "space-harvester.unsetFlag";
-    static final String ADVANCED_CLOSED = "▸ Erweitert";
-    static final String ADVANCED_OPEN = "▾ Erweitert";
     /** Höchstzahl Zeilen je Bereich (ein Verzeichnis oder Zertifikat braucht eine Zeile, der Schalter eine). */
     static final int ROWS = 40;
 
@@ -50,7 +48,7 @@ final class SourceFieldsEditor {
     /** Alle Zeilen (Schlüsselkomponente je Zeile), zum Abbauen beim Typwechsel. */
     private final List<JComponent> rows = new ArrayList<>();
     private final List<JComponent> advancedRows = new ArrayList<>();
-    private final ComposerButton advancedToggle = Comic.button(ADVANCED_CLOSED,
+    private final javax.swing.JButton advancedToggle = Comic.disclosure("Erweitert",
             "Weitere Angaben; leer lassen genügt in der Regel");
     private boolean expanded;
     private SourceFieldSpec certificateField;
@@ -260,7 +258,7 @@ final class SourceFieldsEditor {
         for (JComponent row : advancedRows) {
             form.visible(row, expanded);
         }
-        advancedToggle.setText(expanded ? ADVANCED_OPEN : ADVANCED_CLOSED);
+        Comic.disclose(advancedToggle, expanded);
         form.revalidate();
         form.repaint();
     }
@@ -354,7 +352,7 @@ final class SourceFieldsEditor {
         return null;
     }
 
-    ComposerButton advancedToggle() {
+    javax.swing.JButton advancedToggle() {
         return advancedToggle;
     }
 
