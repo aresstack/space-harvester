@@ -204,8 +204,95 @@ class AnalysisConverterTest {
         assertThat(store.find(only.key())).isEmpty();
     }
 
-    /** Eine Seite mit Bildern im Datenbestand. */
-    private record Input(PageSnapshot page, ExportAssetManifest manifest) implements ConversionInput {
+    @Test
+    void listsDocumentAttachmentTextsInATopLevelBlockNextToPages() {
+        PageSnapshot only = page("confluence", "DEV", "100", null, ACRONYM);
+        AnalysisConverter converter = new AnalysisConverter(new EnrichmentAnalyses(enrichments));
+        ExportAssetManifest.Entry image = new ExportAssetManifest.Entry("100",
+                ExportAssetManifest.Reference.attachment("img1", "plan.png"), "img1", "1", "plan.png", "image/png", 3,
+                "sha256:ii", ExportAssetManifest.Status.STORED, null);
+        ExportAssetManifest manifest = new ExportAssetManifest(true, List.of(image,
+                document("att1", "bericht.pdf", "application/pdf", "sha256:aa", ExportAssetManifest.Status.STORED,
+                        null),
+                // Abgelegt, aber ohne lesbaren Text.
+                document("att2", "scan.pdf", "application/pdf", "sha256:bb", ExportAssetManifest.Status.STORED, null),
+                document("att3", "film.mp4", "video/mp4", null, ExportAssetManifest.Status.EXCLUDED,
+                        "media-type-not-allowed"),
+                document("att4", "weg.docx", "application/msword", null, ExportAssetManifest.Status.FORBIDDEN,
+                        "forbidden"),
+                // Seite nicht im Export: nie im Analyse-Export.
+                new ExportAssetManifest.Entry("999", ExportAssetManifest.Reference.document("att5", "geheim.pdf"),
+                        "att5", "1", "geheim.pdf", "application/pdf", 3, "sha256:cc",
+                        ExportAssetManifest.Status.STORED, null)));
+        Map<String, String> texts = Map.of("sha256:aa", "Quartalsbericht 2026", "sha256:bb", "  ",
+                "sha256:cc", "Geheim");
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        converter.convert(new Input(only, manifest, texts), out);
+        JsonNode analysis = json.readTree(out.toByteArray());
+        ByteArrayOutputStream without = new ByteArrayOutputStream();
+        converter.convert(new Input(only, new ExportAssetManifest(true, List.of(image))), without);
+        JsonNode plain = json.readTree(without.toByteArray());
+
+        JsonNode attachments = analysis.path("attachments");
+        assertThat(analysis.propertyNames()).containsSubsequence("pages", "attachments");
+        assertThat(attachments.valueStream().map(a -> a.path("attachmentId").asString()).toList())
+                .containsExactly("att1", "att2", "att3", "att4");
+        JsonNode pdf = attachments.get(0);
+        assertThat(pdf.path("pageId").asString()).isEqualTo("100");
+        assertThat(pdf.path("title").asString()).isEqualTo("bericht.pdf");
+        assertThat(pdf.path("mediaType").asString()).isEqualTo("application/pdf");
+        assertThat(pdf.path("sha256").asString()).isEqualTo("sha256:aa");
+        assertThat(pdf.path("status").asString()).isEqualTo("STORED");
+        assertThat(pdf.path("reason").isNull()).isTrue();
+        assertThat(pdf.path("text").asString()).isEqualTo("Quartalsbericht 2026");
+        JsonNode scan = attachments.get(1);
+        assertThat(scan.path("text").isNull()).isTrue();
+        assertThat(scan.path("reason").asString()).isEqualTo("text-unavailable");
+        JsonNode excluded = attachments.get(2);
+        assertThat(excluded.path("status").asString()).isEqualTo("EXCLUDED");
+        assertThat(excluded.path("reason").asString()).isEqualTo("media-type-not-allowed");
+        assertThat(excluded.path("sha256").isNull()).isTrue();
+        assertThat(excluded.path("text").isNull()).isTrue();
+        assertThat(attachments.get(3).path("status").asString()).isEqualTo("FORBIDDEN");
+        assertThat(attachments.get(3).path("text").isNull()).isTrue();
+        assertThat(out.toString(StandardCharsets.UTF_8)).doesNotContain("Geheim");
+
+        // Die Seitenobjekte bleiben unverändert, ohne Anhänge darin.
+        assertThat(analysis.path("pages")).isEqualTo(plain.path("pages"));
+        assertThat(analysis.path("pages").get(0).has("attachments")).isFalse();
+        assertThat(plain.path("attachments").isArray()).isTrue();
+        assertThat(plain.path("attachments").isEmpty()).isTrue();
+    }
+
+    @Test
+    void writesAnEmptyAttachmentBlockWithoutCollectedAssets() throws Exception {
+        PageSnapshot only = page("confluence", "DEV", "100", null, ACRONYM);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(only));
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        Exports exports = new Exports(jobs, cache, writer, new ExportConverters(List.of(
+                new AnalysisConverter(new EnrichmentAnalyses(enrichments))), ExportConverters.DEFAULT_MAX_BYTES), clock);
+
+        String id = exports.start("confluence", "DEV", "client-a", List.of("analysis")).id();
+
+        JsonNode analysis = json.readTree(root.resolve(id).resolve("analysis.json").toFile());
+        assertThat(analysis.path("attachments").isArray()).isTrue();
+        assertThat(analysis.path("attachments").isEmpty()).isTrue();
+    }
+
+    private static ExportAssetManifest.Entry document(String id, String name, String mediaType, String sha256,
+                                                      ExportAssetManifest.Status status, String reason) {
+        return new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.document(id, name), id,
+                sha256 == null ? null : "1", name, mediaType, sha256 == null ? 0 : 3, sha256, status, reason);
+    }
+
+    /** Eine Seite mit Bildern und Anhängen (Texte je {@code sha256}) im Datenbestand. */
+    private record Input(PageSnapshot page, ExportAssetManifest manifest, Map<String, String> texts)
+            implements ConversionInput {
+
+        Input(PageSnapshot page, ExportAssetManifest manifest) {
+            this(page, manifest, Map.of());
+        }
 
         @Override
         public String sourceId() {
@@ -243,6 +330,12 @@ class AnalysisConverterTest {
                 @Override
                 public Optional<byte[]> content(ExportAssetManifest.Entry entry) {
                     return Optional.empty();
+                }
+
+                @Override
+                public Optional<String> text(ExportAssetManifest.Entry entry) {
+                    return entry.document() && entry.stored() ? Optional.ofNullable(texts.get(entry.sha256()))
+                            : Optional.empty();
                 }
             };
         }
