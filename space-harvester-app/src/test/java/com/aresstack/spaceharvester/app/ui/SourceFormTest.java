@@ -584,9 +584,12 @@ class SourceFormTest {
             assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(f.validateInput()).as("noch kein Eintrag").isFalse();
         });
-        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 1);
-        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki"));
+        // Der Eintrag mit passender Adresse wird ohne weiteren Schritt vorgeschlagen und gelesen.
         awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Wiki");
+            assertThat(form[0].auth.isEnabled()).as("Anmeldeart kommt aus dem Eintrag").isFalse();
+        });
         SwingUtilities.invokeAndWait(() -> form[0].save());
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
 
@@ -620,5 +623,38 @@ class SourceFormTest {
                 Thread.sleep(20);
             }
         }
+    }
+
+    @Test
+    void keePassIsUsableRightInTheDialogEvenForTheConfluenceDefaultWithoutLogin() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Confluence", new String[] {"https://wiki.example.invalid", "token"});
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> paired[0]));
+
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            form[0] = f;
+            assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
+            f.origin.setSelectedItem("KeePass");
+            assertThat(f.auth.getSelectedItem()).as("bei KeePass nie „Ohne Anmeldung“")
+                    .isEqualTo("Personal Access Token");
+            assertThat(f.pairKeePass.isShowing() || f.pairKeePass.isVisible()).isTrue();
+            assertThat(f.pairKeePass.getText()).isEqualTo("Mit KeePass koppeln …");
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.feedback.text()).contains("Mit KeePass koppeln");
+            f.baseUrl.setText("https://wiki.example.invalid");
+            paired[0] = true;
+            f.pairKeePass.doClick();
+        });
+        awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Confluence"));
     }
 }

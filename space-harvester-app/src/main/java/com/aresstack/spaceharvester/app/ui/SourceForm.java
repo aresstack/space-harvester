@@ -88,8 +88,11 @@ final class SourceForm {
     /** Woher Benutzer und Passwort bzw. Token kommen: KeePass-Eintrag oder Manuell (Tresor), wie beim KI-Dienst. */
     final JComboBox<String> origin = Comic.combo();
     final JComboBox<String> keePassEntry = Comic.combo();
-    final ComposerButton pairKeePass = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC) und die Einträge "
-            + "lesen; einmal gekoppelt gilt es für alle Quellen und den KI-Dienst");
+    final ComposerButton pairKeePass = Comic.button(PAIR_TEXT, "KeePass zeigt einen Code, den du hier einträgst; "
+            + "einmal gekoppelt gilt es für alle Quellen und den KI-Dienst");
+    private static final String PAIR_TEXT = "Mit KeePass koppeln …";
+    /** Zuletzt gelesene Einträge (ohne Geheimnisse), um einen passenden zur Adresse vorzuschlagen. */
+    private List<com.aresstack.enterpriseai.adyton.VaultEntry> keePassEntries = List.of();
     private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
@@ -179,9 +182,12 @@ final class SourceForm {
             keePassEntry.setSelectedItem(knownEntry);
         }
         origin.addActionListener(e -> {
-            updateVisibility();
             if (keePassChosen()) {
-                loadKeePassEntries(!context.keePass().paired());
+                deriveAuthFromKeePass(null);
+            }
+            updateVisibility();
+            if (keePassChosen() && context.keePass().paired()) {
+                loadKeePassEntries(false);
             }
         });
         pairKeePass.addActionListener(e -> loadKeePassEntries(true));
@@ -190,10 +196,6 @@ final class SourceForm {
             authChosen |= !deriving;
             suggestVariable();
             updateVisibility();
-            if (keePassChosen() && keePassEntry.getItemCount() == 0 && pairKeePass.isEnabled()) {
-                // Erst jetzt braucht die Quelle Zugangsdaten: bei bestehender Kopplung die Einträge lesen.
-                loadKeePassEntries(false);
-            }
         });
         certificate.addActionListener(e -> updateVisibility());
 
@@ -272,15 +274,87 @@ final class SourceForm {
         derive();
         suggestVariable();
         renderNotes();
-        if (keePassChosen() && context.keePass().paired()) {
-            // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
-            loadKeePassEntries(false);
+        if (keePassChosen()) {
+            deriveAuthFromKeePass(null);
+            updateVisibility();
+            if (context.keePass().paired()) {
+                // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
+                loadKeePassEntries(false);
+            }
+        }
+        onEdit(baseUrl, this::suggestKeePassEntry);
+    }
+
+    /** Ob die Werte aus KeePass kommen: KeePass gewählt bei einer Art, die eine Anmeldung kennt. */
+    boolean keePassChosen() {
+        if (!AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem())) {
+            return false;
+        }
+        for (int i = 0; i < auth.getItemCount(); i++) {
+            if (!NONE.equals(auth.getItemAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Bei KeePass gibt der Eintrag die Anmeldeart vor: mit Benutzer Benutzer+Passwort, sonst Token; „Ohne Anmeldung“
+     * gibt es dann nicht. {@code user} {@code null}: noch kein Eintrag gelesen, dann Token (bzw. was die Art anbietet).
+     */
+    private void deriveAuthFromKeePass(String user) {
+        boolean pat = offered(PAT);
+        boolean basic = offered(BASIC);
+        String wanted = user != null && !user.isBlank() && basic ? BASIC
+                : user == null && BASIC.equals(auth.getSelectedItem()) ? BASIC
+                : pat ? PAT : basic ? BASIC : null;
+        if (wanted != null && !wanted.equals(auth.getSelectedItem())) {
+            boolean before = deriving;
+            deriving = true;
+            try {
+                auth.setSelectedItem(wanted);
+            } finally {
+                deriving = before;
+            }
         }
     }
 
-    /** Ob die Werte aus KeePass kommen: KeePass gewählt und eine Anmeldung mit Geheimnis. */
-    boolean keePassChosen() {
-        return AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem()) && !NONE.equals(auth.getSelectedItem());
+    private boolean offered(String item) {
+        for (int i = 0; i < auth.getItemCount(); i++) {
+            if (item.equals(auth.getItemAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Schlägt den Eintrag vor, dessen Adresse (oder Titel) zum Host der Quelle passt, solange keiner gewählt ist. */
+    private void suggestKeePassEntry() {
+        if (!keePassChosen() || !keePassTitle().isEmpty() || keePassEntries.isEmpty()) {
+            return;
+        }
+        String host = host(address());
+        if (host == null || host.isBlank()) {
+            return;
+        }
+        String wanted = host.toLowerCase(java.util.Locale.ROOT);
+        String match = null;
+        for (var entry : keePassEntries) {
+            String location = entry.location() == null ? "" : entry.location().toLowerCase(java.util.Locale.ROOT);
+            String entryHost = host(location);
+            if (entryHost != null && entryHost.equalsIgnoreCase(wanted)) {
+                match = entry.title();
+                break;
+            }
+            if (match == null && entry.title() != null
+                    && entry.title().toLowerCase(java.util.Locale.ROOT).contains(wanted)) {
+                match = entry.title();
+            }
+        }
+        if (match != null) {
+            keePassEntry.getEditor().setItem(match);
+            keePassEntry.setSelectedItem(match); // liest den Eintrag über den ActionListener
+        }
     }
 
     private String keePassTitle() {
@@ -300,8 +374,12 @@ final class SourceForm {
         keePassStatus = "Verbinde mit KeePass …";
         form.hint(keePassRow, keePassStatus);
         String keep = keePassTitle();
-        Background.run(() -> context.keePass().titles(), titles -> {
+        Background.run(() -> context.keePass().entries(), entries -> {
             pairKeePass.setEnabled(true);
+            pairKeePass.setText("Einträge neu laden");
+            keePassEntries = entries;
+            List<String> titles = entries.stream().map(com.aresstack.enterpriseai.adyton.VaultEntry::title)
+                    .filter(t -> t != null && !t.isBlank()).distinct().toList();
             keePassEntry.removeAllItems();
             titles.forEach(keePassEntry::addItem);
             if (!keep.isEmpty() && !titles.contains(keep)) {
@@ -309,10 +387,13 @@ final class SourceForm {
             }
             keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
             keePassEntry.getEditor().setItem(keep);
-            keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge") + "; Eintrag wählen";
+            keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge")
+                    + "; Eintrag wählen oder Namen eintippen";
             form.hint(keePassRow, keePassStatus);
             if (!keep.isEmpty()) {
                 readKeePassEntry();
+            } else {
+                suggestKeePassEntry();
             }
         }, error -> {
             pairKeePass.setEnabled(true);
@@ -338,11 +419,15 @@ final class SourceForm {
                 return;
             }
             String user = (String) read[0];
+            deriveAuthFromKeePass(user == null ? "" : user);
             if (user != null && !user.isBlank() && BASIC.equals(auth.getSelectedItem())) {
                 username.setText(user.strip());
             }
             keePassSecret = (char[]) read[1];
-            keePassStatus = keePassSecret.length == 0 ? "Der Eintrag hat kein Passwort." : "Aus KeePass gelesen";
+            keePassStatus = keePassSecret.length == 0 ? "Der Eintrag hat kein Passwort."
+                    : BASIC.equals(auth.getSelectedItem()) ? "Benutzer und Passwort kommen aus KeePass"
+                    : "Das Token kommt aus KeePass";
+            updateVisibility();
             form.hint(keePassRow, keePassStatus);
             renderNotes();
         }, error -> {
@@ -854,7 +939,9 @@ final class SourceForm {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         }
-        if (keePassChosen() && keePassTitle().isEmpty()) {
+        if (keePassChosen() && !context.keePass().paired()) {
+            problems.add("Noch nicht mit KeePass gekoppelt: bitte auf „" + PAIR_TEXT + "“ klicken.");
+        } else if (keePassChosen() && keePassTitle().isEmpty()) {
             problems.add("Kein KeePass-Eintrag gewählt.");
         } else if (keePassChosen() && !secretAvailable(source)) {
             problems.add("Der KeePass-Eintrag ist noch nicht gelesen; KeePass starten und koppeln.");
@@ -980,7 +1067,7 @@ final class SourceForm {
                 id.setText(proposedId);
                 suggestedId = proposedId;
             }
-            if (confluence && !authChosen) {
+            if (confluence && !authChosen && !keePassChosen()) {
                 auth.setSelectedItem(DEFAULT_URL.equals(normalized(address())) ? NONE : PAT);
             }
         } finally {
@@ -1156,6 +1243,16 @@ final class SourceForm {
         boolean keePass = login && keePassChosen();
         form.visible(origin, login);
         form.visible(keePassRow, keePass);
+        // Bei KeePass gibt der Eintrag die Anmeldeart vor.
+        auth.setEnabled(!keePass);
+        if (keePass && pairKeePass.isEnabled() && keePassEntries.isEmpty()) {
+            boolean paired = context.keePass().paired();
+            pairKeePass.setText(paired ? "Einträge laden" : PAIR_TEXT);
+            if (keePassStatus.isEmpty()) {
+                form.hint(keePassRow, paired ? "Gekoppelt" : "Nicht gekoppelt · KeePass muss laufen, mit dem Plugin "
+                        + "KeePassRPC");
+            }
+        }
         form.visible(username, login && basic);
         form.visible(variable, login && !anonymous && !keePass);
         form.visible(sessionValue, login && !anonymous && !keePass);

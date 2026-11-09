@@ -78,6 +78,11 @@ public final class KeePassLink {
         return titles;
     }
 
+    /** Koppelt bei Bedarf (mit Dialog) und liefert alle Einträge ohne Geheimnisse (Titel, Benutzer, Adresse). */
+    public List<VaultEntry> entries() throws SecretUnavailableException {
+        return List.copyOf(interactive.list());
+    }
+
     /** Liest einen Eintrag (Adresse und Passwort); der Aufrufer schließt ihn. */
     public VaultEntryDraft read(String title) throws SecretUnavailableException {
         return interactive.read(title);
