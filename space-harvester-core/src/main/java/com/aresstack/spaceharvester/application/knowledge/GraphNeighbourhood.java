@@ -298,9 +298,7 @@ public class GraphNeighbourhood {
             focus = focus == null ? mention.id() : focus;
             for (KnowledgeGraph.Participation participation : hit.statements()) {
                 ParsedStatements.Statement statement = participation.statement();
-                builder.connect(new Edge(statement.id(), mention.id(),
-                                EdgeType.valueOf(participation.role().name()), null, null, null,
-                                "s" + statement.sentence(), participation.certain()),
+                builder.connect(roleEdge(statement, mention.id(), participation),
                         new Node(statement.id(), PageGraph.NodeKind.STATEMENT, statement.predicateText(),
                                 statement.predicateLemma(), hit.page(), statement.start(), statement.end(),
                                 statement.core()));
@@ -348,6 +346,21 @@ public class GraphNeighbourhood {
                 }
             }
         }
+    }
+
+    /**
+     * Rollenkante einer Begriffssuche mit derselben Herkunft (Grundlage, UD-Relation, Präposition) wie in der Seiten-
+     * und Knotenansicht ({@link PageGraph}).
+     */
+    private static Edge roleEdge(ParsedStatements.Statement statement, String mentionId,
+                                 KnowledgeGraph.Participation participation) {
+        ParsedStatements.Argument argument = statement.arguments().stream()
+                .filter(candidate -> candidate.mention().equals(mentionId) && candidate.role() == participation.role())
+                .findFirst().orElse(null);
+        return new Edge(statement.id(), mentionId, EdgeType.valueOf(participation.role().name()),
+                argument == null ? null : argument.basis().name(), argument == null ? null : argument.relation(),
+                argument == null ? null : argument.marker(), "s" + statement.sentence(),
+                argument == null ? participation.certain() : argument.certain());
     }
 
     private static boolean crossPageAllowed(Options options) {

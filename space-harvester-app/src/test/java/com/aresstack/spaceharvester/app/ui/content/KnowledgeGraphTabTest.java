@@ -218,6 +218,18 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void aNewAnalysisMakesTheGraphLoadAgain() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.pageLoaded()).isTrue();
+
+        tab.analysisChanged();
+
+        assertThat(tab.pageLoaded()).as("lädt beim nächsten Anzeigen neu").isFalse();
+    }
+
+    @Test
     void closingThePageClearsTableStatusAndButtons() {
         tab.page(WIKI);
         tab.showPageNow();

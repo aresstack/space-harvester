@@ -76,6 +76,7 @@ final class StatementsTab extends JPanel {
     private final List<String> lines = new ArrayList<>();
     private final List<Runnable> jumps = new ArrayList<>();
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
+    private Runnable onAnalysed = () -> { };
     private PageSnapshot snapshot;
     private PageText text;
     /** Steigt bei jeder Seite; Ergebnisse mit anderer Nummer gehören zu einer verlassenen Seite. */
@@ -142,6 +143,11 @@ final class StatementsTab extends JPanel {
         render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
     }
 
+    /** Meldet eine neu gespeicherte Analyse (etwa damit der Graph-Reiter neu lädt). */
+    void onAnalysed(Runnable listener) {
+        onAnalysed = Objects.requireNonNull(listener, "listener");
+    }
+
     /** {@code listener} springt zu Fundstellen im Reiter „Text“ ({@code PageDetailPanel#jumpTo}). */
     void onJump(Consumer<List<TermsTab.Span>> listener) {
         onJump = Objects.requireNonNull(listener, "listener");
@@ -152,8 +158,10 @@ final class StatementsTab extends JPanel {
      * Analyse der vorigen Seite wird abgebrochen, ihr Ergebnis verworfen.
      */
     void page(PageSnapshot page, PageText readerText) {
-        if (page != null && sameRunningPage(page.key())) {
-            // Dieselbe Seite neu geladen (Anmeldung, „Aktualität prüfen“): die laufende Analyse läuft weiter.
+        if (page != null && sameRunningPage(page.key()) && sameText(readerText)) {
+            // Dieselbe Seite mit demselben Lesetext neu geladen (Anmeldung, „Aktualität prüfen“): die laufende
+            // Analyse läuft weiter. Bei geändertem Text gilt sie nicht mehr und wird wie bei einem Seitenwechsel
+            // abgebrochen.
             snapshot = page;
             text = readerText;
             return;
@@ -211,6 +219,10 @@ final class StatementsTab extends JPanel {
         neutral(PAGE_UNAVAILABLE);
     }
 
+    private boolean sameText(PageText readerText) {
+        return text != null && readerText != null && text.text().equals(readerText.text());
+    }
+
     private boolean sameRunningPage(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
         return running != null && !running.get() && snapshot != null && snapshot.key().equals(key);
     }
@@ -256,6 +268,7 @@ final class StatementsTab extends JPanel {
             }
             // Neue Analyse: Syntaxdetails der vorigen gelten nicht mehr; ein offenes Feld lädt neu.
             syntaxGeneration++;
+            onAnalysed.run();
             syntax.setText("");
             render(loaded.statements(), loaded.links());
             if (syntaxPanel.getComponentCount() > 1) {

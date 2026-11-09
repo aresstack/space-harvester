@@ -157,6 +157,26 @@ class StatementsTabTest {
     }
 
     @Test
+    void aChangedTextOfTheSamePageCancelsTheRunningAnalysis() {
+        List<String> analysed = new ArrayList<>();
+        tab.onAnalysed(() -> analysed.add("x"));
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.clickAnalyze();
+
+        tab.page(page("1"), new PageText("test/v1", "Ganz anderer Text.", List.of()));
+        runner.runAll();
+
+        assertThat(actions.lastCancelled.getAsBoolean()).isTrue();
+        assertThat(tab.stateLabel()).isEqualTo("Nicht analysiert");
+        assertThat(analysed).isEmpty();
+
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(analysed).as("neue Analyse gemeldet, etwa für den Graph-Reiter").hasSize(1);
+    }
+
+    @Test
     void loadingAndFailedPagesClaimNothingAboutTheAnalysis() {
         tab.pending(new PageKey("wiki", "1"));
         assertThat(tab.hintText()).isEqualTo(StatementsTab.LOADING_PAGE);

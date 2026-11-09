@@ -266,6 +266,22 @@ class GraphNeighbourhoodTest {
     }
 
     @Test
+    void aTermEdgeCarriesTheSameProvenanceAsInThePageView() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
+
+        GraphNeighbourhood.Edge fromTerm = neighbourhood.term(CALLER, "Beleg", GraphNeighbourhood.Options.DEFAULT)
+                .edges().stream().filter(edge -> edge.type().role()).findFirst().orElseThrow();
+        GraphNeighbourhood.Edge fromPage = neighbourhood.page(CALLER, new PageKey("wiki", "1"),
+                GraphNeighbourhood.Options.DEFAULT).edges().stream()
+                .filter(edge -> edge.from().equals(fromTerm.from()) && edge.to().equals(fromTerm.to()))
+                .findFirst().orElseThrow();
+
+        assertThat(fromTerm).isEqualTo(fromPage);
+        assertThat(fromTerm.origin()).isEqualTo("PARSER");
+        assertThat(fromTerm.relation()).isEqualTo("obj");
+    }
+
+    @Test
     void nodeIdsAreParsedIntoTheirPage() {
         assertThat(GraphNeighbourhood.pageOf("wiki/12@0123456789ab#s1.t2")).contains(new PageKey("wiki", "12"));
         assertThat(GraphNeighbourhood.pageOf("wiki/a/b@0123456789ab")).contains(new PageKey("wiki", "a/b"));

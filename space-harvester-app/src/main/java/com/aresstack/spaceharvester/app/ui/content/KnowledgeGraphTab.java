@@ -276,6 +276,28 @@ final class KnowledgeGraphTab extends JPanel {
         }
     }
 
+    /**
+     * Die gespeicherte Analyse der geöffneten Seite hat sich geändert: sichtbar sofort neu laden, sonst beim nächsten
+     * Anzeigen.
+     */
+    void analysisChanged() {
+        if (page == null) {
+            return;
+        }
+        if (isShowing()) {
+            if (entry != null) {
+                reloadFocus();
+            } else {
+                showPage();
+            }
+        } else {
+            pageLoaded = false;
+            entry = null;
+            expansions.clear();
+            requested.clear();
+        }
+    }
+
     // ---- Laden
 
     private void showPage() {
@@ -1354,6 +1376,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     int selectedTableRow() {
         return table.getSelectedRow();
+    }
+
+    boolean pageLoaded() {
+        return pageLoaded;
     }
 
     String selectedNode() {
