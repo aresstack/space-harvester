@@ -266,6 +266,15 @@ Abgleich, Suchen, Exportieren oder bei „Analysen neu berechnen“; der Dienst 
   Parser keinen Speicher.
 - **Lizenz:** Das Modell steht unter CC BY-SA 4.0 (UD German GSD, `docs/NLP_MODEL_LICENSE.md`); wer es mit ausliefert,
   gibt `LICENSE-MODEL.md` und `ATTRIBUTION.md` aus der ZIP mit. Der Code bleibt MIT.
+- **Analysen → Graph:** zeigt einen fokussierten Ausschnitt des Wissensgraphen – die geöffnete Seite (Dokument,
+  Aussagen, Erwähnungen), einen gewählten Knoten oder einen Suchbegriff, jeweils mit direkten Nachbarn und höchstens
+  50 Knoten und 100 Kanten („gekürzt“ sagt, wie viele fehlen). Doppelklick oder „Nachbarn erweitern“ lädt gezielt
+  nach, „Zurück“ stellt die vorige Ansicht her, Mausrad zoomt, Ziehen verschiebt, „Einpassen“ (Taste 0) passt ein.
+  Rechteck = Dokument, abgerundet = Aussage, Ellipse = Erwähnung; gestrichelte Kanten verbinden Erwähnungen
+  verschiedener Seiten (gleiche Grundform = Kandidat, keine Identität), gepunktete sind unsicher zugeordnet,
+  veraltete Seiten sind grau mit „(veraltet)“. „Tabelle“ zeigt dieselben Angaben ohne Farbe, Enter erweitert.
+  Knoten der geöffneten Seite springen mit „Zum Beleg im Text“ zur Textstelle. Der Reiter lädt erst, wenn er
+  sichtbar ist, und startet nie eine Analyse.
 
 ## Inhalte
 
