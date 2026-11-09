@@ -188,7 +188,7 @@ final class AiSettingsPanel {
             parserStatus.setFocusable(false);
             modelRows.add(ParserModelSetup.LABEL, Comic.fieldWithButton(parserStatus, parserInstall),
                     "MaltParser (deutsch) für „Analysen › Aussagen“; wird nur auf Klick aus dem GitHub-Release geladen "
-                            + "(rund 50 MB) und läuft danach lokal");
+                            + "und läuft danach lokal");
             parserInstall.addActionListener(e -> {
                 ParserModelSetup setup = context.parserModel();
                 if (setup.status().state() == ParserModelSetup.State.INSTALLING) {
