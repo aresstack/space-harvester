@@ -102,6 +102,13 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
 - Der Analyse-Export (W) und die technische Inspektion unter „Erweitert → Analyse“ enthalten die Aussagenanalyse
   nicht, weil sie keine Anreicherung ist; ein eigener Export kann über `KnowledgeGraphStore#all` folgen.
 
+- Darstellung (#499 Abschnitt F): `GraphNeighbourhood` liefert fokussierte Teilgraphen (Seite, Knoten oder Begriff,
+  ein Schritt, standardmäßig höchstens 50 Knoten und 100 Kanten, mit Kennzeichen „gekürzt“) ausschließlich über
+  `KnowledgeGraph`, also mit denselben Rechten je Seite. Seitenverbindungen sind Kanten zwischen eigenständigen
+  Erwähnungen (`LEXICAL_CANDIDATE`, `CONFIRMED_TERM_RELATION`). Der Reiter „Analysen → Graph“ zeichnet sie mit Java2D
+  (Form statt nur Farbe, gestrichelte Kandidaten, Zoom, Verschieben, Einpassen, „Nachbarn erweitern“, „Zurück“) und
+  bietet dieselben Angaben als Tabelle; er lädt den Teilgraphen erst, wenn er sichtbar ist, und rechnet nie.
+
 ## Nicht Teil dieser Entscheidung
 
 Wissensgraphgestützter Chat, Entitäts- und Koreferenzauflösung, Ontologie, grafisches Layout, KI-Verifikation,
