@@ -7,9 +7,14 @@ import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 
 import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -73,6 +78,10 @@ import java.util.function.Supplier;
  * ohne Farbe und ist per Tastatur bedienbar. Auswahl zeigt Rolle, Herkunft, Sicherheit und Beleg; Knoten der
  * geöffneten Seite springen zum Beleg im Reiter „Text“.
  *
+ * <p>Das Export-Symbol rechts startet den JSON-LD-Export vorhandener Analysen als Auftrag; der Umfang (Seite,
+ * Unterzweig, Space, Quelle oder gesamter Graph) wird im Menü gewählt, veraltete Analysen folgen „Veraltete zeigen“.
+ * Der Export stößt nie eine Analyse an.
+ *
  * <p>Alle Methoden nur auf dem EDT; Core-Aufrufe laufen im Hintergrund, späte Ergebnisse werden verworfen.
  */
 final class KnowledgeGraphTab extends JPanel {
@@ -82,6 +91,9 @@ final class KnowledgeGraphTab extends JPanel {
     static final String EMPTY_TERM = "Keine Erwähnung auf analysierten, für dich sichtbaren Seiten.";
     static final String FILTERED = "Die Seite ist analysiert, aber die gewählten Filter blenden alles aus "
             + "(z. B. „Veraltete zeigen“ oder die Knotenarten).";
+    static final String EXPORT_TIP = "Graph exportieren (JSON-LD): Umfang wählen; exportiert nur vorhandene "
+            + "Analysen, analysiert nichts";
+    static final String EXPORT_STARTED = "Export läuft – Fortschritt unter Aufträge";
     static final String FILTERED_TERM = "Treffer gibt es, aber die gewählten Filter blenden sie aus "
             + "(z. B. „Nur diese Quelle“ oder „Veraltete zeigen“).";
     /** Abstand zwischen Knoten bei der Anordnung (Weltkoordinaten). */
@@ -122,6 +134,8 @@ final class KnowledgeGraphTab extends JPanel {
             "Zwischen Grafik und Tabelle wechseln");
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton jump = Comic.button(
             "Zum Beleg im Text", "Springt zur Textstelle im Reiter „Text“");
+    private final JButton export = Comic.exportButton(EXPORT_TIP);
+    private final JLabel exportNote = Comic.muted("");
 
     private final Map<String, GraphNeighbourhood.Node> nodes = new LinkedHashMap<>();
     private final Map<String, GraphNeighbourhood.Edge> edges = new LinkedHashMap<>();
@@ -129,6 +143,10 @@ final class KnowledgeGraphTab extends JPanel {
     private final Deque<View> history = new ArrayDeque<>();
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private PageKey page;
+    /** Space der geöffneten Seite für den Export-Umfang „Space“; {@code null}, wenn unbekannt. */
+    private String spaceKey;
+    /** Ob ein Export gerade gestartet wird; so lange bleibt das Symbol gesperrt. */
+    private boolean exporting;
     private boolean pageLoaded;
     /** Womit die Ansicht begann (Seite, Knoten oder Begriff); Filterwechsel wiederholen genau diese Abfrage. */
     private Entry entry;
@@ -187,7 +205,15 @@ final class KnowledgeGraphTab extends JPanel {
         tools.add(back);
         tools.add(fit);
         tools.add(view);
-        head.add(tools, BorderLayout.CENTER);
+        JPanel exportTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
+        exportTools.setOpaque(false);
+        exportTools.add(exportNote);
+        exportTools.add(export);
+        JPanel toolRow = new JPanel(new BorderLayout());
+        toolRow.setOpaque(false);
+        toolRow.add(tools, BorderLayout.CENTER);
+        toolRow.add(exportTools, BorderLayout.EAST);
+        head.add(toolRow, BorderLayout.CENTER);
         JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         filters.setOpaque(false);
         for (JCheckBox box : List.of(documents, statements, mentions, roles, nominal, crossPage, stale,
@@ -204,6 +230,7 @@ final class KnowledgeGraphTab extends JPanel {
         fit.addActionListener(e -> canvas.fit());
         view.addActionListener(e -> toggleView());
         jump.addActionListener(e -> jumpToSelected());
+        export.addActionListener(e -> exportMenu().show(export, 0, export.getHeight()));
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setAutoCreateRowSorter(true);
@@ -260,7 +287,13 @@ final class KnowledgeGraphTab extends JPanel {
      * eine neue Ansicht.
      */
     void page(PageKey key) {
+        page(key, null);
+    }
+
+    /** Wie {@link #page(PageKey)}, mit dem Space der Seite für den Export-Umfang „Space“. */
+    void page(PageKey key, String spaceKey) {
         page = key;
+        this.spaceKey = key == null ? null : spaceKey;
         pageLoaded = false;
         generation++;
         history.clear();
@@ -829,6 +862,74 @@ final class KnowledgeGraphTab extends JPanel {
         pageButton.setEnabled(page != null);
         thisSource.setEnabled(page != null);
         jump.setEnabled(jumpable(selected == null ? null : nodes.get(selected)));
+        export.setEnabled(actions.get() != null && !exporting);
+    }
+
+    /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
+    List<ExportChoice> exportChoices() {
+        List<ExportChoice> choices = new ArrayList<>();
+        PageKey key = page;
+        choices.add(new ExportChoice("Diese Seite",
+                key == null ? null : new KnowledgeGraphExportUseCase.Scope.Page(key.sourceId(), key.pageId())));
+        choices.add(new ExportChoice("Unterzweig ab dieser Seite",
+                key == null ? null : new KnowledgeGraphExportUseCase.Scope.Subtree(key.sourceId(), key.pageId())));
+        choices.add(new ExportChoice(spaceKey == null ? "Space dieser Seite" : "Space „" + spaceKey + "“",
+                key == null || spaceKey == null ? null
+                        : new KnowledgeGraphExportUseCase.Scope.Space(key.sourceId(), spaceKey)));
+        choices.add(new ExportChoice(key == null ? "Quelle dieser Seite" : "Quelle „" + key.sourceId() + "“",
+                key == null ? null : new KnowledgeGraphExportUseCase.Scope.Source(key.sourceId())));
+        choices.add(new ExportChoice("Gesamter Graph", new KnowledgeGraphExportUseCase.Scope.All()));
+        return choices;
+    }
+
+    private JPopupMenu exportMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem title = new JMenuItem(stale.isSelected() ? "Exportieren (mit veralteten Analysen):"
+                : "Exportieren (nur aktuelle Analysen):");
+        title.setEnabled(false);
+        menu.add(title);
+        for (ExportChoice choice : exportChoices()) {
+            JMenuItem item = new JMenuItem(choice.label());
+            item.setEnabled(choice.scope() != null);
+            item.addActionListener(e -> startExport(choice));
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /**
+     * Startet den Export als Auftrag; liest nur vorhandene Analysen. Veraltete kommen mit, wenn „Veraltete zeigen“
+     * gewählt ist.
+     */
+    void startExport(ExportChoice choice) {
+        Actions current = actions.get();
+        if (current == null || choice.scope() == null || exporting) {
+            return;
+        }
+        boolean includeStale = stale.isSelected();
+        exporting = true;
+        export.setEnabled(false);
+        exportNote.setText("Export wird gestartet …");
+        exportNote.setToolTipText(null);
+        runner.run(() -> current.export(choice.scope(), includeStale), started -> {
+            exporting = false;
+            export.setEnabled(actions.get() != null);
+            exportNote.setText(EXPORT_STARTED);
+            exportNote.setToolTipText("Graph-Export „" + choice.label() + "“"
+                    + (includeStale ? " mit veralteten Analysen" : " nur mit aktuellen Analysen")
+                    + " · Ziel: Exportordner/knowledge-graph");
+        }, failure -> {
+            exporting = false;
+            export.setEnabled(actions.get() != null);
+            String reason = failure.getMessage();
+            exportNote.setText("Export nicht gestartet: "
+                    + (reason == null || reason.isBlank() ? failure.getClass().getSimpleName() : reason));
+            exportNote.setToolTipText(null);
+        });
+    }
+
+    /** Ein Eintrag im Export-Menü; {@code scope} ist {@code null}, wenn er gerade nicht wählbar ist. */
+    record ExportChoice(String label, KnowledgeGraphExportUseCase.Scope scope) {
     }
 
     private void toggleView() {
@@ -1283,6 +1384,9 @@ final class KnowledgeGraphTab extends JPanel {
 
         GraphNeighbourhood.Subgraph term(String term, GraphNeighbourhood.Options options);
 
+        /** Startet den JSON-LD-Export vorhandener Analysen als Auftrag; analysiert nie. */
+        JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale);
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -1302,11 +1406,24 @@ final class KnowledgeGraphTab extends JPanel {
                 public GraphNeighbourhood.Subgraph term(String term, GraphNeighbourhood.Options options) {
                     return workspace.knowledgeGraphOfTerm(term, options);
                 }
+
+                @Override
+                public JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale) {
+                    return workspace.startKnowledgeGraphExport(scope, includeStale);
+                }
             };
         }
     }
 
     // ---- für Tests
+
+    String exportNoteText() {
+        return exportNote.getText();
+    }
+
+    boolean exportEnabled() {
+        return export.isEnabled();
+    }
 
     List<String> nodeIds() {
         return List.copyOf(nodes.keySet());
