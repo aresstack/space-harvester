@@ -56,7 +56,8 @@ class TermRelationsViewTest {
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
         Workspace workspace = context.runtime().workspace();
-        await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
+        await("Quelle verbunden", () ->
+                context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
         String space = workspace.spaces("handbuch").get(0).key();
         String job = workspace.startSync("handbuch", space).id();
         for (int i = 0; i < 600 && !workspace.job(job).state().terminal(); i++) {
@@ -66,17 +67,19 @@ class TermRelationsViewTest {
         // Der Abgleich legt nur den Katalog an; das Lesen der Seite füllt den Begriffsindex.
         String pageId = workspace.liveMetadata("handbuch", space, null, 10).entries().get(0).page().pageId();
         workspace.page("handbuch", pageId, false);
-        // Die Akronyme füllt die Anreicherung im Hintergrund; vorgeschlagen wird, sobald sie im Index stehen.
-        int[] added = {0};
-        awaitOffEdt(() -> (added[0] += workspace.proposeAcronymRelations("handbuch").added()) >= 2);
-        assertThat(added[0]).isEqualTo(2);
+        // Die Akronyme füllt die Anreicherung im Hintergrund, und sie gleicht danach selbst die Regelvorschläge ab.
+        // Wer zuerst vorschlägt, ist offen: Gezählt wird der Stand im Core, nicht die Zahl, die ein Lauf hinzufügt.
+        awaitOffEdt("zwei Regelvorschläge im Core", () -> {
+            workspace.proposeAcronymRelations("handbuch");
+            return workspace.termRelations(null, null, 10).relations().size() == 2;
+        });
 
         TermsView[] view = new TermsView[1];
         SwingUtilities.invokeAndWait(() -> {
             view[0] = new TermsView(context);
             view[0].shown();
         });
-        await(() -> view[0].relations().table().getRowCount() == 2);
+        await("zwei Beziehungen in der Liste", () -> view[0].relations().table().getRowCount() == 2);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(view[0].relations().table().getValueAt(0, 0)).isEqualTo("API");
             assertThat(view[0].relations().table().getValueAt(0, 1)).isEqualTo("Abkürzung für");
@@ -85,14 +88,14 @@ class TermRelationsViewTest {
             view[0].relations().table().setRowSelectionInterval(0, 0);
             view[0].reviewButtons().get(0).doClick();
         });
-        await(() -> "Bestätigt".equals(view[0].relations().table().getValueAt(0, 3)));
+        await("API bestätigt", () -> "Bestätigt".equals(view[0].relations().table().getValueAt(0, 3)));
 
         // Abgelehnt bleibt die Beziehung sichtbar, am Ende der Liste.
         SwingUtilities.invokeAndWait(() -> {
             view[0].relations().table().setRowSelectionInterval(1, 1);
             view[0].reviewButtons().get(1).doClick();
         });
-        await(() -> view[0].relations().table().getRowCount() == 2
+        await("SSO abgelehnt am Ende", () -> view[0].relations().table().getRowCount() == 2
                 && "Abgelehnt".equals(view[0].relations().table().getValueAt(1, 3)));
         assertThat(workspace.termRelations(null, null, 10).relations()).hasSize(1);
         // Nach dem Ablehnen bleibt die Zeile gewählt, grau hinterlegt.
@@ -104,7 +107,7 @@ class TermRelationsViewTest {
             view[0].createRelation("REST", com.aresstack.spaceharvester.application.terms.RelationType.RELATED,
                     "HTTP");
         });
-        await(() -> view[0].relations().table().getRowCount() == 3);
+        await("REST angelegt (drei Zeilen)", () -> view[0].relations().table().getRowCount() == 3);
         int[] row = new int[1];
         SwingUtilities.invokeAndWait(() -> {
             row[0] = view[0].relations().table().getSelectedRow();
@@ -114,21 +117,24 @@ class TermRelationsViewTest {
             view[0].reviewButtons().get(2).doClick();
         });
         // Entfernt bleibt die Zeile stehen; die Schaltfläche heißt jetzt Rückgängig.
-        await(() -> TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
+        await("REST entfernt, Rückgängig angeboten", () ->
+                TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
         assertThat(workspace.termRelations("REST", null, 10).relations()).isEmpty();
         SwingUtilities.invokeAndWait(() -> {
             assertThat(view[0].relations().table().getRowCount()).isEqualTo(3);
             view[0].reviewButtons().get(2).doClick();
         });
-        await(() -> TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
+        await("Rückgängig: REST wieder da und gewählt", () ->
+                TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
                 && view[0].relations().table().getSelectedRow() >= 0);
         assertThat(workspace.termRelations("REST", null, 10).relations()).hasSize(1);
         // Entfernt und neu angelegt steht sie wieder normal da, nicht durchgestrichen.
         SwingUtilities.invokeAndWait(() -> view[0].reviewButtons().get(2).doClick());
-        await(() -> TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
+        await("REST erneut entfernt", () -> TermsView.UNDO.equals(view[0].reviewButtons().get(2).getText()));
         SwingUtilities.invokeAndWait(() -> view[0].createRelation("REST",
                 com.aresstack.spaceharvester.application.terms.RelationType.RELATED, "HTTP"));
-        await(() -> TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
+        await("REST neu angelegt, nicht mehr entfernt", () ->
+                TermsView.REMOVE.equals(view[0].reviewButtons().get(2).getText())
                 && view[0].relations().table().getSelectedRow() >= 0);
         SwingUtilities.invokeAndWait(() -> {
             int selected = view[0].relations().table().getSelectedRow();
@@ -162,7 +168,7 @@ class TermRelationsViewTest {
     }
 
     /** Wartet auf einen Zustand; 120 s sind nur die Grenze für einen Hänger (die Anreicherung dauert unter Last). */
-    private static void await(BooleanSupplier condition) throws Exception {
+    private static void await(String step, BooleanSupplier condition) throws Exception {
         for (int i = 0; i < 2400; i++) {
             boolean[] done = new boolean[1];
             SwingUtilities.invokeAndWait(() -> done[0] = condition.getAsBoolean());
@@ -171,17 +177,17 @@ class TermRelationsViewTest {
             }
             Thread.sleep(50);
         }
-        throw new AssertionError("Bedingung nicht erreicht");
+        throw new AssertionError("Nicht erreicht: " + step);
     }
 
     /** Wie {@link #await}, aber außerhalb des EDT: für Aufrufe in den Core, die selbst Zeit brauchen. */
-    private static void awaitOffEdt(BooleanSupplier condition) throws Exception {
+    private static void awaitOffEdt(String step, BooleanSupplier condition) throws Exception {
         for (int i = 0; i < 2400; i++) {
             if (condition.getAsBoolean()) {
                 return;
             }
             Thread.sleep(50);
         }
-        throw new AssertionError("Bedingung nicht erreicht");
+        throw new AssertionError("Nicht erreicht: " + step);
     }
 }

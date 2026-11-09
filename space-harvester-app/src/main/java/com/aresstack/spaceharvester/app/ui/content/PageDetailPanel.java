@@ -327,6 +327,7 @@ public final class PageDetailPanel extends JPanel {
         imagesLoaded = false;
         readingPane.clear(" ");
         breadcrumbs.clear();
+        positionShown.accept(null);
         references.message(" ");
         views = List.of();
         showReader(null, false);
@@ -397,6 +398,7 @@ public final class PageDetailPanel extends JPanel {
         this.page = null;
         readingPane.clear(" ");
         breadcrumbs.clear();
+        positionShown.accept(null);
         references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
@@ -455,21 +457,6 @@ public final class PageDetailPanel extends JPanel {
             page = null;
             acronymHint.setText(" ");
         });
-    }
-
-    /** Lädt eine Seite über ihre Quell-URL (enthält die Seiten-ID). */
-    public void loadByUrl(String sourceId, String url) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
-            return;
-        }
-        cards.show(deck, PAGE);
-        feedback.working("Seite zur Adresse wird gesucht …");
-        Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, false),
-                found -> load(sourceId, found.header().key().pageId(), false),
-                error -> Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, true),
-                        found -> load(sourceId, found.header().key().pageId(), true),
-                        e -> feedback.problem(e, Problems.Step.PAGE)));
     }
 
     /** Meldet den Pfad der angezeigten Seite, sobald er geladen ist; ohne Seitenbaum der Quelle nie. */
