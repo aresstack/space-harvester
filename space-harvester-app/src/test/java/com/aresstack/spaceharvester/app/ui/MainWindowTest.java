@@ -221,6 +221,27 @@ class MainWindowTest {
     }
 
     @Test
+    void theSearchShowsItsStateInTheStatusLineAndHasNoOwnActionRow() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            window.content(() -> { }, () -> { });
+            window.show(AppContext.Section.SEARCH);
+            SearchView search = window.searchView();
+            assertThat(search.actions()).isNull();
+            assertThat(SwingUtilities.isDescendingFrom(search.statusInfo(), window.statusLine())).isTrue();
+            assertThat(search.statusInfo().getParent().isVisible()).isTrue();
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(search.statusInfo().getParent().isVisible()).isFalse();
+        });
+    }
+
+    @Test
     void closeRingsStayRoundAndTheCopyrightOpensTheReleases() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """

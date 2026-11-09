@@ -190,14 +190,14 @@ class SearchViewTest {
 
     private final java.util.Map<SearchView, javax.swing.JPanel> wholes = new java.util.IdentityHashMap<>();
 
-    /** Arbeitsfläche und Aktionszeile zusammen, wie im Hauptfenster. */
+    /** Arbeitsfläche und Stand für die Statuszeile zusammen, wie im Hauptfenster. */
     private javax.swing.JPanel whole(SearchView view) {
         return wholes.computeIfAbsent(view, v -> {
             javax.swing.JPanel[] panel = new javax.swing.JPanel[1];
             Runnable build = () -> {
                 panel[0] = new javax.swing.JPanel(new java.awt.BorderLayout());
                 panel[0].add(v.component(), java.awt.BorderLayout.CENTER);
-                panel[0].add(v.actions(), java.awt.BorderLayout.SOUTH);
+                panel[0].add(v.statusInfo(), java.awt.BorderLayout.SOUTH);
             };
             if (SwingUtilities.isEventDispatchThread()) {
                 build.run();
@@ -300,9 +300,8 @@ class SearchViewTest {
         assertThat(table.getRowCount()).isPositive();
         assertThat(view[0].statusText()).contains("semantisch");
         assertThat(button(whole(view[0]), "Weitere laden").isVisible()).isFalse();
-        // Wie der globale Balken: leere Spur, mittig „Fertig“ statt „Abbrechen“.
-        assertThat(view[0].progress.isIndeterminate()).isFalse();
-        assertThat(view[0].progress.getValue()).isZero();
+        // Am Ende „Fertig“ statt „Abbrechen“; die Ansicht hat keine eigene Aktionszeile mehr.
+        assertThat(view[0].actions()).isNull();
         assertThat(view[0].endState.isVisible()).isTrue();
         assertThat(view[0].endState.getText()).isEqualTo("Fertig");
         assertThat(view[0].cancel.isVisible()).isFalse();

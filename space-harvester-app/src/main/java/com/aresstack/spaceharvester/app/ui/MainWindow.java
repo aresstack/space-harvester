@@ -72,6 +72,9 @@ public final class MainWindow implements AppContext.Navigator {
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
+    /** Stand des sichtbaren Bereichs ({@link View#statusInfo()}) links in der Statuszeile, vor dem Stand der App. */
+    private final CardLayout viewStatusCards = new CardLayout();
+    private final JPanel viewStatus = new JPanel(viewStatusCards);
     /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
     private StatusLine statusLine;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
@@ -121,6 +124,14 @@ public final class MainWindow implements AppContext.Navigator {
         views.forEach((section, view) -> {
             if (view.actions() != null && view != activities) {
                 actionDeck.add(view.actions(), section.name());
+            }
+        });
+        viewStatus.setOpaque(false);
+        viewStatus.add(new JPanel(), JOBS);
+        views.forEach((section, view) -> {
+            if (view.statusInfo() != null) {
+                view.statusInfo().setOpaque(false);
+                viewStatus.add(view.statusInfo(), section.name());
             }
         });
         findBar = new FindBar(() -> views.get(current).component());
@@ -246,7 +257,12 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        statusLine = new StatusLine(activities.progress(), status, activities.jobLine(), new CopyrightLink());
+        JPanel statusWest = new JPanel();
+        statusWest.setOpaque(false);
+        statusWest.setLayout(new javax.swing.BoxLayout(statusWest, javax.swing.BoxLayout.X_AXIS));
+        statusWest.add(viewStatus);
+        statusWest.add(status);
+        statusLine = new StatusLine(activities.progress(), statusWest, activities.jobLine(), new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -327,6 +343,9 @@ public final class MainWindow implements AppContext.Navigator {
         boolean ownActions = view.actions() != null && view != activities;
         actionCards.show(actionDeck, ownActions ? section.name() : JOBS);
         actionDeck.setVisible(ownActions);
+        boolean ownStatus = view.statusInfo() != null;
+        viewStatusCards.show(viewStatus, ownStatus ? section.name() : JOBS);
+        viewStatus.setVisible(ownStatus);
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
@@ -486,6 +505,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Für Tests: die Statuszeile. */
+    /** Für Tests: der Bereich Suche. */
+    SearchView searchView() {
+        return searchView;
+    }
+
     StatusLine statusLine() {
         return statusLine;
     }
