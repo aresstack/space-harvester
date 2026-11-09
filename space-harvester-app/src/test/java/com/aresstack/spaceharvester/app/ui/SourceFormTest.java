@@ -655,6 +655,15 @@ class SourceFormTest {
             f.pairKeePass.doClick();
         });
         awaitOnEdt(() -> form[0].validateInput());
-        SwingUtilities.invokeAndWait(() -> assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Confluence"));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Confluence");
+            // Ein Vorschlag gilt nur, solange die Adresse passt: eine fremde Adresse bekommt nie diese Zugangsdaten.
+            form[0].baseUrl.setText("https://www.example.org");
+            assertThat(form[0].keePassEntry.getEditor().getItem().toString()).isEmpty();
+            assertThat(form[0].validateInput()).isFalse();
+            // Passt die Adresse wieder, gilt der Vorschlag wieder.
+            form[0].baseUrl.setText("https://wiki.example.invalid");
+        });
+        awaitOnEdt(() -> form[0].validateInput());
     }
 }

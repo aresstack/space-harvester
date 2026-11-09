@@ -96,6 +96,11 @@ final class SourceForm {
     private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
+    /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
+    private String keePassUser;
+    /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
+    private String suggestedEntry;
+    private boolean suggesting;
     private String keePassStatus = "";
     final JComboBox<String> auth = Comic.combo();
     final JTextField username = Comic.field(24);
@@ -166,6 +171,10 @@ final class SourceForm {
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();
+            if (keePassChosen()) {
+                // Der neue Typ setzt die Anmeldeart zurück; bei KeePass gibt sie weiter der gelesene Eintrag vor.
+                deriveAuthFromKeePass(keePassUser);
+            }
             updateVisibility();
             derive();
         });
@@ -191,7 +200,12 @@ final class SourceForm {
             }
         });
         pairKeePass.addActionListener(e -> loadKeePassEntries(true));
-        keePassEntry.addActionListener(e -> readKeePassEntry());
+        keePassEntry.addActionListener(e -> {
+            if (!suggesting) {
+                suggestedEntry = null;
+            }
+            readKeePassEntry();
+        });
         auth.addActionListener(e -> {
             authChosen |= !deriving;
             suggestVariable();
@@ -328,33 +342,50 @@ final class SourceForm {
         return false;
     }
 
-    /** Schlägt den Eintrag vor, dessen Adresse (oder Titel) zum Host der Quelle passt, solange keiner gewählt ist. */
+    /**
+     * Schlägt den Eintrag vor, dessen Adresse zum Host der Quelle passt (sonst einen, dessen Titel den ganzen Host
+     * enthält), solange keiner von Hand gewählt ist. Ein Vorschlag wird bei jeder Änderung der Adresse neu geprüft und
+     * verschwindet, wenn er nicht mehr passt: Beim Tippen trifft ein halber Host sonst einen fremden Eintrag, dessen
+     * Zugangsdaten dann an die fertige Adresse gingen.
+     */
     private void suggestKeePassEntry() {
-        if (!keePassChosen() || !keePassTitle().isEmpty() || keePassEntries.isEmpty()) {
+        String current = keePassTitle();
+        boolean auto = suggestedEntry != null && suggestedEntry.equals(current);
+        if (!keePassChosen() || !current.isEmpty() && !auto || keePassEntries.isEmpty()) {
             return;
         }
-        String host = host(address());
-        if (host == null || host.isBlank()) {
+        String match = keePassMatch(host(address()));
+        if (java.util.Objects.equals(match, current.isEmpty() ? null : current)) {
             return;
+        }
+        suggesting = true;
+        try {
+            suggestedEntry = match;
+            keePassEntry.getEditor().setItem(match == null ? "" : match);
+            keePassEntry.setSelectedItem(match); // liest den Eintrag über den ActionListener (oder vergisst ihn)
+        } finally {
+            suggesting = false;
+        }
+    }
+
+    /** Der Eintrag zu einem Host: gleicher Host in der Adresse, sonst ein Titel, der den ganzen Host enthält. */
+    private String keePassMatch(String host) {
+        if (host == null || host.isBlank()) {
+            return null;
         }
         String wanted = host.toLowerCase(java.util.Locale.ROOT);
-        String match = null;
+        String byTitle = null;
         for (var entry : keePassEntries) {
-            String location = entry.location() == null ? "" : entry.location().toLowerCase(java.util.Locale.ROOT);
-            String entryHost = host(location);
+            String entryHost = host(entry.location() == null ? "" : entry.location());
             if (entryHost != null && entryHost.equalsIgnoreCase(wanted)) {
-                match = entry.title();
-                break;
+                return entry.title();
             }
-            if (match == null && entry.title() != null
+            if (byTitle == null && wanted.contains(".") && entry.title() != null
                     && entry.title().toLowerCase(java.util.Locale.ROOT).contains(wanted)) {
-                match = entry.title();
+                byTitle = entry.title();
             }
         }
-        if (match != null) {
-            keePassEntry.getEditor().setItem(match);
-            keePassEntry.setSelectedItem(match); // liest den Eintrag über den ActionListener
-        }
+        return byTitle;
     }
 
     private String keePassTitle() {
@@ -414,11 +445,13 @@ final class SourceForm {
                 return new Object[] {read.userName(), read.copyPassword()};
             }
         }, read -> {
-            if (!title.equals(keePassTitle())) {
+            if (!keePassChosen() || !title.equals(keePassTitle())) {
+                // Inzwischen „Manuell“ oder ein anderer Eintrag: das Ergebnis ändert nichts mehr.
                 java.util.Arrays.fill((char[]) read[1], '\0');
                 return;
             }
             String user = (String) read[0];
+            keePassUser = user == null ? "" : user;
             deriveAuthFromKeePass(user == null ? "" : user);
             if (user != null && !user.isBlank() && BASIC.equals(auth.getSelectedItem())) {
                 username.setText(user.strip());
@@ -437,6 +470,7 @@ final class SourceForm {
     }
 
     private void forgetKeePassSecret() {
+        keePassUser = null;
         if (keePassSecret != null) {
             java.util.Arrays.fill(keePassSecret, '\0');
             keePassSecret = null;
