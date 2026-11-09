@@ -183,8 +183,8 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> labelText(detail.statements()))).isEqualTo(PageDetailPanel.STATEMENTS_PLACEHOLDER);
 
-        // „Graph“ ebenso: Hinweis, bis knowledgeGraphTab den Wissensgraphen einsetzt.
-        assertThat(onEdt(() -> labelText(detail.knowledgeGraph()))).isEqualTo(PageDetailPanel.GRAPH_PLACEHOLDER);
+        // „Graph“ ebenso: eingebauter Wissensgraph; knowledgeGraphTab ersetzt ihn, null zeigt den Hinweis.
+        assertThat(onEdt(() -> detail.knowledgeGraph().getComponent(0))).isInstanceOf(KnowledgeGraphTab.class);
         javax.swing.JPanel graph = onEdt(javax.swing.JPanel::new);
         onEdt(() -> {
             view.knowledgeGraphTab(graph);
