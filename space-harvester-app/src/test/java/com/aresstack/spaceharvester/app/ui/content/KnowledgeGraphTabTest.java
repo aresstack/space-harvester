@@ -262,7 +262,8 @@ class KnowledgeGraphTabTest {
         assertThat(tab.exportEnabled()).as("gesperrt, solange der Start läuft").isFalse();
         runner.runAll();
 
-        assertThat(actions.exports).containsExactly("zweig wiki 1 mit veralteten");
+        assertThat(actions.exports).as("veraltete nur auf ausdrücklichen Wunsch, auch wenn die Ansicht sie zeigt")
+                .containsExactly("zweig wiki 1 nur aktuelle");
         assertThat(actions.calls).as("Export lädt keinen Teilgraphen und analysiert nichts").isEmpty();
         assertThat(tab.exportNoteText()).isEqualTo(KnowledgeGraphTab.EXPORT_STARTED);
         assertThat(tab.exportEnabled()).isTrue();
@@ -279,15 +280,33 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
-    void staleAnalysesAreExportedOnlyWhenShown() {
+    void staleAnalysesAreExportedOnlyWhenExplicitlyIncluded() {
         tab.page(WIKI, "DEV");
         tab.toggleShowStale();
         runner.runAll();
+        tab.includeStaleInExport(true);
 
         tab.startExport(tab.exportChoices().get(2));
         runner.runAll();
 
-        assertThat(actions.exports).containsExactly("space wiki DEV nur aktuelle");
+        assertThat(actions.exports).as("unabhängig vom Ansichtsfilter").containsExactly("space wiki DEV mit veralteten");
+    }
+
+    @Test
+    void theExportNoteIsClearedOnAPageChangeAndALateCallbackDoesNotWriteIt() {
+        tab.page(WIKI, "DEV");
+        tab.startExport(tab.exportChoices().get(0));
+        runner.runAll();
+        assertThat(tab.exportNoteText()).isEqualTo(KnowledgeGraphTab.EXPORT_STARTED);
+
+        tab.page(new PageKey("wiki", "2"), "DEV");
+        assertThat(tab.exportNoteText()).isEmpty();
+
+        tab.startExport(tab.exportChoices().get(0));
+        tab.page(WIKI, "DEV");
+        runner.runAll();
+        assertThat(tab.exportNoteText()).as("Rückmeldung zur vorigen Seite bleibt weg").isEmpty();
+        assertThat(tab.exportEnabled()).isTrue();
     }
 
     @Test

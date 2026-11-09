@@ -79,7 +79,7 @@ import java.util.function.Supplier;
  * geöffneten Seite springen zum Beleg im Reiter „Text“.
  *
  * <p>Das Export-Symbol rechts startet den JSON-LD-Export vorhandener Analysen als Auftrag; der Umfang (Seite,
- * Unterzweig, Space, Quelle oder gesamter Graph) wird im Menü gewählt, veraltete Analysen folgen „Veraltete zeigen“.
+ * Unterzweig, Space, Quelle oder gesamter Graph) wird im Menü gewählt, veraltete Analysen nur mit eigenem Haken dort.
  * Der Export stößt nie eine Analyse an.
  *
  * <p>Alle Methoden nur auf dem EDT; Core-Aufrufe laufen im Hintergrund, späte Ergebnisse werden verworfen.
@@ -93,7 +93,7 @@ final class KnowledgeGraphTab extends JPanel {
             + "(z. B. „Veraltete zeigen“ oder die Knotenarten).";
     static final String EXPORT_TIP = "Graph exportieren (JSON-LD): Umfang wählen; exportiert nur vorhandene "
             + "Analysen, analysiert nichts";
-    static final String EXPORT_STARTED = "Export läuft – Fortschritt unter Aufträge";
+    static final String EXPORT_STARTED = "Graph-Export gestartet – Fortschritt unter Aufträge";
     static final String FILTERED_TERM = "Treffer gibt es, aber die gewählten Filter blenden sie aus "
             + "(z. B. „Nur diese Quelle“ oder „Veraltete zeigen“).";
     /** Abstand zwischen Knoten bei der Anordnung (Weltkoordinaten). */
@@ -147,6 +147,11 @@ final class KnowledgeGraphTab extends JPanel {
     private String spaceKey;
     /** Ob ein Export gerade gestartet wird; so lange bleibt das Symbol gesperrt. */
     private boolean exporting;
+    /**
+     * Ob der Export auch veraltete Analysen mitnimmt. Unabhängig vom Ansichtsfilter „Veraltete zeigen“ und anfangs
+     * aus: veraltete nur auf ausdrücklichen Wunsch (KnowledgeGraphExportUseCase).
+     */
+    private boolean exportStale;
     private boolean pageLoaded;
     /** Womit die Ansicht begann (Seite, Knoten oder Begriff); Filterwechsel wiederholen genau diese Abfrage. */
     private Entry entry;
@@ -207,7 +212,6 @@ final class KnowledgeGraphTab extends JPanel {
         tools.add(view);
         JPanel exportTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
         exportTools.setOpaque(false);
-        exportTools.add(exportNote);
         exportTools.add(export);
         JPanel toolRow = new JPanel(new BorderLayout());
         toolRow.setOpaque(false);
@@ -268,7 +272,11 @@ final class KnowledgeGraphTab extends JPanel {
 
         add(head, BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
-        add(status, BorderLayout.SOUTH);
+        JPanel foot = new JPanel(new BorderLayout(12, 0));
+        foot.setOpaque(false);
+        foot.add(status, BorderLayout.CENTER);
+        foot.add(exportNote, BorderLayout.EAST);
+        add(foot, BorderLayout.SOUTH);
         addHierarchyListener(e -> {
             if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && !pageLoaded) {
                 showPage();
@@ -294,6 +302,8 @@ final class KnowledgeGraphTab extends JPanel {
     void page(PageKey key, String spaceKey) {
         page = key;
         this.spaceKey = key == null ? null : spaceKey;
+        exportNote.setText("");
+        exportNote.setToolTipText(null);
         pageLoaded = false;
         generation++;
         history.clear();
@@ -884,29 +894,35 @@ final class KnowledgeGraphTab extends JPanel {
 
     private JPopupMenu exportMenu() {
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem title = new JMenuItem(stale.isSelected() ? "Exportieren (mit veralteten Analysen):"
-                : "Exportieren (nur aktuelle Analysen):");
-        title.setEnabled(false);
-        menu.add(title);
         for (ExportChoice choice : exportChoices()) {
             JMenuItem item = new JMenuItem(choice.label());
             item.setEnabled(choice.scope() != null);
+            item.setToolTipText(choice.scope() != null ? "Analysen exportieren: " + choice.label()
+                    : page == null ? "Keine Seite geöffnet" : "Space der Seite unbekannt");
             item.addActionListener(e -> startExport(choice));
             menu.add(item);
         }
+        menu.addSeparator();
+        javax.swing.JCheckBoxMenuItem withStale = new javax.swing.JCheckBoxMenuItem(
+                "Veraltete Analysen einschließen", exportStale);
+        withStale.setToolTipText("Sonst nur aktuelle Analysen; veraltete sind im Export als veraltet markiert");
+        withStale.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+        withStale.addActionListener(e -> exportStale = withStale.isSelected());
+        menu.add(withStale);
         return menu;
     }
 
     /**
-     * Startet den Export als Auftrag; liest nur vorhandene Analysen. Veraltete kommen mit, wenn „Veraltete zeigen“
-     * gewählt ist.
+     * Startet den Export als Auftrag; liest nur vorhandene Analysen. Veraltete kommen nur mit, wenn im Menü
+     * „Veraltete Analysen einschließen“ gewählt ist.
      */
     void startExport(ExportChoice choice) {
         Actions current = actions.get();
         if (current == null || choice.scope() == null || exporting) {
             return;
         }
-        boolean includeStale = stale.isSelected();
+        boolean includeStale = exportStale;
+        int startedFor = generation;
         exporting = true;
         export.setEnabled(false);
         exportNote.setText("Export wird gestartet …");
@@ -914,13 +930,19 @@ final class KnowledgeGraphTab extends JPanel {
         runner.run(() -> current.export(choice.scope(), includeStale), started -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
+            if (startedFor != generation) {
+                return;
+            }
             exportNote.setText(EXPORT_STARTED);
-            exportNote.setToolTipText("Graph-Export „" + choice.label() + "“"
-                    + (includeStale ? " mit veralteten Analysen" : " nur mit aktuellen Analysen")
+            exportNote.setToolTipText("Graph-Export " + choice.scope().describe()
+                    + (includeStale ? ", mit veralteten Analysen" : ", nur aktuelle Analysen")
                     + " · Ziel: Exportordner/knowledge-graph");
         }, failure -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
+            if (startedFor != generation) {
+                return;
+            }
             String reason = failure.getMessage();
             exportNote.setText("Export nicht gestartet: "
                     + (reason == null || reason.isBlank() ? failure.getClass().getSimpleName() : reason));
@@ -1419,6 +1441,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     String exportNoteText() {
         return exportNote.getText();
+    }
+
+    void includeStaleInExport(boolean include) {
+        exportStale = include;
     }
 
     boolean exportEnabled() {
