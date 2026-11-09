@@ -399,6 +399,11 @@ class SearchViewTest {
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
                     .anySatisfy(text -> assertThat(text).contains("Hinweise zur Suche", "space-harvester://"));
             assertThat(view[0].optionsButton.getAccessibleContext().getAccessibleName()).isEqualTo("Suchoptionen");
+            // Die Optionen sind Menüpunkte mit dem Modell der Häkchen: per Tastatur erreichbar und gleich geschaltet.
+            javax.swing.JCheckBoxMenuItem item = find(view[0].options, javax.swing.JCheckBoxMenuItem.class).get(0);
+            item.doClick();
+            assertThat(view[0].everywhere.isSelected()).isTrue();
+            item.doClick();
             // Keine zweite Eingabezeile und keine Umfang-/Modus-Zeile über der Tabelle.
             assertThat(find(whole(view[0]), javax.swing.JTextField.class)).isEmpty();
             assertThat(SwingUtilities.isDescendingFrom(view[0].scopeLabel, view[0].component())).isFalse();

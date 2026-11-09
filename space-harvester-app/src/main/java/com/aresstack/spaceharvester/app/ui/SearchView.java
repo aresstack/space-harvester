@@ -260,7 +260,19 @@ public final class SearchView implements View {
         panel.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         JLabel help = new JLabel(HELP);
         help.setForeground(Comic.MUTED);
-        for (JComponent part : List.of(everywhere, semantic, semanticNote, scopeLabel, modeLabel, help)) {
+        // Menüpunkte mit demselben Modell wie die Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet,
+        // das Popup bleibt beim Umschalten offen.
+        for (JCheckBox box : List.of(everywhere, semantic)) {
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+            item.setModel(box.getModel());
+            item.setToolTipText(box.getToolTipText());
+            box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
+            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+            item.setEnabled(box.isEnabled());
+            box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
+            options.add(item);
+        }
+        for (JComponent part : List.of(semanticNote, scopeLabel, modeLabel, help)) {
             part.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
             panel.add(part);
             panel.add(javax.swing.Box.createVerticalStrut(part == help ? 0 : 4));
@@ -276,6 +288,9 @@ public final class SearchView implements View {
         }
         java.awt.Dimension size = options.getPreferredSize();
         options.show(searchBar, Math.max(0, searchBar.getWidth() - size.width), searchBar.getHeight());
+        // Der erste Menüpunkt ist gleich gewählt, damit die Tastatur sofort darauf wirkt.
+        javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
+                new javax.swing.MenuElement[] {options, (javax.swing.MenuElement) options.getComponent(0)});
     }
 
     /** Die Suchleiste für die Kopfzeile des Hauptfensters; es gibt nur dieses eine Suchfeld. */
