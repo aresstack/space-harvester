@@ -44,19 +44,27 @@ public interface TermIndex {
      * @param normalized       genau dieser Suchwert oder {@code null}
      * @param prefix           Suchwert oder eines seiner Wörter ({@link TermText#words}) beginnt so, oder {@code null}
      * @param processorVersion nur Ergebnisse dieser Version des Prozessors {@code terms}
+     * @param startsWith       nur der ganze Suchwert beginnt so (etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
      */
-    record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion) {
+    record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion,
+                  String startsWith) {
 
         public Filter {
             sourceIds = Set.copyOf(sourceIds);
             Objects.requireNonNull(processorVersion, "processorVersion");
         }
 
+        public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
+                      String processorVersion) {
+            this(sourceIds, kind, normalized, prefix, processorVersion, null);
+        }
+
         /** Ob ein Eintrag die Auswahl erfüllt; für Ablagen ohne eigenen Index. */
         public boolean matches(TermPosting posting) {
             if (!sourceIds.contains(posting.page().sourceId()) || kind != null && posting.kind() != kind
                     || normalized != null && !posting.normalized().equals(normalized)
-                    || !posting.processorVersion().equals(processorVersion)) {
+                    || !posting.processorVersion().equals(processorVersion)
+                    || startsWith != null && !posting.normalized().startsWith(startsWith)) {
                 return false;
             }
             return prefix == null || posting.normalized().startsWith(prefix)

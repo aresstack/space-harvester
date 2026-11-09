@@ -122,6 +122,21 @@ class TermQueriesTest {
     }
 
     @Test
+    void startsWithMatchesOnlyTheBeginningOfTheWholeTerm() {
+        cached(page("wiki-a", "DEV", "3", "1", "Die Rückmelde-Liste und der Haupt-Beleg."));
+
+        TermQueries.TermList b = terms.terms(CALLER, new TermQueries.TermSearch(null, null, TermKind.NOUN, null, false,
+                50, null, "B"));
+        TermQueries.TermList prefix = terms.terms(CALLER, new TermQueries.TermSearch(null, null, TermKind.NOUN, "beleg",
+                false, 50, null));
+
+        assertThat(b.terms()).extracting(TermQueries.TermSummary::normalized).isNotEmpty()
+                .allMatch(normalized -> normalized.startsWith("b"));
+        assertThat(prefix.terms()).extracting(TermQueries.TermSummary::normalized)
+                .anyMatch(normalized -> !normalized.startsWith("b"));
+    }
+
+    @Test
     void nounsAreListedSeparatelyFromAcronyms() {
         TermQueries.TermList nouns = list(null, null, TermKind.NOUN, null, 50, null);
 

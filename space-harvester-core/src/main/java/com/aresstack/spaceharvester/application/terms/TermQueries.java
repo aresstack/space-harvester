@@ -100,9 +100,16 @@ public class TermQueries {
      *                 dieser Suchwert, sonst Suchwert oder eines seiner Wörter beginnt so
      * @param limit    1 bis {@link #MAX_LIMIT}
      * @param cursor   {@code nextCursor} der vorigen Antwort derselben Suche oder {@code null}
+     * @param startsWith nur Begriffe, deren Suchwert so beginnt (normalisiert, etwa ein Buchstabe der A–Z-Leiste),
+     *                 oder {@code null}; anders als {@code q} nie ein Wort mitten im Begriff
      */
     public record TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
-                             String cursor) {
+                             String cursor, String startsWith) {
+
+        public TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
+                          String cursor) {
+            this(sourceId, spaceKey, kind, q, exact, limit, cursor, null);
+        }
     }
 
     /**
@@ -203,12 +210,14 @@ public class TermQueries {
         Objects.requireNonNull(search, "search");
         requireLimit(search.limit());
         String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
+        String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
+                : TermText.normalize(search.startsWith());
         String fingerprint = fingerprint("terms", search.sourceId(), search.spaceKey(),
-                search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()));
+                search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()), startsWith);
         String after = search.cursor() == null ? null : decode(search.cursor(), fingerprint);
         Set<String> sourceIds = scope(caller, search.sourceId(), search.spaceKey());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
-                search.exact() ? null : q, processorVersion);
+                search.exact() ? null : q, processorVersion, startsWith);
         Visibility visibility = new Visibility(caller, search.spaceKey());
 
         List<TermSummary> found = new ArrayList<>();
