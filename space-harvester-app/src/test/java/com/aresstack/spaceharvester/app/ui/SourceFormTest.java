@@ -93,7 +93,7 @@ class SourceFormTest {
             f.directory.setText(handbuch.toString());
             assertThat(f.error(f.directory)).as("Tippen nimmt den Hinweis weg").isNull();
             assertThat(f.id.getText()).as("Kennung aus dem Ordner, schon vergeben").isEqualTo("handbuch-2");
-            assertThat(f.title.getText()).isEqualTo("handbuch");
+            assertThat(f.titleValue()).isEqualTo("handbuch");
             f.id.setText("handbuch");
             assertThat(f.validateInput()).as("Kennung vergeben").isFalse();
             assertThat(f.error(f.id)).isEqualTo("Diese Kennung ist schon vergeben.");
@@ -155,8 +155,14 @@ class SourceFormTest {
             assertThat(host.isVisible()).isTrue();
             assertThat(port.isVisible()).as("unter Erweitert").isFalse();
             assertThat(port.getText()).as("Vorgabe des Typs").isEqualTo("21");
-            assertThat(f.fields.advancedToggle().getText()).isEqualTo("Erweitert");
-            assertThat(Comic.disclosed(f.fields.advancedToggle())).as("zugeklappt").isFalse();
+            assertThat(f.fields.advancedToggle().isVisible()).as("ein gemeinsames Erweitert").isFalse();
+            assertThat(f.sourceAdvanced.getText()).isEqualTo("Erweitert");
+            assertThat(Comic.disclosed(f.sourceAdvanced)).as("zugeklappt").isFalse();
+            f.sourceAdvanced(true);
+            assertThat(port.isVisible()).as("Typ-Felder unter dem gemeinsamen Erweitert").isTrue();
+            assertThat(f.id.isVisible()).isTrue();
+            f.sourceAdvanced(false);
+            assertThat(port.isVisible()).isFalse();
             assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
             assertThat(f.auth.getSelectedItem()).as("JES verlangt Zugangsdaten").isEqualTo("Benutzer und Passwort");
             assertThat(f.username.isVisible()).isTrue();
@@ -167,7 +173,7 @@ class SourceFormTest {
             assertThat(f.error(f.username)).isEqualTo("Bitte den Benutzernamen eintragen.");
             host.setText("mvs.example.org");
             assertThat(f.id.getText()).isEqualTo("mvs-example-org");
-            assertThat(f.title.getText()).isEqualTo("mvs.example.org");
+            assertThat(f.titleValue()).isEqualTo("mvs.example.org");
             f.username.setText("batch");
             assertThat(f.validateInput()).isTrue();
             assertThat(f.draft().yaml("    ")).contains("type: jes", "options:\n", "host: \"mvs.example.org\"",
@@ -468,7 +474,7 @@ class SourceFormTest {
             assertThat(f.error(f.id)).isNull();
             f.baseUrl.setText("https://wiki.example.org");
             assertThat(f.id.getText()).as("selbst eingetragen, bleibt").isEqualTo("wiki");
-            assertThat(f.title.getText()).isEqualTo("wiki.example.org");
+            assertThat(f.titleValue()).isEqualTo("wiki.example.org");
             assertThat(f.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(f.variable.getText()).isEqualTo("WIKI_TOKEN");
             assertThat(f.validateInput()).as("Token fehlt").isFalse();
@@ -511,7 +517,11 @@ class SourceFormTest {
             assertThat(f.baseUrl.getText()).isEmpty();
             assertThat(f.baseUrl.placeholder()).isEqualTo("https://confluence.atlassian.com");
             assertThat(f.id.getText()).isEqualTo("confluence-atlassian");
-            assertThat(f.title.getText()).isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.title.getText()).as("Anzeigename nicht vorbelegt").isEmpty();
+            assertThat(f.title.placeholder()).as("Vorschlag grau im Feld").isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.titleValue()).isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(f.id.isVisible()).as("Kennung nur unter Erweitert").isFalse();
+            assertThat(f.sourceAdvancedOpen()).isFalse();
             assertThat(f.auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
             assertThat(f.validateInput()).isTrue();
             assertThat(f.draft().baseUrl()).isEqualTo("https://confluence.atlassian.com");
@@ -519,7 +529,7 @@ class SourceFormTest {
 
             f.baseUrl.setText("https://www.confluence.example.org/wiki");
             assertThat(f.id.getText()).isEqualTo("confluence-example");
-            assertThat(f.title.getText()).isEqualTo("confluence.example.org");
+            assertThat(f.titleValue()).isEqualTo("confluence.example.org");
             assertThat(f.auth.getSelectedItem()).as("eigene Instanz: mit Token").isEqualTo("Personal Access Token");
             f.auth.setSelectedItem("Ohne Anmeldung");
             f.baseUrl.setText("https://confluence.atlassian.com/");

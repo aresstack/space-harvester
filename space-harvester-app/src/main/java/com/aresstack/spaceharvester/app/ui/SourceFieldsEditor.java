@@ -51,6 +51,8 @@ final class SourceFieldsEditor {
     private final javax.swing.JButton advancedToggle = Comic.disclosure("Erweitert",
             "Weitere Angaben; leer lassen genügt in der Regel");
     private boolean expanded;
+    /** Gesetzt, wenn das Formular ein gemeinsames „Erweitert“ hat: dann zeigt der Editor keinen eigenen Knopf. */
+    private java.util.function.Consumer<Boolean> sharedAdvanced;
     private SourceFieldSpec certificateField;
     private JCheckBox certificateUse;
     private JTextField certificateAlias;
@@ -112,8 +114,10 @@ final class SourceFieldsEditor {
                 }
             }
         });
-        form.visible(advancedToggle, !advanced.isEmpty());
-        expanded = false;
+        form.visible(advancedToggle, !advanced.isEmpty() && sharedAdvanced == null);
+        if (sharedAdvanced == null) {
+            expanded = false;
+        }
         showAdvanced();
         JComponent address = addressKey == null ? null : inputs.get(addressKey);
         if (address instanceof JTextField text) {
@@ -248,6 +252,18 @@ final class SourceFieldsEditor {
     void advanced(boolean open) {
         expanded = open;
         showAdvanced();
+        if (sharedAdvanced != null) {
+            sharedAdvanced.accept(open);
+        }
+    }
+
+    /**
+     * Die weiteren Felder des Typs stehen unter dem „Erweitert“ des Formulars statt unter einem eigenen Knopf;
+     * {@code opened} erfährt, wenn ein Hinweis es aufklappt ({@link #reveal}).
+     */
+    void shareAdvanced(java.util.function.Consumer<Boolean> opened) {
+        this.sharedAdvanced = opened;
+        form.visible(advancedToggle, false);
     }
 
     boolean advancedOpen() {
