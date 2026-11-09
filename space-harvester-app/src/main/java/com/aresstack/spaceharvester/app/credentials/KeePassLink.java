@@ -93,7 +93,7 @@ public final class KeePassLink {
     }
 
     /** Der Pairing-Schlüssel im Tresor dieses Windows-Kontos; er erscheint nie in Logs. */
-    private static final class VaultKeyStore implements KeePassPairingKeyStore {
+    static final class VaultKeyStore implements KeePassPairingKeyStore {
 
         private final com.aresstack.spaceharvester.app.settings.SecretVault vault;
 
@@ -113,7 +113,9 @@ public final class KeePassLink {
         @Override
         public void save(char[] sessionKey) {
             try {
-                vault.store(PAIRING_ID, PAIRING_LOGIN, sessionKey);
+                // store() überschreibt sein Argument; der Aufrufer braucht den Schlüssel aber gleich danach für die
+                // erste Sitzung. Ohne Kopie ginge ein Schlüssel aus Nullen an KeePass und die Kopplung scheiterte.
+                vault.store(PAIRING_ID, PAIRING_LOGIN, java.util.Arrays.copyOf(sessionKey, sessionKey.length));
             } catch (IOException e) {
                 throw new IllegalStateException("Die KeePass-Kopplung ließ sich nicht im Tresor ablegen", e);
             }
