@@ -254,18 +254,20 @@ public final class SettingsView implements View {
     /** Für Tests: die Zeilen der Navigation in ihrer Reihenfolge. */
     /**
      * Ein Papierkorb-Knopf in der Zeile eines Eintrags: löscht nach Rückfrage die lokal gespeicherten Zugangsdaten
-     * (Datei im Tresor und den Wert dieser Sitzung), ohne den Wert je anzuzeigen.
+     * (Datei im Tresor und den Wert dieser Sitzung), ohne den Wert je anzuzeigen, und startet die Laufzeit neu, damit
+     * auch die Kopien in den laufenden Quellen und im KI-Dienst verschwinden; sofort, nicht erst beim nächsten Start.
      */
     private IconButton deleteButton(String what, Background.ThrowingRunnable delete) {
         IconButton button = new IconButton(Glyph.TRASH, "Lokal gespeicherte Zugangsdaten löschen: " + what);
-        Runnable run = () -> Background.execute(delete, () -> {
+        Runnable run = () -> Background.execute(delete, () -> context.reload(() -> {
             render();
             ai.render();
-            securityFeedback.success("Gelöscht: " + what);
-        }, securityFeedback::problem);
+            securityFeedback.success("Gelöscht: " + what + "; die Laufzeit wurde ohne diese Zugangsdaten neu gestartet");
+        }), securityFeedback::problem);
         button.addActionListener(e -> {
-            if (Dialogs.confirm(root, "Zugangsdaten löschen?", what + ": die lokal gespeicherte Datei wird gelöscht. "
-                    + "Die App fragt beim nächsten Zugriff neu danach.", "Löschen")) {
+            if (Dialogs.restartAllowed(root, context) && Dialogs.confirm(root, "Zugangsdaten löschen?", what
+                    + ": die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, damit der Wert "
+                    + "sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.", "Löschen")) {
                 run.run();
             }
         });
