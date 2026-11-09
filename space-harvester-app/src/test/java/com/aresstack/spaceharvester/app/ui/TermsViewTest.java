@@ -58,6 +58,18 @@ class TermsViewTest {
     }
 
     @Test
+    void identifiersShowNoSpellingsColumnAndOccurrencesReadAsPlaces() {
+        assertThat(new TermsView(null).identifiers().table().getColumnCount()).isEqualTo(2);
+        assertThat(TermsView.identifierRows(List.of(new TermQueries.TermSummary("Sachbearbeitung",
+                "sachbearbeitung", TermKind.NOUN, 5, 3, 1, List.of("Sachbearbeitung"), List.of()))))
+                .containsExactly(List.of("Sachbearbeitung", "5", "sachbearbeitung", "NOUN"));
+        assertThat(TermsView.occurrenceRows(List.of(new TermQueries.Occurrence("handbuch", "HB", "p1", "Start",
+                TermKind.NOUN, "Sachbearbeitung", null, null, 4, 19, "1", "x", "v",
+                new TermQueries.Snippet("Die ", "Sachbearbeitung", " prüft\n", true, false)))))
+                .containsExactly(List.of("Start", "handbuch · HB", "…Die Sachbearbeitung prüft"));
+    }
+
+    @Test
     void relationsReadAsWordsAndTheReviewButtonsFollowTheSelectedRelation() throws Exception {
         Relation proposed = new Relation("r1", "API", "ABBREVIATION", "Application Programming Interface",
                 "PROPOSED", "RULE", 1);

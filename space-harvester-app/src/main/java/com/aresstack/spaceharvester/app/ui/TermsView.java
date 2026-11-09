@@ -61,7 +61,10 @@ public final class TermsView implements View {
     private final Directory acronyms = new Directory("Globales Akronymverzeichnis",
             new String[]{"Akronym", "Bedeutung", "Fundstellen"});
     private final Directory identifiers = new Directory("Globales Bezeichnerverzeichnis",
-            new String[]{"Bezeichner", "Schreibweisen", "Fundstellen"});
+            new String[]{"Bezeichner", "Fundstellen"});
+    static final String SHOW_OCCURRENCES = "Fundstellen zeigen";
+    private final ComposerButton occurrences = Comic.button("Fundstellen …", SHOW_OCCURRENCES
+            + " (auch per Doppelklick auf eine Zeile)");
     private final Directory relations = new Directory("Beziehungen zwischen Begriffen",
             new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"});
     static final String CONFIRM = "Bestätigen";
@@ -118,6 +121,22 @@ public final class TermsView implements View {
             review.add(button);
         }
         relations.actions(review);
+        JPanel identifierActions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+        identifierActions.setOpaque(false);
+        identifierActions.add(occurrences);
+        occurrences.setEnabled(false);
+        identifiers.actions(identifierActions);
+        identifiers.table().getSelectionModel().addListSelectionListener(e ->
+                occurrences.setEnabled(context != null && identifiers.table().getSelectedRow() >= 0));
+        occurrences.addActionListener(e -> showOccurrences());
+        identifiers.table().addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2 && identifiers.table().rowAtPoint(e.getPoint()) >= 0) {
+                    showOccurrences();
+                }
+            }
+        });
         relations.sortable();
         RelationRenderer renderer = new RelationRenderer();
         for (int c = 0; c < relations.table().getColumnCount(); c++) {
@@ -490,9 +509,9 @@ public final class TermsView implements View {
             }
             identifierLoading = false;
             if (first) {
-                identifiers.show(rows(terms), emptyHint);
+                identifiers.show(identifierRows(terms), emptyHint);
             } else {
-                identifiers.append(rows(terms));
+                identifiers.append(identifierRows(terms));
             }
             identifiers.more(pager.hasMore());
         }, failure -> {
@@ -604,6 +623,77 @@ public final class TermsView implements View {
                     String.valueOf(term.occurrences())));
         }
         return rows;
+    }
+
+    /** Bezeichner und Zahl der Fundstellen; Suchwert und Art stehen unsichtbar dahinter, für die Fundstellen. */
+    static List<List<String>> identifierRows(List<TermQueries.TermSummary> terms) {
+        List<List<String>> rows = new ArrayList<>(terms.size());
+        for (TermQueries.TermSummary term : terms) {
+            rows.add(List.of(term.term(), String.valueOf(term.occurrences()), term.normalized(), term.kind().name()));
+        }
+        return rows;
+    }
+
+    /** Höchstens so viele Fundstellen zeigt der Dialog. */
+    static final int OCCURRENCE_LIMIT = TermQueries.MAX_LIMIT;
+
+    /** Fundstellen des gewählten Bezeichners im Dialog; ein Doppelklick dort öffnet die Seite im Leser. */
+    private void showOccurrences() {
+        int row = identifiers.table().getSelectedRow();
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (row < 0 || runtime == null) {
+            return;
+        }
+        List<String> cells = identifiers.visibleRow(identifiers.table().convertRowIndexToModel(row));
+        if (cells.size() < 4) {
+            return;
+        }
+        String term = cells.get(0);
+        TermKind kind = TermKind.valueOf(cells.get(3));
+        Background.run(() -> runtime.workspace().occurrences(new TermQueries.OccurrenceSearch(cells.get(2), kind,
+                null, null, OCCURRENCE_LIMIT, null, 80)), found -> {
+            Directory list = new Directory("Fundstellen von „" + term + "“", new String[]{"Seite", "Quelle · Space",
+                    "Kontext"});
+            List<TermQueries.Occurrence> shown = found.occurrences();
+            list.show(occurrenceRows(shown), "Keine sichtbare Fundstelle.");
+            if (found.nextCursor() != null) {
+                list.message("Gezeigt werden die ersten " + OCCURRENCE_LIMIT + " Fundstellen.");
+            }
+            javax.swing.JDialog dialog = Dialogs.dialog(root, "Fundstellen");
+            list.table().addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    int at = list.table().rowAtPoint(e.getPoint());
+                    if (e.getClickCount() == 2 && at >= 0) {
+                        TermQueries.Occurrence hit = shown.get(list.table().convertRowIndexToModel(at));
+                        dialog.dispose();
+                        context.navigator().openPage(hit.sourceId(), hit.pageId());
+                    }
+                }
+            });
+            list.setPreferredSize(new java.awt.Dimension(720, 380));
+            ComposerButton close = Comic.button("Schließen", null);
+            close.addActionListener(e -> dialog.dispose());
+            Dialogs.show(dialog, "Fundstellen – Doppelklick öffnet die Seite", list, close);
+        }, failure -> identifiers.message("Fundstellen nicht lesbar: " + failure.getMessage()));
+    }
+
+    /** Seite, Quelle · Space und Kontext je Fundstelle. */
+    static List<List<String>> occurrenceRows(List<TermQueries.Occurrence> occurrences) {
+        List<List<String>> rows = new ArrayList<>(occurrences.size());
+        for (TermQueries.Occurrence o : occurrences) {
+            String title = o.title() == null || o.title().isBlank() ? o.pageId() : o.title();
+            String where = o.spaceKey() == null ? o.sourceId() : o.sourceId() + " · " + o.spaceKey();
+            TermQueries.Snippet s = o.snippet();
+            String context = s == null ? "–" : (s.truncatedBefore() ? "…" : "") + s.before() + s.match() + s.after()
+                    + (s.truncatedAfter() ? "…" : "");
+            rows.add(List.of(title, where, context.replaceAll("\\s+", " ").trim()));
+        }
+        return rows;
+    }
+
+    ComposerButton occurrencesButton() {
+        return occurrences;
     }
 
     @Override

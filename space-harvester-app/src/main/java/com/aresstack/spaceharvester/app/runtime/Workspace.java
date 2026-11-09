@@ -128,6 +128,11 @@ public final class Workspace {
         return harvester.navigation().references(caller, sourceId, pageId);
     }
 
+    /** Fundstellen eines Begriffs auf sichtbaren Seiten ({@code TermQueries.occurrences}, #119). */
+    public TermQueries.OccurrenceList occurrences(TermQueries.OccurrenceSearch search) {
+        return harvester.terms().occurrences(caller, search);
+    }
+
     /** Ein Stapel des Begriffsverzeichnisses über alle sichtbaren Seiten ({@code TermQueries.terms}, #119). */
     public TermQueries.TermList terms(TermQueries.TermSearch search) {
         return harvester.terms().terms(caller, search);
