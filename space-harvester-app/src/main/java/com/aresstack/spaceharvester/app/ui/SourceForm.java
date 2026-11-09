@@ -810,10 +810,20 @@ final class SourceForm {
     /** Ob für Token bzw. Passwort schon ein Wert da ist: eingegeben, in der Sitzung, im Tresor oder als Property. */
     private boolean secretAvailable(SourceDraft source) {
         if (keePassChosen()) {
-            return keePassSecretRead() || source.id() != null && !SourceSaving.loginChanged(editing, source)
-                    && context.secrets().has(source.id(), SourceSaving.login(source));
+            return keePassSecretRead() || sessionMatchesKeePassEntry(source);
         }
         return SourceSaving.secretAvailable(context, editing, source, sessionValue.getPassword().length > 0);
+    }
+
+    /**
+     * Ob der Sitzungswert der Quelle zum gewählten KeePass-Eintrag gehört: dieselbe Anmeldung und derselbe Eintrag wie
+     * in der Datei. Nach einem Wechsel des Eintrags zählt erst der neu gelesene Wert.
+     */
+    private boolean sessionMatchesKeePassEntry(SourceDraft source) {
+        AppSettings settings = context.settings();
+        return source.id() != null && settings != null && keePassTitle().equals(settings.keePassEntry(source.id()))
+                && !SourceSaving.loginChanged(editing, source)
+                && context.secrets().has(source.id(), SourceSaving.login(source));
     }
 
     AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
@@ -825,8 +835,9 @@ final class SourceForm {
                 : sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, SourceSaving.login(source), value);
-        } else if (sourceId != null && context.secrets().has(sourceId, SourceSaving.login(source))
-                && !SourceSaving.loginChanged(editing, source)) {
+        } else if (sourceId != null && (keePassChosen() ? sessionMatchesKeePassEntry(source)
+                : context.secrets().has(sourceId, SourceSaving.login(source))
+                && !SourceSaving.loginChanged(editing, source))) {
             return context.secrets();
         }
         return secrets;
