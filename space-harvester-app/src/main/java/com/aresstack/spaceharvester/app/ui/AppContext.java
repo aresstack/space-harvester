@@ -339,7 +339,8 @@ public final class AppContext {
     /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */
     public synchronized KeePassLink keePass() {
         if (keePass == null) {
-            keePass = new KeePassLink(vault.scope(KeePassLink.PAIRING_VAULT), new SwingPairing());
+            keePass = new KeePassLink(configFile.toAbsolutePath().getParent().resolve(KeePassLink.PAIRING_FILE),
+                    new SwingPairing());
         }
         return keePass;
     }

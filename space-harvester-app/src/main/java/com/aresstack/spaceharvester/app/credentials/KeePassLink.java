@@ -8,7 +8,6 @@ import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePas
 import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassPairingKeyStore;
 import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassRpcConfig;
 import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassRpcSecretProvider;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,15 +15,14 @@ import java.util.function.Supplier;
 
 /**
  * Die KeePass-Anbindung der App über KeePassRPC aus dem Enterprise AI Client: koppeln (SRP-Pairing, KeePass zeigt ein
- * Einmal-Passwort), Einträge auflisten, lesen und neu anlegen. Der Pairing-Schlüssel liegt im Tresor dieses
- * Windows-Kontos ({@link #PAIRING_VAULT}). Alles hier blockiert, also nur im Hintergrund aufrufen.
+ * Einmal-Passwort), Einträge auflisten, lesen und neu anlegen. Der Pairing-Schlüssel liegt wie im EAC in einer Datei
+ * nur für den Besitzer ({@link FilePairingKeyStore}), nicht im DPAPI-Tresor. Alles hier blockiert, also nur im
+ * Hintergrund aufrufen.
  */
 public final class KeePassLink {
 
-    /** Tresorbereich und Eintrag des Pairing-Schlüssels. */
-    public static final String PAIRING_VAULT = "keepass";
-    static final String PAIRING_ID = "pairing";
-    static final String PAIRING_LOGIN = "keepassrpc";
+    /** Dateiname des Pairing-Schlüssels neben der Konfigurationsdatei. */
+    public static final String PAIRING_FILE = "keepass-pairing.key";
     /** Wie der Client in KeePass heißt; KeePassRPC verlangt einen {@code chrome-extension://}-Origin. */
     static final KeePassRpcConfig CONFIG = KeePassRpcConfig.builder()
             .origin("chrome-extension://spaceharvester")
@@ -37,13 +35,12 @@ public final class KeePassLink {
     private final Supplier<Boolean> pairedCheck;
 
     /**
-     * @param pairingStore Tresorbereich für den Pairing-Schlüssel
+     * @param pairingFile  Datei für den Pairing-Schlüssel
      * @param prompt       fragt beim Koppeln nach dem Einmal-Passwort, das KeePass anzeigt ({@code null}: abgebrochen)
      */
-    public KeePassLink(com.aresstack.spaceharvester.app.settings.SecretVault pairingStore,
-                       KeePassPairingCallback prompt) {
-        KeePassPairingKeyStore keys = new VaultKeyStore(pairingStore);
-        this.pairedCheck = () -> pairingStore.has(PAIRING_ID, PAIRING_LOGIN);
+    public KeePassLink(java.nio.file.Path pairingFile, KeePassPairingCallback prompt) {
+        KeePassPairingKeyStore keys = new FilePairingKeyStore(pairingFile);
+        this.pairedCheck = () -> java.nio.file.Files.isRegularFile(pairingFile);
         this.interactive = new KeePassRpcSecretProvider(CONFIG, keys, prompt);
         // Beim Start und beim Lesen des Keys nie ungefragt einen Kopplungsdialog öffnen.
         this.silent = new KeePassRpcSecretProvider(CONFIG, keys, KeePassPairingCallback.unavailable());
@@ -90,44 +87,5 @@ public final class KeePassLink {
     /** Die Zugangsdatenquelle zu einem Eintrag, ohne Kopplungsdialog. */
     public AiCredentials credentials(String entry) {
         return new KeePassAiCredentials(silent, entry);
-    }
-
-    /** Der Pairing-Schlüssel im Tresor dieses Windows-Kontos; er erscheint nie in Logs. */
-    static final class VaultKeyStore implements KeePassPairingKeyStore {
-
-        private final com.aresstack.spaceharvester.app.settings.SecretVault vault;
-
-        VaultKeyStore(com.aresstack.spaceharvester.app.settings.SecretVault vault) {
-            this.vault = vault;
-        }
-
-        @Override
-        public char[] load() {
-            try {
-                return vault.has(PAIRING_ID, PAIRING_LOGIN) ? vault.load(PAIRING_ID, PAIRING_LOGIN) : null;
-            } catch (IOException | RuntimeException e) {
-                return null;
-            }
-        }
-
-        @Override
-        public void save(char[] sessionKey) {
-            try {
-                // store() überschreibt sein Argument; der Aufrufer braucht den Schlüssel aber gleich danach für die
-                // erste Sitzung. Ohne Kopie ginge ein Schlüssel aus Nullen an KeePass und die Kopplung scheiterte.
-                vault.store(PAIRING_ID, PAIRING_LOGIN, java.util.Arrays.copyOf(sessionKey, sessionKey.length));
-            } catch (IOException e) {
-                throw new IllegalStateException("Die KeePass-Kopplung ließ sich nicht im Tresor ablegen", e);
-            }
-        }
-
-        @Override
-        public void clear() {
-            try {
-                vault.remove(PAIRING_ID);
-            } catch (IOException e) {
-                throw new IllegalStateException("Die KeePass-Kopplung ließ sich nicht entfernen", e);
-            }
-        }
     }
 }
