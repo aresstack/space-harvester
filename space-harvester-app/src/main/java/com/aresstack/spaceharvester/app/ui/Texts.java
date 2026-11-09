@@ -81,6 +81,9 @@ public final class Texts {
             case EXPORT -> "Export";
             case ENRICHMENT -> "Anreicherung";
             case ASSETS -> "Bilder beschaffen";
+            case STATEMENT_ANALYSIS -> "Aussagenanalyse";
+            case PURGE -> "Daten bereinigen";
+            case KNOWLEDGE_GRAPH_EXPORT -> "Graph-Export";
         };
     }
 

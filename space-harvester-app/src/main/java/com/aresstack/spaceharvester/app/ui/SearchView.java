@@ -78,8 +78,22 @@ public final class SearchView implements View {
     final JLabel scopeLabel = Comic.muted(" ");
     /** Der Modus der nächsten Suche: Schlagwortsuche oder semantisch, wie der Core ihn meldet. */
     final JLabel modeLabel = Comic.muted(" ");
-    final ComposerButton everywhere = Comic.button("Überall suchen", "Auswahl im Explorer aufheben und in allen "
-            + "Wissensquellen suchen");
+    /**
+     * „Überall suchen“ (#515): übergeht bei der nächsten Suche die Auswahl im Explorer, ohne sie aufzuheben; nur der
+     * Benutzer schaltet es um, keine Baumauswahl und keine Konfigurationsänderung.
+     */
+    final JCheckBox everywhere = checkBox("Überall suchen", "Sucht in allen Wissensquellen, unabhängig von der "
+            + "Auswahl im Explorer; die Auswahl bleibt bestehen");
+    /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
+    private final JPanel searchBar = new JPanel(new BorderLayout(0, 0));
+    /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
+    final javax.swing.JButton optionsButton = new javax.swing.JButton("\u25BE");
+    /** Die Suchoptionen als Popup am Suchfeld: Überall suchen, Semantische Suche, Umfang, Modus, Hinweise. */
+    final javax.swing.JPopupMenu options = new javax.swing.JPopupMenu();
+    /** Warum die semantische Suche gesperrt ist bzw. woher ihre Varianten kommen, lesbar im Popup. */
+    final JLabel semanticNote = Comic.muted(" ");
+    /** Läuft vor jeder Suche aus dem Suchfeld: das Hauptfenster zeigt die Trefferansicht. */
+    private Runnable onSubmit = () -> { };
     private final ComposerButton run = Comic.primary("Suchen", "Im gewählten Umfang suchen (Titel und Inhalt)");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
@@ -125,14 +139,15 @@ public final class SearchView implements View {
     private final Set<String> spaces = new TreeSet<>();
     /** Gewählte Knoten mit Namen für die Umfangszeile. */
     private List<Explorer.Scope> scopes = List.of();
-    /** Hebt die Auswahl im Explorer auf („Überall suchen“). */
-    private Runnable clearScope = () -> scope(List.of());
 
     public SearchView(AppContext context) {
         this.context = context;
         root.setBackground(Comic.SURFACE);
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
-        query.addActionListener(e -> search());
+        query.addActionListener(e -> {
+            onSubmit.run();
+            search();
+        });
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
@@ -147,7 +162,8 @@ public final class SearchView implements View {
         semantic.addItemListener(e -> mode());
         tags.setOpaque(false);
         tags.setVisible(false);
-        everywhere.addActionListener(e -> clearScope.run());
+        everywhere.setSelected(false);
+        everywhere.addItemListener(e -> scope(scopes));
         context.onChange(ignored -> refreshSources());
         refreshSources();
         // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
@@ -175,37 +191,10 @@ public final class SearchView implements View {
         });
         table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
 
-        // Eine Suchleiste, daneben die semantische Suche; Erklärungen stehen im Tooltip des Infosymbols.
-        JLabel info = new JLabel(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.info());
-        info.setToolTipText("<html>Schlagwortsuche über Titel und Inhalt, direkt in den Quellen. Wo gesucht wird, "
-                + "wählst du im Explorer links:<br>eine Wissensquelle, einen Space oder mit Strg-Klick mehrere; "
-                + "ohne Auswahl in allen.<br>"
-                + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) im Suchfeld öffnet die Seite direkt."
-                + "<br>Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage geordnet."
-                + "<br>Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>");
-        info.getAccessibleContext().setAccessibleName("Hinweise zur Suche");
-        JPanel bar = new JPanel(new BorderLayout(10, 0));
-        bar.setOpaque(false);
-        bar.add(query, BorderLayout.CENTER);
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        options.setOpaque(false);
-        options.add(semantic);
-        options.add(info);
-        options.add(run);
-        bar.add(options, BorderLayout.EAST);
-        JPanel scopeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        scopeRow.setOpaque(false);
-        scopeRow.add(scopeLabel);
-        scopeRow.add(everywhere);
-        scopeRow.add(modeLabel);
+        buildSearchBar();
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
-        head.add(bar, BorderLayout.NORTH);
-        JPanel middle = new JPanel(new BorderLayout(0, 6));
-        middle.setOpaque(false);
-        middle.add(scopeRow, BorderLayout.NORTH);
-        middle.add(tags, BorderLayout.CENTER);
-        head.add(middle, BorderLayout.CENTER);
+        head.add(tags, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         root.add(head, BorderLayout.NORTH);
         // „Weitere laden“ über die volle Breite, direkt unter der Trefferliste; nur, solange weitere Treffer folgen.
@@ -235,6 +224,90 @@ public final class SearchView implements View {
         status.addPropertyChangeListener("text", e -> status.setToolTipText(
                 status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
+    }
+
+    /** Hinweise zur Suche, früher im Tooltip des Infosymbols, jetzt lesbar im Popup. */
+    static final String HELP = "<html><b>Hinweise zur Suche</b><br>"
+            + "Schlagwortsuche über Titel und Inhalt, direkt in den Quellen.<br>"
+            + "Wo gesucht wird, wählst du im Explorer links: eine Wissensquelle, einen Space<br>"
+            + "oder mit Strg-Klick mehrere; ohne Auswahl in allen. „Überall suchen“ übergeht die Auswahl.<br>"
+            + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
+            + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
+            + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
+            + "Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>";
+
+    /** Suchfeld mit Pfeil rechts; der Pfeil öffnet die Suchoptionen unter dem Feld (#515). */
+    private void buildSearchBar() {
+        query.getAccessibleContext().setAccessibleName("Suchbegriff");
+        searchBar.setOpaque(false);
+        searchBar.add(query, BorderLayout.CENTER);
+        optionsButton.setToolTipText("Suchoptionen");
+        optionsButton.getAccessibleContext().setAccessibleName("Suchoptionen");
+        optionsButton.setFocusable(true);
+        optionsButton.setMargin(new java.awt.Insets(0, 6, 0, 6));
+        optionsButton.addActionListener(e -> showOptions());
+        searchBar.add(optionsButton, BorderLayout.EAST);
+        // Pfeil nach unten bzw. Alt+Pfeil nach unten im Feld öffnet die Optionen auch per Tastatur.
+        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("alt DOWN"), "searchOptions");
+        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("DOWN"), "searchOptions");
+        query.getActionMap().put("searchOptions", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                showOptions();
+            }
+        });
+        JPanel panel = new JPanel();
+        panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS));
+        panel.setBackground(Comic.SURFACE);
+        panel.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+        JLabel help = new JLabel(HELP);
+        help.setForeground(Comic.MUTED);
+        // Menüpunkte mit demselben Modell wie die Häkchen: per Pfeiltasten erreichbar, Leertaste/Enter schaltet,
+        // das Popup bleibt beim Umschalten offen.
+        for (JCheckBox box : List.of(everywhere, semantic)) {
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+            item.setModel(box.getModel());
+            item.setToolTipText(box.getToolTipText());
+            box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
+            item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
+            item.setEnabled(box.isEnabled());
+            box.addPropertyChangeListener("enabled", e -> item.setEnabled(box.isEnabled()));
+            options.add(item);
+        }
+        for (JComponent part : List.of(semanticNote, scopeLabel, modeLabel, help)) {
+            part.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+            panel.add(part);
+            panel.add(javax.swing.Box.createVerticalStrut(part == help ? 0 : 4));
+        }
+        options.add(panel);
+        options.getAccessibleContext().setAccessibleName("Suchoptionen");
+    }
+
+    /** Öffnet die Optionen rechtsbündig unter dem Suchfeld; Swing hält das Popup im Bildschirm. */
+    void showOptions() {
+        if (!searchBar.isShowing()) {
+            return;
+        }
+        java.awt.Dimension size = options.getPreferredSize();
+        options.show(searchBar, Math.max(0, searchBar.getWidth() - size.width), searchBar.getHeight());
+        // Der erste Menüpunkt ist gleich gewählt, damit die Tastatur sofort darauf wirkt.
+        javax.swing.MenuSelectionManager.defaultManager().setSelectedPath(
+                new javax.swing.MenuElement[] {options, (javax.swing.MenuElement) options.getComponent(0)});
+    }
+
+    /** Die Suchleiste für die Kopfzeile des Hauptfensters; es gibt nur dieses eine Suchfeld. */
+    public JComponent searchBar() {
+        return searchBar;
+    }
+
+    /** Läuft, bevor eine Suche aus dem Suchfeld startet; das Hauptfenster wechselt damit zur Trefferansicht. */
+    public void onSubmit(Runnable action) {
+        this.onSubmit = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Der Text im Suchfeld. */
+    String queryText() {
+        return query.getText();
     }
 
     @Override
@@ -283,25 +356,19 @@ public final class SearchView implements View {
             // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
             spaces.clear();
         }
-        scopeLabel.setText(scopes.isEmpty() ? "In: Alle Wissensquellen" : "In: " + String.join(", ",
-                scopes.stream().map(scope -> title(scope.sourceId())
+        scopeLabel.setText(everywhere.isSelected() || scopes.isEmpty() ? "In: Alle Wissensquellen"
+                : "In: " + String.join(", ", scopes.stream().map(scope -> title(scope.sourceId())
                         + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
-        everywhere.setVisible(!scopes.isEmpty());
     }
 
-    /** Hebt beim Klick auf „Überall suchen“ die Auswahl im Explorer auf; der meldet dann den leeren Umfang. */
-    public void onClearScope(Runnable action) {
-        this.clearScope = java.util.Objects.requireNonNull(action, "action");
-    }
-
-    /** Die Quellen des Umfangs; leer heißt alle. */
+    /** Die Quellen, in denen die nächste Suche sucht; leer heißt alle. „Überall suchen“ übergeht die Auswahl. */
     Set<String> chosenSources() {
-        return Set.copyOf(chosen);
+        return everywhere.isSelected() ? Set.of() : Set.copyOf(chosen);
     }
 
-    /** Die Spaces des Umfangs; leer heißt alle. */
+    /** Die Spaces, in denen die nächste Suche sucht; leer heißt alle. */
     Set<String> chosenSpaces() {
-        return Set.copyOf(spaces);
+        return everywhere.isSelected() ? Set.of() : Set.copyOf(spaces);
     }
 
     private Set<String> knownSources() {
@@ -321,6 +388,8 @@ public final class SearchView implements View {
         semantic.setToolTipText(available || runtime == null
                 ? semanticTip(runtime == null ? null : available, runtime != null && runtime.workspace().aiVariants())
                 : lockedTip(runtime.settings().ai()));
+        String tip = semantic.getToolTipText();
+        semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
         scope(scopes);
     }
@@ -448,9 +517,10 @@ public final class SearchView implements View {
         KeywordSearch.Query q;
         try {
             // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
-            String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, chosen.size() > 1 ? Set.copyOf(chosen) : Set.of(),
-                    Set.copyOf(spaces));
+            // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
+            Set<String> sources = chosenSources();
+            String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;

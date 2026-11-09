@@ -60,8 +60,10 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -405,6 +407,19 @@ public final class Workspace {
         return harvester.sourceManagement().remove(sourceId);
     }
 
+    /**
+     * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
+     * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
+     * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
+     * Der Fortschritt erscheint wie bei jedem Auftrag in Aktivitäten und Statuszeile.
+     */
+    public JobStatus purgeSourceData(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
@@ -474,6 +489,52 @@ public final class Workspace {
     /** Erwähnungen eines Begriffs auf allen manuell analysierten, sichtbaren Seiten. */
     public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit) {
         return harvester.knowledgeGraph().search(caller, term, limit);
+    }
+
+    /** Ob „Analysieren“ im Baum angeboten werden kann (Analysator eingerichtet); lädt kein Modell. */
+    public boolean statementAnalysisJobsAvailable() {
+        return harvester.statementAnalysisJobs().available();
+    }
+
+    /**
+     * Zählt den Umfang eines Analyseauftrags für den Bestätigungsdialog, höchstens {@code limit + 1} Seiten weit;
+     * lädt keine Inhalte und analysiert nichts. Fragt die Quelle nach Kindseiten, also nie auf dem EDT.
+     */
+    public StatementAnalysisJobs.Estimate estimateStatementAnalysis(StatementAnalysisJobs.Scope scope, int limit) {
+        return harvester.statementAnalysisJobs().estimate(caller, scope, limit);
+    }
+
+    /**
+     * „Analysieren“ aus dem Baum: startet den Auftrag {@code STATEMENT_ANALYSIS} für Seite, Unterzweig, Space oder
+     * Quelle; Fortschritt und Abbruch wie bei jedem Auftrag.
+     */
+    public JobStatus startStatementAnalysis(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
+        return harvester.statementAnalysisJobs().start(caller, scope, options);
+    }
+
+    /**
+     * Exportiert vorhandene Analysen als JSON-LD in {@code <Exportordner>/knowledge-graph} (#499, ADR 0024); stößt
+     * nie eine Analyse an. Fortschritt und Abbruch wie bei jedem Auftrag.
+     */
+    public JobStatus startKnowledgeGraphExport(
+            com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase.Scope scope,
+            boolean includeStale) {
+        return harvester.startKnowledgeGraphExport(caller, scope, includeStale);
+    }
+
+    /** Fokussierter Teilgraph einer Seite für „Analysen → Graph“; begrenzt, rechtegeprüft, rechnet nie. */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfPage(PageKey key, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).page(caller, key, options);
+    }
+
+    /** Direkte Nachbarn eines Knotens („Nachbarn erweitern“). */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfNode(String nodeId, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).node(caller, nodeId, options);
+    }
+
+    /** Erwähnungen eines Begriffs mit ihren Aussagen über alle sichtbaren analysierten Seiten. */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfTerm(String term, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).term(caller, term, options);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
@@ -753,7 +814,7 @@ public final class Workspace {
     /** Die jüngsten Diagnoseereignisse aller sichtbaren Aufträge dieser App, neueste zuerst. */
     public List<JobEvent> recentEvents(int limit) {
         return harvester.recentEvents(limit).stream()
-                .filter(event -> access.permits(caller, ResourceScope.space(event.sourceId(), event.partitionKey()),
+                .filter(event -> access.permits(caller, scope(event.sourceId(), event.partitionKey()),
                         event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC))
                 .toList();
     }
@@ -879,9 +940,14 @@ public final class Workspace {
     }
 
     private void requireVisible(JobStatus status, AccessKind kind) {
-        if (!access.permits(caller, ResourceScope.space(status.sourceId(), status.partitionKey()), kind)) {
+        if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {
             throw new UnknownJobException(status.id());
         }
+    }
+
+    /** Space eines Auftrags oder, ohne Space (etwa „Daten bereinigen“), die ganze Quelle. */
+    private static ResourceScope scope(String sourceId, String partitionKey) {
+        return partitionKey == null ? ResourceScope.source(sourceId) : ResourceScope.space(sourceId, partitionKey);
     }
 
     private void ownExport(String exportId) {

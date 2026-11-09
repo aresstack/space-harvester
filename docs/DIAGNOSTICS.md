@@ -112,6 +112,17 @@ Auftrag legt die Lese-Ansicht jeder Seite unter `views/` ab (#218, Format `space
 Status `AVAILABLE`/`RESTRICTED`/`UNSUPPORTED`/`UNAVAILABLE`); nur zur exportierten Version, und bei eingebundenen
 fremden Inhalten nur mit Freigabe der ganzen Quelle. Der Export wartet nicht darauf.
 
+## Aussagenanalyse
+
+Der Auftrag `STATEMENT_ANALYSIS` (#499, ADR 0024) startet nur auf ausdrücklichen Wunsch in der Desktop-App für eine
+Seite, einen Unterzweig, einen Space oder eine Quelle. Phasen `Seiten ermitteln` und `Seiten analysieren`.
+`discovered` zählt ermittelte lesbare Seiten, `processed` erledigte, `written` neu analysierte, `failed`
+gescheiterte; `processed - written - failed` sind übersprungene Seiten (aktuell oder ohne Lesetext, das
+Abschlussereignis nennt beide Zahlen). Fehlercodes: `SCOPE_TOO_LARGE`
+(bestätigte Sicherheitsgrenze überschritten, nichts analysiert), `INCOMPLETE` (Zweige nicht ermittelbar, Gefundenes
+analysiert), `ANALYZER_UNAVAILABLE` (Modell fehlt oder defekt). Ereignisse nennen je gescheiterter Seite nur die
+Ausnahmeklasse, keine Titel, Seiten-IDs oder Texte.
+
 ## Verbindungsdiagnose
 
 Unabhängig von Aufträgen prüft die Verbindungsdiagnose (#189) den Weg zu einer Quelle Stufe für Stufe, wie

@@ -1,28 +1,20 @@
 package com.aresstack.spaceharvester.core;
 
-import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
-import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
-import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
-import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
-import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
-import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Quellen zur Laufzeit verwalten (#188), wie {@code KnowledgeSourceManagement} und {@code SourceConnectionCheck} im
@@ -33,8 +25,9 @@ import java.util.Set;
  *
  * <p>Abgeleitete Daten gehören zur Quelle: Wird sie entfernt oder zeigt sie nach einer Änderung auf ein anderes Ziel
  * (anderer Typ oder andere Basisadresse), werden ihre offenen Aufträge abgebrochen und Seiten-Cache samt Suchindex
- * und Abgleichständen, Anreicherungen (KI-Text, Embeddings, Lese-Ansichten) und Assets entfernt. Exporte bleiben,
- * mit den Bildern, auf die sie verweisen; sie entfernt ihr Besitzer selbst.
+ * und Abgleichständen, Anreicherungen (KI-Text, Embeddings, Lese-Ansichten), Assets, Begriffsbeziehungen, geprüfte
+ * Fakten und Aussagen entfernt ({@link SourceDataStores}). Exporte bleiben, mit den Bildern, auf die sie verweisen; sie
+ * entfernt ihr Besitzer selbst. {@link #purge} löscht dasselbe, ohne die Quelle zu entfernen.
  *
  * <p>Rechte: Die Verwaltung prüft keine {@code AccessPolicy}; sie gehört dem Betreiber des einbettenden Programms.
  */
@@ -47,25 +40,13 @@ public final class SourceManagement {
 
     private final ConfiguredSourceCatalog catalog;
     private final Jobs jobs;
-    private final LucenePageCache cache;
-    private final LuceneEnrichmentStore enrichments;
-    private final LucenePageTextIndex texts;
-    private final FileSystemAssetStore assets;
-    private final ExportArtifactWriter exports;
-    private final Clock clock;
+    private final SourceDataPurge purge;
     private final SourceDiagnostics diagnostics;
 
-    SourceManagement(ConfiguredSourceCatalog catalog, Jobs jobs, LucenePageCache cache,
-                     LuceneEnrichmentStore enrichments, LucenePageTextIndex texts, FileSystemAssetStore assets,
-                     ExportArtifactWriter exports, Clock clock) {
+    SourceManagement(ConfiguredSourceCatalog catalog, Jobs jobs, SourceDataPurge purge) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
-        this.cache = Objects.requireNonNull(cache, "cache");
-        this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
-        this.texts = Objects.requireNonNull(texts, "texts");
-        this.assets = Objects.requireNonNull(assets, "assets");
-        this.exports = Objects.requireNonNull(exports, "exports");
-        this.clock = Objects.requireNonNull(clock, "clock");
+        this.purge = Objects.requireNonNull(purge, "purge");
         this.diagnostics = new SourceDiagnostics(catalog);
     }
 
@@ -192,14 +173,28 @@ public final class SourceManagement {
         return true;
     }
 
+    /**
+     * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle, wie beim
+     * Entfernen, behält aber die Quelle mit Einstellungen und Schalter; auch abgeschaltet. Siehe {@link SourceDataPurge}.
+     *
+     * @param owner auslösender Client
+     * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException ohne Quelle dieser ID
+     */
+    public JobStatus purge(String sourceId, String owner) {
+        JobStatus started = purge.start(sourceId, owner);
+        LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} werden bereinigt", sourceId);
+        return started;
+    }
+
+    /** Die Ablagen, die {@link #purge} und das Entfernen leeren, in ihrer Reihenfolge. */
+    public List<String> purgedStores() {
+        return purge.stores();
+    }
+
     private void withdraw(String sourceId) {
-        Instant start = clock.instant();
-        stopJobs(sourceId);
-        cache.removeSource(sourceId);
-        enrichments.removeSource(sourceId);
-        texts.removeSource(sourceId);
-        int blobs = assets.removeSource(sourceId, exportImages()::contains, start);
-        LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} Asset-Inhalte)", sourceId, blobs);
+        SourceDataPurge.Outcome outcome = purge.purge(sourceId);
+        LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} von {2} Ablagen)", sourceId,
+                outcome.cleared().size(), outcome.cleared().size() + outcome.failed().size());
     }
 
     private void stopJobs(String sourceId) {
@@ -211,30 +206,6 @@ public final class SourceManagement {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    /** Inhalte, auf die bestehende Exporte verweisen (Bilder und gezeichnete Diagramme). */
-    private Set<String> exportImages() {
-        Set<String> referenced = new HashSet<>();
-        for (String exportId : exports.published()) {
-            try {
-                exports.assets(exportId).ifPresent(manifest -> {
-                    for (ExportAssetManifest.Entry entry : manifest.assets()) {
-                        if (entry.sha256() != null) {
-                            referenced.add(entry.sha256());
-                        }
-                        if (entry.rendition() != null && entry.rendition().drawn()) {
-                            referenced.add(entry.rendition().sha256());
-                        }
-                    }
-                });
-            } catch (RuntimeException e) {
-                // Ein unlesbares Manifest darf das Entfernen nicht verhindern; seine Bilder fehlen dann ggf. später.
-                LOG.log(System.Logger.Level.WARNING, "Bildmanifest eines Exports nicht lesbar ({0})",
-                        e.getClass().getName());
-            }
-        }
-        return referenced;
     }
 
     /**

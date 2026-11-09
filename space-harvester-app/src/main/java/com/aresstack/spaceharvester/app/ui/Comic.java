@@ -163,6 +163,14 @@ public final class Comic {
         return new ComposerButton(icon, text, false, tooltip);
     }
 
+    /**
+     * Runder Knopf nur mit Export-Symbol, derselbe wie in den Space-Zeilen der Quellen; der Text steht im Tooltip und
+     * als zugänglicher Name.
+     */
+    public static javax.swing.JButton exportButton(String tooltip) {
+        return new IconButton(Glyph.EXPORT, tooltip);
+    }
+
     /** Zeile aus Knöpfen, links ausgerichtet. */
     public static JPanel row(Component... components) {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
@@ -218,6 +226,34 @@ public final class Comic {
         box.setIcon(new com.aresstack.enterpriseai.ui.comic.paint.ResearchCheckIcon());
         box.setIconTextGap(6);
         return box;
+    }
+
+    /**
+     * Aufklappbare Überschrift wie „▸ Erweitert“ im Assistenten von AskAI ({@code CollapsiblePanel}): linksbündig,
+     * ohne Knopfrahmen, halbfett; der Aufrufer setzt Text samt ▸/▾ und schaltet die Zeilen darunter.
+     */
+    public static javax.swing.JButton disclosure(String text, String tooltip) {
+        javax.swing.JButton header = new javax.swing.JButton(text);
+        header.setHorizontalAlignment(SwingConstants.LEFT);
+        header.setFocusPainted(false);
+        header.setBorderPainted(false);
+        header.setContentAreaFilled(false);
+        header.setOpaque(false);
+        header.setForeground(INK);
+        header.setFont(semiBold(12.5f));
+        header.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 2));
+        header.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        header.setToolTipText(tooltip);
+        return header;
+    }
+
+    /** Eingabefeld mit Knopf daneben (etwa ▾): das Feld füllt die Breite, der Knopf steht rechts. */
+    public static JPanel fieldWithButton(JComponent field, JComponent button) {
+        JPanel line = new JPanel(new BorderLayout(6, 0));
+        line.setOpaque(false);
+        line.add(field, BorderLayout.CENTER);
+        line.add(button, BorderLayout.EAST);
+        return line;
     }
 
     public static JTextField field(int columns) {

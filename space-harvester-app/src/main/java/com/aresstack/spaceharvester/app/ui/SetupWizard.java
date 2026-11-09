@@ -67,7 +67,7 @@ final class SetupWizard {
     private static final int SHIP_WIDTH = 190;
 
     private final AppContext context;
-    private final AiSettingsPanel ai;
+    final AiSettingsPanel ai;
     private final JPanel root = new JPanel(new BorderLayout(14, 10));
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
@@ -96,11 +96,12 @@ final class SetupWizard {
     private final Map<String, Boolean> tested = new LinkedHashMap<>();
     private int step;
     private boolean closed;
-    private Runnable close = () -> { };
+    Runnable close = () -> { };
 
     SetupWizard(AppContext context) {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
+        ai.wizardMode();
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(900, 600));
 
@@ -178,8 +179,9 @@ final class SetupWizard {
 
         back.addActionListener(e -> show(step - 1));
         next.addActionListener(e -> show(step + 1));
-        finish.addActionListener(e -> close.run());
-        later.addActionListener(e -> close.run());
+        // Kein „Speichern“ im Assistenten: Offene Eingaben übernimmt er spätestens beim Schließen.
+        finish.addActionListener(e -> requestClose());
+        later.addActionListener(e -> requestClose());
         show(0);
     }
 
@@ -188,11 +190,20 @@ final class SetupWizard {
         SetupWizard wizard = new SetupWizard(context);
         JDialog dialog = Dialogs.dialog(parent, TITLE);
         wizard.close = dialog::dispose;
-        Dialogs.frame(dialog, TITLE, wizard.component(), dialog::dispose);
+        // Escape, ✕ und das Schließen durch das System gehen wie „Später“ über das Übernehmen; unvollständige
+        // Eingaben halten den Assistenten mit einer Warnung offen, statt still verloren zu gehen.
+        Dialogs.frame(dialog, TITLE, wizard.component(), wizard::requestClose);
+        dialog.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                wizard.requestClose();
+            }
+
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.closed = true;
+                wizard.ai.stopModels();
                 wizard.completed();
             }
         });
@@ -214,7 +225,9 @@ final class SetupWizard {
     }
 
     void show(int index) {
+        int left = step;
         step = Math.max(0, Math.min(STEPS.length - 1, index));
+        boolean leavesAi = (left == AI || left == MODELS) && left != step;
         cards.show(pages, STEPS[step]);
         bubble.setText(LINES[step]);
         back.setEnabled(step > 0);
@@ -223,10 +236,41 @@ final class SetupWizard {
         if ((step == MODELS || step == AI) && !ai.changed()) {
             ai.render();
         }
-        if (step == MODELS) {
+        if (leavesAi) {
+            // Wie im Assistenten von AskAI: Der Schrittwechsel übernimmt die Eingaben, ein „Speichern“ gibt es
+            // nicht. „Modelle“ lädt erst danach, damit Adresse und Key schon gelten.
+            if (step != MODELS) {
+                ai.stopModels();
+            }
+            ai.autoSave(feedback, () -> {
+                if (!closed) {
+                    refresh();
+                    if (step == MODELS) {
+                        ai.prepareModels();
+                    }
+                }
+            });
+        } else if (step == MODELS) {
             ai.prepareModels();
+        } else {
+            // „Modelle laden“ wiederholt sich nur, solange der Schritt offen ist.
+            ai.stopModels();
         }
         refresh();
+    }
+
+    /**
+     * „Fertig“, „Später“, Escape und ✕: erst die offenen KI-Eingaben übernehmen, dann schließen (und den Lauf in der
+     * Datei vermerken). Sind sie unvollständig oder scheitert das Speichern, bleibt der Assistent mit der Meldung offen.
+     */
+    void requestClose() {
+        saveThen(() -> close.run());
+    }
+
+    /** Übernimmt offene KI-Eingaben (ohne Änderung sofort) und führt dann {@code then} aus. */
+    private void saveThen(Runnable then) {
+        ai.stopModels();
+        ai.autoSave(feedback, then);
     }
 
     /** Liest den aktuellen Stand neu: Übersichten und Häkchen der Schrittleiste. */

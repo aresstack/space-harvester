@@ -85,6 +85,15 @@ final class SourceForm {
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
+    /** Woher Benutzer und Passwort bzw. Token kommen: KeePass-Eintrag oder Manuell (Tresor), wie beim KI-Dienst. */
+    final JComboBox<String> origin = Comic.combo();
+    final JComboBox<String> keePassEntry = Comic.combo();
+    final ComposerButton pairKeePass = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC) und die Einträge "
+            + "lesen; einmal gekoppelt gilt es für alle Quellen und den KI-Dienst");
+    private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
+    /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
+    private char[] keePassSecret;
+    private String keePassStatus = "";
     final JComboBox<String> auth = Comic.combo();
     final JTextField username = Comic.field(24);
     final JTextField variable = Comic.field(24);
@@ -157,10 +166,34 @@ final class SourceForm {
             updateVisibility();
             derive();
         });
+        origin.addItem(AiSettingsPanel.KEEPASS);
+        origin.addItem(AiSettingsPanel.MANUAL);
+        origin.setSelectedItem(editing != null
+                ? (settings != null && settings.keePassEntry(editing.draft().id()) != null
+                        ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL)
+                : context.keePassPreferred() ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL);
+        keePassEntry.setEditable(true);
+        String knownEntry = editing != null && settings != null ? settings.keePassEntry(editing.draft().id()) : null;
+        if (knownEntry != null) {
+            keePassEntry.addItem(knownEntry);
+            keePassEntry.setSelectedItem(knownEntry);
+        }
+        origin.addActionListener(e -> {
+            updateVisibility();
+            if (keePassChosen()) {
+                loadKeePassEntries(!context.keePass().paired());
+            }
+        });
+        pairKeePass.addActionListener(e -> loadKeePassEntries(true));
+        keePassEntry.addActionListener(e -> readKeePassEntry());
         auth.addActionListener(e -> {
             authChosen |= !deriving;
             suggestVariable();
             updateVisibility();
+            if (keePassChosen() && keePassEntry.getItemCount() == 0 && pairKeePass.isEnabled()) {
+                // Erst jetzt braucht die Quelle Zugangsdaten: bei bestehender Kopplung die Einträge lesen.
+                loadKeePassEntries(false);
+            }
         });
         certificate.addActionListener(e -> updateVisibility());
 
@@ -178,7 +211,10 @@ final class SourceForm {
         onEdit(id, this::suggestVariable);
 
         form.header(loginSection);
+        form.row("Zugangsdaten beziehen über", origin, "KeePass liest Benutzer und Passwort bzw. Token aus einem "
+                + "Eintrag; Manuell legt sie im Tresor ab");
         form.row("Anmeldung", auth);
+        form.row("KeePass-Eintrag", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
         form.row("Benutzer", username);
         form.row("Token", sessionValue, " ");
         form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
@@ -236,6 +272,94 @@ final class SourceForm {
         derive();
         suggestVariable();
         renderNotes();
+        if (keePassChosen() && context.keePass().paired()) {
+            // Schon gekoppelt: Einträge gleich lesen, ohne erneut zu koppeln.
+            loadKeePassEntries(false);
+        }
+    }
+
+    /** Ob die Werte aus KeePass kommen: KeePass gewählt und eine Anmeldung mit Geheimnis. */
+    boolean keePassChosen() {
+        return AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem()) && !NONE.equals(auth.getSelectedItem());
+    }
+
+    private String keePassTitle() {
+        Object typed = keePassEntry.isEditable() ? keePassEntry.getEditor().getItem() : keePassEntry.getSelectedItem();
+        return typed == null ? "" : typed.toString().strip();
+    }
+
+    /**
+     * Liest die Einträge für das Auswahlfeld; koppelt nur, wenn {@code mayPair} (Wahl von KeePass oder Knopf), sonst
+     * gilt die bestehende Kopplung.
+     */
+    void loadKeePassEntries(boolean mayPair) {
+        if (!mayPair && !context.keePass().paired()) {
+            return;
+        }
+        pairKeePass.setEnabled(false);
+        keePassStatus = "Verbinde mit KeePass …";
+        form.hint(keePassRow, keePassStatus);
+        String keep = keePassTitle();
+        Background.run(() -> context.keePass().titles(), titles -> {
+            pairKeePass.setEnabled(true);
+            keePassEntry.removeAllItems();
+            titles.forEach(keePassEntry::addItem);
+            if (!keep.isEmpty() && !titles.contains(keep)) {
+                keePassEntry.addItem(keep);
+            }
+            keePassEntry.setSelectedItem(keep.isEmpty() ? null : keep);
+            keePassEntry.getEditor().setItem(keep);
+            keePassStatus = "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge") + "; Eintrag wählen";
+            form.hint(keePassRow, keePassStatus);
+            if (!keep.isEmpty()) {
+                readKeePassEntry();
+            }
+        }, error -> {
+            pairKeePass.setEnabled(true);
+            keePassStatus = "Nicht gekoppelt: " + AiSettingsPanel.keePassReason(error);
+            form.hint(keePassRow, keePassStatus);
+        });
+    }
+
+    /** Liest Benutzer und Passwort bzw. Token des gewählten Eintrags; der Benutzer landet im Feld, der Rest im Speicher. */
+    private void readKeePassEntry() {
+        String title = keePassTitle();
+        forgetKeePassSecret();
+        if (title.isEmpty() || !context.keePass().paired()) {
+            return;
+        }
+        Background.run(() -> {
+            try (var read = context.keePass().read(title)) {
+                return new Object[] {read.userName(), read.copyPassword()};
+            }
+        }, read -> {
+            if (!title.equals(keePassTitle())) {
+                java.util.Arrays.fill((char[]) read[1], '\0');
+                return;
+            }
+            String user = (String) read[0];
+            if (user != null && !user.isBlank() && BASIC.equals(auth.getSelectedItem())) {
+                username.setText(user.strip());
+            }
+            keePassSecret = (char[]) read[1];
+            keePassStatus = keePassSecret.length == 0 ? "Der Eintrag hat kein Passwort." : "Aus KeePass gelesen";
+            form.hint(keePassRow, keePassStatus);
+            renderNotes();
+        }, error -> {
+            keePassStatus = AiSettingsPanel.keePassReason(error);
+            form.hint(keePassRow, keePassStatus);
+        });
+    }
+
+    private void forgetKeePassSecret() {
+        if (keePassSecret != null) {
+            java.util.Arrays.fill(keePassSecret, '\0');
+            keePassSecret = null;
+        }
+    }
+
+    private boolean keePassSecretRead() {
+        return keePassSecret != null && keePassSecret.length > 0;
     }
 
     /** Öffnet das Formular modal für eine neue Quelle; {@code saved} erhält nach Speichern und Neu laden ihre ID. */
@@ -531,7 +655,11 @@ final class SourceForm {
             return;
         }
         SourceDraft source = draft();
-        char[] value = sessionValue.getPassword();
+        boolean fromKeePass = keePassChosen();
+        String keePassTitle = fromKeePass ? keePassTitle() : null;
+        // Aus KeePass gelesene Werte gehen nur in die Sitzung, nie in den Tresor.
+        char[] value = fromKeePass ? new char[0] : sessionValue.getPassword();
+        char[] sessionOnly = fromKeePass && keePassSecretRead() ? keePassSecret.clone() : new char[0];
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         AppRuntime runtime = context.runtime();
@@ -560,6 +688,10 @@ final class SourceForm {
             // Quelle und Freigabe in einem Text: Scheitert das Speichern, ändert sich keins von beiden.
             ConfigFileEditor.Draft written = released == null ? write(source)
                     : editor.withAi(context.configFile(), write(source), released);
+            AppSettings current = written.settings();
+            if (fromKeePass || current.keePassEntry(source.id()) != null) {
+                written = editor.withSourceKeePass(context.configFile(), written, source.id(), keePassTitle);
+            }
             SourceSaving.store(context, editor, editing, source, written, value);
             if (editing != null && runtime != null) {
                 // Zeigt die Quelle jetzt auf ein anderes Ziel, entfernt der Core ihre bisherigen Daten (#188).
@@ -571,13 +703,16 @@ final class SourceForm {
             }
             return source.id();
         }, savedId -> {
-            SourceSaving.remember(context, editing, source, value);
+            SourceSaving.remember(context, editing, source, sessionOnly.length > 0 ? sessionOnly : value);
             Arrays.fill(value, '\0');
+            Arrays.fill(sessionOnly, '\0');
+            forgetKeePassSecret();
             clearSecret();
             close.run();
             context.reload(() -> saved.accept(savedId));
         }, error -> {
             Arrays.fill(value, '\0');
+            Arrays.fill(sessionOnly, '\0');
             save.setEnabled(true);
             feedback.problem(error);
         });
@@ -669,11 +804,26 @@ final class SourceForm {
 
     void clearSecret() {
         sessionValue.setText("");
+        forgetKeePassSecret();
     }
 
     /** Ob für Token bzw. Passwort schon ein Wert da ist: eingegeben, in der Sitzung, im Tresor oder als Property. */
     private boolean secretAvailable(SourceDraft source) {
+        if (keePassChosen()) {
+            return keePassSecretRead() || sessionMatchesKeePassEntry(source);
+        }
         return SourceSaving.secretAvailable(context, editing, source, sessionValue.getPassword().length > 0);
+    }
+
+    /**
+     * Ob der Sitzungswert der Quelle zum gewählten KeePass-Eintrag gehört: dieselbe Anmeldung und derselbe Eintrag wie
+     * in der Datei. Nach einem Wechsel des Eintrags zählt erst der neu gelesene Wert.
+     */
+    private boolean sessionMatchesKeePassEntry(SourceDraft source) {
+        AppSettings settings = context.settings();
+        return source.id() != null && settings != null && keePassTitle().equals(settings.keePassEntry(source.id()))
+                && !SourceSaving.loginChanged(editing, source)
+                && context.secrets().has(source.id(), SourceSaving.login(source));
     }
 
     AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
@@ -681,11 +831,13 @@ final class SourceForm {
         // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
         secrets.proxyPassword(context.secrets().proxyPassword());
         String sourceId = source.id();
-        char[] value = sessionValue.getPassword();
+        char[] value = keePassChosen() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
+                : sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, SourceSaving.login(source), value);
-        } else if (sourceId != null && context.secrets().has(sourceId, SourceSaving.login(source))
-                && !SourceSaving.loginChanged(editing, source)) {
+        } else if (sourceId != null && (keePassChosen() ? sessionMatchesKeePassEntry(source)
+                : context.secrets().has(sourceId, SourceSaving.login(source))
+                && !SourceSaving.loginChanged(editing, source))) {
             return context.secrets();
         }
         return secrets;
@@ -702,7 +854,12 @@ final class SourceForm {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         }
-        if ((source.confluence() || source.authType() == SourceSettingsConfig.AuthType.PAT) && !secretAvailable(source)) {
+        if (keePassChosen() && keePassTitle().isEmpty()) {
+            problems.add("Kein KeePass-Eintrag gewählt.");
+        } else if (keePassChosen() && !secretAvailable(source)) {
+            problems.add("Der KeePass-Eintrag ist noch nicht gelesen; KeePass starten und koppeln.");
+        } else if ((source.confluence() || source.authType() == SourceSettingsConfig.AuthType.PAT)
+                && !secretAvailable(source)) {
             problems.add(source.authType() == SourceSettingsConfig.AuthType.PAT ? "Das Token fehlt."
                     : "Das Passwort fehlt.");
         }
@@ -996,9 +1153,12 @@ final class SourceForm {
         form.visible(auth, login);
         boolean basic = BASIC.equals(auth.getSelectedItem());
         boolean anonymous = NONE.equals(auth.getSelectedItem());
+        boolean keePass = login && keePassChosen();
+        form.visible(origin, login);
+        form.visible(keePassRow, keePass);
         form.visible(username, login && basic);
-        form.visible(variable, login && !anonymous);
-        form.visible(sessionValue, login && !anonymous);
+        form.visible(variable, login && !anonymous && !keePass);
+        form.visible(sessionValue, login && !anonymous && !keePass);
         form.label(sessionValue, basic ? "Passwort" : "Token");
         form.hint(sessionValue, secretHint());
         form.visible(certificate, tls);

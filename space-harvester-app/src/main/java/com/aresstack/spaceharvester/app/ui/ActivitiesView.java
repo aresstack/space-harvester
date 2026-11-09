@@ -357,7 +357,8 @@ public final class ActivitiesView implements View {
         JobProgress p = status.progress();
         Step step = Step.of(status.type(), phase, p);
         boolean running = !status.state().terminal();
-        String subject = Texts.type(status.type()) + " " + status.partitionKey();
+        String subject = Texts.type(status.type()) + " "
+                + (status.partitionKey() != null ? status.partitionKey() : status.sourceId());
         String text;
         long done = 0;
         long total = 0;
@@ -912,9 +913,19 @@ public final class ActivitiesView implements View {
                 return new Step((phase == null ? "Anreichern" : phase) + " · " + p.processed() + " von " + total
                         + " Schritten", p.processed(), total);
             }
+            if (type == JobType.PURGE) {
+                return new Step((phase == null ? "Ablagen leeren" : phase) + " · " + p.processed() + " von " + total
+                        + " Ablagen", p.processed(), total);
+            }
             if (type == JobType.ASSETS) {
                 return new Step("Bilder beschaffen · " + p.processed() + " von " + total + " Bildern geprüft, "
                         + p.written() + " abgelegt", p.processed(), total);
+            }
+            if (type == JobType.STATEMENT_ANALYSIS) {
+                long skipped = p.processed() - p.written() - p.failed();
+                return new Step((phase == null ? "Aussagenanalyse" : phase) + " · " + p.processed() + " von " + total
+                        + " Seiten, " + p.written() + " analysiert, " + skipped + " übersprungen",
+                        p.processed(), total);
             }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
@@ -939,6 +950,10 @@ public final class ActivitiesView implements View {
                 case ENRICHMENT -> new Counters("Schritte (Seiten × Prozessoren)", "Erledigt", "Neu berechnet",
                         "Fehlgeschlagen");
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
+                case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
+                case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
+                case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",
+                        "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

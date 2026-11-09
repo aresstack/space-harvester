@@ -83,6 +83,11 @@ public final class KeePassLink {
         return interactive.read(title);
     }
 
+    /** Liest einen Eintrag ohne Kopplungsdialog (beim Start); der Aufrufer schließt ihn. */
+    public VaultEntryDraft readSilently(String title) throws SecretUnavailableException {
+        return silent.read(title);
+    }
+
     /** Legt einen neuen Eintrag an; einen vorhandenen mit diesem Titel lässt KeePass unverändert (ALREADY_EXISTS). */
     public void create(String title, String baseUrl, char[] apiKey) throws SecretUnavailableException {
         try (VaultEntryDraft draft = new VaultEntryDraft(title, "", apiKey, baseUrl, Map.of())) {

@@ -465,7 +465,7 @@ public final class RemoteAi {
             batch = call.get();
         } catch (EmbeddingException e) {
             // Nur die Art: Meldungen können den Endpunkt nennen, nie Texte oder den Key.
-            throw new EmbeddingUnavailableException("Embedding-Dienst: " + e.kind());
+            throw new EmbeddingUnavailableException("Embedding-Dienst: " + e.kind(), serviceFailure(e));
         }
         List<float[]> vectors = new ArrayList<>(batch.size());
         for (int i = 0; i < batch.size(); i++) {

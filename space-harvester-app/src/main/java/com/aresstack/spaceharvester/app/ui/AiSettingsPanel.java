@@ -98,13 +98,32 @@ final class AiSettingsPanel {
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
-    final ComposerButton advanced = Comic.button("▸ Erweitert", "Abschnittsgröße und Überlappung für Embeddings");
+    final javax.swing.JButton advanced = Comic.disclosure("▸ Erweitert",
+            "Dimension, Abschnittsgröße und Überlappung für Embeddings");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
+    /** Wiederholt „Modelle laden“ im Assistenten, solange „Modelle“ offen ist und der Dienst nicht erreichbar ist. */
+    final ModelRetry modelRetry;
+    /** Ob „Modelle laden“ über {@link #modelRetry} läuft (Assistent, Schritt „Modelle“ offen) statt einmal. */
+    private boolean autoRetry;
+    /** Zählt jede Anfrage nach Modellen; nur die Antwort auf die jüngste zählt. */
+    private int modelsRequest;
+    /** Für welchen Dienst ({@link #serviceKey}) {@link #loaded} gilt. */
+    private String loadedService = "";
+    /** Für Tests: wie viele veraltete Antworten (älterer Dienst oder überholte Anfrage) verworfen wurden. */
+    int discardedModelAnswers;
+    /** Grund des letzten gescheiterten Versuchs, für die Statuszeile der Wiederholung. */
+    private String lastFailure = "";
 
     AiSettingsPanel(AppContext context) {
+        this(context, ModelRetry.SWING);
+    }
+
+    /** Mit eigener Zeitplanung für die Wiederholung von „Modelle laden“; für Tests. */
+    AiSettingsPanel(AppContext context, ModelRetry.Scheduler scheduler) {
         this.context = context;
+        this.modelRetry = new ModelRetry(scheduler, this::attemptModels, this::retrying);
         this.modelsFeedback = new Feedback();
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
@@ -123,23 +142,25 @@ final class AiSettingsPanel {
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
-        modelRows.add("Text-Modell", Comic.row(chatModel, pickChat),
+        modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
-        modelRows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
+        modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
-        modelRows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
-        modelRows.add("Vision-Modell", Comic.row(visionModel, pickVision),
+        modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
                 "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
         {
-            modelRows.add("Rerank-Modell", Comic.row(rerankModel, pickRerank),
+            modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
-            modelRows.add("", advanced, "Zerlegung der Inhalte für Embeddings; die Vorgaben passen meistens");
+            // Wie im Assistenten von AskAI: linksbündige Überschrift, die aufgeklappten Felder im selben Raster.
+            modelRows.wide(advanced);
+            modelRows.add("Dimension", dimensions, "Vektorlänge des Embedding-Modells; leer: wird beim Übernehmen "
+                    + "beim Dienst gemessen");
             modelRows.add("Abschnittsgröße", chunkTokens, "Höchstens so viele Tokens je Abschnitt für Embeddings; "
                     + "leer: 350; wirkt nach Neustart");
             modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1; "
                     + "wirkt nach Neustart");
-            advanced.addActionListener(e -> advanced(!modelRows.shows(chunkTokens)));
+            advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
         pickChat.setEnabled(false);
@@ -163,7 +184,7 @@ final class AiSettingsPanel {
         south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         root.add(south, BorderLayout.SOUTH);
-        save.addActionListener(e -> save(save, feedback));
+        save.addActionListener(e -> save(save, feedback, () -> { }, false));
         removeKey.addActionListener(e -> removeKey());
         {
             models.setOpaque(false);
@@ -176,7 +197,7 @@ final class AiSettingsPanel {
             modelsSouth.add(Comic.row(saveModels), BorderLayout.NORTH);
             modelsSouth.add(modelsFeedback, BorderLayout.SOUTH);
             models.add(modelsSouth, BorderLayout.SOUTH);
-            saveModels.addActionListener(e -> save(saveModels, modelsFeedback));
+            saveModels.addActionListener(e -> save(saveModels, modelsFeedback, () -> { }, false));
         }
         render();
     }
@@ -209,9 +230,11 @@ final class AiSettingsPanel {
         releasedIds = current.externalProcessingSources();
         released.setText(releasedText(settings, releasedIds));
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
-        // Nichts gewählt: KeePass, außer es liegt schon ein Key im Tresor.
+        // Nichts gewählt: KeePass, wenn die App schon gekoppelt ist oder KeePass für eine Quelle gewählt wurde
+        // (dieselbe Kopplung gilt weiter, kein neues Koppeln), sonst Manuell; ein Key im Tresor spricht für Manuell.
         boolean manual = fileAccess.mode() == AiAccess.Mode.MANUAL
-                || fileAccess.mode() == null && context.aiVault().has(KEY_ID, KEY_LOGIN);
+                || fileAccess.mode() == null && (context.aiVault().has(KEY_ID, KEY_LOGIN)
+                || !context.keePassPreferred());
         access.setSelectedItem(manual ? MANUAL : KEEPASS);
         String title = fileAccess.entry() == null ? AiAccess.DEFAULT_ENTRY : fileAccess.entry();
         if (titles.isEmpty()) {
@@ -377,10 +400,39 @@ final class AiSettingsPanel {
         return !draft().equals(current) || apiKey.getPassword().length > 0 || !accessDraft().equals(shownAccess);
     }
 
-    private void save(ComposerButton save, Feedback feedback) {
+    /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
+    private boolean saving;
+    /** Was nach dem laufenden Speichern noch übernommen werden soll; nur das letzte zählt. */
+    private Runnable queued;
+
+    /**
+     * Im Assistenten gibt es kein „Speichern“: Er übernimmt die Eingaben beim Schrittwechsel und spätestens bei
+     * „Fertig“ ({@link #autoSave}), wie der Assistent von AskAI.
+     */
+    void wizardMode() {
+        save.setVisible(false);
+        saveModels.setVisible(false);
+    }
+
+    /**
+     * Übernimmt geänderte Eingaben ohne Knopf, wie der Assistent von AskAI beim Verlassen eines Schritts;
+     * unverändert ohne Meldung. {@code then} läuft danach auf dem EDT, auch wenn nichts zu tun war, nicht aber, wenn
+     * die Eingaben unvollständig sind oder das Speichern scheitert; das meldet {@code feedback}.
+     */
+    void autoSave(Feedback feedback, Runnable then) {
+        if (saving) {
+            // Ein Speichern läuft schon (etwa vom Schrittwechsel): danach erneut prüfen, dann weiter.
+            queued = () -> autoSave(feedback, then);
+            return;
+        }
+        save(null, feedback, then, true);
+    }
+
+    private void save(javax.swing.JComponent save, Feedback feedback, Runnable then, boolean quiet) {
         AiDraft draft = draft();
         if (!draft.problems().isEmpty()) {
-            feedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            feedback.warning(quiet ? "KI-Einstellungen nicht übernommen" : "Bitte prüfen",
+                    String.join(" ", draft.problems()));
             return;
         }
         char[] key = apiKey.getPassword();
@@ -388,7 +440,10 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         AiAccess chosen = accessDraft();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)) {
-            feedback.info("Nichts geändert", null);
+            if (!quiet) {
+                feedback.info("Nichts geändert", null);
+            }
+            then.run();
             return;
         }
         if (chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
@@ -409,8 +464,11 @@ final class AiSettingsPanel {
             Arrays.fill(key, '\0');
             return;
         }
-        save.setEnabled(false);
-        feedback.working("Wird gespeichert …");
+        if (save != null) {
+            save.setEnabled(false);
+        }
+        saving = true;
+        feedback.working(quiet ? "KI-Einstellungen werden übernommen …" : "Wird gespeichert …");
         boolean vault = context.aiVault().available();
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
@@ -438,21 +496,59 @@ final class AiSettingsPanel {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
+            boolean serviceChanged = key.length > 0 || !chosen.equals(shownAccess)
+                    || !java.util.Objects.equals(blankToNull(draft.baseUrl()), blankToNull(current.baseUrl()));
             Arrays.fill(key, '\0');
-            save.setEnabled(true);
+            if (save != null) {
+                save.setEnabled(true);
+            }
+            if (serviceChanged) {
+                // Anderer Dienst oder Key: Beim nächsten Betreten von „Modelle“ lädt der Assistent neu.
+                forgetModels();
+            }
             context.reload(() -> {
-                render();
+                saving = false;
+                AiDraft now = draft();
+                if (now.equals(draft)) {
+                    render();
+                } else {
+                    // Inzwischen weiter getippt: nichts überschreiben, nur den Key aus dem Feld nehmen. Die gemessene
+                    // Dimension nur, wenn Feld und Embedding-Modell noch so sind wie beim Speichern.
+                    apiKey.setText("");
+                    String measuredDimension = measured.draft().embeddingDimensions();
+                    if (measuredDimension != null
+                            && java.util.Objects.equals(blankToNull(now.embeddingDimensions()),
+                            blankToNull(draft.embeddingDimensions()))
+                            && java.util.Objects.equals(blankToNull(now.embeddingModel()),
+                            blankToNull(draft.embeddingModel()))) {
+                        dimensions.setText(measuredDimension);
+                    }
+                }
                 if (measured.problem() == null) {
                     feedback.success("KI-Einstellungen übernommen");
                 } else {
                     feedback.warning("Gespeichert, semantische Suche bleibt aus", measured.problem());
                 }
+                then.run();
+                runQueued();
             });
         }, error -> {
             Arrays.fill(key, '\0');
-            save.setEnabled(true);
+            saving = false;
+            queued = null;
+            if (save != null) {
+                save.setEnabled(true);
+            }
             feedback.problem(error);
         });
+    }
+
+    private void runQueued() {
+        Runnable next = queued;
+        queued = null;
+        if (next != null) {
+            next.run();
+        }
     }
 
     /**
@@ -535,7 +631,8 @@ final class AiSettingsPanel {
                     model);
             return new Measured(withDimensions(draft, String.valueOf(measured)), null);
         } catch (AiServiceException e) {
-            return new Measured(without, "Die Dimension ließ sich nicht messen: " + reason(e) + ".");
+            boolean keyGiven = key.length > 0 || stored != null && stored.length > 0;
+            return new Measured(without, "Die Dimension ließ sich nicht messen: " + reason(e, keyGiven) + ".");
         } catch (RuntimeException e) {
             return new Measured(without, "Die Dimension ließ sich nicht messen: " + Problems.describe(e).title()
                     + ".");
@@ -558,44 +655,113 @@ final class AiSettingsPanel {
                 draft.dimensions(), draft.timeout(), null, Set.of());
     }
 
-    /** {@code AiServiceException.Reason} verständlich, ohne Adresse oder Schlüssel. */
+    static final String UNAUTHENTICATED = "Nicht authentifiziert (401/403): API-Key prüfen";
+    static final String NOT_SIGNED_IN = "Nicht angemeldet – API-Key fehlt";
+    private static final java.util.regex.Pattern HTTP_STATUS = java.util.regex.Pattern.compile("HTTP (\\d{3})");
+
+    /** Wie {@link #reason(AiServiceException, boolean)} mit eingetragenem Key. */
     static String reason(AiServiceException e) {
+        return reason(e, true);
+    }
+
+    /**
+     * {@code AiServiceException.Reason} verständlich, ohne Adresse oder Schlüssel. Abgelehnt ohne Key heißt „nicht
+     * angemeldet“, mit Key „nicht authentifiziert“. Meldet der Core 401/403 noch als unerwartete Antwort, erkennt das
+     * der HTTP-Status in seiner Meldung ({@link #httpStatus(Throwable)}).
+     *
+     * @param keyGiven ob die Anfrage einen API-Key trug
+     */
+    static String reason(AiServiceException e, boolean keyGiven) {
+        if (unauthorized(e)) {
+            return keyGiven ? UNAUTHENTICATED : NOT_SIGNED_IN;
+        }
+        int status = httpStatus(e);
         return switch (e.reason()) {
             case NOT_CONFIGURED -> "kein Dienst eingetragen";
-            case UNAUTHORIZED -> "API-Key abgelehnt";
+            case UNAUTHORIZED -> keyGiven ? UNAUTHENTICATED : NOT_SIGNED_IN;
             case UNREACHABLE -> "Dienst nicht erreichbar";
             case TIMEOUT -> "keine Antwort in der Frist";
-            case INVALID_RESPONSE -> "unerwartete Antwort des Dienstes";
+            case INVALID_RESPONSE -> "unerwartete Antwort des Dienstes" + (status > 0 ? " (HTTP " + status + ")" : "");
         };
+    }
+
+    /** Ob der Dienst den Zugang abgelehnt hat: Grund {@code UNAUTHORIZED} oder HTTP 401/403 in der Meldung. */
+    static boolean unauthorized(Throwable error) {
+        if (!(error instanceof AiServiceException ai)) {
+            return false;
+        }
+        int status = httpStatus(ai);
+        return ai.reason() == AiServiceException.Reason.UNAUTHORIZED || status == 401 || status == 403;
+    }
+
+    /** Ob Warten helfen kann: nur ein nicht erreichbarer oder zu langsamer Dienst. */
+    static boolean retryable(Throwable error) {
+        return error instanceof AiServiceException ai && !unauthorized(ai)
+                && (ai.reason() == AiServiceException.Reason.UNREACHABLE
+                || ai.reason() == AiServiceException.Reason.TIMEOUT);
+    }
+
+    /** Der HTTP-Status aus der Meldung des Core („… HTTP 401“), sonst 0; die Meldung nennt nie den Key. */
+    static int httpStatus(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        if (message == null) {
+            return 0;
+        }
+        java.util.regex.Matcher matcher = HTTP_STATUS.matcher(message);
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
     }
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
     }
 
-    /** Fragt die Modelle mit den aktuellen Eingaben ab; der API-Key bleibt im Speicher. */
-    private void loadModels() {
+    /**
+     * „Modelle laden“: im Assistenten (Schritt „Modelle“ offen) beginnt die Wiederholung neu, mit kurzer Wartezeit;
+     * sonst ein einzelner Versuch.
+     */
+    void loadModels() {
+        if (autoRetry) {
+            modelRetry.start();
+        } else {
+            attemptModels(null);
+        }
+    }
+
+    /**
+     * Fragt die Modelle mit den aktuellen Eingaben ab; der API-Key bleibt im Speicher.
+     *
+     * @param outcome erfährt das Ende, wenn die Wiederholung den Versuch startet; sonst {@code null}
+     */
+    private void attemptModels(ModelRetry.Outcome outcome) {
         AiDraft draft = draft();
         if (blankToNull(draft.baseUrl()) == null) {
             modelsFeedback.warning("Basisadresse fehlt", "Erst die Adresse des KI-Dienstes eintragen.");
+            failed(outcome, false);
             return;
         }
         if (!draft.problems().isEmpty()) {
             modelsFeedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            failed(outcome, false);
             return;
         }
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             modelsFeedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Allgemein.");
+            failed(outcome, false);
             return;
         }
         char[] typed = apiKey.getPassword();
         AiAccess chosenAccess = accessDraft();
         boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
+        int request = ++modelsRequest;
+        String service = serviceKey(draft, chosenAccess);
         loadModels.setEnabled(false);
-        modelsFeedback.working("Modelle werden geladen …");
+        modelsFeedback.working(outcome != null && modelRetry.attempts() > 1
+                ? "Modelle werden geladen … (Versuch " + modelRetry.attempts() + ")" : "Modelle werden geladen …");
+        boolean[] keyGiven = {false};
         Background.run(() -> {
             char[] key = currentKey(typed, chosenAccess, knownEntry);
+            keyGiven[0] = key != null && key.length > 0;
             try {
                 return runtime.workspace().aiModels(service(draft, key));
             } finally {
@@ -605,25 +771,103 @@ final class AiSettingsPanel {
             }
         }, loaded -> {
             Arrays.fill(typed, '\0');
+            if (stale(request, service, outcome)) {
+                return;
+            }
             loadModels.setEnabled(true);
             showModels(loaded);
+            loadedService = service;
+            if (outcome != null) {
+                outcome.succeeded();
+            }
         }, error -> {
             Arrays.fill(typed, '\0');
-            loadModels.setEnabled(true);
-            if (error instanceof AiServiceException ai) {
-                modelsFeedback.warning("Modelle nicht geladen", reason(ai) + ".");
-            } else {
-                modelsFeedback.problem(error);
+            if (stale(request, service, outcome)) {
+                return;
             }
+            loadModels.setEnabled(true);
+            modelsFailed(error, keyGiven[0], outcome);
         });
+    }
+
+    /** Wofür eine Modellliste gilt: Adresse und Bezugsart des Keys (nie der Key selbst). */
+    private static String serviceKey(AiDraft draft, AiAccess access) {
+        return String.valueOf(blankToNull(draft.baseUrl())) + "|" + access.mode() + "|" + access.entry();
+    }
+
+    private String currentService() {
+        return serviceKey(draft(), accessDraft());
+    }
+
+    /**
+     * Ob eine Antwort veraltet ist: Eine neuere Anfrage läuft, oder die Eingaben nennen inzwischen einen anderen
+     * Dienst. Dann zeigt sie nichts und wählt nichts vor; war es die jüngste Anfrage, gilt sie als Fehlschlag, nach
+     * dem die Wiederholung den neuen Dienst fragt.
+     */
+    private boolean stale(int request, String service, ModelRetry.Outcome outcome) {
+        boolean newest = request == modelsRequest;
+        if (newest && service.equals(currentService())) {
+            return false;
+        }
+        discardedModelAnswers++;
+        if (newest) {
+            loadModels.setEnabled(true);
+            failed(outcome, true);
+        }
+        return true;
+    }
+
+    /** Zeigt, warum „Modelle laden“ scheiterte, und sagt der Wiederholung, ob Warten helfen kann. */
+    void modelsFailed(Throwable error, boolean keyGiven, ModelRetry.Outcome outcome) {
+        if (error instanceof AiServiceException ai) {
+            lastFailure = reason(ai, keyGiven);
+            modelsFeedback.warning("Modelle nicht geladen", lastFailure + ".");
+        } else {
+            lastFailure = Problems.describe(error).title();
+            modelsFeedback.problem(error);
+        }
+        failed(outcome, retryable(error));
+    }
+
+    private static void failed(ModelRetry.Outcome outcome, boolean retryable) {
+        if (outcome != null) {
+            outcome.failed(retryable);
+        }
+    }
+
+    /** Statuszeile der Wiederholung: „Versuch 3 – nächster in 20 s …“ mit dem Grund. */
+    private void retrying(int attempt, Duration next) {
+        modelsFeedback.warning("Versuch " + attempt + " – nächster in " + next.toSeconds() + " s …",
+                "Modelle nicht geladen: " + lastFailure + ". „Modelle laden“ versucht es sofort.");
+    }
+
+    /** Beendet die Wiederholung, etwa beim Verlassen von „Modelle“ oder Schließen des Assistenten. */
+    void stopModels() {
+        autoRetry = false;
+        modelRetry.stop();
+    }
+
+    /** Vergisst die geladene Liste, damit der Assistent beim nächsten Betreten von „Modelle“ neu lädt. */
+    private void forgetModels() {
+        loaded = List.of();
+        loadedService = "";
+        // Eine noch laufende Anfrage gilt dem alten Dienst; ihre Antwort verfällt.
+        modelsRequest++;
+        loadModels.setEnabled(true);
+        pickChat.setEnabled(false);
+        pickEmbedding.setEnabled(false);
+        pickRerank.setEnabled(false);
+        pickVision.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
     /** Erweitert auf- oder zuklappen; eigene Werte bleiben sichtbar, damit nichts verdeckt wirkt. */
     void advanced(boolean open) {
+        modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
         advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        models.repaint();
         models.revalidate();
     }
 
@@ -633,12 +877,15 @@ final class AiSettingsPanel {
     }
 
     /**
-     * Lädt die Modelle einmal von selbst, wenn ein Dienst eingetragen ist und noch nichts geladen wurde; der
+     * Lädt die Modelle von selbst, wenn ein Dienst eingetragen ist und noch nichts geladen wurde, und wiederholt das
+     * bei nicht erreichbarem Dienst langsam ({@link ModelRetry}), bis es gelingt oder {@link #stopModels()} kommt; der
      * Assistent ruft es beim Betreten von „Modelle“ auf, wie der Enterprise AI Client nach dem Verbindungstest.
      */
     void prepareModels() {
-        if (loaded.isEmpty() && loadModels.isEnabled() && blankToNull(baseUrl.getText()) != null) {
-            loadModels();
+        autoRetry = true;
+        if ((loaded.isEmpty() || !loadedService.equals(currentService())) && !modelRetry.active()
+                && blankToNull(baseUrl.getText()) != null) {
+            modelRetry.start();
         }
     }
 
@@ -646,6 +893,8 @@ final class AiSettingsPanel {
         this.loaded = List.copyOf(loaded);
         preselect(chatModel, AiModel.CHAT, "chat");
         preselect(embeddingModel, AiModel.EMBEDDING, "embedding");
+        preselectIfPresent(visionModel, "vision");
+        preselectIfPresent(rerankModel, "rerank");
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
@@ -699,6 +948,20 @@ final class AiSettingsPanel {
         List<String> ids = choices(category).stream().map(AiModel::id).toList();
         String chosen = ModelPreselection.choose(ids, field.getText(), preferred.model(kind), preferred.match(kind));
         if (!chosen.isEmpty() && !chosen.equals(field.getText().strip())) {
+            choose(field, chosen);
+        }
+    }
+
+    /**
+     * Vision und Rerank: nur ein leeres Feld, und nur mit dem Vorzugsmodell aus {@code setup-models.properties}, wenn
+     * der Dienst es anbietet ({@link ModelPreselection#present}); keine Ersatzwahl, eine Eingabe bleibt immer.
+     */
+    private void preselectIfPresent(JTextField field, String kind) {
+        if (!field.getText().isBlank()) {
+            return;
+        }
+        String chosen = ModelPreselection.present(loaded.stream().map(AiModel::id).toList(), preferred.model(kind));
+        if (!chosen.isEmpty()) {
             choose(field, chosen);
         }
     }

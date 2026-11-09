@@ -346,11 +346,31 @@ public class Jobs implements AutoCloseable {
      *
      * @return {@code true}, wenn innerhalb von {@code timeout} keiner der Quelle mehr offen ist
      */
+    /**
+     * Quelle eines Auftrags über alle Quellen, etwa des Knowledge-Graph-Exports; {@link #cancelSource} beendet ihn
+     * für jede Quelle mit.
+     */
+    public static final String ALL_SOURCES = "*";
+
     public boolean cancelSource(String sourceId, Duration timeout) throws InterruptedException {
+        return cancelSource(sourceId, null, timeout);
+    }
+
+    /**
+     * Wie {@link #cancelSource(String, Duration)}, lässt aber den Auftrag {@code exceptJobId} laufen, etwa den
+     * Bereinigungsauftrag, der die übrigen Aufträge seiner Quelle beendet.
+     *
+     * @param exceptJobId Auftrag, der weiterläuft, oder {@code null}
+     */
+    public boolean cancelSource(String sourceId, String exceptJobId, Duration timeout) throws InterruptedException {
         Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(timeout, "timeout");
+        // Quellenübergreifende Aufträge (ALL_SOURCES) können Daten jeder Quelle enthalten: sie enden mit.
+        java.util.function.Predicate<Job> affected = job -> (job.sourceId.equals(sourceId)
+                || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId);
         List<String> ids;
         synchronized (lock) {
-            ids = open.values().stream().filter(job -> job.sourceId.equals(sourceId)).map(job -> job.id).toList();
+            ids = open.values().stream().filter(affected).map(job -> job.id).toList();
         }
         for (String id : ids) {
             try {
@@ -361,7 +381,7 @@ public class Jobs implements AutoCloseable {
         }
         long deadline = System.nanoTime() + timeout.toNanos();
         synchronized (lock) {
-            while (open.values().stream().anyMatch(job -> job.sourceId.equals(sourceId))) {
+            while (open.values().stream().anyMatch(affected)) {
                 long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
                 if (left <= 0) {
                     return false;

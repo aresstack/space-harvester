@@ -106,6 +106,7 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -167,6 +168,9 @@ import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
+import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -278,6 +282,9 @@ public final class Harvester implements AutoCloseable {
     private final PageImageAnalysis imageAnalysis;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final StatementAnalysisJobs statementAnalysisJobs;
+    private final KnowledgeGraphExportUseCase knowledgeGraphExport;
+    private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -518,6 +525,7 @@ public final class Harvester implements AutoCloseable {
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
                     termProcessor.version());
+            FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
                     cache::findHeader, clock);
@@ -527,7 +535,7 @@ public final class Harvester implements AutoCloseable {
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
                     key -> cache.find(key).flatMap(projector::project), termRelations,
                     new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
-                            builder.userAgent), new FileResolutionCache(builder.dataDirectory.resolve("term-relations")),
+                            builder.userAgent), resolutionCache,
                     jobs, termProcessor.version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
@@ -680,6 +688,29 @@ public final class Harvester implements AutoCloseable {
                     clock);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
+                @Override
+                public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,
+                                                        String parentPageId, String cursor) {
+                    return navigation.children(who, sourceId, spaceKey, parentPageId, cursor);
+                }
+
+                @Override
+                public List<Partition> spaces(AccessContext who, String sourceId) {
+                    access.require(who, ResourceScope.source(sourceId), AccessKind.METADATA);
+                    return access.filter(who, sources.partitions(sourceId), AccessKind.METADATA,
+                            partition -> ResourceScope.space(sourceId, partition.key()));
+                }
+
+                @Override
+                public String spaceKey(AccessContext who, String sourceId, String pageId) {
+                    return navigation.position(who, sourceId, pageId).spaceKey();
+                }
+            }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
+                    access, OWNER);
+            this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
+                    key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
+            this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -689,12 +720,26 @@ public final class Harvester implements AutoCloseable {
                     exportSettings(manager));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
-                    exportWriter, clock);
+            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
+            FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
+            KnowledgeGraph graph = this.knowledgeGraph;
+            // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
+            SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
+                    .fillQueue(fillQueue)
+                    .pageCache(cache)
+                    .fullText(textIndex)
+                    .enrichments(enrichmentStore)
+                    .assets(assetStore, exportWriter, clock)
+                    .termRelations(termRelations, resolutionCache)
+                    .factEdits(factEditStore, clock)
+                    .knowledgeGraph(graphStore, graph::forgetInputs)
+                    .inventoryLog(inventoryLog)
+                    .build(), sourceId -> catalog.config(sourceId).isPresent(),
+                    sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
+            this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
-            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
-            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, new FileInventoryLog(cacheDirectory));
+            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, inventoryLog);
             opened.add(inventories);
             if (fillQueue != null) {
                 // ADR 0016, Punkt 5: technisch, mit den Zugangsdaten der Quelle, unabhängig von sync.mode; je Quelle
@@ -1231,6 +1276,29 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /**
+     * Aussagenanalyse für eine Seite, einen Unterzweig, einen Space oder eine Quelle als ausdrücklich gestarteter
+     * Auftrag (#499 Abschnitt E, ADR 0024); nur die Desktop-App startet ihn auf Nutzerwunsch.
+     */
+    public StatementAnalysisJobs statementAnalysisJobs() {
+        return statementAnalysisJobs;
+    }
+
+    /**
+     * JSON-LD-Export des Knowledge Graph als Auftrag (#499 Abschnitt G, ADR 0024); liest nur vorhandene Analysen und
+     * stößt nie eine an.
+     */
+    public KnowledgeGraphExportUseCase knowledgeGraphExport() {
+        return knowledgeGraphExport;
+    }
+
+    /** Startet den Graph-Export in {@code <exportDirectory>/knowledge-graph}; der Aufrufer wartet nicht. */
+    public JobStatus startKnowledgeGraphExport(AccessContext caller, KnowledgeGraphExportUseCase.Scope scope,
+                                               boolean includeStale) {
+        return knowledgeGraphExport.start(caller,
+                new KnowledgeGraphExportUseCase.Request(scope, includeStale, knowledgeGraphExportDirectory));
     }
 
     /**

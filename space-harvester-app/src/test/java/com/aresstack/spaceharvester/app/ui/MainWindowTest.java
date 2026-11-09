@@ -242,6 +242,56 @@ class MainWindowTest {
     }
 
     /**
+     * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
+     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht.
+     */
+    @Test
+    void theSearchFieldSitsCenteredInTheHeaderAndEnterOpensTheResults() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            javax.swing.JPanel surface = window.content(() -> { }, () -> { });
+            javax.swing.JComponent bar = window.searchView().searchBar();
+            java.awt.Container top = bar.getParent().getParent();
+            for (int width : new int[] {960, 1280, 1920}) {
+                surface.setSize(width, 600);
+                layout(surface);
+                java.awt.Rectangle field = SwingUtilities.convertRectangle(bar.getParent(), bar.getBounds(), top);
+                java.awt.Component west = ((java.awt.BorderLayout) top.getLayout())
+                        .getLayoutComponent(java.awt.BorderLayout.WEST);
+                java.awt.Component east = ((java.awt.BorderLayout) top.getLayout())
+                        .getLayoutComponent(java.awt.BorderLayout.EAST);
+                assertThat(field.width).as("Breite bei %d", width).isBetween(SearchBarLayout.MIN_WIDTH,
+                        SearchBarLayout.MAX_WIDTH);
+                assertThat(field.x).as("links frei bei %d", width).isGreaterThanOrEqualTo(west.getX() + west.getWidth());
+                assertThat(field.x + field.width).as("rechts frei bei %d", width).isLessThanOrEqualTo(east.getX());
+            }
+            window.show(AppContext.Section.SETTINGS);
+            javax.swing.JTextField field = (javax.swing.JTextField) ((java.awt.BorderLayout) bar.getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.CENTER);
+            field.setText("betrieb");
+            field.postActionEvent();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.searchView().queryText()).isEqualTo("betrieb");
+            assertThat(SwingUtilities.isDescendingFrom(bar, surface)).isTrue();
+        });
+    }
+
+    private static void layout(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container nested) {
+                layout(nested);
+            }
+        }
+    }
+
+    /**
      * Die Einstellungen haben keine Reiterleiste mehr: Ihre Bereiche stehen untereinander im linken Drawer an Stelle
      * des Explorers, rechts nur der gewählte Bereich; wer die Einstellungen verlässt, sieht wieder den Explorer.
      */
