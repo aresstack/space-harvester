@@ -237,6 +237,9 @@ final class SetupWizard {
         if ((step == MODELS || step == AI) && !ai.changed()) {
             ai.render();
         }
+        if (step == SUMMARY) {
+            render(); // die Zusammenfassung zeigt den Stand von jetzt, auch das eben installierte Parsermodell
+        }
         if (leavesAi) {
             // Wie im Assistenten von AskAI: Der Schrittwechsel übernimmt die Eingaben, ein „Speichern“ gibt es
             // nicht. „Modelle“ lädt erst danach, damit Adresse und Key schon gelten.
@@ -346,6 +349,15 @@ final class SetupWizard {
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("Vision-Modell", blank(settings.ai().visionModel()));
+        ParserModelSetup.Status parser = context.parserModel().status();
+        summary.add(ParserModelSetup.LABEL, switch (parser.state()) {
+            case INSTALLED -> ParserModelSetup.INSTALLED + context.parserModel().directory()
+                    .map(dir -> " · " + dir.toAbsolutePath()).orElse("");
+            case NOT_INSTALLED -> ParserModelSetup.NOT_INSTALLED + " · unter Modelle „" + ParserModelSetup.INSTALL
+                    + "“ oder in den Einstellungen";
+            case INSTALLING -> "Wird installiert …";
+            case UNAVAILABLE -> "Nicht verfügbar";
+        }, parser.state() == ParserModelSetup.State.INSTALLED ? Comic.INK : Comic.MUTED);
         summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
         AiAccess access = settings.aiAccess();
         summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()

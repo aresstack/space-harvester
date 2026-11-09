@@ -75,7 +75,10 @@ class SetupWizardTest {
         assertThat(SetupWizard.LINES).hasSameSizeAs(SetupWizard.STEPS);
         assertThat(SetupWizard.STEPS).containsExactly("Wissensquellen", "Netzwerk", "KI-Dienst", "Modelle",
                 "Abschluss");
-        assertThat(texts(wizard[0].summary)).contains("Firmenwiki (wiki)", "keine Quelle");
+        assertThat(texts(wizard[0].summary)).contains("Firmenwiki (wiki)", "keine Quelle", ParserModelSetup.LABEL);
+        assertThat(texts(wizard[0].summary).stream().filter(t -> t.startsWith("Installiert")
+                || t.startsWith("Nicht installiert") || t.startsWith("Nicht verfügbar")))
+                .as("Stand des Parsermodells auf der Abschlussseite").isNotEmpty();
         assertThat(texts(wizard[0].sources)).contains("Firmenwiki (wiki)");
         // Ansehen ist kein Einrichten: Die Quelle ist nicht erreichbar, kein KI-Dienst, also kein Häkchen.
         SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].done()).containsOnly(false));
