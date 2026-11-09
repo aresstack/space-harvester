@@ -302,11 +302,13 @@ public final class SettingsView implements View {
         boolean aiKeyStored = context.aiVault().has(AiSettingsPanel.KEY_ID);
         String aiState;
         String aiTip = null;
-        if (access.fromKeePass()) {
+        if (aiKeyStored) {
+            // Eine Datei liegt noch da, auch wenn der Dienst inzwischen aus KeePass liest: Der Papierkorb zeigt sie an.
+            aiState = "im Tresor" + (access.fromKeePass() ? "; nicht mehr genutzt, der Dienst liest aus KeePass („"
+                    + access.entry() + "“)" : "");
+        } else if (access.fromKeePass()) {
             aiState = "in KeePass („" + access.entry() + "“)" + (context.aiKeyAvailable() ? "" : "; noch nicht gelesen");
             aiTip = KEEPASS_TIP;
-        } else if (aiKeyStored) {
-            aiState = "im Tresor";
         } else if (context.aiKeyAvailable()) {
             aiState = "nur für diese Sitzung";
         } else {
@@ -334,7 +336,8 @@ public final class SettingsView implements View {
             boolean stored = context.vault().has(source.id());
             String keePassEntry = settings.keePassEntry(source.id());
             if (stored) {
-                state = "im Tresor";
+                state = "im Tresor" + (keePassEntry != null ? "; nicht mehr genutzt, die Quelle liest aus KeePass („"
+                        + keePassEntry + "“)" : "");
             } else if (keePassEntry != null && source.secretMissing()) {
                 state = "in KeePass („" + keePassEntry + "“)"
                         + (context.secrets().has(source) ? "" : "; noch nicht gelesen");
