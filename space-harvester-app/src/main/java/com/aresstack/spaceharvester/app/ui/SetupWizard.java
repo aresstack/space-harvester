@@ -184,7 +184,16 @@ final class SetupWizard {
         finish.addActionListener(e -> requestClose());
         later.addActionListener(e -> requestClose());
         show(0);
+        // Endet die Installation des Parsermodells, während die Zusammenfassung offen ist, zeigt sie das sofort.
+        context.parserModel().listen(parserListener);
     }
+
+    /** Hält die Zusammenfassung beim Stand des Parsermodells; beim Schließen abgemeldet. */
+    private final java.util.function.Consumer<ParserModelSetup.Status> parserListener = status -> {
+        if (step == SUMMARY && !closed) {
+            render();
+        }
+    };
 
     /** Öffnet den Assistenten modal; beim Schließen merkt sich die Datei, dass er lief. */
     static void open(Component parent, AppContext context) {
@@ -204,6 +213,7 @@ final class SetupWizard {
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.closed = true;
+                context.parserModel().unlisten(wizard.parserListener);
                 wizard.ai.stopModels();
                 wizard.completed();
             }
@@ -236,6 +246,9 @@ final class SetupWizard {
         finish.setVisible(step == STEPS.length - 1);
         if ((step == MODELS || step == AI) && !ai.changed()) {
             ai.render();
+        }
+        if (step == SUMMARY) {
+            render(); // die Zusammenfassung zeigt den Stand von jetzt, auch das eben installierte Parsermodell
         }
         if (leavesAi) {
             // Wie im Assistenten von AskAI: Der Schrittwechsel übernimmt die Eingaben, ein „Speichern“ gibt es
@@ -346,6 +359,15 @@ final class SetupWizard {
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("Vision-Modell", blank(settings.ai().visionModel()));
+        ParserModelSetup.Status parser = context.parserModel().status();
+        summary.add(ParserModelSetup.LABEL, switch (parser.state()) {
+            case INSTALLED -> ParserModelSetup.INSTALLED + context.parserModel().directory()
+                    .map(dir -> " · " + dir.toAbsolutePath()).orElse("");
+            case NOT_INSTALLED -> ParserModelSetup.NOT_INSTALLED + " · unter Modelle „" + ParserModelSetup.INSTALL
+                    + "“ oder in den Einstellungen";
+            case INSTALLING -> "Wird installiert …";
+            case UNAVAILABLE -> "Nicht verfügbar";
+        }, parser.state() == ParserModelSetup.State.INSTALLED ? Comic.INK : Comic.MUTED);
         summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
         AiAccess access = settings.aiAccess();
         summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()
