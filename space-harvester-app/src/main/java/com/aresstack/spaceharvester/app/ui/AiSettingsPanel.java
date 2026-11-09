@@ -112,6 +112,11 @@ final class AiSettingsPanel {
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
     final javax.swing.JButton advanced = Comic.disclosure("Erweitert",
             "Dimension, Abschnittsgröße und Überlappung für Embeddings");
+    /** Stand des MaltParser-Modells (ADR 0024); nur lesbar, der Knopf steht im Feld. */
+    final JTextField parserStatus = Comic.field(24);
+    final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
+            "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
+                    + "entpackt es ins Datenverzeichnis");
     private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
@@ -183,6 +188,20 @@ final class AiSettingsPanel {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
+            parserStatus.setEditable(false);
+            parserStatus.setFocusable(false);
+            modelRows.add(ParserModelSetup.LABEL, Comic.fieldWithButton(parserStatus, parserInstall),
+                    "MaltParser (deutsch) für „Analysen › Aussagen“; wird nur auf Klick aus dem GitHub-Release geladen "
+                            + "und läuft danach lokal");
+            parserInstall.addActionListener(e -> {
+                ParserModelSetup setup = context.parserModel();
+                if (setup.status().state() == ParserModelSetup.State.INSTALLING) {
+                    setup.cancel();
+                } else {
+                    setup.install();
+                }
+            });
+            context.parserModel().listen(this::parserModel);
             // Wie im Assistenten von AskAI: linksbündige Überschrift, die aufgeklappten Felder im selben Raster.
             modelRows.wide(advanced);
             modelRows.add("Dimension", dimensions, "Vektorlänge des Embedding-Modells; leer: wird beim Übernehmen "
@@ -1046,6 +1065,29 @@ final class AiSettingsPanel {
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
     /** Erweitert auf- oder zuklappen; eigene Werte bleiben sichtbar, damit nichts verdeckt wirkt. */
+    /** Zeigt den Stand des Parsermodells in der Zeile; Fortschritt und Fehler im Statusbereich der Modelle. */
+    void parserModel(ParserModelSetup.Status status) {
+        switch (status.state()) {
+            case INSTALLED -> parserStatus.setText(ParserModelSetup.INSTALLED);
+            case NOT_INSTALLED -> parserStatus.setText(ParserModelSetup.NOT_INSTALLED);
+            case INSTALLING -> parserStatus.setText(status.percent() >= 0
+                    ? "Wird installiert … " + status.percent() + " %" : "Wird installiert …");
+            case UNAVAILABLE -> parserStatus.setText("Nicht verfügbar");
+        }
+        boolean installing = status.state() == ParserModelSetup.State.INSTALLING;
+        parserInstall.setText(installing ? ParserModelSetup.CANCEL : ParserModelSetup.INSTALL);
+        parserInstall.setVisible(status.state() == ParserModelSetup.State.NOT_INSTALLED || installing);
+        if (installing) {
+            modelsFeedback.working(LABEL_PARSER + status.message());
+        } else if (status.message() != null && status.failed()) {
+            modelsFeedback.warning("Parsermodell nicht installiert", status.message());
+        } else if (status.message() != null) {
+            modelsFeedback.success(status.message());
+        }
+    }
+
+    private static final String LABEL_PARSER = "Parsermodell: ";
+
     void advanced(boolean open) {
         modelRows.visible(dimensions, open);
         modelRows.visible(chunkTokens, open);

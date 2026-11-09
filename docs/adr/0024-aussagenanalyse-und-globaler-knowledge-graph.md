@@ -80,6 +80,18 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
    enthalten keine Kennungen im Klartext. Protokolle nennen bei unlesbaren Dateien nur die Ausnahmeklasse, nie Inhalt,
    Suchbegriffe oder Seitentitel.
 
+### Modellinstallation per Download auf Klick (Nachtrag 09.11.2026)
+
+Das gepinnte MaltParser-Modell (`german-parser-model.properties`: Release-Tag, Asset, SHA-256 der ZIP) installiert
+die App auf Klick selbst, wie askai seine lokalen Modelle: Zeile „Parsermodell“ im Einrichtungsassistenten (Schritt
+„Modelle“) und unter Einstellungen › Modelle, dazu im Reiter Analysen › Aussagen eine Meldung mit Link zur
+Release-Seite, Anleitung zur manuellen Installation und Knopf „Jetzt installieren“. `ParserModelInstaller` lädt die
+ZIP über Proxy-Regel (auch PAC), Proxy-Anmeldung und TLS-Vertrauen der App (`HttpModelDownload`), prüft die SHA-256,
+entpackt in ein Zwischenverzeichnis neben `<Datenverzeichnis>/nlp-model/<Tag>`, prüft Manifest und `.mco` und schiebt
+das Verzeichnis erst dann an seinen Platz; Abbruch oder Fehler lassen ein vorhandenes Modell unberührt. Nie beim
+Start, nie im Core, nie im Dienst; das Modell wird nie neu trainiert. Die manuelle Installation bleibt möglich, ein
+von Hand entpacktes Modell gilt ohne Neustart.
+
 ## Alternativen
 
 | Option | Bewertung |
