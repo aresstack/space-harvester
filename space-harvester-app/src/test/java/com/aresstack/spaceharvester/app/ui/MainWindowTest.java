@@ -76,6 +76,10 @@ class MainWindowTest {
             surface[0] = window[0].content(() -> { }, () -> { });
             surface[0].setSize(1280, 820);
         });
+        // Suche nur unter der Arbeitsfläche, nicht unter dem Explorer; der Fortschritt steckt in der Statuszeile.
+        assertThat(SwingUtilities.isDescendingFrom(window[0].findBar(), window[0].deck().getParent())).isTrue();
+        assertThat(SwingUtilities.isDescendingFrom(window[0].findBar(), window[0].explorer().component())).isFalse();
+        assertThat(SwingUtilities.isDescendingFrom(window[0].statusLine(), surface[0])).isTrue();
         for (AppContext.Section section : AppContext.Section.values()) {
             Path png = home.resolve(section.name() + ".png");
             SwingUtilities.invokeAndWait(() -> {

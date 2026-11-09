@@ -41,8 +41,8 @@ import java.util.Map;
  * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Begriffe, Aufträge und Status,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
- * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}), sonst der globale
- * Fortschritt der Aufträge. Navigation und
+ * Statusleiste die feste Aktionszeile des Bereichs ({@link View#actions()}). Der Fortschritt der Aufträge füllt den
+ * Hintergrund der Statuszeile ({@link StatusLine}). Navigation und
  * Explorer sind getrennte Bausteine. {@link #content} baut den Inhalt ohne Fenster (für Bildschirmfotos und Tests).
  */
 public final class MainWindow implements AppContext.Navigator {
@@ -63,9 +63,14 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel actionDeck = new JPanel(actionCards);
     private final javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT);
     static final int SIDEBAR_WIDTH = 280;
-    /** Karte der Aktionszeile mit dem globalen Fortschritt der Aufträge. */
+    /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
+    /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
+    private StatusLine statusLine;
+    /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
+    private final FindBar findBar;
+    private AppContext.Section current = AppContext.Section.SEARCH;
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -98,13 +103,14 @@ public final class MainWindow implements AppContext.Navigator {
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
         actionDeck.setOpaque(false);
-        // Der Fortschritt der Aufträge ist global: jeder Bereich ohne eigene Aktionszeile zeigt ihn.
-        actionDeck.add(activities.actions(), JOBS);
+        // Der Fortschritt der Aufträge steht global in der Statuszeile; ohne eigene Aktionszeile bleibt die Zeile leer.
+        actionDeck.add(new JPanel(), JOBS);
         views.forEach((section, view) -> {
             if (view.actions() != null && view != activities) {
                 actionDeck.add(view.actions(), section.name());
             }
         });
+        findBar = new FindBar(() -> views.get(current).component());
         context.onChange(ignored -> updateStatus());
         updateStatus();
     }
@@ -147,7 +153,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /**
      * Der Fensterinhalt: Tintenrand, Kopfzeile mit Titel, Icon-Leiste in zwei Gruppen und ✕, Explorer und
-     * Arbeitsfläche, Aktionszeile, Statusleiste.
+     * Arbeitsfläche mit Aktionszeile und Suche, Statuszeile mit Fortschritt.
      *
      * @param close    Gedrückthalten des ✕
      * @param minimize Klick auf das ✕
@@ -198,7 +204,17 @@ public final class MainWindow implements AppContext.Navigator {
         side.add(explorer.component(), BorderLayout.CENTER);
         deck.setMinimumSize(new Dimension(320, 0));
         split.setLeftComponent(side);
-        split.setRightComponent(deck);
+        // Aktionszeile und Suche gehören zur Arbeitsfläche: sie reichen nicht unter den Explorer.
+        JPanel work = new JPanel(new BorderLayout());
+        work.setBackground(Comic.SURFACE);
+        work.setMinimumSize(new Dimension(320, 0));
+        JPanel workFoot = new JPanel(new BorderLayout());
+        workFoot.setOpaque(false);
+        workFoot.add(actionDeck, BorderLayout.CENTER);
+        workFoot.add(findBar, BorderLayout.SOUTH);
+        work.add(deck, BorderLayout.CENTER);
+        work.add(workFoot, BorderLayout.SOUTH);
+        split.setRightComponent(work);
         split.setBorder(BorderFactory.createEmptyBorder());
         split.setBackground(Comic.SURFACE);
         split.setContinuousLayout(true);
@@ -214,15 +230,10 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.WEST);
-        foot.add(new CopyrightLink(), BorderLayout.EAST);
+        statusLine = new StatusLine(activities.progress(), status, activities.jobLine(), new CopyrightLink());
+        JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
-        bottom.add(actionDeck, BorderLayout.NORTH);
         bottom.add(foot, BorderLayout.SOUTH);
 
         surface.add(top, BorderLayout.NORTH);
@@ -256,6 +267,14 @@ public final class MainWindow implements AppContext.Navigator {
                 }
             });
         }
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
+        surface.getActionMap().put("find", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                findBar.focus();
+            }
+        });
     }
 
     /** Einstellungen mit dem Reiter „KI“. */
@@ -267,13 +286,20 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
+        boolean changed = section != current;
+        current = section;
         View view = views.get(section);
-        actionCards.show(actionDeck, view.actions() != null && view != activities ? section.name() : JOBS);
+        boolean ownActions = view.actions() != null && view != activities;
+        actionCards.show(actionDeck, ownActions ? section.name() : JOBS);
+        actionDeck.setVisible(ownActions);
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
         }
         view.shown();
+        if (changed) {
+            findBar.areaChanged();
+        }
     }
 
     @Override
@@ -339,6 +365,7 @@ public final class MainWindow implements AppContext.Navigator {
     private void notice(String text, java.awt.Color color) {
         updateStatus();
         status.setText(status.getText() + " · " + text);
+        status.setToolTipText(status.getText());
         status.setForeground(color);
     }
 
@@ -365,6 +392,7 @@ public final class MainWindow implements AppContext.Navigator {
             state = "Startet …";
         }
         status.setText("Space Harvester " + context.version() + " · " + state);
+        status.setToolTipText(status.getText());
         status.setForeground(Comic.MUTED);
     }
 
@@ -408,6 +436,16 @@ public final class MainWindow implements AppContext.Navigator {
                 g2.drawArc(2, 9, 10, 4, 180, 180);
             }
         };
+    }
+
+    /** Für Tests: die Suche im sichtbaren Bereich. */
+    FindBar findBar() {
+        return findBar;
+    }
+
+    /** Für Tests: die Statuszeile. */
+    StatusLine statusLine() {
+        return statusLine;
     }
 
     /** Für Tests: der Explorer links. */

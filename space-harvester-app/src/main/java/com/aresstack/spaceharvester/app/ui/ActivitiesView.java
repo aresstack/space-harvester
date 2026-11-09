@@ -59,7 +59,7 @@ public final class ActivitiesView implements View {
     private final JobsModel model = new JobsModel();
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
-    /** Der globale Fortschrittsbalken über der Statusleiste; darauf links der Schritt, mittig Abbrechen bzw. der Endzustand. */
+    /** Modell des globalen Fortschritts, gezeichnet als Hintergrund der Statuszeile; darauf links der Schritt, mittig Abbrechen bzw. der Endzustand. */
     final JProgressBar progress = new JProgressBar();
     private final JPanel progressBar = new JPanel(new BorderLayout());
     final JLabel progressText = Comic.muted(" ");
@@ -219,22 +219,12 @@ public final class ActivitiesView implements View {
         center.add(endState);
         JPanel overlay = new JPanel(new BorderLayout());
         overlay.setOpaque(false);
-        overlay.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+        overlay.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         overlay.add(progressText, BorderLayout.WEST);
         overlay.add(center, BorderLayout.CENTER);
-        JPanel layered = new JPanel();
-        layered.setOpaque(false);
-        layered.setLayout(new javax.swing.OverlayLayout(layered));
-        overlay.setAlignmentX(0.5f);
-        overlay.setAlignmentY(0.5f);
-        progress.setAlignmentX(0.5f);
-        progress.setAlignmentY(0.5f);
-        overlay.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-        progress.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-        layered.add(overlay);
-        layered.add(progress);
+        // Der Balken selbst ist der Hintergrund der Statuszeile (StatusLine); hier nur Schritt, Abbrechen, Endzustand.
         progressBar.setOpaque(false);
-        progressBar.add(layered, BorderLayout.CENTER);
+        progressBar.add(overlay, BorderLayout.CENTER);
         progressText.setText("Kein Auftrag läuft");
         cancel.setVisible(false);
         updateButtons();
@@ -264,10 +254,20 @@ public final class ActivitiesView implements View {
         return root;
     }
 
-    /** Der globale Fortschrittsbalken; das Hauptfenster zeigt ihn in jedem Bereich ohne eigene Aktionszeile. */
+    /** Keine eigene Aktionszeile mehr: der Fortschritt der Aufträge steht in der Statuszeile ({@link #jobLine()}). */
     @Override
     public JComponent actions() {
+        return null;
+    }
+
+    /** Schritt, Abbrechen und Endzustand des Auftrags für die Mitte der Statuszeile. */
+    JComponent jobLine() {
         return progressBar;
+    }
+
+    /** Das Modell des Fortschritts; die Statuszeile zeichnet ihn als ihren Hintergrund. */
+    JProgressBar progress() {
+        return progress;
     }
 
     @Override
@@ -404,8 +404,8 @@ public final class ActivitiesView implements View {
         } else {
             progress.setIndeterminate(running);
             progress.setMaximum(1);
-            // Nach dem Ende bleibt die Spur leer, damit der Endzustand mittig gut lesbar ist.
-            progress.setValue(0);
+            // Fertig heißt 100 %: die Statuszeile zeigt den vollen Balken kurz und blendet ihn dann aus.
+            progress.setValue(status.state() == JobState.COMPLETED ? 1 : 0);
             String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
             progressText.setText(subject + (running ? " · " + state : ""));
         }
