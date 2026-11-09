@@ -952,6 +952,8 @@ public final class ActivitiesView implements View {
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
+                case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",
+                        "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
