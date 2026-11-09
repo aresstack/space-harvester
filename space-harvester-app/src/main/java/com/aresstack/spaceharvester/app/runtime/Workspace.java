@@ -511,6 +511,16 @@ public final class Workspace {
         return harvester.statementAnalysisJobs().start(caller, scope, options);
     }
 
+    /**
+     * Exportiert vorhandene Analysen als JSON-LD in {@code <Exportordner>/knowledge-graph} (#499, ADR 0024); stößt
+     * nie eine Analyse an. Fortschritt und Abbruch wie bei jedem Auftrag.
+     */
+    public JobStatus startKnowledgeGraphExport(
+            com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase.Scope scope,
+            boolean includeStale) {
+        return harvester.startKnowledgeGraphExport(caller, scope, includeStale);
+    }
+
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
     public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image) {
         return storedImage(sourceId, image, null);
