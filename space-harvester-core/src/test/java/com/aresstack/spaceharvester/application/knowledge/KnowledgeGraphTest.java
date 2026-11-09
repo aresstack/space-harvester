@@ -112,6 +112,19 @@ class KnowledgeGraphTest {
     }
 
     @Test
+    void twoOwnTermsWithTheSameConfirmedTargetKeepAllTheirMentions() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg. Der Kunde prüft den Nachweis.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft die Quittung.");
+        expansions = (caller, term, sourceId) -> term.equalsIgnoreCase("beleg") || term.equalsIgnoreCase("nachweis")
+                ? List.of("Quittung") : List.of();
+
+        assertThat(graph().links(CALLER, new PageKey("wiki", "1"))).singleElement().satisfies(link -> {
+            assertThat(link.match()).isEqualTo(KnowledgeGraph.Match.CONFIRMED_TERM_RELATION);
+            assertThat(link.mentions()).as("Beleg und Nachweis").hasSize(2);
+        });
+    }
+
+    @Test
     void aLockedSourceRevealsNoNodesStatementsOrCounts() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
         analyse("geheim", "9", "Die Revision prüft den Beleg.");

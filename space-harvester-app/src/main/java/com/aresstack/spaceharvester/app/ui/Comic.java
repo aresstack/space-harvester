@@ -163,6 +163,14 @@ public final class Comic {
         return new ComposerButton(icon, text, false, tooltip);
     }
 
+    /**
+     * Runder Knopf nur mit Export-Symbol, derselbe wie in den Space-Zeilen der Quellen; der Text steht im Tooltip und
+     * als zugänglicher Name.
+     */
+    public static javax.swing.JButton exportButton(String tooltip) {
+        return new IconButton(Glyph.EXPORT, tooltip);
+    }
+
     /** Zeile aus Knöpfen, links ausgerichtet. */
     public static JPanel row(Component... components) {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));

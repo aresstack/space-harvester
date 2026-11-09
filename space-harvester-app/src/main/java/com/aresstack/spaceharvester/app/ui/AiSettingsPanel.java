@@ -230,11 +230,11 @@ final class AiSettingsPanel {
         releasedIds = current.externalProcessingSources();
         released.setText(releasedText(settings, releasedIds));
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
-        // Nichts gewählt: KeePass, wenn die App schon mit KeePass gekoppelt ist (die Kopplung gilt weiter, kein
-        // neues Koppeln), sonst Manuell; ein Key im Tresor spricht immer für Manuell.
+        // Nichts gewählt: KeePass, wenn die App schon gekoppelt ist oder KeePass für eine Quelle gewählt wurde
+        // (dieselbe Kopplung gilt weiter, kein neues Koppeln), sonst Manuell; ein Key im Tresor spricht für Manuell.
         boolean manual = fileAccess.mode() == AiAccess.Mode.MANUAL
                 || fileAccess.mode() == null && (context.aiVault().has(KEY_ID, KEY_LOGIN)
-                || !context.keePass().paired());
+                || !context.keePassPreferred());
         access.setSelectedItem(manual ? MANUAL : KEEPASS);
         String title = fileAccess.entry() == null ? AiAccess.DEFAULT_ENTRY : fileAccess.entry();
         if (titles.isEmpty()) {

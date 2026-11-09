@@ -49,6 +49,8 @@ class ConfigurationParityTest {
                   - confluence
               sync:
                 interval: 30m
+                spaces:
+                  - confluence/DOC
                 mode: sync-cache
                 catch-up-on-start: true
             """;
@@ -89,6 +91,7 @@ class ConfigurationParityTest {
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));
 
         assertThat(app.sync().interval()).isEqualTo(sync.interval());
+        assertThat(app.sync().spaces()).isEqualTo(sync.spaces()).containsExactly("confluence/DOC");
         assertThat(app.sync().mode()).isEqualTo(sync.mode());
         assertThat(app.sync().catchUpOnStart()).isEqualTo(sync.catchUpOnStart());
     }

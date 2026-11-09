@@ -168,6 +168,9 @@ import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
+import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -279,6 +282,9 @@ public final class Harvester implements AutoCloseable {
     private final PageImageAnalysis imageAnalysis;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    private final StatementAnalysisJobs statementAnalysisJobs;
+    private final KnowledgeGraphExportUseCase knowledgeGraphExport;
+    private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -682,6 +688,29 @@ public final class Harvester implements AutoCloseable {
                     clock);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+            this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {
+                @Override
+                public PageNavigation.Children children(AccessContext who, String sourceId, String spaceKey,
+                                                        String parentPageId, String cursor) {
+                    return navigation.children(who, sourceId, spaceKey, parentPageId, cursor);
+                }
+
+                @Override
+                public List<Partition> spaces(AccessContext who, String sourceId) {
+                    access.require(who, ResourceScope.source(sourceId), AccessKind.METADATA);
+                    return access.filter(who, sources.partitions(sourceId), AccessKind.METADATA,
+                            partition -> ResourceScope.space(sourceId, partition.key()));
+                }
+
+                @Override
+                public String spaceKey(AccessContext who, String sourceId, String pageId) {
+                    return navigation.position(who, sourceId, pageId).spaceKey();
+                }
+            }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
+                    access, OWNER);
+            this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
+                    key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
+            this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -1247,6 +1276,29 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /**
+     * Aussagenanalyse für eine Seite, einen Unterzweig, einen Space oder eine Quelle als ausdrücklich gestarteter
+     * Auftrag (#499 Abschnitt E, ADR 0024); nur die Desktop-App startet ihn auf Nutzerwunsch.
+     */
+    public StatementAnalysisJobs statementAnalysisJobs() {
+        return statementAnalysisJobs;
+    }
+
+    /**
+     * JSON-LD-Export des Knowledge Graph als Auftrag (#499 Abschnitt G, ADR 0024); liest nur vorhandene Analysen und
+     * stößt nie eine an.
+     */
+    public KnowledgeGraphExportUseCase knowledgeGraphExport() {
+        return knowledgeGraphExport;
+    }
+
+    /** Startet den Graph-Export in {@code <exportDirectory>/knowledge-graph}; der Aufrufer wartet nicht. */
+    public JobStatus startKnowledgeGraphExport(AccessContext caller, KnowledgeGraphExportUseCase.Scope scope,
+                                               boolean includeStale) {
+        return knowledgeGraphExport.start(caller,
+                new KnowledgeGraphExportUseCase.Request(scope, includeStale, knowledgeGraphExportDirectory));
     }
 
     /**

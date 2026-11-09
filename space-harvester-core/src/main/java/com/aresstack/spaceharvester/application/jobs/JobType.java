@@ -19,10 +19,20 @@ public enum JobType {
      */
     ASSETS,
     /**
+     * MaltParser-Aussagenanalyse einer Seite, eines Unterzweigs, Space oder einer Quelle, nur auf ausdrückliche
+     * Anforderung in der Desktop-App (#499, ADR 0024); nie Folgeauftrag eines Abgleichs oder Exports.
+     */
+    STATEMENT_ANALYSIS,
+    /**
      * Alle lokal gespeicherten Daten einer Quelle löschen („Daten bereinigen“), ohne die Quelle selbst zu entfernen;
      * beendet vorher die übrigen Aufträge der Quelle.
      */
-    PURGE;
+    PURGE,
+    /**
+     * Export des Knowledge Graph als JSON-LD 1.1 (#499, ADR 0024); liest nur vorhandene Analysen und stößt nie eine
+     * Analyse an.
+     */
+    KNOWLEDGE_GRAPH_EXPORT;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
