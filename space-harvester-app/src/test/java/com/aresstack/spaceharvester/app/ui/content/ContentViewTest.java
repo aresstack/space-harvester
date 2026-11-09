@@ -91,23 +91,20 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
                 StandardCharsets.UTF_8)).contains("Text der Seite");
-        // Ort, Version und Herkunft stehen nicht dauerhaft unter dem Titel, sondern hinter dem ⓘ und im Tooltip.
+        // Ort, Version und Herkunft stehen nicht dauerhaft unter dem Titel, sondern im Popup beim Überfahren der Überschrift.
         assertThat(onEdt(() -> view.detail().details())).contains("Space " + space).contains("Aus dem lokalen Bestand");
-        assertThat(onEdt(() -> view.detail().infoIcon().isVisible())).isTrue();
-        // Ein überlanger Titel schiebt das ⓘ nicht aus dem Kopf: der Titel gibt nach, das ⓘ bleibt daneben.
+        // Ein überlanger Titel gibt nach (mit „…“) statt den Kopf zu sprengen.
         assertThat(onEdt(() -> {
-            javax.swing.JLabel icon = view.detail().infoIcon();
-            java.awt.Container heading = icon.getParent();
-            javax.swing.JLabel titleLabel = (javax.swing.JLabel) heading.getComponent(0);
+            javax.swing.JLabel titleLabel = view.detail().titleLabel();
+            java.awt.Container heading = titleLabel.getParent();
             titleLabel.setText("Sehr langer Titel ".repeat(40));
             heading.setSize(300, heading.getPreferredSize().height);
             heading.doLayout();
-            return icon.getX() + icon.getWidth() <= heading.getWidth() && icon.getWidth() > 0
-                    && titleLabel.getWidth() < titleLabel.getPreferredSize().width;
+            return heading.getComponentCount() == 1 && titleLabel.getWidth() == 300;
         })).isTrue();
         assertThat(onEdt(() -> {
-            java.awt.event.MouseListener[] listeners = view.detail().infoIcon().getMouseListeners();
-            listeners[listeners.length - 1].mouseClicked(null);
+            java.awt.event.MouseListener[] listeners = view.detail().titleLabel().getMouseListeners();
+            listeners[listeners.length - 1].mouseEntered(null);
             javax.swing.JPopupMenu popup = view.detail().detailsPopup();
             List<String> items = new java.util.ArrayList<>();
             for (java.awt.Component item : popup.getComponents()) {
@@ -116,7 +113,10 @@ class ContentViewTest {
                 }
             }
             return items;
-        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen", "Seiten-ID kopieren");
+        })).as("Lesezeichen und Browser stehen schon in der Kopfzeile").containsExactly("Seiten-ID kopieren");
+        // Ohne Klick zu: liegt die Maus weder auf der Überschrift noch im Popup, schließt es.
+        assertThat(PageDetailPanel.pointerInside(new java.awt.Point(-10_000, -10_000),
+                new javax.swing.JLabel("nicht sichtbar"))).isFalse();
         assertThat(onEdt(() -> view.detail().feedback().isVisible())).as("keine Cache-Meldung").isFalse();
         assertThat(onEdt(view::crumbs)).isEqualTo("handbuch › " + space);
     }
