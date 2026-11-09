@@ -120,7 +120,10 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.glossary.Glossary;
+import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
+import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -132,6 +135,7 @@ import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
+import com.aresstack.spaceharvester.persistence.files.FileGlossaryStore;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileKnowledgeGraphStore;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
@@ -269,6 +273,8 @@ public final class Harvester implements AutoCloseable {
     private final TermRelations termRelations;
     private final AcronymRelationRule acronymRelationRule;
     private final AcronymResolution acronymResolution;
+    private final Glossary glossary;
+    private final GlossaryClassification glossaryClassification;
     private final FactEdits factEdits;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -532,11 +538,18 @@ public final class Harvester implements AutoCloseable {
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
                     termRelations, termProcessor.version(), clock);
             // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
+            ChatAcronymExpansionModel chatModel = new ChatAcronymExpansionModel(
+                    () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent);
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
-                    key -> cache.find(key).flatMap(projector::project), termRelations,
-                    new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
-                            builder.userAgent), resolutionCache,
+                    key -> cache.find(key).flatMap(projector::project), termRelations, chatModel, resolutionCache,
                     jobs, termProcessor.version(), clock);
+            // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
+            this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
+                    access, cache::findHeader, clock);
+            this.glossaryClassification = new GlossaryClassification(catalog, enrichmentStore, access,
+                    cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
+                    ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
+                    clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -1150,6 +1163,16 @@ public final class Harvester implements AutoCloseable {
     /** KI-Akronymauflösung als Vorschlagslauf je Quelle (#122). */
     public AcronymResolution acronymResolution() {
         return acronymResolution;
+    }
+
+    /** Fachglossar: Pflege von Hand und Abgleich der KI-Läufe. */
+    public Glossary glossary() {
+        return glossary;
+    }
+
+    /** „Fachbegriffe ermitteln“: KI-Lauf nur auf ausdrücklichen Wunsch. */
+    public GlossaryClassification glossaryClassification() {
+        return glossaryClassification;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */

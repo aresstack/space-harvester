@@ -14,12 +14,16 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.glossary.Glossary;
+import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
+import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.persistence.files.FileGlossaryStore;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
@@ -88,6 +92,34 @@ class TermConfiguration {
                 model.getIfAvailable(() -> AcronymExpansionModel.NONE), resolutions, jobs,
                 termsVersion(sentences),
                 Clock.systemUTC());
+    }
+
+    /** Fachglossar als Nutzerdaten unter {@code space-harvester.glossary.directory}, außerhalb des Caches. */
+    @Bean
+    Glossary glossary(SourceCatalog catalog, AccessGuard access,
+                      @Value("${space-harvester.glossary.directory:data/glossary}") Path directory,
+                      ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader) {
+        return new Glossary(catalog, new FileGlossaryStore(directory), access,
+                headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
+    }
+
+    /** „Fachbegriffe ermitteln“: dasselbe Chat-Modell wie die Akronymauflösung, nur auf Knopfdruck. */
+    @Bean
+    GlossaryClassification glossaryClassification(SourceCatalog catalog, AccessGuard access,
+                                                  Enrichments enrichments, Glossary glossary, Jobs jobs,
+                                                  ObjectProvider<AcronymExpansionModel> model,
+                                                  ObjectProvider<SnapshotRepository> repository,
+                                                  ObjectProvider<PageCacheReader> reader,
+                                                  SentenceSegmenter sentences) {
+        TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
+        SnapshotRepository snapshots = repository.getIfAvailable();
+        PageCacheReader cache = reader.getIfAvailable();
+        Function<PageKey, Optional<PageSnapshot>> payloads = payloads(snapshots, cache);
+        PageTextProjector projector = projector();
+        return new GlossaryClassification(catalog, index, access, headers(snapshots, cache),
+                key -> payloads.apply(key).flatMap(projector::project), glossary,
+                model.getIfAvailable(() -> AcronymExpansionModel.NONE), ResolutionCache.inMemory(), jobs,
+                termsVersion(sentences), GlossaryClassification.Budget.DEFAULT, Clock.systemUTC());
     }
 
     private static Function<PageKey, Optional<PageSnapshot>> payloads(SnapshotRepository snapshots,
