@@ -204,13 +204,15 @@ class SetupWizardTest {
             panel.advanced.doClick();
             layout(models);
             assertThat(panel.dimensions.isVisible()).isTrue();
-            int left = javax.swing.SwingUtilities.convertPoint(panel.chatModel, 0, 0, models).x;
-            for (javax.swing.JComponent field : java.util.List.of(panel.embeddingModel, panel.visionModel,
-                    panel.rerankModel, panel.dimensions, panel.chunkTokens)) {
+            // Modellfelder tragen ▾ im Feld (InputFrame): verglichen wird die äußere Kante des Felds.
+            java.awt.Component chatFrame = panel.chatModel.getParent();
+            int left = javax.swing.SwingUtilities.convertPoint(chatFrame, 0, 0, models).x;
+            for (java.awt.Component field : java.util.List.of(panel.embeddingModel.getParent(),
+                    panel.visionModel.getParent(), panel.rerankModel.getParent(), panel.dimensions,
+                    panel.chunkTokens)) {
                 assertThat(javax.swing.SwingUtilities.convertPoint(field, 0, 0, models).x).isEqualTo(left);
             }
-            int right = javax.swing.SwingUtilities.convertPoint(panel.pickChat, panel.pickChat.getWidth(), 0,
-                    models).x;
+            int right = javax.swing.SwingUtilities.convertPoint(chatFrame, chatFrame.getWidth(), 0, models).x;
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.dimensions, panel.dimensions.getWidth(), 0,
                     models).x).as("gleiche rechte Kante wie Feld mit ▾").isEqualTo(right);
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.advanced, 0, 0, models).x)

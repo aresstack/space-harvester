@@ -401,7 +401,7 @@ public final class Explorer {
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
         head.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
-        head.add(filter, BorderLayout.CENTER);
+        head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());

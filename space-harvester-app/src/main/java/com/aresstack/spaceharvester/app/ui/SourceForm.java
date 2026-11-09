@@ -69,7 +69,7 @@ final class SourceForm {
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
     /** Kein eigenes Bundle: das Vertrauen aller Quellen ({@code space-harvester.network.tls}, #189). */
-    static final String NETWORK_TRUST = "Wie für alle Quellen (Einstellungen › Serverzertifikate)";
+    static final String NETWORK_TRUST = "Wie für alle Quellen";
     /** Öffentliche Confluence-Instanz (Atlassian-Dokumentation), lesbar ohne Anmeldung: Vorgabe zum Ausprobieren. */
     static final String DEFAULT_URL = "https://confluence.atlassian.com";
     static final String DEFAULT_TITLE = "Confluence-Hilfe (Atlassian)";
@@ -81,7 +81,12 @@ final class SourceForm {
 
     final JComboBox<String> kind = Comic.combo();
     final JTextField id = Comic.field(24);
-    final JTextField title = Comic.field(24);
+    /** Leer mit grauem Vorschlag (aus Adresse oder Ordner); leer gespeichert gilt der Vorschlag. */
+    final PlaceholderField title = new PlaceholderField(24, "");
+    /** „Erweitert“ am Ende: Kennung und Zertifikate, die automatisch gesetzt sind und selten jemand ändert. */
+    final javax.swing.JButton sourceAdvanced = Comic.disclosure("Erweitert",
+            "Technische Kennung und Zertifikate; alles ist automatisch gesetzt");
+    private boolean sourceAdvancedOpen;
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
@@ -96,6 +101,8 @@ final class SourceForm {
     private final JPanel keePassRow = Comic.row(keePassEntry, pairKeePass);
     /** Passwort bzw. Token aus dem gewählten Eintrag, nur im Speicher; {@code null}, solange nichts gelesen ist. */
     private char[] keePassSecret;
+    /** Ob das Feld Passwort/Token gerade den Wert aus KeePass zeigt (maskiert, schreibgeschützt, zählt nicht als Eingabe). */
+    private boolean secretFromKeePass;
     /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
     private String keePassUser;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
@@ -115,12 +122,14 @@ final class SourceForm {
     final ComposerButton chooseCertificate = Comic.button("Wählen …",
             "Aus dem Windows-Zertifikatsspeicher wählen (nur öffentliche Zertifikate, keine Schlüssel)");
     /** Freigabe für den KI-Dienst ({@code space-harvester.ai.external-processing-sources}); Vorgabe aus. */
-    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen (Embeddings, "
-            + "Reranking)");
-    /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung). */
-    final JTextArea notes = Comic.note("");
+    final JCheckBox release = Comic.checkBox("Inhalte dieser Quelle dürfen an den KI-Dienst gehen");
+    /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung); unter „Erweitert“. */
+    final JTextArea notes = Comic.wrapped("", Comic.TEXT, 12.5f);
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
+    private final JLabel aiSection = Form.section("KI-Dienst");
+    /** Ob die KI-Freigabe unter „Erweitert“ steht (kein KI-Dienst eingetragen). */
+    private boolean releaseAdvanced;
     /** Die Felder des Typs bei Arten ohne eigenes Formular. */
     final SourceFieldsEditor fields;
     /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
@@ -151,7 +160,6 @@ final class SourceForm {
         this.editing = editing;
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
-        root.setPreferredSize(new Dimension(680, 600));
         Comic.style(sessionValue);
         PasswordReveal.install(sessionValue);
 
@@ -220,9 +228,7 @@ final class SourceForm {
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", row(directory, browse(directory, true)), null);
         form.row("Dateien", include, "Muster, durch Komma getrennt");
-        form.row("Anzeigename", title, "So heißt die Quelle in der App");
-        form.row("Technische Kennung", id, "Wird aus der Adresse vorgeschlagen; nur ändern, wenn nötig");
-        fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
+        form.row("Anzeigename", title, "So heißt die Quelle in der App; leer lassen für den Vorschlag");
         onEdit(baseUrl, this::derive);
         onEdit(directory, this::derive);
         onEdit(id, this::suggestVariable);
@@ -234,8 +240,33 @@ final class SourceForm {
         form.row("KeePass-Eintrag", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
         form.row("Benutzer", username);
         form.row("Token", sessionValue, " ");
-        form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
 
+        // Die Freigabe ist eine Entscheidung, solange ein KI-Dienst da ist; ohne Dienst wirkt sie nicht und steht
+        // unter „Erweitert“.
+        boolean aiConfigured = settings != null && settings.ai().configured();
+        releaseAdvanced = !aiConfigured;
+        if (aiConfigured) {
+            form.header(aiSection);
+            form.row("Freigabe", release, "Vorgabe aus; ohne Freigabe keine Embeddings und kein Reranking für diese "
+                    + "Quelle, also keine semantische Suche in ihr");
+        }
+
+        // Alles Ableitbare steht eingeklappt unter „Erweitert“ (linksbündig wie im Assistenten): die automatisch
+        // vergebene Kennung, der Platzhalter in der Datei, die weiteren Felder des Typs, Client-Zertifikat (Vorgabe
+        // keins), Serverzertifikate (Vorgabe wie für alle Quellen) und was Speichern wohin schreibt.
+        JPanel sourceToggle = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        sourceToggle.setOpaque(false);
+        sourceToggle.add(sourceAdvanced);
+        form.wide(sourceToggle, 14);
+        form.row("Technische Kennung", id, "Wird automatisch vergeben; nur ändern, wenn nötig");
+        form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
+        fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
+        fields.shareAdvanced(open -> {
+            if (open != sourceAdvancedOpen) {
+                sourceAdvanced(open);
+            }
+        });
+        sourceAdvanced.addActionListener(e -> sourceAdvanced(!sourceAdvancedOpen));
         form.header(certificateSection);
         form.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
         form.row("Alias", row(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
@@ -251,19 +282,19 @@ final class SourceForm {
         });
 
         form.header(trustSection);
-        form.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten dieser Quelle glaubt; eigene Truststores "
-                + "unter spring.ssl.bundle");
+        form.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten dieser Quelle glaubt; „Wie für alle Quellen“ "
+                + "ist unter Einstellungen › Serverzertifikate festgelegt, eigene Truststores unter spring.ssl.bundle");
+        if (!aiConfigured) {
+            form.header(aiSection);
+            form.row("Freigabe", release, "Wirkt erst, wenn unter Einstellungen › KI-Dienst ein Dienst eingetragen "
+                    + "ist");
+        }
+        form.wide(notes, 14);
 
-        form.header(Form.section("KI-Dienst"));
-        boolean aiConfigured = settings != null && settings.ai().configured();
-        form.row("Freigabe", release, aiConfigured ? "Vorgabe aus; ohne Freigabe keine Embeddings und kein Reranking "
-                + "für diese Quelle" : "Wirkt erst, wenn unter Einstellungen › KI-Dienst ein Dienst eingetragen ist");
         sessionValue.getDocument().addDocumentListener(changes(this::renderNotes));
 
-        JPanel content = new JPanel(new BorderLayout(0, 10));
-        content.setOpaque(false);
-        content.add(form, BorderLayout.NORTH);
-        content.add(notes, BorderLayout.CENTER);
+        // Das Formular nimmt die Breite des Fensters ein (Hinweise brechen um); gescrollt wird nur senkrecht.
+        Form.Sheet content = new Form.Sheet(form);
         content.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttons.setOpaque(false);
@@ -285,7 +316,9 @@ final class SourceForm {
         if (editing != null) {
             prefill(editing.draft());
         }
-        updateVisibility();
+        // Beim Bearbeiten aufgeklappt, wenn die Quelle eigene Zertifikate hat, damit nichts verborgen wirkt.
+        sourceAdvanced(editing != null && (editing.draft().certificateType() != null
+                || editing.draft().trustBundle() != null));
         derive();
         suggestVariable();
         renderNotes();
@@ -472,9 +505,23 @@ final class SourceForm {
 
     private void forgetKeePassSecret() {
         keePassUser = null;
+        showKeePassSecret(false);
         if (keePassSecret != null) {
             java.util.Arrays.fill(keePassSecret, '\0');
             keePassSecret = null;
+        }
+    }
+
+    /** Setzt den Wert aus KeePass ins Feld oder nimmt ihn wieder heraus; ein eingetippter Wert bleibt unberührt. */
+    private void showKeePassSecret(boolean show) {
+        if (show && !secretFromKeePass) {
+            secretFromKeePass = true;
+            sessionValue.setText(new String(keePassSecret));
+            sessionValue.setEditable(false);
+        } else if (!show && secretFromKeePass) {
+            secretFromKeePass = false;
+            sessionValue.setText("");
+            sessionValue.setEditable(true);
         }
     }
 
@@ -497,11 +544,49 @@ final class SourceForm {
         Dialogs.frame(dialog, heading, form.component(), dialog::dispose);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
+            public void windowOpened(java.awt.event.WindowEvent e) {
+                form.firstField().requestFocusInWindow();
+            }
+
+            @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 form.clearSecret();
             }
         });
-        Dialogs.present(dialog, new Dimension(680, 680));
+        form.root.setPreferredSize(form.preferredSize());
+        Dialogs.present(dialog, new Dimension(560, 420));
+    }
+
+    /**
+     * Breite für Beschriftung, Feld und einen Hinweis in einer Zeile; die Höhe zeigt das ganze Formular, soweit der
+     * Bildschirm es hergibt, sonst wird gescrollt.
+     */
+    Dimension preferredSize() {
+        int width = 720;
+        int height = root.getPreferredSize().height + 24;
+        if (!GraphicsEnvironment.isHeadless()) {
+            java.awt.Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+            height = Math.min(height, screen.height - 120);
+            width = Math.min(width, screen.width - 80);
+        }
+        return new Dimension(width, Math.max(height, 420));
+    }
+
+    /** Das erste Feld, das jemand ausfüllt: die Adresse bzw. der Ordner, beim Bearbeiten der Anzeigename. */
+    JComponent firstField() {
+        if (editing == null) {
+            if (baseUrl.isVisible()) {
+                return baseUrl;
+            }
+            if (directory.isVisible()) {
+                return directory;
+            }
+            JTextField address = fields.address();
+            if (address != null) {
+                return address;
+            }
+        }
+        return title;
     }
 
     JComponent component() {
@@ -510,6 +595,31 @@ final class SourceForm {
 
     void onSaved(Consumer<String> saved) {
         this.saved = saved;
+    }
+
+    /** Der eingetragene Anzeigename, leer der graue Vorschlag. */
+    String titleValue() {
+        String typed = title.getText();
+        String proposed = title.placeholder();
+        return typed.isBlank() && proposed != null ? proposed : typed;
+    }
+
+    /** „Erweitert“ auf- oder zuklappen. */
+    void sourceAdvanced(boolean open) {
+        sourceAdvancedOpen = open;
+        Comic.disclose(sourceAdvanced, open);
+        fields.advanced(open);
+        updateVisibility();
+    }
+
+    /** Ob das Feld unter „Erweitert“ steht (dann klappt ein Fehler dort „Erweitert“ auf). */
+    private boolean advancedField(JComponent field) {
+        return field == id || field == variable || field == certificate || field == alias || field == thumbprint
+                || field == certificatePath || field == certificatePasswordVariable || field == trust;
+    }
+
+    boolean sourceAdvancedOpen() {
+        return sourceAdvancedOpen;
     }
 
     /** Die Eingaben als Eintrag für die Datei. */
@@ -534,7 +644,7 @@ final class SourceForm {
         SourceDraft draft;
         if (tls || kept == null) {
             draft = new SourceDraft(id.getText(), type,
-                    title.getText(), confluence ? address() : null,
+                    titleValue(), confluence ? address() : null,
                     files ? directory.getText() : null, files ? include.getText() : null, authType,
                     authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                     authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
@@ -543,7 +653,7 @@ final class SourceForm {
                     certificateType == null ? null : thumbprint.getText(),
                     !tls || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
         } else {
-            draft = new SourceDraft(id.getText(), type, title.getText(), null, null, null, authType,
+            draft = new SourceDraft(id.getText(), type, titleValue(), null, null, null, authType,
                     authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                     authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(),
                     kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
@@ -559,7 +669,7 @@ final class SourceForm {
 
     /** Ob Token bzw. Passwort eingegeben ist (ohne den Wert zu kopieren). */
     private boolean typed() {
-        return sessionValue.getDocument().getLength() > 0;
+        return !secretFromKeePass && sessionValue.getDocument().getLength() > 0;
     }
 
     /**
@@ -709,6 +819,9 @@ final class SourceForm {
         for (String problem : problems) {
             JComponent field = field(problem);
             fields.reveal(field);
+            if (advancedField(field) && !sourceAdvancedOpen) {
+                sourceAdvanced(true);
+            }
             if (form.has(field)) {
                 form.error(field, shortly(problem));
                 first = first == null ? field : first;
@@ -1094,10 +1207,12 @@ final class SourceForm {
                     : genericTitle(genericAddress);
             String proposedId = unique(confluence ? idForUrl(address()) : folder ? slug(folderName(folderPath))
                     : genericId(genericAddress));
-            if (title.getText().isBlank() || title.getText().equals(suggestedTitle)) {
-                title.setText(proposedTitle);
-                suggestedTitle = proposedTitle;
+            // Der Vorschlag steht grau im leeren Feld, nicht als Text: wer tippt, überschreibt nichts.
+            if (title.getText().equals(suggestedTitle)) {
+                title.setText("");
             }
+            title.setPlaceholder(proposedTitle);
+            suggestedTitle = "";
             if (id.getText().isBlank() || id.getText().equals(suggestedId)) {
                 id.setText(proposedId);
                 suggestedId = proposedId;
@@ -1268,7 +1383,13 @@ final class SourceForm {
         form.visible(include, files);
         boolean login = confluence || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));
-        boolean tls = confluence || generic && SourceFields.tls(selectedType());
+        boolean tlsType = confluence || generic && SourceFields.tls(selectedType());
+        // Zertifikate stehen unter „Erweitert“: sichtbar nur aufgeklappt.
+        boolean tls = tlsType && sourceAdvancedOpen;
+        form.visible(id, sourceAdvancedOpen);
+        form.visible(notes, sourceAdvancedOpen);
+        aiSection.setVisible(!releaseAdvanced || sourceAdvancedOpen);
+        form.visible(release, !releaseAdvanced || sourceAdvancedOpen);
         loginSection.setVisible(login);
         certificateSection.setVisible(tls);
         trustSection.setVisible(tls);
@@ -1289,10 +1410,13 @@ final class SourceForm {
             }
         }
         form.visible(username, login && basic);
-        form.visible(variable, login && !anonymous && !keePass);
-        form.visible(sessionValue, login && !anonymous && !keePass);
+        form.visible(variable, login && !anonymous && !keePass && sourceAdvancedOpen);
+        // Bei KeePass zeigt das Feld den gelesenen Wert maskiert und schreibgeschützt, damit man sieht, dass er da ist.
+        boolean shown = keePass && !anonymous && keePassSecretRead();
+        showKeePassSecret(shown);
+        form.visible(sessionValue, login && !anonymous && (!keePass || shown));
         form.label(sessionValue, basic ? "Passwort" : "Token");
-        form.hint(sessionValue, secretHint());
+        form.hint(sessionValue, shown ? "Aus KeePass gelesen; bleibt nur im Speicher" : secretHint());
         form.visible(certificate, tls);
         boolean windows = tls && WINDOWS_MY.equals(certificate.getSelectedItem());
         boolean pkcs12 = tls && PKCS12.equals(certificate.getSelectedItem());
@@ -1302,7 +1426,7 @@ final class SourceForm {
         form.visible(certificatePath, pkcs12);
         form.visible(certificatePasswordVariable, pkcs12);
         form.visible(trust, tls);
-        if (pkcs12 && certificatePasswordVariable.getText().isBlank()) {
+        if (tlsType && PKCS12.equals(certificate.getSelectedItem()) && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");
             certificatePasswordVariable.setText(base + "_CLIENT_PASSWORD");
@@ -1359,8 +1483,13 @@ final class SourceForm {
         private final List<Row> rows = new ArrayList<>();
         private int y;
 
-        private record Row(JComponent key, JLabel label, JComponent field, JLabel hint, String text) {
+        private record Row(JComponent key, JLabel label, JComponent field, JTextArea hint, String text) {
         }
+
+        /** Breite der Beschriftungsspalte, damit alle Felder bündig stehen. */
+        static final int LABEL_WIDTH = 190;
+        /** Schmaler wird kein Feld; darunter beginnt der waagerechte Bildlauf. */
+        static final int FIELD_MIN_WIDTH = 160;
 
         Form() {
             super(new GridBagLayout());
@@ -1386,6 +1515,63 @@ final class SourceForm {
 
         void row(String label, JComponent field) {
             row(label, field, null);
+        }
+
+        /**
+         * Eine Zeile über beide Spalten, linksbündig und in voller Breite, etwa die aufklappbare Überschrift
+         * „▸ Erweitert“ oder ein umbrechender Hinweis; {@code top} ist der Abstand zur Zeile davor.
+         */
+        void wide(JComponent component, int top) {
+            GridBagConstraints c = new GridBagConstraints();
+            c.gridx = 0;
+            c.gridy = y++;
+            c.gridwidth = 2;
+            c.weightx = 1;
+            c.fill = GridBagConstraints.HORIZONTAL;
+            c.anchor = GridBagConstraints.WEST;
+            c.insets = new Insets(top, 0, 0, 0);
+            add(component, c);
+        }
+
+        /**
+         * Die Fläche im Bildlauf: so breit wie das Fenster, damit nichts rechts herausläuft und kein waagerechter
+         * Scrollbalken entsteht; nur wenn das Fenster schmaler ist als die Felder mindestens brauchen, scrollt sie
+         * waagerecht.
+         */
+        static final class Sheet extends JPanel implements javax.swing.Scrollable {
+
+            Sheet(Form form) {
+                super(new BorderLayout());
+                setOpaque(false);
+                add(form, BorderLayout.NORTH);
+            }
+
+            @Override
+            public Dimension getPreferredScrollableViewportSize() {
+                return getPreferredSize();
+            }
+
+            @Override
+            public int getScrollableUnitIncrement(java.awt.Rectangle visible, int orientation, int direction) {
+                return 16;
+            }
+
+            @Override
+            public int getScrollableBlockIncrement(java.awt.Rectangle visible, int orientation, int direction) {
+                return orientation == javax.swing.SwingConstants.VERTICAL ? visible.height : visible.width;
+            }
+
+            @Override
+            public boolean getScrollableTracksViewportWidth() {
+                return !(getParent() instanceof javax.swing.JViewport viewport)
+                        || viewport.getWidth() >= getMinimumSize().width - 8;
+            }
+
+            @Override
+            public boolean getScrollableTracksViewportHeight() {
+                return getParent() instanceof javax.swing.JViewport viewport
+                        && viewport.getHeight() > getPreferredSize().height;
+            }
         }
 
         /** Hält Platz für bis zu {@code count} Zeilen frei, die später kommen ({@link #build}); leer ohne Höhe. */
@@ -1426,11 +1612,17 @@ final class SourceForm {
             JLabel label = new JLabel(text);
             label.setFont(Comic.semiBold(12.5f));
             label.setForeground(Comic.TEXT);
+            // Feste Beschriftungsspalte: Felder stehen bündig, eine lange Beschriftung bekommt Punkte und Tooltip.
+            label.setPreferredSize(new Dimension(LABEL_WIDTH, label.getPreferredSize().height));
+            label.setMinimumSize(label.getPreferredSize());
+            if (label.getFontMetrics(label.getFont()).stringWidth(text) > LABEL_WIDTH - 14) {
+                label.setToolTipText(text);
+            }
             GridBagConstraints left = new GridBagConstraints();
             left.gridx = 0;
             left.gridy = y;
-            left.anchor = GridBagConstraints.WEST;
-            left.insets = new Insets(4, 0, 0, 14);
+            left.anchor = GridBagConstraints.NORTHWEST;
+            left.insets = new Insets(4 + 5, 0, 0, 14);
             add(label, left);
             GridBagConstraints right = new GridBagConstraints();
             right.gridx = 1;
@@ -1438,14 +1630,19 @@ final class SourceForm {
             right.weightx = 1;
             right.fill = GridBagConstraints.HORIZONTAL;
             right.insets = new Insets(4, 0, 0, 0);
+            // Ein Feld darf schmaler werden als sein Wunschmaß (lange Auswahltexte, Feld mit Knopf): So bestimmt
+            // das Fenster die Breite, nie das Feld, und ein waagerechter Scrollbalken entsteht nicht.
+            field.setMinimumSize(new Dimension(FIELD_MIN_WIDTH, field.getPreferredSize().height));
             add(field, right);
             // Die Hinweiszeile ist immer da (notfalls leer), damit ein Fehler Platz hat, ohne etwas zu verschieben.
-            JLabel hintLabel = Comic.muted(hint == null ? " " : hint);
+            JTextArea hintLabel = Comic.hint(hint == null ? " " : hint);
             GridBagConstraints below = new GridBagConstraints();
             below.gridx = 1;
             below.gridy = y + 1;
+            below.weightx = 1;
             below.anchor = GridBagConstraints.WEST;
             below.fill = GridBagConstraints.HORIZONTAL;
+            below.insets = new Insets(1, 2, 0, 0);
             add(hintLabel, below);
             y += 2;
             JComponent key = field instanceof JPanel panel && panel.getComponentCount() > 0
@@ -1510,12 +1707,18 @@ final class SourceForm {
         }
 
         void visible(JComponent field, boolean visible) {
+            boolean found = false;
             for (Row row : rows) {
                 if (row.key() == field || row.field() == field) {
                     row.label().setVisible(visible);
                     row.field().setVisible(visible);
                     row.hint().setVisible(visible);
+                    found = true;
                 }
+            }
+            if (!found) {
+                // Eine Zeile über beide Spalten ({@link #wide}).
+                field.setVisible(visible);
             }
         }
     }

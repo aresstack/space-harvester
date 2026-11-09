@@ -101,7 +101,8 @@ final class SetupWizard {
     SetupWizard(AppContext context) {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
-        ai.wizardMode();
+        // Ein Statusbereich für alle Schritte, über der Knopfleiste; die Inhalte zeigen keine eigenen Meldungen.
+        ai.wizardMode(feedback);
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(900, 600));
 

@@ -203,6 +203,65 @@ public final class Comic {
         return label;
     }
 
+    /**
+     * Umbrechender Text ohne Rahmen, der seine Spalte nie breiter macht: Er nimmt die Breite, die er bekommt, und
+     * wächst in die Höhe (Hinweise unter Formularfeldern, längere Erklärungen). Anders als {@link #note} drängt er
+     * nie nach rechts, deshalb entsteht in einem Formular kein waagerechter Scrollbalken.
+     */
+    public static JTextArea wrapped(String text, Color color, float size) {
+        JTextArea area = new JTextArea(text) {
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension preferred = super.getPreferredSize();
+                if (getWidth() <= 0) {
+                    // Noch ohne Breite (vor dem ersten Auslegen, etwa beim pack() eines Fensters): die Höhe für eine
+                    // übliche Spaltenbreite schätzen, damit das Fenster von Anfang an Platz für den Umbruch hat.
+                    java.awt.FontMetrics metrics = getFontMetrics(getFont());
+                    int lines = 1;
+                    for (String paragraph : getText().split("\n", -1)) {
+                        lines += Math.max(1, (int) Math.ceil(metrics.stringWidth(paragraph) / (double) WRAP_GUESS));
+                    }
+                    lines -= 1;
+                    java.awt.Insets insets = getInsets();
+                    preferred.height = Math.max(preferred.height, lines * metrics.getHeight() + insets.top
+                            + insets.bottom);
+                }
+                return new Dimension(Math.min(preferred.width, 40), preferred.height);
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return getPreferredSize();
+            }
+
+            @Override
+            public void setBounds(int x, int y, int width, int height) {
+                super.setBounds(x, y, width, height);
+                // Mit der echten Breite bricht der Text um; braucht er mehr Zeilen, legt der Behälter neu aus.
+                if (width > 0 && super.getPreferredSize().height != height) {
+                    javax.swing.SwingUtilities.invokeLater(this::revalidate);
+                }
+            }
+        };
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setOpaque(false);
+        area.setFont(regular(size));
+        area.setForeground(color);
+        area.setBorder(BorderFactory.createEmptyBorder());
+        return area;
+    }
+
+    /** Spaltenbreite, mit der ein noch nicht ausgelegter {@link #wrapped} Text seine Höhe schätzt. */
+    private static final int WRAP_GUESS = 400;
+
+    /** Grauer Hinweis unter einem Feld, umbrechend. */
+    public static JTextArea hint(String text) {
+        return wrapped(text, MUTED, 12f);
+    }
+
     /** Mehrzeiliger, umbrechender Hinweistext ohne Rahmen. */
     public static JTextArea note(String text) {
         JTextArea area = new JTextArea(text);
@@ -306,13 +365,15 @@ public final class Comic {
         }
     }
 
-    /** Eingabefeld mit Knopf daneben (etwa ▾): das Feld füllt die Breite, der Knopf steht rechts. */
+    /** Eingabefeld mit Knopf IM Feld (etwa ▾): das Feld füllt die Breite, der Knopf sitzt rechts innen. */
     public static JPanel fieldWithButton(JComponent field, JComponent button) {
-        JPanel line = new JPanel(new BorderLayout(6, 0));
-        line.setOpaque(false);
-        line.add(field, BorderLayout.CENTER);
-        line.add(button, BorderLayout.EAST);
-        return line;
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame frame =
+                new com.aresstack.spaceharvester.app.ui.controls.InputFrame(field);
+        if (button instanceof javax.swing.AbstractButton b) {
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.styleFlat(b);
+        }
+        frame.addButton(button);
+        return frame;
     }
 
     public static JTextField field(int columns) {
@@ -321,8 +382,13 @@ public final class Comic {
         return field;
     }
 
+    /** Der Rahmen aller Eingabefelder, auch der Felder mit integrierten Knöpfen ({@code InputFrame}). */
+    public static javax.swing.border.Border fieldBorder() {
+        return ComicBorder.roundedBorder(PALETTE, 4);
+    }
+
     public static void style(JTextComponent field) {
-        field.setBorder(ComicBorder.roundedBorder(PALETTE, 4));
+        field.setBorder(fieldBorder());
         field.setForeground(INK);
         field.setCaretColor(INK);
         field.setBackground(Color.WHITE);
