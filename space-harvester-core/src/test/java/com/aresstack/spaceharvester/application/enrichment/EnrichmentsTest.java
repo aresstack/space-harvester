@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuild
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -263,6 +264,43 @@ class EnrichmentsTest {
         assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 1, 0));
         assertThat(store.find(page.key())).singleElement()
                 .satisfies(result -> assertThat(result.payloadJson()).contains("\"reason\":\"source-not-approved\""));
+    }
+
+    @Test
+    void passagesOfAnUnapprovedSourceAreComputedAtOnceInTheSyncAndStayCurrent() {
+        // Ein geschlossener Hintergrund nähme nichts an: Was eingeplant würde, fehlte wie im Abgleich bei voller
+        // Warteschlange („Noch keine Absätze“).
+        ExecutorService closed = Enrichments.background(1);
+        closed.shutdown();
+        EmbeddingProcessor embedding = new EmbeddingProcessor(() -> new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return "remote@1";
+            }
+
+            @Override
+            public int dimensions() {
+                return 3;
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                throw new AssertionError("nicht freigegeben");
+            }
+        }, 1000, KnowledgeTextSegmentation.defaults(), sourceId -> sourceId.equals("approved"));
+        PassageProcessor passages = new PassageProcessor(
+                SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()), KnowledgeTextSegmentation.defaults(),
+                embedding);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(passages), store, CLOCK, closed);
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(passages.background(page.key())).isFalse();
+        assertThat(passages.background(new PageKey("approved", "101"))).isTrue();
+        // So ruft der Abgleich (EnrichmentsAfterSync) und das Öffnen der Seite (PassageQueries) auf.
+        assertThat(enrichments.refresh(page, PassageProcessor.ID)).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+        assertThat(enrichments.refresh(page, PassageProcessor.ID)).isEqualTo(new Enrichments.Run(true, 0, 1, 0));
+        assertThat(store.find(page.key())).singleElement()
+                .satisfies(result -> assertThat(result.payloadJson()).contains("source-not-approved"));
     }
 
     @Test
