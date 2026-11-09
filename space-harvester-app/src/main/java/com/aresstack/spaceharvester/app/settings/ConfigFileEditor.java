@@ -379,6 +379,37 @@ public final class ConfigFileEditor {
      * @throws IllegalArgumentException bei einem relativen Pfad oder wenn die Datei danach etwas anderes liest
      */
     public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots) {
+        return withFileAccess(file, base, allowAll, roots, List.of());
+    }
+
+    /**
+     * Wie {@link #withFileAccess(Path, Draft, boolean, List)}, zusätzlich mit den vorübergehend abgeschalteten Ordnern
+     * unter {@code space-harvester-app.inactive-roots} (nur die App; leer entfernt den Schlüssel). Ein Ordner steht
+     * entweder in {@code roots} oder in {@code inactive-roots}.
+     */
+    public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots,
+                                List<String> inactiveRoots) {
+        List<Path> expected = absolutePaths(roots);
+        List<Path> expectedInactive = absolutePaths(inactiveRoots).stream().map(Path::normalize).toList();
+        String text = nested(base.text(), "local-files", "allow-all", indent -> indent + "allow-all: " + allowAll
+                + "\n");
+        text = nested(text, "local-files", "roots", indent -> rootsYaml(indent, roots));
+        String inactive = inactiveRoots.isEmpty() ? null : "inactive-roots: [" + inactiveRoots.stream()
+                .map(root -> "\"" + root.strip().replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                .collect(java.util.stream.Collectors.joining(", ")) + "]";
+        text = appValue(text, "inactiveroots", inactive);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.localFiles().equals(new LocalFileSettings(allowAll, expected))
+                || !settings.inactiveRoots().equals(expectedInactive)) {
+            throw new IllegalArgumentException("Der Dateizugriff ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.local-files von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** @throws IllegalArgumentException bei einem ungültigen oder relativen Pfad */
+    private static List<Path> absolutePaths(List<String> roots) {
         List<Path> expected = new ArrayList<>();
         for (String root : roots) {
             Path path;
@@ -393,16 +424,7 @@ public final class ConfigFileEditor {
             }
             expected.add(path);
         }
-        String text = nested(base.text(), "local-files", "allow-all", indent -> indent + "allow-all: " + allowAll
-                + "\n");
-        text = nested(text, "local-files", "roots", indent -> rootsYaml(indent, roots));
-        AppSettings settings = loader.read(file, text);
-        if (!settings.localFiles().equals(new LocalFileSettings(allowAll, expected))) {
-            throw new IllegalArgumentException("Der Dateizugriff ließ sich nicht sicher in die Konfigurationsdatei "
-                    + "schreiben; bitte space-harvester.local-files von Hand bearbeiten."
-                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
-        }
-        return new Draft(text, settings);
+        return expected;
     }
 
     /** {@code roots:} als Liste in Anführungszeichen; Backslashes von Windows- und UNC-Pfaden bleiben erhalten. */
