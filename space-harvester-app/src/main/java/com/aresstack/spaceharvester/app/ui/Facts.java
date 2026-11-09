@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.Color;
@@ -9,7 +10,8 @@ import java.awt.Insets;
 
 /**
  * Zweispaltige Liste „Bezeichnung – Wert“. Werte sind markierbar (zum Kopieren von IDs und Hashes), aber nicht
- * bearbeitbar.
+ * bearbeitbar. Eine Zeile kann rechts einen kleinen Knopf tragen ({@link #add(String, String, Color, JComponent)}),
+ * etwa zum Löschen des Werts, auf den sie zeigt.
  */
 public final class Facts extends JPanel {
 
@@ -25,6 +27,11 @@ public final class Facts extends JPanel {
     }
 
     public Facts add(String label, String value, Color color) {
+        return add(label, value, color, null);
+    }
+
+    /** @param action ein Knopf rechts neben dem Wert, z. B. ein {@link IconButton}; {@code null}: keiner */
+    public Facts add(String label, String value, Color color, JComponent action) {
         GridBagConstraints left = new GridBagConstraints();
         left.gridx = 0;
         left.gridy = row;
@@ -47,6 +54,14 @@ public final class Facts extends JPanel {
         text.setToolTipText(value == null || value.isEmpty() ? null : value);
         text.setFocusable(true); // per Tab erreichbar, markieren und mit Strg+C kopieren wie das Textfeld zuvor
         super.add(text, right);
+        if (action != null) {
+            GridBagConstraints trailing = new GridBagConstraints();
+            trailing.gridx = 2;
+            trailing.gridy = row;
+            trailing.anchor = GridBagConstraints.NORTHEAST;
+            trailing.insets = new Insets(0, 6, 0, 0);
+            super.add(action, trailing);
+        }
         row++;
         return this;
     }

@@ -23,7 +23,9 @@ import java.util.Locale;
  * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
  * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
  * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und
- * Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“ (Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“. Jede
+ * Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“
+ * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
+ * lokal gespeicherte Zugangsdaten lassen sich dort je Eintrag löschen. Jede
  * Änderung schreibt die Datei und startet die Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
 public final class SettingsView implements View {
@@ -45,6 +47,13 @@ public final class SettingsView implements View {
     private final Facts cache = new Facts();
     /** Reiter „Sicherheit“: wo Geheimnisse liegen, je Eintrag nur „gespeichert“ oder „fehlt“, nie der Wert. */
     final Facts security = new Facts();
+    /** Reiter „Sicherheit“, Abschnitt „KeePass“: die eine Kopplung der App. */
+    final KeePassPairingPanel keePass;
+    /** Meldungen im Abschnitt „Tresor“ (gelöschte Zugangsdaten). */
+    final Feedback securityFeedback = new Feedback();
+    /** Die Löschknöpfe des Reiters „Sicherheit“ in Zeilenreihenfolge, für Tests. */
+    final java.util.List<IconButton> deleteButtons = new java.util.ArrayList<>();
+    private final java.util.Map<IconButton, Runnable> deletions = new java.util.HashMap<>();
     private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
             "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
     /** Rechts: der gewählte Bereich. */
@@ -85,6 +94,12 @@ public final class SettingsView implements View {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
+        this.keePass = new KeePassPairingPanel(context);
+        keePass.onChange(() -> {
+            ai.refreshPairing();
+            render();
+        });
+        ai.onPairingChange(keePass::render);
         root.setBackground(Comic.SURFACE);
         problems.setForeground(Comic.RED);
         reload.addActionListener(e -> reload());
@@ -150,12 +165,15 @@ public final class SettingsView implements View {
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
-        vault.add(Comic.note("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
-                + "KI-Dienstes und das Proxy-Passwort liegen im Tresor dieses Windows-Kontos (DPAPI), in der Datei "
-                + "steht nur der Platzhalter ${NAME}. Ändern und entfernen an der Quelle, unter KI-Dienst bzw. Proxy."),
-                BorderLayout.NORTH);
+        vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
+                + "KI-Dienstes und das Proxy-Passwort liegen im Tresor dieses Windows-Kontos (DPAPI), als Dateien nur "
+                + "für dieses Konto lesbar; in der Datei steht nur der Platzhalter ${NAME}. Der Knopf rechts löscht die "
+                + "lokal gespeicherten Zugangsdaten eines Eintrags sofort; ändern an der Quelle, unter KI-Dienst bzw. "
+                + "Proxy.", Comic.TEXT, 12.5f), BorderLayout.NORTH);
         vault.add(security, BorderLayout.CENTER);
-        page(SECURITY, Comic.column(Comic.plate("Tresor", Comic.RED, vault)));
+        vault.add(securityFeedback, BorderLayout.SOUTH);
+        page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
+                Comic.plate("Tresor", Comic.RED, vault)));
         pageDeck.setOpaque(false);
         root.add(pageDeck, BorderLayout.CENTER);
         buildDrawer();
@@ -163,6 +181,7 @@ public final class SettingsView implements View {
         context.onChange(ignored -> {
             render();
             fileAccess.render();
+            keePass.render();
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
             if (!AI.equals(selected) && !MODELS.equals(selected)) {
@@ -233,18 +252,54 @@ public final class SettingsView implements View {
     }
 
     /** Für Tests: die Zeilen der Navigation in ihrer Reihenfolge. */
+    /**
+     * Ein Papierkorb-Knopf in der Zeile eines Eintrags: löscht nach Rückfrage die lokal gespeicherten Zugangsdaten
+     * (Datei im Tresor und den Wert dieser Sitzung), ohne den Wert je anzuzeigen, und startet die Laufzeit neu, damit
+     * auch die Kopien in den laufenden Quellen und im KI-Dienst verschwinden; sofort, nicht erst beim nächsten Start.
+     */
+    private IconButton deleteButton(String what, Background.ThrowingRunnable delete) {
+        IconButton button = new IconButton(Glyph.TRASH, "Lokal gespeicherte Zugangsdaten löschen: " + what);
+        Runnable run = () -> Background.execute(delete, () -> context.reload(() -> {
+            render();
+            ai.render();
+            securityFeedback.success("Gelöscht: " + what + "; die Laufzeit wurde ohne diese Zugangsdaten neu gestartet");
+        }), securityFeedback::problem);
+        button.addActionListener(e -> {
+            if (Dialogs.restartAllowed(root, context) && Dialogs.confirm(root, "Zugangsdaten löschen?", what
+                    + ": die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, damit der Wert "
+                    + "sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.", "Löschen")) {
+                run.run();
+            }
+        });
+        deleteButtons.add(button);
+        deletions.put(button, run);
+        return button;
+    }
+
+    /** Löscht wie der Knopf, ohne Rückfrage; für Tests. */
+    void deleteWithoutAsking(IconButton button) {
+        deletions.get(button).run();
+    }
+
     java.util.List<SettingsNavRow> navRows() {
         return java.util.List.copyOf(rows.values());
     }
 
     private void renderSecurity(AppSettings settings) {
         security.reset();
+        deleteButtons.clear();
+        deletions.clear();
         security.add("Tresor", context.vault().describe());
         if (settings == null) {
             return;
         }
+        boolean aiKeyStored = context.aiVault().has(AiSettingsPanel.KEY_ID);
         security.add("API-Key des KI-Dienstes", context.aiKeyAvailable() ? "gespeichert"
-                : settings.ai().configured() ? "fehlt" : "kein KI-Dienst eingerichtet");
+                : settings.ai().configured() ? "fehlt" : "kein KI-Dienst eingerichtet", Comic.INK,
+                aiKeyStored ? deleteButton("API-Key des KI-Dienstes", () -> {
+                    context.aiVault().remove(AiSettingsPanel.KEY_ID);
+                    context.sessionAiKey(null);
+                }) : null);
         ProxySettings proxy = settings.proxy();
         if (proxy != null && proxy.authentication() != null) {
             security.add("Proxy-Passwort", context.proxyPasswordAvailable(proxy.authentication().username())
@@ -252,7 +307,8 @@ public final class SettingsView implements View {
         }
         for (AppSettings.SourceEntry source : settings.sources()) {
             String state;
-            if (context.vault().has(source.id())) {
+            boolean stored = context.vault().has(source.id());
+            if (stored) {
                 state = "im Tresor";
             } else if (source.secretMissing()) {
                 state = "fehlt";
@@ -261,7 +317,11 @@ public final class SettingsView implements View {
             } else {
                 state = "keins nötig";
             }
-            security.add("Zugang " + source.config().title(), state);
+            security.add("Zugang " + source.config().title(), state, Comic.INK,
+                    stored ? deleteButton("Zugangsdaten von „" + source.config().title() + "“", () -> {
+                        context.vault().remove(source.id());
+                        context.secrets().remove(source.id());
+                    }) : null);
         }
         try {
             if (new ConfigFileEditor(context.loader()).fileHasPlaintextSecret(context.configFile())) {

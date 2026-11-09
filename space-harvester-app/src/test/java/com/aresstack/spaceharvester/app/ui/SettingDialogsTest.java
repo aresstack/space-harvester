@@ -340,12 +340,18 @@ class SettingDialogsTest {
             panel[0] = new AiSettingsPanel(context);
             assertThat(panel[0].access.getSelectedItem()).as("nicht gekoppelt: Manuell")
                     .isEqualTo(AiSettingsPanel.MANUAL);
-            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Nicht gekoppelt");
-            // Schon gekoppelt: KeePass vorgewählt, die Kopplung gilt weiter.
+            panel[0].access.setSelectedItem(AiSettingsPanel.KEEPASS);
+            // Nicht gekoppelt: „Koppeln“ im Eintragsfeld, Hinweis an Ort und Stelle; die Kopplung selbst steht unter
+            // Sicherheit › KeePass, nicht mehr als eigene Zeile hier.
+            assertThat(panel[0].pair.getText()).isEqualTo(KeePassPairingPanel.PAIR);
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).startsWith("Nicht gekoppelt");
+            assertThat(panel[0].rows.shows(panel[0].entryRow)).isTrue();
+            // Schon gekoppelt: KeePass vorgewählt, die Kopplung gilt weiter; der Knopf lädt nur noch die Einträge.
             paired[0] = true;
             panel[0] = new AiSettingsPanel(context);
             assertThat(panel[0].access.getSelectedItem()).isEqualTo(AiSettingsPanel.KEEPASS);
-            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Gekoppelt");
+            assertThat(panel[0].pair.getText()).isEqualTo(AiSettingsPanel.LOAD_ENTRIES);
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).isEqualTo(AiSettingsPanel.ENTRY_HINT);
             assertThat(panel[0].entry.isEditable()).isTrue();
             panel[0].pair.doClick();
         });
@@ -357,7 +363,7 @@ class SettingDialogsTest {
             assertThat(panel[0].apiKey.isEditable()).isFalse();
             assertThat(panel[0].rows.hint(panel[0].apiKey)).startsWith("Aus KeePass gelesen");
             assertThat(panel[0].typedKey()).isEmpty();
-            assertThat(panel[0].keePassStatus.getText()).startsWith("Gekoppelt");
+            assertThat(panel[0].rows.hint(panel[0].entryRow)).startsWith("Gekoppelt · 1 Eintrag lesbar");
             assertThat(panel[0].titles).containsExactly("Enterprise AI API");
             panel[0].embeddingModel.setText("text-embedding-3-small");
             panel[0].dimensions.setText("1536");
@@ -488,7 +494,7 @@ class SettingDialogsTest {
         }
     }
 
-    private static void await(BooleanSupplier condition) throws Exception {
+    static void await(BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 30_000;
         boolean[] met = {false};
         while (System.currentTimeMillis() < until) {

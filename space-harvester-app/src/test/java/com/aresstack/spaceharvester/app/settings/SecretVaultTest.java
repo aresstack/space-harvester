@@ -66,6 +66,26 @@ public class SecretVaultTest {
     }
 
     @Test
+    void vaultFilesAreReadableForTheOwnerOnly() throws Exception {
+        SecretVault vault = new SecretVault(home.resolve("secrets"), new FakeDpapi());
+
+        vault.store("wiki", "pat", "Tökén-123".toCharArray());
+
+        java.nio.file.Path file = home.resolve("secrets").resolve("wiki.secret");
+        if (Files.getFileStore(file).supportsFileAttributeView("posix")) {
+            assertThat(Files.getPosixFilePermissions(file)).containsExactlyInAnyOrder(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE);
+            assertThat(Files.getPosixFilePermissions(home.resolve("secrets"))).containsExactlyInAnyOrder(
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE);
+        }
+        vault.remove("wiki");
+        assertThat(Files.exists(file)).isFalse();
+    }
+
+    @Test
     void withoutWindowsThereIsNoVault() throws Exception {
         SecretVault none = new SecretVault(home.resolve("secrets"), null);
         assertThat(none.available()).isFalse();
