@@ -87,6 +87,15 @@ class SourceFormLayoutTest {
             assertThat(size.width).isEqualTo(720);
             root.setSize(size);
             layout(root);
+            if (keePass) {
+                // Reihenfolge (Angelo, 09.11.): Art, Zugangsdaten über, KeePass-Eintrag, Anmeldung, Adresse, Name.
+                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.keePassEntry, root),
+                        y(form.auth, root), y(form.baseUrl, root), y(form.title, root)))
+                        .as("Anmeldung vor Adresse und Name").isSorted();
+            } else {
+                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.auth, root), y(form.baseUrl, root),
+                        y(form.title, root))).as("Anmeldung vor Adresse und Name").isSorted();
+            }
 
             JScrollPane scroll = find(root, JScrollPane.class).get(0);
             JViewport viewport = scroll.getViewport();
@@ -144,6 +153,11 @@ class SourceFormLayoutTest {
         } finally {
             context.shutdown();
         }
+    }
+
+    /** Senkrechte Lage eines Felds im Fenster, für die Reihenfolge der Zeilen. */
+    private static int y(Component field, Component root) {
+        return SwingUtilities.convertPoint(field.getParent(), field.getLocation(), root).y;
     }
 
     private static boolean visible(Component component) {

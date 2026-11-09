@@ -107,6 +107,8 @@ final class SourceForm {
     private boolean secretFromKeePass;
     /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
     private String keePassUser;
+    /** Adresse des gelesenen Eintrags ("" ohne Adresse); {@code null}: keiner gelesen. Leeres Adressfeld = sie gilt. */
+    private String keePassUrl;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
     private String suggestedEntry;
     private boolean suggesting;
@@ -129,6 +131,7 @@ final class SourceForm {
     final JTextArea notes = Comic.wrapped("", Comic.TEXT, 12.5f);
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
+    private final JLabel sourceSection = Form.section("Quelle");
     private final JLabel aiSection = Form.section("KI-Dienst");
     /** Ob die KI-Freigabe unter „Erweitert“ steht (kein KI-Dienst eingetragen). */
     private boolean releaseAdvanced;
@@ -208,6 +211,7 @@ final class SourceForm {
                 deriveAuthFromKeePass(keePassUser);
             }
             updateVisibility();
+            derive(); // Adresse und Vorschläge: mit KeePass aus dem Eintrag, sonst aus dem Feld
             if (keePassChosen() && context.keePass().paired()) {
                 loadKeePassEntries(false);
             }
@@ -236,8 +240,18 @@ final class SourceForm {
         });
         certificate.addActionListener(e -> updateVisibility());
 
-        form.header(Form.section("Quelle"));
+        // Reihenfolge nach Entscheidung (Angelo, 09.11.): erst die Art, dann woher die Zugangsdaten kommen und der
+        // KeePass-Eintrag, daraus die Anmeldung vorbelegt; erst danach Adresse (bei KeePass aus dem Eintrag) und Name.
         form.row("Art", kind);
+        form.header(loginSection);
+        form.row("Zugangsdaten beziehen über", origin, "KeePass liefert Adresse, Benutzer und Passwort bzw. Token aus "
+                + "einem Eintrag; Manuell legt sie im Tresor ab");
+        form.row("KeePass-Eintrag", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
+        form.row("Anmeldung", auth);
+        form.row("Benutzer", username);
+        form.row("Token", sessionValue, " ");
+
+        form.header(sourceSection);
         int mainFields = form.reserve(SourceFieldsEditor.ROWS);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", Comic.fieldWithButton(directory, browse(directory, true)), null);
@@ -246,14 +260,6 @@ final class SourceForm {
         onEdit(baseUrl, this::derive);
         onEdit(directory, this::derive);
         onEdit(id, this::suggestVariable);
-
-        form.header(loginSection);
-        form.row("Zugangsdaten beziehen über", origin, "KeePass liest Benutzer und Passwort bzw. Token aus einem "
-                + "Eintrag; Manuell legt sie im Tresor ab");
-        form.row("Anmeldung", auth);
-        form.row("KeePass-Eintrag", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
-        form.row("Benutzer", username);
-        form.row("Token", sessionValue, " ");
 
         // Die Freigabe ist eine Entscheidung, solange ein KI-Dienst da ist; ohne Dienst wirkt sie nicht und steht
         // unter „Erweitert“.
@@ -362,6 +368,24 @@ final class SourceForm {
     /** Ob KeePass die Zugangsdaten liefert: KeePass gewählt und eine Anmeldung außer „Ohne Anmeldung“. */
     private boolean keePassLogin() {
         return keePassChosen() && !NONE.equals(auth.getSelectedItem());
+    }
+
+    /** Ob KeePass gewählt ist, unabhängig von der Anmeldeart (auch „Ohne Anmeldung“ nutzt die Adresse des Eintrags). */
+    private boolean keePassOrigin() {
+        return AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem());
+    }
+
+    /**
+     * Die Adresse des gelesenen KeePass-Eintrags, solange KeePass gewählt ist und der Eintrag eine hat; sonst
+     * {@code null}. Sie gilt, wenn das Adressfeld leer bleibt; eine Eingabe im Feld gewinnt immer.
+     */
+    private String keePassAddress() {
+        return keePassOrigin() && keePassUrl != null && !keePassUrl.isBlank() ? keePassUrl : null;
+    }
+
+    /** Ob ein KeePass-Eintrag gelesen ist, der keine Adresse hat: dann ist die Adresse Pflicht. */
+    private boolean keePassEntryWithoutAddress() {
+        return keePassOrigin() && keePassUrl != null && keePassUrl.isBlank();
     }
 
     /**
@@ -496,13 +520,19 @@ final class SourceForm {
     /** Liest Benutzer und Passwort bzw. Token des gewählten Eintrags; der Benutzer landet im Feld, der Rest im Speicher. */
     private void readKeePassEntry() {
         String title = keePassTitle();
+        boolean hadAddress = keePassUrl != null;
         forgetKeePassSecret();
+        if (hadAddress) {
+            // Der alte Eintrag galt als Adresse: Platzhalter und Vorschläge zurücksetzen.
+            updateVisibility();
+            derive();
+        }
         if (title.isEmpty() || !context.keePass().paired()) {
             return;
         }
         Background.run(() -> {
             try (var read = context.keePass().read(title)) {
-                return new Object[] {read.userName(), read.copyPassword()};
+                return new Object[] {read.userName(), read.copyPassword(), read.location()};
             }
         }, read -> {
             if (!keePassChosen() || !title.equals(keePassTitle())) {
@@ -512,6 +542,7 @@ final class SourceForm {
             }
             String user = (String) read[0];
             keePassUser = user == null ? "" : user;
+            keePassUrl = read[2] == null ? "" : ((String) read[2]).strip();
             if (!authPickedInKeePass) {
                 deriveAuthFromKeePass(keePassUser);
             }
@@ -523,6 +554,7 @@ final class SourceForm {
                     : BASIC.equals(auth.getSelectedItem()) ? "Benutzer und Passwort kommen aus KeePass"
                     : "Das Token kommt aus KeePass";
             updateVisibility();
+            derive(); // Adresse, Name und Kennung folgen dem Eintrag, solange das Adressfeld leer ist
             form.hint(keePassRow, keePassStatus);
             renderNotes();
         }, error -> {
@@ -533,6 +565,7 @@ final class SourceForm {
 
     private void forgetKeePassSecret() {
         keePassUser = null;
+        keePassUrl = null;
         showKeePassSecret(false);
         if (keePassSecret != null) {
             java.util.Arrays.fill(keePassSecret, '\0');
@@ -821,8 +854,19 @@ final class SourceForm {
     }
 
     /** Die eingetragene Adresse; leer heißt die öffentliche Confluence-Hilfe. */
+    /**
+     * Die Adresse: die Eingabe; leer die Adresse des KeePass-Eintrags; ohne KeePass-Eintrag die Confluence-Hilfe. Ein
+     * gelesener Eintrag ohne Adresse liefert leer, damit „Die Adresse fehlt“ am Feld steht.
+     */
     private String address() {
-        return baseUrl.getText().isBlank() ? DEFAULT_URL : baseUrl.getText();
+        if (!baseUrl.getText().isBlank()) {
+            return baseUrl.getText();
+        }
+        String fromKeePass = keePassAddress();
+        if (fromKeePass != null) {
+            return fromKeePass;
+        }
+        return keePassEntryWithoutAddress() ? "" : DEFAULT_URL;
     }
 
     /**
@@ -1232,8 +1276,13 @@ final class SourceForm {
             boolean folder = !generic || addressField != null
                     && fields.spec(addressOption()).kind() == SourceFieldSpec.Kind.DIRECTORY;
             String folderPath = generic ? genericAddress : directory.getText();
-            String proposedTitle = confluence ? titleFor(address()) : folder ? folderName(folderPath)
-                    : genericTitle(genericAddress);
+            // Der Name hängt an der Adresse (Angelo, 09.11.): eine eingetippte Adresse ist auch der Vorschlag für den
+            // Namen; leer gilt der Titel des KeePass-Eintrags bzw. die Confluence-Hilfe.
+            boolean fromKeePass = confluence && baseUrl.getText().isBlank() && keePassAddress() != null
+                    && !keePassTitle().isEmpty();
+            String proposedTitle = fromKeePass ? keePassTitle()
+                    : confluence ? (baseUrl.getText().isBlank() ? titleFor(address()) : baseUrl.getText().strip())
+                    : folder ? folderName(folderPath) : genericTitle(genericAddress);
             String proposedId = unique(confluence ? idForUrl(address()) : folder ? slug(folderName(folderPath))
                     : genericId(genericAddress));
             // Der Vorschlag steht grau im leeren Feld, nicht als Text: wer tippt, überschreibt nichts.
@@ -1381,6 +1430,10 @@ final class SourceForm {
                         editing.plaintextSecrets())).append("; dort steht künftig nur der Platzhalter.");
             }
         }
+        if (source.confluence() && baseUrl.getText().isBlank() && keePassAddress() != null) {
+            text.append("\nDie Adresse ").append(keePassAddress()).append(" kommt aus dem KeePass-Eintrag „")
+                    .append(keePassTitle()).append("“ und steht so in der Datei; eine Eingabe im Feld gewinnt.");
+        }
         if (source.secretVariable() != null) {
             String what = source.secretName();
             text.append("\n").append(Character.toUpperCase(what.charAt(0))).append(what.substring(1))
@@ -1406,9 +1459,14 @@ final class SourceForm {
         boolean generic = !confluence && !files;
         // Bei Arten mit Feldern ist die Adresse eins davon; das Adressfeld bleibt für Arten ohne Felder.
         form.visible(baseUrl, confluence || generic && !fields.active() && addressOption() != null);
-        baseUrl.setPlaceholder(confluence ? DEFAULT_URL : "");
-        form.hint(baseUrl, confluence ? "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe"
-                : "Adresse der Quelle (in der Datei options." + addressOption() + ")");
+        // Platzhalter: die Adresse des KeePass-Eintrags, sonst die Confluence-Hilfe; ein Eintrag ohne Adresse keiner.
+        String fromKeePass = keePassAddress();
+        baseUrl.setPlaceholder(!confluence ? "" : fromKeePass != null ? fromKeePass
+                : keePassEntryWithoutAddress() ? "" : DEFAULT_URL);
+        form.hint(baseUrl, !confluence ? "Adresse der Quelle (in der Datei options." + addressOption() + ")"
+                : fromKeePass != null ? "Leer gilt die Adresse des KeePass-Eintrags; eine Eingabe hier gewinnt"
+                : keePassEntryWithoutAddress() ? "Der KeePass-Eintrag hat keine Adresse; bitte hier eintragen"
+                : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
         form.visible(include, files);
         boolean login = confluence || generic && (auth.getItemCount() > 1
