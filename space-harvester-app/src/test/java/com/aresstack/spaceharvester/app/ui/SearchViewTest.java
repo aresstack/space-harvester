@@ -320,6 +320,14 @@ class SearchViewTest {
     }
 
     @Test
+    void aFailedSemanticSearchNamesTheReasonFromTheCore() {
+        var reason = com.aresstack.spaceharvester.ai.AiServiceException.Reason.class;
+        assertThat(SearchView.failureText(Enum.valueOf(reason, "UNAUTHORIZED"))).contains("API-Key");
+        assertThat(SearchView.failureText(Enum.valueOf(reason, "TIMEOUT"))).contains("nicht rechtzeitig");
+        assertThat(SearchView.failureText(null)).contains("Quellen");
+    }
+
+    @Test
     void everyEndOfTheProgressiveSearchReadsAsPlainWords() {
         assertThat(SearchView.completion(ProgressiveResult.Completion.QUALITY_REACHED))
                 .isEqualTo("Die Suche ist abgeschlossen · genug passende Treffer");
