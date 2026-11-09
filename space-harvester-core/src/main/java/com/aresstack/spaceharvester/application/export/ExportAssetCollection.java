@@ -2,9 +2,11 @@ package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
@@ -40,6 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import tools.jackson.core.JacksonException;
@@ -74,6 +77,13 @@ import tools.jackson.databind.json.JsonMapper;
  * bleiben. Danach lädt er dieselbe Datei neu und macht weiter. Ohne Anmeldung fehlen die übrigen Dateien des Laufs
  * mit {@link ExportAssetManifest.Status#SIGN_IN_REQUIRED}, ohne erneut zu warten; {@link #start} holt sie später nach,
  * schon abgelegte kommen dann aus dem Speicher.
+ *
+ * <p>Dokument-Anhänge (ADR 0023): Ist {@link ExportSettings#attachments()} an, legt derselbe Lauf auch die übrigen
+ * Anhänge der Seite ab (PDF, Office, Mails …), über denselben Download, dieselbe Anmeldung und dieselbe Ablage, als
+ * {@link ExportAssetManifest.Kind#DOCUMENT} im selben Manifest, und liest ihren Text einmal über die Textextraktion
+ * der Ablage ({@link Assets#text}). Ein Anhang mit nicht zugelassenem Medientyp oder über der Größengrenze wird nicht
+ * geladen und steht als {@link ExportAssetManifest.Status#EXCLUDED} mit Grund {@code media-type-excluded} bzw.
+ * {@code too-large} im Manifest. Die Einstellung gilt je Lauf, wie sie gerade wirksam ist.
  */
 public class ExportAssetCollection {
 
@@ -96,6 +106,7 @@ public class ExportAssetCollection {
     private final Assets assets;
     private final BiPredicate<String, String> sourceWide;
     private final SignInRequests signIns;
+    private final Supplier<ExportSettings> settings;
     /** Laufende Aufträge je Export; nach einem Neustart entscheidet allein das Manifest. */
     private final Map<String, String> running = new ConcurrentHashMap<>();
 
@@ -111,6 +122,14 @@ public class ExportAssetCollection {
     /** @param signIns wo Aufträge auf einen Einmalcode warten (ADR 0018) */
     public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets,
                                  BiPredicate<String, String> sourceWide, SignInRequests signIns) {
+        this(jobs, writer, sources, assets, sourceWide, signIns, () -> ExportSettings.DEFAULT);
+    }
+
+    /** @param settings die wirksame Einstellung für Dokument-Anhänge (ADR 0023), je Lauf gelesen */
+    public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets,
+                                 BiPredicate<String, String> sourceWide, SignInRequests signIns,
+                                 Supplier<ExportSettings> settings) {
+        this.settings = Objects.requireNonNull(settings, "settings");
         this.signIns = Objects.requireNonNull(signIns, "signIns");
         this.sourceWide = Objects.requireNonNull(sourceWide, "sourceWide");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
@@ -186,8 +205,21 @@ public class ExportAssetCollection {
                 if (!entry.stored() || entry.attachmentId() == null) {
                     return Optional.empty();
                 }
+                // Dokumente und Bilder liegen gleich: je Anhang, Version und SHA-256.
                 try {
                     return assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256());
+                } catch (AssetStoreException e) {
+                    return Optional.empty();
+                }
+            }
+
+            @Override
+            public Optional<String> text(ExportAssetManifest.Entry entry) {
+                if (!entry.document() || !entry.stored()) {
+                    return Optional.empty();
+                }
+                try {
+                    return assets.storedText(entry.sha256()).map(AssetText::text);
                 } catch (AssetStoreException e) {
                     return Optional.empty();
                 }
@@ -216,7 +248,7 @@ public class ExportAssetCollection {
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, PHASE);
             List<ExportAssetManifest.Entry> entries = new ArrayList<>();
-            Run run = new Run(context, dataset.sourceId());
+            Run run = new Run(context, dataset.sourceId(), settings.get());
             boolean[] complete = {true};
             boolean[] stopped = {false};
             Set<String> checked = new HashSet<>();
@@ -318,6 +350,9 @@ public class ExportAssetCollection {
                     ownAttachments.add(attachment.attachmentId());
                     AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
                     if (kind == AssetKind.OTHER) {
+                        if (run.settings.attachments()) {
+                            byId.put(attachment.attachmentId(), document(run, list, pageId, attachment));
+                        }
                         continue;
                     }
                     attachmentIds.add(attachment.attachmentId());
@@ -527,6 +562,50 @@ public class ExportAssetCollection {
                 status, reason);
     }
 
+    /**
+     * Ein Dokument-Anhang (ADR 0023): nach der Einstellung gefiltert, sonst wie ein Bild geladen und abgelegt; danach
+     * einmal sein Text gelesen und abgelegt. Ein nicht lesbarer Text kostet nur den Text, nie das Original.
+     */
+    private ExportAssetManifest.Entry document(Run run, PageAttachmentList list, String pageId,
+                                               PageAttachment attachment) {
+        JobContext context = run.context;
+        context.discovered(1);
+        ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.document(attachment.attachmentId(),
+                attachment.title());
+        String excluded = null;
+        if (!run.settings.permits(attachment.mediaType())) {
+            excluded = "media-type-excluded";
+        } else if (attachment.fileSize() != null && attachment.fileSize() > run.settings.maxSize()) {
+            excluded = "too-large";
+        }
+        if (excluded != null) {
+            context.processed(1);
+            return new ExportAssetManifest.Entry(pageId, reference, attachment.attachmentId(), attachment.version(),
+                    attachment.title(), attachment.mediaType(), attachment.fileSize() == null ? 0
+                    : attachment.fileSize(), null, ExportAssetManifest.Status.EXCLUDED, excluded);
+        }
+        ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
+                attachment.version(), attachment.title(), attachment.mediaType(),
+                () -> assets.content(list, attachment.attachmentId(), true).asset());
+        if (!entry.stored()) {
+            return entry;
+        }
+        if (entry.size() > run.settings.maxSize()) {
+            // Die Quelle nannte keine oder eine falsche Größe: abgelegt ist es, exportiert wird es nicht.
+            return new ExportAssetManifest.Entry(pageId, reference, entry.attachmentId(), entry.version(),
+                    entry.title(), entry.mediaType(), entry.size(), null, ExportAssetManifest.Status.EXCLUDED,
+                    "too-large");
+        }
+        try {
+            assets.text(list, attachment.attachmentId());
+        } catch (RuntimeException e) {
+            // Nicht lesbar, keine Extraktion oder Zeit abgelaufen: das Original bleibt, der Text fehlt.
+            LOG.log(System.Logger.Level.DEBUG, "Anhangstext der Quelle {0} nicht gelesen ({1})", list.sourceId(),
+                    e.getClass().getName());
+        }
+        return entry;
+    }
+
     /** Ob {@code filename} die Vorschau eines der gezeichneten Diagramme ist. */
     private static boolean preview(String filename, Set<String> drawn) {
         if (filename == null || filename.isBlank()) {
@@ -548,11 +627,13 @@ public class ExportAssetCollection {
 
         final JobContext context;
         final String sourceId;
+        final ExportSettings settings;
         boolean declined;
 
-        Run(JobContext context, String sourceId) {
+        Run(JobContext context, String sourceId, ExportSettings settings) {
             this.context = context;
             this.sourceId = sourceId;
+            this.settings = settings == null ? ExportSettings.DEFAULT : settings;
         }
 
         com.aresstack.spaceharvester.application.assets.Asset signedIn(Download download) {

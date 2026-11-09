@@ -40,8 +40,8 @@ java -jar space-harvester.jar
 
 KI-Dienst, Suche, Synchronisierung, Speicherort und freigegebene Ordner bilden die Laufzeitkonfiguration (ADR 0015) mit fortlaufender
 Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvester.ai.*`, `space-harvester.search.*`,
-`space-harvester.sync.*`, `space-harvester.cache.directory`/`max-age`/`version-check`, `space-harvester.local-files.*`
-und `space-harvester.network.*`.
+`space-harvester.sync.*`, `space-harvester.cache.directory`/`max-age`/`version-check`, `space-harvester.local-files.*`,
+`space-harvester.export.attachments.*` und `space-harvester.network.*`.
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
@@ -274,6 +274,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen: gemerkte Routen samt PAC-Ergebnissen werden verworfen, Proxy-Anmeldung und Vertrauen ohne Bundle neu gesetzt, alle Quellen neu geöffnet (Trust-Bundles und Client-Zertifikate neu gelesen); laufende Anfragen enden über ihre Verbindung |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
+| Dateianhänge im Export (siehe unten) | `export.attachments.enabled` (Standard `true`), `export.attachments.media-types`, `export.attachments.max-size` (Standard `20MB`) | ja, beim nächsten Auftrag „Bilder beschaffen“ |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
 | Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) samt Ergebnis-Cache der KI-Akronymauflösung (#122, `ai-cache.json`: nur Fingerabdrücke und Beziehungs-IDs, Auslösung über `POST /api/v1/term-relations/refresh?sourceId=` mit `{"kind":"acronym"}`, Auftrag unter `/api/v1/term-relations/refresh-jobs/{id}`) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
@@ -333,6 +334,24 @@ space-harvester:
 - Eine Freigabe liest nichts ein; eingelesen wird nur, was eine Quelle nennt.
 - `POST /api/v1/configuration` nimmt `local-files.allow-all` und `local-files.roots` (Text mit `;` oder Liste) an;
   `GET` zeigt sie unter `localFiles`.
+
+### Dateianhänge im Export
+
+Der Auftrag „Bilder beschaffen“ nach einem Export legt zusätzlich die Dokument-Anhänge der exportierten Seiten ab
+(ADR 0023): derselbe Download, dieselbe Anmeldung (Einmalcode), dieselbe Ablage je SHA-256. Ihr Text wird einmal mit
+Apache Tika gelesen; das JSON-Paket enthält Original und Text in `attachments.json` und `attachments/<Seiten-ID>/`
+([CONVERTERS.md](CONVERTERS.md)).
+
+| Schlüssel | Standard | Bedeutung |
+| --- | --- | --- |
+| `export.attachments.enabled` | `true` | `false`: keine Dokument-Anhänge, nur Bilder |
+| `export.attachments.media-types` | PDF, Word/Excel/PowerPoint (alt und OOXML), OpenDocument, RTF, `message/rfc822`, `application/vnd.ms-outlook`, `text/*` | zugelassene Medientypen der Quelle, als YAML-Liste oder Text mit Kommas; `typ/*` und ein Eintrag mit `.*` am Ende passen auf alle Untertypen (etwa `application/vnd.oasis.opendocument.*`) |
+| `export.attachments.max-size` | `20MB` | größte Datei; Bytes oder mit `KB`, `MB`, `GB` (je 1024); Standard ist die Grenze der Textextraktion |
+
+- Ein Anhang mit anderem Medientyp oder über der Grenze wird nicht geladen; er steht mit Status `EXCLUDED` und Grund
+  `media-type-excluded` bzw. `too-large` im Manifest, ohne Inhalt, und gilt nicht als fehlend.
+- Bilder, Grafiken und draw.io-Daten zählen nicht als Dokument; für sie gilt weiter ADR 0018.
+- `POST /api/v1/configuration` nimmt die drei Schlüssel an; `GET` zeigt sie unter `export`.
 
 ### Webhooks
 

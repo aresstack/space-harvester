@@ -35,6 +35,9 @@ import tools.jackson.databind.json.JsonMapper;
  * assets/&lt;Seiten-ID&gt;/&lt;Datei&gt;       Bilder und Anhänge wie beschafft (draw.io: die Originaldatei)
  * assets/&lt;Seiten-ID&gt;/&lt;Name&gt;.svg    gezeichnete Grafik eines Diagramms
  * assets/&lt;Seiten-ID&gt;/&lt;Name&gt;.graph.json  draw.io als Knoten und Verbindungen für KI-Systeme
+ * attachments.json                 Dokument-Anhänge (ADR 0023): Seite, Anhang, Typ, Prüfsumme, Status, Pfade
+ * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;  das Original des Anhangs
+ * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;.txt  sein beim Beschaffen gelesener Text
  * </pre>
  *
  * Keine Base64-Einbettung; Pfade sind relativ zum Paket. Was nicht abgelegt ist, steht nur mit Status und Grund in
@@ -44,10 +47,14 @@ import tools.jackson.databind.json.JsonMapper;
 public final class JsonPackageConverter implements ExportConverter {
 
     public static final String FORMAT = "json-package";
-    public static final String VERSION = "json-package/1";
+    public static final String VERSION = "json-package/2";
     public static final String ASSETS_FORMAT = "space-harvester/export-package-assets/v1";
+    /** Format von {@code attachments.json} (ADR 0023). */
+    public static final String ATTACHMENTS_FORMAT = "attachments/v1";
     private static final LocalDateTime ZIP_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
     private static final Pattern UNSAFE = Pattern.compile("[^\\p{L}\\p{N}._ -]+");
+    /** Dateinamen der Anhänge: Buchstaben (auch Umlaute), Ziffern, Punkt, Bindestrich, Unterstrich; sonst {@code _}. */
+    private static final Pattern UNSAFE_ATTACHMENT = Pattern.compile("[^\\p{L}\\p{N}._-]+");
 
     private final JsonMapper json = JsonMapper.builder().build();
     private final JsonArrayConverter pages = new JsonArrayConverter();
@@ -81,7 +88,7 @@ public final class JsonPackageConverter implements ExportConverter {
 
         ExportAssets assets = input.assets();
         Optional<ExportAssetManifest> manifest = assets.manifest();
-        List<Entry> entries = manifest.map(ExportAssetManifest::assets).orElse(List.of());
+        List<Entry> entries = manifest.map(ExportAssetManifest::images).orElse(List.of());
         Set<String> used = new HashSet<>();
         entry(zip, "assets.json");
         JsonGenerator generator = json.createGenerator(new Unclosed(zip));
@@ -144,6 +151,7 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeEndObject();
         generator.close();
         zip.closeEntry();
+        attachments(zip, assets, manifest.map(ExportAssetManifest::documents).orElse(List.of()), files, used);
         try {
             files.forEach(Runnable::run);
         } catch (UncheckedIOException e) {
@@ -151,6 +159,78 @@ public final class JsonPackageConverter implements ExportConverter {
         }
         zip.finish();
         zip.flush();
+    }
+
+    /**
+     * {@code attachments.json} (ADR 0023): je Dokument-Anhang Seite, Anhang, Typ, Größe, Prüfsumme, Status und Grund,
+     * dazu der Pfad des Originals und der seines Texts. Ohne Text bleibt das Original mit Grund
+     * {@code text-unavailable} und {@code textPath: null}; was nicht abgelegt ist, steht ohne Dateien darin.
+     */
+    private void attachments(ZipOutputStream zip, ExportAssets assets, List<Entry> documents, List<Runnable> files,
+                             Set<String> used) throws IOException {
+        entry(zip, "attachments.json");
+        JsonGenerator generator = json.createGenerator(new Unclosed(zip));
+        generator.writeStartObject();
+        generator.writeStringProperty("format", ATTACHMENTS_FORMAT);
+        generator.writeName("attachments");
+        generator.writeStartArray();
+        for (Entry entry : documents) {
+            Optional<byte[]> content = entry.stored() ? assets.content(entry) : Optional.empty();
+            Optional<String> text = content.isPresent() ? assets.text(entry) : Optional.empty();
+            String path = null;
+            String textPath = null;
+            String reason = entry.reason();
+            if (content.isPresent()) {
+                String base = "attachments/" + safeAttachment(entry.pageId()) + "/";
+                path = unique(base + attachmentName(entry), used);
+                String original = path;
+                files.add(() -> file(zip, original, assets.content(entry)));
+                if (text.isPresent()) {
+                    textPath = unique(path + ".txt", used);
+                    byte[] bytes = text.get().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    String target = textPath;
+                    files.add(() -> file(zip, target, Optional.of(bytes)));
+                } else if (reason == null) {
+                    reason = "text-unavailable";
+                }
+            } else if (entry.stored() && reason == null) {
+                reason = "asset-store-error";
+            }
+            generator.writeStartObject();
+            generator.writeStringProperty("pageId", entry.pageId());
+            generator.writeStringProperty("attachmentId", entry.attachmentId());
+            generator.writeStringProperty("title", entry.title());
+            generator.writeStringProperty("mediaType", entry.mediaType());
+            generator.writeNumberProperty("size", content.map(bytes -> (long) bytes.length).orElse(entry.size()));
+            generator.writeStringProperty("sha256", content.isPresent() ? entry.sha256() : null);
+            generator.writeStringProperty("status", entry.status().name());
+            generator.writeStringProperty("reason", reason);
+            generator.writeStringProperty("path", path);
+            generator.writeStringProperty("textPath", textPath);
+            generator.writeEndObject();
+        }
+        generator.writeEndArray();
+        generator.writeEndObject();
+        generator.close();
+        zip.closeEntry();
+    }
+
+    /** Dateiname eines Anhangs im Paket: sein Titel, nur mit sicheren Zeichen, sonst {@code anhang}. */
+    private static String attachmentName(Entry entry) {
+        String name = entry.reference().filename();
+        if (name == null || name.isBlank()) {
+            name = entry.title();
+        }
+        return safeAttachment(name == null || name.isBlank() ? "anhang" : name);
+    }
+
+    private static String safeAttachment(String value) {
+        String cleaned = UNSAFE_ATTACHMENT.matcher(value).replaceAll("_").replace("..", "_");
+        cleaned = cleaned.replaceAll("^[._]+(?=.)", "");
+        if (cleaned.isEmpty() || cleaned.equals(".") || cleaned.equals("_")) {
+            return "_";
+        }
+        return cleaned.length() > 120 ? cleaned.substring(cleaned.length() - 120) : cleaned;
     }
 
     /** draw.io als Struktur; nicht lesbare Daten bekommen nur einen Grund. */

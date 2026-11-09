@@ -1116,6 +1116,19 @@ public class Assets {
     }
 
     /**
+     * Der abgelegte Text genau dieser Dokumentbytes durch die eingestellte Extraktion (ADR 0023); liest nichts und
+     * fragt die Quelle nicht.
+     *
+     * @return leer ohne Extraktion oder wenn es (noch) keinen Text gibt
+     */
+    public Optional<AssetText> storedText(String sha256) {
+        if (documents == null || sha256 == null) {
+            return Optional.empty();
+        }
+        return store.text(sha256, documents.id(), documents.version());
+    }
+
+    /**
      * Die vorhandene Beschreibung genau dieser Bildbytes durch das eingestellte Modell; erzeugt nichts und fragt die
      * Quelle nicht.
      */

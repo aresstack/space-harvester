@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
@@ -127,13 +128,15 @@ class ExportConfiguration {
     @Bean
     ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
                                                 Assets assets, Exports exports, AccessGuard access,
-                                                SignInRequests signIns) {
+                                                SignInRequests signIns, ConfigurationManager configuration) {
         // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
         // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
                 (owner, sourceId) -> technicalClient(owner)
                         .filter(client -> access.permitsSourceWide(client, sourceId, AccessKind.CONTENT))
-                        .isPresent(), signIns);
+                        .isPresent(), signIns,
+                // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
+                () -> configuration.current().configuration().export());
         exports.onPublished(images::start);
         return images;
     }

@@ -48,4 +48,14 @@ public interface ExportAssets {
     default Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
         return Optional.empty();
     }
+
+    /**
+     * Der beim Beschaffen gelesene Text eines Dokument-Anhangs ({@link ExportAssetManifest.Kind#DOCUMENT}, ADR 0023)
+     * aus der Ablage; ein Converter liest nie selbst.
+     *
+     * @return leer, wenn es keinen Text gibt (nicht lesbar, keine Extraktion, kein Dokument)
+     */
+    default Optional<String> text(ExportAssetManifest.Entry entry) {
+        return Optional.empty();
+    }
 }

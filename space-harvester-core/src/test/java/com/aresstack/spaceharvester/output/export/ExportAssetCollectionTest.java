@@ -112,10 +112,10 @@ class ExportAssetCollectionTest {
 
         JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
         assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
-        // 100: Anhänge bild.png und ablauf.drawio, ein Bild der Lese-Ansicht, das kein Anhang ist; 101: ein fehlender
-        // Anhang.
-        assertThat(collection.progress().discovered()).isEqualTo(4);
-        assertThat(collection.progress().written()).isEqualTo(3);
+        // 100: Anhänge bild.png und ablauf.drawio, ein Bild der Lese-Ansicht, das kein Anhang ist, und das Dokument
+        // handbuch.pdf (ADR 0023); 101: ein fehlender Anhang.
+        assertThat(collection.progress().discovered()).isEqualTo(5);
+        assertThat(collection.progress().written()).isEqualTo(4);
         assertThat(collection.progress().failed()).isEqualTo(1);
         ExportDatasetInfo info = conversions.dataset(export.id(), "client-a").orElseThrow();
         assertThat(info.images()).isEqualTo(ExportDatasetInfo.Images.INCOMPLETE);
@@ -135,6 +135,12 @@ class ExportAssetCollectionTest {
         assertThat(drawio.rendition().mediaType()).isEqualTo("image/svg+xml");
         assertThat(mermaid.rendition().drawn()).isTrue();
         assertThat(mermaid.rendition().mediaType()).isEqualTo("image/png");
+        // Dokumente stehen im selben Manifest, aber nicht unter den Bildern der Seite.
+        assertThat(manifest.documents()).singleElement().satisfies(entry -> {
+            assertThat(entry.reference().kind()).isEqualTo(ExportAssetManifest.Kind.DOCUMENT);
+            assertThat(entry.attachmentId()).isEqualTo("att2");
+            assertThat(entry.stored()).isTrue();
+        });
         assertThat(manifest.forPage("101")).singleElement().satisfies(entry -> {
             assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.MISSING);
             assertThat(entry.stored()).isFalse();

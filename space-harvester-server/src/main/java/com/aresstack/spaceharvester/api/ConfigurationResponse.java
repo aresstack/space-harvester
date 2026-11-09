@@ -30,11 +30,20 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
                         new Storage(c.storage().dataDirectory() == null ? null
                                 : c.storage().dataDirectory().toString()),
                         new LocalFiles(c.localFiles().allowAll(),
-                                c.localFiles().roots().stream().map(Object::toString).toList())));
+                                c.localFiles().roots().stream().map(Object::toString).toList()),
+                        new Export(c.export().attachments(), c.export().mediaTypes(), c.export().maxSize())));
     }
 
     public record Configuration(Ai ai, Search search, Sync sync, Network network, Storage storage,
-                                LocalFiles localFiles) {
+                                LocalFiles localFiles, Export export) {
+    }
+
+    /**
+     * Dateianhänge im Export (ADR 0023), {@code export.attachments.*}.
+     *
+     * @param maxSize größte Datei in Bytes
+     */
+    public record Export(boolean attachments, List<String> mediaTypes, long maxSize) {
     }
 
     /**

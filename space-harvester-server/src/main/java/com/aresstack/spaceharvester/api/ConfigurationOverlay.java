@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -39,11 +40,13 @@ public final class ConfigurationOverlay {
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
             SyncSettings.WITHHELD_RETENTION, SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE,
             SyncSettings.INVENTORY_INTERVAL, SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM,
-            StorageSettings.DATA_DIRECTORY, LocalFileSettings.ALLOW_ALL, LocalFileSettings.ROOTS);
+            StorageSettings.DATA_DIRECTORY, LocalFileSettings.ALLOW_ALL, LocalFileSettings.ROOTS,
+            ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
+            ExportSettings.ATTACHMENTS_MAX_SIZE);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            SyncSettings.SPACES, LocalFileSettings.ROOTS);
+            SyncSettings.SPACES, LocalFileSettings.ROOTS, ExportSettings.ATTACHMENTS_MEDIA_TYPES);
 
     private static final Pattern INDEXED = Pattern.compile("(.+)\\[\\d+]");
 
@@ -102,6 +105,12 @@ public final class ConfigurationOverlay {
             put(properties, LocalFileSettings.ROOTS, String.join(LocalFileSettings.SEPARATOR,
                     configuration.localFiles().roots().stream().map(Object::toString).toList()));
         }
+        ExportSettings export = configuration.export();
+        put(properties, ExportSettings.ATTACHMENTS_ENABLED, export.attachments());
+        if (!export.mediaTypes().isEmpty()) {
+            put(properties, ExportSettings.ATTACHMENTS_MEDIA_TYPES, String.join(",", export.mediaTypes()));
+        }
+        put(properties, ExportSettings.ATTACHMENTS_MAX_SIZE, export.maxSize());
         return properties;
     }
 

@@ -285,6 +285,7 @@ final class ExportChapters {
             case UNAVAILABLE -> "unavailable";
             case SIGN_IN_REQUIRED -> "sign-in-required";
             case REDUNDANT -> "redundant";
+            case EXCLUDED -> "excluded";
             case STORED -> "not-collected";
         };
     }
@@ -340,7 +341,7 @@ final class ExportChapters {
 
     private static String src(Entry entry) {
         return switch (entry.reference().kind()) {
-            case ATTACHMENT -> entry.reference().filename() == null ? null : "attachment:" + entry.reference().filename();
+            case ATTACHMENT, DOCUMENT -> entry.reference().filename() == null ? null : "attachment:" + entry.reference().filename();
             case VIEW_IMAGE -> entry.reference().src();
             case MERMAID -> null;
         };
@@ -357,6 +358,7 @@ final class ExportChapters {
             case UNAVAILABLE -> "nicht beschafft";
             case SIGN_IN_REQUIRED -> "Anmeldung mit Einmalcode erforderlich";
             case REDUNDANT -> "Vorschau eines Diagramms, Quelldaten verwendet";
+            case EXCLUDED -> "nach Einstellung nicht beschafft";
             case STORED -> "nicht beschafft";
         };
         return entry.reason() == null || entry.reason().isBlank() ? status : status + " (" + entry.reason() + ")";
