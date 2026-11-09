@@ -68,6 +68,9 @@ public final class MainWindow implements AppContext.Navigator {
     private final JLabel status = Comic.muted(" ");
     /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
     private StatusLine statusLine;
+    /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
+    private final FindBar findBar;
+    private AppContext.Section current = AppContext.Section.SEARCH;
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -107,6 +110,7 @@ public final class MainWindow implements AppContext.Navigator {
                 actionDeck.add(view.actions(), section.name());
             }
         });
+        findBar = new FindBar(() -> views.get(current).component());
         context.onChange(ignored -> updateStatus());
         updateStatus();
     }
@@ -149,7 +153,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /**
      * Der Fensterinhalt: Tintenrand, Kopfzeile mit Titel, Icon-Leiste in zwei Gruppen und ✕, Explorer und
-     * Arbeitsfläche, Aktionszeile, Statusleiste.
+     * Arbeitsfläche mit Aktionszeile und Suche, Statuszeile mit Fortschritt.
      *
      * @param close    Gedrückthalten des ✕
      * @param minimize Klick auf das ✕
@@ -200,7 +204,17 @@ public final class MainWindow implements AppContext.Navigator {
         side.add(explorer.component(), BorderLayout.CENTER);
         deck.setMinimumSize(new Dimension(320, 0));
         split.setLeftComponent(side);
-        split.setRightComponent(deck);
+        // Aktionszeile und Suche gehören zur Arbeitsfläche: sie reichen nicht unter den Explorer.
+        JPanel work = new JPanel(new BorderLayout());
+        work.setBackground(Comic.SURFACE);
+        work.setMinimumSize(new Dimension(320, 0));
+        JPanel workFoot = new JPanel(new BorderLayout());
+        workFoot.setOpaque(false);
+        workFoot.add(actionDeck, BorderLayout.CENTER);
+        workFoot.add(findBar, BorderLayout.SOUTH);
+        work.add(deck, BorderLayout.CENTER);
+        work.add(workFoot, BorderLayout.SOUTH);
+        split.setRightComponent(work);
         split.setBorder(BorderFactory.createEmptyBorder());
         split.setBackground(Comic.SURFACE);
         split.setContinuousLayout(true);
@@ -220,7 +234,6 @@ public final class MainWindow implements AppContext.Navigator {
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
-        bottom.add(actionDeck, BorderLayout.NORTH);
         bottom.add(foot, BorderLayout.SOUTH);
 
         surface.add(top, BorderLayout.NORTH);
@@ -254,6 +267,14 @@ public final class MainWindow implements AppContext.Navigator {
                 }
             });
         }
+        surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
+        surface.getActionMap().put("find", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                findBar.focus();
+            }
+        });
     }
 
     /** Einstellungen mit dem Reiter „KI“. */
@@ -265,6 +286,8 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
+        boolean changed = section != current;
+        current = section;
         View view = views.get(section);
         boolean ownActions = view.actions() != null && view != activities;
         actionCards.show(actionDeck, ownActions ? section.name() : JOBS);
@@ -274,6 +297,9 @@ public final class MainWindow implements AppContext.Navigator {
             button.setSelected(true);
         }
         view.shown();
+        if (changed) {
+            findBar.areaChanged();
+        }
     }
 
     @Override
@@ -408,6 +434,11 @@ public final class MainWindow implements AppContext.Navigator {
                 g2.drawArc(2, 9, 10, 4, 180, 180);
             }
         };
+    }
+
+    /** Für Tests: die Suche im sichtbaren Bereich. */
+    FindBar findBar() {
+        return findBar;
     }
 
     /** Für Tests: die Statuszeile. */
