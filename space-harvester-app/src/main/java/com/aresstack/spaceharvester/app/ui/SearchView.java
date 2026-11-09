@@ -654,13 +654,29 @@ public final class SearchView implements View {
             LOG.log(System.Logger.Level.WARNING, "Semantische Suche fehlgeschlagen: {0} Suchanfragen, keine lief",
                     result.variants().size());
             // Die semantische Suche scheitert meist am KI-Dienst (Embeddings), nicht an den Quellen (#515).
-            feedback.warning("Suche fehlgeschlagen", "Keine Suchanfrage ließ sich ausführen. Mögliche Ursachen: "
-                    + "KI-Dienst für das Embedding-Modell nicht erreichbar oder nicht angemeldet, Frist überschritten "
-                    + "oder Quellen nicht erreichbar. Ohne „Semantische Suche“ geht die Schlagwortsuche weiter.");
+            feedback.warning("Suche fehlgeschlagen", failureText(result.failure()));
         } else if (model.rows.isEmpty() && result.reason() != ProgressiveResult.Completion.CANCELLED) {
             feedback.info("Keine Treffer", "Weder die Anfrage noch ihre Varianten fanden eine Seite, die du lesen "
                     + "darfst.");
         }
+    }
+
+    /** Der Grund einer gescheiterten semantischen Suche, wie der Core ihn meldet ({@code ProgressiveResult#failure}). */
+    static String failureText(com.aresstack.spaceharvester.ai.AiServiceException.Reason reason) {
+        String fallback = " Ohne „Semantische Suche“ geht die Schlagwortsuche weiter.";
+        if (reason == null) {
+            return "Keine Suchanfrage ließ sich ausführen; die Quellen waren nicht erreichbar." + fallback;
+        }
+        return switch (reason) {
+            case NOT_CONFIGURED -> "Kein Embedding-Modell eingerichtet (Einstellungen › Modelle).";
+            case UNAUTHORIZED -> "Der KI-Dienst lehnt die Anmeldung ab: API-Key fehlt oder ist ungültig "
+                    + "(Einstellungen › Modelle).";
+            case UNREACHABLE -> "Der KI-Dienst für das Embedding-Modell ist nicht erreichbar (Adresse, Proxy, "
+                    + "Netzwerk).";
+            case TIMEOUT -> "Der KI-Dienst hat nicht rechtzeitig geantwortet.";
+            case INVALID_RESPONSE -> "Der KI-Dienst lieferte unbrauchbare Embeddings, etwa mit falscher Vektorlänge "
+                    + "(„Modell prüfen“ misst sie neu).";
+        } + fallback;
     }
 
     static String completion(ProgressiveResult.Completion reason) {
