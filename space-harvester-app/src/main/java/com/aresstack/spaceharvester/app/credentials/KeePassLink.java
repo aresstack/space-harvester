@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePas
 import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassRpcConfig;
 import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassRpcSecretProvider;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -39,8 +40,8 @@ public final class KeePassLink {
      * @param prompt       fragt beim Koppeln nach dem Einmal-Passwort, das KeePass anzeigt ({@code null}: abgebrochen)
      */
     public KeePassLink(java.nio.file.Path pairingFile, KeePassPairingCallback prompt) {
-        KeePassPairingKeyStore keys = new FilePairingKeyStore(pairingFile);
-        this.pairedCheck = () -> java.nio.file.Files.isRegularFile(pairingFile);
+        SessionKeyStore keys = new SessionKeyStore(new FilePairingKeyStore(pairingFile));
+        this.pairedCheck = () -> keys.held() || java.nio.file.Files.isRegularFile(pairingFile);
         this.interactive = new KeePassRpcSecretProvider(CONFIG, keys, prompt);
         // Beim Start und beim Lesen des Keys nie ungefragt einen Kopplungsdialog öffnen.
         this.silent = new KeePassRpcSecretProvider(CONFIG, keys, KeePassPairingCallback.unavailable());
@@ -87,5 +88,60 @@ public final class KeePassLink {
     /** Die Zugangsdatenquelle zu einem Eintrag, ohne Kopplungsdialog. */
     public AiCredentials credentials(String entry) {
         return new KeePassAiCredentials(silent, entry);
+    }
+
+    /**
+     * Hält den Pairing-Schlüssel zusätzlich für die laufende Sitzung im Speicher, gemeinsam für beide Provider: Scheitert
+     * das Schreiben der Datei, gilt die Kopplung trotzdem bis zum Beenden der App (so wie der EAC es verspricht). Der
+     * Provider überschreibt geladene Schlüssel nach Gebrauch, darum gehen nur Kopien hinaus und hinein.
+     */
+    static final class SessionKeyStore implements KeePassPairingKeyStore {
+
+        private final KeePassPairingKeyStore file;
+        private char[] memory;
+
+        SessionKeyStore(KeePassPairingKeyStore file) {
+            this.file = file;
+        }
+
+        synchronized boolean held() {
+            return memory != null;
+        }
+
+        @Override
+        public synchronized char[] load() {
+            if (memory == null) {
+                char[] stored = file.load();
+                if (stored == null || stored.length == 0) {
+                    return null;
+                }
+                memory = stored;
+            }
+            return Arrays.copyOf(memory, memory.length);
+        }
+
+        @Override
+        public synchronized void save(char[] sessionKey) {
+            wipe();
+            if (sessionKey == null || sessionKey.length == 0) {
+                file.clear();
+                return;
+            }
+            memory = Arrays.copyOf(sessionKey, sessionKey.length);
+            file.save(Arrays.copyOf(sessionKey, sessionKey.length));
+        }
+
+        @Override
+        public synchronized void clear() {
+            wipe();
+            file.clear();
+        }
+
+        private void wipe() {
+            if (memory != null) {
+                Arrays.fill(memory, '\0');
+                memory = null;
+            }
+        }
     }
 }
