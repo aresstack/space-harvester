@@ -229,11 +229,15 @@ public final class Comic {
     }
 
     /**
-     * Aufklappbare Überschrift wie „▸ Erweitert“ im Assistenten von AskAI ({@code CollapsiblePanel}): linksbündig,
-     * ohne Knopfrahmen, halbfett; der Aufrufer setzt Text samt ▸/▾ und schaltet die Zeilen darunter.
+     * Aufklappbare Überschrift wie „Erweitert“ im Assistenten von AskAI ({@code CollapsiblePanel}): linksbündig,
+     * ohne Knopfrahmen, halbfett, mit gezeichnetem Pfeil davor (kein Textzeichen: Segoe UI Semibold hat ▸/▾ nicht und
+     * zeigt sonst ein Kästchen). Der Aufrufer schaltet mit {@link #disclose} den Pfeil und die Zeilen darunter.
      */
     public static javax.swing.JButton disclosure(String text, String tooltip) {
         javax.swing.JButton header = new javax.swing.JButton(text);
+        header.setIcon(new DisclosureIcon(header));
+        header.setIconTextGap(6);
+        header.putClientProperty(DISCLOSED, Boolean.FALSE);
         header.setHorizontalAlignment(SwingConstants.LEFT);
         header.setFocusPainted(false);
         header.setBorderPainted(false);
@@ -245,6 +249,61 @@ public final class Comic {
         header.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         header.setToolTipText(tooltip);
         return header;
+    }
+
+    private static final String DISCLOSED = "spaceharvester.disclosed";
+
+    /** Pfeil einer {@link #disclosure aufklappbaren Überschrift}: rechts zeigend zu, nach unten offen. */
+    public static void disclose(javax.swing.JButton header, boolean open) {
+        header.putClientProperty(DISCLOSED, open);
+        header.repaint();
+    }
+
+    /** Ob die {@link #disclosure aufklappbare Überschrift} offen ist. */
+    public static boolean disclosed(javax.swing.JButton header) {
+        return Boolean.TRUE.equals(header.getClientProperty(DISCLOSED));
+    }
+
+    /** Gefülltes Dreieck in Textfarbe, unabhängig von der Schrift. */
+    private static final class DisclosureIcon implements javax.swing.Icon {
+        private final javax.swing.JButton owner;
+
+        DisclosureIcon(javax.swing.JButton owner) {
+            this.owner = owner;
+        }
+
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(c.isEnabled() ? c.getForeground() : MUTED);
+                java.awt.geom.Path2D.Double arrow = new java.awt.geom.Path2D.Double();
+                if (disclosed(owner)) {
+                    arrow.moveTo(x + 1, y + 3);
+                    arrow.lineTo(x + 9, y + 3);
+                    arrow.lineTo(x + 5, y + 8);
+                } else {
+                    arrow.moveTo(x + 3, y + 1);
+                    arrow.lineTo(x + 8, y + 5);
+                    arrow.lineTo(x + 3, y + 9);
+                }
+                arrow.closePath();
+                g.fill(arrow);
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 10;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 10;
+        }
     }
 
     /** Eingabefeld mit Knopf daneben (etwa ▾): das Feld füllt die Breite, der Knopf steht rechts. */
