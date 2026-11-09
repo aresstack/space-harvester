@@ -212,7 +212,39 @@ public final class AppSettingsLoader {
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
-                localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems));
+                localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
+                inactiveRoots(get(app, "inactive-roots"), problems));
+    }
+
+    /**
+     * {@code space-harvester-app.inactive-roots}: Ordner, die in der Tabelle „Dateizugriff“ stehen, aber vorübergehend
+     * abgeschaltet sind; als YAML-Liste oder durch {@code ;} getrennt. Relative Pfade werden gemeldet und übergangen.
+     */
+    private List<Path> inactiveRoots(Object raw, List<String> problems) {
+        List<Object> entries = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            entries.addAll(list);
+        } else if (raw instanceof Map<?, ?>) {
+            problems.add(APP_ROOT + ".inactive-roots ist eine Liste von Ordnern, keine Zuordnung");
+        } else if (raw != null) {
+            String text = text(raw, problems);
+            if (text != null) {
+                entries.addAll(List.of(text.split(LocalFileSettings.SEPARATOR)));
+            }
+        }
+        List<Path> inactive = new ArrayList<>();
+        for (Object entry : entries) {
+            Path root = path(entry, problems);
+            if (root == null) {
+                continue;
+            }
+            if (!root.isAbsolute()) {
+                problems.add(APP_ROOT + ".inactive-roots: nur absolute Pfade sind erlaubt");
+                continue;
+            }
+            inactive.add(root);
+        }
+        return inactive;
     }
 
     /** {@code space-harvester-app.source-keepass-entries}: Quellen-ID → Titel des KeePass-Eintrags. */

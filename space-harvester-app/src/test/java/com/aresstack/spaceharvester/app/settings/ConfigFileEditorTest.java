@@ -693,6 +693,20 @@ class ConfigFileEditorTest {
         assertThatThrownBy(() -> editor.withFileAccess(file, new ConfigFileEditor.Draft(cleared, null), false,
                 java.util.List.of("relativ/ordner"))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("absolute");
+
+        // Abgeschaltete Ordner stehen unter space-harvester-app.inactive-roots; leer entfernt den Schlüssel wieder.
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), false,
+                java.util.List.of("/srv/handbuecher"), java.util.List.of(unc)));
+        AppSettings paused = loader.load(file);
+        assertThat(paused.problems()).isEmpty();
+        assertThat(paused.localFiles().roots()).containsExactly(Path.of("/srv/handbuecher"));
+        assertThat(paused.inactiveRoots()).containsExactly(Path.of(unc));
+        assertThat(Files.readString(file)).contains("  inactive-roots: [\"" + unc.replace("\\", "\\\\")
+                .replace("\"", "\\\"") + "\"]");
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), false,
+                java.util.List.of("/srv/handbuecher"), java.util.List.of()));
+        assertThat(Files.readString(file)).doesNotContain("inactive-roots");
+        assertThat(loader.load(file).inactiveRoots()).isEmpty();
     }
 
     @Test
