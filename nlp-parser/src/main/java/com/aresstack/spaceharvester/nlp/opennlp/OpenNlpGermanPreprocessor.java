@@ -88,6 +88,12 @@ public final class OpenNlpGermanPreprocessor implements GermanPreprocessor {
         return new ByteArrayInputStream(bytes);
     }
 
+    /**
+     * Sätze mit Wörtern, Wortarten und Grundformen. Ein Zeilenumbruch trennt in der Textprojektion Blöcke
+     * (Überschrift, Absatz, Listenpunkt) und ist deshalb eine harte Satzgrenze: Die Satzerkennung läuft je Block,
+     * sonst verschmilzt eine Überschrift mit dem Folgesatz. Wortarten geschlossener Klassen, die nie richtig sein
+     * können, korrigiert {@link GermanTagCorrections} vor dem Parser.
+     */
     @Override
     public List<Sentence> analyze(String text) {
         SentenceDetectorME detector = new SentenceDetectorME(sentences);
@@ -95,37 +101,51 @@ public final class OpenNlpGermanPreprocessor implements GermanPreprocessor {
         POSTaggerME tagger = new POSTaggerME(tags, POSTagFormat.UD);
         LemmatizerME lemmatizer = new LemmatizerME(lemmas);
         List<Sentence> result = new ArrayList<>();
-        for (Span sentenceSpan : detector.sentPosDetect(text)) {
-            int offset = sentenceSpan.getStart();
-            String sentenceText = text.substring(sentenceSpan.getStart(), sentenceSpan.getEnd());
-            List<Token> words = new ArrayList<>();
-            List<MultiwordToken> multiwords = new ArrayList<>();
-            for (Span span : tokenizer.tokenizePos(sentenceText)) {
-                int start = offset + span.getStart();
-                int end = offset + span.getEnd();
-                String form = text.substring(start, end);
-                List<String> parts = GermanContractions.split(form);
-                if (parts == null) {
-                    words.add(Token.word(words.size() + 1, form, start, end));
-                } else {
-                    int first = words.size() + 1;
-                    for (String part : parts) {
-                        words.add(Token.word(words.size() + 1, part, start, end));
-                    }
-                    multiwords.add(new MultiwordToken(first, words.size(), form, start, end));
-                }
+        int blockStart = 0;
+        while (blockStart <= text.length()) {
+            int blockEnd = text.indexOf('\n', blockStart);
+            if (blockEnd < 0) {
+                blockEnd = text.length();
             }
-            String[] forms = words.stream().map(Token::form).toArray(String[]::new);
-            String[] upos = forms.length == 0 ? new String[0] : tagger.tag(forms);
-            String[] lemma = forms.length == 0 ? new String[0] : lemmatizer.lemmatize(forms, upos);
-            List<Token> tagged = new ArrayList<>();
-            for (int i = 0; i < words.size(); i++) {
-                tagged.add(words.get(i).withTags(lemma(lemma[i]), upos[i], null, Map.of()));
+            for (Span local : detector.sentPosDetect(text.substring(blockStart, blockEnd))) {
+                result.add(sentence(text, blockStart + local.getStart(), blockStart + local.getEnd(), result.size(),
+                        tokenizer, tagger, lemmatizer));
             }
-            result.add(new Sentence(result.size(), sentenceSpan.getStart(), sentenceSpan.getEnd(), sentenceText,
-                    tagged, multiwords));
+            blockStart = blockEnd + 1;
         }
         return result;
+    }
+
+    private static Sentence sentence(String text, int sentenceStart, int sentenceEnd, int index, TokenizerME tokenizer,
+                                     POSTaggerME tagger, LemmatizerME lemmatizer) {
+        String sentenceText = text.substring(sentenceStart, sentenceEnd);
+        List<Token> words = new ArrayList<>();
+        List<MultiwordToken> multiwords = new ArrayList<>();
+        for (Span span : tokenizer.tokenizePos(sentenceText)) {
+            int start = sentenceStart + span.getStart();
+            int end = sentenceStart + span.getEnd();
+            String form = text.substring(start, end);
+            List<String> parts = GermanContractions.split(form);
+            if (parts == null) {
+                words.add(Token.word(words.size() + 1, form, start, end));
+            } else {
+                int first = words.size() + 1;
+                for (String part : parts) {
+                    words.add(Token.word(words.size() + 1, part, start, end));
+                }
+                multiwords.add(new MultiwordToken(first, words.size(), form, start, end));
+            }
+        }
+        String[] forms = words.stream().map(Token::form).toArray(String[]::new);
+        String[] upos = forms.length == 0 ? new String[0] : tagger.tag(forms);
+        GermanTagCorrections.correctTags(forms, upos);
+        String[] lemma = forms.length == 0 ? new String[0] : lemmatizer.lemmatize(forms, upos);
+        List<Token> tagged = new ArrayList<>();
+        for (int i = 0; i < words.size(); i++) {
+            tagged.add(words.get(i).withTags(GermanTagCorrections.lemma(forms[i], upos[i], lemma(lemma[i])), upos[i],
+                    null, Map.of()));
+        }
+        return new Sentence(index, sentenceStart, sentenceEnd, sentenceText, tagged, multiwords);
     }
 
     /** OpenNLP meldet fehlende Grundformen als {@code O} oder {@code _}. */
