@@ -41,7 +41,9 @@ final class StatusLine extends JPanel {
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(4, 16, 4, 16)));
-        add(west, BorderLayout.WEST);
+        // Der Stand links darf die Mitte (Abbrechen, Endzustand) nicht verdrängen: höchstens 40 % der Breite,
+        // ein langer Text (Pfad des Bestands) wird mit „…“ gekürzt.
+        add(new Capped(west, 0.4), BorderLayout.WEST);
         if (center != null) {
             add(center, BorderLayout.CENTER);
         }
@@ -127,6 +129,33 @@ final class StatusLine extends JPanel {
         sweep.stop();
         fade.stop();
         super.removeNotify();
+    }
+
+    /** Hält ein Kind auf höchstens einen Anteil der Breite der Statuszeile. */
+    private final class Capped extends JPanel {
+        private final double share;
+
+        Capped(JComponent child, double share) {
+            super(new BorderLayout());
+            this.share = share;
+            setOpaque(false);
+            add(child, BorderLayout.CENTER);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            java.awt.Dimension size = super.getPreferredSize();
+            int cap = (int) (StatusLine.this.getWidth() * share);
+            if (cap > 0 && size.width > cap) {
+                size.width = cap;
+            }
+            return size;
+        }
+
+        @Override
+        public java.awt.Dimension getMinimumSize() {
+            return new java.awt.Dimension(0, super.getMinimumSize().height);
+        }
     }
 
     private static Color mix(Color color, Color base, double share) {

@@ -160,6 +160,11 @@ final class FindBar extends JPanel {
             find = new ReaderFind(root);
             findRoot = root;
         }
+        if (find.stale()) {
+            // Inhalt hat sich geändert (anderer Reiter, neu geladenes Dokument): gemerkte Stellen verwerfen.
+            find.clear();
+            searched = null;
+        }
         String query = field.getText();
         if (query.trim().isEmpty()) {
             find.clear();

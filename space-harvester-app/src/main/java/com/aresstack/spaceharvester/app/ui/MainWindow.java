@@ -365,6 +365,7 @@ public final class MainWindow implements AppContext.Navigator {
     private void notice(String text, java.awt.Color color) {
         updateStatus();
         status.setText(status.getText() + " · " + text);
+        status.setToolTipText(status.getText());
         status.setForeground(color);
     }
 
@@ -391,6 +392,7 @@ public final class MainWindow implements AppContext.Navigator {
             state = "Startet …";
         }
         status.setText("Space Harvester " + context.version() + " · " + state);
+        status.setToolTipText(status.getText());
         status.setForeground(Comic.MUTED);
     }
 

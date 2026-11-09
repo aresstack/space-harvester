@@ -58,4 +58,64 @@ class FindBarTest {
             assertThat(text.getHighlighter().getHighlights()).isEmpty();
         });
     }
+
+    @Test
+    void expandingLowercaseDoesNotShiftOffsets() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea text = new JTextArea("İİİ Neustart");
+            JPanel page = new JPanel();
+            page.add(text);
+            FindBar bar = new FindBar(() -> page);
+            assertThat(bar.search("neustart")).isEqualTo(1);
+            Highlighter.Highlight mark = text.getHighlighter().getHighlights()[0];
+            assertThat(text.getText().substring(mark.getStartOffset(), mark.getEndOffset())).isEqualTo("Neustart");
+        });
+    }
+
+    @Test
+    void tablesAreSearchedByTheirDisplayedText() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTable table = new javax.swing.JTable(new Object[][] {{Thread.State.RUNNABLE}},
+                    new Object[] {"Zustand"});
+            table.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+                @Override
+                protected void setValue(Object value) {
+                    setText(value == Thread.State.RUNNABLE ? "Läuft" : String.valueOf(value));
+                }
+            });
+            JPanel page = new JPanel();
+            page.add(table);
+            FindBar bar = new FindBar(() -> page);
+            assertThat(bar.search("läuft")).isEqualTo(1);
+            assertThat(bar.search("RUNNABLE")).isZero();
+        });
+    }
+
+    @Test
+    void changedContentIsSearchedAgain() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea text = new JTextArea("eins zwei eins zwei eins");
+            JPanel page = new JPanel();
+            page.add(text);
+            FindBar bar = new FindBar(() -> page);
+            assertThat(bar.search("eins")).isEqualTo(3);
+            text.setText("eins");
+            bar.next();
+            assertThat(bar.counterText()).isEqualTo("1 / 1");
+        });
+    }
+
+    @Test
+    void longStatusTextLeavesRoomForTheJobLine() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JLabel status = new JLabel("Space Harvester · Bestand " + "C:\\sehr\\langer\\Pfad".repeat(30));
+            JLabel cancel = new JLabel("Abbrechen");
+            StatusLine line = new StatusLine(new javax.swing.JProgressBar(), status, cancel, new JLabel("© AresStack"));
+            line.setSize(960, 30);
+            line.doLayout();
+            line.setSize(960, 30);
+            line.doLayout();
+            assertThat(cancel.getWidth()).isGreaterThanOrEqualTo(cancel.getPreferredSize().width);
+        });
+    }
 }

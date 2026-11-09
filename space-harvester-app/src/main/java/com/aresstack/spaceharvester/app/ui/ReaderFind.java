@@ -184,30 +184,48 @@ final class ReaderFind {
         } catch (BadLocationException ex) {
             return;
         }
-        String lower = content.toLowerCase(Locale.ROOT);
+        // Auf dem Originaltext vergleichen: toLowerCase kann die Länge ändern („İ“), dann stimmten die Stellen nicht.
+        int length = needle.length();
         int position = 0;
-        while (position < lower.length()) {
-            int index = lower.indexOf(needle, position);
-            if (index < 0) {
-                break;
+        while (position + length <= content.length()) {
+            if (content.regionMatches(true, position, needle, 0, length)) {
+                hits.add(Hit.text(text, position, position + length, content.substring(position, position + length),
+                        document, document.getLength()));
+                position += length;
+            } else {
+                position++;
             }
-            int end = index + needle.length();
-            hits.add(Hit.text(text, index, end, content.substring(index, end)));
-            position = end;
         }
+    }
+
+    /**
+     * Ob sich der durchsuchte Inhalt seit der Suche geändert hat (anderer Reiter, neu geladenes Dokument): dann
+     * passen die gemerkten Stellen nicht mehr und es muss neu gesucht werden.
+     */
+    boolean stale() {
+        for (int i = 0; i < hits.size(); i++) {
+            Hit hit = hits.get(i);
+            if (hit.text != null && (hit.text.getDocument() != hit.document
+                    || hit.text.getDocument().getLength() != hit.length)) {
+                return true;
+            }
+            if (!SwingUtilities.isDescendingFrom(hitComponent(i), root)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void collectTable(JTable table, String needle) {
         List<Cell> cells = new ArrayList<Cell>();
         for (int column = 0; column < table.getColumnCount(); column++) {
-            Object header = table.getColumnModel().getColumn(column).getHeaderValue();
-            if (contains(header, needle)) {
+            if (contains(headerText(table, column), needle)) {
                 cells.add(new Cell(-1, column));
             }
         }
         for (int row = 0; row < table.getRowCount(); row++) {
             for (int column = 0; column < table.getColumnCount(); column++) {
-                if (contains(table.getValueAt(row, column), needle)) {
+                if (contains(cellText(table, row, column), needle)) {
                     cells.add(new Cell(row, column));
                 }
             }
@@ -218,10 +236,43 @@ final class ReaderFind {
         installTableMarking(table);
         markedTables.add(table);
         for (Cell cell : cells) {
-            Object value = cell.row < 0 ? table.getColumnModel().getColumn(cell.column).getHeaderValue()
-                    : table.getValueAt(cell.row, cell.column);
-            hits.add(Hit.cell(table, cell, String.valueOf(value)));
+            String value = cell.row < 0 ? headerText(table, cell.column) : cellText(table, cell.row, cell.column);
+            hits.add(Hit.cell(table, cell, value));
         }
+    }
+
+    /** Der angezeigte Text der Zelle (über den Renderer, z. B. „Läuft“ statt RUNNING), sonst der Wert. */
+    private static String cellText(JTable table, int row, int column) {
+        Object value = table.getValueAt(row, column);
+        try {
+            Component shown = table.getCellRenderer(row, column).getTableCellRendererComponent(table, value, false,
+                    false, row, column);
+            if (shown instanceof JLabel && ((JLabel) shown).getText() != null) {
+                return ((JLabel) shown).getText();
+            }
+        } catch (RuntimeException ignored) {
+            // fällt auf den Wert zurück
+        }
+        return value == null ? null : String.valueOf(value);
+    }
+
+    /** Der angezeigte Spaltentitel. */
+    private static String headerText(JTable table, int column) {
+        Object value = table.getColumnModel().getColumn(column).getHeaderValue();
+        TableCellRenderer renderer = table.getColumnModel().getColumn(column).getHeaderRenderer();
+        if (renderer == null && table.getTableHeader() != null) {
+            renderer = table.getTableHeader().getDefaultRenderer();
+        }
+        try {
+            Component shown = renderer == null ? null
+                    : renderer.getTableCellRendererComponent(table, value, false, false, -1, column);
+            if (shown instanceof JLabel && ((JLabel) shown).getText() != null) {
+                return ((JLabel) shown).getText();
+            }
+        } catch (RuntimeException ignored) {
+            // fällt auf den Wert zurück
+        }
+        return value == null ? null : String.valueOf(value);
     }
 
     private void collectLabel(JLabel label, String needle) {
@@ -338,7 +389,7 @@ final class ReaderFind {
             root.scrollRectToVisible(inRoot);
         }
         if (hit.text != null && hit.text.isFocusable()) {
-            hit.text.setCaretPosition(hit.start);
+            hit.text.setCaretPosition(Math.max(0, Math.min(hit.start, hit.text.getDocument().getLength())));
         }
     }
 
@@ -365,6 +416,9 @@ final class ReaderFind {
         final Cell cell;
         final JLabel label;
         final String found;
+        /** Dokument und Länge zur Zeit der Suche, um veraltete Stellen zu erkennen. */
+        Document document;
+        int length;
         Object tag;
 
         private Hit(JTextComponent text, int start, int end, JTable table, Cell cell, JLabel label, String found) {
@@ -377,8 +431,11 @@ final class ReaderFind {
             this.found = found;
         }
 
-        static Hit text(JTextComponent text, int start, int end, String found) {
-            return new Hit(text, start, end, null, null, null, found);
+        static Hit text(JTextComponent text, int start, int end, String found, Document document, int length) {
+            Hit hit = new Hit(text, start, end, null, null, null, found);
+            hit.document = document;
+            hit.length = length;
+            return hit;
         }
 
         static Hit cell(JTable table, Cell cell, String found) {
