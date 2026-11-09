@@ -104,6 +104,7 @@ public final class MainWindow implements AppContext.Navigator {
         searchView.onClearScope(explorer::clearSelection);
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
+            explorer.currentPage(position);
             if (revealOpened) {
                 revealOpened = false;
                 explorer.revealPage(position);

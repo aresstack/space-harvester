@@ -157,6 +157,10 @@ public final class Explorer {
     private final CardLayout cards = new CardLayout();
     private final JPanel deck = new JPanel(cards);
     private final JLabel note = Comic.muted(" ");
+    private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
+    private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
+    /** Die zuletzt in der Leseansicht gezeigte Seite; Ziel von „Aktuelles Dokument im Baum zeigen“. */
+    private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
     private List<String> shownSources = List.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
@@ -201,12 +205,20 @@ public final class Explorer {
             @Override
             public void mouseClicked(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
-                if (path == null || event.getClickCount() != 1 || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                if (path == null || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     return;
                 }
+                // Ein Klick wählt nur (Download-Symbol und „Weitere laden“ ausgenommen), erst Doppelklick öffnet.
+                boolean single = event.getClickCount() == 1;
                 if (onAction(path, event.getPoint())) {
-                    download(((Node) path.getLastPathComponent()).item());
-                } else {
+                    if (single) {
+                        download(((Node) path.getLastPathComponent()).item());
+                    }
+                } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
+                    if (single) {
+                        activate(path);
+                    }
+                } else if (event.getClickCount() == 2) {
                     activate(path);
                 }
             }
@@ -302,8 +314,9 @@ public final class Explorer {
         bindKey(filter, KeyEvent.VK_ESCAPE, () -> filter.setText(""));
 
         JScrollPane treeScroll = Comic.scroll(tree);
-        treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        // Zeilen gehen über die volle Breite (Download-Symbol rechtsbündig); bei neuer Breite neu vermessen.
+        treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        // Zeilen gehen mindestens über die volle Breite (Download-Symbol rechtsbündig); breitere Zeilen scrollen
+        // waagerecht. Bei neuer Breite neu vermessen.
         treeScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
@@ -322,8 +335,19 @@ public final class Explorer {
         head.add(filter, BorderLayout.CENTER);
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
-        root.add(note, BorderLayout.SOUTH);
-        note.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 0));
+        collapseAll.addActionListener(e -> collapseAll());
+        showCurrent.addActionListener(e -> showCurrent());
+        JPanel foot = new JPanel(new BorderLayout());
+        foot.setOpaque(false);
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
+        buttons.setOpaque(false);
+        buttons.add(collapseAll);
+        buttons.add(showCurrent);
+        foot.add(buttons, BorderLayout.WEST);
+        // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
+        note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
+        foot.add(note, BorderLayout.CENTER);
+        root.add(foot, BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
@@ -335,6 +359,28 @@ public final class Explorer {
     /** Meldet jede Änderung der Auswahl als Umfang (für die Suche); leer heißt alle. */
     public void onScope(Consumer<List<Scope>> listener) {
         this.scopeListener = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Merkt sich die in der Leseansicht gezeigte Seite (ohne den Baum zu ändern). */
+    public void currentPage(PageNavigation.Position position) {
+        this.current = position;
+    }
+
+    /** Klappt alle Knoten zu; die Wissensquellen bleiben sichtbar. */
+    void collapseAll() {
+        for (int row = tree.getRowCount() - 1; row >= 0; row--) {
+            tree.collapseRow(row);
+        }
+    }
+
+    /** Wie das Fadenkreuz in IntelliJ: nur den Pfad zur gezeigten Seite aufklappen und sie wählen, ohne zu öffnen. */
+    void showCurrent() {
+        if (current == null) {
+            return;
+        }
+        cards.show(deck, TREE);
+        collapseAll();
+        revealPage(current);
     }
 
     /** Hebt die Auswahl auf; der Umfang ist dann wieder alles. */
@@ -503,7 +549,7 @@ public final class Explorer {
             top.add(new Node(new Note(runtime == null ? "Startet …" : "Keine Wissensquelle")));
         }
         model.reload();
-        note.setText(sources.isEmpty() ? " " : Texts.count(sources.size(), "Wissensquelle", "Wissensquellen"));
+        note.setText(" ");
     }
 
     private static Node expandable(Item item) {
@@ -682,8 +728,7 @@ public final class Explorer {
         int id = ++filterRequest;
         if (text.isEmpty()) {
             cards.show(deck, TREE);
-            note.setText(shownSources.isEmpty() ? " "
-                    : Texts.count(shownSources.size(), "Wissensquelle", "Wissensquellen"));
+            note.setText(" ");
             return;
         }
         cards.show(deck, MATCHES);
@@ -959,6 +1004,21 @@ public final class Explorer {
     /** Für Tests. */
     JTree tree() {
         return tree;
+    }
+
+    /** Für Tests. */
+    IconButton collapseAllButton() {
+        return collapseAll;
+    }
+
+    /** Für Tests. */
+    IconButton showCurrentButton() {
+        return showCurrent;
+    }
+
+    /** Für Tests. */
+    String note() {
+        return note.getText();
     }
 
     /** Für Tests. */

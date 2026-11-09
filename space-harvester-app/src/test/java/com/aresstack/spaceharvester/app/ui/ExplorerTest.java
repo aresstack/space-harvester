@@ -146,5 +146,51 @@ class ExplorerTest {
             selected[0] = path == null ? null : ((Explorer.Node) path.getLastPathComponent()).item();
         });
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
+
+        // Ein Klick auf die Seite wählt nur, erst der Doppelklick öffnet sie.
+        List<String> opened = new java.util.ArrayList<>();
+        context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("openPage")) {
+                        opened.add((String) args[1]);
+                    }
+                    return null;
+                }));
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTree tree = explorer[0].tree();
+            tree.setSize(400, 400);
+            java.awt.Rectangle row = tree.getPathBounds(tree.getSelectionPath());
+            for (int clicks = 1; clicks <= 2; clicks++) {
+                tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                        System.currentTimeMillis(), 0, row.x + 5, row.y + row.height / 2, clicks, false,
+                        java.awt.event.MouseEvent.BUTTON1));
+                if (clicks == 1) {
+                    assertThat(opened).as("ein Klick öffnet nicht").isEmpty();
+                }
+            }
+        });
+        assertThat(opened).containsExactly(wanted);
+
+        // Fußleiste: keine Anzahl der Wissensquellen; „Alles zuklappen“ und das Fadenkreuz zeigen die gezeigte Seite.
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(explorer[0].note()).isBlank();
+            assertThat(explorer[0].collapseAllButton().getToolTipText()).isEqualTo("Alles zuklappen");
+            explorer[0].collapseAllButton().doClick();
+            assertThat(explorer[0].tree().getRowCount()).isEqualTo(1);
+            explorer[0].currentPage(position);
+            explorer[0].showCurrentButton().doClick();
+        });
+        for (int i = 0; i < 200; i++) {
+            SwingUtilities.invokeAndWait(() -> {
+                javax.swing.tree.TreePath path = explorer[0].tree().getSelectionPath();
+                selected[0] = path == null ? null : ((Explorer.Node) path.getLastPathComponent()).item();
+            });
+            if (selected[0] instanceof Explorer.PageItem page && page.pageId().equals(wanted)) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
+        assertThat(opened).as("das Fadenkreuz öffnet nicht").containsExactly(wanted);
     }
 }

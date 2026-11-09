@@ -457,21 +457,6 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** Lädt eine Seite über ihre Quell-URL (enthält die Seiten-ID). */
-    public void loadByUrl(String sourceId, String url) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
-            return;
-        }
-        cards.show(deck, PAGE);
-        feedback.working("Seite zur Adresse wird gesucht …");
-        Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, false),
-                found -> load(sourceId, found.header().key().pageId(), false),
-                error -> Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, true),
-                        found -> load(sourceId, found.header().key().pageId(), true),
-                        e -> feedback.problem(e, Problems.Step.PAGE)));
-    }
-
     /** Meldet den Pfad der angezeigten Seite, sobald er geladen ist; ohne Seitenbaum der Quelle nie. */
     public void onPosition(java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {
         this.positionShown = java.util.Objects.requireNonNull(listener, "listener");
