@@ -20,11 +20,20 @@ application {
     applicationName = 'parity-report'
 }
 
+evaluationDependsOn(':space-harvester-server')
+evaluationDependsOn(':space-harvester-app')
+
 dependencies {
     implementation libs.pdfbox
     implementation libs.jsoup
 
     testImplementation project(':space-harvester-core')
+    // Konfigurationsparität (ConfigurationParityTest): dieselbe YAML durch Spring-Binding und AppSettingsLoader.
+    // Beide bauen nur bootJar (jar ist aus), daher die Klassen direkt.
+    testImplementation files(project(':space-harvester-server').sourceSets.main.output)
+    testImplementation files(project(':space-harvester-app').sourceSets.main.output)
+    testImplementation 'org.springframework.boot:spring-boot'
+    testImplementation 'org.yaml:snakeyaml'
     testImplementation testFixtures(project(':enterprise-ai-sources'))
     testImplementation testFixtures(project(':space-harvester-core'))
     testImplementation platform(libs.spring.boot.dependencies)
