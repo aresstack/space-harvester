@@ -282,4 +282,32 @@ class ObjectCentricExtractionTest {
         assertEquals(Role.AFFECTED_OBJECT, second.subject().role());
         assertEquals("Die Anträge", text(analysis, second.subject()));
     }
+
+    @Test
+    void aPrepositionAttachedAsParticleIsNotPartOfThePredicate() {
+        // Angelos Beta-Befund: „ermöglicht … den selbstständigen Zugriff auf und Austausch von …“ ergab „aufermöglichen“
+        ObjectCentricAnalysis analysis = Gold.analyze("preposition-not-particle.conllu");
+
+        List<Statement> ermoeglicht = analysis.statements().stream()
+                .filter(statement -> statement.predicate().text().startsWith("ermöglicht")).toList();
+        assertEquals(2, ermoeglicht.size(), "je Satz eine Aussage");
+        for (Statement statement : ermoeglicht) {
+            assertEquals("ermöglicht", statement.predicate().text());
+            assertEquals("ermöglichen", statement.predicate().lemma());
+        }
+        assertEquals("den selbstständigen Zugriff", text(analysis, ermoeglicht.get(0).core(Role.AFFECTED_OBJECT)));
+
+        Statement anrufen = analysis.statements().stream()
+                .filter(statement -> statement.predicate().text().startsWith("ruft")).findFirst().orElseThrow();
+        assertEquals("ruft … an", anrufen.predicate().text(), "echte Partikel vor einem Relativsatz am Objekt bleibt");
+        assertEquals("anrufen", anrufen.predicate().lemma());
+    }
+
+    @Test
+    void aParticleBeforeACoordinatedVerbStaysAParticle() {
+        ObjectCentricAnalysis analysis = Gold.analyze("coordination.conllu");
+
+        assertEquals(List.of("anrufen", "einreichen"), analysis.statements().stream()
+                .map(statement -> statement.predicate().lemma()).toList());
+    }
 }

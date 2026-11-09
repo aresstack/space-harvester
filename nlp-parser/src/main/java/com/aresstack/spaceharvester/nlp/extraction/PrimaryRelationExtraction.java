@@ -17,7 +17,9 @@ import java.util.TreeSet;
  * Akkusativobjekt ({@code obj}), nur aus Parserkanten.
  * <ul>
  *   <li>Prädikat = Vollverb mit Hilfsverben ({@code aux}, {@code aux:pass}) und Partikel ({@code compound:prt});
- *       Grundform = Partikel + Grundform des Verbs ({@code an} + {@code rufen}).</li>
+ *       Grundform = Partikel + Grundform des Verbs ({@code an} + {@code rufen}). Eine {@code compound:prt}-Kante
+ *       zählt nur, wenn das Token in der rechten Satzklammer stehen kann ({@link #separableParticle}); sonst ist es
+ *       eine falsch angehängte Präposition („Zugriff auf und Austausch von …“) und gehört nicht zum Prädikat.</li>
  *   <li>Passiv ({@code aux:pass} oder {@code nsubj:pass}): das Subjekt ist {@link Role#AFFECTED_OBJECT}.</li>
  *   <li>Koordiniertes Prädikat ({@code conj}) ohne eigenes Subjekt übernimmt das Subjekt des Bezugsprädikats,
  *       markiert als {@link Basis#COORDINATION} und unsicher; ist es ein {@code nsubj:pass}, gilt auch das
@@ -33,6 +35,17 @@ final class PrimaryRelationExtraction {
     private static final Set<String> NOT_A_PREDICATE = Set.of("aux", "cop", "compound", "amod", "det", "case",
             "mark", "fixed", "flat");
     private static final Set<String> SUBORDINATE = Set.of("advcl", "ccomp", "acl", "xcomp", "csubj");
+    /**
+     * Abhängige des Verbs, die hinter der rechten Satzklammer stehen dürfen (Nachfeld, weitere Teilsätze); sie
+     * schließen eine Partikel nicht ein.
+     */
+    private static final Set<String> AFTER_THE_BRACKET = Set.of("punct", "conj", "cc", "parataxis", "ccomp",
+            "advcl", "xcomp", "csubj", "acl", "discourse", "vocative", "dep");
+    /** Teile einer Phrase, die im Nachfeld stehen dürfen. */
+    private static final Set<String> CLAUSAL_INSIDE = Set.of("acl", "advcl", "ccomp", "xcomp", "csubj",
+            "parataxis", "punct");
+    /** STTS-Tags einer Präposition; eine so getaggte „Partikel“ ist keine. */
+    private static final Set<String> PREPOSITION_TAGS = Set.of("APPR", "APPRART", "APPO", "APZR");
 
     private PrimaryRelationExtraction() {
     }
@@ -173,7 +186,7 @@ final class PrimaryRelationExtraction {
             String relation = dependent.deprel();
             if ("aux".equals(relation) || "aux:pass".equals(relation)) {
                 ids.add(dependent.id());
-            } else if ("compound:prt".equals(relation)) {
+            } else if ("compound:prt".equals(relation) && separableParticle(sentence, verb, dependent)) {
                 ids.add(dependent.id());
                 particle = dependent;
             }
@@ -194,5 +207,57 @@ final class PrimaryRelationExtraction {
             lemma = lemma.toLowerCase(Locale.ROOT).startsWith(prefix) ? lemma : prefix + lemma;
         }
         return new Predicate(verb.id(), new ArrayList<>(ids), text.toString(), lemma);
+    }
+
+    /**
+     * Ob {@code particle} ({@code compound:prt} am Verb) wirklich eine abgetrennte Verbpartikel ist. Die steht in der
+     * rechten Satzklammer hinter dem Verb, also nie
+     * <ul>
+     *   <li>als Präposition getaggt (STTS {@code APPR}, {@code APPRART}, …),</li>
+     *   <li>mitten in einer Phrase eines anderen Beteiligten des Verbs (Wörter dieser Phrase davor und danach),</li>
+     *   <li>vor einer Reihung mit einem Nicht-Verb („auf und Austausch“); „ruft … an und reicht … ein“ bleibt.</li>
+     * </ul>
+     * Der Parser hängt eine Präposition, deren Nomen per Koordination fehlt, sonst gern als Partikel an.
+     */
+    static boolean separableParticle(Sentence sentence, Token verb, Token particle) {
+        if (particle.xpos() != null && PREPOSITION_TAGS.contains(particle.xpos())) {
+            return false;
+        }
+        if (particle.id() < verb.id()) {
+            return false;
+        }
+        for (Token dependent : sentence.dependents(verb.id())) {
+            if (dependent.id() == particle.id() || AFTER_THE_BRACKET.contains(dependent.deprel())
+                    || AFTER_THE_BRACKET.contains(dependent.baseRelation())) {
+                continue;
+            }
+            int[] span = span(sentence, dependent.id());
+            if (span[0] < particle.id() && particle.id() < span[1]) {
+                return false;
+            }
+        }
+        int size = sentence.tokens().size();
+        if (particle.id() + 2 <= size && "CCONJ".equals(sentence.token(particle.id() + 1).upos())) {
+            String after = sentence.token(particle.id() + 2).upos();
+            return "VERB".equals(after) || "AUX".equals(after) || "PUNCT".equals(after);
+        }
+        return true;
+    }
+
+    /**
+     * Kleinste und größte Token-ID der Phrase von {@code root}, ohne Teilsätze und Satzzeichen darin: ein
+     * Relativsatz am Objekt darf hinter der Partikel stehen („ruft den Kunden an, der …“).
+     */
+    private static int[] span(Sentence sentence, int root) {
+        int[] span = {root, root};
+        for (Token dependent : sentence.dependents(root)) {
+            if (CLAUSAL_INSIDE.contains(dependent.baseRelation())) {
+                continue;
+            }
+            int[] child = span(sentence, dependent.id());
+            span[0] = Math.min(span[0], child[0]);
+            span[1] = Math.max(span[1], child[1]);
+        }
+        return span;
     }
 }
