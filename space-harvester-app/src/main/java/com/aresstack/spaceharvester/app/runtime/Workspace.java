@@ -60,6 +60,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
@@ -509,6 +510,21 @@ public final class Workspace {
      */
     public JobStatus startStatementAnalysis(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
         return harvester.statementAnalysisJobs().start(caller, scope, options);
+    }
+
+    /** Fokussierter Teilgraph einer Seite für „Analysen → Graph“; begrenzt, rechtegeprüft, rechnet nie. */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfPage(PageKey key, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).page(caller, key, options);
+    }
+
+    /** Direkte Nachbarn eines Knotens („Nachbarn erweitern“). */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfNode(String nodeId, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).node(caller, nodeId, options);
+    }
+
+    /** Erwähnungen eines Begriffs mit ihren Aussagen über alle sichtbaren analysierten Seiten. */
+    public GraphNeighbourhood.Subgraph knowledgeGraphOfTerm(String term, GraphNeighbourhood.Options options) {
+        return new GraphNeighbourhood(harvester.knowledgeGraph()).term(caller, term, options);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */

@@ -115,6 +115,10 @@ public final class PageDetailPanel extends JPanel {
     private final TermsTab terms = new TermsTab();
     private final PassagesTab passages = new PassagesTab();
     private final ImagesTab images = new ImagesTab();
+    /** Unterreiter „Analysen → Aussagen“ (#499): gespeicherte Analyse der Seite, neu nur auf Knopfdruck. */
+    private final StatementsTab statementsView;
+    /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
+    private final KnowledgeGraphTab graphView;
     private final JLabel state = Comic.muted(" ");
     /** Das ⓘ neben dem Titel: öffnet die Seitendetails als Popup. */
     private final JLabel info = new JLabel(new InfoIcon());
@@ -182,6 +186,10 @@ public final class PageDetailPanel extends JPanel {
     public PageDetailPanel(AppContext context) {
         super(new BorderLayout(0, 8));
         this.context = context;
+        this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
+                : context.runtime().workspace());
+        this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
+                : context.runtime().workspace());
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(17f));
@@ -285,6 +293,11 @@ public final class PageDetailPanel extends JPanel {
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
         passages.onJump(this::jumpTo);
+        statementsView.onJump(this::jumpTo);
+        statementsTab(statementsView);
+        graphView.onJump(this::jumpTo);
+        statementsView.onAnalysed(graphView::analysisChanged);
+        knowledgeGraphTab(graphView);
         images.onDescribe(this::describeImages);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
@@ -455,6 +468,8 @@ public final class PageDetailPanel extends JPanel {
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
+        statementsView.pending(new PageKey(sourceId, pageId));
+        graphView.page(null);
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
@@ -496,6 +511,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             feedback.problem(error, Problems.Step.PAGE);
+            statementsView.unavailable();
             page = null;
             acronymHint.setText(" ");
         });
@@ -516,6 +532,8 @@ public final class PageDetailPanel extends JPanel {
         views = loaded.enrichments();
         PageSnapshot snapshot = page.snapshot();
         PageMetadata metadata = page.header().metadata();
+        statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
+        graphView.page(snapshot.key());
         pageShown.accept(sourceId, metadata.partitionKey());
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
