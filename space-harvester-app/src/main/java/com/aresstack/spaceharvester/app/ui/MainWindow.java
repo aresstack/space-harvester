@@ -461,6 +461,8 @@ public final class MainWindow implements AppContext.Navigator {
                 status.setToolTipText(null);
             }
         } else if (context.startProblem() != null) {
+            // Nach einem späteren Fehlschlag löscht ein erfolgreicher Neustart die Meldung wieder.
+            starting = true;
             context.events().publish(new StatusMessageEvent("Nicht gestartet: "
                     + Problems.describe(context.startProblem()).title(), Integer.MAX_VALUE, Severity.ERROR));
         } else {

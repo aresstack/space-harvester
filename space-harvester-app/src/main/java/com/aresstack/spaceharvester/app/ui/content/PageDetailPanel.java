@@ -301,7 +301,33 @@ public final class PageDetailPanel extends JPanel {
                 showDetails();
             }
         });
-        JPanel heading = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+        // Der Titel gibt nach (mit „…“), das ⓘ bleibt immer direkt daneben sichtbar.
+        JPanel heading = new JPanel(null) {
+            private static final int GAP = 6;
+
+            @Override
+            public void doLayout() {
+                java.awt.Dimension t = title.getPreferredSize();
+                java.awt.Dimension i = info.getPreferredSize();
+                int h = getHeight();
+                int tw = Math.max(0, Math.min(t.width, getWidth() - i.width - GAP));
+                title.setBounds(0, (h - t.height) / 2, tw, t.height);
+                info.setBounds(tw + GAP, (h - i.height) / 2, i.width, i.height);
+            }
+
+            @Override
+            public java.awt.Dimension getPreferredSize() {
+                java.awt.Dimension t = title.getPreferredSize();
+                java.awt.Dimension i = info.getPreferredSize();
+                return new java.awt.Dimension(t.width + GAP + i.width, Math.max(t.height, i.height));
+            }
+
+            @Override
+            public java.awt.Dimension getMinimumSize() {
+                java.awt.Dimension i = info.getPreferredSize();
+                return new java.awt.Dimension(i.width, Math.max(title.getPreferredSize().height, i.height));
+            }
+        };
         heading.setOpaque(false);
         heading.add(title);
         heading.add(info);
