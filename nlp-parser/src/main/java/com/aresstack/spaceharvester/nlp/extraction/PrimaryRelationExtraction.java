@@ -71,9 +71,19 @@ final class PrimaryRelationExtraction {
     private static Statement statement(ParsedDocument document, Mentions mentions, Sentence sentence, Token verb) {
         Set<Finding> findings = EnumSet.noneOf(Finding.class);
         Token subject = firstOf(sentence, verb.id(), "nsubj", "nsubj:pass");
-        Token inherited = subject == null ? coordinatedSubject(sentence, verb) : null;
+        Token inherited = null;
+        if (subject == null) {
+            inherited = coordinatedSubject(sentence, verb);
+            if (inherited == null && crossesClauseInChain(sentence, verb)) {
+                findings.add(Finding.COORDINATION_ACROSS_CLAUSE);
+            }
+        }
+        List<Token> auxiliaries = auxiliaries(sentence, verb);
+        if (sentence.dependents(verb.id()).stream().anyMatch(t -> auxiliary(t) && !auxiliaries.contains(t))) {
+            findings.add(Finding.AUXILIARY_OUTSIDE_CLAUSE);
+        }
         // Geteiltes Passiv (werden geprüft und genehmigt): Hilfsverb und Subjekt hängen nur am ersten Prädikat.
-        boolean passive = !sentence.dependents(verb.id(), "aux:pass").isEmpty()
+        boolean passive = auxiliaries.stream().anyMatch(t -> "aux:pass".equals(t.deprel()))
                 || subject != null && "nsubj:pass".equals(subject.deprel())
                 || inherited != null && "nsubj:pass".equals(inherited.deprel());
         if (passive) {
@@ -98,7 +108,27 @@ final class PrimaryRelationExtraction {
                 findings.add(Finding.NO_SUBJECT);
             }
         }
-        List<Token> objects = sentence.dependents(verb.id(), "obj");
+        List<Token> objects = new ArrayList<>();
+        for (Token object : sentence.dependents(verb.id(), "obj")) {
+            if (reflexive(object)) {
+                findings.add(Finding.REFLEXIVE);
+            } else {
+                objects.add(object);
+            }
+        }
+        if (objects.isEmpty() && subject != null && !passive) {
+            // Zwei Subjekte am selben Verb sind ein Parserfehler („hat sich die Vision gesetzt“): das spätere ist
+            // wahrscheinlich das Objekt, aber nur als unsichere Heuristik.
+            for (Token second : sentence.dependents(verb.id(), "nsubj")) {
+                if (second.id() > subject.id() && !reflexive(second) && "nsubj".equals(second.deprel())) {
+                    Mention mention = mentions.at(document, sentence, second);
+                    arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), second.deprel(), null,
+                            Priority.CORE, Basis.HEURISTIC, false));
+                    findings.add(Finding.HEURISTIC_PARTICIPANT);
+                    break;
+                }
+            }
+        }
         for (Token object : objects) {
             arguments.add(object(document, mentions, sentence, object, "obj"));
             for (Token conjunct : sentence.dependents(object.id(), "conj")) {
@@ -108,7 +138,8 @@ final class PrimaryRelationExtraction {
                 }
             }
         }
-        if (objects.isEmpty()) {
+        if (objects.isEmpty() && arguments.stream().noneMatch(a -> a.role() == Role.AFFECTED_OBJECT
+                && a.basis() == Basis.HEURISTIC)) {
             findings.add(Finding.NO_ACCUSATIVE_OBJECT);
         }
         Statement statement = new Statement(id(document, sentence.index(), verb.id()), sentence.index(),
@@ -152,12 +183,16 @@ final class PrimaryRelationExtraction {
         return coordinated ? Clause.COORDINATED : Clause.MAIN;
     }
 
-    /** Subjekt des Prädikats, mit dem {@code verb} koordiniert ist, entlang der {@code conj}-Kette. */
+    /**
+     * Subjekt des Prädikats, mit dem {@code verb} koordiniert ist, entlang der {@code conj}-Kette. Beginnt zwischen
+     * den gereihten Prädikaten ein Teilsatz mit eigenem Subjekt (Relativsatz ohne schließendes Komma, „stellt … bereit,
+     * die … verwaltet und ausgewertet werden“), gehört das spätere Prädikat zu diesem Teilsatz: keine Übernahme.
+     */
     private static Token coordinatedSubject(Sentence sentence, Token verb) {
         Token current = verb;
         while ("conj".equals(current.baseRelation())) {
             Token head = sentence.head(current);
-            if (head == null || !head.hasUpos("VERB", "AUX")) {
+            if (head == null || !head.hasUpos("VERB", "AUX") || opensClauseBetween(sentence, head, current)) {
                 return null;
             }
             Token subject = firstOf(sentence, head.id(), "nsubj", "nsubj:pass");
@@ -169,8 +204,104 @@ final class PrimaryRelationExtraction {
         return null;
     }
 
+    /** Ob die Übernahme entlang der {@code conj}-Kette an einer Teilsatzgrenze endete. */
+    private static boolean crossesClauseInChain(Sentence sentence, Token verb) {
+        Token current = verb;
+        while ("conj".equals(current.baseRelation())) {
+            Token head = sentence.head(current);
+            if (head == null) {
+                return false;
+            }
+            if (opensClauseBetween(sentence, head, current)) {
+                return true;
+            }
+            current = head;
+        }
+        return false;
+    }
+
+    /**
+     * Ob nach dem letzten Komma zwischen {@code head} und dem späteren {@code conjunct} ein Subjekt oder Einleitewort
+     * eines dritten Prädikats steht, also ein Teilsatz beginnt, in dem {@code conjunct} liegt. Ein geschlossener
+     * Einschub („prüft den Antrag, den der Kunde einreicht, und genehmigt ihn“) endet mit einem Komma und stört nicht.
+     */
+    private static boolean opensClauseBetween(Sentence sentence, Token head, Token conjunct) {
+        int comma = -1;
+        for (int id = head.id() + 1; id < conjunct.id(); id++) {
+            if (",".equals(sentence.token(id).form())) {
+                comma = id;
+            }
+        }
+        if (comma < 0) {
+            return false;
+        }
+        for (int id = comma + 1; id < conjunct.id(); id++) {
+            Token token = sentence.token(id);
+            boolean opener = "mark".equals(token.deprel()) || "nsubj".equals(token.deprel())
+                    || "nsubj:pass".equals(token.deprel());
+            if (opener && token.head() != head.id() && token.head() != conjunct.id()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Reflexivpronomen {@code sich}: nie ein eigener Beteiligter, nie Subjekt oder betroffenes Objekt. */
+    static boolean reflexive(Token token) {
+        return "sich".equalsIgnoreCase(token.form());
+    }
+
+    private static boolean auxiliary(Token token) {
+        return "aux".equals(token.deprel()) || "aux:pass".equals(token.deprel());
+    }
+
+    /**
+     * Die Hilfsverben des Prädikats. Ein Hilfsverb vor dem Verb (linke Satzklammer) zählt wie vom Parser angehängt;
+     * eines dahinter nur im Verbalkomplex, also wenn dazwischen nur Verben, Konjunktionen, Kommas und deren
+     * Abhängige stehen („ausgewertet werden“, „geprüft und genehmigt wird“). Ein Hilfsverb jenseits einer
+     * Teilsatzgrenze („stellt … bereit, die … ausgewertet werden“) gehört dem Verb direkt davor.
+     */
+    static List<Token> auxiliaries(Sentence sentence, Token verb) {
+        List<Token> result = new ArrayList<>();
+        for (Token dependent : sentence.dependents(verb.id())) {
+            if (auxiliary(dependent) && inVerbCluster(sentence, verb, dependent)) {
+                result.add(dependent);
+            }
+        }
+        if (verb.id() < sentence.tokens().size()) {
+            Token next = sentence.token(verb.id() + 1);
+            Token host = sentence.head(next);
+            if (auxiliary(next) && host != null && host.id() != verb.id() && !inVerbCluster(sentence, host, next)) {
+                result.add(next);
+            }
+        }
+        return result;
+    }
+
+    private static boolean inVerbCluster(Sentence sentence, Token verb, Token auxiliary) {
+        if (auxiliary.id() < verb.id()) {
+            return true;
+        }
+        for (int id = verb.id() + 1; id < auxiliary.id(); id++) {
+            Token between = sentence.token(id);
+            if (between.hasUpos("VERB", "AUX", "CCONJ") || ",".equals(between.form())) {
+                continue;
+            }
+            Token head = sentence.head(between);
+            boolean ofAVerbInBetween = head != null && head.id() > verb.id() && head.id() < auxiliary.id()
+                    && head.hasUpos("VERB", "AUX");
+            if (!ofAVerbInBetween) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static Token firstOf(Sentence sentence, int head, String... relations) {
         for (Token dependent : sentence.dependents(head)) {
+            if (reflexive(dependent)) {
+                continue;
+            }
             for (String relation : relations) {
                 if (relation.equals(dependent.deprel())) {
                     return dependent;
@@ -184,11 +315,10 @@ final class PrimaryRelationExtraction {
         Set<Integer> ids = new TreeSet<>();
         ids.add(verb.id());
         Token particle = null;
+        auxiliaries(sentence, verb).forEach(auxiliary -> ids.add(auxiliary.id()));
         for (Token dependent : sentence.dependents(verb.id())) {
             String relation = dependent.deprel();
-            if ("aux".equals(relation) || "aux:pass".equals(relation)) {
-                ids.add(dependent.id());
-            } else if ("compound:prt".equals(relation) && separableParticle(sentence, verb, dependent)) {
+            if ("compound:prt".equals(relation) && separableParticle(sentence, verb, dependent)) {
                 ids.add(dependent.id());
                 particle = dependent;
             }

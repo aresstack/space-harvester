@@ -314,4 +314,32 @@ class ObjectCentricExtractionTest {
         assertEquals(List.of("anrufen", "einreichen"), analysis.statements().stream()
                 .map(statement -> statement.predicate().lemma()).toList());
     }
+
+    @Test
+    void clauseBoundariesThatMustNotBlockInheritanceOrAuxiliaries() {
+        ObjectCentricAnalysis analysis = Gold.analyze("clause-boundaries.conllu");
+
+        Statement approves = analysis.statements().stream()
+                .filter(statement -> statement.predicate().lemma().equals("genehmigen") && statement.sentence() == 0)
+                .findFirst().orElseThrow();
+        assertEquals("Der Sachbearbeiter", text(analysis, approves.core(Role.ACTOR)),
+                "ein geschlossener Relativsatz dazwischen verhindert die Übernahme nicht");
+        assertFalse(approves.has(Finding.COORDINATION_ACROSS_CLAUSE));
+
+        List<Statement> second = analysis.statements().stream().filter(s -> s.sentence() == 1).toList();
+        Statement checked = second.stream().filter(s -> s.predicate().lemma().equals("prüfen")).findFirst().orElseThrow();
+        assertEquals(Voice.PASSIVE, checked.voice(), "geteiltes Hilfsverb im Verbalkomplex zählt");
+        assertEquals("geprüft … wird", checked.predicate().text());
+        assertFalse(checked.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        Statement approved = second.stream().filter(s -> s.predicate().lemma().equals("genehmigen")).findFirst()
+                .orElseThrow();
+        assertEquals(Voice.PASSIVE, approved.voice());
+        assertEquals("der Antrag", text(analysis, approved.core(Role.AFFECTED_OBJECT)));
+
+        Statement evaluated = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("auswerten"))
+                .findFirst().orElseThrow();
+        assertEquals("werden … ausgewertet", evaluated.predicate().text(), "Hilfsverb vor dem Einschub zählt");
+        assertEquals(Voice.PASSIVE, evaluated.voice());
+        assertTrue(evaluated.withRole(Role.TIME).isEmpty(), "„Daten“ ist nie eine Zeitangabe");
+    }
 }

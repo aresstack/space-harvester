@@ -1,0 +1,49 @@
+# Gold-Analysen (MIT) zu Ursache E (ADR 0024, Ursachenmatrix): Teilsatzgrenzen, die eine Übernahme und ein
+# Hilfsverb NICHT verhindern dürfen. Satz 1: geschlossener Relativsatz vor dem gereihten Verb; Satz 2: geteiltes
+# Passiv im Verbalkomplex am Satzende; Satz 3: Hilfsverb vor einem Einschub mit eigenem Verb.
+# sent_id = 1
+# text = Der Sachbearbeiter prüft den Antrag, den der Kunde einreicht, und genehmigt ihn.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	3	obj	_	SpaceAfter=No
+6	,	,	PUNCT	$,	_	10	punct	_	_
+7	den	der	PRON	PRELS	_	10	obj	_	_
+8	der	der	DET	ART	_	9	det	_	_
+9	Kunde	Kunde	NOUN	NN	_	10	nsubj	_	_
+10	einreicht	einreichen	VERB	VVFIN	_	5	acl:relcl	_	SpaceAfter=No
+11	,	,	PUNCT	$,	_	13	punct	_	_
+12	und	und	CCONJ	KON	_	13	cc	_	_
+13	genehmigt	genehmigen	VERB	VVFIN	_	3	conj	_	_
+14	ihn	er	PRON	PPER	_	13	obj	_	SpaceAfter=No
+15	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 2
+# text = Die Behörde meldet, dass der Antrag geprüft und genehmigt wird.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Behörde	Behörde	NOUN	NN	_	3	nsubj	_	_
+3	meldet	melden	VERB	VVFIN	_	0	root	_	SpaceAfter=No
+4	,	,	PUNCT	$,	_	8	punct	_	_
+5	dass	dass	SCONJ	KOUS	_	8	mark	_	_
+6	der	der	DET	ART	_	7	det	_	_
+7	Antrag	Antrag	NOUN	NN	_	8	nsubj:pass	_	_
+8	geprüft	prüfen	VERB	VVPP	_	3	ccomp	_	_
+9	und	und	CCONJ	KON	_	10	cc	_	_
+10	genehmigt	genehmigen	VERB	VVPP	_	8	conj	_	_
+11	wird	werden	AUX	VAFIN	_	8	aux:pass	_	SpaceAfter=No
+12	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Daten werden, wenn sie vorliegen, ausgewertet.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Daten	Daten	NOUN	NN	_	9	nsubj:pass	_	_
+3	werden	werden	AUX	VAFIN	_	9	aux:pass	_	SpaceAfter=No
+4	,	,	PUNCT	$,	_	7	punct	_	_
+5	wenn	wenn	SCONJ	KOUS	_	7	mark	_	_
+6	sie	sie	PRON	PPER	_	7	nsubj	_	_
+7	vorliegen	vorliegen	VERB	VVFIN	_	9	advcl	_	SpaceAfter=No
+8	,	,	PUNCT	$,	_	7	punct	_	_
+9	ausgewertet	auswerten	VERB	VVPP	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	$.	_	9	punct	_	_
+

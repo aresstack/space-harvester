@@ -50,7 +50,7 @@ derselbe Text mit demselben Analysator analysiert wird.
   `sh:instrument`, `sh:time`, `sh:circumstance`.
 - `sh:Participation` (qualifizierte Rolle, über `sh:participation`): `sh:role`, `sh:participant` → Erwähnung,
   `sh:relation` (UD), `sh:marker` (Präposition), `sh:priority`, `sh:basis` (`PARSER`, `COORDINATION`,
-  `CASE_HEURISTIC`, `LEXICON`), `sh:certain`.
+  `CASE_HEURISTIC`, `LEXICON`, `HEURISTIC`), `sh:certain`.
 - `sh:Evidence`: `sh:inRevision`, `sh:sentence`, `sh:start`, `sh:end` (Satzspanne im Lesetext).
 - `sh:NominalAttachment`: `sh:head`, `sh:dependent` → Erwähnungen, `sh:attachmentKind` (z. B. `GENITIVE`),
   `sh:relation`, `sh:marker`, `sh:basis`. Ein nominaler Bezug behauptet **keinen Besitz**.

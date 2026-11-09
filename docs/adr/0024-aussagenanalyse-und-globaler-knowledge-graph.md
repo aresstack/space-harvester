@@ -45,7 +45,7 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
    (`DOCUMENT` = Seite in der analysierten Fassung, `MENTION`, `STATEMENT`) und typisierte Kanten ab: Dokument →
    Aussage/Erwähnung (`CONTAINS`), Aussage → Erwähnung je Rolle (`ACTOR`, `AFFECTED_OBJECT`, `RECIPIENT`,
    `PREPOSITIONAL_OBJECT`, `INSTRUMENT`, `TIME`, `CIRCUMSTANCE`), Erwähnung → Erwähnung (`NOMINAL`, kein Besitz). Jede
-   Kante trägt Herkunft (`PARSER`, `COORDINATION`, `CASE_HEURISTIC`, `LEXICON`, `STRUCTURE`), UD-Relation,
+   Kante trägt Herkunft (`PARSER`, `COORDINATION`, `CASE_HEURISTIC`, `LEXICON`, `HEURISTIC`, `STRUCTURE`), UD-Relation,
    Präposition, Beleg (Satz) und Sicherheit. IDs enthalten Quelle, Seite und die ersten 12 Zeichen des Eingabe-Hashs
    (`quelle/seite@fassung#s<Satz>.t<Token>` bzw. `.v<Verb>`). Weil eine neue Analyse die Datei der Seite ersetzt,
    ersetzt sie genau deren Projektion: keine verwaisten oder doppelten Knoten, andere Seiten unberührt, Wiederholung
@@ -108,9 +108,9 @@ der Core bereits.
 | B | Aussage „welchen“ | OpenNLP taggt das Relativpronomen als `VERB`, MaltParser macht es zur Wurzel | Wortart | Korrektur geschlossener Wortklassen nach dem Tagger, vor dem Parser (`GermanTagCorrections`, Regelversion 3) |
 | G | Passivaussage „hinweg ist“ | OpenNLP taggt die Postposition als `VERB`, „ist“ wird `aux:pass` | Wortart | wie B (umgesetzt, Regelversion 3) |
 | C | „aufermöglichen“ | MaltParser hängt die Präposition als `compound:prt` an | MaltParser | Extraktion folgt der Kante nicht (#563, Regelversion 2) |
-| D | „den Daten“ als Zeitangabe | OpenNLP-Grundform „datum“, die Zeitregel liest das Lemma | Grundform + Regel | Zeitregel nicht über die Grundform „datum“ bei der Wortform „Daten“ |
-| E | Relativpronomen zugleich Handelnder (aktiv) und Betroffenes (passiv) | gemeinsames Passiv-„werden“ hängt nur am letzten Glied | MaltParser + Regel | Stimme über gereihte Partizipien mit gemeinsamem Hilfsverb weitergeben; keine Übernahme über Stimmengrenzen |
-| F | „Das Vorhaben → setzen → sich“ | „sich“ als `obj`, „die Vision“ als zweites `nsubj` | MaltParser + Regel | Reflexivpronomen nie betroffenes Objekt; zweites Subjekt höchstens unsicheres Objekt (Grundlage Heuristik) |
+| D | „den Daten“ als Zeitangabe | OpenNLP-Grundform „datum“, die Zeitregel liest das Lemma | Grundform + Regel | Zeitregel nicht über die Grundform „datum“ bei der Wortform „Daten“ (umgesetzt, Regelversion 4) |
+| E | „ausgewertet → Handelnder: Das Vorhaben“; Hauptsatz wird passiv | Passiv-„werden“ des Relativsatzes hängt am Hauptverb, „ausgewertet“ als dessen `conj` | MaltParser + Regel | Hilfsverb hinter dem Verb zählt nur im Verbalkomplex, sonst gehört es dem Verb direkt davor; keine Subjektübernahme in einen Teilsatz mit eigenem Subjekt (umgesetzt, Regelversion 4) |
+| F | „Das Vorhaben → setzen → sich“ | „sich“ als `obj`, „die Vision“ als zweites `nsubj` | MaltParser + Regel | Reflexivpronomen nie Beteiligter; zweites Subjekt höchstens unsicheres Objekt, Grundlage `HEURISTIC` (umgesetzt, Regelversion 4) |
 | H | „stellt … sicher“ ohne Objekt | Verbzusatz „sicher“/„bereit“ als `xcomp`, Objekt als dessen `nsubj` | MaltParser | Regel für prädikative Verbzusätze, Objekt nur unsicher (Heuristik) |
 | I | „Register → erweitern → Register“ | Listenkennung „Register:“ als `nsubj`, eigentliches Subjekt als `obj` | Struktur + MaltParser | Listenkennung vor Doppelpunkt nie Beteiligter neben eigenem Subjekt; fehlt eins, ist sie impliziter Handelnder mit Grundlage Heuristik und höchstens UNCERTAIN |
 | J | Listeneintrag „Datenprodukt-API: Erlaubt …“ ohne Prädikat | großgeschriebenes Verb nach Doppelpunkt als `PROPN` | Wortart | keine deterministische Korrektur ohne Lexikon; die Qualitätsstufe markiert solche Aussagen |

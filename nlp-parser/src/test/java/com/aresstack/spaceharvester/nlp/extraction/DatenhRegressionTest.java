@@ -72,7 +72,7 @@ class DatenhRegressionTest {
         // Zwischenstand: der Zeilenumbruch nach „Kurzbeschreibung“ und „Komponenten“ ist eine harte Satzgrenze
         assertEquals("Kurzbeschreibung", sentence("Kurzbeschreibung").text());
         assertEquals("Komponenten", sentence("Komponenten").text());
-        assertEquals(12, DOCUMENT.sentences().size(), "12 Zeilen, 12 Sätze");
+        assertEquals(13, DOCUMENT.sentences().size(), "13 Zeilen, 13 Sätze");
 
         // Endergebnis: die Überschrift ist kein Beteiligter, der eigentliche Handelnde kommt zurück
         List<String> relations = relations();
@@ -122,19 +122,20 @@ class DatenhRegressionTest {
         assertEquals("bereitzustellen", statement("bereitstellen", "Das Vorhaben Datenhaus hat sich").predicate().text());
     }
 
-    // ---- D: „Daten“ als Zeitangabe (OpenNLP-Grundform + Lexikonregel) ----------------------------------------------
+    // ---- D: „Daten“ als Zeitangabe (OpenNLP-Grundform + Lexikonregel, behoben in der Zeitregel) ----------------------
 
     @Test
-    void causeD_dataReadAsDate_isALemmaErrorThatTheTimeRuleAmplifies() {
+    void causeD_dataIsNoTimeEvenWithTheLemmaDatum() {
         Sentence sentence = sentence("Das Datenhaus ermöglicht");
         Token daten = token(sentence, "Daten");
-        assertEquals("datum", daten.lemma(), "Zwischenstand: OpenNLP führt „Daten“ auf „Datum“ zurück");
+        assertEquals("datum", daten.lemma(), "Zwischenstand: OpenNLP führt „Daten“ weiter auf „Datum“ zurück");
         assertEquals("obl", daten.deprel(), "die Kante selbst ist brauchbar");
 
-        // IST (Regelfehler auf falscher Grundform): die Zeitregel liest das Lemma „datum“ als Zeitwort
-        Argument time = statement("ermöglichen", "Das Datenhaus ermöglicht").withRole(Role.TIME).get(0);
-        assertEquals("den Daten", text(time));
-        assertEquals(Basis.LEXICON, time.basis());
+        // Endergebnis: keine Zeitangabe „den Daten“ (Regelfehler behoben), „mit“ macht sie zum Mittel
+        Statement statement = statement("ermöglichen", "Das Datenhaus ermöglicht");
+        assertTrue(statement.withRole(Role.TIME).isEmpty(), "verboten: TIME den Daten");
+        assertTrue(relations().stream().noneMatch(r -> r.contains(" TIME ") && r.contains("Daten")));
+        assertEquals("den Daten", text(statement.withRole(Role.INSTRUMENT).get(0)));
     }
 
     // ---- E: Passiv im gereihten Relativsatz (MaltParser + Stimmenregel) ---------------------------------------------
@@ -161,20 +162,51 @@ class DatenhRegressionTest {
         assertFalse(active.has(Finding.UNRESOLVED_PRONOUN), "IST: offenes Pronomen nicht erkannt");
     }
 
-    // ---- F: Reflexivpronomen als Objekt (MaltParser + Objektregel) --------------------------------------------------
+    // ---- E: Hilfsverb jenseits der Teilsatzgrenze und Übernahme in den Relativsatz (behoben in der Extraktion) ------
 
     @Test
-    void causeF_reflexivePronounAsObject_isAModelErrorThatTheObjectRuleAccepts() {
+    void causeE_passiveInARelativeClauseNeitherMakesTheMainClausePassiveNorInheritsItsSubject() {
+        Sentence sentence = sentence("Das Vorhaben Datenhaus stellt");
+        Token stellt = token(sentence, "stellt");
+        Token werden = token(sentence, "werden");
+        Token ausgewertet = token(sentence, "ausgewertet");
+        assertEquals(stellt.id(), werden.head(), "Zwischenstand: MaltParser hängt „werden“ an das Hauptverb");
+        assertEquals("aux:pass", werden.deprel());
+        assertEquals(stellt.id(), ausgewertet.head(), "und „ausgewertet“ als gereihtes Verb des Hauptsatzes");
+        assertEquals("conj", ausgewertet.deprel());
+
+        // Endergebnis: Hauptsatz aktiv mit seinem Handelnden, „ausgewertet werden“ passiv ohne geerbten Handelnden
+        Statement main = statement("stellen", "Das Vorhaben Datenhaus stellt");
+        assertEquals(Statement.Voice.ACTIVE, main.voice());
+        assertEquals("Das Vorhaben", text(main.core(Role.ACTOR)));
+        assertEquals("stellt", main.predicate().text());
+        assertTrue(main.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        Statement passive = statement("auswerten", "Das Vorhaben Datenhaus stellt");
+        assertEquals(Statement.Voice.PASSIVE, passive.voice());
+        assertEquals("ausgewertet werden", passive.predicate().text());
+        assertTrue(passive.arguments().stream().noneMatch(a -> text(a).contains("Vorhaben")),
+                "verboten: auswerten mit dem Vorhaben als Beteiligtem");
+        assertTrue(passive.has(Finding.COORDINATION_ACROSS_CLAUSE));
+    }
+
+    // ---- F: Reflexivpronomen als Objekt (MaltParser + Objektregel, behoben in der Objektregel) -----------------------
+
+    @Test
+    void causeF_reflexivePronounIsNoParticipant() {
         Sentence sentence = sentence("Das Vorhaben Datenhaus hat sich");
-        assertEquals("obj", token(sentence, "sich").deprel(), "Zwischenstand: „sich“ als Akkusativobjekt");
+        assertEquals("obj", token(sentence, "sich").deprel(), "Zwischenstand: „sich“ weiter als Akkusativobjekt");
         assertEquals("nsubj", token(sentence, "Vision").deprel(), "und das eigentliche Objekt als zweites Subjekt");
 
-        // IST (Regelfehler): Kernrelation „Das Vorhaben → setzen → sich“
+        // Endergebnis: „sich“ ist kein Beteiligter; „die Vision“ ist unsicheres Objekt aus einer Heuristik
         Statement statement = statement("setzen", "Das Vorhaben Datenhaus hat sich");
-        assertEquals("sich", text(statement.core(Role.AFFECTED_OBJECT)));
+        assertTrue(relations().stream().noneMatch(r -> r.endsWith(" sich")), "verboten: sich als Beteiligter");
         assertTrue(SalienceProjection.project(ANALYSIS).core().stream()
-                .anyMatch(core -> "sich".equals(core.objectText())));
-        assertTrue(statement.withRole(Role.AFFECTED_OBJECT).stream().noneMatch(a -> text(a).contains("Vision")));
+                .noneMatch(core -> "sich".equals(core.objectText())), "verboten: Kern … → setzen → sich");
+        assertTrue(statement.has(Finding.REFLEXIVE));
+        Argument vision = statement.core(Role.AFFECTED_OBJECT);
+        assertEquals("die Vision", text(vision));
+        assertEquals(Basis.HEURISTIC, vision.basis());
+        assertFalse(vision.certain());
     }
 
     // ---- H: Verbzusatz als prädikatives Adjektiv (MaltParser) -------------------------------------------------------
