@@ -51,7 +51,12 @@ class StatementAnalysisJobsTest {
     private final List<String> fetched = new ArrayList<>();
     private final Map<String, RuntimeException> fetchFailures = new HashMap<>();
     private Runnable afterFetch = () -> { };
+    private boolean grantedPerSpaceOnly;
     private final AccessGuard access = new AccessGuard((context, scope, kind) -> {
+        if (grantedPerSpaceOnly && kind == AccessKind.CONTENT && scope.pageId() != null
+                && scope.spaceKey() == null) {
+            return AccessDecision.DENY; // Freigabe nur für einen bestimmten Space: ohne Space nicht entscheidbar
+        }
         if (scope.spaceKey() != null && spacesDenied.contains(scope.spaceKey())) {
             return AccessDecision.DENY;
         }
@@ -120,6 +125,37 @@ class StatementAnalysisJobsTest {
         assertThat(subtree.progress()).isEqualTo(new JobProgress(1, 1, 1, 0));
         assertThat(fetched).containsExactly("43");
         assertThat(jobs.events(single.id())).noneMatch(event -> "PAGE_FAILED".equals(event.code()));
+    }
+
+    @Test
+    void aRootWithoutKnownSpaceIsResolvedSoAGrantForThatSpaceApplies() {
+        grantedPerSpaceOnly = true;
+        tree.space("wiki", "DEV", "42");
+        tree.children("42", List.of("43"));
+
+        JobStatus single = run(new StatementAnalysisJobs.Scope.SinglePage("wiki", null, "42"),
+                StatementAnalysisJobs.Options.DEFAULT);
+        JobStatus subtree = run(new StatementAnalysisJobs.Scope.Subtree("wiki", null, "42"),
+                new StatementAnalysisJobs.Options(true, 0));
+
+        assertThat(single.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(single.progress()).isEqualTo(new JobProgress(1, 1, 1, 0));
+        assertThat(subtree.progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        assertThat(fetched).containsExactly("42", "42", "43");
+    }
+
+    @Test
+    void aFailedSpaceLookupThatExcludesTheRootMarksTheJobIncomplete() {
+        grantedPerSpaceOnly = true;
+        tree.space("wiki", "DEV", "42");
+        tree.lookupFails = true;
+
+        JobStatus single = run(new StatementAnalysisJobs.Scope.SinglePage("wiki", null, "42"),
+                StatementAnalysisJobs.Options.DEFAULT);
+
+        assertThat(single.state()).isEqualTo(JobState.FAILED);
+        assertThat(single.error().code()).isEqualTo(StatementAnalysisJobs.INCOMPLETE);
+        assertThat(fetched).isEmpty();
     }
 
     @Test
@@ -321,6 +357,7 @@ class StatementAnalysisJobsTest {
         private final Set<String> failing = new HashSet<>();
         int calls;
         int cursorsServed;
+        boolean lookupFails;
 
         void space(String sourceId, String spaceKey, String... rootIds) {
             roots.put(spaceKey, List.of(rootIds));
@@ -356,6 +393,16 @@ class StatementAnalysisJobsTest {
                     .toList();
             return new PageNavigation.Children(sourceId, space, parentPageId, nodes,
                     to < all.size() ? String.valueOf(to) : null);
+        }
+
+        @Override
+        public String spaceKey(AccessContext caller, String sourceId, String pageId) {
+            if (lookupFails) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null);
+            }
+            String space = spaceOf.get(pageId);
+            access.require(caller, ResourceScope.page(sourceId, space, pageId), AccessKind.METADATA);
+            return space;
         }
 
         @Override

@@ -197,10 +197,10 @@ public class StatementAnalysisJobs {
 
         void run() {
             switch (scope) {
-                case Scope.SinglePage page -> add(page.sourceId(), page.spaceKey(), page.pageId());
+                case Scope.SinglePage page -> root(page.sourceId(), page.spaceKey(), page.pageId());
                 case Scope.Subtree subtree -> {
-                    add(subtree.sourceId(), subtree.spaceKey(), subtree.pageId());
-                    below(subtree.sourceId(), subtree.spaceKey(), subtree.pageId());
+                    String spaceKey = root(subtree.sourceId(), subtree.spaceKey(), subtree.pageId());
+                    below(subtree.sourceId(), spaceKey, subtree.pageId());
                 }
                 case Scope.Space space -> below(space.sourceId(), space.spaceKey(), null);
                 case Scope.Source source -> {
@@ -221,6 +221,33 @@ public class StatementAnalysisJobs {
                     }
                 }
             }
+        }
+
+        /**
+         * Merkt die Ausgangsseite. Ohne bekannten Space ermittelt ihn zuerst die geschützte Navigation
+         * ({@code metadata}), damit eine Freigabe für genau diesen Space greift; die Inhaltsprüfung bleibt danach
+         * dieselbe. Ist die Seite gesperrt, bleibt sie ungenannt; scheitert nur die Ermittlung und schließt die strenge
+         * Prüfung die Seite deshalb aus, gilt der Auftrag als unvollständig statt still gekürzt.
+         *
+         * @return der Space der Seite, sofern bekannt
+         */
+        private String root(String sourceId, String spaceKey, String pageId) {
+            boolean lookupFailed = false;
+            if (spaceKey == null) {
+                checkpoint.run();
+                try {
+                    spaceKey = discovery.spaceKey(caller, sourceId, pageId);
+                } catch (AccessDeniedException e) {
+                    spaceKey = null; // ohne Freigabe: weder zählen noch melden
+                } catch (RuntimeException e) {
+                    lookupFailed = true;
+                }
+            }
+            add(sourceId, spaceKey, pageId);
+            if (lookupFailed && !pages.containsKey(new PageKey(sourceId, pageId))) {
+                incomplete = true;
+            }
+            return spaceKey;
         }
 
         /** Alle Nachfahren von {@code parent} (oder alle Seiten des Space ab den Wurzelseiten), Breite zuerst. */
@@ -392,6 +419,13 @@ public class StatementAnalysisJobs {
                                          String cursor);
 
         List<Partition> spaces(AccessContext caller, String sourceId);
+
+        /**
+         * Space einer Seite über die geschützte Navigation ({@code metadata} auf Quelle und Seite).
+         *
+         * @throws AccessDeniedException ohne Freigabe der Seite
+         */
+        String spaceKey(AccessContext caller, String sourceId, String pageId);
     }
 
     /** Geschützter Seitenabruf (Cache, sonst die Quelle) – nur innerhalb des Auftrags. */

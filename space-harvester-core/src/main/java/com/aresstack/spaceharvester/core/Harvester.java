@@ -696,6 +696,11 @@ public final class Harvester implements AutoCloseable {
                     return access.filter(who, sources.partitions(sourceId), AccessKind.METADATA,
                             partition -> ResourceScope.space(sourceId, partition.key()));
                 }
+
+                @Override
+                public String spaceKey(AccessContext who, String sourceId, String pageId) {
+                    return navigation.position(who, sourceId, pageId).spaceKey();
+                }
             }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
                     access, OWNER);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
