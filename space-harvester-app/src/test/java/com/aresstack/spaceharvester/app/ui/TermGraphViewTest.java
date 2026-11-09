@@ -102,6 +102,15 @@ class TermGraphViewTest {
     }
 
     @Test
+    void parallelRelationsShareOnePairKeyInBothDirections() {
+        GraphSource.Edge there = new GraphSource.Edge("api", "rest", "SYNONYM", true, false);
+        GraphSource.Edge back = new GraphSource.Edge("rest", "api", "ABBREVIATION", false, true);
+        assertThat(TermGraphView.Canvas.pairKey(there)).isEqualTo(TermGraphView.Canvas.pairKey(back));
+        assertThat(TermGraphView.Canvas.pairKey(there))
+                .isNotEqualTo(TermGraphView.Canvas.pairKey(new GraphSource.Edge("api", "http", "RELATED", true, false)));
+    }
+
+    @Test
     void withoutRuntimeTheStartFieldIsDisabledAndHintsHowToStart() throws Exception {
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {

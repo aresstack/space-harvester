@@ -291,10 +291,12 @@ final class TermGraphView {
         /** Der Knoten unter dem Punkt oder {@code null}. */
         GraphSource.Node nodeAt(Point point) {
             Map<String, Rectangle2D> boxes = layout(getWidth(), getHeight());
-            for (GraphSource.Node node : graph.nodes()) {
-                Rectangle2D box = boxes.get(node.key());
+            // Später gemalte Knoten liegen oben: rückwärts suchen, damit der sichtbare Knoten getroffen wird.
+            List<GraphSource.Node> nodes = graph.nodes();
+            for (int i = nodes.size() - 1; i >= 0; i--) {
+                Rectangle2D box = boxes.get(nodes.get(i).key());
                 if (box != null && box.contains(point)) {
-                    return node;
+                    return nodes.get(i);
                 }
             }
             return null;
@@ -367,8 +369,17 @@ final class TermGraphView {
                 g2.setColor(getBackground());
                 g2.fillRect(0, 0, getWidth(), getHeight());
                 Map<String, Rectangle2D> boxes = layout(getWidth(), getHeight());
+                // Mehrere Beziehungen zwischen denselben Begriffen nebeneinander zeichnen statt übereinander.
+                Map<String, Integer> pairs = new java.util.HashMap<>();
                 for (GraphSource.Edge edge : graph.edges()) {
-                    paintEdge(g2, edge, boxes.get(edge.from()), boxes.get(edge.to()));
+                    pairs.merge(pairKey(edge), 1, Integer::sum);
+                }
+                Map<String, Integer> seen = new java.util.HashMap<>();
+                for (GraphSource.Edge edge : graph.edges()) {
+                    String pair = pairKey(edge);
+                    int index = seen.merge(pair, 1, Integer::sum) - 1;
+                    double offset = (index - (pairs.get(pair) - 1) / 2.0) * PARALLEL_GAP;
+                    paintEdge(g2, edge, boxes.get(edge.from()), boxes.get(edge.to()), offset);
                 }
                 for (GraphSource.Node node : graph.nodes()) {
                     Rectangle2D box = boxes.get(node.key());
@@ -381,12 +392,35 @@ final class TermGraphView {
             }
         }
 
-        private void paintEdge(Graphics2D g2, GraphSource.Edge edge, Rectangle2D from, Rectangle2D to) {
+        private static final double PARALLEL_GAP = 22;
+
+        /** Gleicher Schlüssel für beide Richtungen eines Begriffspaars. */
+        static String pairKey(GraphSource.Edge edge) {
+            return edge.from().compareTo(edge.to()) <= 0 ? edge.from() + "\u0000" + edge.to()
+                    : edge.to() + "\u0000" + edge.from();
+        }
+
+        private void paintEdge(Graphics2D g2, GraphSource.Edge edge, Rectangle2D from, Rectangle2D to,
+                double offset) {
             if (from == null || to == null) {
                 return;
             }
             Point2D a = exit(from, to);
             Point2D b = exit(to, from);
+            if (offset != 0) {
+                // Senkrecht zur Verbindung in fester Richtung (unabhängig von der Kantenrichtung) verschieben.
+                boolean flip = edge.from().compareTo(edge.to()) > 0;
+                double dx = b.getX() - a.getX();
+                double dy = b.getY() - a.getY();
+                double length = Math.hypot(dx, dy);
+                if (length > 0) {
+                    double sign = flip ? -1 : 1;
+                    double nx = -dy / length * offset * sign;
+                    double ny = dx / length * offset * sign;
+                    a = new Point2D.Double(a.getX() + nx, a.getY() + ny);
+                    b = new Point2D.Double(b.getX() + nx, b.getY() + ny);
+                }
+            }
             Color color = edgeColor(edge.type());
             g2.setColor(color);
             g2.setStroke(edge.confirmed() ? new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
