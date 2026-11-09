@@ -75,7 +75,8 @@ class SetupWizardTest {
         assertThat(SetupWizard.LINES).hasSameSizeAs(SetupWizard.STEPS);
         assertThat(SetupWizard.STEPS).containsExactly("Wissensquellen", "Netzwerk", "KI-Dienst", "Modelle",
                 "Abschluss");
-        assertThat(texts(wizard[0].summary)).contains("Firmenwiki (wiki)", "keine Quelle", ParserModelSetup.LABEL);
+        assertThat(texts(wizard[0].summary)).contains("Firmenwiki (wiki)", "keine Quelle", ParserModelSetup.LABEL,
+                "KeePass", "nicht gekoppelt");
         assertThat(texts(wizard[0].summary).stream().filter(t -> t.startsWith("Installiert")
                 || t.startsWith("Nicht installiert") || t.startsWith("Nicht verfügbar")))
                 .as("Stand des Parsermodells auf der Abschlussseite").isNotEmpty();
@@ -124,6 +125,101 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
         assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
                 "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
+        // Ohne lokal gespeicherte Zugangsdaten gibt es nichts zu löschen.
+        assertThat(view[0].deleteButtons).isEmpty();
+    }
+
+    @Test
+    void theSecurityTabShowsKeePassAsOriginInsteadOfMissing() throws Exception {
+        // Quelle und KI-Dienst beziehen ihre Zugangsdaten über KeePass: nichts liegt lokal, also weder „fehlt“ noch
+        // ein Papierkorb (Angelo, 09.11., beta.310: „Zugang … fehlt“ trotz funktionierender Anmeldung).
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                  ai-access: keepass
+                  ai-keepass-entry: Enterprise AI API
+                  source-keepass-entries:
+                    wiki: Wiki-Zugang
+                space-harvester:
+                  ai:
+                    base-url: https://kp.example.invalid/v1
+                  sources:
+                    - id: wiki
+                      type: confluence
+                      title: Firmenwiki
+                      base-url: https://wiki.example.invalid
+                      auth:
+                        type: pat
+                        token: ${WIKI_TOKEN}
+                """.formatted(home.resolve("data")));
+        CountDownLatch reloaded = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(reloaded::countDown));
+        assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
+        java.util.List<String> texts = texts(view[0].security);
+        assertThat(texts).contains("Zugang Firmenwiki", "API-Key des KI-Dienstes")
+                .noneMatch(text -> text.equals("fehlt") || text.equals("gespeichert"));
+        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Wiki-Zugang“"))).hasSize(1);
+        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Enterprise AI API“"))).hasSize(1);
+        assertThat(view[0].deleteButtons).as("aus KeePass: nichts Lokales zu löschen").isEmpty();
+        assertThat(tooltips(view[0].security)).anyMatch(tip -> tip != null && tip.contains("nur in KeePass")
+                && tip.contains("Entkoppeln"));
+    }
+
+    @Test
+    void theSecurityTabPairsAndUnpairsKeePassAndTheAiTabFollows() throws Exception {
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("Enterprise AI API", new String[] {"https://kp.example.invalid/v1", "sk-aus-keepass"});
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> paired[0],
+                () -> paired[0] = false));
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(view[0].keePass.status.getText()).isEqualTo(KeePassPairingPanel.NOT_PAIRED);
+            assertThat(view[0].keePass.pair.getText()).isEqualTo(KeePassPairingPanel.PAIR);
+            assertThat(view[0].keePass.unpair.isVisible()).as("Entkoppeln nur, wenn gekoppelt").isFalse();
+            // Der Reiter „KI-Dienst“ hat keine eigene Kopplungszeile mehr, nur „Koppeln“ im Eintragsfeld.
+            assertThat(texts(view[0].aiPanel().rows)).noneMatch(text -> text.equals("KeePass"));
+            paired[0] = true; // die Fake-Anbindung koppelt beim ersten Lesen
+            view[0].keePass.pair.doClick();
+        });
+        await(() -> view[0].keePass.status.getText().startsWith(KeePassPairingPanel.PAIRED + " ·"));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].keePass.status.getText()).isEqualTo("Gekoppelt · 1 Eintrag lesbar");
+            assertThat(view[0].keePass.pair.getText()).isEqualTo(KeePassPairingPanel.REPAIR);
+            assertThat(view[0].keePass.unpair.isVisible()).isTrue();
+            assertThat(view[0].aiPanel().pair.getText()).as("KI-Dienst folgt dem Stand")
+                    .isEqualTo(AiSettingsPanel.LOAD_ENTRIES);
+            view[0].keePass.unpairWithoutAsking();
+            assertThat(view[0].keePass.status.getText()).isEqualTo(KeePassPairingPanel.NOT_PAIRED);
+            assertThat(view[0].keePass.unpair.isVisible()).isFalse();
+            assertThat(view[0].aiPanel().pair.getText()).isEqualTo(KeePassPairingPanel.PAIR);
+            assertThat(view[0].keePass.feedback.text()).contains("entkoppelt").doesNotContain("sk-aus-keepass");
+        });
+    }
+
+    @Test
+    void storedCredentialsGetADeleteButtonInTheSecurityTab() throws Exception {
+        context.vault().store("wiki", "pat", "geheimes-token".toCharArray());
+        context.aiVault().store(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN, "sk-geheim".toCharArray());
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(texts(view[0].security)).contains("im Tresor")
+                    .noneMatch(text -> text.contains("geheimes-token") || text.contains("sk-geheim"));
+            assertThat(view[0].deleteButtons).as("ein Knopf für den API-Key, einer für die Quelle").hasSize(2);
+            assertThat(view[0].deleteButtons.get(1).getToolTipText()).contains("Firmenwiki");
+        });
+        SwingUtilities.invokeAndWait(() -> view[0].deleteWithoutAsking(view[0].deleteButtons.get(1)));
+        await(() -> !context.vault().has("wiki"));
+        await(() -> view[0].securityFeedback.text().contains("Gelöscht"));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(texts(view[0].security)).contains("keins nötig");
+            assertThat(view[0].deleteButtons).as("nur noch der API-Key").hasSize(1);
+            assertThat(context.aiVault().has(AiSettingsPanel.KEY_ID)).isTrue();
+        });
     }
 
     @Test
@@ -243,6 +339,21 @@ class SetupWizardTest {
             }
         }
         return texts;
+    }
+
+    private static java.util.List<String> tooltips(java.awt.Container container) {
+        java.util.List<String> tips = new java.util.ArrayList<>();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof javax.swing.JComponent component) {
+                tips.add(component.getToolTipText());
+                tips.addAll(tooltips(component));
+            }
+        }
+        return tips;
+    }
+
+    private static void await(java.util.function.BooleanSupplier condition) throws Exception {
+        SettingDialogsTest.await(condition);
     }
 
     private static java.util.List<String> texts(java.awt.Container container) {

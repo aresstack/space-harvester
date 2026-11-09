@@ -110,7 +110,8 @@ class SourceFormLayoutTest {
             assertThat(ai).as("KI-Dienst konfiguriert").isEqualTo(yaml != null);
             assertThat(form.release.isVisible()).as("Freigabe nur mit KI-Dienst im Hauptteil").isEqualTo(ai);
             assertThat(form.id.isVisible()).as("Kennung unter Erweitert").isFalse();
-            assertThat(form.certificate.isVisible()).as("Zertifikat unter Erweitert").isFalse();
+            assertThat(form.certificate.isVisible()).as("Client-Zertifikat sichtbar bei der Anmeldung").isTrue();
+            assertThat(form.trust.isVisible()).as("Serverzertifikate unter Erweitert").isFalse();
             if (keePass) {
                 form.origin.setSelectedItem(AiSettingsPanel.KEEPASS);
                 assertThat(form.pairKeePass.isVisible()).as("Koppeln-Knopf sichtbar").isTrue();
@@ -132,8 +133,9 @@ class SourceFormLayoutTest {
                         y(form.auth, root), y(form.baseUrl, root), y(form.title, root)))
                         .as("Anmeldung vor Adresse und Name").isSorted();
             } else {
-                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.auth, root), y(form.baseUrl, root),
-                        y(form.title, root))).as("Anmeldung vor Adresse und Name").isSorted();
+                assertThat(List.of(y(form.kind, root), y(form.origin, root), y(form.auth, root),
+                        y(form.certificate, root), y(form.baseUrl, root), y(form.title, root)))
+                        .as("Anmeldung und Zertifikat vor Adresse und Name").isSorted();
             }
 
             JScrollPane scroll = find(root, JScrollPane.class).get(0);

@@ -40,6 +40,9 @@ import java.util.Set;
  * @param aiAccess        woher die App den API-Key des KI-Dienstes nimmt (KeePass oder Tresor); nur die App
  * @param localFiles      freigegebene Ordner für lokale Dateien ({@code space-harvester.local-files.allow-all},
  *                        {@code .roots}); ohne Angabe nur das Verzeichnis der Ordner-Quelle selbst
+ * @param sourceKeePass   Quellen-ID → Titel des KeePass-Eintrags ({@code space-harvester-app.source-keepass-entries})
+ * @param inactiveRoots   vorübergehend abgeschaltete Ordner ({@code space-harvester-app.inactive-roots}): bleiben in
+ *                        der Tabelle „Dateizugriff“ stehen, gelten aber nicht; nur die App kennt sie
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -47,7 +50,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
                           TrustSettings tls, Cache cache, boolean setupCompleted,
                           Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
-                          LocalFileSettings localFiles, Map<String, String> sourceKeePass) {
+                          LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                          List<Path> inactiveRoots) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -67,6 +71,20 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         aiAccess = aiAccess == null ? AiAccess.NONE : aiAccess;
         localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
         sourceKeePass = sourceKeePass == null ? Map.of() : Map.copyOf(sourceKeePass);
+        inactiveRoots = inactiveRoots == null ? List.of() : List.copyOf(inactiveRoots);
+    }
+
+    /** Ohne abgeschaltete Ordner, für Aufrufer, die sie nicht brauchen. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                List.of());
     }
 
     /** Ohne Zugangsdaten aus KeePass für Quellen, für Aufrufer, die sie nicht brauchen. */
@@ -111,7 +129,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass);
+                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots);
     }
 
     /**
@@ -121,13 +140,14 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
-                other.sync, other.aiAccess, other.localFiles, other.sourceKeePass);
+                other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
-                outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass);
+                outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */

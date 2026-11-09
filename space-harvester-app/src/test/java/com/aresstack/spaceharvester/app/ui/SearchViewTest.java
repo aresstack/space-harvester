@@ -92,10 +92,11 @@ class SearchViewTest {
         JTable table = find(whole(view[0]), JTable.class).get(0);
         AbstractButton more = button(whole(view[0]), "Weitere laden");
         // ADR 0013: Die Quellen finden, die Seiten werden in den Cache geladen, Treffer kommen aus dem Cache. Was beim
-        // Antworten noch lädt, kommt über „Weitere laden“.
-        await(() -> table.getRowCount() > 0);
+        // Antworten noch lädt, kommt über „Weitere laden“. Die Funde einer Quelle stehen schon da, während die Suche
+        // läuft (Ring über der Liste); die Zeile unter der Liste gilt erst mit dem fertigen Stapel.
+        await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
         assertThat(view[0].statusText()).contains("Dateien: Volltext im Cache").doesNotContain("Bestand");
-        loadAll(table, more, 2 * PAGES_PER_SOURCE);
+        loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
         // Vorläufige Treffer kennen ihren Space erst, wenn ihre Seite geladen ist: bis zum Ende des Ladens warten.
         await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
 
@@ -156,6 +157,26 @@ class SearchViewTest {
         assertThat(model.getValueAt(0, 0)).isEqualTo("neu");
     }
 
+    /** Die vorläufigen Funde eines Stapels weichen dem fertigen Stapel; frühere Stapel bleiben. */
+    @Test
+    void provisionalHitsOfABatchAreReplacedByTheFinishedBatch() {
+        SearchView.HitsModel model = new SearchView.HitsModel();
+        model.set(List.of(hit("a"), hit("b")));
+        // Ein vorläufiger Fund für eine schon gezeigte Seite ändert die geprüfte Zeile nicht (Codex-Befund #557).
+        model.append(List.of(new SearchView.Hit("s", "a", "nur Quelle", null, "", null), hit("c"), hit("d"),
+                hit("c")));
+        assertThat(pageIds(model)).containsExactly("a", "b", "c", "d");
+        assertThat(model.getValueAt(0, 0)).isEqualTo("Seite a");
+        model.truncate(2);
+        assertThat(pageIds(model)).containsExactly("a", "b");
+        model.add(List.of(hit("d"), hit("e")));
+        assertThat(pageIds(model)).containsExactly("a", "b", "d", "e");
+        model.truncate(10);
+        assertThat(pageIds(model)).hasSize(4);
+        model.truncate(0);
+        assertThat(model.getRowCount()).isZero();
+    }
+
     private static SearchView.Hit hit(String pageId) {
         return new SearchView.Hit("s", pageId, "Seite " + pageId, "DEV", "", null);
     }
@@ -212,12 +233,15 @@ class SearchViewTest {
         });
     }
 
-    /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
-    private static void loadAll(JTable table, AbstractButton more, int expected) throws Exception {
+    /**
+     * Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. Solange der Ring über der
+     * Liste liegt, läuft ein Stapel noch: Seine vorläufigen Funde zählen nicht als Ende.
+     */
+    private static void loadAll(SearchView view, JTable table, AbstractButton more, int expected) throws Exception {
         for (int i = 0; i < 1200; i++) {
             boolean[] state = new boolean[2];
             SwingUtilities.invokeAndWait(() -> {
-                state[0] = table.getRowCount() == expected && !more.isEnabled();
+                state[0] = table.getRowCount() == expected && !more.isEnabled() && !view.overlay.isBusy();
                 state[1] = more.isEnabled();
                 if (state[1]) {
                     more.doClick();
@@ -248,7 +272,7 @@ class SearchViewTest {
             view[0].search("betrieb");
         });
         JTable table = find(whole(view[0]), JTable.class).get(0);
-        loadAll(table, button(whole(view[0]), "Weitere laden"), 2 * PAGES_PER_SOURCE);
+        loadAll(view[0], table, button(whole(view[0]), "Weitere laden"), 2 * PAGES_PER_SOURCE);
         assertThat(view[0].statusText()).contains("Offline: nicht erreichbar", "unvollständig");
     }
 
@@ -356,7 +380,7 @@ class SearchViewTest {
         assertThat(view[0].chosenSpaces()).isEmpty();
         JTable table = find(whole(view[0]), JTable.class).get(0);
         AbstractButton more = button(whole(view[0]), "Weitere laden");
-        loadAll(table, more, PAGES_PER_SOURCE);
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
         Set<String> sourcesSeen = new HashSet<>();
         SwingUtilities.invokeAndWait(() -> {
             for (int row = 0; row < table.getRowCount(); row++) {
@@ -373,7 +397,7 @@ class SearchViewTest {
         });
         assertThat(view[0].chosenSources()).isEmpty();
         assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
-        loadAll(table, more, 2 * PAGES_PER_SOURCE);
+        loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
     }
 
     /**

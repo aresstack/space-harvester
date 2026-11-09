@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.app.credentials.OwnerOnlyDirectory;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +25,10 @@ import java.util.regex.Pattern;
  * DPAPI für das angemeldete Windows-Konto verschlüsselt ({@code ConvertFrom-SecureString} in PowerShell, ohne
  * native Bibliothek). Nur dieses Konto auf diesem Rechner kann sie wieder lesen; in Logs, Exporten und der Oberfläche
  * erscheint der Wert nie. Ohne Windows gibt es keinen Tresor: Eingaben gelten dann nur bis zum Schließen der App.
+ *
+ * <p>Der Ordner des Tresors und jede Datei darin sind nur für das eigene Konto lesbar ({@link OwnerOnlyDirectory}:
+ * Windows-ACL nur Besitzer, POSIX {@code rw-------}), zusätzlich zur DPAPI-Verschlüsselung. Unter Sicherheit lässt sich
+ * jede Datei auf Knopfdruck löschen ({@link #remove}).
  *
  * <p>Der Klartext geht nur über die Standardeingabe an PowerShell (nie über die Befehlszeile, die andere Prozesse
  * sehen können) und als Base64 von UTF-8, damit Umlaute die Codepage nicht stören.
@@ -142,15 +148,19 @@ public final class SecretVault {
             throw new IOException("Unter diesem Betriebssystem gibt es keinen Tresor für Zugangsdaten.");
         }
         Files.createDirectories(directory);
+        // Ordner nur für das eigene Konto; neue Dateien erben das. Gelingt es nicht, schützt weiterhin DPAPI.
+        OwnerOnlyDirectory.secure(directory);
         Path target = file(sourceId);
         Path temp = Files.createTempFile(directory, sourceId, ".tmp");
         try {
+            OwnerOnlyDirectory.secureFile(temp);
             Files.writeString(temp, text, StandardCharsets.US_ASCII);
             try {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
+            OwnerOnlyDirectory.secureFile(target);
         } finally {
             Files.deleteIfExists(temp);
         }

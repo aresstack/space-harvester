@@ -1,0 +1,62 @@
+# Gold-Analysen (MIT) zu Angelos Beta-Befund: Präposition „auf“ vom Parser als compound:prt am Verb angehängt.
+# Satz 1: Austausch als conj am Objekt; Satz 2: Austausch als conj am Verb; Satz 3: echte Partikel vor Relativsatz;
+# Satz 4: echte Partikel vor gereihtem Satz mit eigenem Subjekt.
+# sent_id = 1
+# text = Der Marktplatz ermöglicht verschiedenen Nutzergruppen den selbstständigen Zugriff auf und Austausch von Angeboten.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Marktplatz	Marktplatz	NOUN	NN	_	3	nsubj	_	_
+3	ermöglicht	ermöglichen	VERB	VVFIN	_	0	root	_	_
+4	verschiedenen	verschieden	ADJ	ADJA	_	5	amod	_	_
+5	Nutzergruppen	Nutzergruppe	NOUN	NN	_	3	iobj	_	_
+6	den	der	DET	ART	_	8	det	_	_
+7	selbstständigen	selbstständig	ADJ	ADJA	_	8	amod	_	_
+8	Zugriff	Zugriff	NOUN	NN	_	3	obj	_	_
+9	auf	auf	ADP	PTKVZ	_	3	compound:prt	_	_
+10	und	und	CCONJ	KON	_	11	cc	_	_
+11	Austausch	Austausch	NOUN	NN	_	8	conj	_	_
+12	von	von	ADP	APPR	_	13	case	_	_
+13	Angeboten	Angebot	NOUN	NN	_	11	nmod	_	_
+14	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Marktplatz ermöglicht verschiedenen Nutzergruppen den selbstständigen Zugriff auf und Austausch von Angeboten.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Marktplatz	Marktplatz	NOUN	NN	_	3	nsubj	_	_
+3	ermöglicht	ermöglichen	VERB	VVFIN	_	0	root	_	_
+4	verschiedenen	verschieden	ADJ	ADJA	_	5	amod	_	_
+5	Nutzergruppen	Nutzergruppe	NOUN	NN	_	3	iobj	_	_
+6	den	der	DET	ART	_	8	det	_	_
+7	selbstständigen	selbstständig	ADJ	ADJA	_	8	amod	_	_
+8	Zugriff	Zugriff	NOUN	NN	_	3	obj	_	_
+9	auf	auf	ADP	PTKVZ	_	3	compound:prt	_	_
+10	und	und	CCONJ	KON	_	11	cc	_	_
+11	Austausch	Austausch	NOUN	NN	_	3	conj	_	_
+12	von	von	ADP	APPR	_	13	case	_	_
+13	Angeboten	Angebot	NOUN	NN	_	11	nmod	_	_
+14	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 3
+# text = Der Kunde ruft den Sachbearbeiter an, der den Antrag prüft.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Kunde	Kunde	NOUN	NN	_	3	nsubj	_	_
+3	ruft	rufen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	obj	_	_
+6	an	an	ADP	PTKVZ	_	3	compound:prt	_	_
+7	,	,	PUNCT	$,	_	11	punct	_	_
+8	der	der	PRON	PRELS	_	11	nsubj	_	_
+9	den	der	DET	ART	_	10	det	_	_
+10	Antrag	Antrag	NOUN	NN	_	11	obj	_	_
+11	prüft	prüfen	VERB	VVFIN	_	5	acl:relcl	_	_
+12	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 4
+# text = Er ruft an und sie antwortet.
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	ruft	rufen	VERB	VVFIN	_	0	root	_	_
+3	an	an	ADP	PTKVZ	_	2	compound:prt	_	_
+4	und	und	CCONJ	KON	_	6	cc	_	_
+5	sie	sie	PRON	PPER	_	6	nsubj	_	_
+6	antwortet	antworten	VERB	VVFIN	_	2	conj	_	_
+7	.	.	PUNCT	$.	_	2	punct	_	_
+

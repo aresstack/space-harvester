@@ -369,6 +369,7 @@ final class SetupWizard {
             case UNAVAILABLE -> "Nicht verfügbar";
         }, parser.state() == ParserModelSetup.State.INSTALLED ? Comic.INK : Comic.MUTED);
         summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
+        summary.add("KeePass", context.keePass().paired() ? "gekoppelt" : "nicht gekoppelt");
         AiAccess access = settings.aiAccess();
         summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()
                 ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");

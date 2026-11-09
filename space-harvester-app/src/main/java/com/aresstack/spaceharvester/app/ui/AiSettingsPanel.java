@@ -15,7 +15,6 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
@@ -73,18 +72,24 @@ final class AiSettingsPanel {
     final JComboBox<String> access = Comic.combo();
     static final String KEEPASS = "KeePass";
     static final String MANUAL = "Manuell";
-    final JLabel keePassStatus = Comic.text("Nicht gekoppelt");
-    final ComposerButton pair = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein "
-            + "Einmal-Passwort");
-    /** Kopplungsstand als Feld mit dem Koppeln-Knopf rechts IM Feld (InputFrame), wie die übrigen Zeilen. */
-    final JPanel keePassRow = Comic.fieldWithButton(keePassStatus, pair);
-
-    {
-        // Innenabstand wie bei einem Textfeld im InputFrame, damit der Text nicht am Rahmen klebt.
-        keePassStatus.setBorder(new javax.swing.border.EmptyBorder(2, 4, 2, 4));
-    }
+    /**
+     * Rechts IM Eintragsfeld: „Koppeln“, solange die App nicht gekoppelt ist (dieselbe Kopplung wie unter Sicherheit ›
+     * KeePass, hier an Ort und Stelle), sonst „Einträge laden“. Die Kopplung selbst (Stand, Neu koppeln, Entkoppeln)
+     * steht unter Einstellungen › Sicherheit ({@link KeePassPairingPanel}), denn sie gilt auch für die Quellen.
+     */
+    final ComposerButton pair = Comic.button(KeePassPairingPanel.PAIR, "Mit KeePass koppeln (KeePassRPC); KeePass "
+            + "zeigt dabei ein Einmal-Passwort");
+    static final String LOAD_ENTRIES = "Einträge laden";
+    static final String ENTRY_HINT = "Bestehenden Eintrag wählen oder einen neuen Namen eintippen; ein neuer Eintrag "
+            + "entsteht beim Speichern mit Basisadresse und API-Key";
+    static final String NOT_PAIRED_HINT = "Nicht gekoppelt · „Koppeln“ verbindet mit KeePass (muss laufen, mit dem "
+            + "Plugin KeePassRPC) und gilt dann auch für die Wissensquellen";
     /** Editierbar: einen bestehenden Eintrag wählen oder einen neuen Titel eintippen. */
     final JComboBox<String> entry = Comic.combo();
+    /** Eintragsfeld mit dem Knopf {@link #pair} rechts IM Feld (InputFrame). */
+    final JPanel entryRow = Comic.fieldWithButton(entry, pair);
+    /** Wird nach einer Kopplung von hier aus gerufen, damit Sicherheit › KeePass den Stand zeigt. */
+    private Runnable pairingChanged = () -> { };
     /** Die beim Koppeln gelesenen Titel; leer, solange nicht gekoppelt. */
     List<String> titles = List.of();
     /** Ob das Feld „API-Key“ gerade den aus KeePass gelesenen Key zeigt (dann zählt er nicht als eingetippt). */
@@ -158,9 +163,7 @@ final class AiSettingsPanel {
         entry.setEditable(true);
         rows.add("Zugangsdaten beziehen über", access, "KeePass liest Basisadresse und API-Key aus einem Eintrag; "
                 + "Manuell legt den Key im Tresor dieses Windows-Kontos ab");
-        rows.add("KeePass", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
-        rows.add("Eintrag", entry, "Bestehenden Eintrag wählen oder einen neuen Namen eintippen; ein neuer Eintrag "
-                + "entsteht beim Speichern mit Basisadresse und API-Key");
+        rows.add("Eintrag", entryRow, ENTRY_HINT);
         access.addActionListener(e -> updateAccess());
         pair.addActionListener(e -> pairKeePass());
         entry.addActionListener(e -> entryChosen());
@@ -300,11 +303,11 @@ final class AiSettingsPanel {
         }
         entry.setSelectedItem(title);
         entry.getEditor().setItem(title);
-        keePassStatus.setText(context.keePass().paired() ? "Gekoppelt" : "Nicht gekoppelt");
         clearKeePassKey();
         apiKey.setText("");
         // Setzt auch den Hinweis zum Key und liest bei KeePass den gewählten Eintrag.
         updateAccess();
+        refreshPairing();
         shownAccess = accessDraft();
         removeKey.setVisible(context.aiKeyAvailable() && !keePassChosen());
     }
@@ -366,10 +369,25 @@ final class AiSettingsPanel {
                 : new AiAccess(AiAccess.Mode.MANUAL, null);
     }
 
+    void onPairingChange(Runnable pairingChanged) {
+        this.pairingChanged = pairingChanged;
+    }
+
+    /**
+     * Knopf und Hinweis am Eintragsfeld nach dem gespeicherten Kopplungsstand: nicht gekoppelt → „Koppeln“ mit Hinweis
+     * an Ort und Stelle, sonst „Einträge laden“. Auch nach Koppeln oder Entkoppeln unter Sicherheit.
+     */
+    void refreshPairing() {
+        boolean paired = context.keePass().paired();
+        pair.setText(paired ? LOAD_ENTRIES : KeePassPairingPanel.PAIR);
+        pair.setToolTipText(paired ? "Die Einträge aus KeePass für das Auswahlfeld lesen"
+                : "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein Einmal-Passwort");
+        rows.hint(entryRow, paired ? ENTRY_HINT : NOT_PAIRED_HINT);
+    }
+
     private void updateAccess() {
         boolean keePass = keePassChosen();
-        rows.visible(keePassRow, keePass);
-        rows.visible(entry, keePass);
+        rows.visible(entryRow, keePass);
         if (keePass) {
             entryChosen();
         } else {
@@ -383,7 +401,7 @@ final class AiSettingsPanel {
     /** Koppelt (KeePass zeigt ein Einmal-Passwort) und liest die Einträge für das Auswahlfeld. */
     void pairKeePass() {
         pair.setEnabled(false);
-        keePassStatus.setText("Verbinde mit KeePass …");
+        rows.hint(entryRow, "Verbinde mit KeePass …");
         String keep = entryTitle();
         Background.run(() -> context.keePass().titles(), read -> {
             pair.setEnabled(true);
@@ -395,12 +413,16 @@ final class AiSettingsPanel {
             }
             entry.setSelectedItem(keep.isEmpty() && !read.isEmpty() ? read.get(0) : keep);
             entry.getEditor().setItem(entry.getSelectedItem());
-            keePassStatus.setText("Gekoppelt · " + Texts.count(read.size(), "Eintrag", "Einträge") + " lesbar");
+            refreshPairing();
+            rows.hint(entryRow, "Gekoppelt · " + Texts.count(read.size(), "Eintrag", "Einträge") + " lesbar; "
+                    + "Eintrag wählen oder neuen Namen eintippen");
             entryChosen();
+            pairingChanged.run();
         }, error -> {
             pair.setEnabled(true);
-            keePassStatus.setText("Nicht gekoppelt");
+            refreshPairing();
             feedback.warning("KeePass nicht erreichbar", keePassReason(error));
+            pairingChanged.run();
         });
     }
 

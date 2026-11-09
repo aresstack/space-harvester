@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Future;
 
 /**
  * Globale Suche als reine Schlagwortsuche über den Cache ({@code KeywordSearch} des Core, ADR 0013): Die native Suche
@@ -100,6 +102,13 @@ public final class SearchView implements View {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
+    /**
+     * Drehender Ring über der Trefferliste, solange eine Suche läuft, mit roter Stopp-Fläche „Abbrechen“ in der Mitte
+     * (Klick oder Esc). Die Treffer, die schon da sind, bleiben stehen und bedienbar, der Schleier lässt die Maus durch.
+     */
+    final BusyOverlay overlay = new BusyOverlay(Comic.scroll(table));
+    /** Die laufende Schlagwortsuche bzw. das Laden des nächsten Stapels im Hintergrund; {@code null} ohne. */
+    private Future<?> searching;
     final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
@@ -202,7 +211,10 @@ public final class SearchView implements View {
         // „Weitere laden“ über die volle Breite, direkt unter der Trefferliste; nur, solange weitere Treffer folgen.
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setOpaque(false);
-        list.add(Comic.scroll(table), BorderLayout.CENTER);
+        overlay.setHighlight(Comic.BLUE);
+        overlay.setVeilColor(Comic.SURFACE);
+        overlay.onCancel(this::cancelSearch);
+        list.add(overlay, BorderLayout.CENTER);
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
         list.add(more, BorderLayout.SOUTH);
@@ -460,10 +472,11 @@ public final class SearchView implements View {
         more.setVisible(false);
         feedback.clear();
         starting("Adresse wird aufgelöst …");
-        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+        searching = Background.start(() -> runtime.workspace().resolveAddress(address), resolution -> {
             if (id != request) {
                 return;
             }
+            searching = null;
             run.setEnabled(true);
             stopLoading();
             states.clear();
@@ -488,6 +501,7 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
             run.setEnabled(true);
             stopLoading();
             feedback.problem(error);
@@ -535,11 +549,18 @@ public final class SearchView implements View {
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
+        // Die alte Liste geht; die Funde der Quellen füllen die neue, sobald eine Quelle antwortet.
+        model.set(List.of());
+        states.clear();
+        status.setText(" ");
         starting("Suche läuft …");
-        Background.run(() -> runtime.workspace().keywordSearch(q, null, LIMIT), results -> {
+        searching = Background.start(() -> runtime.workspace().keywordSearch(q, null, LIMIT, observer(id)), results -> {
             if (id != request) {
+                discard(results);
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             states.clear();
             incomplete = false;
@@ -571,12 +592,54 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             model.set(List.of());
             states.clear();
             reset();
             feedback.problem(error);
         });
+    }
+
+    /**
+     * Der Beobachter der Suche Nummer {@code id}: Die Funde einer Quelle erscheinen in der Liste, sobald die Quelle
+     * geantwortet hat; der fertige Stapel ersetzt sie dann in der Rangfolge des Core. Meldungen einer überholten Suche
+     * verfallen.
+     */
+    private KeywordSearch.Found observer(int id) {
+        return (sourceId, hits) -> SwingUtilities.invokeLater(() -> {
+            if (id == request) {
+                arrived(hits);
+            }
+        });
+    }
+
+    /**
+     * Vorläufige Treffer einer Quelle, noch während die anderen suchen: nur angehängt, nie an die Stelle einer schon
+     * gezeigten Zeile, denn ein geprüfter Treffer eines früheren Stapels weiß mehr (Space, Auszug, Anhang) als der
+     * Fund der Quelle.
+     */
+    private void arrived(List<KeywordSearch.Hit> hits) {
+        if (hits.isEmpty()) {
+            return;
+        }
+        model.append(hits.stream().map(Hit::of).toList());
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · weitere Quellen antworten noch");
+        status.setForeground(Comic.MUTED);
+    }
+
+    /**
+     * Ein Stapel, dessen Suche überholt oder abgebrochen wurde: Sein Laden in den Cache endet, sonst lüde der Core
+     * Seiten für eine Liste, die niemand mehr sieht.
+     */
+    private void discard(KeywordSearch.Results results) {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Progress progress = results.progress();
+        if (runtime != null && progress != null && !progress.done()) {
+            Background.run(() -> runtime.workspace().cancelKeywordSearch(progress.id()), ignored -> { },
+                    ignored -> { });
+        }
     }
 
     /**
@@ -641,6 +704,7 @@ public final class SearchView implements View {
     /** Ende der semantischen Suche: Endliste, Grund in der Fortschrittszeile, Hinweis bei keinen Treffern. */
     private void ended(ProgressiveResult result) {
         running = null;
+        overlay.setBusy(false);
         showRanked(result.hits());
         showVariants(result.variants());
         idle(switch (result.reason()) {
@@ -749,13 +813,20 @@ public final class SearchView implements View {
         run.setEnabled(false);
         feedback.clear();
         starting("Weitere Treffer werden geladen …");
-        Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
+        int from = model.rows.size();
+        searching = Background.start(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT, observer(id)),
+                results -> {
             if (id != request) {
+                discard(results);
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             run.setEnabled(true);
             shownCursor = cursor;
-            batchStart = model.rows.size();
+            batchStart = from;
+            // Die vorläufigen Funde dieses Stapels weichen dem fertigen Stapel in der Rangfolge des Core.
+            model.truncate(from);
             model.add(hits(results));
             show(q, results);
             track(results.progress());
@@ -770,6 +841,8 @@ public final class SearchView implements View {
             if (id != request) {
                 return;
             }
+            searching = null;
+            overlay.setBusy(false);
             // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
             run.setEnabled(true);
             reset();
@@ -876,12 +949,46 @@ public final class SearchView implements View {
                 error -> finished(true));
     }
 
+    /**
+     * „Stopp“ im Ring über der Liste: Was auch immer gerade läuft, hört auf, und die Treffer, die schon da sind,
+     * bleiben stehen und bedienbar. Eine semantische Suche beendet der Core selbst ({@code completed(CANCELLED)}); eine
+     * laufende Schlagwortsuche wird unterbrochen, ihr spätes Ergebnis verfällt; danach endet das Laden in den Cache.
+     */
+    void cancelSearch() {
+        if (running != null) {
+            running.cancel();
+            cancel.setEnabled(false);
+            return;
+        }
+        if (searching != null) {
+            request++;
+            searching.cancel(true);
+            searching = null;
+            overlay.setBusy(false);
+            run.setEnabled(true);
+            awaitingHits = false;
+            // Ohne fertigen Stapel gibt es keinen Cursor: „Weitere laden“ gilt erst wieder nach einer vollständigen
+            // Suche.
+            nextCursor = null;
+            finished(true);
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · Suche abgebrochen");
+            status.setForeground(Comic.MUTED);
+            return;
+        }
+        cancelLoading();
+    }
+
     /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
     private void stopLoading() {
         if (running != null) {
             running.cancel();
             running = null;
         }
+        if (searching != null) {
+            searching.cancel(true);
+            searching = null;
+        }
+        overlay.setBusy(false);
         AppRuntime runtime = context.runtime();
         String id = progressId;
         poll.stop();
@@ -999,6 +1106,7 @@ public final class SearchView implements View {
 
     /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
     private void starting(String text) {
+        overlay.setBusy(true);
         endState.setVisible(false);
         progressText.setText(text);
         progressText.setVisible(true);
@@ -1132,6 +1240,30 @@ public final class SearchView implements View {
                 fireTableDataChanged();
             } else if (!appended.isEmpty()) {
                 fireTableRowsInserted(first, rows.size() - 1);
+            }
+        }
+
+        /** Hängt nur Treffer an, deren Seite noch nicht in der Liste steht; vorhandene Zeilen bleiben unverändert. */
+        void append(List<Hit> hits) {
+            List<Hit> appended = new ArrayList<>();
+            for (Hit hit : hits) {
+                if (indexOf(hit) < 0 && appended.stream().noneMatch(other -> same(other, hit))) {
+                    appended.add(hit);
+                }
+            }
+            if (!appended.isEmpty()) {
+                int first = rows.size();
+                rows.addAll(appended);
+                fireTableRowsInserted(first, rows.size() - 1);
+            }
+        }
+
+        /** Nimmt alle Zeilen ab {@code from} weg; davor bleibt alles. */
+        void truncate(int from) {
+            if (from < rows.size()) {
+                int last = rows.size() - 1;
+                rows = new ArrayList<>(rows.subList(0, Math.max(0, from)));
+                fireTableRowsDeleted(Math.max(0, from), last);
             }
         }
 

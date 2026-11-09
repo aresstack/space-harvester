@@ -94,7 +94,7 @@ class FileAccessEditorTest {
         FileAccessEditor[] editor = new FileAccessEditor[1];
         SwingUtilities.invokeAndWait(() -> {
             editor[0] = new FileAccessEditor(context, parent -> true);
-            assertThat(editor[0].list().getComponentCount()).as("nur der Hinweis „Noch kein Ordner“").isEqualTo(1);
+            assertThat(editor[0].table.getRowCount()).as("leere Tabelle").isZero();
             editor[0].path.setText("  " + projects + " ");
             editor[0].add.doClick();
             editor[0].path.setText(team);
@@ -102,11 +102,15 @@ class FileAccessEditorTest {
             editor[0].path.setText(projects);
             editor[0].add.doClick();
             assertThat(editor[0].roots()).containsExactly(projects, team);
-            assertThat(editor[0].list().getComponentCount()).isEqualTo(2);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(2);
+            assertThat(editor[0].table.getValueAt(0, FileAccessEditor.PATH)).isEqualTo(projects);
+            assertThat(editor[0].table.getValueAt(0, FileAccessEditor.ACTIVE)).isEqualTo(true);
             assertThat(editor[0].path.getText()).isEmpty();
 
+            // Das ✕ in der Zeile entfernt sofort.
             editor[0].revoke(projects);
             assertThat(editor[0].roots()).containsExactly(team);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(1);
             editor[0].allowAll.doClick();
             editor[0].save();
         });
@@ -139,6 +143,82 @@ class FileAccessEditorTest {
         await(() -> editor[0].feedback.text().contains("Dateizugriff übernommen"));
         assertThat(context.settings().localFiles().roots()).containsExactly(home.resolve("wissen"));
         await(() -> !editor[0].changed());
+    }
+
+    /** Mehrere markierte Zeilen gehen mit einem Klick; die Statusspalte meldet, ob der Ordner erreichbar ist. */
+    @Test
+    void selectedRowsAreRemovedTogetherAndStatusShowsReachability() throws Exception {
+        String existing = Files.createDirectories(home.resolve("vorhanden")).toString();
+        String missing = home.resolve("fehlt").toString();
+        String kept = Files.createDirectories(home.resolve("bleibt")).toString();
+        FileAccessEditor[] editor = new FileAccessEditor[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0] = new FileAccessEditor(context, parent -> true);
+            for (String folder : List.of(existing, missing, kept)) {
+                editor[0].path.setText(folder);
+                editor[0].add.doClick();
+            }
+            assertThat(editor[0].table.getRowCount()).isEqualTo(3);
+        });
+        int status = FileAccessEditor.STATUS;
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(0, status))
+                && FileAccessEditor.STATUS_UNREACHABLE.equals(editor[0].table.getValueAt(1, status))
+                && FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(2, status)));
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0].table.setRowSelectionInterval(0, 1);
+            editor[0].removeSelected();
+            assertThat(editor[0].roots()).containsExactly(kept);
+            assertThat(editor[0].table.getRowCount()).isEqualTo(1);
+        });
+        // Ein entfernter und wieder aufgenommener Ordner wird neu geprüft: inzwischen angelegt → erreichbar.
+        Files.createDirectories(Path.of(missing));
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0].path.setText(missing);
+            editor[0].add.doClick();
+        });
+        await(() -> FileAccessEditor.STATUS_REACHABLE.equals(editor[0].table.getValueAt(1, status)));
+    }
+
+    /**
+     * Das Häkchen schaltet einen Ordner vorübergehend ab: Er bleibt in der Tabelle, wandert aber beim Speichern von
+     * {@code local-files.roots} nach {@code space-harvester-app.inactive-roots} und kommt beim Laden zurück.
+     */
+    @Test
+    void uncheckedFoldersStayListedButAreSavedAsInactive() throws Exception {
+        String active = home.resolve("aktiv").toString();
+        // Mit Punkt getippt: die Datei hält auch abgeschaltete Ordner normalisiert, die Platte gilt danach als gespeichert.
+        String paused = home.resolve("pause").toString() + java.io.File.separator + ".";
+        String pausedSaved = home.resolve("pause").toString();
+        FileAccessEditor[] editor = new FileAccessEditor[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0] = new FileAccessEditor(context, parent -> true);
+            for (String folder : List.of(active, paused)) {
+                editor[0].path.setText(folder);
+                editor[0].add.doClick();
+            }
+            // Wie ein Klick ins Häkchen: der Tabellen-Editor schreibt ins Modell.
+            editor[0].table.setValueAt(false, 1, FileAccessEditor.ACTIVE);
+            assertThat(editor[0].activeRoots()).containsExactly(active);
+            assertThat(editor[0].inactiveRoots()).containsExactly(paused);
+            assertThat(editor[0].roots()).containsExactly(active, paused);
+            editor[0].save();
+        });
+        await(() -> editor[0].feedback.text().contains("Dateizugriff übernommen"));
+        assertThat(Files.readString(config)).contains("inactive-roots: [", "roots:\n").contains(pausedSaved);
+        assertThat(context.settings().localFiles().roots()).containsExactly(Path.of(active));
+        assertThat(context.settings().inactiveRoots()).containsExactly(Path.of(pausedSaved));
+        await(() -> !editor[0].changed());
+        SwingUtilities.invokeAndWait(() -> {
+            // Ein neu geöffneter Dialog zeigt die gespeicherten Ordner (die leere Tabelle zählt nicht als Änderung).
+            FileAccessEditor fresh = new FileAccessEditor(context, parent -> true);
+            assertThat(fresh.roots()).containsExactly(active, pausedSaved);
+            assertThat(fresh.table.getValueAt(1, FileAccessEditor.ACTIVE)).isEqualTo(false);
+            assertThat(fresh.changed()).isFalse();
+            fresh.setActive(pausedSaved, true);
+            assertThat(fresh.changed()).isTrue();
+            assertThat(fresh.activeRoots()).containsExactly(active, pausedSaved);
+            assertThat(fresh.table.getValueAt(1, FileAccessEditor.ACTIVE)).isEqualTo(true);
+        });
     }
 
     private static void await(java.util.function.BooleanSupplier condition) throws Exception {

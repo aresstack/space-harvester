@@ -350,10 +350,22 @@ public class KeywordSearch {
      * @param partOf der übergeordnete Lauf oder {@code null}
      */
     public Results search(AccessContext caller, Query query, String cursor, int limit, SearchRunId partOf) {
+        return search(caller, query, cursor, limit, partOf, null);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, Query, String, int, SearchRunId)}; zusätzlich meldet {@code found} die Funde
+     * jeder Quelle, sobald sie geantwortet hat, noch während die übrigen suchen. So steht ein erster Teil der Treffer
+     * schon da, bevor der Stapel fertig ist; die Meldungen kommen aus den Suchthreads, nie aus dem des Aufrufers.
+     *
+     * @param found Beobachter der laufenden Suche oder {@code null}
+     */
+    public Results search(AccessContext caller, Query query, String cursor, int limit, SearchRunId partOf,
+                          Found found) {
         Instant startedAt = Instant.now();
         long started = System.nanoTime();
         Tally tally = new Tally();
-        Results results = batch(caller, query, cursor, limit, tally);
+        Results results = batch(caller, query, cursor, limit, tally, found);
         if (runs == SearchRunLog.NONE) {
             return results;
         }
@@ -391,6 +403,22 @@ public class KeywordSearch {
         void searching(Set<String> sourceIds);
     }
 
+    /**
+     * Beobachter einer laufenden Suche: bekommt die Funde einer Quelle als vorläufige Treffer (Titel und Auszug der
+     * Quelle, wie {@link Results#ranked()} sie zu Beginn nennt), sobald diese Quelle geantwortet hat. Quellen, deren
+     * Funde die Suche erst je Seite prüfen muss, meldet er nicht; die stehen erst im fertigen Stapel. Ein Endnutzer
+     * mit delegierter Anmeldung (ADR 0014) bekommt keine Meldung: Für ihn gilt nur die endgültige Liste.
+     */
+    @FunctionalInterface
+    public interface Found {
+
+        /**
+         * @param sourceId die Quelle, die geantwortet hat
+         * @param hits     ihre vorläufigen Treffer dieses Stapels in ihrer Rangfolge, höchstens {@code limit}
+         */
+        void found(String sourceId, List<Hit> hits);
+    }
+
     /** Zahlen eines Stapels für das Suchlauf-Protokoll; nur geprüfte Seiten. */
     private static final class Tally {
 
@@ -401,7 +429,7 @@ public class KeywordSearch {
         OptionalInt confirmed = OptionalInt.empty();
     }
 
-    private Results batch(AccessContext caller, Query query, String cursor, int limit, Tally tally) {
+    private Results batch(AccessContext caller, Query query, String cursor, int limit, Tally tally, Found watcher) {
         Objects.requireNonNull(query, "query");
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
@@ -414,6 +442,12 @@ public class KeywordSearch {
         }
         Map<String, Integer> offsets = position == null ? null : position.offsets();
         boolean cached = texts != null;
+        // ADR 0014, Fortschreibung Punkt 4: Ein Endnutzer mit delegierter Anmeldung bekommt nur die endgültige Liste aus
+        // dem Cache, seitenweise mit seinem Token geprüft. Die Funde der Quelle bleiben ungeprüft und nur zum Laden.
+        boolean finalListOnly = caller != null && caller.kind() == AccessContext.PrincipalKind.END_USER;
+        // Vorläufige Treffer je Quelle gibt es nur mit Cache (dort sind sie der erste Stand der Liste) und nie für
+        // Endnutzer.
+        Found observer = watcher != null && cached && !finalListOnly ? watcher : null;
 
         List<SourceState> states = new ArrayList<>();
         Map<String, List<SourceSearchMatch>> pending = new LinkedHashMap<>();
@@ -468,6 +502,11 @@ public class KeywordSearch {
                             query.spaces())));
                 }
                 calls.add(perQuery);
+                if (observer != null) {
+                    // Sobald diese Quelle geantwortet hat, erfährt es der Beobachter, auch wenn andere noch suchen.
+                    List<Future<List<SourceSearchMatch>>> answers = List.copyOf(perQuery);
+                    searching.submit(() -> report(observer, caller, search, answers, limit));
+                }
             }
         }
         for (int s = 0; s < searches.size(); s++) {
@@ -561,9 +600,6 @@ public class KeywordSearch {
         // ohne Inhaltsabruf. Bewertet nach Titel und Auszug (#154) wählt die Strategie (ADR 0016, Punkt 4), welche
         // jetzt in den Cache laden; der Volltextindex findet sie dort, und seine Treffer ersetzen die vorläufigen. Was
         // ein früherer Stapel noch lud, fragt dieser Stapel wieder ab, damit es nicht verloren geht.
-        // ADR 0014, Fortschreibung Punkt 4: Ein Endnutzer mit delegierter Anmeldung bekommt nur die endgültige Liste aus
-        // dem Cache, seitenweise mit seinem Token geprüft. Die Funde der Quelle bleiben ungeprüft und nur zum Laden.
-        boolean finalListOnly = caller != null && caller.kind() == AccessContext.PrincipalKind.END_USER;
         Checked discovered = finalListOnly ? unchecked(candidates) : provisional(caller, query, candidates);
         complete &= discovered.complete();
         List<Hit> found = discovered.hits();
@@ -771,6 +807,46 @@ public class KeywordSearch {
                     snippet ? candidate.passageId() : null));
         }
         return new Checked(hits, complete);
+    }
+
+    /**
+     * Meldet dem Beobachter die Funde einer Quelle, sobald alle ihre Anfragen geantwortet haben: derselbe Ausschnitt
+     * und dieselben vorläufigen Treffer wie am Ende in {@link #provisional}, aber nur für Quellen, deren Freigabe für
+     * die ganze Quelle gilt; die übrigen prüft erst der Stapel je Seite. Ausgefallene Anfragen und Fehler des
+     * Beobachters lässt die Suche hier unbeachtet, der Stapel meldet sie.
+     */
+    private void report(Found found, AccessContext caller, LiveSearch search,
+                        List<Future<List<SourceSearchMatch>>> answers, int limit) {
+        List<List<SourceSearchMatch>> answered = new ArrayList<>();
+        for (Future<List<SourceSearchMatch>> answer : answers) {
+            try {
+                answered.add(answer.get());
+            } catch (ExecutionException e) {
+                // Der Stapel wertet den Ausfall aus.
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        String sourceId = search.source().id();
+        if (answered.isEmpty() || !access.permitsSourceWide(caller, sourceId, AccessKind.METADATA)) {
+            return;
+        }
+        List<SourceSearchMatch> matches = merge(answered);
+        int offset = search.offset();
+        List<SourceSearchMatch> fresh = matches.size() <= offset ? List.of()
+                : matches.subList(offset, Math.min(matches.size(), offset + limit));
+        boolean snippet = access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT);
+        List<Hit> hits = new ArrayList<>();
+        for (SourceSearchMatch match : fresh) {
+            hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
+                    match.url(), match.version(), match.modifiedAt(), null, null, null));
+        }
+        try {
+            found.found(sourceId, List.copyOf(hits));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Beobachter der Suche fehlgeschlagen ({0})", e.getClass().getName());
+        }
     }
 
     /**
