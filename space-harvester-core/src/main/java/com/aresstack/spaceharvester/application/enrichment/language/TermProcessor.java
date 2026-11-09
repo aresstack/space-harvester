@@ -64,7 +64,7 @@ public class TermProcessor implements EnrichmentProcessor {
         Set<Integer> acronymStarts = new HashSet<>();
         for (AcronymProcessor.Mention mention : acronyms.mentions(content)) {
             mentions.add(new Mention(mention.acronym() ? TermKind.ACRONYM : TermKind.IDENTIFIER, mention.term(),
-                    mention.normalized(), mention.expansion(), mention.start(), mention.end()));
+                    mention.normalized(), mention.expansion(), mention.start(), mention.end(), false));
             acronymStarts.add(mention.start());
         }
         GermanText analysis = GermanText.analyze(text);
@@ -84,7 +84,9 @@ public class TermProcessor implements EnrichmentProcessor {
                         && notANounAtStart(group.term(), confirmed))) {
                     continue;
                 }
-                mentions.add(new Mention(kind, group.term(), null, null, start, end));
+                boolean genitive = group.from() < group.termFrom()
+                        && GENITIVE_DETERMINERS.contains(sentence.tokens().get(group.from()).lower());
+                mentions.add(new Mention(kind, group.term(), null, null, start, end, genitive));
             }
         }
         Set<String> nounKeys = new HashSet<>();
@@ -105,7 +107,8 @@ public class TermProcessor implements EnrichmentProcessor {
             // Akronyme mit der Suchform des EAC (U.S.A. und USA gleich), alles andere nach TermText.
             String surface = TermText.normalize(mention.normalized() != null ? mention.normalized()
                     : mention.term());
-            String normalized = mention.kind() == TermKind.NOUN ? baseForm(surface, nounKeys) : surface;
+            String normalized = mention.kind() == TermKind.NOUN && mention.genitive() ? baseForm(surface, nounKeys)
+                    : surface;
             Found entry = found.computeIfAbsent(normalized + '\u0000' + mention.kind().id(),
                     key -> new Found(mention, normalized));
             if (!entry.base && surface.equals(normalized)) {
@@ -154,7 +157,12 @@ public class TermProcessor implements EnrichmentProcessor {
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
 
-    private record Mention(TermKind kind, String term, String normalized, String expansion, int start, int end) {
+    /** Artikel, nach denen ein Nomen auf -s oder -es im Genitiv Singular steht ({@code des Haushalts}). */
+    private static final Set<String> GENITIVE_DETERMINERS = Set.of("des", "eines", "dieses", "jenes", "jedes",
+            "keines", "meines", "seines", "ihres", "unseres", "welches");
+
+    private record Mention(TermKind kind, String term, String normalized, String expansion, int start, int end,
+                           boolean genitive) {
     }
 
     private static final class Found {
@@ -229,7 +237,8 @@ public class TermProcessor implements EnrichmentProcessor {
     }
 
     /**
-     * Grundform statt Genitiv-s ({@code Haushalts}, {@code Ansatzes}), nur wenn sie selbst auf der Seite steht; ohne
+     * Grundform statt Genitiv-s nach {@link #GENITIVE_DETERMINERS} ({@code des Haushalts}, {@code des Ansatzes}), nur
+     * wenn sie selbst auf der Seite steht; ein Plural wie {@code die Autos} bleibt eigener Begriff; ohne
      * Wörterbuch wird nichts geraten.
      */
     static String baseForm(String normalized, Set<String> nounKeys) {

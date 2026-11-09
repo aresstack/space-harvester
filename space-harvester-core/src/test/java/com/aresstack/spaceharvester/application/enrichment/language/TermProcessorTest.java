@@ -71,6 +71,14 @@ class TermProcessorTest {
     }
 
     @Test
+    void anSPluralIsNoGenitiveAndStaysItsOwnTerm() {
+        List<TermPayload.Entry> terms = terms("Das Auto steht bereit. Die Autos werden geprüft.");
+
+        assertThat(entry(terms, "auto", TermKind.NOUN).count()).isEqualTo(1);
+        assertThat(entry(terms, "autos", TermKind.NOUN).count()).isEqualTo(1);
+    }
+
+    @Test
     void singularAndPluralStayTwoTerms() {
         List<TermPayload.Entry> terms = terms("Der Beleg wird geprüft. Die Belege werden archiviert.");
 
