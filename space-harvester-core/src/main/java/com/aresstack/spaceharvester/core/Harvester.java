@@ -131,6 +131,7 @@ import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
+import com.aresstack.spaceharvester.persistence.files.FileKnowledgeGraphStore;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
@@ -162,6 +163,10 @@ import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
+import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -270,6 +275,8 @@ public final class Harvester implements AutoCloseable {
     private final ExportConversions conversions;
     private final Assets assets;
     private final PageImageAnalysis imageAnalysis;
+    private final StatementAnalysis statementAnalysis;
+    private final KnowledgeGraph knowledgeGraph;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -648,6 +655,22 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
+            // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
+            // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
+            KnowledgeGraphStore graphStore = new FileKnowledgeGraphStore(
+                    builder.dataDirectory.resolve("knowledge-graph"));
+            StatementAnalyzer statementAnalyzer = builder.statementAnalyzer;
+            java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
+                try {
+                    return projector.project(snapshot);
+                } catch (IllegalArgumentException e) {
+                    return Optional.empty();
+                }
+            };
+            this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
+                    clock);
+            this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
+                    termRelations::expansions);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -1183,6 +1206,23 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * Aussagenanalyse einer Seite auf Knopfdruck (#499, ADR 0024): {@link StatementAnalysis#analyze} nur auf
+     * ausdrückliche Anforderung, nie auf dem EDT; {@link StatementAnalysis#read} liest nur. Ohne
+     * {@link Builder#statementAnalyzer} (Dienst) ist {@link StatementAnalysis#available()} {@code false}.
+     */
+    public StatementAnalysis statementAnalysis() {
+        return statementAnalysis;
+    }
+
+    /**
+     * Globaler Knowledge Graph über alle manuell analysierten Seiten (#499, ADR 0024), mit Rechteprüfung je Seite.
+     * Liegt unter {@code <dataDirectory>/knowledge-graph}, außerhalb des Caches.
+     */
+    public KnowledgeGraph knowledgeGraph() {
+        return knowledgeGraph;
+    }
+
+    /**
      * Offene Anmeldungen (ADR 0018): verlangt eine Quelle beim Beschaffen von Bildern einen Einmalcode, wartet der
      * Auftrag hier („Wartet auf Anmeldung“), sofern {@link Builder#signInWait} eine Wartezeit setzt. Die Oberfläche zeigt {@link SignInRequests#pending()}, sendet den Code
      * mit {@link SignInRequests#submit} und kann ihn neu anfordern ({@link SignInRequests#resend}).
@@ -1573,6 +1613,7 @@ public final class Harvester implements AutoCloseable {
 
         private final List<SourceSettingsConfig> sources = new ArrayList<>();
         private Path dataDirectory;
+        private StatementAnalyzer statementAnalyzer;
         private String userAgent = "space-harvester-core";
         private ProxySettings proxy = ProxySettings.disabled();
         private TrustBundles trustBundles = TrustBundles.NONE;
@@ -1721,6 +1762,16 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder reranker(SearchReranker reranker) {
             this.reranker = Objects.requireNonNull(reranker, "reranker");
+            return this;
+        }
+
+        /**
+         * Lokaler Satzanalysator für die Aussagenanalyse auf Knopfdruck (#499): nur die Desktop-App setzt ihn (MaltParser
+         * aus {@code :nlp-parser}); ohne ihn bleibt {@link Harvester#statementAnalysis()} ohne Analysator, der Graph
+         * lesbar. Der Core ruft ihn nie von sich aus.
+         */
+        public Builder statementAnalyzer(StatementAnalyzer analyzer) {
+            this.statementAnalyzer = Objects.requireNonNull(analyzer, "analyzer");
             return this;
         }
 
