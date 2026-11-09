@@ -453,6 +453,11 @@ public class TermRelations {
         return removed.size();
     }
 
+    /** Alle Beziehungen, auch abgelehnte, ohne Rechteprüfung; nur für Vorschlagsläufe (#336, Stufe A). */
+    List<TermRelation> stored() {
+        return List.copyOf(store.all());
+    }
+
     /** Die Beziehungen einer Herkunft in genau diesem Geltungsbereich, ohne Rechteprüfung; nur für Vorschlagsläufe. */
     List<TermRelation> automatic(RelationOrigin origin, RelationScope scope) {
         List<TermRelation> found = new ArrayList<>();
