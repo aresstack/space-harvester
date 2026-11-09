@@ -17,6 +17,8 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
 
+import com.aresstack.spaceharvester.app.event.Severity;
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
@@ -72,6 +74,14 @@ public final class MainWindow implements AppContext.Navigator {
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
+    /** So lange bleibt eine kurze Meldung stehen. */
+    private static final int NOTICE_MS = 8000;
+    private final javax.swing.Timer statusClear = new javax.swing.Timer(NOTICE_MS, e -> {
+        status.setText(" ");
+        status.setToolTipText(null);
+    });
+    /** Bis die Laufzeit steht, zeigt die Statuszeile „Startet …“. */
+    private boolean starting = true;
     /** Stand des sichtbaren Bereichs ({@link View#statusInfo()}) links in der Statuszeile, vor dem Stand der App. */
     private final CardLayout viewStatusCards = new CardLayout();
     private final JPanel viewStatus = new JPanel(viewStatusCards);
@@ -136,6 +146,8 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         findBar = new FindBar(() -> views.get(current).component());
+        statusClear.setRepeats(false);
+        context.events().subscribe(StatusMessageEvent.class, this::showStatus);
         context.onChange(ignored -> updateStatus());
         updateStatus();
     }
@@ -420,10 +432,8 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */
     private void notice(String text, java.awt.Color color) {
-        updateStatus();
-        status.setText(status.getText() + " · " + text);
-        status.setToolTipText(status.getText());
-        status.setForeground(color);
+        context.events().publish(new StatusMessageEvent(text, NOTICE_MS,
+                Comic.RED.equals(color) ? Severity.ERROR : Severity.INFO));
     }
 
     @Override
@@ -437,20 +447,45 @@ public final class MainWindow implements AppContext.Navigator {
         return sources;
     }
 
+    /**
+     * Links in der Statuszeile steht keine feste Angabe mehr (Version, Quellen und Datenordner stehen unter
+     * Einstellungen), nur was auf dem Ereignisbus erscheint: beim Start „Startet …“ bzw. warum nichts startete.
+     */
     private void updateStatus() {
-        AppRuntime runtime = context.runtime();
-        String state;
-        if (runtime != null) {
-            state = Texts.count(runtime.workspace().sources().size(), "Quelle", "Quellen") + " · Bestand "
-                    + context.settings().storage().dataDirectory();
+        if (context.runtime() != null) {
+            if (starting) {
+                starting = false;
+                status.setText(" ");
+                status.setToolTipText(null);
+            }
         } else if (context.startProblem() != null) {
-            state = "Nicht gestartet: " + Problems.describe(context.startProblem()).title();
+            context.events().publish(new StatusMessageEvent("Nicht gestartet: "
+                    + Problems.describe(context.startProblem()).title(), Integer.MAX_VALUE, Severity.ERROR));
         } else {
-            state = "Startet …";
+            context.events().publish(new StatusMessageEvent("Startet …", Integer.MAX_VALUE, Severity.INFO));
         }
-        status.setText("Space Harvester " + context.version() + " · " + state);
-        status.setToolTipText(status.getText());
-        status.setForeground(Comic.MUTED);
+    }
+
+    /** Zeigt eine Statusmeldung vom Bus und blendet sie nach ihrer Dauer aus (wie die Statusleiste in MainframeMate). */
+    private void showStatus(StatusMessageEvent event) {
+        Runnable apply = () -> {
+            StatusMessageEvent.Payload message = event.getPayload();
+            String text = message.getText() == null ? "" : message.getText();
+            status.setText(text.isEmpty() ? " " : text);
+            status.setToolTipText(text.isEmpty() ? null : text);
+            status.setForeground(message.getSeverity() == Severity.ERROR ? Comic.RED
+                    : message.getSeverity() == Severity.WARN ? Comic.ORANGE : Comic.MUTED);
+            statusClear.stop();
+            if (message.getDurationMs() < Integer.MAX_VALUE) {
+                statusClear.setInitialDelay(message.getDurationMs());
+                statusClear.restart();
+            }
+        };
+        if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+            apply.run();
+        } else {
+            javax.swing.SwingUtilities.invokeLater(apply);
+        }
     }
 
     private boolean confirmClose(JFrame frame) {

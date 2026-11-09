@@ -80,6 +80,7 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
 
     ReadingPane() {
@@ -122,6 +123,7 @@ final class ReadingPane extends JPanel {
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
         originals = Map.of();
+        details = "";
         pane.setText("");
         hint.setText(text);
         hint.setForeground(Comic.TEXT);
@@ -132,10 +134,20 @@ final class ReadingPane extends JPanel {
         return hint.getText();
     }
 
-    /** Zeigt eine vorbereitete Ansicht; auf dem EDT. */
+    /** Die Bildzeile der gezeigten Ansicht („1 Bild · live aus der Quelle …“) für die Seitendetails; sonst leer. */
+    String details() {
+        return details;
+    }
+
+    /**
+     * Zeigt eine vorbereitete Ansicht; auf dem EDT. Die Bildzeile steht nicht dauerhaft über dem Text, sondern in den
+     * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt.
+     */
     void show(Prepared prepared) {
         originals = prepared.originals();
-        hint.setText(prepared.note());
+        boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
+        details = prepared.html().isEmpty() ? "" : prepared.note();
+        hint.setText(visible ? prepared.note() : " ");
         hint.setForeground(prepared.missing() > 0 ? Comic.ORANGE : Comic.TEXT);
         if (prepared.html().isEmpty()) {
             pane.setText("");
