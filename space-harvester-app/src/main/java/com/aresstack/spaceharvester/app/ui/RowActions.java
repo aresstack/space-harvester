@@ -30,6 +30,8 @@ final class RowActions extends JComponent implements TableCellRenderer {
     private final IntFunction<List<Action>> actions;
     private List<Action> shown = List.of();
     private int row = -1;
+    /** Breite der zuletzt vorbereiteten Zelle; JTable fragt den Tooltip ohne gesetzte Größe ab. */
+    private int cellWidth;
     private int hoverRow = -1;
     private int hoverSlot = -1;
 
@@ -108,13 +110,14 @@ final class RowActions extends JComponent implements TableCellRenderer {
                                                    int viewRow, int column) {
         shown = actions.apply(table.convertRowIndexToModel(viewRow));
         row = viewRow;
+        cellWidth = table.getCellRect(viewRow, column, false).width;
         setBackground(selected ? table.getSelectionBackground() : table.getBackground());
         return this;
     }
 
     @Override
     public String getToolTipText(MouseEvent event) {
-        int start = getWidth() - 4 - shown.size() * SLOT;
+        int start = cellWidth - 4 - shown.size() * SLOT;
         int slot = Math.floorDiv(event.getX() - start, SLOT);
         return event.getX() < start || slot >= shown.size() ? null : shown.get(slot).tooltip();
     }
