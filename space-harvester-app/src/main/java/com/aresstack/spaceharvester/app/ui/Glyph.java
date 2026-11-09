@@ -17,11 +17,13 @@ import java.awt.geom.RoundRectangle2D;
  * Kleine Vektorsymbole für Icon-Knöpfe (16 × 16, skaliert mit der Bildschirmauflösung): Aktualisieren, Stift,
  * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
  * Übernehmen (Haken), Verwerfen (Kreuz),
- * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
+ * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen), Einpassen (Ecken), Tabelle (Raster),
+ * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
  */
-enum Glyph implements Icon {
+public enum Glyph implements Icon {
 
-    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR;
+    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
+    GRAPH, FILTER, BACK, NEIGHBOURS;
 
     private static final int SIZE = 16;
 
@@ -121,6 +123,53 @@ enum Glyph implements Icon {
                     g.draw(new Line2D.Double(8, 12.5, 8, 15.2));
                     g.draw(new Line2D.Double(0.8, 8, 3.5, 8));
                     g.draw(new Line2D.Double(12.5, 8, 15.2, 8));
+                }
+                case FIT -> {
+                    // Vier Ecken eines Rahmens: alles in die Fläche einpassen.
+                    for (int[] k : new int[][] {{2, 2, 1, 1}, {14, 2, -1, 1}, {2, 14, 1, -1}, {14, 14, -1, -1}}) {
+                        g.draw(new Line2D.Double(k[0], k[1], k[0] + 4 * k[2], k[1]));
+                        g.draw(new Line2D.Double(k[0], k[1], k[0], k[1] + 4 * k[3]));
+                    }
+                }
+                case TABLE -> {
+                    g.draw(new RoundRectangle2D.Double(2, 2.5, 12, 11, 2, 2));
+                    g.draw(new Line2D.Double(2, 6.2, 14, 6.2));
+                    g.draw(new Line2D.Double(2, 9.8, 14, 9.8));
+                    g.draw(new Line2D.Double(7, 2.5, 7, 13.5));
+                }
+                case GRAPH -> {
+                    g.draw(new Line2D.Double(4.5, 4.5, 11.5, 11.5));
+                    g.draw(new Line2D.Double(4.5, 4.5, 11.5, 4.5));
+                    g.fill(new Ellipse2D.Double(2.2, 2.2, 4.6, 4.6));
+                    g.fill(new Ellipse2D.Double(9.2, 2.2, 4.6, 4.6));
+                    g.fill(new Ellipse2D.Double(9.2, 9.2, 4.6, 4.6));
+                }
+                case FILTER -> {
+                    Path2D funnel = new Path2D.Double();
+                    funnel.moveTo(2, 3);
+                    funnel.lineTo(14, 3);
+                    funnel.lineTo(9.4, 8.6);
+                    funnel.lineTo(9.4, 13.4);
+                    funnel.lineTo(6.6, 11.8);
+                    funnel.lineTo(6.6, 8.6);
+                    funnel.closePath();
+                    g.draw(funnel);
+                }
+                case BACK -> {
+                    g.draw(new Line2D.Double(3, 8, 13.5, 8));
+                    Path2D head = new Path2D.Double();
+                    head.moveTo(7, 4);
+                    head.lineTo(3, 8);
+                    head.lineTo(7, 12);
+                    g.draw(head);
+                }
+                case NEIGHBOURS -> {
+                    // Ein Knoten, dessen Nachbarn dazukommen: Kreis mit Plus.
+                    g.fill(new Ellipse2D.Double(1.8, 5.8, 4.4, 4.4));
+                    g.draw(new Line2D.Double(6, 8, 9.2, 8));
+                    g.draw(new Ellipse2D.Double(8.6, 3.6, 7, 7));
+                    g.draw(new Line2D.Double(12.1, 5.4, 12.1, 8.8));
+                    g.draw(new Line2D.Double(10.4, 7.1, 13.8, 7.1));
                 }
                 case MORE -> {
                     for (double cx : new double[] {3, 8, 13}) {

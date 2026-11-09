@@ -18,14 +18,14 @@ import org.junit.jupiter.api.Test;
 /** Reiter „Analysen → Graph“ ohne Core: Laden, Erweitern, Zurück, Tabelle, Sprung, Seitenwechsel (#499 F). */
 class KnowledgeGraphTabTest {
 
-    private static final PageKey WIKI = new PageKey("wiki", "1");
+    static final PageKey WIKI = new PageKey("wiki", "1");
     private static final KnowledgeGraph.PageRef WIKI_REF = new KnowledgeGraph.PageRef(WIKI, "DEV", "Seite 1",
             PageStatements.State.CURRENT, null);
     private static final KnowledgeGraph.PageRef OTHER_REF = new KnowledgeGraph.PageRef(new PageKey("handbuch", "7"),
             "OPS", "Belege", PageStatements.State.STALE, PageStatements.TEXT_CHANGED);
     private static final String DOC = "wiki/1@0123456789ab";
     private static final String STATEMENT = DOC + "#s1.v3";
-    private static final String BELEG = DOC + "#s1.t10";
+    static final String BELEG = DOC + "#s1.t10";
     private static final String OTHER = "handbuch/7@abcdefabcdef#s1.t4";
 
     private final FakeActions actions = new FakeActions();
@@ -116,7 +116,7 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         assertThat(tab.nodeIds()).isEmpty();
-        assertThat(tab.detailsText()).isEqualTo(KnowledgeGraphTab.EMPTY_TERM);
+        assertThat(tab.hintText()).isEqualTo(KnowledgeGraphTab.EMPTY_TERM);
         tab.setShowStale(false);
         GraphNeighbourhood.Options options = tab.options();
         assertThat(options.includeStale()).isFalse();
@@ -152,12 +152,12 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         assertThat(tab.nodeIds()).isEmpty();
-        assertThat(tab.detailsText()).isEqualTo(KnowledgeGraphTab.FILTERED);
+        assertThat(tab.hintText()).isEqualTo(KnowledgeGraphTab.FILTERED);
 
         actions.empty = true;
         tab.showPageNow();
         runner.runAll();
-        assertThat(tab.detailsText()).isEqualTo(KnowledgeGraphTab.NOT_ANALYSED);
+        assertThat(tab.hintText()).isEqualTo(KnowledgeGraphTab.NOT_ANALYSED);
     }
 
     @Test
@@ -338,7 +338,7 @@ class KnowledgeGraphTabTest {
         assertThat(tab.exportEnabled()).isTrue();
     }
 
-    private static final class FakeActions implements KnowledgeGraphTab.Actions {
+    static final class FakeActions implements KnowledgeGraphTab.Actions {
 
         final List<String> calls = new ArrayList<>();
         boolean empty;
@@ -413,7 +413,7 @@ class KnowledgeGraphTabTest {
         }
     }
 
-    private static final class DeferredRunner implements KnowledgeGraphTab.Runner {
+    static final class DeferredRunner implements KnowledgeGraphTab.Runner {
 
         private final List<Runnable> pending = new ArrayList<>();
 

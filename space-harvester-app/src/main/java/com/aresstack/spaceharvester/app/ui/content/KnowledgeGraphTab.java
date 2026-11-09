@@ -3,7 +3,13 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
+import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
+import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
@@ -15,14 +21,11 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
-import javax.swing.JCheckBox;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.table.AbstractTableModel;
@@ -31,7 +34,8 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
@@ -101,6 +105,9 @@ final class KnowledgeGraphTab extends JPanel {
     private static final double GAP_Y = 18;
     private static final double NODE_HEIGHT = 34;
     /** Alles sehen, nichts zeichnen: prüft nur, ob es überhaupt etwas gäbe. */
+    static final String FILTER_TIP = "Filter: welche Knoten und Kanten der Graph zeigt";
+    static final String TABLE_TIP = "Als Tabelle zeigen";
+    static final String GRAPH_TIP = "Als Grafik zeigen";
     private static final GraphNeighbourhood.Options PROBE = new GraphNeighbourhood.Options(1, 0,
             EnumSet.allOf(PageGraph.NodeKind.class), EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null,
             null);
@@ -111,31 +118,35 @@ final class KnowledgeGraphTab extends JPanel {
     private final EdgeTableModel tableModel = new EdgeTableModel();
     private final JTable table = new JTable(tableModel);
     private final JPanel cards = new JPanel(new CardLayout());
-    private final JTextArea details = Comic.code();
-    private final JLabel status = Comic.muted(" ");
+    private final TabHeader head = new TabHeader("Wissensgraph");
+    /** Details zum angeklickten Knoten oder zur Kante, an der Mausposition; dort auch „Zum Beleg im Text“. */
+    private final InfoPopup popup = new InfoPopup();
     private final JTextField search = new JTextField(16);
-    private final JCheckBox documents = check("Dokumente");
-    private final JCheckBox statements = check("Aussagen");
-    private final JCheckBox mentions = check("Erwähnungen");
-    private final JCheckBox roles = check("Rollen");
-    private final JCheckBox nominal = check("Nominale Bezüge");
-    private final JCheckBox crossPage = check("Seitenverbindungen");
-    private final JCheckBox stale = check("Veraltete zeigen");
-    private final JCheckBox thisSource = new JCheckBox("Nur diese Quelle");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton pageButton = Comic.button(
-            "Diese Seite", "Teilgraph der geöffneten Seite");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton expand = Comic.button(
-            "Nachbarn erweitern", "Lädt die direkten Nachbarn des gewählten Knotens dazu (auch Doppelklick)");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton back = Comic.button("Zurück",
-            "Vorige Ansicht");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton fit = Comic.button("Einpassen",
-            "Ganzen Teilgraphen in die Fläche einpassen");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton view = Comic.button("Tabelle",
-            "Zwischen Grafik und Tabelle wechseln");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton jump = Comic.button(
-            "Zum Beleg im Text", "Springt zur Textstelle im Reiter „Text“");
+    private final JPopupMenu filterMenu = new JPopupMenu();
+    private final JCheckBoxMenuItem documents = check("Dokumente");
+    private final JCheckBoxMenuItem statements = check("Aussagen");
+    private final JCheckBoxMenuItem mentions = check("Erwähnungen");
+    private final JCheckBoxMenuItem roles = check("Rollen");
+    private final JCheckBoxMenuItem nominal = check("Nominale Bezüge");
+    private final JCheckBoxMenuItem crossPage = check("Seitenverbindungen");
+    private final JCheckBoxMenuItem stale = check("Veraltete zeigen");
+    private final JCheckBoxMenuItem thisSource = check("Nur diese Quelle");
+    private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
+    private final IconButton expand = new IconButton(Glyph.NEIGHBOURS,
+            "Nachbarn erweitern: lädt die direkten Nachbarn des gewählten Knotens dazu (auch Doppelklick)");
+    private final IconButton back = new IconButton(Glyph.BACK, "Zurück zur vorigen Ansicht");
+    private final IconButton filter = new IconButton(Glyph.FILTER, FILTER_TIP);
+    private final IconButton fit = new IconButton(Glyph.FIT, "Einpassen: ganzen Teilgraphen in die Fläche einpassen");
+    private final IconButton view = new IconButton(Glyph.TABLE, TABLE_TIP);
     private final JButton export = Comic.exportButton(EXPORT_TIP);
-    private final JLabel exportNote = Comic.muted("");
+    /** Rückmeldung zum Export, in der Statuszeile hinter dem Stand des Graphen; leer ohne. */
+    private String exportNote = "";
+    private String statusText = " ";
+    /** Titel und Text der Details zur Auswahl, auch wenn das Fenster gerade nicht offen ist. */
+    private String detailTitle = "";
+    private String detailText = "";
+    /** Warum der Graph leer ist (Suche ohne Treffer, Filter, nicht analysiert); steht mitten in der Fläche. */
+    private String emptyHint;
 
     private final Map<String, GraphNeighbourhood.Node> nodes = new LinkedHashMap<>();
     private final Map<String, GraphNeighbourhood.Edge> edges = new LinkedHashMap<>();
@@ -194,59 +205,47 @@ final class KnowledgeGraphTab extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
-        JPanel head = new JPanel(new BorderLayout(0, 4));
-        head.setOpaque(false);
-        JPanel titles = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        titles.setOpaque(false);
-        JLabel title = Comic.text("Wissensgraph");
-        title.setFont(Comic.semiBold(15f));
-        titles.add(title);
-        titles.add(badge("Experimentell", Comic.PETROL));
-        titles.add(Comic.muted("nur manuell analysierte Seiten · Parserbefunde, nicht fachlich geprüft"));
-        head.add(titles, BorderLayout.NORTH);
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
-        tools.setOpaque(false);
+        thisSource.setSelected(false);
+        head.badge("Experimentell", Comic.PETROL)
+                .note("nur manuell analysierte Seiten · Parserbefunde, nicht fachlich geprüft");
         search.setToolTipText("Begriff, Grundform oder Wortlaut; Enter sucht");
         search.addActionListener(e -> showTerm(search.getText()));
-        tools.add(Comic.muted("Suche"));
-        tools.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(search));
-        tools.add(pageButton);
-        tools.add(expand);
-        tools.add(back);
-        tools.add(fit);
-        tools.add(view);
-        JPanel exportTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
-        exportTools.setOpaque(false);
-        exportTools.add(export);
-        JPanel toolRow = new JPanel(new BorderLayout());
-        toolRow.setOpaque(false);
-        toolRow.add(tools, BorderLayout.CENTER);
-        toolRow.add(exportTools, BorderLayout.EAST);
-        head.add(toolRow, BorderLayout.CENTER);
-        JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        filters.setOpaque(false);
-        for (JCheckBox box : List.of(documents, statements, mentions, roles, nominal, crossPage, stale,
+        head.search(InputFrame.search(search));
+        head.action(pageButton, expand, back);
+        head.copy(this::copyText);
+        head.tool(filter, fit, view, export);
+        for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, stale,
                 thisSource)) {
-            box.setOpaque(false);
             box.addActionListener(e -> reloadFocus());
-            filters.add(box);
+            if (box == stale) {
+                filterMenu.addSeparator();
+            }
+            filterMenu.add(box);
         }
-        head.add(filters, BorderLayout.SOUTH);
 
         pageButton.addActionListener(e -> showPage());
         expand.addActionListener(e -> expandSelected());
         back.addActionListener(e -> back());
+        filter.addActionListener(e -> filterMenu.show(filter, 0, filter.getHeight()));
         fit.addActionListener(e -> canvas.fit());
         view.addActionListener(e -> toggleView());
-        jump.addActionListener(e -> jumpToSelected());
         export.addActionListener(e -> exportMenu().show(export, 0, export.getHeight()));
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setAutoCreateRowSorter(true);
+        table.setToolTipText("Doppelklick zeigt die Details – dort auch „Zum Beleg im Text“; Enter erweitert");
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!syncingTable && !e.getValueIsAdjusting() && table.getSelectedRow() >= 0) {
                 Row row = tableModel.rows.get(table.convertRowIndexToModel(table.getSelectedRow()));
                 select(row.node(), row.edge());
+            }
+        });
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && table.getSelectedRow() >= 0) {
+                    showDetails(table, e.getX(), e.getY());
+                }
             }
         });
         table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
@@ -259,29 +258,10 @@ final class KnowledgeGraphTab extends JPanel {
         });
         cards.setOpaque(false);
         cards.add(canvas, "graph");
-        cards.add(new JScrollPane(table), "table");
-
-        details.setRows(7);
-        details.setEditable(false);
-        JPanel detailPanel = new JPanel(new BorderLayout(0, 4));
-        detailPanel.setOpaque(false);
-        JPanel detailActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        detailActions.setOpaque(false);
-        detailActions.add(jump);
-        detailPanel.add(new JScrollPane(details), BorderLayout.CENTER);
-        detailPanel.add(detailActions, BorderLayout.SOUTH);
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, cards, detailPanel);
-        split.setResizeWeight(0.75);
-        split.setBorder(null);
-        split.setOpaque(false);
+        cards.add(Comic.scroll(table), "table");
 
         add(head, BorderLayout.NORTH);
-        add(split, BorderLayout.CENTER);
-        JPanel foot = new JPanel(new BorderLayout(12, 0));
-        foot.setOpaque(false);
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(exportNote, BorderLayout.EAST);
-        add(foot, BorderLayout.SOUTH);
+        add(cards, BorderLayout.CENTER);
         addHierarchyListener(e -> {
             if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && !pageLoaded) {
                 showPage();
@@ -298,8 +278,35 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private void status(String text) {
-        status.setText(text);
-        onStatus.accept(text);
+        statusText = text;
+        pushStatus();
+    }
+
+    private void exportNote(String text) {
+        exportNote = text;
+        pushStatus();
+    }
+
+    /** Stand des Graphen und, solange vorhanden, die Rückmeldung zum Export, in einer Zeile. */
+    private void pushStatus() {
+        String base = statusText == null ? " " : statusText;
+        onStatus.accept(exportNote.isBlank() ? base : base.isBlank() ? exportNote : base + " · " + exportNote);
+    }
+
+    /** Der Inhalt als Text für die Zwischenablage: die Tabellenzeilen (Knoten und Kanten), tabulatorgetrennt. */
+    String copyText() {
+        StringBuilder text = new StringBuilder();
+        for (int c = 0; c < tableModel.getColumnCount(); c++) {
+            text.append(c > 0 ? "\t" : "").append(tableModel.getColumnName(c));
+        }
+        for (int r = 0; r < tableModel.getRowCount(); r++) {
+            text.append('\n');
+            for (int c = 0; c < tableModel.getColumnCount(); c++) {
+                Object value = tableModel.getValueAt(r, c);
+                text.append(c > 0 ? "\t" : "").append(value == null ? "" : value);
+            }
+        }
+        return text.toString();
     }
 
     /** {@code listener} springt zu Fundstellen im Reiter „Text“ ({@code PageDetailPanel#jumpTo}). */
@@ -320,8 +327,7 @@ final class KnowledgeGraphTab extends JPanel {
         page = key;
         this.spaceKey = key == null ? null : spaceKey;
         pageChanges++;
-        exportNote.setText("");
-        exportNote.setToolTipText(null);
+        exportNote("");
         pageLoaded = false;
         generation++;
         history.clear();
@@ -462,9 +468,7 @@ final class KnowledgeGraphTab extends JPanel {
             }
             requested.clear();
             requested.addAll(expansions);
-            if (loaded.emptyHint() != null) {
-                details.setText(loaded.emptyHint());
-            }
+            emptyHint = loaded.emptyHint();
             refresh();
             canvas.fit();
         }, error -> {
@@ -684,7 +688,7 @@ final class KnowledgeGraphTab extends JPanel {
         restore(previous.filters());
         selected = null;
         selectedEdge = null;
-        details.setText("");
+        detail(null, null);
         refresh();
         canvas.fit();
     }
@@ -710,7 +714,8 @@ final class KnowledgeGraphTab extends JPanel {
         truncated = false;
         hidden = 0;
         merged = false;
-        details.setText("");
+        emptyHint = null;
+        detail(null, null);
     }
 
     // ---- Auswahl
@@ -718,11 +723,33 @@ final class KnowledgeGraphTab extends JPanel {
     private void select(String nodeId, GraphNeighbourhood.Edge edge) {
         selected = nodeId;
         selectedEdge = edge;
-        details.setText(edge != null ? describe(edge) : nodeId == null ? "" : describe(nodes.get(nodeId)));
-        details.setCaretPosition(0);
+        detail(nodeId, edge);
         syncTable();
         refreshButtons();
         canvas.repaint();
+    }
+
+    /** Baut Titel, Text und Links des Detailfensters zur Auswahl; gezeigt wird es erst mit {@link #showDetails}. */
+    private void detail(String nodeId, GraphNeighbourhood.Edge edge) {
+        String text = edge != null ? describe(edge) : nodeId == null ? "" : describe(nodes.get(nodeId));
+        int cut = text.indexOf('\n');
+        detailTitle = cut < 0 ? text : text.substring(0, cut);
+        detailText = cut < 0 ? "" : text.substring(cut + 1).strip();
+        popup.text(detailTitle, detailText).clearLinks();
+        if (edge == null && jumpable(nodeId == null ? null : nodes.get(nodeId))) {
+            popup.link("Zum Beleg im Text", this::jumpToSelected);
+        }
+        if (popup.isVisible()) {
+            popup.setVisible(false);
+        }
+    }
+
+    /** Öffnet die Details zur Auswahl als Fenster neben der Mausposition {@code x, y} in {@code owner}. */
+    private void showDetails(java.awt.Component owner, int x, int y) {
+        if (detailTitle.isBlank() || !owner.isShowing()) {
+            return;
+        }
+        popup.showAt(owner, x, y);
     }
 
     /** Hält die markierte Tabellenzeile bei derselben Auswahl wie die Grafik (Enter erweitert, was markiert ist). */
@@ -869,6 +896,8 @@ final class KnowledgeGraphTab extends JPanel {
     private void refresh() {
         tableModel.reload();
         syncTable();
+        canvas.hint(!nodes.isEmpty() ? null : emptyHint != null ? emptyHint
+                : page == null ? "Keine Seite geöffnet." : pageLoaded ? "Kein Teilgraph." : null);
         if (nodes.isEmpty()) {
             status(page == null ? "Keine Seite geöffnet." : pageLoaded ? " " : "Teilgraph lädt beim Öffnen.");
         } else {
@@ -889,7 +918,9 @@ final class KnowledgeGraphTab extends JPanel {
         back.setEnabled(!history.isEmpty());
         pageButton.setEnabled(page != null);
         thisSource.setEnabled(page != null);
-        jump.setEnabled(jumpable(selected == null ? null : nodes.get(selected)));
+        boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage, stale).stream()
+                .allMatch(JCheckBoxMenuItem::isSelected) || (thisSource.isSelected() && page != null);
+        filter.setForeground(filtered ? Comic.BLUE : Comic.INK);
         export.setEnabled(actions.get() != null && !exporting);
     }
 
@@ -943,18 +974,14 @@ final class KnowledgeGraphTab extends JPanel {
         int startedFor = pageChanges;
         exporting = true;
         export.setEnabled(false);
-        exportNote.setText("Export wird gestartet …");
-        exportNote.setToolTipText(null);
+        exportNote("Export wird gestartet …");
         runner.run(() -> current.export(choice.scope(), includeStale), started -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
             if (startedFor != pageChanges) {
                 return;
             }
-            exportNote.setText(EXPORT_STARTED);
-            exportNote.setToolTipText("Graph-Export " + choice.scope().describe()
-                    + (includeStale ? ", mit veralteten Analysen" : ", nur aktuelle Analysen")
-                    + " · Ziel: Exportordner/knowledge-graph");
+            exportNote(EXPORT_STARTED);
         }, failure -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
@@ -962,9 +989,8 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             String reason = failure.getMessage();
-            exportNote.setText("Export nicht gestartet: "
+            exportNote("Export nicht gestartet: "
                     + (reason == null || reason.isBlank() ? failure.getClass().getSimpleName() : reason));
-            exportNote.setToolTipText(null);
         });
     }
 
@@ -975,27 +1001,22 @@ final class KnowledgeGraphTab extends JPanel {
     private void toggleView() {
         tableShown = !tableShown;
         ((CardLayout) cards.getLayout()).show(cards, tableShown ? "table" : "graph");
-        view.setText(tableShown ? "Grafik" : "Tabelle");
+        view.setIcon(tableShown ? Glyph.GRAPH : Glyph.TABLE);
+        view.setToolTipText(tableShown ? GRAPH_TIP : TABLE_TIP);
+        view.getAccessibleContext().setAccessibleName(view.getToolTipText());
     }
 
     private static String key(GraphNeighbourhood.Edge edge) {
         return edge.from() + "|" + edge.to() + "|" + edge.type();
     }
 
-    private static JCheckBox check(String text) {
-        JCheckBox box = new JCheckBox(text, true);
-        box.setOpaque(false);
+    /** Ein Filter im Filtermenü; der Klick lässt das Menü offen, damit man mehrere umschalten kann. */
+    private static JCheckBoxMenuItem check(String text) {
+        JCheckBoxMenuItem box = new JCheckBoxMenuItem(text, true);
+        box.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
         return box;
     }
 
-    private static JLabel badge(String text, Color tone) {
-        JLabel label = new JLabel(text);
-        label.setFont(Comic.semiBold(11f));
-        label.setForeground(tone);
-        label.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
-                BorderFactory.createEmptyBorder(1, 6, 1, 6)));
-        return label;
-    }
 
     /** Zeichenfläche: Zoom (Rad), Verschieben (Ziehen), Auswahl (Klick), Erweitern (Doppelklick). */
     private final class Canvas extends JComponent {
@@ -1005,11 +1026,22 @@ final class KnowledgeGraphTab extends JPanel {
         private double dy;
         private Point2D dragFrom;
         private String dragging;
+        /** Ob {@link #fit()} ohne Größe aufgerufen wurde und beim ersten Auslegen nachzuholen ist. */
+        private boolean fitPending;
+
+        /** Warum nichts zu sehen ist, mitten in der Fläche; leer, sobald es Knoten gibt. */
+        private final WrappedText hint = Comic.wrapped(" ", Comic.MUTED, 13f);
 
         Canvas() {
             setPreferredSize(new Dimension(600, 380));
             setFocusable(true);
             setToolTipText("");
+            setLayout(new GridBagLayout());
+            GridBagConstraints at = new GridBagConstraints();
+            at.insets = new java.awt.Insets(24, 24, 24, 24);
+            add(hint, at);
+            hint.setVisible(false);
+
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
@@ -1048,10 +1080,16 @@ final class KnowledgeGraphTab extends JPanel {
                         select(node, null);
                         if (e.getClickCount() == 2) {
                             expandSelected();
+                        } else {
+                            showDetails(Canvas.this, e.getX(), e.getY());
                         }
                         return;
                     }
-                    select(null, edgeAt(at).orElse(null));
+                    GraphNeighbourhood.Edge edge = edgeAt(at).orElse(null);
+                    select(null, edge);
+                    if (edge != null && e.getClickCount() == 1) {
+                        showDetails(Canvas.this, e.getX(), e.getY());
+                    }
                 }
 
                 @Override
@@ -1080,6 +1118,25 @@ final class KnowledgeGraphTab extends JPanel {
             });
         }
 
+        @Override
+        public void doLayout() {
+            super.doLayout();
+            // Geladen, bevor die Fläche eine Größe hatte: beim ersten Auslegen einpassen.
+            if (fitPending && getWidth() > 0 && getHeight() > 0) {
+                fit();
+            }
+        }
+
+        /** Der Hinweis in der leeren Fläche; {@code null} blendet ihn aus. */
+        void hint(String text) {
+            hint.setVisible(text != null);
+            hint.setText(text == null ? " " : text);
+            hint.setPreferredSize(text == null ? null
+                    : new Dimension(InfoPopup.MAX_WIDTH, hint.heightFor(InfoPopup.MAX_WIDTH)));
+            revalidate();
+            repaint();
+        }
+
         void zoom(double factor, double x, double y) {
             double next = Math.max(0.2, Math.min(4, scale * factor));
             double applied = next / scale;
@@ -1090,6 +1147,7 @@ final class KnowledgeGraphTab extends JPanel {
         }
 
         void fit() {
+            fitPending = !positions.isEmpty() && (getWidth() <= 0 || getHeight() <= 0);
             if (positions.isEmpty() || getWidth() <= 0 || getHeight() <= 0) {
                 scale = 1;
                 dx = getWidth() / 2.0;
@@ -1167,8 +1225,6 @@ final class KnowledgeGraphTab extends JPanel {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 if (nodes.isEmpty()) {
-                    g.setColor(Comic.MUTED);
-                    g.drawString(page == null ? "Keine Seite geöffnet" : "Kein Teilgraph", 16, 24);
                     return;
                 }
                 AffineTransform base = g.getTransform();
@@ -1458,7 +1514,7 @@ final class KnowledgeGraphTab extends JPanel {
     // ---- für Tests
 
     String exportNoteText() {
-        return exportNote.getText();
+        return exportNote;
     }
 
     void includeStaleInExport(boolean include) {
@@ -1478,11 +1534,21 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     String statusText() {
-        return status.getText();
+        return statusText;
     }
 
+    /** Titel und Text des Detailfensters zur Auswahl (auch ungeöffnet). */
     String detailsText() {
-        return details.getText();
+        return detailTitle.isBlank() ? "" : detailTitle + "\n" + detailText;
+    }
+
+    /** Der Hinweis in der leeren Fläche oder {@code null}. */
+    String hintText() {
+        return emptyHint;
+    }
+
+    InfoPopup popup() {
+        return popup;
     }
 
     int tableRows() {
@@ -1505,12 +1571,13 @@ final class KnowledgeGraphTab extends JPanel {
         back.doClick();
     }
 
+    /** Klickt „Zum Beleg im Text“ im Detailfenster. */
     void clickJump() {
-        jump.doClick();
+        popup.clickLink(0);
     }
 
     boolean jumpOffered() {
-        return jump.isEnabled();
+        return popup.linkTexts().contains("Zum Beleg im Text");
     }
 
     void searchTerm(String term) {
