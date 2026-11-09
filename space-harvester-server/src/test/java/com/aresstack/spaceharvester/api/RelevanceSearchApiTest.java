@@ -179,7 +179,8 @@ class RelevanceSearchApiTest {
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode body = json.readTree(response.body());
         assertThat(body.get("hits").isEmpty()).isTrue();
-        assertThat(response.body()).doesNotContain("similarity").doesNotContain("900");
+        // Ohne die zufälligen Kennungen (etwa searchRun): Eine UUID kann „900“ enthalten, ohne dass etwas durchsickert.
+        assertThat(withoutIds(response.body())).doesNotContain("similarity").doesNotContain("900");
     }
 
     @Test
@@ -197,8 +198,12 @@ class RelevanceSearchApiTest {
 
         HttpResponse<String> hidden = related(METADATA_ONLY_TOKEN, "102", "");
         assertThat(hidden.statusCode()).isEqualTo(404);
-        assertThat(hidden.body()).doesNotContain("101").doesNotContain("900");
+        assertThat(withoutIds(hidden.body())).doesNotContain("101").doesNotContain("900");
         assertThat(related(TestClient.TOKEN, "102", "kind=links-to").statusCode()).isEqualTo(400);
+    }
+
+    private static String withoutIds(String body) {
+        return body.replaceAll("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", "<id>");
     }
 
     private HttpResponse<String> related(String token, String pageId, String parameters) throws Exception {
