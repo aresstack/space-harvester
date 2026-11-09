@@ -569,6 +569,15 @@ public final class Workspace {
         return harvester.keywordSearch().search(caller, query, cursor, limit);
     }
 
+    /**
+     * Wie {@link #keywordSearch(KeywordSearch.Query, String, int)}; {@code found} erfährt die Funde jeder Quelle, sobald
+     * sie geantwortet hat, aus den Suchthreads, nie vom EDT.
+     */
+    public KeywordSearch.Results keywordSearch(KeywordSearch.Query query, String cursor, int limit,
+                                               KeywordSearch.Found found) {
+        return harvester.keywordSearch().search(caller, query, cursor, limit, null, found);
+    }
+
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
     public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
         return harvester.keywordSearch().progress(id);
