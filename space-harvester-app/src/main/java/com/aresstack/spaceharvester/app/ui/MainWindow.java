@@ -41,8 +41,8 @@ import java.util.Map;
  * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Begriffe, Aufträge und Status,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
- * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}), sonst der globale
- * Fortschritt der Aufträge. Navigation und
+ * Statusleiste die feste Aktionszeile des Bereichs ({@link View#actions()}). Der Fortschritt der Aufträge füllt den
+ * Hintergrund der Statuszeile ({@link StatusLine}). Navigation und
  * Explorer sind getrennte Bausteine. {@link #content} baut den Inhalt ohne Fenster (für Bildschirmfotos und Tests).
  */
 public final class MainWindow implements AppContext.Navigator {
@@ -63,9 +63,11 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel actionDeck = new JPanel(actionCards);
     private final javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT);
     static final int SIDEBAR_WIDTH = 280;
-    /** Karte der Aktionszeile mit dem globalen Fortschritt der Aufträge. */
+    /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
+    /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
+    private StatusLine statusLine;
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
     private final SourcesView sources;
@@ -98,8 +100,8 @@ public final class MainWindow implements AppContext.Navigator {
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
         actionDeck.setOpaque(false);
-        // Der Fortschritt der Aufträge ist global: jeder Bereich ohne eigene Aktionszeile zeigt ihn.
-        actionDeck.add(activities.actions(), JOBS);
+        // Der Fortschritt der Aufträge steht global in der Statuszeile; ohne eigene Aktionszeile bleibt die Zeile leer.
+        actionDeck.add(new JPanel(), JOBS);
         views.forEach((section, view) -> {
             if (view.actions() != null && view != activities) {
                 actionDeck.add(view.actions(), section.name());
@@ -214,12 +216,8 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.WEST);
-        foot.add(new CopyrightLink(), BorderLayout.EAST);
+        statusLine = new StatusLine(activities.progress(), status, activities.jobLine(), new CopyrightLink());
+        JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
         bottom.add(actionDeck, BorderLayout.NORTH);
@@ -268,7 +266,9 @@ public final class MainWindow implements AppContext.Navigator {
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
         View view = views.get(section);
-        actionCards.show(actionDeck, view.actions() != null && view != activities ? section.name() : JOBS);
+        boolean ownActions = view.actions() != null && view != activities;
+        actionCards.show(actionDeck, ownActions ? section.name() : JOBS);
+        actionDeck.setVisible(ownActions);
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
@@ -408,6 +408,11 @@ public final class MainWindow implements AppContext.Navigator {
                 g2.drawArc(2, 9, 10, 4, 180, 180);
             }
         };
+    }
+
+    /** Für Tests: die Statuszeile. */
+    StatusLine statusLine() {
+        return statusLine;
     }
 
     /** Für Tests: der Explorer links. */
