@@ -59,9 +59,13 @@ final class AiSettingsPanel {
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
     final JTextField dimensions = Comic.field(6);
-    /** Wie viele Quellen Inhalte an den Dienst geben dürfen; festgelegt im Formular jeder Quelle. */
-    final JLabel released = Comic.text(" ");
-    /** Die Freigaben aus der Datei; dieses Panel ändert sie nicht. */
+    /**
+     * Welche Quellen Inhalte an den Dienst geben dürfen: je Quelle ein Häkchen (Vorgabe aus), derselbe Schlüssel wie
+     * das Häkchen im Formular der Quelle; ohne Quellen eine Zeile Text.
+     */
+    final JPanel released = new JPanel();
+    private final List<javax.swing.JCheckBox> releaseBoxes = new ArrayList<>();
+    /** Die Freigaben aus der Datei (für Quellen, die gerade nicht in der Liste stehen). */
     private List<String> releasedIds = List.of();
     private Duration timeout;
     /** „Zugangsdaten beziehen über“: KeePass (Vorgabe) oder Manuell, wie im Enterprise AI Client. */
@@ -198,8 +202,9 @@ final class AiSettingsPanel {
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
         pickVision.addActionListener(e -> pick(pickVision, visionModel, AiModel.VISION));
-        rows.add("Freigegeben", released, "Je Quelle im Formular unter Wissensquellen › Bearbeiten …; ohne Freigabe "
-                + "keine Embeddings und kein Reranking");
+        released.setOpaque(false);
+        released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
+        rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
         root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die "
                 + "Modelle wählst du unter „Modelle“. Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der "
                 + "Konfigurationsdatei."), BorderLayout.NORTH);
@@ -252,9 +257,8 @@ final class AiSettingsPanel {
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
         timeout = current.timeout();
-        // Freigaben gehören zur Quelle; dieses Panel zeigt nur ihre Zahl und schreibt sie unverändert zurück.
         releasedIds = current.externalProcessingSources();
-        released.setText(releasedText(settings, releasedIds));
+        renderReleased(settings, releasedIds);
         AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
         // Nichts gewählt: KeePass, wenn die App schon gekoppelt ist oder KeePass für eine Quelle gewählt wurde
         // (dieselbe Kopplung gilt weiter, kein neues Koppeln), sonst Manuell; ein Key im Tresor spricht für Manuell.
@@ -460,12 +464,56 @@ final class AiSettingsPanel {
     }
 
     AiDraft draft() {
-        // Die Freigaben aus der Datei, nicht vom letzten render(): Das Quellenformular ändert sie unabhängig davon.
-        AppSettings settings = context.settings();
-        List<String> released = settings == null ? releasedIds : settings.ai().externalProcessingSources();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, released, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
+                timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
                 visionModel.getText());
+    }
+
+    /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
+    private void renderReleased(AppSettings settings, List<String> ids) {
+        released.removeAll();
+        releaseBoxes.clear();
+        List<AppSettings.SourceEntry> sources = settings == null ? List.of() : settings.sources();
+        if (sources.isEmpty()) {
+            released.add(Comic.muted("Noch keine Wissensquelle angelegt"));
+        }
+        for (AppSettings.SourceEntry source : sources) {
+            String title = source.config().title();
+            javax.swing.JCheckBox box = Comic.checkBox(title == null || title.isBlank() ? source.id() : title);
+            box.putClientProperty("sourceId", source.id());
+            box.setSelected(ids.contains(source.id()));
+            releaseBoxes.add(box);
+            released.add(box);
+        }
+        released.revalidate();
+        released.repaint();
+    }
+
+    /**
+     * Die Freigaben für die Datei: die Häkchen der gezeigten Quellen; Freigaben für Quellen, die gerade nicht in
+     * der Liste stehen, bleiben erhalten. Hat das Quellenformular inzwischen eine Freigabe geändert, gilt die Datei,
+     * solange hier niemand das Häkchen anfasst.
+     */
+    private List<String> releasedDraft() {
+        AppSettings settings = context.settings();
+        List<String> file = settings == null ? releasedIds : settings.ai().externalProcessingSources();
+        if (releaseBoxes.isEmpty()) {
+            return file;
+        }
+        List<String> ids = new ArrayList<>(file);
+        for (javax.swing.JCheckBox box : releaseBoxes) {
+            String id = (String) box.getClientProperty("sourceId");
+            ids.remove(id);
+            if (box.isSelected()) {
+                ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    /** Die Häkchen der Freigabe, in der Reihenfolge der Quellen (für Tests). */
+    List<javax.swing.JCheckBox> releaseBoxes() {
+        return List.copyOf(releaseBoxes);
     }
 
     /** „2 von 3 Quellen“ mit ihren Namen, oder „keine“. */
@@ -508,6 +556,16 @@ final class AiSettingsPanel {
     void wizardMode() {
         save.setVisible(false);
         saveModels.setVisible(false);
+    }
+
+    /**
+     * Wie {@link #wizardMode()}, zusätzlich mit genau einem Statusbereich: Meldungen beider Schritte erscheinen in
+     * {@code shared} (im Assistenten über der Knopfleiste), nicht mehr in den scrollenden Inhalten.
+     */
+    void wizardMode(Feedback shared) {
+        wizardMode();
+        feedback.forwardTo(shared);
+        modelsFeedback.forwardTo(shared);
     }
 
     /**

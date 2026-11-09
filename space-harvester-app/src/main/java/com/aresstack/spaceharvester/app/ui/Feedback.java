@@ -21,6 +21,8 @@ public final class Feedback extends JPanel {
     private final JTextArea message = Comic.note("");
     private final JTextArea technical = Comic.note("");
     private final ComposerButton details = Comic.button("Technische Details", "Klasse und Meldung der Ausnahme");
+    /** Zeigt die Meldungen an dieser Stelle statt hier (ein Statusbereich für mehrere Ansichten, Assistent). */
+    private Feedback target;
 
     public Feedback() {
         super(new BorderLayout());
@@ -88,14 +90,31 @@ public final class Feedback extends JPanel {
 
     /** Für Tests: Überschrift und Text der Meldung. */
     public String text() {
-        return title.getText() + "\n" + message.getText();
+        return target != null ? target.text() : title.getText() + "\n" + message.getText();
     }
 
     public void clear() {
+        if (target != null) {
+            target.clear();
+            return;
+        }
+        setVisible(false);
+    }
+
+    /**
+     * Alle Meldungen erscheinen künftig in {@code target}; diese Platte bleibt unsichtbar. So hat eine Ansicht mit
+     * mehreren Teilen genau einen Statusbereich, der immer die letzte Meldung zeigt.
+     */
+    public void forwardTo(Feedback target) {
+        this.target = target;
         setVisible(false);
     }
 
     private void show(Color stripe, String heading, String text, String tech) {
+        if (target != null) {
+            target.show(stripe, heading, text, tech);
+            return;
+        }
         plate.setAccentStripe(stripe);
         title.setText(heading);
         message.setText(text == null ? "" : text);

@@ -203,6 +203,49 @@ public final class Comic {
         return label;
     }
 
+    /**
+     * Umbrechender Text ohne Rahmen, der seine Spalte nie breiter macht: Er nimmt die Breite, die er bekommt, und
+     * wächst in die Höhe (Hinweise unter Formularfeldern, längere Erklärungen). Anders als {@link #note} drängt er
+     * nie nach rechts, deshalb entsteht in einem Formular kein waagerechter Scrollbalken.
+     */
+    public static JTextArea wrapped(String text, Color color, float size) {
+        JTextArea area = new JTextArea(text) {
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension preferred = super.getPreferredSize();
+                return new Dimension(Math.min(preferred.width, 40), preferred.height);
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return getPreferredSize();
+            }
+
+            @Override
+            public void setBounds(int x, int y, int width, int height) {
+                super.setBounds(x, y, width, height);
+                // Mit der echten Breite bricht der Text um; braucht er mehr Zeilen, legt der Behälter neu aus.
+                if (width > 0 && super.getPreferredSize().height != height) {
+                    javax.swing.SwingUtilities.invokeLater(this::revalidate);
+                }
+            }
+        };
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setOpaque(false);
+        area.setFont(regular(size));
+        area.setForeground(color);
+        area.setBorder(BorderFactory.createEmptyBorder());
+        return area;
+    }
+
+    /** Grauer Hinweis unter einem Feld, umbrechend. */
+    public static JTextArea hint(String text) {
+        return wrapped(text, MUTED, 12f);
+    }
+
     /** Mehrzeiliger, umbrechender Hinweistext ohne Rahmen. */
     public static JTextArea note(String text) {
         JTextArea area = new JTextArea(text);

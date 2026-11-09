@@ -209,7 +209,7 @@ class SettingDialogsTest {
             panel[0] = new AiSettingsPanel(context);
             panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
             // Die Freigabe gehört zur Quelle; hier steht nur, wie viele freigegeben sind.
-            assertThat(panel[0].released.getText()).as("Vorgabe: keine Quelle freigegeben").isEqualTo("keine Quelle");
+            assertThat(panel[0].releaseBoxes()).as("Vorgabe: keine Quelle freigegeben").allMatch(box -> !box.isSelected());
             panel[0].baseUrl.setText("sk-abcdefghijklmnopqrstuvwxyz0123");
             panel[0].save.doClick();
             assertThat(panel[0].feedback.text()).as("Schlüssel im Adressfeld").contains("wie ein API-Key");
