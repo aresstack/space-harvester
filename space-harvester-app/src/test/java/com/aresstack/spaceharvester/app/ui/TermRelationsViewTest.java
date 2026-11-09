@@ -187,7 +187,7 @@ class TermRelationsViewTest {
         });
         javax.swing.JTable[] synonyms = new javax.swing.JTable[1];
         SwingUtilities.invokeAndWait(() -> synonyms[0] = view[0].synonyms().directory().table());
-        await(() -> synonyms[0].getRowCount() == 2 && view[0].relations().table().getRowCount() == 4);
+        await("Synonyme und Beziehungen geladen", () -> synonyms[0].getRowCount() == 2 && view[0].relations().table().getRowCount() == 4);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(synonyms[0].getValueAt(0, 0)).isEqualTo("E-Mail");
             assertThat(synonyms[0].getValueAt(0, 1)).isEqualTo("Email");
@@ -199,12 +199,12 @@ class TermRelationsViewTest {
             synonyms[0].setRowSelectionInterval(1, 1);
             view[0].synonyms().reviewButtons().get(1).doClick();
         });
-        await(() -> synonyms[0].getRowCount() == 2 && "Abgelehnt".equals(synonyms[0].getValueAt(1, 4))
+        await("Synonym abgelehnt", () -> synonyms[0].getRowCount() == 2 && "Abgelehnt".equals(synonyms[0].getValueAt(1, 4))
                 && synonyms[0].getSelectedRow() == 1);
         // Neu angelegt im Reiter Synonyme erscheint sie dort gewählt.
         SwingUtilities.invokeAndWait(() -> view[0].synonyms().createRelation("Schnittstelle", RelationType.SYNONYM,
                 "API"));
-        await(() -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
+        await("Synonym neu angelegt", () -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
                 && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0)));
 
         // Graph: API in der Mitte, Tiefe 2 bringt auch REST; die abgelehnte Beziehung fehlt.
@@ -212,14 +212,14 @@ class TermRelationsViewTest {
             view[0].tabs().select(TermsView.GRAPH);
             view[0].graph().showTerm("api");
         });
-        await(() -> view[0].graph().canvas().labels().size() == 4);
+        await("Graph Tiefe 2", () -> view[0].graph().canvas().labels().size() == 4);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(view[0].graph().canvas().labels()).containsExactly("API",
                     "Application Programming Interface", "Schnittstelle", "REST");
             assertThat(view[0].graph().canvas().graph().edges()).hasSize(3);
             view[0].graph().depthChoice().setSelectedIndex(0);
         });
-        await(() -> view[0].graph().canvas().labels().size() == 3);
+        await("Graph Tiefe 1", () -> view[0].graph().canvas().labels().size() == 3);
         assertThat(view[0].graph().centre()).isEqualTo("api");
     }
 
