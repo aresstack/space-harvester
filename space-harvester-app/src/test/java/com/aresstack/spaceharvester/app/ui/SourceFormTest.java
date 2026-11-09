@@ -590,6 +590,9 @@ class SourceFormTest {
         SwingUtilities.invokeAndWait(() -> {
             assertThat(form[0].keePassEntry.getSelectedItem()).isEqualTo("Wiki");
             assertThat(form[0].auth.isEnabled()).as("Anmeldeart kommt aus dem Eintrag").isFalse();
+            // Das Token steht maskiert und schreibgeschützt im Feld: sichtbar gelesen, aber keine eigene Eingabe.
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token-aus-keepass");
+            assertThat(form[0].sessionValue.isEditable()).isFalse();
         });
         SwingUtilities.invokeAndWait(() -> form[0].save());
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
@@ -666,5 +669,12 @@ class SourceFormTest {
             form[0].baseUrl.setText("https://wiki.example.invalid");
         });
         awaitOnEdt(() -> form[0].validateInput());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(new String(form[0].sessionValue.getPassword())).isEqualTo("token");
+            // Wechsel auf „Manuell“: Der Wert aus KeePass verlässt das Feld, man tippt selbst.
+            form[0].origin.setSelectedItem("Manuell");
+            assertThat(form[0].sessionValue.getPassword()).isEmpty();
+            assertThat(form[0].sessionValue.isEditable()).isTrue();
+        });
     }
 }
