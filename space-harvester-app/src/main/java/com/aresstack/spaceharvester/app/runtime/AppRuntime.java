@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.runtime;
 
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.app.nlp.MaltStatementAnalyzer;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -222,6 +223,9 @@ public final class AppRuntime implements AutoCloseable {
                     ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
         }
         builder.accessPolicy(policy);
+        // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.
+        MaltStatementAnalyzer.pinned(MaltStatementAnalyzer.defaultDirectory(storage.dataDirectory()))
+                .ifPresent(builder::statementAnalyzer);
         return builder;
     }
 

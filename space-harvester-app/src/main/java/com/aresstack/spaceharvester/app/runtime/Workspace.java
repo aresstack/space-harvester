@@ -32,6 +32,7 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
@@ -58,6 +59,8 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -430,6 +433,41 @@ public final class Workspace {
         PageImages images = harvester.imageAnalysis().describe(page.snapshot());
         harvester.enrichments().flush();
         return images;
+    }
+
+    // ------------------------------------------------------------------ Aussagen (#499, ADR 0024)
+
+    /** Ob die App einen Satzanalysator hat (gepinntes Modell bekannt); lädt kein Modell. */
+    public boolean statementAnalysisAvailable() {
+        return harvester.statementAnalysis().available();
+    }
+
+    /** Gespeicherte Aussagenanalyse der Seite mit Stand; rechnet nie. */
+    public PageStatements statements(PageSnapshot snapshot) {
+        return harvester.statementAnalysis().read(caller, snapshot);
+    }
+
+    /**
+     * „Mit MaltParser analysieren“: analysiert genau diese Seite jetzt und ersetzt ihre Analyse samt Graph-Projektion.
+     * Lädt beim ersten Aufruf das Modell (Sekunden); nur auf ausdrückliche Anforderung, nie auf dem EDT.
+     */
+    public PageStatements analyzeStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled) {
+        return harvester.statementAnalysis().analyze(caller, snapshot, cancelled);
+    }
+
+    /** CoNLL-U der gespeicherten Analyse für die aufklappbaren Syntaxdetails. */
+    public Optional<String> syntaxDetails(PageSnapshot snapshot) {
+        return harvester.statementAnalysis().syntaxDetails(caller, snapshot);
+    }
+
+    /** Verbindungen dieser Seite zu anderen manuell analysierten, sichtbaren Seiten im globalen Graphen. */
+    public List<KnowledgeGraph.Link> statementLinks(PageKey key) {
+        return harvester.knowledgeGraph().links(caller, key);
+    }
+
+    /** Erwähnungen eines Begriffs auf allen manuell analysierten, sichtbaren Seiten. */
+    public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit) {
+        return harvester.knowledgeGraph().search(caller, term, limit);
     }
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
