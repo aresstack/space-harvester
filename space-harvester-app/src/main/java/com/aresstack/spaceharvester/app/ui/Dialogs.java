@@ -60,6 +60,30 @@ public final class Dialogs {
     }
 
     /**
+     * Wie {@link #confirm} mit einem Ankreuzfeld {@code option} (anfangs leer) unter dem Text.
+     *
+     * @return {@code null} ohne Bestätigung, sonst ob das Feld angekreuzt war
+     */
+    public static Boolean confirm(Component parent, String title, String text, String option, String action) {
+        Boolean[] result = {null};
+        JDialog dialog = dialog(parent, title);
+        javax.swing.JCheckBox box = Comic.checkBox(option);
+        ComposerButton yes = Comic.danger(action, null);
+        ComposerButton no = Comic.button("Abbrechen", null);
+        yes.addActionListener(e -> {
+            result[0] = box.isSelected();
+            dialog.dispose();
+        });
+        no.addActionListener(e -> dialog.dispose());
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(Comic.note(text), BorderLayout.CENTER);
+        body.add(box, BorderLayout.SOUTH);
+        show(dialog, title, body, no, yes);
+        return result[0];
+    }
+
+    /**
      * Vor jedem Übernehmen, das die Quellen neu startet: Laufen Aufträge, sagt der Dialog, welche abbrechen würden, und
      * übernimmt nur nach Bestätigung. Ohne laufende Aufträge {@code true} ohne Rückfrage.
      */
