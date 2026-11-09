@@ -310,6 +310,21 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void graphInteractionsWhileTheExportStartsDoNotSwallowItsOutcome() {
+        tab.page(WIKI, "DEV");
+        tab.showPageNow();
+        runner.runAll();
+        actions.exportFailure = new IllegalStateException("Warteschlange voll");
+
+        tab.startExport(tab.exportChoices().get(4));
+        tab.toggleShowStale();
+        tab.searchTerm("Beleg");
+        runner.runAll();
+
+        assertThat(tab.exportNoteText()).isEqualTo("Export nicht gestartet: Warteschlange voll");
+    }
+
+    @Test
     void aSecondExportWhileStartingIsIgnoredAndAFailureNamesTheReason() {
         tab.page(WIKI, "DEV");
         actions.exportFailure = new IllegalStateException("Exportordner nicht beschreibbar");

@@ -152,6 +152,11 @@ final class KnowledgeGraphTab extends JPanel {
      * aus: veraltete nur auf ausdrücklichen Wunsch (KnowledgeGraphExportUseCase).
      */
     private boolean exportStale;
+    /**
+     * Zählt nur Seitenwechsel, nicht jede Graph-Abfrage wie {@link #generation}: Filter, Suche, Erweitern oder Zurück
+     * während des Exportstarts dürfen die Rückmeldung nicht verschlucken.
+     */
+    private int pageChanges;
     private boolean pageLoaded;
     /** Womit die Ansicht begann (Seite, Knoten oder Begriff); Filterwechsel wiederholen genau diese Abfrage. */
     private Entry entry;
@@ -302,6 +307,7 @@ final class KnowledgeGraphTab extends JPanel {
     void page(PageKey key, String spaceKey) {
         page = key;
         this.spaceKey = key == null ? null : spaceKey;
+        pageChanges++;
         exportNote.setText("");
         exportNote.setToolTipText(null);
         pageLoaded = false;
@@ -922,7 +928,7 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         boolean includeStale = exportStale;
-        int startedFor = generation;
+        int startedFor = pageChanges;
         exporting = true;
         export.setEnabled(false);
         exportNote.setText("Export wird gestartet …");
@@ -930,7 +936,7 @@ final class KnowledgeGraphTab extends JPanel {
         runner.run(() -> current.export(choice.scope(), includeStale), started -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
-            if (startedFor != generation) {
+            if (startedFor != pageChanges) {
                 return;
             }
             exportNote.setText(EXPORT_STARTED);
@@ -940,7 +946,7 @@ final class KnowledgeGraphTab extends JPanel {
         }, failure -> {
             exporting = false;
             export.setEnabled(actions.get() != null);
-            if (startedFor != generation) {
+            if (startedFor != pageChanges) {
                 return;
             }
             String reason = failure.getMessage();
