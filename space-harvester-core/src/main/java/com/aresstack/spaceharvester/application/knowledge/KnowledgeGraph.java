@@ -165,6 +165,14 @@ public class KnowledgeGraph {
         return visible(caller).stream().map(AnalysedPage::page).toList();
     }
 
+    /**
+     * Alle sichtbaren analysierten Seiten mit Stand und Analyse (ohne CoNLL-U), nach Quelle und Seite geordnet; etwa für
+     * den Export (#499 Abschnitt G). Rechnet nie.
+     */
+    public List<AnalysedPage> analysed(AccessContext caller) {
+        return visible(caller);
+    }
+
     /** Eine sichtbare analysierte Seite; leer ohne Analyse oder ohne Leserecht (nicht unterscheidbar). */
     public Optional<AnalysedPage> page(AccessContext caller, PageKey key) {
         return store.find(key).flatMap(analysis -> visible(caller, analysis));
@@ -238,8 +246,13 @@ public class KnowledgeGraph {
         own.forEach((term, ids) -> {
             for (String other : expansions.expansions(caller, term, key.sourceId())) {
                 String normalized = TermText.normalize(other);
-                if (wanted.putIfAbsent(normalized, Match.CONFIRMED_TERM_RELATION) == null) {
-                    mentionsByWanted.put(normalized, ids);
+                Match known = wanted.putIfAbsent(normalized, Match.CONFIRMED_TERM_RELATION);
+                if (known == null) {
+                    mentionsByWanted.put(normalized, new ArrayList<>(ids));
+                } else if (known == Match.CONFIRMED_TERM_RELATION) {
+                    // Mehrere eigene Begriffe mit bestätigter Beziehung zum selben Ziel: alle Erwähnungen behalten.
+                    List<String> merged = mentionsByWanted.get(normalized);
+                    ids.stream().filter(id -> !merged.contains(id)).forEach(merged::add);
                 }
             }
         });

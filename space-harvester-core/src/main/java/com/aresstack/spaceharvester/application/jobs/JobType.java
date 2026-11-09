@@ -17,7 +17,12 @@ public enum JobType {
      * Bilder eines veröffentlichten Exports beschaffen und im Asset-Speicher ablegen ({@code assets.json}), als eigener
      * Auftrag; der Export wartet nicht darauf.
      */
-    ASSETS;
+    ASSETS,
+    /**
+     * MaltParser-Aussagenanalyse einer Seite, eines Unterzweigs, Space oder einer Quelle, nur auf ausdrückliche
+     * Anforderung in der Desktop-App (#499, ADR 0024); nie Folgeauftrag eines Abgleichs oder Exports.
+     */
+    STATEMENT_ANALYSIS;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie

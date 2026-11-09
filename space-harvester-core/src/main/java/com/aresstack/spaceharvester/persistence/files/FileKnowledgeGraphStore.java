@@ -144,7 +144,8 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 } else {
                     skipped++;
                 }
-            } catch (IOException | JacksonException | IllegalArgumentException | NullPointerException e) {
+            } catch (IOException | RuntimeException e) {
+                // Jede Datei für sich: ein kaputtes Feld (Zeitstempel, Enum, fehlender Wert) sperrt nicht die übrigen.
                 skipped++;
                 LOG.warn("Wissensgraph: eine Seitenanalyse ist unlesbar und bleibt unberücksichtigt ({})",
                         e.getClass().getSimpleName());

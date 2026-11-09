@@ -64,6 +64,31 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void aFileWithAnInvalidTimestampIsSkippedAndDoesNotBlockTheStore() throws IOException {
+        FileKnowledgeGraphStore store = new FileKnowledgeGraphStore(directory);
+        store.replace(analysis("wiki", "1", "Beleg"));
+        store.replace(analysis("wiki", "2", "Quittung"));
+        Path broken;
+        try (var files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            broken = files.filter(file -> {
+                try {
+                    return Files.readString(file, StandardCharsets.UTF_8).contains("Quittung");
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            }).findFirst().orElseThrow();
+        }
+        String json = Files.readString(broken, StandardCharsets.UTF_8);
+        Files.writeString(broken, json.replaceFirst("\"analyzedAt\"\\s*:\\s*\"[^\"]*\"",
+                "\"analyzedAt\":\"gestern\""), StandardCharsets.UTF_8);
+
+        FileKnowledgeGraphStore reopened = new FileKnowledgeGraphStore(directory);
+        assertThat(reopened.all()).extracting(PageStatementAnalysis::key).containsExactly(new PageKey("wiki", "1"));
+        reopened.replace(analysis("wiki", "2", "Quittung"));
+        assertThat(new FileKnowledgeGraphStore(directory).all()).hasSize(2);
+    }
+
+    @Test
     void removingDeletesTheFile() {
         FileKnowledgeGraphStore store = new FileKnowledgeGraphStore(directory);
         store.replace(analysis("wiki", "1", "Beleg"));
