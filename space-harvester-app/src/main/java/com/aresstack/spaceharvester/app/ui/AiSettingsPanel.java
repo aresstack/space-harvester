@@ -321,7 +321,8 @@ final class AiSettingsPanel {
                         + "unverändert.";
             };
         }
-        return Problems.describe(error).title();
+        Problems.Problem problem = Problems.describe(error);
+        return problem.message() == null || problem.message().isBlank() ? problem.title() : problem.message();
     }
 
     /**
