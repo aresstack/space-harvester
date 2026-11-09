@@ -297,7 +297,7 @@ public final class AppSettingsLoader {
                 flag(get(sync, "events"), false, prefix + SyncSettings.EVENTS, problems),
                 interval(optionalDuration(get(sync, "interval"), prefix + SyncSettings.INTERVAL, problems),
                         prefix + SyncSettings.INTERVAL, problems),
-                List.of(),
+                spaces(get(sync, "spaces"), problems),
                 flag(get(sync, "before-search"), false, prefix + SyncSettings.BEFORE_SEARCH, problems),
                 cache.withheldRetention(),
                 flag(get(sync, "catch-up-on-start"), false, prefix + SyncSettings.CATCH_UP_ON_START, problems),
@@ -305,6 +305,36 @@ public final class AppSettingsLoader {
                 interval(optionalDuration(get(sync, "inventory-interval"), prefix + SyncSettings.INVENTORY_INTERVAL,
                         problems), prefix + SyncSettings.INVENTORY_INTERVAL, problems),
                 Map.of()).withBackground(background, parallelism);
+    }
+
+    /**
+     * {@code space-harvester.sync.spaces} wie im Server ({@code SyncProperties}): Liste oder Komma-Text aus
+     * {@code <sourceId>/<spaceKey>}; ungültige Einträge werden gemeldet und weggelassen.
+     */
+    private List<String> spaces(Object raw, List<String> problems) {
+        List<String> entries = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            list.forEach(entry -> entries.add(text(entry, problems)));
+        } else if (raw != null) {
+            String text = text(raw, problems);
+            if (text != null) {
+                entries.addAll(List.of(text.split(",")));
+            }
+        }
+        List<String> spaces = new ArrayList<>();
+        for (String entry : entries) {
+            String space = entry == null ? "" : entry.trim();
+            if (space.isEmpty()) {
+                continue;
+            }
+            int slash = space.indexOf('/');
+            if (slash < 1 || slash == space.length() - 1 || space.indexOf('/', slash + 1) >= 0) {
+                problems.add("space-harvester.sync.spaces erwartet <sourceId>/<spaceKey>, nicht '" + space + "'");
+                continue;
+            }
+            spaces.add(space);
+        }
+        return List.copyOf(spaces);
     }
 
     /**
