@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -196,8 +197,11 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         Batch batch = new Batch(UUID.randomUUID().toString(), waiting.size() + pending.size(),
                 List.copyOf(waiting.values()));
         pending.forEach(hit -> batch.finished(false));
-        waiting.values().forEach(ticket -> ticket.done().whenComplete((stored, failure) ->
-                batch.finished(failure == null && Boolean.TRUE.equals(stored))));
+        // Gewartet wird auf die gezählte Fertigmeldung, nicht auf den Abruf: Sonst kehrte die Suche zurück, bevor der
+        // Fortschritt den Abruf zählt, und ihr Fill wiche vom abgelegten Fortschritt ab.
+        Map<AcquisitionScheduler.Ticket, CompletableFuture<Boolean>> counted = new HashMap<>();
+        waiting.values().forEach(ticket -> counted.put(ticket, ticket.done().whenComplete((stored, failure) ->
+                batch.finished(failure == null && Boolean.TRUE.equals(stored)))));
         synchronized (batches) {
             batches.put(batch.id, batch);
         }
@@ -206,7 +210,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         int failed = 0;
         for (Map.Entry<KeywordSearch.Hit, AcquisitionScheduler.Ticket> entry : waiting.entrySet()) {
             AcquisitionScheduler.Ticket ticket = entry.getValue();
-            CompletableFuture<Boolean> future = ticket.done();
+            CompletableFuture<Boolean> future = counted.get(ticket);
             try {
                 if (!future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
                     failed++;
@@ -221,7 +225,12 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 // Ein delegierter Benutzer hat seinen Abruf beendet; die Seite fehlt noch.
                 pending.add(entry.getKey());
             } catch (ExecutionException e) {
-                failed++;
+                if (e.getCause() instanceof CancellationException) {
+                    // Die gezählte Meldung trägt den Abbruch als Ursache; die Seite fehlt noch.
+                    pending.add(entry.getKey());
+                } else {
+                    failed++;
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 pending.add(entry.getKey());
