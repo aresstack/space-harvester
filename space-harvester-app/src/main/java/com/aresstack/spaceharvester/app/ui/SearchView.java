@@ -82,14 +82,14 @@ public final class SearchView implements View {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
-    private final JLabel status = Comic.muted(" ");
+    final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     /** Stand der Suche in der Statuszeile des Hauptfensters: Ladestand bzw. Ende, Abbrechen, Zahl der Treffer. */
     final JLabel progressText = Comic.muted(" ");
     /** Nach dem Ende: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“. */
     final JLabel endState = new JLabel(" ");
     /** Der Stand für die Statuszeile ({@link #statusInfo()}); die Ansicht hat keine eigene Aktionszeile mehr. */
-    private final JPanel statusInfo = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+    private final JPanel statusInfo = new JPanel();
     final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
             + "bleibt im Cache");
     /** Fragt den Ladestand ab; steigt er, wird derselbe Stapel neu geordnet ({@link #refresh}). */
@@ -217,10 +217,21 @@ public final class SearchView implements View {
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
         // Der Stand steht in der Statuszeile des Hauptfensters: Ladestand, Abbrechen bzw. Endzustand, Treffer.
+        // Wird es eng, kürzt nur der Hinweis rechts (mit „…“, ganz im Tooltip); Abbrechen bleibt immer sichtbar.
         statusInfo.setOpaque(false);
-        statusInfo.add(progressText);
-        statusInfo.add(cancel);
-        statusInfo.add(endState);
+        statusInfo.setLayout(new javax.swing.BoxLayout(statusInfo, javax.swing.BoxLayout.X_AXIS));
+        for (JComponent part : List.of(progressText, cancel, endState)) {
+            part.setMinimumSize(part.getPreferredSize());
+            part.addPropertyChangeListener("text", e -> {
+                part.setMinimumSize(null);
+                part.setMinimumSize(part.getPreferredSize());
+            });
+            statusInfo.add(part);
+            statusInfo.add(javax.swing.Box.createHorizontalStrut(8));
+        }
+        status.setMinimumSize(new java.awt.Dimension(0, 0));
+        status.addPropertyChangeListener("text", e -> status.setToolTipText(
+                status.getText() == null || status.getText().isBlank() ? null : status.getText()));
         statusInfo.add(status);
     }
 

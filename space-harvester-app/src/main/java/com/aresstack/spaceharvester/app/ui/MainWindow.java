@@ -257,12 +257,7 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        JPanel statusWest = new JPanel();
-        statusWest.setOpaque(false);
-        statusWest.setLayout(new javax.swing.BoxLayout(statusWest, javax.swing.BoxLayout.X_AXIS));
-        statusWest.add(viewStatus);
-        statusWest.add(status);
-        statusLine = new StatusLine(activities.progress(), statusWest, activities.jobLine(), new CopyrightLink());
+        statusLine = new StatusLine(activities.progress(), viewStatus, status, activities.jobLine(), new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);

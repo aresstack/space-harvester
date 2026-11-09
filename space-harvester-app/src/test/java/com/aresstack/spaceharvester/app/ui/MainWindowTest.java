@@ -242,6 +242,47 @@ class MainWindowTest {
     }
 
     @Test
+    void at960PixelsTheSearchKeepsAbbrechenVisibleAndShortensOnlyTheHint() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            window.show(AppContext.Section.SEARCH);
+            SearchView search = window.searchView();
+            search.progressText.setText("Suche läuft · 3 von 9 Suchanfragen · 12 Treffer");
+            search.cancel.setVisible(true);
+            String hint = "12 Treffer · semantisch, nach Nähe zur Anfrage · Wiki: nicht erreichbar (Zeitüberschreitung)"
+                    + " · unvollständig: nicht jede Quelle oder jeder Treffer ließ sich prüfen";
+            search.status.setText(hint);
+            surface.setSize(960, 700);
+            layoutAll(surface);
+            java.awt.Rectangle cancel = SwingUtilities.convertRectangle(search.cancel.getParent(),
+                    search.cancel.getBounds(), window.statusLine());
+            assertThat(search.cancel.getWidth()).isEqualTo(search.cancel.getPreferredSize().width);
+            assertThat(cancel.x).isGreaterThanOrEqualTo(0);
+            assertThat(cancel.x + cancel.width).isLessThanOrEqualTo(window.statusLine().getWidth());
+            assertThat(search.progressText.getWidth()).isEqualTo(search.progressText.getPreferredSize().width);
+            // Nur der lange Hinweis wird gekürzt; ganz steht er im Tooltip.
+            assertThat(search.status.getWidth()).isLessThan(search.status.getPreferredSize().width);
+            assertThat(search.status.getToolTipText()).isEqualTo(hint);
+        });
+    }
+
+    private static void layoutAll(Component component) {
+        component.doLayout();
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
+    @Test
     void closeRingsStayRoundAndTheCopyrightOpensTheReleases() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
