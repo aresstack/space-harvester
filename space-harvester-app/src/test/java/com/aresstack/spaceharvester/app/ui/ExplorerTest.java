@@ -131,5 +131,20 @@ class ExplorerTest {
         assertThat(selected[0]).isInstanceOf(Explorer.PageItem.class);
         assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
         assertThat(scopeCalls[0]).isZero();
+
+        // Erst Treffer A (Pfad wird im Hintergrund geholt), dann B: die spätere Antwort für A überschreibt B nicht.
+        Explorer.PageItem other = Explorer.children(context.runtime(), space, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .filter(page -> !page.pageId().equals(wanted)).findFirst().orElseThrow();
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0].revealPage("handbuch", other.pageId());
+            explorer[0].revealPage(position);
+        });
+        Thread.sleep(1500);
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.tree.TreePath path = explorer[0].tree().getSelectionPath();
+            selected[0] = path == null ? null : ((Explorer.Node) path.getLastPathComponent()).item();
+        });
+        assertThat(((Explorer.PageItem) selected[0]).pageId()).isEqualTo(wanted);
     }
 }

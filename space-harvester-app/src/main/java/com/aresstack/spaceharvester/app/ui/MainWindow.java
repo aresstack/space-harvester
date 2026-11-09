@@ -300,11 +300,16 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Klappt den linken Drawer zu oder wieder auf. */
+    /** Breite des Teilers bei zugeklapptem Drawer: sichtbar und per Doppelklick erreichbar. */
+    static final int COLLAPSED_DIVIDER = 6;
+
     void toggleDrawer() {
         if (split.isLeftCollapsed()) {
             split.openLeft();
         } else {
             split.collapseLeft();
+            // collapseLeft() nimmt den Teiler ganz weg; ein schmaler bleibt, damit ein Doppelklick wieder aufklappt.
+            split.setDividerSize(COLLAPSED_DIVIDER);
         }
     }
 
@@ -483,6 +488,11 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: die Statuszeile. */
     StatusLine statusLine() {
         return statusLine;
+    }
+
+    /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */
+    com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane split() {
+        return split;
     }
 
     /** Für Tests: der Explorer links. */

@@ -163,6 +163,8 @@ public final class Explorer {
     private int filterRequest;
     /** Während {@link #revealPage} wählt der Baum selbst; der Suchumfang bleibt dann, wie er ist. */
     private boolean revealing;
+    /** Zähler der Reveal-Anfragen: Suchtreffer A, dann B – A darf B nicht mehr überschreiben. */
+    private int revealRequest;
     /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
     private int hoverRow = -1;
 
@@ -368,6 +370,11 @@ public final class Explorer {
      * gefundene Knoten gewählt. Der Suchumfang ändert sich dadurch nicht.
      */
     public void revealPage(PageNavigation.Position position) {
+        reveal(position, ++revealRequest);
+    }
+
+    /** {@code ticket}: nur die jüngste Anfrage wählt; eine ältere, deren Kinder später laden, verfällt. */
+    private void reveal(PageNavigation.Position position, int ticket) {
         if (position == null || position.page() == null) {
             return;
         }
@@ -382,7 +389,7 @@ public final class Explorer {
         }
         String pageId = position.page().pageId();
         steps.add(item -> item instanceof PageItem p && p.pageId().equals(pageId));
-        descend(source, steps, 0);
+        descend(source, steps, 0, ticket);
     }
 
     /** Wie {@link #revealPage(PageNavigation.Position)}; den Pfad der Seite holt der Core im Hintergrund. */
@@ -391,13 +398,21 @@ public final class Explorer {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
-        Background.run(() -> runtime.workspace().position(sourceId, pageId), this::revealPage, error -> {
+        int ticket = ++revealRequest;
+        Background.run(() -> runtime.workspace().position(sourceId, pageId), position -> {
+            if (ticket == revealRequest) {
+                reveal(position, ticket);
+            }
+        }, error -> {
             // Quellen ohne Seitenbaum: nichts zu zeigen.
         });
     }
 
-    private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index) {
+    private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
         Runnable next = () -> {
+            if (ticket != revealRequest) {
+                return;
+            }
             Node child = index < steps.size() ? child(node, steps.get(index)) : null;
             if (child == null && index < steps.size() - 1 && node.item() instanceof SpaceItem) {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
@@ -410,7 +425,7 @@ public final class Explorer {
             if (child == null || index == steps.size() - 1) {
                 select(child == null ? node : child);
             } else {
-                descend(child, steps, index + 1);
+                descend(child, steps, index + 1, ticket);
             }
         };
         TreePath path = new TreePath(node.getPath());
