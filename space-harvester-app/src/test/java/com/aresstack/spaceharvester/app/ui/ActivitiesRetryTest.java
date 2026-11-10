@@ -2,64 +2,59 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import java.time.Instant;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Der Pfeil im Kreis in der Zeile eines Auftrags: anklickbar für beendete Downloads und Abgleiche, gesperrt solange
- * der Auftrag läuft und für andere Auftragsarten; nennt im Tooltip, wie viele Dateien wegen fehlender Anmeldung
- * (Einmalcode) fehlen.
+ * Pfeil im Kreis und „Neu erzwingen“ in der Zeile eines Auftrags (ADR 0025): Bei Downloads lädt der Pfeil nur
+ * gescheiterte Seiten nach und ist sonst gesperrt; „Neu erzwingen“ gibt es für beendete Downloads. Abgleiche starten
+ * mit dem Pfeil wie bisher erneut.
  */
 class ActivitiesRetryTest {
 
     @Test
-    void finishedDownloadsAndSyncsCanBeRetried() {
-        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.COMPLETED))).isNull();
-        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.FAILED))).isNull();
-        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.CANCELLED))).isNull();
-        assertThat(ActivitiesView.retryBlocked(job(JobType.SYNC, JobState.COMPLETED))).isNull();
+    void theCircularArrowRetriesOnlyFailedPagesOfADownload() {
+        assertThat(ActivitiesView.retryBlocked(failures())).isNull();
+        assertThat(ActivitiesView.retryTip(failures(), null)).isEqualTo(ActivitiesView.RETRY_FAILED_TIP)
+                .startsWith("Nur Fehler neu versuchen");
+        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.COMPLETED)))
+                .isEqualTo("nichts gescheitert");
+        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.FAILED)))
+                .isEqualTo("nicht fertig geworden, ▶ setzt fort");
+        assertThat(ActivitiesView.retryTip(job(JobType.EXPORT, JobState.COMPLETED), null))
+                .isEqualTo("Nur Fehler neu versuchen · nichts gescheitert");
         assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.RUNNING))).isEqualTo("läuft noch");
-        assertThat(ActivitiesView.retryBlocked(job(JobType.EXPORT, JobState.QUEUED))).isEqualTo("läuft noch");
         assertThat(ActivitiesView.retryBlocked(job(JobType.ENRICHMENT, JobState.COMPLETED)))
                 .isEqualTo("nur für Downloads und Abgleiche");
     }
 
     @Test
-    void theTooltipNamesTheFilesMissingForWantOfASignIn() {
-        JobStatus done = job(JobType.EXPORT, JobState.COMPLETED);
-        assertThat(ActivitiesView.retryTip(done, null))
-                .isEqualTo("Erneut versuchen · denselben Download noch einmal starten");
+    void syncsStillStartAgain() {
+        assertThat(ActivitiesView.retryBlocked(job(JobType.SYNC, JobState.COMPLETED))).isNull();
         assertThat(ActivitiesView.retryTip(job(JobType.SYNC, JobState.COMPLETED), null))
                 .isEqualTo("Erneut versuchen · denselben Abgleich noch einmal starten");
-        assertThat(ActivitiesView.retryTip(done, dataset(new ExportDatasetInfo.Media(3, 0, 2, 0))))
-                .isEqualTo("Erneut versuchen · 2 Dateien fehlen wegen fehlender Anmeldung; "
-                        + "die Einmalcode-Abfrage kommt dann wieder");
-        assertThat(ActivitiesView.retryTip(done, dataset(new ExportDatasetInfo.Media(3, 0, 1, 0))))
-                .startsWith("Erneut versuchen · 1 Datei fehlt wegen fehlender Anmeldung");
-        assertThat(ActivitiesView.retryTip(job(JobType.EXPORT, JobState.RUNNING), null))
+        assertThat(ActivitiesView.retryTip(job(JobType.SYNC, JobState.RUNNING), null))
                 .isEqualTo("Erneut versuchen · läuft noch");
     }
 
     @Test
-    void aDownloadWithFailuresOffersToRetryOnlyTheFailedPages() {
-        JobStatus failures = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
-                new JobProgress(6, 6, 0, 6), null, false, Instant.EPOCH, null, null, null, null);
-
-        assertThat(ActivitiesView.retryBlocked(failures)).isNull();
-        assertThat(ActivitiesView.retryTip(failures, null)).isEqualTo(ActivitiesView.RETRY_FAILED_TIP)
-                .startsWith("Nur Fehler neu versuchen");
+    void finishedDownloadsCanBeForcedAnew() {
+        assertThat(ActivitiesView.forceBlocked(job(JobType.EXPORT, JobState.COMPLETED))).isNull();
+        assertThat(ActivitiesView.forceBlocked(failures())).isNull();
+        assertThat(ActivitiesView.forceBlocked(job(JobType.EXPORT, JobState.CANCELLED))).isNull();
+        assertThat(ActivitiesView.forceTip(job(JobType.EXPORT, JobState.COMPLETED))).startsWith("Neu erzwingen · ");
+        assertThat(ActivitiesView.forceBlocked(job(JobType.EXPORT, JobState.RUNNING))).isEqualTo("läuft noch");
+        assertThat(ActivitiesView.forceBlocked(job(JobType.SYNC, JobState.COMPLETED))).isEqualTo("nur für Downloads");
     }
 
-    private static ExportDatasetInfo dataset(ExportDatasetInfo.Media media) {
-        return new ExportDatasetInfo("j1", "wiki", "OPS", 3, true, ExportDatasetInfo.Images.NOT_COLLECTED, List.of("json"),
-                media);
+    private static JobStatus failures() {
+        return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(6, 6, 0, 6), null, false, Instant.EPOCH, null, null, null, null);
     }
 
     private static JobStatus job(JobType type, JobState state) {

@@ -21,6 +21,12 @@ public enum JobAction {
      * (ADR 0025).
      */
     RETRY_FAILED,
+    /**
+     * „Neu erzwingen“ (⟲): bei einem beendeten Download den ganzen Umfang neu von der Quelle abrufen, auch unveränderte
+     * Seiten, im selben Eintrag; der bisherige Bestand und das bisherige Ergebnis werden erst nach dem Lauf ersetzt,
+     * ein Abbruch zerstört nichts (ADR 0025).
+     */
+    FORCE_REFRESH,
     /** Einen wartenden oder laufenden Auftrag abbrechen. */
     CANCEL,
     /** Einen beendeten Auftrag aus der Liste entfernen; geladene Daten bleiben. */

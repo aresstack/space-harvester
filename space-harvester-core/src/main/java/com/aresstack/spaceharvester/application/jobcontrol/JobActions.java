@@ -21,7 +21,7 @@ import java.util.function.UnaryOperator;
  * andere an {@link Jobs}. Die Oberfläche bietet nur an, was {@link JobLifecycleState#actions()} nennt, und ruft dann
  * {@link #perform}; eigene Zustandslogik braucht sie nicht.
  *
- * <p>Fortsetzen und „Nur Fehler neu versuchen“ bleiben immer im selben Eintrag, auch nach einem Neustart (dann aus
+ * <p>Fortsetzen, „Nur Fehler neu versuchen“ und „Neu erzwingen“ bleiben immer im selben Eintrag, auch nach einem Neustart (dann aus
  * den abgelegten {@link JobStatus#parameters()}); es entsteht nie ein neuer Auftrag.
  */
 public class JobActions {
@@ -81,6 +81,12 @@ public class JobActions {
                     throw new JobNotResumableException(jobId, "nur Downloads laden gescheiterte Seiten gezielt nach");
                 }
                 yield exports.retryFailed(jobId, owner, access);
+            }
+            case FORCE_REFRESH -> {
+                if (current.type() != JobType.EXPORT) {
+                    throw new JobNotResumableException(jobId, "nur Downloads erzwingen einen neuen Stand");
+                }
+                yield exports.forceRefresh(jobId, owner, access);
             }
             case DELETE -> {
                 if (sync) {

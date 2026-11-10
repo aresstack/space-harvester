@@ -109,6 +109,18 @@ public interface SpaceProvisioning {
     }
 
     /**
+     * Wie {@link #provisionScoped(JobContext, String, String, java.util.function.Function, java.util.function.Function)};
+     * mit {@code reloadAll} („Neu erzwingen“, ADR 0025) lädt das Einlesen auch unveränderte Seiten neu, in eine neue
+     * Generation, die den bisherigen Stand erst nach dem Lauf ersetzt. Standard: wie ohne {@code reloadAll}.
+     */
+    default Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading,
+                                        boolean reloadAll) {
+        return provisionScoped(context, sourceId, spaceKey, counting, loading);
+    }
+
+    /**
      * Seiten der bestätigten Generation ohne aktuellen Inhalt im Cache: nur katalogisiert, nie geladen oder veraltet.
      * Ein Export, der eine davon braucht, liest neu ein, statt die Generation zu übernehmen. Standard: keine.
      */

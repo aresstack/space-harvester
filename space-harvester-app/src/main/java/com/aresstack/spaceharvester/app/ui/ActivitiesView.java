@@ -119,7 +119,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 5, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 6, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -862,18 +862,21 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
     private static final javax.swing.Icon RETRY = ComposerIcons.refresh();
+    private static final javax.swing.Icon FORCE = ComposerIcons.download();
     static final String RETRY_TIP = "Erneut versuchen";
     /** Tooltip des Pfeils im Kreis bei einem mit Fehlern fertigen Download (ADR 0025). */
     static final String RETRY_FAILED_TIP = "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
             + "ohne neue Inventur, im selben Eintrag";
+    /** Tooltip von „Neu erzwingen“ (ADR 0025). */
+    static final String FORCE_TIP = "Neu erzwingen";
     private static final javax.swing.Icon PAUSE = ComposerIcons.pause();
     private static final javax.swing.Icon RESUME = ComposerIcons.play();
     static final String PAUSE_TIP = "Anhalten";
     static final String RESUME_TIP = "Fortsetzen";
 
     /**
-     * Die zehn Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Anhalten bzw. Fortsetzen, Erneut
-     * versuchen, Löschen.
+     * Die elf Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Anhalten bzw. Fortsetzen, Nur Fehler
+     * neu versuchen, Neu erzwingen, Löschen.
      */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
@@ -899,6 +902,8 @@ public final class ActivitiesView implements View {
         String retryBlocked = retryBlocked(job);
         actions.add(new RowActions.Action(RETRY, retryTip(job, datasets.get(job.id())), retryBlocked == null,
                 () -> retry(job)));
+        String forceBlocked = forceBlocked(job);
+        actions.add(new RowActions.Action(FORCE, forceTip(job), forceBlocked == null, () -> force(job)));
         actions.add(new RowActions.Action(Glyph.TRASH, running ? "Auftrag löschen · läuft noch, erst abbrechen"
                 : "Auftrag löschen", !running, () -> deleteJob(job)));
         return actions;
@@ -956,7 +961,10 @@ public final class ActivitiesView implements View {
                 feedback::problem);
     }
 
-    /** Warum dieser Auftrag gerade nicht erneut gestartet werden kann, oder {@code null}. */
+    /**
+     * Warum der Pfeil im Kreis gerade nicht geht, oder {@code null}. Bei einem Download lädt er nur gescheiterte Seiten
+     * nach, also nur, wenn der Kern das anbietet ({@link JobAction#RETRY_FAILED}).
+     */
     static String retryBlocked(JobStatus job) {
         if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
             return "nur für Downloads und Abgleiche";
@@ -964,36 +972,59 @@ public final class ActivitiesView implements View {
         if (!job.state().terminal()) {
             return "läuft noch";
         }
+        if (job.type() == JobType.EXPORT && !job.lifecycle().allows(JobAction.RETRY_FAILED)) {
+            return job.state() == JobState.COMPLETED ? "nichts gescheitert" : "nicht fertig geworden, ▶ setzt fort";
+        }
         return null;
     }
 
-    /**
-     * Der Tooltip des Pfeils im Kreis: „Erneut versuchen“; hat der Download Dateien wegen fehlender Anmeldung
-     * (Einmalcode) ausgelassen, steht das dabei, denn genau dann kommt die Abfrage beim neuen Versuch wieder.
-     */
-    static String retryTip(JobStatus job, ExportDatasetInfo dataset) {
-        String blocked = retryBlocked(job);
-        if (blocked != null) {
-            return RETRY_TIP + " · " + blocked;
+    /** Warum „Neu erzwingen“ gerade nicht geht, oder {@code null}. */
+    static String forceBlocked(JobStatus job) {
+        if (job.type() != JobType.EXPORT) {
+            return "nur für Downloads";
         }
-        if (job.lifecycle().allows(JobAction.RETRY_FAILED)) {
-            return RETRY_FAILED_TIP;
+        if (!job.state().terminal()) {
+            return "läuft noch";
         }
-        int signIn = dataset == null ? 0 : dataset.media().signInRequired();
-        if (signIn > 0) {
-            return RETRY_TIP + " · " + Texts.count(signIn, "Datei fehlt", "Dateien fehlen")
-                    + " wegen fehlender Anmeldung; die Einmalcode-Abfrage kommt dann wieder";
-        }
-        return RETRY_TIP + " · denselben " + (job.type() == JobType.SYNC ? "Abgleich" : "Download")
-                + " noch einmal starten";
+        return job.lifecycle().allows(JobAction.FORCE_REFRESH) ? null : "nicht möglich";
+    }
+
+    /** Tooltip von „Neu erzwingen“. */
+    static String forceTip(JobStatus job) {
+        String blocked = forceBlocked(job);
+        return blocked != null ? FORCE_TIP + " · " + blocked : FORCE_TIP + " · alles neu von der Quelle abrufen, "
+                + "auch Unverändertes; der bisherige Stand bleibt, bis der neue fertig ist";
     }
 
     /**
-     * Pfeil im Kreis in der Zeile: Ein mit Fehlern fertiger Download lädt nur die gescheiterten Seiten nach, ein
-     * gescheiterter oder abgebrochener setzt fort, beides im selben Eintrag (ADR 0025). Sonst startet er denselben
-     * Auftrag noch einmal: einen Download mit Quelle, Space und Startseite wie zuvor, einen Abgleich mit Quelle und
-     * Space. Verlangt die Quelle wieder einen Einmalcode, erscheint die Abfrage wie beim ersten Mal über die
-     * Anforderungen.
+     * „Neu erzwingen“ in der Zeile: derselbe Download ruft den ganzen Umfang neu ab und ersetzt den bisherigen Stand
+     * erst nach dem Lauf, im selben Eintrag (ADR 0025).
+     */
+    void force(JobStatus job) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || forceBlocked(job) != null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().performJobAction(job.id(), JobAction.FORCE_REFRESH),
+                started -> show(started.id()), feedback::problem);
+    }
+
+    /**
+     * Der Tooltip des Pfeils im Kreis: bei einem Download „Nur Fehler neu versuchen“, bei einem Abgleich „Erneut
+     * versuchen“; ist er gesperrt, steht der Grund dabei. Fehlende Bilder und Anhänge holt ihr eigener Auftrag (▶).
+     */
+    static String retryTip(JobStatus job, ExportDatasetInfo dataset) {
+        String blocked = retryBlocked(job);
+        if (job.type() == JobType.EXPORT) {
+            return blocked == null ? RETRY_FAILED_TIP : "Nur Fehler neu versuchen · " + blocked;
+        }
+        return blocked != null ? RETRY_TIP + " · " + blocked : RETRY_TIP + " · denselben Abgleich noch einmal starten";
+    }
+
+    /**
+     * Pfeil im Kreis in der Zeile: Ein mit Fehlern fertiger Download lädt nur die gescheiterten Seiten nach, im selben
+     * Eintrag (ADR 0025). Ein Abgleich startet mit Quelle und Space noch einmal. Verlangt die Quelle wieder einen
+     * Einmalcode, erscheint die Abfrage wie beim ersten Mal über die Anforderungen.
      */
     void retry(JobStatus job) {
         AppRuntime runtime = context.runtime();
@@ -1001,13 +1032,9 @@ public final class ActivitiesView implements View {
             return;
         }
         if (job.type() == JobType.EXPORT) {
-            for (JobAction action : List.of(JobAction.RETRY_FAILED, JobAction.RESUME)) {
-                if (job.lifecycle().allows(action)) {
-                    Background.run(() -> runtime.workspace().performJobAction(job.id(), action),
-                            started -> show(started.id()), feedback::problem);
-                    return;
-                }
-            }
+            Background.run(() -> runtime.workspace().performJobAction(job.id(), JobAction.RETRY_FAILED),
+                    started -> show(started.id()), feedback::problem);
+            return;
         }
         Background.run(() -> job.type() == JobType.SYNC
                         ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())

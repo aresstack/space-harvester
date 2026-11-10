@@ -48,6 +48,7 @@ class ExportRetryFailedTest {
     private final PageSnapshot two = page("confluence", "DEV", "2", "1");
     private final PageSnapshot three = page("confluence", "DEV", "3", "1");
     private int inventories;
+    private final List<Boolean> reloads = new ArrayList<>();
     private final List<Set<String>> retried = new ArrayList<>();
     /** Was das Nachladen meldet und veröffentlicht. */
     private SpaceProvisioning.Retried retryResult;
@@ -71,6 +72,15 @@ class ExportRetryFailedTest {
         }
 
         @Override
+        public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                           java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                           java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading,
+                                           boolean reloadAll) {
+            reloads.add(reloadAll);
+            return provisionScoped(context, sourceId, spaceKey, counting, loading);
+        }
+
+        @Override
         public Retried retry(JobContext context, String sourceId, String spaceKey, Set<String> pageIds,
                              Predicate<PageHeader> allowed) {
             retried.add(Set.copyOf(pageIds));
@@ -87,7 +97,8 @@ class ExportRetryFailedTest {
         JobStatus done = jobs.status(export.id());
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
         assertThat(done.lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
-        assertThat(done.lifecycle().actions()).containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(done.lifecycle().actions()).containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH,
+                JobAction.DELETE);
         assertThat(writer.published.get(export.id()).summary().unfetched()).containsExactly("3");
         return done;
     }
@@ -128,7 +139,8 @@ class ExportRetryFailedTest {
 
         JobStatus done = jobs.status(export.id());
         assertThat(done.progress()).isEqualTo(new JobProgress(3, 3, 2, 1));
-        assertThat(done.lifecycle().actions()).containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(done.lifecycle().actions()).containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH,
+                JobAction.DELETE);
         assertThat(writer.published.get(export.id()).summary().unfetched()).containsExactly("3");
     }
 
@@ -167,7 +179,8 @@ class ExportRetryFailedTest {
         cache.publish("confluence", "DEV", confirmed("g1"), List.of(one, two));
         JobStatus export = exports.start(dev());
 
-        assertThat(jobs.status(export.id()).lifecycle().actions()).containsExactly(JobAction.DELETE);
+        assertThat(jobs.status(export.id()).lifecycle().actions()).containsExactly(JobAction.FORCE_REFRESH,
+                JobAction.DELETE);
         assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.RETRY_FAILED))
                 .isInstanceOf(JobActionNotAllowedException.class);
     }
@@ -182,5 +195,31 @@ class ExportRetryFailedTest {
                 .isInstanceOf(JobNotResumableException.class)
                 .hasMessageContaining("Bilder oder Anhänge");
         assertThat(retried).isEmpty();
+    }
+
+    @Test
+    void forcingReadsEverythingAnewInTheSameEntryAndReplacesTheResultAfterwards() {
+        JobStatus export = exportWithPage3Failing(dev());
+        assertThat(reloads).containsExactly(false);
+
+        JobStatus again = actions.perform(export.id(), "client-a", JobAction.FORCE_REFRESH);
+
+        assertThat(again.id()).isEqualTo(export.id());
+        assertThat(reloads).containsExactly(false, true);
+        assertThat(inventories).isEqualTo(2);
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(writer.published).containsKey(export.id());
+        assertThat(jobs.list("client-a", JobType.EXPORT)).hasSize(1);
+    }
+
+    @Test
+    void forcingIsRefusedWhileImagesAreCollected() {
+        JobStatus export = exportWithPage3Failing(dev());
+        jobs.submit(JobType.ATTACHMENTS, "confluence", "DEV", null, "client-a",
+                Map.of(ExportAssetCollection.EXPORT_ID, export.id()), context -> new CompletableFuture<>());
+
+        assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.FORCE_REFRESH))
+                .isInstanceOf(JobNotResumableException.class);
+        assertThat(reloads).containsExactly(false);
     }
 }

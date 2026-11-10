@@ -164,6 +164,15 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading) {
+        return provisionScoped(context, sourceId, spaceKey, counting, loading, false);
+    }
+
+    /** Wie oben; mit {@code reloadAll} auch unveränderte Seiten im Ladeumfang neu laden („Neu erzwingen“). */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading,
+                                       boolean reloadAll) {
         Objects.requireNonNull(counting, "counting");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
@@ -181,7 +190,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                         Set<String> ids = new java.util.HashSet<>();
                         listed.stream().filter(load).forEach(header -> ids.add(header.key().pageId()));
                         return ids::contains;
-                    });
+                    }, reloadAll);
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }

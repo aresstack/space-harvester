@@ -237,20 +237,62 @@ public class Exports {
         private final List<ExportConverter> selected;
         /** Nur „Nur Fehler neu versuchen“: die Seiten, die nachzuladen sind; sonst {@code null}. */
         private final Set<String> retry;
+        /** Nur „Neu erzwingen“: auch unveränderte Seiten neu laden. */
+        private final boolean reloadAll;
 
         ExportTask(ExportRequest request, List<ExportConverter> selected) {
-            this(request, selected, null);
+            this(request, selected, null, false);
         }
 
-        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry) {
+        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll) {
             this.request = request;
             this.selected = selected;
             this.retry = retry == null ? null : Set.copyOf(retry);
+            this.reloadAll = reloadAll;
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
-            return JobTask.blocking(running -> export(running, request, selected, retry)).start(context);
+            return JobTask.blocking(running -> export(running, request, selected, retry, reloadAll)).start(context);
+        }
+    }
+
+    /**
+     * „Neu erzwingen“ für den eigenen beendeten Export im selben Eintrag (ADR 0025): liest den ganzen Umfang neu von
+     * der Quelle, auch unveränderte Seiten, in eine neue Generation, die den bisherigen Stand erst nach dem Lauf
+     * ersetzt; jede Seite behält ihren bisherigen Stand, bis ihre neue Fassung da ist. Danach ersetzt das neue
+     * Artefakt das bisherige; scheitert oder endet der Lauf vorher, bleibt alles Bisherige.
+     *
+     * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws JobNotResumableException wenn der Export noch wartet oder läuft oder seine Bilder oder Anhänge noch
+     *                                  beschafft werden
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus forceRefresh(String exportId, String owner,
+                                  java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new UnknownJobException(exportId);
+        }
+        if (!status.state().terminal()) {
+            throw new JobNotResumableException(exportId, "der Export wartet oder läuft noch");
+        }
+        requireNoFollowUp(exportId, owner);
+        purgeQuietly();
+        writer.requireCapacity();
+        ExportRequest request = access.apply(request(status)).withRefresh(true);
+        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), null,
+                true));
+    }
+
+    private void requireNoFollowUp(String exportId, String owner) {
+        if (followUpRunning(exportId, owner)) {
+            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
+            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
+                    + "erst anhalten oder abwarten");
         }
     }
 
@@ -279,16 +321,13 @@ public class Exports {
                     ? "der Export ist nicht fertig geworden; Fortsetzen holt den Rest"
                     : "der Export wartet oder läuft noch");
         }
-        if (followUpRunning(exportId, owner)) {
-            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
-            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
-                    + "erst anhalten oder abwarten");
-        }
+        requireNoFollowUp(exportId, owner);
         purgeQuietly();
         writer.requireCapacity();
         Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
         ExportRequest request = access.apply(request(status));
-        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds));
+        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds,
+                false));
     }
 
     /** Ob für diesen Export ein Bilder- oder Anhängeauftrag wartet oder läuft. */
@@ -439,10 +478,11 @@ public class Exports {
     }
 
     private void export(JobContext context, ExportRequest request, List<ExportConverter> selected,
-                        Set<String> retry) {
+                        Set<String> retry, boolean reloadAll) {
         try {
             requireAuthorized(request);
-            Prepared prepared = retry == null ? prepare(context, request) : prepareRetry(context, request, retry);
+            Prepared prepared = retry != null ? prepareRetry(context, request, retry)
+                    : prepare(context, request, reloadAll);
             exportGeneration(context, request, prepared, selected);
         } catch (UnknownSourceException e) {
             throw new JobFailedException("UNKNOWN_SOURCE", "Die Quelle " + request.sourceId()
@@ -522,6 +562,11 @@ public class Exports {
      * einen (unvollständigen) Export aus dem bisherigen Bestand, wenn keine Aktualität verlangt war.
      */
     private Prepared prepare(JobContext context, ExportRequest request) {
+        return prepare(context, request, false);
+    }
+
+    /** @param reloadAll „Neu erzwingen“: auch unveränderte Seiten neu laden */
+    private Prepared prepare(JobContext context, ExportRequest request, boolean reloadAll) {
         context.phase(COMPONENT, "Bestand prüfen");
         Instant startedAt = clock.instant();
         String sourceId = request.sourceId();
@@ -545,12 +590,13 @@ public class Exports {
         context.phase(COMPONENT, "Einlesen");
         String what = request.rootPageId() == null ? "der Space wird" : "der Teilbaum wird";
         context.record(JobEvent.Draft.info(COMPONENT, (current.isEmpty() ? "Kein Bestand im Cache; "
+                : reloadAll ? "Neu erzwingen; "
                 : request.refresh() ? "Aktueller Stand verlangt; "
                 : "Bestand nicht bestätigt (" + current.get().state() + "); ") + what + " von der Quelle eingelesen"));
         // Mit Startseite lädt das Einlesen nur deren Teilbaum; der übrige Space kommt nur mit Kopfdaten in den Katalog.
         SpaceProvisioning.Provisioned provisioned = provisioning.provisionScoped(
                 new ProvisioningContext(context), sourceId, spaceKey, headers -> counted(request, headers),
-                request.rootPageId() == null ? null : headers -> inSubtree(request, headers));
+                request.rootPageId() == null ? null : headers -> inSubtree(request, headers), reloadAll);
         context.checkpoint();
         if (!provisioned.confirmed()) {
             if (current.isEmpty() || request.refresh()) {

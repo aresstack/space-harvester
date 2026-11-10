@@ -97,7 +97,16 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     Generation liest der Lauf wie beim Fortsetzen ein. In der App führt der Pfeil im Kreis bei einem solchen Download
     ↻ aus, bei einem gescheiterten oder abgebrochenen Fortsetzen.
 
-Folgen in eigenen Schritten: „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar) im selben Eintrag.
+14. **⟲ Neu erzwingen** (Angelo 10.11.2026: „Den gesamten Datenbestand tatsächlich neu von Confluence abrufen, aber
+    erst nach erfolgreichem Download den bisherigen Bestand ersetzen“). Ein beendeter Download (fertig, mit Fehlern,
+    gescheitert oder abgebrochen) bietet `JobAction#FORCE_REFRESH` an. `Exports#forceRefresh` läuft im selben Eintrag
+    erneut, mit Inventur und `reloadAll` (`SpaceProvisioning#provisionScoped(…, reloadAll)`): `SyncPlan#withContentReloaded`
+    macht auch unveränderte Seiten im Ladeumfang zu `CONTENT_CHANGED`. Sie laufen über die `StagedGeneration`, ersetzen
+    ihren bisherigen Stand also erst mit der neuen Generation; scheitert ein Abruf, bleibt der bisherige als veraltet.
+    Ein Abbruch verwirft das Vorgemerkte, Bestand und Artefakt bleiben. Das neue Artefakt ersetzt das bisherige erst
+    nach Erfolg (`ExportArtifactWriter#replace`), Bilder und Anhänge laufen danach in ihren Einträgen erneut; solange
+    sie noch laufen, lehnt ⟲ ab. Ein Teilbaum-Export lädt nur seinen Teilbaum neu. In der App steht ⟲ als eigener
+    Knopf neben ↻; ↻ lädt bei Downloads nur noch gescheiterte Seiten nach. Abgleiche folgen in einem eigenen Schritt.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

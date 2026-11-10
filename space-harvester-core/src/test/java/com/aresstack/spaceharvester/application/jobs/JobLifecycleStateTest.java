@@ -43,7 +43,12 @@ class JobLifecycleStateTest {
     void finishedMeansNothingIsMissing() {
         assertThat(status(JobType.EXPORT, JobState.COMPLETED, 0, false, false, false).lifecycle().key())
                 .isEqualTo("COMPLETED");
-        assertThat(actions(JobType.EXPORT, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
+        assertThat(actions(JobType.EXPORT, JobState.COMPLETED, 0, false))
+                .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(actions(JobType.EXPORT, JobState.COMPLETED, 1, false))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(actions(JobType.SYNC, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
+        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 1, false)).containsExactly(JobAction.DELETE);
         assertThat(status(JobType.EXPORT, JobState.COMPLETED, 1, false, false, false).lifecycle().key())
                 .isEqualTo("COMPLETED_WITH_ERRORS");
         assertThat(status(JobType.ASSETS, JobState.COMPLETED, 0, true, false, false).lifecycle().key())
@@ -53,7 +58,7 @@ class JobLifecycleStateTest {
     @Test
     void failedAndCancelledDownloadsResumeOtherKindsOnlyDelete() {
         assertThat(actions(JobType.EXPORT, JobState.FAILED, 0, false))
-                .containsExactly(JobAction.RESUME, JobAction.DELETE);
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.SYNC, JobState.CANCELLED, 0, false))
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         assertThat(actions(JobType.ENRICHMENT, JobState.FAILED, 0, false)).containsExactly(JobAction.DELETE);
