@@ -158,9 +158,8 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }
         String thumbprint = certificate.enabled() ? certificate.thumbprint() : null;
-        // Desktop: TLS wie der Enterprise AI Client unter Java 8, damit die Einmalcode-Sitzung hält (#571).
         KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, context.routes(), context.userAgent(),
-                trust, thumbprint, context.async(), desktop);
+                trust, thumbprint, context.async());
         SourceSettings settings = settings(config, desktop);
         List<String> invalid = provider.validate(settings);
         if (!invalid.isEmpty()) {
