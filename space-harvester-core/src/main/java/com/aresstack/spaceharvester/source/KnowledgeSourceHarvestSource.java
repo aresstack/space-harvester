@@ -1330,12 +1330,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
         @Override
         public String message() {
-            return challenge.message();
+            return note != null ? note : challenge.message();
         }
 
         @Override
         public String error() {
-            return note != null ? note : challenge.error();
+            return challenge.error();
         }
 
         @Override
