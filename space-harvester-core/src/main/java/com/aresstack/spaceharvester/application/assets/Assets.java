@@ -241,10 +241,21 @@ public class Assets {
      * vorbehalten, sonst füllte jeder Leser die Ablage.
      */
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore) {
+        return content(list, attachmentId, mayStore, false);
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean)}; mit {@code fresh} am Speicher vorbei von der Quelle
+     * („Neu erzwingen“, ADR 0025). Der abgelegte Stand gilt weiter, bis der neue Download ihn ersetzt; scheitert er,
+     * bleibt der alte.
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
-        if (stored.isPresent()) {
-            return read(stored.get());
+        if (!fresh) {
+            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            if (stored.isPresent()) {
+                return read(stored.get());
+            }
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
     }
@@ -349,12 +360,21 @@ public class Assets {
      * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
      */
     public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image) {
+        return viewImage(sourceId, pageId, pageVersion, image, false);
+    }
+
+    /**
+     * Wie {@link #viewImage(String, String, String, HarvestSource.ViewImage)}; mit {@code fresh} am Speicher vorbei
+     * von der Quelle („Neu erzwingen“, ADR 0025); der abgelegte Stand gilt, bis der neue ihn ersetzt.
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image,
+                                  boolean fresh) {
         HarvestSource source = source(sourceId);
         String attachmentId = image.attachmentId() != null ? image.attachmentId()
                 : "view-" + sha256(image.src().getBytes(java.nio.charset.StandardCharsets.UTF_8))
                         .substring("sha256:".length(), "sha256:".length() + 32);
         String version = image.attachmentId() != null ? image.version() : pageVersion;
-        Optional<Asset> stored = store.find(sourceId, attachmentId, version);
+        Optional<Asset> stored = fresh ? Optional.empty() : store.find(sourceId, attachmentId, version);
         if (stored.isPresent()) {
             return read(stored.get());
         }

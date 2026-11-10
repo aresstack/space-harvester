@@ -274,7 +274,7 @@ class JobsTest {
         jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> order.add("B")));
         JobStatus c = jobs.submit(JobType.EXPORT, "confluence", "C", "client-a",
                 JobTask.blocking(context -> order.add("C")));
-        assertThat(c.lifecycle().actions()).containsExactly(JobAction.START_NOW, JobAction.CANCEL);
+        assertThat(c.lifecycle().actions()).containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
 
         jobs.prioritize(c.id(), "client-a");
         executor.runNext();
@@ -294,7 +294,7 @@ class JobsTest {
 
         assertThat(pausing.pauseRequested()).isTrue();
         assertThat(pausing.lifecycle().key()).isEqualTo("PAUSE_REQUESTED");
-        assertThat(pausing.lifecycle().actions()).containsExactly(JobAction.CANCEL);
+        assertThat(pausing.lifecycle().actions()).containsExactly(JobAction.CANCEL, JobAction.DELETE);
         executor.runNext();
         assertThat(jobs.status(export.id()).pauseRequested()).isFalse();
 

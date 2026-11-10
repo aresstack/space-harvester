@@ -10,8 +10,8 @@ import java.util.Objects;
  * fertig, wenn nichts fehlt.
  *
  * <p>Regeln: Anhalten und Fortsetzen erscheinen nie gleichzeitig; vor dem Start steht „Jetzt starten“; nur Aufträge,
- * deren Art es kennt ({@link JobType#resumable()}), lassen sich anhalten und fortsetzen; gelöscht werden nur beendete
- * Aufträge.
+ * deren Art es kennt ({@link JobType#resumable()}), lassen sich anhalten und fortsetzen; Löschen gibt es in jedem
+ * Zustand, als letzte Aktion (wartende und laufende bricht {@link Jobs#delete} vorher ab).
  */
 public sealed interface JobLifecycleState {
 
@@ -41,16 +41,18 @@ public sealed interface JobLifecycleState {
         // Katalogabgleich lädt keine Inhalte und hat nichts zu erzwingen.
         boolean download = status.type() == JobType.EXPORT;
         boolean sync = status.type() == JobType.SYNC;
-        boolean forceable = download || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
+        // Bilder und Anhänge holen beim erneuten Lauf nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
+        boolean files = status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS;
+        boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
             case PAUSED -> new Paused(status.pauseReason());
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download) : new Completed(forceable);
+                    ? new CompletedWithErrors(download || files, download || files) : new Completed(forceable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
-                    ? new CompletedWithErrors(true) : new Stopped(status.state(), resumable, forceable);
+                    ? new CompletedWithErrors(true, true) : new Stopped(status.state(), resumable, forceable);
             case CANCELLED -> new Stopped(status.state(), resumable, forceable);
         };
     }
@@ -64,7 +66,7 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return List.of(JobAction.START_NOW, JobAction.CANCEL);
+            return List.of(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
         }
     }
 
@@ -77,7 +79,8 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return resumable ? List.of(JobAction.PAUSE, JobAction.CANCEL) : List.of(JobAction.CANCEL);
+            return resumable ? List.of(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE)
+                    : List.of(JobAction.CANCEL, JobAction.DELETE);
         }
     }
 
@@ -93,7 +96,7 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return pausing ? List.of(JobAction.CANCEL) : List.of();
+            return pausing ? List.of(JobAction.CANCEL, JobAction.DELETE) : List.of(JobAction.DELETE);
         }
     }
 
@@ -140,12 +143,17 @@ public sealed interface JobLifecycleState {
      * „Neu erzwingen“ an ({@link JobAction#RETRY_FAILED}, {@link JobAction#FORCE_REFRESH}). Bei einem Abgleich ist das
      * der Fehlschlag {@link #SYNC_PARTIAL}: Die Generation ist bestätigt, nur einzelne Seiten fehlen.
      *
-     * @param retryable ob die Art gescheiterte Seiten gezielt nachladen und einen neuen Stand erzwingen kann
+     * @param retryable ob die Art Gescheitertes gezielt nachladen kann (auch Bilder und Anhänge)
+     * @param forceable ob die Art einen neuen Stand erzwingen kann
      */
-    record CompletedWithErrors(boolean retryable) implements JobLifecycleState {
+    record CompletedWithErrors(boolean retryable, boolean forceable) implements JobLifecycleState {
 
         public CompletedWithErrors() {
-            this(false);
+            this(false, false);
+        }
+
+        public CompletedWithErrors(boolean retryable) {
+            this(retryable, retryable);
         }
 
         @Override
@@ -155,8 +163,15 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return retryable ? List.of(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE)
-                    : List.of(JobAction.DELETE);
+            List<JobAction> actions = new java.util.ArrayList<>(3);
+            if (retryable) {
+                actions.add(JobAction.RETRY_FAILED);
+            }
+            if (forceable) {
+                actions.add(JobAction.FORCE_REFRESH);
+            }
+            actions.add(JobAction.DELETE);
+            return List.copyOf(actions);
         }
     }
 

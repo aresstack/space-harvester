@@ -958,15 +958,30 @@ public final class Workspace {
     }
 
     /**
-     * Löscht einen beendeten Auftrag samt Diagnoseereignissen und nimmt ihn aus der Liste. Exportdateien, die der
-     * Benutzer gespeichert hat, und der Seitenbestand bleiben.
-     *
-     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     * Löscht einen Auftrag in jedem Zustand samt Diagnoseereignissen und nimmt ihn aus der Liste; einen wartenden oder
+     * laufenden bricht das vorher ab. Exportdateien, die der Benutzer gespeichert hat, und der Seitenbestand bleiben.
      */
     public void deleteJob(String jobId) {
         job(jobId);
         harvester.deleteJob(jobId);
         activities.forget(jobId);
+    }
+
+    /**
+     * Löscht alle sichtbaren Aufträge in jedem Zustand („Alle Aufträge löschen“); wartende und laufende werden vorher
+     * abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs() {
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            try {
+                deleteJob(status.id());
+                deleted++;
+            } catch (UnknownJobException e) {
+                activities.forget(status.id());
+            }
+        }
+        return deleted;
     }
 
     /** Löscht alle sichtbaren beendeten Aufträge; wartende und laufende bleiben. @return Anzahl */
