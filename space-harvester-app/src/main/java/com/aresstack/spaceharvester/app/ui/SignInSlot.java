@@ -365,6 +365,7 @@ public final class SignInSlot extends JPanel {
         JTextArea area = new JTextArea();
         area.setEditable(false);
         area.setFocusable(false);
+        Comic.noAutoScroll(area);
         area.setOpaque(false);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
