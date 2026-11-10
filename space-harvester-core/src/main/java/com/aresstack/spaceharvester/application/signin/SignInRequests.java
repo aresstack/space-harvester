@@ -299,6 +299,18 @@ public class SignInRequests {
      * {@link SignInRequest.Answer#FAILED} nennt {@link SignInRequest#failure()} der Anforderung die Ursache (#571).
      */
     public SignInRequest.Answer submit(String requestId, char[] code) {
+        return submit(requestId, code, null, null);
+    }
+
+    /**
+     * Wie {@link #submit(String, char[])}, bei {@link SignInRequest#asksForLogin()} mit Benutzer und Passwort nur für
+     * dieses Absenden (#571). Überschreibt {@code code} und {@code password} danach; beide erscheinen nie in
+     * Protokoll oder {@link SignInRequest#failure()}.
+     *
+     * @param username Benutzer oder {@code null}
+     * @param password Passwort oder {@code null}
+     */
+    public SignInRequest.Answer submit(String requestId, char[] code, String username, char[] password) {
         Objects.requireNonNull(code, "code");
         try {
             Pending pending;
@@ -320,10 +332,11 @@ public class SignInRequests {
                 }
                 SignInChallenge next;
                 try {
-                    next = challenge.submit(code);
+                    next = username == null || password == null ? challenge.submit(code)
+                            : challenge.submit(code, username, password);
                 } catch (SourceAccessException e) {
                     sent(pending);
-                    failed(pending, challenge, e, code, "Einmalcode");
+                    failed(pending, challenge, e, code, password, "Einmalcode");
                     return SignInRequest.Answer.FAILED;
                 } catch (RuntimeException | Error e) {
                     sent(pending);
@@ -352,6 +365,9 @@ public class SignInRequests {
             }
         } finally {
             Arrays.fill(code, '\0');
+            if (password != null) {
+                Arrays.fill(password, '\0');
+            }
         }
     }
 
@@ -384,7 +400,7 @@ public class SignInRequests {
                 next = challenge.resend();
             } catch (SourceAccessException e) {
                 sent(pending);
-                failed(pending, challenge, e, null, "Neuer Einmalcode");
+                failed(pending, challenge, e, null, null, "Neuer Einmalcode");
                 throw e;
             } catch (RuntimeException | Error e) {
                 sent(pending);
@@ -407,11 +423,13 @@ public class SignInRequests {
      * Merkt sich die bereinigte Ursache an der Anforderung und protokolliert Quelle, Art und Typ der innersten
      * Ursache, nie Meldungstexte oder den Code.
      *
-     * @param code der gesendete Code oder {@code null}; taucht er im Text auf, wird er entfernt
+     * @param code     der gesendete Code oder {@code null}; taucht er im Text auf, wird er entfernt
+     * @param password das mitgesendete Passwort oder {@code null}; ebenso
      */
     private void failed(Pending pending, SignInChallenge challenge, SourceAccessException e, char[] code,
-                        String what) {
-        String failure = SignInFailures.without(SignInFailures.describe(e, challenge.service()), code);
+                        char[] password, String what) {
+        String failure = SignInFailures.without(SignInFailures.without(SignInFailures.describe(e,
+                challenge.service()), code), password);
         LOG.log(System.Logger.Level.WARNING, "{0} für Quelle {1} nicht gesendet ({2}, {3})", what, pending.sourceId,
                 e.reason(), SignInFailures.rootType(e));
         synchronized (this) {
@@ -508,7 +526,8 @@ public class SignInRequests {
 
         SignInRequest view() {
             return new SignInRequest(id, sourceId, challenge.service(), challenge.title(), challenge.message(),
-                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure);
+                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure,
+                    challenge.asksForLogin());
         }
     }
 }

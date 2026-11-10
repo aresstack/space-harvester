@@ -21,6 +21,12 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 final class ConfiguredSecrets implements SecretProvider {
 
+    /**
+     * Benutzer und Passwort, die für einen einzigen Aufruf im selben Thread die Zugangsdaten einer Referenz ersetzen
+     * ({@link #withLogin}, #571); nie gespeichert.
+     */
+    private static final ThreadLocal<Map<SecretRef, Login>> ONCE = new ThreadLocal<>();
+
     private final Map<SecretRef, Credentials> credentials = new ConcurrentHashMap<>();
     private final SourceSecrets fallback;
 
@@ -110,8 +116,44 @@ final class ConfiguredSecrets implements SecretProvider {
         return new ConfiguredSecrets(fallback);
     }
 
+    /** Ein Aufruf, der unter {@link #withLogin} läuft. */
+    @FunctionalInterface
+    interface LoginUse<T, X extends Exception> {
+        T run() throws X;
+    }
+
+    /**
+     * Führt {@code use} aus, während jeder {@link ConfiguredSecrets} im selben Thread für {@code ref} Benutzer und
+     * Passwort liefert statt der konfigurierten Zugangsdaten (#571): Eine Quelle mit Personal Access Token sendet so
+     * den Einmalcode der Zwei-Faktor-Anmeldung mit Basic, weil der Adapter die Anmeldung beim Absenden neu auflöst.
+     * Danach gilt wieder die konfigurierte Anmeldung; die Kopie des Passworts wird gelöscht, nichts wird gespeichert.
+     */
+    static <T, X extends Exception> T withLogin(SecretRef ref, String username, char[] password, LoginUse<T, X> use)
+            throws X {
+        Map<SecretRef, Login> previous = ONCE.get();
+        Map<SecretRef, Login> logins = previous == null ? new HashMap<>() : new HashMap<>(previous);
+        Login login = new Login(username, password.clone());
+        logins.put(ref, login);
+        ONCE.set(logins);
+        try {
+            return use.run();
+        } finally {
+            Arrays.fill(login.password(), '\0');
+            if (previous == null) {
+                ONCE.remove();
+            } else {
+                ONCE.set(previous);
+            }
+        }
+    }
+
     @Override
     public SecretMaterial resolve(SecretRef ref) throws SecretUnavailableException {
+        Map<SecretRef, Login> once = ONCE.get();
+        Login login = once == null ? null : once.get(ref);
+        if (login != null) {
+            return new SecretMaterial(ref, login.username(), login.password().clone());
+        }
         Credentials found = credentials.get(ref);
         if (found == null && fallback != null) {
             return external(ref);
@@ -140,6 +182,14 @@ final class ConfiguredSecrets implements SecretProvider {
             return new SecretMaterial(ref, credential.get().principal(), secret.clone());
         } finally {
             Arrays.fill(secret, '\0');
+        }
+    }
+
+    private record Login(String username, char[] password) {
+
+        @Override
+        public String toString() {
+            return "Login[username=" + username + ", password=***]";
         }
     }
 

@@ -622,6 +622,104 @@ class KnowledgeSourceHarvestSourceTest {
                 .isEqualTo("Quelle antwortet mit HTTP 500 – Ziel wiki.example.org");
     }
 
+    /**
+     * #571: Bei einer Quelle mit Personal Access Token fragt die Abfrage neben dem Code Benutzer und Passwort ab. Für
+     * genau dieses Absenden löst der Adapter die Anmeldung als Benutzer und Passwort auf (Basic an dieselbe
+     * Web-Sitzung); davor und danach gilt das Token, das Passwort wird überschrieben.
+     */
+    @Test
+    void aTokenSourceSendsTheCodeOnceWithUserAndPassword() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(resolvingOnSubmit(secrets, seen)), null, null, true);
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "anna", required.challenge());
+        char[] password = "pw-value".toCharArray();
+
+        assertThat(request.asksForLogin()).isTrue();
+        assertThat(signIns.submit(request.id(), "000000".toCharArray(), "anna", password))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+
+        assertThat(seen).containsExactly("anna:pw-value");
+        assertThat(password).containsOnly('\0');
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /** #571: Mit Benutzer und Passwort konfiguriert fragt die Abfrage nichts zusätzlich ab und ersetzt nichts. */
+    @Test
+    void aPasswordSourceNeitherAsksForNorUsesAnExtraLogin() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", "anna", "configured");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(resolvingOnSubmit(secrets, seen)), null, null, false);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+
+        assertThat(required.challenge().asksForLogin()).isFalse();
+        assertThat(required.challenge().submit("000000".toCharArray(), "other", "pw-value".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("anna:configured");
+    }
+
+    /** Wie der Confluence-Adapter: das Absenden löst die Anmeldung der Quelle neu auf. */
+    private static OneTimeCodeChallenge resolvingOnSubmit(ConfiguredSecrets secrets, List<String> seen) {
+        return new OneTimeCodeChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public OneTimeCodeChallenge submit(char[] code) {
+                seen.add(principalAndSecret(secrets));
+                return null;
+            }
+
+            @Override
+            public OneTimeCodeChallenge resend() throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "kein neuer Code");
+            }
+        };
+    }
+
+    private static String principalAndSecret(ConfiguredSecrets secrets) {
+        try {
+            com.aresstack.enterpriseai.adyton.SecretMaterial material =
+                    secrets.resolve(ConfiguredSecrets.refFor("wiki"));
+            return (material.hasPrincipal() ? material.principal() : "-") + ":" + new String(material.copySecret());
+        } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static SourceAccessException submitFails(KnowledgeSourceHarvestSource source) {
         SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
                 () -> source.searchPages("x", 5), SignInRequiredException.class);
