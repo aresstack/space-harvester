@@ -2,6 +2,10 @@ package com.aresstack.spaceharvester.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
+import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -44,5 +48,22 @@ class ConfluenceSourceAdapterSettingsTest {
                 .noneMatch(problem -> problem.contains("foreignFileRedirects"));
         // Der Dienst bleibt bei seinen Standards.
         assertThat(ConfluenceSourceAdapter.settings(source(Map.of())).get("maxRetries")).isEqualTo("2");
+    }
+
+    @Test
+    void theDesktopAppBuildsConfluenceLikeTheEnterpriseAiClientWithoutAsyncTransport() {
+        // #571: EAC 0.80.98 (AdapterAssembly.sourceProviders) baut den Adapter ohne asynchronen Transport; alle
+        // Abrufe einer Quelle laufen über denselben UrlConnection-Transport. Der Dienst behält WebClient-Snapshots.
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        ProxyRoutes routes = ProxyRoutes.from(ProxySettings.disabled());
+        try (AsyncSnapshotTransports async = new AsyncSnapshotTransports(secrets, routes, "test")) {
+            SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, "test", TrustBundles.NONE,
+                    async, null);
+
+            assertThat(new ConfluenceSourceAdapter().open(source(Map.of()), context).port())
+                    .isInstanceOf(AsyncStoredContentSource.class);
+            assertThat(ConfluenceSourceAdapter.desktop(null).open(source(Map.of()), context).port())
+                    .isNotInstanceOf(AsyncStoredContentSource.class);
+        }
     }
 }

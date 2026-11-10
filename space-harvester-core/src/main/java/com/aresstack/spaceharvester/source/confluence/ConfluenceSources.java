@@ -56,36 +56,37 @@ public final class ConfluenceSources {
     public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
                                                    X509TrustManager trust, String thumbprint,
                                                    AsyncSnapshotTransports async) {
-        return provider(secrets, routes, userAgent, trust, thumbprint, async, false);
+        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+        return async == null ? provider : async.attach(provider, trust, thumbprint);
     }
 
     /**
-     * Wie oben; {@code java8Tls}: der synchrone Transport (Dateien, Einmalcode) verbindet sich wie der Enterprise AI
-     * Client unter Java 8 nur mit TLS 1.2 ({@link Java8Tls}, #571).
+     * Für die Desktop-App gebaut wie im Enterprise AI Client 0.80.98 ({@code AdapterAssembly.sourceProviders}): ohne
+     * asynchronen Transport, alle Abrufe einer Quelle über denselben UrlConnection-Transport, und HTML-Antworten statt
+     * Dateien als Diagnosedateien in {@code diagnosticsDirectory} (#571).
+     *
+     * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
      */
-    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
-                                                   X509TrustManager trust, String thumbprint,
-                                                   AsyncSnapshotTransports async, boolean java8Tls) {
-        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint,
-                java8Tls);
-        return async == null ? provider : async.attach(provider, trust, thumbprint);
+    public static KnowledgeSourceProvider desktopProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                          String userAgent, X509TrustManager trust, String thumbprint,
+                                                          Path diagnosticsDirectory) {
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, diagnosticsDirectory);
     }
 
     private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
                                                                String userAgent, X509TrustManager trust,
                                                                String thumbprint) {
-        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, false);
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, null);
     }
 
     private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
                                                                String userAgent, X509TrustManager trust,
-                                                               String thumbprint, boolean java8Tls) {
+                                                               String thumbprint, Path diagnosticsDirectory) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
-        SSLSocketFactory trustOnly = trustOnly(trust);
-        return new ConfluenceSourceProvider(secrets, routes, java8Tls ? Java8Tls.of(trustOnly) : trustOnly, userAgent,
-                new ConfiguredClientCertificates(secrets, trust, thumbprint, java8Tls));
+        return new ConfluenceSourceProvider(secrets, routes, trustOnly(trust), userAgent,
+                new ConfiguredClientCertificates(secrets, trust, thumbprint), diagnosticsDirectory);
     }
 
     /**

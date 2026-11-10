@@ -422,9 +422,23 @@ public class Assets {
             return Optional.empty();
         }
         PageAttachment found = diagram;
+        Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
+        if (storedDiagram.isEmpty() && !deliveredSinceTwoFactorPage(sourceId)) {
+            // Wie der Enterprise AI Client (#571): Der erste geschützte Abruf einer Quelle ist das Bild der Lese-Ansicht,
+            // nicht der rohe Diagramm-Anhang. Verlangt die Quelle einen Einmalcode, merkt sich das Zwei-Faktor-Plugin
+            // diese Adresse und leitet nach dem Code dorthin weiter; im EAC ist das immer ein Bild. Das Bild liegt
+            // danach in der Ablage, die Lese-Ansicht lädt es nicht noch einmal.
+            try {
+                viewImage(sourceId, pageId, pageVersion, image);
+            } catch (SignInRequiredException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Das Bild selbst lädt nicht (zu groß, nicht unterstützt …): weiter mit den Quelldaten.
+            }
+        }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+            byte[] mxfile = storedDiagram.map(store::read)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
         }
@@ -1475,6 +1489,12 @@ public class Assets {
                 state.probe.unlock();
             }
         }
+    }
+
+    /** Ob die Quelle seit dem Start und seit der letzten Zwei-Faktor-Seite eine Datei ohne Einmalcode geliefert hat. */
+    private boolean deliveredSinceTwoFactorPage(String sourceId) {
+        SourceGate state = gates.get(sourceId);
+        return state != null && state.delivered != null;
     }
 
     private boolean flowing(SourceGate state) {
