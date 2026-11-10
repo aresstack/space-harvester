@@ -107,6 +107,14 @@ class SetupWizardTest {
     }
 
     @Test
+    void compactScreenLeavesRoomForWindowFrameAndNavigation() {
+        java.awt.Dimension size = SetupWizard.preferredContentSize(new java.awt.Rectangle(0, 0, 1024, 600));
+        assertThat(size.width).isLessThanOrEqualTo(1024 - 96);
+        assertThat(size.height).isLessThanOrEqualTo(600 - 120);
+        assertThat(size.height).isGreaterThan(0);
+    }
+
+    @Test
     void theNetworkTestTriesTheSourceAndSaysClearlyThatItFailed() throws Exception {
         SetupWizard[] wizard = new SetupWizard[1];
         CountDownLatch tested = new CountDownLatch(1);
