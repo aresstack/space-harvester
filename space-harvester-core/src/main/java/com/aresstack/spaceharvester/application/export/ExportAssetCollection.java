@@ -259,12 +259,45 @@ public class ExportAssetCollection {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         } else {
             resumed = jobs.rerun(jobId, owner, new AssetTask(exportId, scope,
-                    CompletableFuture.completedFuture(scope == Scope.MEDIA && documentsWithImages(exportId, owner))));
+                    CompletableFuture.completedFuture(scope == Scope.MEDIA && documentsWithImages(exportId, owner)),
+                    FORCE_REFRESH.equals(status.parameter(RERUN))));
         }
         if (exportId != null) {
             running.put(scope.key(exportId), jobId);
         }
         return resumed;
+    }
+
+    /** Wiederanlauf-Angabe: der Lauf ist „Neu erzwingen“ ({@link #FORCE_REFRESH}); fehlt für einen gewöhnlichen. */
+    static final String RERUN = "rerun";
+    static final String FORCE_REFRESH = "force-refresh";
+
+    /**
+     * „Neu erzwingen“ (ADR 0025): Der eigene beendete Bilder- oder Anhängeauftrag läuft im selben Eintrag erneut und
+     * lädt jede Datei am Speicher vorbei neu von der Quelle; der abgelegte Stand einer Datei gilt, bis ihr neuer
+     * Download ihn ersetzt, und bleibt, wenn er scheitert. Die Art des Laufs steht in den Angaben, damit Fortsetzen
+     * nach einem Neustart weiter neu lädt.
+     *
+     * @throws UnknownJobException      wenn es keinen eigenen Bilder- oder Anhängeauftrag mit dieser ID gibt
+     * @throws JobNotResumableException wenn er noch wartet oder läuft, oder ein alter Auftrag seinen Export nicht nennt
+     */
+    public JobStatus forceRefresh(String jobId, String owner) {
+        JobStatus status = jobs.status(jobId, owner);
+        Scope scope = Scope.of(status.type());
+        if (scope == null) {
+            throw new UnknownJobException(jobId);
+        }
+        String exportId = status.parameter(EXPORT_ID);
+        if (exportId == null) {
+            throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
+        }
+        Map<String, String> parameters = new java.util.HashMap<>(status.parameters());
+        parameters.put(RERUN, FORCE_REFRESH);
+        JobStatus rerun = jobs.rerun(jobId, owner, parameters, new AssetTask(exportId, scope,
+                CompletableFuture.completedFuture(scope == Scope.MEDIA && documentsWithImages(exportId, owner)),
+                true));
+        running.put(scope.key(exportId), jobId);
+        return rerun;
     }
 
     /**
@@ -287,6 +320,8 @@ public class ExportAssetCollection {
         private final Scope scope;
         /** Nur Bilder: ob dieser Lauf auch die Anhänge beschafft, weil sie keinen eigenen Auftrag bekamen. */
         private final CompletableFuture<Boolean> withDocuments;
+        /** „Neu erzwingen“: alle Dateien am Speicher vorbei neu laden. */
+        private final boolean fresh;
         private final Map<String, CheckedPage> checked = new ConcurrentHashMap<>();
 
         AssetTask(String exportId, Scope scope) {
@@ -294,16 +329,21 @@ public class ExportAssetCollection {
         }
 
         AssetTask(String exportId, Scope scope, CompletableFuture<Boolean> withDocuments) {
+            this(exportId, scope, withDocuments, false);
+        }
+
+        AssetTask(String exportId, Scope scope, CompletableFuture<Boolean> withDocuments, boolean fresh) {
             this.exportId = exportId;
             this.scope = scope;
             this.withDocuments = withDocuments;
+            this.fresh = fresh;
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
             running.put(scope.key(exportId), context.jobId());
             return JobTask.blocking(job -> collect(job, scope, new Share(scope == Scope.MEDIA,
-                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked)).start(context);
+                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked, fresh)).start(context);
         }
     }
 
@@ -477,7 +517,8 @@ public class ExportAssetCollection {
         };
     }
 
-    private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done) {
+    private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done,
+                         boolean fresh) {
         Tally context = new Tally(job);
         List<ExportAssetManifest.Entry> entries = new ArrayList<>();
         Set<String> checked = new HashSet<>();
@@ -486,7 +527,7 @@ public class ExportAssetCollection {
             ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, scope.phase);
-            run = new Run(context, scope, share, dataset.sourceId(), settings.get());
+            run = new Run(context, scope, share, dataset.sourceId(), settings.get(), fresh);
             Run current = run;
             boolean[] complete = {true};
             dataset.forEachPage(page -> {
@@ -666,9 +707,10 @@ public class ExportAssetCollection {
                                 "drawio-preview"));
                         continue;
                     }
+                    boolean reload = run.fresh("attachment:" + attachment.attachmentId());
                     ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
                             attachment.version(), attachment.title(), attachment.mediaType(),
-                            () -> assets.content(list, attachment.attachmentId(), true).asset());
+                            () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
                     if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
                         entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
                                 .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
@@ -722,8 +764,10 @@ public class ExportAssetCollection {
                             image.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content"));
                     continue;
                 }
+                boolean reload = run.fresh(image.attachmentId() != null ? "attachment:" + image.attachmentId()
+                        : "view:" + image.src());
                 entries.add(store(run, pageId, reference, null, null, image.title(), image.mediaType(),
-                        () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image).asset()));
+                        () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image, reload).asset()));
             }
         } catch (SourceAccessException e) {
             unreachable(e);
@@ -886,9 +930,10 @@ public class ExportAssetCollection {
                     attachment.title(), attachment.mediaType(), attachment.fileSize() == null ? 0
                     : attachment.fileSize(), null, ExportAssetManifest.Status.EXCLUDED, excluded);
         }
+        boolean reload = run.fresh("attachment:" + attachment.attachmentId());
         ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
                 attachment.version(), attachment.title(), attachment.mediaType(),
-                () -> assets.content(list, attachment.attachmentId(), true).asset());
+                () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
         if (!entry.stored()) {
             return entry;
         }
@@ -932,14 +977,23 @@ public class ExportAssetCollection {
         final Share share;
         final String sourceId;
         final ExportSettings settings;
+        /** „Neu erzwingen“: jede Datei einmal je Lauf am Speicher vorbei neu laden. */
+        final boolean fresh;
+        private final Set<String> refreshed = new HashSet<>();
         boolean declined;
 
-        Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings) {
+        Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings, boolean fresh) {
             this.context = context;
             this.scope = scope;
             this.share = share;
             this.sourceId = sourceId;
             this.settings = settings == null ? ExportSettings.DEFAULT : settings;
+            this.fresh = fresh;
+        }
+
+        /** Ob die Datei mit diesem Schlüssel in diesem Lauf neu geladen werden soll (nur beim ersten Mal). */
+        boolean fresh(String key) {
+            return fresh && refreshed.add(key);
         }
 
         com.aresstack.spaceharvester.application.assets.Asset signedIn(Download download) {

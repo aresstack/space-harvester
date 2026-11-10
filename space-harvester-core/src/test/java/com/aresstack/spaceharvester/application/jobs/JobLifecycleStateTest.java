@@ -49,12 +49,15 @@ class JobLifecycleStateTest {
                 .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.SYNC, JobState.COMPLETED, 0, false))
                 .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
-        // Bilder und Anhänge: unvollständig → nur Fehlendes neu holen (#628).
+        // Bilder und Anhänge sind Downloads: unvollständig → nur Fehlendes neu holen, immer auch neu erzwingen.
         assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 1, false))
-                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.ATTACHMENTS, JobState.COMPLETED, 0, true))
-                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
-        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 0, false))
+                .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(actions(JobType.ATTACHMENTS, JobState.CANCELLED, 0, false))
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(status(JobType.EXPORT, JobState.COMPLETED, 1, false, false, false).lifecycle().key())
                 .isEqualTo("COMPLETED_WITH_ERRORS");
         assertThat(status(JobType.ASSETS, JobState.COMPLETED, 0, true, false, false).lifecycle().key())

@@ -43,13 +43,13 @@ public sealed interface JobLifecycleState {
         boolean sync = status.type() == JobType.SYNC;
         // Bilder und Anhänge holen beim erneuten Lauf nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
         boolean files = status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS;
-        boolean forceable = download || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
+        boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
             case PAUSED -> new Paused(status.pauseReason());
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download || files, download) : new Completed(forceable);
+                    ? new CompletedWithErrors(download || files, download || files) : new Completed(forceable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
                     ? new CompletedWithErrors(true, true) : new Stopped(status.state(), resumable, forceable);

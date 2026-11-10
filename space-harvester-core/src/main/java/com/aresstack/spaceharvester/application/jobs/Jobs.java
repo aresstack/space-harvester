@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +77,11 @@ public class Jobs implements AutoCloseable {
      * Eintrag fortsetzen lassen; nur bis zum Ende dieses Dienstes, denn die Arbeit selbst lässt sich nicht ablegen.
      */
     private final Map<String, Job> stopped = new HashMap<>();
+    /**
+     * Aufträge, deren abgekoppelte Arbeit noch läuft ({@link Job#detached}). Solange, startet derselbe Eintrag keinen
+     * neuen Lauf: die alte Arbeit hält womöglich noch Dateien oder Sitzungen unter derselben ID.
+     */
+    private final Set<String> lingering = new HashSet<>();
     private int running;
     /** Laufende Folgeaufträge ({@link JobType#followUp()}). */
     private int runningFollowUps;
@@ -214,7 +220,8 @@ public class Jobs implements AutoCloseable {
     /**
      * Unter dem Sperrobjekt: beendet einen laufenden Auftrag sofort mit {@code end}, ohne auf seine Arbeit zu warten,
      * und gibt seinen Platz frei. Die Arbeit läuft womöglich weiter, bis sie einen Prüfpunkt erreicht; ihr Eintrag
-     * bleibt davon unberührt ({@link Job#detached}). Fortsetzen startet einen neuen Lauf desselben Eintrags.
+     * bleibt davon unberührt ({@link Job#detached}). Fortsetzen startet einen neuen Lauf desselben Eintrags,
+     * sobald die alte Arbeit geendet hat ({@link #lingering}).
      */
     private void detach(Job job, JobState end, String why) {
         job.finish(end, null, clock.instant());
@@ -228,7 +235,8 @@ public class Jobs implements AutoCloseable {
         job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, end.name(),
                 (end == JobState.PAUSED ? "Auftrag angehalten: " : "Auftrag abgebrochen: ") + why, null, null, null,
                 null);
-        job.detached = true;
+        job.detach();
+        lingering.add(job.id);
         store.save(finished);
     }
 
@@ -369,6 +377,7 @@ public class Jobs implements AutoCloseable {
         }
         JobStatus status;
         synchronized (lock) {
+            requireNotLingering(jobId);
             Job job = stopped.get(jobId);
             if (job == null) {
                 throw new JobNotResumableException(jobId, "der Auftrag stammt aus der Zeit vor dem letzten Neustart; "
@@ -432,6 +441,7 @@ public class Jobs implements AutoCloseable {
             if (open.containsKey(jobId)) {
                 throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
             }
+            requireNotLingering(jobId);
             Job job = stopped.get(jobId);
             if (job == null) {
                 // Unter dem Sperrobjekt erneut gelesen: ein paralleles Löschen gewinnt.
@@ -460,6 +470,14 @@ public class Jobs implements AutoCloseable {
         }
         dispatch();
         return status;
+    }
+
+    /** Unter dem Sperrobjekt: kein neuer Lauf, solange die abgekoppelte Arbeit des Eintrags noch läuft. */
+    private void requireNotLingering(String jobId) {
+        if (lingering.contains(jobId)) {
+            throw new JobNotResumableException(jobId, "der vorige Lauf beendet noch seinen hängenden Schritt; "
+                    + "später erneut versuchen oder den Auftrag löschen");
+        }
     }
 
     /** Ob ein Auftrag in diesem Zustand im selben Eintrag fortgesetzt werden kann, sofern seine Art es erlaubt. */
@@ -527,20 +545,23 @@ public class Jobs implements AutoCloseable {
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
      */
     public void delete(String jobId, String owner) {
-        boolean freed;
-        // Unter dem Sperrobjekt, damit kein gleichzeitiges Fortsetzen einen gerade gelöschten Auftrag wieder öffnet.
-        synchronized (lock) {
-            Job open = this.open.get(jobId);
-            JobStatus status = requireOwner(open != null ? open.snapshot()
-                    : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
-            freed = stop(jobId);
-            stopped.remove(status.id());
-            // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
-            events.delete(status.id());
-            store.delete(status.id());
-        }
-        if (freed) {
-            dispatch();
+        boolean freed = false;
+        try {
+            // Unter dem Sperrobjekt, damit kein gleichzeitiges Fortsetzen einen gerade gelöschten Auftrag wieder öffnet.
+            synchronized (lock) {
+                Job open = this.open.get(jobId);
+                JobStatus status = requireOwner(open != null ? open.snapshot()
+                        : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
+                freed = stop(jobId);
+                stopped.remove(status.id());
+                // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
+                events.delete(status.id());
+                store.delete(status.id());
+            }
+        } finally {
+            if (freed) {
+                dispatch();
+            }
         }
     }
 
@@ -557,15 +578,20 @@ public class Jobs implements AutoCloseable {
         }
         job.cancelRequested = true;
         job.pauseRequested = false;
-        job.detached = true;
+        job.detach();
         open.remove(jobId);
         lock.notifyAll();
-        if (job.state == JobState.QUEUED) {
+        boolean wasRunning = job.state != JobState.QUEUED;
+        if (!wasRunning) {
             queued.remove(job);
-            job.finish(JobState.CANCELLED, null, clock.instant());
-            return false;
         }
         job.finish(JobState.CANCELLED, null, clock.instant());
+        // Erst den Endzustand ablegen: scheitert das Löschen danach, bleibt ein beendeter Eintrag statt eines laufenden.
+        store.save(job.snapshot());
+        if (!wasRunning) {
+            return false;
+        }
+        lingering.add(jobId);
         running--;
         if (job.type.followUp()) {
             runningFollowUps--;
@@ -947,6 +973,9 @@ public class Jobs implements AutoCloseable {
         JobStatus finished;
         synchronized (lock) {
             if (job.state.terminal()) {
+                if (job.detached && lingering.remove(job.id)) {
+                    lock.notifyAll();
+                }
                 return;
             }
             Instant now = clock.instant();
@@ -1244,23 +1273,33 @@ public class Jobs implements AutoCloseable {
         void emit(boolean end, JobEvent.Severity severity, JobEvent.Category category, String eventComponent,
                   String code, String message, Integer httpStatus, String proxyRoute, String tlsFinding,
                   String detail) {
-            if (detached) {
-                return;
-            }
-            long current;
-            do {
-                current = sequence.get();
-                if (!end && current >= JobEventStore.MAX_EVENTS_PER_JOB - 1) {
+            // Unter dem Monitor des Auftrags: ein gleichzeitiges Abkoppeln oder Löschen ({@link #detach()}) wartet,
+            // bis das Ereignis abgelegt ist, und danach legt keins mehr eins ab.
+            synchronized (this) {
+                if (detached) {
                     return;
                 }
-            } while (!sequence.compareAndSet(current, current + 1));
-            try {
-                appendQuietly(new JobEvent(id, current + 1, clock.instant(), type, sourceId,
-                        partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
-                        proxyRoute, tlsFinding, detail));
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht erzeugt ({0})", e.getClass().getName());
+                long current;
+                do {
+                    current = sequence.get();
+                    if (!end && current >= JobEventStore.MAX_EVENTS_PER_JOB - 1) {
+                        return;
+                    }
+                } while (!sequence.compareAndSet(current, current + 1));
+                try {
+                    appendQuietly(new JobEvent(id, current + 1, clock.instant(), type, sourceId,
+                            partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
+                            proxyRoute, tlsFinding, detail));
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht erzeugt ({0})",
+                            e.getClass().getName());
+                }
             }
+        }
+
+        /** Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). */
+        synchronized void detach() {
+            detached = true;
         }
     }
 }

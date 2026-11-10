@@ -121,6 +121,14 @@ public class ExportConversions {
         return images.resume(jobId, owner);
     }
 
+    /** „Neu erzwingen“ für einen eigenen Bilder- oder Anhängeauftrag ({@link ExportAssetCollection#forceRefresh}). */
+    public JobStatus forceImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.forceRefresh(jobId, owner);
+    }
+
     /**
      * Schreibt die Datei in {@code directory}. Eine vorhandene Datei wird nie überschrieben; der Name bekommt dann
      * einen Zähler. Die Datei entsteht erst als {@code .part} und erscheint vollständig oder gar nicht.

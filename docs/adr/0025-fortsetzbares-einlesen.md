@@ -125,8 +125,13 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     `Workspace#deleteAllJobs`) löscht alle eigenen Aufträge in jedem Zustand. Erreicht ein laufender Auftrag nach
     angefordertem Abbruch oder Anhalten `Jobs#STOP_GRACE` (30 s) lang keinen Prüfpunkt, weil ein Abruf der Quelle
     hängt, gilt er als abgebrochen bzw. angehalten und gibt seinen Platz frei; ▶ startet einen neuen Lauf desselben
-    Eintrags. Bilder und Anhänge, die unvollständig fertig sind, bieten `RETRY_FAILED` an: derselbe Eintrag läuft
-    erneut und holt nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
+    Eintrags, sobald die abgekoppelte Arbeit geendet hat (vorher lehnt `Jobs` ab, weil beide Läufe dieselben Dateien
+    unter derselben ID schreiben würden). Löschen legt den Endzustand ab, bevor es Ereignisse löscht; scheitert das,
+    bleibt ein abgebrochener Eintrag und der Platz ist trotzdem frei. Bilder und Anhänge, die unvollständig fertig
+    sind, bieten `RETRY_FAILED` an: derselbe Eintrag läuft erneut und holt nur, was fehlt; abgelegte Dateien kommen
+    aus dem Speicher. `FORCE_REFRESH` (⟲) gilt auch für Bilder und Anhänge: derselbe Eintrag holt jede Datei neu von
+    der Quelle, am Speicher vorbei; der Speicher legt Inhalte nach Prüfsumme ab, der alte Stand bleibt also lesbar,
+    bis der neue da ist.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

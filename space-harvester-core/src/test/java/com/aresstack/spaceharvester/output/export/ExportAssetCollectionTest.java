@@ -253,6 +253,55 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void retryingTakesStoredFilesAndForcingLoadsEveryFileAgainInTheSameEntry() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(collection.lifecycle().actions())
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        int afterFirst = source.downloads;
+
+        // ↻ Nur Fehler: derselbe Eintrag, abgelegte Dateien kommen aus dem Speicher.
+        assertThat(conversions.resumeImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
+        drain();
+        assertThat(jobs.status(collection.id()).progress().written()).isEqualTo(3);
+        int afterRetry = source.downloads;
+        assertThat(afterRetry - afterFirst).isLessThanOrEqualTo(1);
+
+        // ⟲ Neu erzwingen: derselbe Eintrag, jede Datei noch einmal von der Quelle.
+        assertThat(conversions.forceImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
+        drain();
+        JobStatus forced = jobs.status(collection.id());
+        assertThat(forced.parameters()).containsEntry("rerun", "force-refresh");
+        assertThat(forced.progress().written()).isEqualTo(3);
+        assertThat(source.downloads - afterRetry).isGreaterThanOrEqualTo(3);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+        assertThat(writer.assets(jobs.status(collection.id()).parameter(ExportAssetCollection.EXPORT_ID))
+                .orElseThrow().forPage("100")).hasSize(4);
+    }
+
+    @Test
     void imagesTheSourceRendersFromOtherPagesNeedTheWholeSource() {
         assertThat(foreignImages(false)).allSatisfy(entry -> {
             assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.FORBIDDEN);

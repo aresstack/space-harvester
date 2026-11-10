@@ -94,6 +94,12 @@ public class JobActions {
                 if (sync) {
                     yield syncs.forceRefresh(jobId, owner).status();
                 }
+                if (current.type() == JobType.ASSETS || current.type() == JobType.ATTACHMENTS) {
+                    if (conversions == null) {
+                        throw new JobNotResumableException(jobId, "keine Bild- oder Anhangbeschaffung angebunden");
+                    }
+                    yield conversions.forceImages(jobId, owner);
+                }
                 if (current.type() != JobType.EXPORT) {
                     throw new JobNotResumableException(jobId, "nur Downloads und Abgleiche erzwingen einen neuen Stand");
                 }

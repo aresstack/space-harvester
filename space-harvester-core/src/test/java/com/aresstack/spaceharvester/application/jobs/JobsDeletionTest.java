@@ -103,6 +103,33 @@ class JobsDeletionTest {
     }
 
     @Test
+    void aFailedDeletionOfARunningJobLeavesItCancelledAndFreesTheSlot() {
+        InMemoryJobEventStore failing = new InMemoryJobEventStore() {
+            @Override
+            public void delete(String jobId) {
+                throw new IllegalStateException("Ablage nicht erreichbar");
+            }
+        };
+        Jobs jobs = new Jobs(store, failing, sourceId -> Optional.empty(), executor,
+                new JobLimits(1, 5, Duration.ofHours(1), Duration.ofDays(30)), clock);
+        JobStatus running = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a",
+                context -> new CompletableFuture<>());
+        executor.runNext();
+        JobStatus waiting = jobs.submit(JobType.EXPORT, "wiki", "OPS", "client-a", JobTask.blocking(context -> {
+        }));
+
+        assertThatThrownBy(() -> jobs.delete(running.id(), "client-a")).isInstanceOf(IllegalStateException.class);
+
+        // Kein Eintrag bleibt als „läuft“ stehen, und der nächste Auftrag bekommt den Platz.
+        assertThat(store.find(running.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+        assertThat(jobs.status(running.id()).state()).isEqualTo(JobState.CANCELLED);
+        while (executor.pending() > 0) {
+            executor.runNext();
+        }
+        assertThat(jobs.status(waiting.id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void deletingAllRemovesEveryOwnJobInEveryState() {
         JobStatus done = finished("client-a", JobType.EXPORT);
         JobStatus running = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a",
@@ -132,8 +159,12 @@ class JobsDeletionTest {
 
         JobStatus cancelled = jobs.status(stuck.id());
         assertThat(cancelled.state()).isEqualTo(JobState.CANCELLED);
-        assertThat(cancelled.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
+        assertThat(cancelled.lifecycle().actions())
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         long eventsAtCancel = events.events(stuck.id()).size();
+        // Solange die alte Arbeit noch läuft, startet derselbe Eintrag keinen zweiten Lauf (gleiche Dateien, gleiche ID).
+        assertThatThrownBy(() -> jobs.rerun(stuck.id(), "client-a", JobTask.blocking(context -> {
+        }))).isInstanceOf(JobNotResumableException.class);
         // Endet die hängende Arbeit doch noch, ändert sie den Eintrag nicht mehr.
         hanging.complete(null);
         assertThat(jobs.status(stuck.id()).state()).isEqualTo(JobState.CANCELLED);
