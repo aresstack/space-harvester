@@ -128,7 +128,7 @@ public interface GlossaryAccess {
     /** Ablehnen; bleibt als abgelehnt sichtbar und kommt bei keinem KI-Lauf wieder. */
     Entry reject(String id, long revision);
 
-    /** Nimmt eine Ablehnung bewusst zurück: der Eintrag ist wieder vorgeschlagen. */
+    /** Nimmt eine Ablehnung bewusst zurück: ein KI-Vorschlag ist wieder vorgeschlagen, ein manueller bestätigt. */
     Entry restore(String id, long revision);
 
     /** Entfernen: ein manueller Eintrag ist danach weg (leer), ein KI-Eintrag abgelehnt (der Eintrag). */
