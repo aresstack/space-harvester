@@ -245,6 +245,35 @@ class PlanApplierTest {
     }
 
     @Test
+    void aLimitedRunLoadsOnlyItsScopeAndOnlyCatalogsTheRest() {
+        SpaceSync.SyncRun limited = sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.FULL,
+                inventory -> pageId -> !pageId.equals("3"));
+
+        assertThat(fetched).containsExactlyInAnyOrder("1", "2");
+        assertThat(limited.confirmed().missingPageIds()).containsExactly("3");
+        assertThat(repository.find(key("3"))).isEmpty();
+        assertThat(repository.findHeader(key("3"))).isPresent();
+
+        // Später ohne Grenze: nur die fehlende Seite wird geladen.
+        run();
+        assertThat(fetched).containsExactly("3");
+    }
+
+    @Test
+    void aLimitedRunLeavesChangedPagesOutsideItsScopeOutdated() {
+        run();
+        source.put("3", "DOC", null, "8", null).put("1", "DOC", null, "4", "api");
+
+        fetched.clear();
+        SpaceSync.SyncRun limited = sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.FULL,
+                inventory -> pageId -> pageId.equals("1"));
+
+        assertThat(fetched).containsExactly("1");
+        assertThat(limited.confirmed().stalePageIds()).containsExactly("3");
+        assertThat(revision("3")).isEqualTo("7");
+    }
+
+    @Test
     void anAbortedFirstLoadKeepsTheLoadedPagesAndTheNextRunContinues() {
         store.keepsLoaded = true;
         crashAtFetchOf = "3";

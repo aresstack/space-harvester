@@ -16,7 +16,9 @@ import java.util.Objects;
  * @param failures     Seiten, die der Leser nicht liefern konnte
  * @param warnings     Auffälligkeiten, etwa Seiten, die im Baum nur durch fehlende Elternseite oder Zyklus Wurzel
  *                     wurden
- * @param complete     {@code true} nur, wenn die Generation bestätigt ist und keine Seite fehlt
+ * @param complete     {@code true} nur, wenn keine Seite fehlt und die Generation bestätigt ist; bei einer Startseite
+ *                     genügt, dass die Generation im Teilbaum keine Lücken hat (ADR 0025: ein Teilbaum-Export lädt nur
+ *                     seinen Teilbaum, der übrige Space bleibt nur katalogisiert)
  */
 public record ExportSummary(String exportId, ExportScope scope, Instant startedAt, Instant finishedAt,
                             long pagesWritten, List<PageFailure> failures, List<String> warnings, boolean complete) {
@@ -31,8 +33,10 @@ public record ExportSummary(String exportId, ExportScope scope, Instant startedA
         Objects.requireNonNull(finishedAt, "finishedAt");
         failures = List.copyOf(failures);
         warnings = List.copyOf(warnings);
-        if (complete && (scope.generation().state() != CacheState.CONFIRMED || !failures.isEmpty())) {
-            throw new IllegalArgumentException("vollständig nur aus bestätigter Generation ohne fehlende Seiten");
+        boolean generationFits = scope.generation().state() == CacheState.CONFIRMED || scope.rootPageId() != null;
+        if (complete && (!generationFits || !failures.isEmpty())) {
+            throw new IllegalArgumentException("vollständig nur aus bestätigter Generation (oder lückenlosem Teilbaum) "
+                    + "ohne fehlende Seiten");
         }
     }
 }
