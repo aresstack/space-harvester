@@ -1,33 +1,36 @@
 ![Space Harvester – Vom Dokument zum Wissensnetz](docs/images/space-harvester-banner.png)
 
-**Space Harvester** erschließt Wissensquellen: Seiten und Dokumente finden, sicher abrufen, lokal indexieren,
-lesbar darstellen, aktuell halten, analysieren und in wiederverwendbare Formate exportieren.
+**Space Harvester** ist die Wissensquellen- und Dokumentbibliothek des
+[Enterprise AI Client](https://github.com/aresstack/enterprise-ai-client): Seiten und Dokumente finden, sicher
+abrufen, lokal indexieren, lesbar darstellen, aktuell halten, analysieren und in wiederverwendbare Formate
+exportieren.
 
-Das Projekt ist inzwischen **mehr als ein Confluence-Exportdienst**. Ein gemeinsamer, Spring-unabhängiger Core
-trägt sowohl die **Swing-Desktop-Anwendung** als auch einen separat startbaren **Spring-Boot-Dienst mit REST-API und
-Weboberfläche**. Die Quelladapter stammen aus bzw. orientieren sich am
-[Enterprise AI Client](https://github.com/aresstack/enterprise-ai-client).
+Ein gemeinsamer, Spring-unabhängiger **Core** ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)) trägt
+drei Auslieferungen aus demselben Commit:
+
+- die **Desktop-App** (Swing) mit direktem Core-Zugriff, ohne lokalen Server,
+- den separat startbaren **Spring-Boot-Dienst** mit REST-API (OpenAPI) und Weboberfläche,
+- die **Core-Bibliothek** zum Einbetten in andere Java-21-Programme.
+
+KI-Chat, Agenten und Recherche gehören nicht in den Core; sie bleiben im Enterprise AI Client. Die Quelladapter
+stammen aus dem Enterprise AI Client bzw. orientieren sich an ihm.
 
 ## Was Space Harvester kann
 
 | Bereich | Funktionsumfang |
 |---|---|
-| **Quellen** | Confluence Data Center und lokale Dateien; Erweiterung über Quellenadapter |
+| **Quellen** | Confluence Data Center und lokale Dateien; weitere Quellentypen über Quellenadapter |
 | **Suche** | Lucene-Volltextindex, Live-Suche über Quellen, schrittweises Nachladen, optional semantische Suche |
 | **Lesen** | Seitenbaum, Breadcrumbs, Lesetext, Eigenschaften, Anhänge, Querverweise und gerenderte Diagramme |
 | **Synchronisieren** | Versions- und Bestandsabgleich, Aktualitätsprüfung, gesteuerte Hintergrundbefüllung und nachvollziehbare Aufträge |
 | **Exportieren** | Reproduzierbarer JSON-Datenbestand; daraus JSON, Markdown, Word und PDF ohne erneuten Quellenabruf |
-| **Anreichern** | Seitenbezogene Verarbeitung und Analyse, unter anderem Akronymerkennung; optionale KI- und Embedding-Funktionen |
-| **Betreiben** | Desktop-App ohne lokalen Server oder headless REST-Dienst; Rechteprüfung, Proxy/PAC, TLS/mTLS und Diagnose |
+| **Begriffe** | Akronyme, Bezeichner, Beziehungen, Synonyme (Vorschläge über das Embedding-Modell) und Fachglossar ([ADR 0019](docs/adr/0019-begriffsindex-und-begriffsbeziehungen.md)) |
+| **Analysieren** | Absätze, Bildbeschreibung, Aussagen und ein globaler Wissensgraph mit Export als JSON-LD ([ADR 0024](docs/adr/0024-aussagenanalyse-und-globaler-knowledge-graph.md)) |
+| **Betreiben** | Desktop-App ohne lokalen Server oder headless REST-Dienst; Rechteprüfung, Proxy/PAC, TLS/mTLS, KeePass-Anbindung (nur App) und Diagnose |
 
-**Noch in Entwicklung:** Die globale Begriffsverwaltung mit **Akronymen, Bezeichnern, Beziehungen und Fachglossar**
-ist als eigener Desktop-Hauptbereich und seitenbezogene Ansicht geplant
-([#339](https://github.com/aresstack/space-harvester/issues/339)).
-Dafür werden der Begriffsindex ([#119](https://github.com/aresstack/space-harvester/issues/119)),
-kuratierbare Beziehungen ([#120](https://github.com/aresstack/space-harvester/issues/120)),
-die Akronymauflösung ([#122](https://github.com/aresstack/space-harvester/issues/122)) und
-automatische Synonymvorschläge ([#336](https://github.com/aresstack/space-harvester/issues/336)) weiterentwickelt.
-Das KI-gestützte Fachglossar ist noch keine fertige Funktion.
+Inhalte gehen nur an einen KI-Dienst, wenn die Quelle dafür ausdrücklich freigegeben ist
+([Embeddings](docs/EMBEDDINGS.md), [Sicherheit](docs/SECURITY.md)). Was sich je Version geändert hat, steht in den
+[Release-Notizen](docs/release-notes/).
 
 ## Schnellstart
 
@@ -37,36 +40,48 @@ Das KI-gestützte Fachglossar ist noch keine fertige Funktion.
 
 Die Desktop-Anwendung läuft eigenständig mit direktem Core-Zugriff – **ohne REST-Server und ohne Spring-Kontext**.
 
-1. Im Bereich [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
-   `space-harvester-app-<version>.jar` und bei Bedarf die `SHA256SUMS` herunterladen.
+1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
+   `space-harvester-app-<version>.jar` und bei Bedarf `SHA256SUMS` herunterladen.
 2. Mit Java 21 starten:
 
 ```bash
 java -jar space-harvester-app-<version>.jar
 ```
 
-Beim ersten Start führt der Quellen-Assistent durch die Einrichtung. Die App bietet Suche, Explorer, Leseansicht,
-Quellenverwaltung, Synchronisierung, Downloads, Aufträge, Status und Einstellungen. Einzelheiten einschließlich
-Windows-Start und Konfiguration: [Desktop-Dokumentation](docs/DESKTOP_APP.md).
+**Windows:** Zeigt `java -version` noch ein älteres Java (z. B. 1.8), die App mit dem vollen Pfad zur `java.exe` des
+JDK 21 starten (Einzelheiten unter [Starten unter Windows](docs/DESKTOP_APP.md#starten-unter-windows)):
+
+```bat
+"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar
+```
+
+Beim ersten Start führt der Einrichtungsassistent durch Quellen, Netzwerk, KI-Dienst und Modelle. Die App bietet
+Suche, Explorer, Leseansicht, Quellenverwaltung, Synchronisierung, Downloads, Aufträge, Begriffe, Analysen, Status
+und Einstellungen. Weitere Optionen sind `--config <datei>` und `--version`
+([Desktop-Dokumentation](docs/DESKTOP_APP.md)).
 
 ### REST-Dienst und Weboberfläche
 
+Aus dem Release (`space-harvester-<version>.jar`, ausführbares Spring-Boot-JAR) oder aus dem Quellcode:
+
 ```bash
+java -jar space-harvester-<version>.jar
+# oder
 ./gradlew :space-harvester-server:bootRun
 ```
 
-Der Dienst stellt seine API unter `http://localhost:8080/api/v1/` und seine Weboberfläche unter
-`http://localhost:8080/ui/` bereit. Für reguläre API-Zugriffe ist ein Bearer-Token vorgesehen
-([Sicherheit](docs/SECURITY.md)); für eine lokale Entwicklungsinstanz ohne Anmeldung:
+Auch hier gilt unter Windows der Hinweis zum vollen Pfad der `java.exe` des JDK 21. Der Dienst stellt seine API unter
+`http://localhost:8080/api/v1/` und seine Weboberfläche unter `http://localhost:8080/ui/` bereit. Für reguläre
+API-Zugriffe ist ein Bearer-Token vorgesehen ([Sicherheit](docs/SECURITY.md)); für eine lokale Entwicklungsinstanz
+ohne Anmeldung:
 
 ```bash
 SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew :space-harvester-server:bootRun
 ```
 
-Der Dienst kann ohne eingerichtete Confluence-Quelle starten. Mit dem Profil `demo` lässt sich der Ablauf anhand
-einer Fake-Confluence ausprobieren ([End-to-End-Beispiele](docs/E2E.md)).
-Port, Quellen, Authentifizierung und Netzwerkeinstellungen sind konfigurierbar
-([Konfiguration](docs/CONFIGURATION.md)).
+Der Dienst kann ohne eingerichtete Quelle starten. Mit dem Profil `demo` lässt sich der Ablauf anhand einer
+Fake-Confluence ausprobieren ([End-to-End-Beispiele](docs/E2E.md)). Strukturierte JSON-Logs (Elastic Common Schema)
+liefert das Profil `json-logs`.
 
 ### Bauen und testen
 
@@ -74,36 +89,101 @@ Port, Quellen, Authentifizierung und Netzwerkeinstellungen sind konfigurierbar
 ./gradlew build
 ```
 
-Der Build prüft Core, Server, Desktop und Vergleichstests. Unter Windows den Gradle Wrapper über `gradlew.bat`
-aufrufen. Für ein ausführbares Server-JAR siehe die Ausgabe von `:space-harvester-server:bootJar`.
-Strukturierte JSON-Logs (Elastic Common Schema) unterstützt das Profil `json-logs`.
+Der Build übersetzt und testet alle Module (Core, Server, Desktop, Vergleichstests). Unter Windows den Wrapper über
+`gradlew.bat` aufrufen. Die Version aller Module steuert zentral `build.gradle`: ohne Angabe `0.1.0-SNAPSHOT`, im
+Release `-PreleaseVersion=<v>`.
+
+## Konfiguration
+
+App und Dienst lesen **eine YAML-Datei mit denselben Schlüsseln** (`space-harvester:` und `spring.ssl.bundle`); die
+App ergänzt nur ihre eigenen Einstellungen unter `space-harvester-app:`. Eine Server-`application.yml` lässt sich
+deshalb weitgehend in die App übernehmen.
+
+| | Datei |
+|---|---|
+| Desktop-App | `--config <datei>`, sonst `SPACE_HARVESTER_APP_CONFIG`, sonst `%USERPROFILE%\.space-harvester\space-harvester-app.yml`; die Einstellungen der App schreiben in diese Datei |
+| Dienst | `application.yml`, optional `config/application-local.yml` (Profil `local`) und optional Spring Cloud Config Server (Profil `config-server`) |
+
+```yaml
+space-harvester:
+  sources:
+    - id: confluence
+      type: confluence
+      title: Confluence
+      base-url: https://confluence.example.org
+      auth:
+        type: pat                 # none | basic | pat
+        token: ${CONFLUENCE_TOKEN}
+```
+
+**Geheimnisse stehen nie in der YAML**, sondern nur als Platzhalter `${NAME}`; die App legt eingegebene Token und
+Passwörter verschlüsselt im Tresor des Windows-Kontos ab oder bezieht sie über KeePass. Ein laufender Dienst und die
+App dürfen nicht denselben Datenordner verwenden. Alle Schlüssel, Reihenfolge der Quellen und Änderungen zur Laufzeit:
+[CONFIGURATION.md](docs/CONFIGURATION.md), [Geheimnisse](docs/SECRETS.md), [TLS/mTLS](docs/MTLS.md),
+[Desktop › Konfiguration](docs/DESKTOP_APP.md#konfiguration) und unten [Quellen konfigurieren](#quellen-konfigurieren).
+
+## Module
+
+Java-21-Gradle-Multimodulprojekt (Gradle Wrapper 8.14.3, Spring Boot 4.1.1). Einzelheiten:
+[MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md),
+[ADR 0008](docs/adr/0008-desktop-app.md).
+
+| Modul | Zweck |
+|---|---|
+| `space-harvester-core` | Bibliothek ohne Spring Boot und REST: Fachlogik, Quellenadapter, Lucene-Cache, Abgleich, Suche, Export, Begriffe, Analysen, Embeddings |
+| `space-harvester-server` | Spring-Boot-Dienst mit REST-API, Confluence-Fassade, Weboberfläche und Sicherheit; nutzt den Core |
+| `space-harvester-app` | Swing-Desktop-App direkt auf dem Core, ohne REST und ohne Spring-Kontext |
+| `enterprise-ai-sources` | unveränderte Kopie der Quelladapter des Enterprise AI Client ([UPSTREAM.md](enterprise-ai-sources/UPSTREAM.md)) |
+| `enterprise-ai-keepass` | unveränderte Kopie der KeePassRPC-Anbindung des Enterprise AI Client; nur die App hängt davon ab |
+| `comic-controls` | unveränderte Kopie der Bedienelemente des Enterprise AI Client für die App |
+| `document-export` | Word-, PDF- und Markdown-Ausgabe des Enterprise AI Client als Bibliothek ohne Swing (angepasste Kopie) |
+| `nlp-parser` | deutsches Dependency Parsing nach Universal Dependencies mit MaltParser ([ADR 0005](docs/adr/0005-deutsches-ud-parsing.md)) |
+| `nlp-model-training` | eigenständige Trainingswerkzeuge für das deutsche MaltParser-Modell |
+| `parity-tests` | Vergleichstests gegen den Enterprise AI Client ([PARITY.md](docs/PARITY.md)) |
+
+Abhängigkeiten verlaufen von den Oberflächen zu Anwendungsfällen und Ports; App und Server hängen am Core, nie
+umgekehrt, und die App nie am Server.
+
+## Releases und Betas
+
+Der Workflow **Release** ([`.github/workflows/release.yml`](.github/workflows/release.yml)) baut und testet bei jedem
+Push alle Module und veröffentlicht Desktop-App (`space-harvester-app-<v>.jar`), Dienst (`space-harvester-<v>.jar`)
+und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc`) derselben Version, dazu
+`SHA256SUMS` und eine Build-Provenance-Attestierung.
+
+| Auslöser | Ergebnis |
+|---|---|
+| Push auf `main` | neues Pre-Release `v<Basis>-beta.<N>`; `N` zählt je Push hoch |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird ersetzt |
+| **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | reguläres Release genau dieser Version, als *Latest* markiert |
+
+- Ein reguläres Release braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`
+  ([v0.1.0](docs/release-notes/v0.1.0.md)); der Workflow stellt sie vor die Dateiübersicht und bricht ohne sie ab.
+- Nach einem regulären Release zählen die Betas auf der nächsten Minor-Version weiter (nach `v0.1.0`:
+  `v0.2.0-beta.1`, …), ohne dass `build.gradle` angepasst werden muss.
+- Nicht über **Releases › Draft a new release** gehen: Versionierte Releases werden nie überschrieben, der Workflow
+  lehnt das Hochladen dann ab. Ablauf im Detail: [Desktop › Releases](docs/DESKTOP_APP.md#releases).
 
 ## Dokumentation
 
-- [Desktop-App](docs/DESKTOP_APP.md) – Bedienung, Einrichtung und Bereiche
-- [Module und Architektur](docs/MODULES.md) – Core, Server und Desktop
-- [Konfiguration](docs/CONFIGURATION.md) und [Quellenadapter](docs/SOURCE_ADAPTERS.md)
+- [Desktop-App](docs/DESKTOP_APP.md) – Bedienung, Einrichtung, Bereiche, Releases
+- [Module und Architektur](docs/MODULES.md) und [Umsetzungsplan](docs/IMPLEMENTATION_PLAN.md)
+- [Konfiguration](docs/CONFIGURATION.md), [Quellenadapter](docs/SOURCE_ADAPTERS.md) und
+  [Confluence-Kompatibilität](docs/CONFLUENCE_COMPAT.md)
 - [Sicherheit](docs/SECURITY.md), [TLS/mTLS](docs/MTLS.md) und [Geheimnisse](docs/SECRETS.md)
-- [Funktionsparität mit dem Enterprise AI Client](docs/PARITY.md) – umgesetzte und noch offene Fähigkeiten
-- [Formatkonvertierung](docs/CONVERTERS.md), [Diagnose](docs/DIAGNOSTICS.md) und [Architekturentscheidungen](docs/adr/)
+- [Seiten-Snapshot](docs/PAGE_SNAPSHOT.md), [Formatkonvertierung](docs/CONVERTERS.md),
+  [Embeddings](docs/EMBEDDINGS.md) und [Wissensgraph-Format](docs/knowledge-graph-v1.md)
+- [Diagnose](docs/DIAGNOSTICS.md) und [End-to-End-Beispiele](docs/E2E.md)
+- [Funktionsparität mit dem Enterprise AI Client](docs/PARITY.md)
+- [Parallele Arbeitsstränge](docs/PARALLEL_WORKSTREAMS.md) und [Lizenz des NLP-Modells](docs/NLP_MODEL_LICENSE.md)
+- [Architekturentscheidungen (ADRs)](docs/adr/) – u. a. HTTP-Transport (0001), Lucene-Cache (0003), Core und Server
+  (0006), Desktop-App (0008), Core als gemeinsame Bibliothek (0012), Konfiguration zur Laufzeit (0015),
+  Medien und Einmalcode (0018), Begriffsindex (0019), Anhänge im Export (0023), Aussagen und Wissensgraph (0024)
+- [Release-Notizen](docs/release-notes/)
 
 Die folgenden Abschnitte dokumentieren die technischen Details und Schnittstellen.
 
-## Module und Nutzung als Bibliothek
-
-Der Build umfasst drei produktive Module ([Modulübersicht](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
-
-- `space-harvester-core`: Bibliothek ohne Spring Boot und ohne REST. Fachlogik, Quellenadapter (Confluence, Dateien),
-  Lucene-Cache, Abgleich, Suche, Export und Embeddings.
-- `space-harvester-server`: der Spring-Boot-Dienst mit REST-API, Confluence-Fassade, Weboberfläche und Sicherheit; er
-  verwendet den Core; starten lässt er sich mit `./gradlew :space-harvester-server:bootRun`.
-- `space-harvester-app`: Desktop-App (Swing, Comic-Design des Enterprise AI Client) direkt auf dem Core, ohne REST und
-  ohne Spring-Kontext: `java -jar space-harvester-app/build/libs/space-harvester-app-<version>.jar`. Start unter
-  Windows, Konfiguration und Funktionsumfang: [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md).
-
-Der Core ist als gemeinsame Wissensquellen- und Dokumentverarbeitungsbibliothek für Space Harvester und den
-Enterprise AI Client ausgelegt ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)). Welche Fähigkeiten
-bereits gleichwertig sind und wo noch Lücken bestehen, dokumentiert [die Paritätsübersicht](docs/PARITY.md).
+## Nutzung als Bibliothek
 
 Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
 Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,
