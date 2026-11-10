@@ -303,6 +303,16 @@ public class SignInRequests {
     }
 
     /**
+     * Start a separate web login for a PAT source without asking for or submitting the original session's OTP.
+     * The returned challenge requests the OTP issued for the new web session.
+     */
+    public SignInRequest.Answer beginWebLogin(String requestId, String username, char[] password) {
+        Objects.requireNonNull(username, "username");
+        Objects.requireNonNull(password, "password");
+        return submit(requestId, new char[0], username, password);
+    }
+
+    /**
      * Wie {@link #submit(String, char[])}, bei {@link SignInRequest#asksForLogin()} mit Benutzer und Passwort nur für
      * dieses Absenden (#571). Überschreibt {@code code} und {@code password} danach; beide erscheinen nie in
      * Protokoll oder {@link SignInRequest#failure()}.
@@ -312,6 +322,7 @@ public class SignInRequests {
      */
     public SignInRequest.Answer submit(String requestId, char[] code, String username, char[] password) {
         Objects.requireNonNull(code, "code");
+        boolean startingWebLogin = code.length == 0 && username != null && password != null;
         try {
             Pending pending;
             synchronized (this) {
@@ -321,8 +332,12 @@ public class SignInRequests {
                 return SignInRequest.Answer.GONE;
             }
             // Erste Zeile des Absendens: fehlt danach jede weitere, steht im Protokoll, wo es hängt (#571).
-            LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} wird gesendet{1}", pending.sourceId,
-                    username == null || password == null ? "" : " (mit Benutzeranmeldung)");
+            if (startingWebLogin) {
+                LOG.log(System.Logger.Level.INFO, "Web-Anmeldung für Quelle {0} wird gestartet", pending.sourceId);
+            } else {
+                LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} wird gesendet{1}", pending.sourceId,
+                        username == null || password == null ? "" : " (mit Benutzeranmeldung)");
+            }
             synchronized (pending.sending) {
                 SignInChallenge challenge;
                 synchronized (this) {
@@ -361,10 +376,15 @@ public class SignInRequests {
                         pending.challenge = next;
                     }
                 }
-                LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} {1}", pending.sourceId,
-                        next == null ? "angenommen" : "nicht angenommen");
+                LOG.log(System.Logger.Level.INFO, startingWebLogin ? "Web-Anmeldung für Quelle {0}: {1}"
+                        : "Einmalcode für Quelle {0} {1}", pending.sourceId,
+                        next == null ? "angenommen"
+                                : startingWebLogin ? "Einmalcode für neue Sitzung erforderlich" : "nicht angenommen");
                 changed();
-                return next == null ? SignInRequest.Answer.ACCEPTED : SignInRequest.Answer.REJECTED;
+                if (next == null) {
+                    return SignInRequest.Answer.ACCEPTED;
+                }
+                return startingWebLogin ? SignInRequest.Answer.NEXT_STEP : SignInRequest.Answer.REJECTED;
             }
         } finally {
             Arrays.fill(code, '\0');
