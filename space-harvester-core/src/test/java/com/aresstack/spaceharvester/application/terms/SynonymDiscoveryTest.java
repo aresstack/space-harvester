@@ -226,6 +226,37 @@ class SynonymDiscoveryTest {
         discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT.withMaxJudgedPairs(10), null);
         assertThat(inputs).hasSize(1);
         assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).isEmpty();
+
+        // Codex zu #585: Das Urteil des Chat-Modells gilt weiter, solange dasselbe Modell eingestellt ist und die
+        // Fundstellen gleich bleiben; der Lauf ohne Chat-Prüfung bildet den Vorschlag nicht erneut.
+        SynonymDiscovery.Outcome again = discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+        assertThat(again.reused()).isEqualTo(1);
+        assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).isEmpty();
+
+        // Ohne Chat-Modell (andere Modellversion) entsteht der Vorschlag wieder; wird die Chat-Prüfung mit demselben
+        // Modell später zugeschaltet, setzt der Cache sein Urteil ohne neue Anfrage durch.
+        available = false;
+        discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+        assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).hasSize(1);
+        available = true;
+        discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT.withMaxJudgedPairs(10), null);
+        assertThat(inputs).hasSize(1);
+        assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).isEmpty();
+    }
+
+    /** Codex zu #585: Ein Paar, das zuerst eine Regel nannte, zählt mit seiner Ähnlichkeit trotzdem als Embedding-Paar. */
+    @Test
+    void aPairNamedByARuleFirstStillBecomesAProposalWhenTheVectorsAreSimilar() {
+        available = false;
+        provider = Optional.of(vectorsByWord(Map.of("rückmeldeschlüssel", 0, "rückmeldungsschlüssel", 0)));
+        siblings("wiki");
+
+        discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+
+        List<TermRelation> proposals = automatic(RelationOrigin.AI, RelationType.SYNONYM);
+        assertThat(proposals).hasSize(1);
+        assertThat(Set.of(proposals.get(0).fromTerm(), proposals.get(0).toTerm()))
+                .containsExactlyInAnyOrder("Rückmeldeschlüssel", "Rückmeldungsschlüssel");
     }
 
     /** Vektoren je Wort: Begriffe derselben Gruppe liegen aufeinander, jedes andere Wort steht senkrecht dazu. */

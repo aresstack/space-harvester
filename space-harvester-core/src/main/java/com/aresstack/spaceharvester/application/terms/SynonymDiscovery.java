@@ -268,19 +268,43 @@ public class SynonymDiscovery {
         }
         checkpoint(context);
         String ruleGeneration = "rules-" + PROMPT_VERSION + stamp;
+        Map<String, TermRelation> earlier = new HashMap<>();
+        relations.automatic(RelationOrigin.AI, relationScope).forEach(relation -> {
+            if (PRODUCED.contains(relation.type())) {
+                earlier.put(relation.id(), relation);
+            }
+        });
         if (!model.available() || budget.maxJudgedPairs() == 0) {
             // Ohne Chat-Prüfung (Standard): Ähnliche Vektoren sind der Vorschlag. Nur das Embedding-Modell sieht
             // Text, und nur aus freigegebenen Quellen; Paare, die schon entschieden oder manuell sind, bleiben aus.
+            // Die Ähnlichkeit steht nur, wenn Stufe B das Paar ab der Schwelle fand, auch wenn eine Regel es zuerst
+            // nannte. Hat das eingestellte Chat-Modell dasselbe Paar mit denselben Fundstellen schon beurteilt, gilt
+            // sein Urteil weiter (Cache), sonst stünde der Vorschlag beim nächsten Zuschalten im Widerspruch dazu.
             Set<String> known = knownPairs(relationScope);
             List<TermRelations.Proposal> embeddingProposals = new ArrayList<>();
             int skipped = 0;
+            int reused = 0;
             for (SynonymCandidate candidate : open) {
-                if (candidate.reason() != SynonymCandidate.Reason.EMBEDDING) {
+                if (candidate.similarity() <= 0) {
                     skipped++;
-                } else if (!known.contains(candidate.pairKey())) {
-                    embeddingProposals.add(new TermRelations.Proposal(candidate.fromTerm(), candidate.toTerm(),
-                            RelationType.SYNONYM, evidence(candidate.fromContext(), candidate.toContext())));
+                    continue;
                 }
+                if (known.contains(candidate.pairKey())) {
+                    continue;
+                }
+                Optional<List<String>> judged = cachedJudgment(scope, candidate);
+                if (judged.isPresent()) {
+                    reused++;
+                    for (String id : judged.get()) {
+                        TermRelation relation = earlier.get(id);
+                        if (relation != null) {
+                            embeddingProposals.add(proposalOf(relation));
+                        }
+                    }
+                    continue;
+                }
+                embeddingProposals.add(new TermRelations.Proposal(candidate.fromTerm(), candidate.toTerm(),
+                        RelationType.SYNONYM, evidence(candidate.fromContext(), candidate.toContext())));
             }
             checkpoint(context);
             phase(context, PHASE + ": Abgleich");
@@ -300,7 +324,7 @@ public class SynonymDiscovery {
                     collected.candidates().size(), rules.added(), rules.updated(), rules.withdrawn(),
                     embedding == null ? "nicht gelaufen" : embedding.added() + " neu, " + embedding.updated()
                             + " geändert, " + embedding.withdrawn() + " entfallen");
-            return new Outcome(collected.candidates().size(), rules, embedding, 0, 0, skipped, 0,
+            return new Outcome(collected.candidates().size(), rules, embedding, 0, reused, skipped, 0,
                     collected.embeddingUsed());
         }
         // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel; das Budget zählt
@@ -321,15 +345,10 @@ public class SynonymDiscovery {
             asked.add(new Pair(asked.size() + 1, candidate, a, b));
         }
         String version = model.version();
-        Map<String, TermRelation> earlier = new HashMap<>();
-        relations.automatic(RelationOrigin.AI, relationScope).forEach(relation -> {
-            if (PRODUCED.contains(relation.type())) {
-                earlier.put(relation.id(), relation);
-            }
-        });
         List<TermRelations.Proposal> proposals = new ArrayList<>();
         Map<String, List<String>> answered = new HashMap<>();
         Set<String> keptPairs = new HashSet<>();
+        Set<String> judged = new HashSet<>();
         int reused = 0;
         for (var iterator = asked.iterator(); iterator.hasNext(); ) {
             Pair pair = iterator.next();
@@ -342,8 +361,10 @@ public class SynonymDiscovery {
                         proposals.add(proposalOf(relation));
                     }
                 }
+                // Das Urteil aus dem Cache gilt, auch gegen einen Vorschlag, den ein Lauf ohne Chat-Prüfung
+                // inzwischen aus der Ähnlichkeit gebildet hat: nur die genannten Beziehungen bleiben.
                 answered.put(pair.fingerprint, cached.get());
-                keptPairs.add(pair.candidate.pairKey());
+                judged.add(pair.candidate.pairKey());
                 iterator.remove();
                 reused++;
             }
@@ -397,7 +418,6 @@ public class SynonymDiscovery {
         }
         // Paare über dem Budget, ohne Freigabe oder ohne lesbare Antwort behalten ihre Vorschläge: unverändert
         // genannt, schreibt der Abgleich nichts. Paare, die kein Kandidat mehr sind, verlieren ihre Vorschläge.
-        Set<String> judged = new HashSet<>();
         asked.forEach(pair -> judged.add(pair.candidate.pairKey()));
         for (TermRelation relation : earlier.values()) {
             String key = pairKey(relation.fromTerm(), relation.toTerm());
@@ -428,6 +448,19 @@ public class SynonymDiscovery {
                 reused, skipped, rejected, rules.added(), ai.added(), ai.updated(), ai.withdrawn(), ai.suppressed());
         return new Outcome(collected.candidates().size(), rules, ai, asked.size(), reused, skipped, rejected,
                 collected.embeddingUsed());
+    }
+
+    /** Das Urteil des eingestellten Chat-Modells zu diesem Paar mit diesen Fundstellen, falls es schon gefragt war. */
+    private Optional<List<String>> cachedJudgment(SynonymScope scope, SynonymCandidate candidate) {
+        if (!model.available()) {
+            return Optional.empty();
+        }
+        List<SynonymCandidate.Context> a = releasedContexts(candidate.fromContext());
+        List<SynonymCandidate.Context> b = releasedContexts(candidate.toContext());
+        if (a.isEmpty() || b.isEmpty()) {
+            return Optional.empty();
+        }
+        return cache.find(fingerprint(scope, model.version(), new Pair(0, candidate, a, b)));
     }
 
     private Set<String> candidateKeys(List<SynonymCandidate> open) {
