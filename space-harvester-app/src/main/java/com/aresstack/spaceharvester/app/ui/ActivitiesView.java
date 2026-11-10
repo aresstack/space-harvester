@@ -115,7 +115,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 3, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 4, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -822,7 +822,10 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
-    /** Die acht Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Löschen. */
+    private static final javax.swing.Icon RETRY = ComposerIcons.refresh();
+    static final String RETRY_TIP = "Erneut versuchen";
+
+    /** Die neun Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Erneut versuchen, Löschen. */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
             return List.of();
@@ -841,9 +844,58 @@ public final class ActivitiesView implements View {
         boolean space = job.sourceId() != null && job.partitionKey() != null;
         actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
+        String retryBlocked = retryBlocked(job);
+        actions.add(new RowActions.Action(RETRY, retryTip(job, datasets.get(job.id())), retryBlocked == null,
+                () -> retry(job)));
         actions.add(new RowActions.Action(Glyph.TRASH, running ? "Auftrag löschen · läuft noch, erst abbrechen"
                 : "Auftrag löschen", !running, () -> deleteJob(job)));
         return actions;
+    }
+
+    /** Warum dieser Auftrag gerade nicht erneut gestartet werden kann, oder {@code null}. */
+    static String retryBlocked(JobStatus job) {
+        if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
+            return "nur für Downloads und Abgleiche";
+        }
+        if (!job.state().terminal()) {
+            return "läuft noch";
+        }
+        return null;
+    }
+
+    /**
+     * Der Tooltip des Pfeils im Kreis: „Erneut versuchen“; hat der Download Dateien wegen fehlender Anmeldung
+     * (Einmalcode) ausgelassen, steht das dabei, denn genau dann kommt die Abfrage beim neuen Versuch wieder.
+     */
+    static String retryTip(JobStatus job, ExportDatasetInfo dataset) {
+        String blocked = retryBlocked(job);
+        if (blocked != null) {
+            return RETRY_TIP + " · " + blocked;
+        }
+        int signIn = dataset == null ? 0 : dataset.media().signInRequired();
+        if (signIn > 0) {
+            return RETRY_TIP + " · " + Texts.count(signIn, "Datei fehlt", "Dateien fehlen")
+                    + " wegen fehlender Anmeldung; die Einmalcode-Abfrage kommt dann wieder";
+        }
+        return RETRY_TIP + " · denselben " + (job.type() == JobType.SYNC ? "Abgleich" : "Download")
+                + " noch einmal starten";
+    }
+
+    /**
+     * Startet denselben Auftrag noch einmal (Pfeil im Kreis in der Zeile): einen Download mit Quelle, Space und
+     * Startseite wie zuvor als neuen Export-Auftrag, einen Abgleich mit Quelle und Space. Verlangt die Quelle wieder
+     * einen Einmalcode, erscheint die Abfrage wie beim ersten Mal über die Anforderungen.
+     */
+    void retry(JobStatus job) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || retryBlocked(job) != null) {
+            return;
+        }
+        Background.run(() -> job.type() == JobType.SYNC
+                        ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())
+                        : runtime.workspace().startExport(job.sourceId(), job.partitionKey(), job.rootPageId(),
+                                List.of(Downloads.FORMAT)),
+                started -> show(started.id()), feedback::problem);
     }
 
     /** Für Tests. */
