@@ -93,6 +93,12 @@ class KnowledgeGraphTabTest {
         assertThat(tab.jumpOffered()).isTrue();
         tab.clickJump();
         assertThat(jumps).containsExactly(List.of(new TermsTab.Span(58, 67)));
+        // Codex zu #570: auch per Tastatur (Enter auf dem Link, Leertaste in der Tabelle öffnet die Details).
+        tab.pressEnterOnJump();
+        assertThat(jumps).hasSize(2);
+        tab.selectTableRow(2);
+        tab.pressSpaceInTable();
+        assertThat(tab.jumpOffered()).isTrue();
 
         tab.selectNode(DOC);
         assertThat(tab.jumpOffered()).isFalse();

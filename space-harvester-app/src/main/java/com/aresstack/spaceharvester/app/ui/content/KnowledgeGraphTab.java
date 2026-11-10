@@ -233,7 +233,8 @@ final class KnowledgeGraphTab extends JPanel {
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setAutoCreateRowSorter(true);
-        table.setToolTipText("Doppelklick zeigt die Details – dort auch „Zum Beleg im Text“; Enter erweitert");
+        table.setToolTipText("Doppelklick oder Leertaste zeigt die Details – dort auch „Zum Beleg im Text“; "
+                + "Enter erweitert");
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!syncingTable && !e.getValueIsAdjusting() && table.getSelectedRow() >= 0) {
                 Row row = tableModel.rows.get(table.convertRowIndexToModel(table.getSelectedRow()));
@@ -254,6 +255,19 @@ final class KnowledgeGraphTab extends JPanel {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 expandSelected();
+            }
+        });
+        // Tastatur: Leertaste öffnet die Details zur markierten Zeile (wie der Doppelklick).
+        table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "details");
+        table.getActionMap().put("details", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                int row = table.getSelectedRow();
+                if (row >= 0) {
+                    java.awt.Rectangle cell = table.getCellRect(row, 0, true);
+                    showDetails(table, cell.x + 24, cell.y + cell.height / 2);
+                }
             }
         });
         cards.setOpaque(false);
@@ -1105,6 +1119,13 @@ final class KnowledgeGraphTab extends JPanel {
             bind(KeyEvent.VK_MINUS, () -> zoom(1 / 1.15, getWidth() / 2.0, getHeight() / 2.0));
             bind(KeyEvent.VK_SUBTRACT, () -> zoom(1 / 1.15, getWidth() / 2.0, getHeight() / 2.0));
             bind(KeyEvent.VK_0, this::fit);
+            // Leertaste: Details zum gewählten Knoten, an seiner Stelle in der Fläche.
+            bind(KeyEvent.VK_SPACE, () -> {
+                Point2D p = selected == null ? null : positions.get(selected);
+                if (p != null) {
+                    showDetails(this, (int) (p.getX() * scale + dx), (int) (p.getY() * scale + dy));
+                }
+            });
         }
 
         private void bind(int key, Runnable action) {
@@ -1574,6 +1595,16 @@ final class KnowledgeGraphTab extends JPanel {
     /** Klickt „Zum Beleg im Text“ im Detailfenster. */
     void clickJump() {
         popup.clickLink(0);
+    }
+
+    /** Enter auf „Zum Beleg im Text“, wie ein Tastaturbenutzer. */
+    void pressEnterOnJump() {
+        popup.pressEnterOnLink(0);
+    }
+
+    /** Leertaste in der Tabelle: öffnet die Details zur markierten Zeile. */
+    void pressSpaceInTable() {
+        table.getActionMap().get("details").actionPerformed(null);
     }
 
     boolean jumpOffered() {

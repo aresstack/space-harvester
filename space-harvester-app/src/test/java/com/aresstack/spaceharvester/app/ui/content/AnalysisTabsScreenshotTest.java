@@ -81,12 +81,11 @@ class AnalysisTabsScreenshotTest {
             write(graph, out.resolve("graph.png"));
             // Das Detailfenster zum gewählten Knoten, wie es neben dem Mausklick erscheint.
             com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup = graph.popup();
-            popup.setSize(popup.getPreferredSize().width > 0 ? Math.min(480, 360) : 360, 10);
-            popup.setPopupSize(360, 170);
-            popup.setSize(360, 170);
+            java.awt.Dimension size = popup.sizeFor(400);
+            popup.setSize(size);
             layout(popup);
             layout(popup);
-            BufferedImage image = new BufferedImage(360, 170, BufferedImage.TYPE_INT_ARGB);
+            BufferedImage image = new BufferedImage(size.width, size.height, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = image.createGraphics();
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             popup.printAll(g);
