@@ -611,8 +611,20 @@ final class SourceForm {
 
     /** Wie {@link #open(Component, AppContext, Consumer)}, aber zum Bearbeiten eines bestehenden Eintrags. */
     static void open(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
+        open(parent, context, editing, saved, false);
+    }
+
+    /** Öffnet denselben Quelleneditor mit Fokus auf Herkunft und KeePass-Eintrag statt auf den Anzeigenamen. */
+    static void openCredentials(Component parent, AppContext context, SourceDraft.Editable editing,
+                                Consumer<String> saved) {
+        open(parent, context, editing, saved, true);
+    }
+
+    private static void open(Component parent, AppContext context, SourceDraft.Editable editing,
+                             Consumer<String> saved, boolean credentials) {
         SourceForm form = new SourceForm(context, editing);
-        String heading = editing == null ? "Wissensquelle hinzufügen" : "Wissensquelle bearbeiten";
+        String heading = credentials ? "Anmeldung und Zugangsdaten" : editing == null
+                ? "Wissensquelle hinzufügen" : "Wissensquelle bearbeiten";
         JDialog dialog = Dialogs.dialog(parent, heading);
         form.saved = saved;
         form.close = dialog::dispose;
@@ -620,7 +632,7 @@ final class SourceForm {
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowOpened(java.awt.event.WindowEvent e) {
-                form.firstField().requestFocusInWindow();
+                (credentials ? form.origin : form.firstField()).requestFocusInWindow();
             }
 
             @Override
