@@ -105,7 +105,9 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
                 statements.add(new ParsedStatements.Statement(documentId + "#s" + index + ".v1", index, verbStart,
                         verbStart + verb.length(), verb, verb, ParsedStatements.Voice.ACTIVE,
                         ParsedStatements.Clause.MAIN, true, arguments,
-                        pronoun ? Set.of("UNRESOLVED_PRONOUN") : Set.of()));
+                        pronoun ? Set.of("UNRESOLVED_PRONOUN") : Set.of(), 0,
+                        pronoun ? ParsedStatements.Quality.UNCERTAIN : ParsedStatements.Quality.PLAUSIBLE,
+                        pronoun ? List.of("UNRESOLVED_PRONOUN") : List.of(), ParsedStatements.Review.UNREVIEWED));
             }
             start = end;
             index++;

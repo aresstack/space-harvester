@@ -97,23 +97,49 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      * @param predicateLemma Grundform ({@code anrufen}) oder {@code null}
      * @param voice          Aktiv oder Passiv
      * @param clause         Haupt-, koordinierter oder Nebensatz
-     * @param core           Kernaussage der priorisierten Sicht (aktiv, kein Nebensatz, Subjekt und Objekt aus
-     *                       eigenen, widerspruchsfreien Parserkanten)
+     * @param core           strukturell vollständige Aussage der priorisierten Sicht (aktiv, kein Nebensatz, Subjekt
+     *                       und Objekt aus eigenen, widerspruchsfreien Parserkanten); keine inhaltliche Relevanz
      * @param arguments      Beteiligte, Kern zuerst
      * @param findings       erkannte, aber nicht aufgelöste Besonderheiten ({@code PASSIVE}, {@code UNRESOLVED_PRONOUN},
      *                       {@code TIME_FROM_NOMINAL} …)
+     * @param paragraph      Absatz (Block der Textprojektion, gezählt an {@code \n}) ab 0: Gruppierung neben
+     *                       {@code sentence}; {@value #UNKNOWN_PARAGRAPH}, wenn unbekannt
+     * @param quality        Extraktionsqualität: wie gut die Aussage maschinell abgeleitet ist, nie ob sie stimmt
+     * @param qualityReasons Gründe einer Abstufung ({@code HEURISTIC_PARTICIPANT}, {@code NO_PARTICIPANT} …), leer bei
+     *                       {@link Quality#PLAUSIBLE}
+     * @param review         fachliche Prüfung durch einen Menschen, unabhängig von {@code quality}
      */
     public record Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
-                            Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings) {
+                            Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
+                            int paragraph, Quality quality, List<String> qualityReasons, Review review) {
 
         public Statement {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(predicateText, "predicateText");
             Objects.requireNonNull(voice, "voice");
             Objects.requireNonNull(clause, "clause");
+            Objects.requireNonNull(quality, "quality");
+            Objects.requireNonNull(review, "review");
             arguments = List.copyOf(arguments);
             findings = Set.copyOf(findings);
+            qualityReasons = List.copyOf(qualityReasons);
         }
+
+        /**
+         * Eine Aussage ohne Qualitätsbewertung (ältere Analysen, andere Analysatoren): {@link Quality#UNCERTAIN} mit
+         * Grund {@value #NOT_ASSESSED}, Absatz unbekannt ({@value #UNKNOWN_PARAGRAPH}), ungeprüft.
+         */
+        public Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
+                         Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings) {
+            this(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core, arguments, findings,
+                    UNKNOWN_PARAGRAPH, Quality.UNCERTAIN, List.of(NOT_ASSESSED), Review.UNREVIEWED);
+        }
+
+        /** Grund für Aussagen ohne Bewertung. */
+        public static final String NOT_ASSESSED = "NOT_ASSESSED";
+
+        /** Absatz für Aussagen ohne Absatzangabe. */
+        public static final int UNKNOWN_PARAGRAPH = -1;
 
         /** Alle Beteiligten mit dieser Rolle. */
         public List<Argument> withRole(Role role) {
@@ -125,6 +151,26 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             return arguments.stream().allMatch(argument -> argument.certain()
                     && (argument.basis() == Basis.PARSER || argument.basis() == Basis.LEXICON));
         }
+    }
+
+    /**
+     * Extraktionsqualität einer Aussage (Nachtrag Ursachenmatrix zu ADR 0024): beschreibt nur die maschinelle
+     * Ableitung, keine fachliche Wahrheit; keine Prozentwerte.
+     */
+    public enum Quality {
+        /** Syntaktisch ausreichend gestützte Relation. */
+        PLAUSIBLE,
+        /** Verwertbarer Kandidat mit ungeklärter Zuordnung. */
+        UNCERTAIN,
+        /** Erkannte Fehlkonstruktion; keine fachliche Relation. */
+        INVALID
+    }
+
+    /** Fachliche Prüfung einer Aussage durch einen Menschen; bisher nur im Modell, ohne Oberfläche. */
+    public enum Review {
+        UNREVIEWED,
+        CONFIRMED,
+        REJECTED
     }
 
     public enum Voice {

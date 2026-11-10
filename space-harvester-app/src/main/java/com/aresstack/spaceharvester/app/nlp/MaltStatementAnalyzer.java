@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Resolution;
 import com.aresstack.spaceharvester.nlp.extraction.SalienceProjection;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
+import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
 import com.aresstack.spaceharvester.nlp.malt.ExpectedModel;
 import com.aresstack.spaceharvester.nlp.malt.GermanParserModelPin;
 import com.aresstack.spaceharvester.nlp.malt.MaltModelLoader;
@@ -31,6 +32,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -181,6 +183,33 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
                 documentId.substring(at + 1));
     }
 
+    /**
+     * Absatz je Satz, ab 0: Blöcke der Textprojektion sind durch {@code \n} getrennt; eine Folge von Umbrüchen und
+     * Leerzeilen ist eine Grenze. Ein Durchlauf über den Text, Sätze in Textreihenfolge.
+     */
+    static int[] paragraphs(String text, List<Sentence> sentences) {
+        int[] result = new int[sentences.size()];
+        int paragraph = 0;
+        boolean content = false;
+        int position = 0;
+        for (int index = 0; index < sentences.size(); index++) {
+            int start = Math.min(sentences.get(index).start(), text.length());
+            for (; position < start; position++) {
+                char c = text.charAt(position);
+                if (c == '\n') {
+                    if (content) {
+                        paragraph++;
+                        content = false;
+                    }
+                } else if (!Character.isWhitespace(c)) {
+                    content = true;
+                }
+            }
+            result[index] = paragraph;
+        }
+        return result;
+    }
+
     static ParsedStatements map(ParsedDocument document, ObjectCentricAnalysis analysis) {
         List<ParsedStatements.Sentence> sentences = new ArrayList<>();
         for (Sentence sentence : document.sentences()) {
@@ -197,7 +226,9 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
         for (CoreRelation relation : SalienceProjection.project(analysis).core()) {
             core.add(relation.statement());
         }
+        int[] paragraphs = paragraphs(document.text(), document.sentences());
         List<ParsedStatements.Statement> statements = new ArrayList<>();
+        Map<String, Mention> mentionsById = StatementQuality.mentions(analysis);
         for (Statement statement : analysis.statements()) {
             Sentence sentence = document.sentences().get(statement.sentence());
             int start = Integer.MAX_VALUE;
@@ -223,11 +254,14 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
             for (Finding finding : statement.findings()) {
                 findings.add(finding.name());
             }
+            StatementQuality.Assessment quality = StatementQuality.assess(mentionsById, analysis, statement);
             statements.add(new ParsedStatements.Statement(statement.id(), statement.sentence(), start, end,
                     statement.predicate().text(), statement.predicate().lemma(),
                     ParsedStatements.Voice.valueOf(statement.voice().name()),
                     ParsedStatements.Clause.valueOf(statement.clause().name()), core.contains(statement.id()),
-                    arguments, findings));
+                    arguments, findings, paragraphs[statement.sentence()],
+                    ParsedStatements.Quality.valueOf(quality.level().name()), quality.reasons(),
+                    ParsedStatements.Review.UNREVIEWED));
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
         for (NominalAttachment attachment : analysis.attachments()) {

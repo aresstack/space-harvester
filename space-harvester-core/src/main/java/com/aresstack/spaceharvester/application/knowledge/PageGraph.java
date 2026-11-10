@@ -4,8 +4,9 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Objects;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Graph-Projektion einer Seitenanalyse (#499, ADR 0024): Knoten für Dokument, Erwähnungen und Aussagen, typisierte
@@ -92,8 +93,19 @@ public record PageGraph(PageKey key, List<Node> nodes, List<Edge> edges) {
         }
     }
 
-    /** Leitet die Projektion ab; Beteiligte auf unbekannte Erwähnungen werden übergangen. */
+    /** Qualitätsstufen der Standardansicht: nur plausible Aussagen (Nachtrag Ursachenmatrix zu ADR 0024). */
+    public static final Set<ParsedStatements.Quality> DEFAULT_QUALITIES = Set.of(ParsedStatements.Quality.PLAUSIBLE);
+
+    /** Die Standardprojektion: nur {@link ParsedStatements.Quality#PLAUSIBLE plausible} Aussagen. */
     public static PageGraph of(PageStatementAnalysis analysis) {
+        return of(analysis, DEFAULT_QUALITIES);
+    }
+
+    /**
+     * Leitet die Projektion ab; Aussagen anderer Qualitätsstufen und Beteiligte auf unbekannte Erwähnungen werden
+     * übergangen. Erwähnungen und nominale Bezüge bleiben vollständig, sie sind Text, keine Relation.
+     */
+    public static PageGraph of(PageStatementAnalysis analysis, Set<ParsedStatements.Quality> qualities) {
         String document = PageStatementAnalysis.documentId(analysis.key(), analysis.inputSha256());
         ParsedStatements result = analysis.result();
         List<Node> nodes = new ArrayList<>();
@@ -108,6 +120,9 @@ public record PageGraph(PageKey key, List<Node> nodes, List<Edge> edges) {
             }
         }
         for (ParsedStatements.Statement statement : result.statements()) {
+            if (!qualities.contains(statement.quality())) {
+                continue;
+            }
             nodes.add(new Node(statement.id(), NodeKind.STATEMENT, statement.predicateText(),
                     statement.predicateLemma(), statement.start(), statement.end()));
             edges.add(new Edge(document, statement.id(), EdgeKind.CONTAINS, "STRUCTURE", null, null, null, true));

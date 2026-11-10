@@ -127,7 +127,7 @@ class StatementAnalysisTest {
         StatementAnalysis analysis = analysis();
         analysis.analyze(CALLER, page("1", "3", REFERENCE), () -> false);
 
-        PageStatements read = analysis.read(CALLER, page("1", "4", REFERENCE + " Er prüft den Antrag."));
+        PageStatements read = analysis.read(CALLER, page("1", "4", REFERENCE + " Den Antrag prüft er."));
 
         assertThat(read.state()).isEqualTo(PageStatements.State.STALE);
         assertThat(read.reason()).isEqualTo(PageStatements.TEXT_CHANGED);
@@ -201,6 +201,23 @@ class StatementAnalysisTest {
         assertThatThrownBy(() -> denied.analyze(CALLER, page, () -> false))
                 .isInstanceOf(AccessDeniedException.class);
         assertThat(parser.calls).hasValue(1);
+    }
+
+    @Test
+    void theDefaultGraphShowsOnlyPlausibleStatementsAndKeepsTheOthersAvailable() {
+        StatementAnalysis analysis = analysis();
+        PageSnapshot page = page("1", "3", REFERENCE + " Den Antrag prüft er.");
+        analysis.analyze(CALLER, page, () -> false);
+        PageStatementAnalysis stored = store.find(page.key()).orElseThrow();
+        assertThat(stored.result().statements()).extracting(ParsedStatements.Statement::quality)
+                .containsExactly(ParsedStatements.Quality.PLAUSIBLE, ParsedStatements.Quality.UNCERTAIN);
+
+        assertThat(PageGraph.of(stored).nodes()).filteredOn(node -> node.kind() == PageGraph.NodeKind.STATEMENT)
+                .extracting(PageGraph.Node::label).containsExactly("übermittelt");
+        assertThat(PageGraph.of(stored, java.util.EnumSet.allOf(ParsedStatements.Quality.class)).nodes())
+                .filteredOn(node -> node.kind() == PageGraph.NodeKind.STATEMENT).hasSize(2);
+        // Erwähnungen bleiben vollständig: sie sind Text, keine Relation
+        assertThat(PageGraph.of(stored).nodes()).extracting(PageGraph.Node::label).contains("Antrag");
     }
 
     @Test

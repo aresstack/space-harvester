@@ -11,6 +11,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeSet;
 import tools.jackson.core.JsonEncoding;
 import tools.jackson.core.JsonGenerator;
@@ -22,8 +23,11 @@ import tools.jackson.databind.json.JsonMapper;
  * Space-Harvester-Begriffe und W3C PROV-O für Herkunft. Eine Aussage ist ein eigener Knoten mit Rollen-Kanten zu
  * Erwähnungen und qualifizierten Beteiligungen (Rolle, UD-Relation, Präposition, Herkunft, Sicherheit); Erwähnungen
  * bleiben je Textstelle eigenständig. Es gibt keine {@code owl:sameAs}-Behauptungen: {@code sh:lexicalKey} ist nur die
- * normalisierte Grundform für lexikalische Kandidaten, keine Identität. Jede Aussage trägt
- * {@code sh:verificationStatus "UNVERIFIED_PARSER_OUTPUT"}.
+ * normalisierte Grundform für lexikalische Kandidaten, keine Identität. Jede Aussage trägt drei getrennte Angaben:
+ * {@code sh:extractionQuality} (maschinelle Ableitung, mit {@code sh:qualityReason}), {@code sh:basis} je Beteiligung
+ * (Herkunft) und {@code sh:verificationStatus} (fachliche Prüfung: {@value #UNVERIFIED}, solange kein Mensch sie
+ * bestätigt oder verworfen hat). Exportiert werden nur die Aussagen der Stufen aus {@link Header#qualities()},
+ * standardmäßig nur plausible; Erwähnungen und nominale Bezüge bleiben vollständig.
  *
  * <p>Deterministisch: Seiten nach Quelle und Seite, Knoten nach Satz und Position, Mengen sortiert; nur der Kopf nennt
  * den Zeitpunkt. Streamend geschrieben, ohne den Graphen im Speicher aufzubauen.
@@ -40,7 +44,7 @@ public final class KnowledgeGraphJsonLd {
     public static final String FORMAT = "space-harvester/knowledge-graph-jsonld/v1";
     /** Prefix aller Knoten-IRIs. */
     public static final String IRI = "urn:space-harvester:kg:";
-    /** Kennzeichnung jeder Aussage: Parserausgabe, fachlich nicht geprüft. */
+    /** Prüfstatus einer fachlich (noch) nicht geprüften Aussage. */
     public static final String UNVERIFIED = "UNVERIFIED_PARSER_OUTPUT";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -54,14 +58,22 @@ public final class KnowledgeGraphJsonLd {
      * @param scope         Umfang für Menschen, etwa {@code space:wiki/DEV}
      * @param includesStale ob veraltete Analysen enthalten sind
      * @param complete      ob alle Seiten des Umfangs enthalten sind, die der Aufrufer lesen darf
+     * @param qualities     exportierte Qualitätsstufen der Aussagen ({@code sh:exportedQuality}); Erwähnungen und
+     *                      nominale Bezüge bleiben immer vollständig
      */
     public record Header(String exportId, String scope, Instant generatedAt, boolean includesStale,
-                         boolean complete) {
+                         boolean complete, Set<ParsedStatements.Quality> qualities) {
 
         public Header {
             Objects.requireNonNull(exportId, "exportId");
             Objects.requireNonNull(scope, "scope");
             Objects.requireNonNull(generatedAt, "generatedAt");
+            qualities = Set.copyOf(qualities);
+        }
+
+        /** Kopf mit den Qualitätsstufen der Standardansicht: nur plausible Aussagen. */
+        public Header(String exportId, String scope, Instant generatedAt, boolean includesStale, boolean complete) {
+            this(exportId, scope, generatedAt, includesStale, complete, PageGraph.DEFAULT_QUALITIES);
         }
     }
 
@@ -86,7 +98,7 @@ public final class KnowledgeGraphJsonLd {
             json.writeStartArray();
             exportNode(json, header, sorted);
             for (Entry entry : sorted) {
-                page(json, entry);
+                page(json, entry, header.qualities());
             }
             json.writeEndArray();
             json.writeEndObject();
@@ -161,12 +173,16 @@ public final class KnowledgeGraphJsonLd {
         for (String term : List.of("format", "scope", "includesStale", "complete", "pageCount", "sourceId",
                 "pageId", "spaceKey", "title", "revision", "inputSha256", "status", "staleReason", "analyzer",
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
-                "end", "sentence", "predicate", "predicateLemma", "voice", "clause", "core", "verificationStatus",
+                "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
+                "verificationStatus",
                 "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
         set(json, "grammaticalCase", "sh:grammaticalCase");
         set(json, "finding", "sh:finding");
+        set(json, "extractionQuality", "sh:extractionQuality");
+        set(json, "qualityReason", "sh:qualityReason");
+        set(json, "exportedQuality", "sh:exportedQuality");
         for (String link : List.of("revisionOf", "page", "mention", "participant", "head", "dependent",
                 "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
                 "instrument", "time", "circumstance")) {
@@ -222,10 +238,16 @@ public final class KnowledgeGraphJsonLd {
         json.writeBooleanProperty("includesStale", header.includesStale());
         json.writeBooleanProperty("complete", header.complete());
         json.writeNumberProperty("pageCount", entries.size());
+        json.writeName("exportedQuality");
+        json.writeStartArray();
+        for (ParsedStatements.Quality quality : new TreeSet<>(header.qualities())) {
+            json.writeString(quality.name());
+        }
+        json.writeEndArray();
         json.writeEndObject();
     }
 
-    private static void page(JsonGenerator json, Entry entry) {
+    private static void page(JsonGenerator json, Entry entry, Set<ParsedStatements.Quality> qualities) {
         PageStatementAnalysis analysis = entry.analysis();
         String page = page(analysis.key());
         String revision = revision(analysis);
@@ -293,6 +315,7 @@ public final class KnowledgeGraphJsonLd {
         }
 
         List<ParsedStatements.Statement> statements = result.statements().stream()
+                .filter(statement -> qualities.contains(statement.quality()))
                 .sorted(Comparator.comparingInt(ParsedStatements.Statement::start)
                         .thenComparing(ParsedStatements.Statement::id)).toList();
         for (ParsedStatements.Statement statement : statements) {
@@ -305,7 +328,20 @@ public final class KnowledgeGraphJsonLd {
             json.writeStringProperty("voice", statement.voice().name());
             json.writeStringProperty("clause", statement.clause().name());
             json.writeBooleanProperty("core", statement.core());
-            json.writeStringProperty("verificationStatus", UNVERIFIED);
+            json.writeStringProperty("verificationStatus", statement.review() == ParsedStatements.Review.UNREVIEWED
+                    ? UNVERIFIED : statement.review().name());
+            json.writeStringProperty("extractionQuality", statement.quality().name());
+            if (!statement.qualityReasons().isEmpty()) {
+                json.writeName("qualityReason");
+                json.writeStartArray();
+                for (String reason : statement.qualityReasons()) {
+                    json.writeString(reason);
+                }
+                json.writeEndArray();
+            }
+            if (statement.paragraph() >= 0) {
+                json.writeNumberProperty("paragraph", statement.paragraph());
+            }
             if (!statement.findings().isEmpty()) {
                 json.writeName("finding");
                 json.writeStartArray();
