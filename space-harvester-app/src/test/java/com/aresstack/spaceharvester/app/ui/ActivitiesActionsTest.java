@@ -114,6 +114,19 @@ class ActivitiesActionsTest {
         assertSlots(withFailures(), JobAction.RETRY_FAILED, null, JobAction.FORCE_REFRESH);
     }
 
+    /** Bilder und Anhänge (#631): fertig → Neu erzwingen; unvollständig → Nur Fehler und Neu erzwingen. */
+    @Test
+    void imagesAndAttachments() {
+        for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
+            assertSlots(job(type, JobState.COMPLETED, false), null, null, JobAction.FORCE_REFRESH);
+            JobStatus incomplete = new JobStatus("j1", type, "wiki", "OPS", "local", JobState.COMPLETED,
+                    new JobProgress(5, 5, 3, 2), null, false, Instant.EPOCH, null, Instant.EPOCH, null, null,
+                    Map.of(), true, false, null);
+            assertSlots(incomplete, JobAction.RETRY_FAILED, null, JobAction.FORCE_REFRESH);
+            assertSlots(job(type, JobState.CANCELLED, false), null, JobAction.RESUME, JobAction.FORCE_REFRESH);
+        }
+    }
+
     /** Die drei Zustandsplätze vor der Mülltonne; {@code null} heißt: Symbol steht da, aber blass. */
     private static void assertSlots(JobStatus job, JobAction retry, JobAction playPause, JobAction stopForce) {
         var state = job.lifecycle();

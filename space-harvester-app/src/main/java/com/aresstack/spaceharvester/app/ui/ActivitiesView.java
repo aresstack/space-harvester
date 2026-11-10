@@ -897,7 +897,7 @@ public final class ActivitiesView implements View {
     /**
      * Feste Plätze je Zeile (Angelo 10.11.2026), damit Formate und Aktionen in jeder Zeile untereinander stehen: fünf
      * Formate, ein freier Platz als Abstand, Diagnose, Inhalte, dann die Zustandsplätze {@link Slot}. Was ein Zustand
-     * nicht anbietet, bleibt ein freier Platz; Play/Pause und Löschen stehen immer da.
+     * nicht anbietet, steht blass da; jeder Platz ist immer belegt.
      */
     static final int SLOTS = 5 + 1 + 2 + Slot.values().length;
 
@@ -992,18 +992,10 @@ public final class ActivitiesView implements View {
         for (Slot slot : Slot.values()) {
             JobAction action = actionFor(slot, state);
             actions.add(action != null
-                    ? new RowActions.Action(actionIcon(action), slotTip(action, job), true, () -> perform.accept(action))
+                    ? new RowActions.Action(actionIcon(action), actionTip(action, job), true, () -> perform.accept(action))
                     : new RowActions.Action(idleIcon(slot, state), idleTip(slot, job), false, () -> { }));
         }
         return actions;
-    }
-
-    /** Wie {@link #actionTip}; Löschen nennt, dass ein laufender Auftrag dafür erst abbricht. */
-    private static String slotTip(JobAction action, JobStatus job) {
-        if (action == JobAction.DELETE && !job.lifecycle().allows(JobAction.DELETE)) {
-            return "Auftrag löschen · bricht ihn vorher ab";
-        }
-        return actionTip(action, job);
     }
 
     static javax.swing.Icon actionIcon(JobAction action) {
@@ -1055,10 +1047,6 @@ public final class ActivitiesView implements View {
         if (runtime == null) {
             return;
         }
-        if (action == JobAction.DELETE && !job.lifecycle().allows(JobAction.DELETE)) {
-            deleteRunning(runtime, job);
-            return;
-        }
         if (!job.lifecycle().allows(action)) {
             return;
         }
@@ -1071,8 +1059,8 @@ public final class ActivitiesView implements View {
             }
             case DELETE -> {
                 if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
-                        + " wirklich löschen? Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. "
-                        + KEPT)) {
+                        + " wirklich löschen?" + (job.state().terminal() ? "" : " Er wird dafür abgebrochen.")
+                        + " Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
                     return;
                 }
             }
@@ -1090,37 +1078,6 @@ public final class ActivitiesView implements View {
             } else if (action == JobAction.RESUME || action == JobAction.RETRY_FAILED
                     || action == JobAction.FORCE_REFRESH) {
                 show(after.id());
-            }
-            poll();
-        }, feedback::problem);
-    }
-
-    /** So lange wartet Löschen eines laufenden Auftrags auf das Ende des Abbruchs. */
-    static final java.time.Duration DELETE_WAIT = java.time.Duration.ofSeconds(30);
-
-    /**
-     * Löschen in jedem Zustand (Angelo 10.11.2026): Ein laufender oder wartender Auftrag bricht nach „Ja“ erst ab, dann
-     * wird er gelöscht, sobald der Core das Löschen erlaubt. Bricht er in {@link #DELETE_WAIT} nicht ab, bleibt er mit
-     * einem Hinweis stehen.
-     */
-    private void deleteRunning(AppRuntime runtime, JobStatus job) {
-        if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
-                + " wirklich löschen? Er wird dafür abgebrochen; der Auftrag und seine Diagnoseereignisse werden "
-                + "dauerhaft gelöscht. " + KEPT)) {
-            return;
-        }
-        Background.run(() -> stopAndDelete(runtime.workspace(), List.of(job.id())) == 1, deleted -> {
-            if (deleted) {
-                if (job.id().equals(selectedId)) {
-                    selectedId = null;
-                    detail = null;
-                    table.clearSelection();
-                    render();
-                }
-                feedback.success("Auftrag gelöscht");
-            } else {
-                feedback.warning("Der Auftrag bricht noch ab",
-                        "Gelöscht werden kann er, sobald er abgebrochen ist.");
             }
             poll();
         }, feedback::problem);
@@ -1254,79 +1211,28 @@ public final class ActivitiesView implements View {
             + "des Downloads verschwindet mit dem Auftrag.";
 
     /**
-     * Löscht alle Aufträge der Liste nach „Wirklich alle Aufträge löschen?“: laufende und wartende werden vorher
-     * abgebrochen ({@link #stopAndDelete}).
+     * Löscht alle Aufträge nach „Wirklich alle Aufträge löschen?“, in jedem Zustand; laufende und wartende bricht der
+     * Core dafür ab ({@code Workspace#deleteAllJobs}).
      */
     void deleteAll() {
         AppRuntime runtime = context.runtime();
-        List<String> ids = model.rows.stream().map(JobStatus::id).toList();
-        if (runtime == null || ids.isEmpty()) {
+        int count = model.rows.size();
+        if (runtime == null || count == 0) {
             return;
         }
         if (!Dialogs.confirm(root, "Alle Aufträge löschen?", "Wirklich alle Aufträge löschen? "
-                + Texts.count(ids.size(), "Auftrag", "Aufträge") + " samt Diagnoseereignissen werden dauerhaft "
+                + Texts.count(count, "Auftrag", "Aufträge") + " samt Diagnoseereignissen werden dauerhaft "
                 + "gelöscht; laufende werden vorher abgebrochen. " + KEPT)) {
             return;
         }
-        Background.run(() -> stopAndDelete(runtime.workspace(), ids), deleted -> {
+        Background.run(() -> runtime.workspace().deleteAllJobs(), deleted -> {
             selectedId = null;
             detail = null;
             table.clearSelection();
             render();
-            if (deleted == ids.size()) {
-                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
-            } else {
-                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht",
-                        Texts.count(ids.size() - deleted, "Auftrag bricht", "Aufträge brechen")
-                                + " noch ab; gelöscht werden sie, sobald sie abgebrochen sind.");
-            }
+            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
             poll();
         }, feedback::problem);
-    }
-
-    /**
-     * Bricht ab, was der Zustand abbrechen lässt, wartet bis {@link #DELETE_WAIT}, bis der Core das Löschen erlaubt,
-     * und löscht dann. Schon gelöschte zählen mit. @return Anzahl gelöschter Aufträge
-     */
-    static int stopAndDelete(com.aresstack.spaceharvester.app.runtime.Workspace workspace, List<String> ids)
-            throws InterruptedException {
-        java.util.Set<String> open = new java.util.LinkedHashSet<>(ids);
-        int deleted = 0;
-        for (String id : ids) {
-            try {
-                if (workspace.jobState(id).allows(JobAction.CANCEL)) {
-                    workspace.performJobAction(id, JobAction.CANCEL);
-                }
-            } catch (com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException
-                     | com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
-                // Inzwischen beendet oder gelöscht: entscheidet die Schleife unten.
-            }
-        }
-        long until = System.nanoTime() + DELETE_WAIT.toNanos();
-        while (!open.isEmpty()) {
-            for (java.util.Iterator<String> it = open.iterator(); it.hasNext(); ) {
-                String id = it.next();
-                try {
-                    if (workspace.jobState(id).allows(JobAction.DELETE)) {
-                        workspace.performJobAction(id, JobAction.DELETE);
-                        deleted++;
-                        it.remove();
-                    }
-                } catch (com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
-                    deleted++;
-                    it.remove();
-                } catch (com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException
-                         | com.aresstack.spaceharvester.application.jobs.JobStillRunningException e) {
-                    // Zustand hat sich zwischen Prüfen und Löschen geändert: nächste Runde. Alles andere, etwa ein
-                    // Speicherfehler, geht an die Statuszeile.
-                }
-            }
-            if (open.isEmpty() || System.nanoTime() >= until) {
-                break;
-            }
-            Thread.sleep(250);
-        }
-        return deleted;
     }
 
     private void restart() {

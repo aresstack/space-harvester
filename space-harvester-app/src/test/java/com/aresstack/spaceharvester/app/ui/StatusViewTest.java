@@ -133,7 +133,7 @@ class StatusViewTest {
         workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key());
         java.util.List<String> everything = workspace.jobs().stream().map(j -> j.id()).toList();
         assertThat(everything).isNotEmpty();
-        assertThat(ActivitiesView.stopAndDelete(workspace, everything)).isEqualTo(everything.size());
+        assertThat(workspace.deleteAllJobs()).isEqualTo(everything.size());
         assertThat(workspace.jobs()).extracting(j -> j.id()).doesNotContainAnyElementsOf(everything);
     }
 
