@@ -1395,28 +1395,45 @@ public class Assets {
     /** Zustand der Dateiabrufe einer Quelle (#571), siehe {@link #fromSource}. */
     private static final class SourceGate {
         final java.util.concurrent.locks.ReentrantLock probe = new java.util.concurrent.locks.ReentrantLock(true);
-        /** Ob die Quelle zuletzt eine Datei ohne Einmalcode geliefert hat. */
-        volatile boolean flowing;
-        /** Zählt die gesehenen Zwei-Faktor-Seiten; {@link #challenge} ist die letzte. */
-        volatile long challenges;
-        volatile SignInChallenge challenge;
+        /** Wann die Quelle zuletzt eine Datei ohne Einmalcode geliefert hat; {@code null} seit einer Code-Seite. */
+        volatile java.time.Instant delivered;
+        /** Die zuletzt gesehene Zwei-Faktor-Seite, solange keine Datei kam; {@code null} sonst. */
+        volatile Seen seen;
     }
+
+    /**
+     * Eine Zwei-Faktor-Seite der Quelle: wann sie kam und wie viele Anforderungen der Quelle vor dem Abruf erledigt waren
+     * ({@link SignInRequests#settlements}).
+     */
+    private record Seen(SignInChallenge challenge, java.time.Instant at, long settlements) {
+    }
+
+    /** So lange nach einer gelieferten Datei gilt die Sitzung als freigeschaltet: Abrufe laufen dann parallel. */
+    private static final java.time.Duration FLOWING = java.time.Duration.ofMinutes(1);
+    /**
+     * So lange gilt eine gesehene Zwei-Faktor-Seite ohne Anforderung (etwa ohne Oberfläche); danach fragt ein Abruf die
+     * Quelle wieder und bringt eine frische Seite mit frischem Code.
+     */
+    private static final java.time.Duration SEEN = java.time.Duration.ofMinutes(5);
 
     private final ConcurrentHashMap<String, SourceGate> gates = new ConcurrentHashMap<>();
 
     /**
      * Der eine Weg aller geschützten Dateiabrufe (Bild, Anhang, Vorschau) an die Quelle (#571), damit es wie im
-     * Enterprise AI Client je Quelle nur eine Zwei-Faktor-Sitzung und einen Code gibt:
+     * Enterprise AI Client je Quelle nur eine Zwei-Faktor-Sitzung, eine Mail und einen Code gibt:
      * <ul>
      *   <li>Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht kein Abruf ans
      *       Netz; geworfen wird, was die Quelle geworfen hätte, mit der Seite der offenen Anforderung.</li>
-     *   <li>Bis die Quelle eine Datei ohne Einmalcode geliefert hat, läuft je Quelle immer nur ein Abruf. Sonst trafen
-     *       gleichzeitige Abrufe (Lese-Ansicht, Bildauftrag, Vorschauen) je eine eigene Zwei-Faktor-Seite mit eigener
-     *       Sitzung und eigener Mail, und der eingegebene Code passte nicht zur Sitzung (HTTP 500). Wer währenddessen
-     *       wartete, fragt die Quelle nicht mehr, wenn der laufende Abruf auf die Zwei-Faktor-Seite traf, sondern
-     *       bekommt dieselbe Seite.</li>
-     *   <li>Nach einer gelieferten Datei laufen Abrufe wieder parallel, auch die schon wartenden. Länger als
-     *       {@code DOWNLOAD_WAIT} wartet niemand auf den Abruf vor ihm ({@code RATE_LIMITED}).</li>
+     *   <li>Hat ein Abruf die Zwei-Faktor-Seite bekommen, geht kein weiterer ans Netz, bis ein Code angenommen oder die
+     *       Anforderung abgelehnt ist ({@link SignInRequests#settlements}); jeder bekommt dieselbe Seite. Auch dann, wenn
+     *       noch niemand die Anforderung angelegt hat: die Lese-Ansicht versucht für ein draw.io-Bild zuerst die
+     *       Quelldaten ohne Anforderung und gleich danach die Vorschau; jede neue Abfrage hätte eine neue Seite mit
+     *       neuer Mail gebracht, und der Code der ersten passte nicht mehr (HTTP 500). Ohne Anforderung gilt die Seite
+     *       {@code SEEN} lang; ohne {@link SignInRequests} (nichts kann freischalten) gar nicht.</li>
+     *   <li>Ohne frisch gelieferte Datei (seit {@code FLOWING}) läuft je Quelle immer nur ein Abruf, auch wenn eine
+     *       freigeschaltete Sitzung inzwischen abgelaufen sein kann; erst nach einer gelieferten Datei wieder parallel,
+     *       auch die schon wartenden. Länger als {@code DOWNLOAD_WAIT} wartet niemand auf den Abruf vor ihm
+     *       ({@code RATE_LIMITED}).</li>
      * </ul>
      * Lesen auf Abruf schließt sich damit derselben Anforderung an ({@link #unlocking}), ein Auftrag wartet auf sie
      * ({@link SignInRequests#await}). Abgelegte Dateien kommen weiter aus der Ablage. Code und Token sieht diese Stelle
@@ -1424,11 +1441,10 @@ public class Assets {
      */
     private <T> T fromSource(String sourceId, java.util.function.Supplier<T> call) {
         SourceGate state = gates.computeIfAbsent(sourceId, id -> new SourceGate());
-        if (state.flowing) {
+        if (flowing(state)) {
             holdWhileSignInOpen(sourceId);
-            return observed(state, call);
+            return observed(sourceId, state, call);
         }
-        long before = state.challenges;
         try {
             if (!state.probe.tryLock(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
                 throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
@@ -1442,16 +1458,18 @@ public class Assets {
         boolean locked = true;
         try {
             holdWhileSignInOpen(sourceId);
-            SignInChallenge seen = state.challenge;
-            if (state.challenges != before && seen != null) {
-                throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen, null);
+            Seen seen = state.seen;
+            if (seen != null && signIns != null && clock.instant().isBefore(seen.at().plus(SEEN))
+                    && settlements(sourceId) == seen.settlements()) {
+                throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen.challenge(),
+                        null);
             }
-            if (state.flowing) {
+            if (flowing(state)) {
                 // Der vorige Abruf hat eine Datei geliefert: wieder parallel, wer noch wartet, kommt sofort dran.
                 state.probe.unlock();
                 locked = false;
             }
-            return observed(state, call);
+            return observed(sourceId, state, call);
         } finally {
             if (locked) {
                 state.probe.unlock();
@@ -1459,15 +1477,26 @@ public class Assets {
         }
     }
 
-    private <T> T observed(SourceGate state, java.util.function.Supplier<T> call) {
+    private boolean flowing(SourceGate state) {
+        java.time.Instant delivered = state.delivered;
+        return delivered != null && clock.instant().isBefore(delivered.plus(FLOWING));
+    }
+
+    private long settlements(String sourceId) {
+        return signIns == null ? 0 : signIns.settlements(sourceId);
+    }
+
+    private <T> T observed(String sourceId, SourceGate state, java.util.function.Supplier<T> call) {
+        // Vor dem Abruf gezählt: wird währenddessen ein Code angenommen, gilt die Seite, die der Abruf mitbringt, nicht.
+        long settledBefore = settlements(sourceId);
         try {
             T result = call.get();
-            state.flowing = true;
+            state.seen = null;
+            state.delivered = clock.instant();
             return result;
         } catch (SignInRequiredException e) {
-            state.flowing = false;
-            state.challenge = e.challenge();
-            state.challenges++;
+            state.delivered = null;
+            state.seen = e.challenge() == null ? null : new Seen(e.challenge(), clock.instant(), settledBefore);
             throw e;
         }
     }
