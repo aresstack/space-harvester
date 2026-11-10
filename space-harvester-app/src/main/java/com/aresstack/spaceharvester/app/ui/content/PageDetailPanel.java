@@ -1003,6 +1003,7 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
+                images.released(found.released());
                 images.show(found.state(), found.reason(), found.warnings(), found.images());
             }
         }, error -> {
@@ -1035,6 +1036,7 @@ public final class PageDetailPanel extends JPanel {
             if (shown != page) {
                 return;
             }
+            images.released(found.released());
             images.show(found.state(), found.reason(), found.warnings(), found.images());
             feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
                     : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
@@ -1092,7 +1094,7 @@ public final class PageDetailPanel extends JPanel {
                     entry.reason(), preview));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
-                List.copyOf(rows), found.describedCount());
+                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId));
     }
 
     /**
@@ -1130,7 +1132,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private record ImageRows(PassagesTab.State state, String reason, List<String> warnings,
-                             List<ImagesTab.Image> images, int described) {
+                             List<ImagesTab.Image> images, int described, boolean released) {
     }
 
     private void harvestAssets() {

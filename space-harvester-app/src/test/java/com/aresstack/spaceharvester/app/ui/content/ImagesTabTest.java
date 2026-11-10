@@ -51,8 +51,16 @@ class ImagesTabTest {
             tab.clickRelease();
             tab.describing(true);
             seen.add(String.valueOf(tab.releaseOffered()));
+            // Codex zu #567: Nach „einmalig“ gibt es Beschreibungen, die Quelle bleibt aber gesperrt – die Knöpfe
+            // bleiben, „Bilder beschreiben“ nicht.
+            tab.describing(false);
+            tab.released(false);
+            tab.show(PassagesTab.State.CURRENT, null, List.of(new ImagesTab.Image("Plan", ImagesTab.Status.DESCRIBED,
+                    "Ein Plan", null, null)));
+            seen.add(String.valueOf(tab.releaseOffered()));
+            seen.add(String.valueOf(tab.describeOffered()));
         });
-        assertThat(seen).containsExactly("false", "true", "false", "einmalig", "freigeben", "false");
+        assertThat(seen).containsExactly("false", "true", "false", "einmalig", "freigeben", "false", "true", "false");
     }
 
     @Test
