@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
@@ -17,6 +18,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
@@ -98,10 +100,136 @@ class AssetsSignInTest {
                 .isExactlyInstanceOf(SignInRequiredException.class);
     }
 
+    @Test
+    void whileTheRequestIsOpenFurtherReadsJoinItWithoutAskingTheSourceAgain() {
+        List<String> logs = capture();
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("https://wiki.example.org/download/bild.png",
+                "Bild", null, "image/png", null);
+
+        SignInPendingException first = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.content(list(), "att1", false, "anna"));
+        assertThat(source.calls).hasValue(1);
+
+        // Weitere Anhänge, Bilder der Ansicht, Vorschauen und Ströme: dieselbe Anforderung, keine neue Abfrage, die
+        // eine neue Zwei-Faktor-Seite und damit eine neue Sitzung brächte (#571).
+        List<Throwable> held = List.of(
+                org.assertj.core.api.Assertions.catchThrowable(() -> assets.content(list(), "att2", false, "anna")),
+                org.assertj.core.api.Assertions.catchThrowable(() -> assets.viewImage("wiki", "100", "1", image,
+                        "anna")),
+                org.assertj.core.api.Assertions.catchThrowable(() -> assets.preview(list(), "att1",
+                        AttachmentPreview.THUMBNAIL, false, "anna")),
+                org.assertj.core.api.Assertions.catchThrowable(() -> assets.stream(list(), "att2", false, "bernd")));
+        assertThat(held).allSatisfy(e -> assertThat(e).isExactlyInstanceOf(SignInPendingException.class)
+                .extracting(x -> ((SignInPendingException) x).signInRequestId()).isEqualTo(first.signInRequestId()));
+        assertThat(signIns.ownedBy(first.signInRequestId(), "bernd")).isTrue();
+        // Ohne Halter wie von der Quelle: Anmeldung erforderlich, ebenfalls ohne Abfrage.
+        assertThatThrownBy(() -> assets.content(list(), "att2", false))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        assertThatThrownBy(() -> assets.content(list(), "att2", false, null))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        assertThatThrownBy(() -> assets.viewImage("wiki", "100", "1", image))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        assertThat(source.calls).hasValue(1);
+
+        assertThat(signIns.submit(first.signInRequestId(), "123456".toCharArray()))
+                .isEqualTo(SignInRequest.Answer.ACCEPTED);
+
+        // Der Code ging an die Seite der ersten Abfrage, zu der die Sitzung noch passt.
+        assertThat(source.codes).containsExactly("123456");
+        assertThat(source.submittedOnPage).containsExactly(1);
+        assertThat(assets.content(list(), "att2", false, "anna").content()).isEqualTo(CONTENT);
+        assertThat(assets.viewImage("wiki", "100", "1", image, "anna").content()).isEqualTo(CONTENT);
+        assertThat(source.calls).hasValue(3);
+        assertThat(logs).isNotEmpty().noneMatch(line -> line.contains("123456"));
+    }
+
+    @Test
+    void whileTheRequestIsOpenStoredFilesStillComeFromTheStore() {
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+        source.locked = false;
+        assets.content(list(), "att1", true);
+        source.locked = true;
+
+        SignInPendingException pending = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.content(list(), "att2", false, "anna"));
+        int calls = source.calls.get();
+
+        assertThat(signIns.pendingFor("wiki")).map(SignInRequest::id).contains(pending.signInRequestId());
+        assertThat(assets.content(list(), "att1", false, "anna").content()).isEqualTo(CONTENT);
+        assertThat(source.calls).hasValue(calls);
+    }
+
+    private final java.util.logging.Logger logger = java.util.logging.Logger.getLogger("com.aresstack");
+    private java.util.logging.Handler handler;
+
+    @org.junit.jupiter.api.AfterEach
+    void release() {
+        if (handler != null) {
+            logger.removeHandler(handler);
+            logger.setLevel(null);
+        }
+    }
+
+    /** Protokollzeilen unter {@code com.aresstack} ({@code System.Logger} läuft hier über java.util.logging). */
+    private List<String> capture() {
+        List<String> lines = new java.util.concurrent.CopyOnWriteArrayList<>();
+        logger.setLevel(java.util.logging.Level.ALL);
+        handler = new java.util.logging.Handler() {
+            @Override
+            public void publish(java.util.logging.LogRecord record) {
+                lines.add(java.text.MessageFormat.format(String.valueOf(record.getMessage()),
+                        record.getParameters() == null ? new Object[0] : record.getParameters()));
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        return lines;
+    }
+
     private static final class LockedSource implements HarvestSource {
 
         volatile boolean locked = true;
         final List<String> codes = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** Jede Abfrage einer Datei, auch die abgewiesene: jede brächte bei Confluence eine neue Zwei-Faktor-Seite. */
+        final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        /** Die Seite (Nummer der Abfrage), an die ein Code ging. */
+        final List<Integer> submittedOnPage = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public java.util.Set<SourceCapability> capabilities() {
+            java.util.Set<SourceCapability> capabilities = java.util.EnumSet.copyOf(HarvestSource.super.capabilities());
+            capabilities.add(SourceCapability.ATTACHMENT_PREVIEWS);
+            return capabilities;
+        }
+
+        private void guarded() {
+            int page = calls.incrementAndGet();
+            if (locked) {
+                throw new SignInRequiredException(id(), "Einmalcode verlangt", new Challenge(page), null);
+            }
+        }
+
+        @Override
+        public byte[] viewImage(ViewImage image, long maxBytes) {
+            guarded();
+            return CONTENT;
+        }
+
+        @Override
+        public byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
+            guarded();
+            return CONTENT;
+        }
 
         @Override
         public String id() {
@@ -147,13 +275,17 @@ class AssetsSignInTest {
 
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
-            if (locked) {
-                throw new SignInRequiredException(id(), "Einmalcode verlangt", new Challenge(), null);
-            }
+            guarded();
             return new AttachmentFile(attachment, CONTENT, NOW);
         }
 
         private final class Challenge implements SignInChallenge {
+
+            private final int page;
+
+            Challenge(int page) {
+                this.page = page;
+            }
 
             @Override
             public String service() {
@@ -183,6 +315,7 @@ class AssetsSignInTest {
             @Override
             public SignInChallenge submit(char[] code) {
                 codes.add(new String(code));
+                submittedOnPage.add(page);
                 locked = false;
                 return null;
             }

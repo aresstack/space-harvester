@@ -224,6 +224,18 @@ public class SignInRequests {
         return Optional.ofNullable(bySource.get(sourceId)).map(Pending::view);
     }
 
+    /**
+     * Die Anmeldeseite der offenen Anforderung einer Quelle (#571). Solange es sie gibt, gehen geschützte Dateien der
+     * Quelle nicht ans Netz: jede weitere Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Sitzungs-Cookie die
+     * gemeinsame Sitzung der Quelle überschreibt, und der Code der ersten Seite passte beim Senden nicht mehr. Wer lesen
+     * will, schließt sich mit dieser Seite der offenen Anforderung an ({@link #open}, {@link #await}).
+     */
+    public synchronized Optional<SignInChallenge> pendingChallenge(String sourceId) {
+        purge();
+        return Optional.ofNullable(bySource.get(sourceId)).filter(pending -> pending.state == State.OPEN)
+                .map(pending -> pending.challenge);
+    }
+
     /** Die Anforderung, auf die ein Auftrag gerade wartet („Wartet auf Anmeldung“). */
     public synchronized Optional<SignInRequest> waiting(String jobId) {
         return bySource.values().stream().filter(pending -> pending.jobs.contains(jobId)).findFirst()

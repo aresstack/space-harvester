@@ -54,6 +54,21 @@ class SignInOnDemandTest {
     }
 
     @Test
+    void theOpenRequestKeepsTheChallengeOfTheFirstPageUntilItIsAccepted() {
+        Challenge first = new Challenge();
+        SignInRequest request = signIns.open("wiki", "anna", first);
+        signIns.open("wiki", "bernd", new Challenge());
+
+        // Weitere Leser schließen sich mit dieser Seite an, statt die Quelle erneut zu fragen (#571).
+        assertThat(signIns.pendingChallenge("wiki")).containsSame(first);
+        assertThat(signIns.pendingChallenge("andere")).isEmpty();
+
+        assertThat(signIns.submit(request.id(), "123456".toCharArray())).isEqualTo(SignInRequest.Answer.ACCEPTED);
+
+        assertThat(signIns.pendingChallenge("wiki")).isEmpty();
+    }
+
+    @Test
     void aRequestNobodyAnswersEndsAfterTheWait() {
         SignInRequest request = signIns.open("wiki", "anna", new Challenge());
 
