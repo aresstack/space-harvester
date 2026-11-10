@@ -116,6 +116,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** Hinweis, wenn die neue Web-Sitzung den schon gesendeten Code nicht annimmt (#571). */
     static final String NEW_SESSION_NOTE = "Mit Benutzer und Passwort neu angemeldet. Confluence hat dafür einen neuen "
             + "Code per E-Mail gesendet; bitte diesen Code eingeben.";
+    /** Nach der Anmeldung ohne Code (erster Schritt im Codefeld): Confluence schickt der neuen Sitzung einen Code. */
+    static final String LOGIN_NOTE = "Mit Benutzer und Passwort angemeldet. Confluence hat dafür einen Code per E-Mail "
+            + "gesendet; bitte diesen Code eingeben.";
 
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
 
@@ -1411,7 +1414,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          * und Passwort in einer neuen Web-Sitzung, deren Code-Seite der Code dann beantwortet. Die Sitzung, die der
          * Bearer-Abruf eröffnet hat, nimmt keinen Code an (HTTP 500, auch mit Basic). Nimmt die neue Seite den
          * schon gesendeten Code nicht an (Confluence schickt dann einen neuen), bleibt die Abfrage offen und fragt
-         * nur noch den Code ab. Danach laufen alle Dateiabrufe dieser Quelle über diese Sitzung, REST beim Token.
+         * nur noch den Code ab. Danach laufen alle Dateiabrufe dieser Quelle über diese Sitzung, REST beim Token. Ein
+         * leerer Code meldet nur an und fragt dann den Code der neuen Sitzung ab, ohne einen Code zu senden.
          */
         private SignInChallenge inNewWebSession(char[] code, WebLogin login, FileFetch<?> retry) {
             LOG.info("Quelle {}: Einmalcode für Abfrage {}: Dateiabruf in neuer Web-Sitzung mit Benutzeranmeldung über "
@@ -1431,6 +1435,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 throw sendFailure(e, false);
             }
             web = login;
+            if (code.length == 0) {
+                // Erster Schritt des Codefelds: nur anmelden. Den Code der Token-Sitzung nimmt Confluence hier ohnehin
+                // nicht an; gefragt wird nur der Code, den die neue Sitzung schickt (Angelo 10.11.2026).
+                return new Challenge(fresh, login, LOGIN_NOTE);
+            }
             Challenge inSession = new Challenge(fresh, login);
             SignInChallenge again;
             try {

@@ -122,7 +122,7 @@ class SignInSlotTest {
     }
 
     @Test
-    void aPatChallengeRequiresTemporaryCredentialsAndSubmitsThemWithTheOtp() throws Exception {
+    void aPatChallengeAsksOnlyForUserAndPasswordFirstAndSendsNoCode() throws Exception {
         SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
         java.util.concurrent.atomic.AtomicInteger bareSubmissions = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicReference<String> submittedLogin = new java.util.concurrent.atomic.AtomicReference<>();
@@ -183,26 +183,48 @@ class SignInSlotTest {
         SwingUtilities.invokeAndWait(() -> {
             assertThat(slot[0].shown().asksForLogin()).isTrue();
             assertThat(slot[0].loginFieldsVisible()).isTrue();
-            slot[0].codeField().setText("123456");
+            // Erster Schritt bei einem Token: nur Benutzername und Passwort, kein Codefeld (Angelo 10.11.2026).
+            assertThat(slot[0].usernameField().isVisible()).isTrue();
+            assertThat(slot[0].passwordField().isVisible()).isTrue();
+            assertThat(slot[0].codeField().isVisible()).isFalse();
             slot[0].submitButton().doClick();
             assertThat(slot[0].errorText()).isEqualTo(SignInSlot.LOGIN_REQUIRED);
-            assertThat(slot[0].codeField().getPassword()).as("keep OTP available while waiting for credentials")
-                    .containsExactly('1', '2', '3', '4', '5', '6');
             slot[0].usernameField().setText("maria");
             slot[0].passwordField().setText("temporary-password");
             slot[0].submitButton().doClick();
-            assertThat(slot[0].codeField().getPassword()).isEmpty();
             assertThat(slot[0].passwordField().getPassword()).isEmpty();
         });
 
         assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS))
                 .isEqualTo(SignInRequests.Outcome.UNLOCKED);
         assertThat(bareSubmissions).hasValue(0);
-        assertThat(submittedLogin).hasValue("maria:temporary-password:123456");
+        assertThat(submittedLogin).as("ohne Code").hasValue("maria:temporary-password:");
         await(() -> !slot[0].isVisible());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(slot[0].usernameField().getText()).isEmpty();
             assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        });
+    }
+
+    @Test
+    void theFieldsStandFlushUnderEachOtherAndAreEquallyWide() throws Exception {
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0] = new SignInSlot(() -> null, r -> java.util.Optional.empty());
+            // Alle drei sichtbar machen, um die Spalten zu messen.
+            slot[0].usernameField().setVisible(true);
+            slot[0].passwordField().setVisible(true);
+            slot[0].codeField().setVisible(true);
+            java.awt.Container form = slot[0].codeField().getParent();
+            form.setSize(form.getPreferredSize());
+            form.doLayout();
+            int x = slot[0].usernameField().getX();
+            int width = slot[0].usernameField().getWidth();
+            assertThat(slot[0].passwordField().getX()).isEqualTo(x);
+            assertThat(slot[0].codeField().getX()).isEqualTo(x);
+            assertThat(slot[0].passwordField().getWidth()).isEqualTo(width);
+            assertThat(slot[0].codeField().getWidth()).isEqualTo(width);
+            assertThat(slot[0].usernameField().getParent()).isSameAs(form);
         });
     }
 

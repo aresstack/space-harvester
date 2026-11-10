@@ -800,6 +800,36 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * Erster Schritt des Codefelds bei einem Token (Angelo 10.11.2026): nur Benutzer und Passwort, kein Code. Die neue
+     * Web-Sitzung meldet sich an, sendet keinen Code und fragt nur den Code ab, den Confluence ihr schickt.
+     */
+    @Test
+    void anEmptyCodeOnlySignsInAndAsksForTheCodeOfTheNewSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit(new char[0], "anna", "pw-value".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.error()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(seen).as("angemeldet, aber kein Code gesendet").endsWith("web-port image anna:pw-value")
+                .doesNotContain("web-port code anna:pw-value");
+        assertThat(again.submit("111111".toCharArray())).isNull();
+        assertThat(seen).last().isEqualTo("web-port code anna:pw-value");
+    }
+
+    /**
      * #571: Scheitert das erste Absenden in der neuen Web-Sitzung (Netz), bleibt deren Code-Seite die Abfrage; der
      * nächste Versuch geht wieder an diese Sitzung, ohne eine weitere zu öffnen.
      */
