@@ -1329,7 +1329,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
             FileFetch<?> retry = retries.get(challenge);
             if (webPorts != null && retry != null) {
-                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPorts.get()), retry);
+                LOG.info("Quelle {}: Einmalcode-Abfrage {}: neue Cookie-Sitzung vorbereiten", id,
+                        instance(challenge));
+                KnowledgeSourcePort sessionPort = webPorts.get();
+                LOG.info("Quelle {}: Einmalcode-Abfrage {}: Cookie-Sitzung {} bereit, Dateiabruf beginnt", id,
+                        instance(challenge), instance(sessionPort));
+                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), sessionPort), retry);
             }
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} mit Benutzeranmeldung gesendet", id,
                     instance(challenge), instance(port));
