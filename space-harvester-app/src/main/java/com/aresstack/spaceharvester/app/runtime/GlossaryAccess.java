@@ -135,14 +135,15 @@ public interface GlossaryAccess {
     Optional<Entry> remove(String id, long revision);
 
     /**
-     * Startet „Fachbegriffe ermitteln“ für alle berechtigten Seiten ({@code null, null}), eine Quelle oder einen Space.
+     * Startet „Fachbegriffe ermitteln“ für alle berechtigten Quellen ({@code null, null}), eine Quelle oder einen Space:
+     * je Quelle ein Auftrag.
      *
      * @throws AiUnavailableException ohne KI-Dienst
-     * @throws NotAllowedException    wenn die Quelle nicht freigegeben ist
+     * @throws NotAllowedException    wenn keine Quelle im Umfang freigegeben ist
      */
-    JobStatus classify(String sourceId, String spaceKey);
+    List<JobStatus> classify(String sourceId, String spaceKey);
 
-    /** Stand des Laufs; {@code progress} zählt entdeckte, verarbeitete Seiten und geschriebene Einträge. */
+    /** Stand eines Auftrags; {@code progress} zählt gefragte und beantwortete Kandidaten und geschriebene Einträge. */
     JobStatus classification(String jobId);
 
     /** Bricht den Lauf ab; was schon vorgeschlagen ist, bleibt, Benutzerentscheidungen ändert er nie. */
