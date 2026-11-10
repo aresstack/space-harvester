@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
@@ -39,6 +40,7 @@ class SourceDataConfiguration {
                                     ObjectProvider<AssetStore> assets, ObjectProvider<ExportArtifactWriter> exports,
                                     ObjectProvider<TermRelations> relations,
                                     ObjectProvider<FileResolutionCache> resolutions,
+                                    ObjectProvider<Glossary> glossary,
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
@@ -51,6 +53,7 @@ class SourceDataConfiguration {
             stores.assets(files, writer, clock);
         }
         relations.ifAvailable(found -> stores.termRelations(found, resolutions.getIfAvailable()));
+        glossary.ifAvailable(stores::glossary);
         facts.ifAvailable(found -> stores.factEdits(found, clock));
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {
             stores.inventoryLog(log);
