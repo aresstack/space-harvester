@@ -592,4 +592,111 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(SignInFailures.describe(failure, required.challenge().service()))
                 .isEqualTo("Proxy verlangt Anmeldung (HTTP 407) – Ziel wiki.example.org");
     }
+
+    /**
+     * #571: Mit Personal Access Token nimmt die Zwei-Faktor-Anmeldung von Confluence den Einmalcode nicht an und
+     * antwortet mit HTTP 500. Die Quelle meldet das klar statt der bloßen 500.
+     */
+    @Test
+    void aServerErrorAfterSendingTheCodeWithATokenSaysTokensAreNotAccepted() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(serverErrorAfterSending()), null, null, true);
+
+        SourceAccessException failure = submitFails(source);
+
+        assertThat(failure.reason()).isEqualTo(SourceAccessException.Reason.ACCESS_DENIED);
+        assertThat(SignInFailures.describe(failure, "wiki.example.org"))
+                .isEqualTo(SignInFailures.tokenLoginRejected(500) + " – Ziel wiki.example.org")
+                .contains("Personal Access Token").contains("Benutzer und Passwort");
+    }
+
+    /** #571: Mit Benutzer und Passwort bleibt es bei der Art „Quelle antwortet mit HTTP 500“. */
+    @Test
+    void aServerErrorAfterSendingTheCodeWithAPasswordStaysAPlainHttpStatus() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(serverErrorAfterSending()), null, null, false);
+
+        SourceAccessException failure = submitFails(source);
+
+        assertThat(SignInFailures.describe(failure, "wiki.example.org"))
+                .isEqualTo("Quelle antwortet mit HTTP 500 – Ziel wiki.example.org");
+    }
+
+    private static SourceAccessException submitFails(KnowledgeSourceHarvestSource source) {
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+        return org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> required.challenge().submit("000000".toCharArray()), SourceAccessException.class);
+    }
+
+    /** Eine Abfrage, deren Senden Confluence wie bei HaVdB mit Token mit HTTP 500 beantwortet. */
+    private static OneTimeCodeChallenge serverErrorAfterSending() {
+        return new OneTimeCodeChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
+                        "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
+            }
+
+            @Override
+            public OneTimeCodeChallenge resend() throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "kein neuer Code");
+            }
+        };
+    }
+
+    /** Ein Port, dessen Suche die Abfrage verlangt. */
+    private static KnowledgeSourcePort lockedBy(OneTimeCodeChallenge challenge) {
+        return new SearchableKnowledgeSource() {
+            @Override
+            public List<SourceSearchHit> search(SourceQuery query) throws KnowledgeSourceException {
+                throw new OneTimeCodeRequiredException("Einmalcode verlangt", challenge, null);
+            }
+
+            @Override
+            public SourceAddress sourceId() {
+                return SourceAddress.of("confluence://wiki.example.org");
+            }
+
+            @Override
+            public List<com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource> discover(SourceScope scope) {
+                return List.of();
+            }
+
+            @Override
+            public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "nicht hier");
+            }
+
+            @Override
+            public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+                return List.of();
+            }
+        };
+    }
 }
