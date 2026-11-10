@@ -12,7 +12,8 @@ import java.awt.Graphics2D;
 
 /**
  * Die Statuszeile unten im Hauptfenster. Ihr Hintergrund ist zugleich der Fortschrittsbalken der Aufträge: er füllt
- * sich von ganz links bis ganz rechts (auch unter „© AresStack“). Darüber links der Stand der App, mittig Schritt,
+ * sich von ganz links bis ganz rechts (auch unter „© AresStack“). Darüber ganz links ein Hinweis, der eine Eingabe
+ * verlangt (Einmalcode), dann der Stand der App, mittig Schritt,
  * Abbrechen bzw. Endzustand des Auftrags, rechts das Copyright. Bei 100 % bleibt der Balken noch {@link #FADE_DELAY_MS}
  * Millisekunden stehen und verschwindet dann; der Text („Fertig“) bleibt.
  *
@@ -45,6 +46,15 @@ final class StatusLine extends JPanel {
      *             kürzt der Bereich selbst (etwa einen langen Hinweis mit „…“), {@code null} ohne
      */
     StatusLine(JProgressBar model, JComponent lead, JComponent west, JComponent center, JComponent east) {
+        this(model, null, lead, west, center, east);
+    }
+
+    /**
+     * @param alert ein Hinweis ganz links vor allem anderen, der Aufmerksamkeit verlangt (etwa „Confluence verlangt
+     *              einen Einmalcode“, {@link SignInNotice}); er zeigt sich selbst nur, solange er gilt, {@code null} ohne
+     */
+    StatusLine(JProgressBar model, JComponent alert, JComponent lead, JComponent west, JComponent center,
+               JComponent east) {
         super(new BorderLayout(12, 0));
         this.model = model;
         setOpaque(true);
@@ -54,13 +64,18 @@ final class StatusLine extends JPanel {
         // Der Stand links darf die Mitte (Abbrechen, Endzustand) nicht verdrängen: höchstens 40 % der Breite,
         // ein langer Text (Pfad des Bestands) wird mit „…“ gekürzt.
         // Nur der Stand der App wird auf 40 % gekürzt; der Stand des Bereichs (mit Abbrechen) steht davor.
-        if (lead == null) {
+        if (lead == null && alert == null) {
             add(new Capped(west, 0.4), BorderLayout.WEST);
         } else {
             // FlowLayout statt BoxLayout: Es fragt die (von der Breite abhängigen) Größen jedes Mal neu ab.
             JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
             left.setOpaque(false);
-            left.add(new Capped(lead, LEAD_SHARE));
+            if (alert != null) {
+                left.add(new Capped(alert, LEAD_SHARE));
+            }
+            if (lead != null) {
+                left.add(new Capped(lead, LEAD_SHARE));
+            }
             left.add(new Capped(west, 0.4));
             add(left, BorderLayout.WEST);
         }
