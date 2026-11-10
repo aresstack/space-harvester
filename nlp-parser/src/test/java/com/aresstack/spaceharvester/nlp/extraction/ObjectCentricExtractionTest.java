@@ -341,5 +341,38 @@ class ObjectCentricExtractionTest {
         assertEquals("werden … ausgewertet", evaluated.predicate().text(), "Hilfsverb vor dem Einschub zählt");
         assertEquals(Voice.PASSIVE, evaluated.voice());
         assertTrue(evaluated.withRole(Role.TIME).isEmpty(), "„Daten“ ist nie eine Zeitangabe");
+
+        Statement worked = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("arbeiten"))
+                .findFirst().orElseThrow();
+        assertEquals("gearbeitet … wird", worked.predicate().text(),
+                "Artikel und Nomen eines gereihten Verbs dazwischen lassen das Hilfsverb im Verbalkomplex");
+        assertEquals(Voice.PASSIVE, worked.voice());
+        assertFalse(worked.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+    }
+
+    @Test
+    void anAuxiliaryBehindACommaThatOpensAClauseStaysWithTheClause() {
+        ObjectCentricAnalysis analysis = Gold.analyze("clause-boundaries.conllu");
+
+        Statement collected = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("sammeln") && s.sentence() == 4).findFirst().orElseThrow();
+        assertEquals("hat … gesammelt", collected.predicate().text(), "„werden“ des Relativsatzes gehört nicht dazu");
+        assertEquals(Voice.ACTIVE, collected.voice());
+        assertTrue(collected.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        assertEquals("Das Amt", text(analysis, collected.core(Role.ACTOR)));
+
+        Statement managed = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 4).findFirst().orElseThrow();
+        assertEquals("verwaltet werden", managed.predicate().text());
+        assertEquals(Voice.PASSIVE, managed.voice());
+
+        Statement gathered = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("sammeln") && s.sentence() == 5).findFirst().orElseThrow();
+        assertEquals("gesammelt hat", gathered.predicate().text(), "das Verb hat sein Hilfsverb schon");
+        assertEquals(Voice.ACTIVE, gathered.voice());
+        assertEquals("das Amt", text(analysis, gathered.core(Role.ACTOR)));
+        Statement reports = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 5).findFirst().orElseThrow();
+        assertEquals("verwaltet werden", reports.predicate().text());
     }
 }

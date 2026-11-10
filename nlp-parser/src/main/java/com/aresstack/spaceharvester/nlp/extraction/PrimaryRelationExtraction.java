@@ -257,8 +257,8 @@ final class PrimaryRelationExtraction {
 
     /**
      * Die Hilfsverben des Prädikats. Ein Hilfsverb vor dem Verb (linke Satzklammer) zählt wie vom Parser angehängt;
-     * eines dahinter nur im Verbalkomplex, also wenn dazwischen nur Verben, Konjunktionen, Kommas und deren
-     * Abhängige stehen („ausgewertet werden“, „geprüft und genehmigt wird“). Ein Hilfsverb jenseits einer
+     * eines dahinter nur im Verbalkomplex, also wenn dazwischen nur Verben, Konjunktionen, Kommas und direkte
+     * Abhängige dieser Verben stehen (ohne Komma dazwischen auch mittelbare) („ausgewertet werden“, „geprüft und genehmigt wird“). Ein Hilfsverb jenseits einer
      * Teilsatzgrenze („stellt … bereit, die … ausgewertet werden“) gehört dem Verb direkt davor.
      */
     static List<Token> auxiliaries(Sentence sentence, Token verb) {
@@ -282,19 +282,60 @@ final class PrimaryRelationExtraction {
         if (auxiliary.id() < verb.id()) {
             return true;
         }
+        boolean strict = false;
+        for (int id = verb.id() + 1; id < auxiliary.id(); id++) {
+            Token between = sentence.token(id);
+            strict |= ",".equals(between.form());
+            // „gesammelt hat und … verwaltet werden“: das Verb hat sein Hilfsverb schon, kein geteiltes.
+            strict |= auxiliary(between) && between.head() == verb.id();
+        }
         for (int id = verb.id() + 1; id < auxiliary.id(); id++) {
             Token between = sentence.token(id);
             if (between.hasUpos("VERB", "AUX", "CCONJ") || ",".equals(between.form())) {
                 continue;
             }
             Token head = sentence.head(between);
-            boolean ofAVerbInBetween = head != null && head.id() > verb.id() && head.id() < auxiliary.id()
+            boolean ofAVerbBetween = head != null && head.id() > verb.id() && head.id() < auxiliary.id()
                     && head.hasUpos("VERB", "AUX");
-            if (!ofAVerbInBetween) {
+            // Ohne Komma zählen auch mittelbar Abhängige der mit dem Verb gereihten Verben (conj).
+            if (!ofAVerbBetween && (strict || !underAConjunctBetween(sentence, between, verb, auxiliary.id()))) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Ob {@code token} (auch mittelbar, etwa ein Artikel über sein Nomen) von einem mit {@code verb} gereihten Verb
+     * ({@code conj}, auch über mehrere Glieder) zwischen {@code verb} und {@code to} abhängt, ohne den Bereich dabei
+     * zu verlassen („gearbeitet und der Antrag geprüft wird“). Nur ohne Komma dazwischen und nur über gereihte Verben:
+     * Ein Relativ- oder Adverbialsatz („gesammelt, mit denen gearbeitet wird“; ohne Komma „abgelehnt weil … gelagert
+     * werden“) hängt nicht als {@code conj} am Verb.
+     */
+    private static boolean underAConjunctBetween(Sentence sentence, Token token, Token verb, int to) {
+        Token head = sentence.head(token);
+        // Jeder Schritt bleibt im Bereich; mehr Schritte als Wörter darin gibt es in einem Baum nicht.
+        for (int steps = to - verb.id(); head != null && head.id() > verb.id() && head.id() < to && steps > 0;
+             steps--) {
+            if (head.hasUpos("VERB", "AUX")) {
+                return conjunctOf(sentence, head, verb);
+            }
+            head = sentence.head(head);
+        }
+        return false;
+    }
+
+    /** Ob {@code candidate} über eine Kette von {@code conj}-Kanten an {@code verb} hängt. */
+    private static boolean conjunctOf(Sentence sentence, Token candidate, Token verb) {
+        Token current = candidate;
+        for (int steps = sentence.tokens().size(); current != null && "conj".equals(current.deprel()) && steps > 0;
+             steps--) {
+            if (current.head() == verb.id()) {
+                return true;
+            }
+            current = sentence.head(current);
+        }
+        return false;
     }
 
     private static Token firstOf(Sentence sentence, int head, String... relations) {

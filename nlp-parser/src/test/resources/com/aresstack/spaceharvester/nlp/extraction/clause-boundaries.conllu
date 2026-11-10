@@ -1,6 +1,10 @@
 # Gold-Analysen (MIT) zu Ursache E (ADR 0024, Ursachenmatrix): Teilsatzgrenzen, die eine Übernahme und ein
 # Hilfsverb NICHT verhindern dürfen. Satz 1: geschlossener Relativsatz vor dem gereihten Verb; Satz 2: geteiltes
-# Passiv im Verbalkomplex am Satzende; Satz 3: Hilfsverb vor einem Einschub mit eigenem Verb.
+# Passiv im Verbalkomplex am Satzende; Satz 3: Hilfsverb vor einem Einschub mit eigenem Verb; Satz 4: geteiltes
+# Hilfsverb hinter einem gereihten Verb mit eigener Nominalphrase (Artikel hängt nur mittelbar am Verb). Satz 5
+# (Gegenprobe, Anhängung wie MaltParser in datenh.conllu Satz 4): Passiv-„werden“ des Relativsatzes hängt am
+# Partizip davor; es gehört trotzdem nicht ihm, denn hinter dem Komma beginnt ein Teilsatz. Satz 6 (Gegenprobe):
+# gereihte dass-Sätze ohne Komma, „werden“ am ersten Verb, das sein Hilfsverb „hat“ schon hat.
 # sent_id = 1
 # text = Der Sachbearbeiter prüft den Antrag, den der Kunde einreicht, und genehmigt ihn.
 1	Der	der	DET	ART	_	2	det	_	_
@@ -47,3 +51,52 @@
 9	ausgewertet	auswerten	VERB	VVPP	_	0	root	_	SpaceAfter=No
 10	.	.	PUNCT	$.	_	9	punct	_	_
 
+# sent_id = 4
+# text = Er meldet, dass gearbeitet und der Antrag geprüft wird.
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	meldet	melden	VERB	VVFIN	_	0	root	_	SpaceAfter=No
+3	,	,	PUNCT	$,	_	5	punct	_	_
+4	dass	dass	SCONJ	KOUS	_	5	mark	_	_
+5	gearbeitet	arbeiten	VERB	VVPP	_	2	ccomp	_	_
+6	und	und	CCONJ	KON	_	9	cc	_	_
+7	der	der	DET	ART	_	8	det	_	_
+8	Antrag	Antrag	NOUN	NN	_	9	nsubj:pass	_	_
+9	geprüft	prüfen	VERB	VVPP	_	5	conj	_	_
+10	wird	werden	AUX	VAFIN	_	5	aux:pass	_	SpaceAfter=No
+11	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 5
+# text = Das Amt hat die Daten gesammelt, die in den Verfahren verwaltet werden.
+1	Das	der	DET	ART	_	2	det	_	_
+2	Amt	Amt	NOUN	NN	_	6	nsubj	_	_
+3	hat	haben	AUX	VAFIN	_	6	aux	_	_
+4	die	der	DET	ART	_	5	det	_	_
+5	Daten	Daten	NOUN	NN	_	6	obj	_	_
+6	gesammelt	sammeln	VERB	VVPP	_	0	root	_	SpaceAfter=No
+7	,	,	PUNCT	$,	_	12	punct	_	_
+8	die	der	PRON	PRELS	_	12	nsubj:pass	_	_
+9	in	in	ADP	APPR	_	11	case	_	_
+10	den	der	DET	ART	_	11	det	_	_
+11	Verfahren	Verfahren	NOUN	NN	_	12	obl	_	_
+12	verwaltet	verwalten	VERB	VVPP	_	5	acl:relcl	_	_
+13	werden	werden	AUX	VAFIN	_	6	aux:pass	_	SpaceAfter=No
+14	.	.	PUNCT	$.	_	6	punct	_	_
+
+# sent_id = 6
+# text = Er meldet, dass das Amt die Daten gesammelt hat und die Berichte verwaltet werden.
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	meldet	melden	VERB	VVFIN	_	0	root	_	SpaceAfter=No
+3	,	,	PUNCT	$,	_	9	punct	_	_
+4	dass	dass	SCONJ	KOUS	_	9	mark	_	_
+5	das	der	DET	ART	_	6	det	_	_
+6	Amt	Amt	NOUN	NN	_	9	nsubj	_	_
+7	die	der	DET	ART	_	8	det	_	_
+8	Daten	Daten	NOUN	NN	_	9	obj	_	_
+9	gesammelt	sammeln	VERB	VVPP	_	2	ccomp	_	_
+10	hat	haben	AUX	VAFIN	_	9	aux	_	_
+11	und	und	CCONJ	KON	_	14	cc	_	_
+12	die	der	DET	ART	_	13	det	_	_
+13	Berichte	Bericht	NOUN	NN	_	14	nsubj:pass	_	_
+14	verwaltet	verwalten	VERB	VVPP	_	9	conj	_	_
+15	werden	werden	AUX	VAFIN	_	9	aux:pass	_	SpaceAfter=No
+16	.	.	PUNCT	$.	_	2	punct	_	_
