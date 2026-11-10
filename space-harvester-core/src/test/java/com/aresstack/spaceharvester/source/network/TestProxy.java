@@ -17,6 +17,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * das Ziel weiter und merkt sich Anfragezeile und Kopfzeilen. {@code CONNECT host:port} öffnet einen Tunnel zum Ziel
  * und leitet die Bytes (TLS) unverändert in beide Richtungen; ist das Ziel nicht erreichbar, antwortet er mit 502.
  * Mit {@link #requireBasic} verlangt er eine Anmeldung und antwortet ohne passende {@code Proxy-Authorization} mit 407.
+ * Einen Inhalt mit {@code Content-Length} (etwa ein Formular-POST) liest er ganz und gibt ihn weiter bzw. verwirft ihn
+ * nach einer 407, damit die nächste Anfrage auf derselben Verbindung lesbar bleibt.
  */
 public final class TestProxy implements AutoCloseable {
 
@@ -93,6 +95,7 @@ public final class TestProxy implements AutoCloseable {
                 requestLines.add(requestLine);
                 headerBlocks.add(head);
                 String[] parts = requestLine.split(" ");
+                byte[] body = in.readNBytes(contentLength(head));
                 if (!authorized(head)) {
                     out.write(("HTTP/1.1 407 Proxy Authentication Required\r\n"
                             + "Proxy-Authenticate: Basic realm=\"test-proxy\"\r\nContent-Length: 0\r\n\r\n")
@@ -113,6 +116,7 @@ public final class TestProxy implements AutoCloseable {
                             .replaceAll("(?i)\r\n(proxy-connection|connection|proxy-authorization):[^\r]*", "")
                             .replace("\r\n\r\n", "\r\nConnection: close\r\n\r\n");
                     upstream.getOutputStream().write(forwarded.getBytes(StandardCharsets.ISO_8859_1));
+                    upstream.getOutputStream().write(body);
                     upstream.getOutputStream().flush();
                     upstream.getInputStream().transferTo(out);
                 }
@@ -150,6 +154,17 @@ public final class TestProxy implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** Länge des Inhalts laut {@code Content-Length}; ohne die Kopfzeile null. */
+    private static int contentLength(String head) {
+        for (String line : head.split("\r\n")) {
+            int colon = line.indexOf(':');
+            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase("Content-Length")) {
+                return Integer.parseInt(line.substring(colon + 1).trim());
+            }
+        }
+        return 0;
     }
 
     private static String readHead(InputStream in) throws IOException {
