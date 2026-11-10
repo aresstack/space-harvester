@@ -45,12 +45,87 @@ class ActivitiesActionsTest {
                 .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(job(JobType.SYNC, JobState.COMPLETED, false).lifecycle().actions())
                 .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
-        // Kein Zustand bietet mehr Aktionen an, als die Spalte breit ist.
+    }
+
+    /**
+     * Feste Plätze (Angelo 10.11.2026): ↻ Nur Fehler, Play ⇄ Pause, Stop ⇄ Neu erzwingen, Mülltonne. Jede Zeile hat
+     * gleich viele Knöpfe, kein Platz ist je leer; was der Zustand nicht erlaubt, ist blass.
+     */
+    @Test
+    void everyStateFillsTheSameFourSlotsAndTheTrashIsAlwaysThere() {
         for (JobType type : JobType.values()) {
             for (JobState state : JobState.values()) {
-                assertThat(job(type, state, false).lifecycle().actions().size())
-                        .isLessThanOrEqualTo(ActivitiesView.MAX_LIFECYCLE_ACTIONS);
+                for (boolean pausing : new boolean[] {false, true}) {
+                    JobStatus job = job(type, state, pausing);
+                    List<RowActions.Action> slots = ActivitiesView.stateActions(job, action -> { });
+                    assertThat(slots).as(type + " " + state).hasSize(ActivitiesView.Slot.values().length);
+                    assertThat(slots).as("kein Platz leer").noneMatch(RowActions.Action::empty);
+                    assertThat(slots.get(ActivitiesView.Slot.DELETE.ordinal()).enabled()).as("Mülltonne").isTrue();
+                }
             }
+        }
+        assertThat(ActivitiesView.SLOTS).isEqualTo(5 + 1 + 2 + 4);
+    }
+
+    @Test
+    void running() {
+        assertSlots(job(JobType.EXPORT, JobState.RUNNING, false), null, JobAction.PAUSE, JobAction.CANCEL);
+    }
+
+    @Test
+    void waiting() {
+        assertSlots(job(JobType.EXPORT, JobState.QUEUED, false), null, JobAction.START_NOW, JobAction.CANCEL);
+    }
+
+    @Test
+    void pauseRequested() {
+        assertSlots(job(JobType.EXPORT, JobState.RUNNING, true), null, null, JobAction.CANCEL);
+    }
+
+    @Test
+    void cancelRequested() {
+        JobStatus job = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, true, Instant.EPOCH, null, null, null, null, Map.of(), false, false,
+                null);
+        assertSlots(job, null, null, null);
+        // Der Platz bleibt Stop, blass, solange der Abbruch läuft.
+        assertThat(ActivitiesView.stateActions(job, a -> { }).get(ActivitiesView.Slot.STOP_FORCE.ordinal()).icon())
+                .isSameAs(ActivitiesView.actionIcon(JobAction.CANCEL));
+    }
+
+    @Test
+    void paused() {
+        assertSlots(paused(PauseReason.USER), null, JobAction.RESUME, null);
+    }
+
+    @Test
+    void failedOrCancelled() {
+        assertSlots(job(JobType.EXPORT, JobState.FAILED, false), null, JobAction.RESUME, JobAction.FORCE_REFRESH);
+        assertSlots(job(JobType.EXPORT, JobState.CANCELLED, false), null, JobAction.RESUME, JobAction.FORCE_REFRESH);
+    }
+
+    @Test
+    void completed() {
+        assertSlots(job(JobType.EXPORT, JobState.COMPLETED, false), null, null, JobAction.FORCE_REFRESH);
+    }
+
+    @Test
+    void completedWithErrors() {
+        assertSlots(withFailures(), JobAction.RETRY_FAILED, null, JobAction.FORCE_REFRESH);
+    }
+
+    /** Die drei Zustandsplätze vor der Mülltonne; {@code null} heißt: Symbol steht da, aber blass. */
+    private static void assertSlots(JobStatus job, JobAction retry, JobAction playPause, JobAction stopForce) {
+        var state = job.lifecycle();
+        assertThat(ActivitiesView.actionFor(ActivitiesView.Slot.RETRY, state)).isEqualTo(retry);
+        assertThat(ActivitiesView.actionFor(ActivitiesView.Slot.PLAY_PAUSE, state)).isEqualTo(playPause);
+        assertThat(ActivitiesView.actionFor(ActivitiesView.Slot.STOP_FORCE, state)).isEqualTo(stopForce);
+        assertThat(ActivitiesView.actionFor(ActivitiesView.Slot.DELETE, state)).isEqualTo(JobAction.DELETE);
+        List<RowActions.Action> slots = ActivitiesView.stateActions(job, a -> { });
+        assertThat(slots).extracting(RowActions.Action::enabled)
+                .containsExactly(retry != null, playPause != null, stopForce != null, true);
+        if (playPause != null) {
+            assertThat(slots.get(1).icon()).isSameAs(ActivitiesView.actionIcon(playPause));
         }
     }
 

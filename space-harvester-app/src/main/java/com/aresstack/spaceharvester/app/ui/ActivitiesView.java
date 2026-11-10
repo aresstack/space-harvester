@@ -126,7 +126,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 2 + MAX_LIFECYCLE_ACTIONS, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, SLOTS, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -895,14 +895,68 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon RETRY_FAILED = ComposerIcons.refresh();
     private static final javax.swing.Icon FORCE_REFRESH = ComposerIcons.download();
     /**
-     * Mehr Aktionen bietet kein Zustand an ({@link JobLifecycleState#actions()}); so breit ist die Spalte. Drei, weil
-     * ein beendeter Download neben Fortsetzen bzw. Nur Fehler auch Neu erzwingen und Löschen anbietet (ADR 0025).
+     * Feste Plätze je Zeile (Angelo 10.11.2026), damit Formate und Aktionen in jeder Zeile untereinander stehen: fünf
+     * Formate, ein freier Platz als Abstand, Diagnose, Inhalte, dann die Zustandsplätze {@link Slot}. Was ein Zustand
+     * nicht anbietet, bleibt ein freier Platz; Play/Pause und Löschen stehen immer da.
      */
-    static final int MAX_LIFECYCLE_ACTIONS = 3;
+    static final int SLOTS = 5 + 1 + 2 + Slot.values().length;
 
     /**
-     * Die Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, dann die des Zustands im Core in dessen
-     * Reihenfolge. Die Oberfläche rechnet nichts selbst: was der Zustand nicht nennt, gibt es nicht.
+     * Die Zustandsplätze rechts, von links nach rechts, alle immer sichtbar (Angelo 10.11.2026): Ein Platz wechselt
+     * sein Symbol, statt zu verschwinden; was der Zustand nicht erlaubt, ist blass.
+     */
+    enum Slot {
+        /** „Nur Fehler neu versuchen“ (↻). */
+        RETRY,
+        /** Play (Fortsetzen, Jetzt starten) ⇄ Pause. */
+        PLAY_PAUSE,
+        /** Stop, solange der Auftrag läuft oder wartet ⇄ „Neu erzwingen“, wenn er steht. */
+        STOP_FORCE,
+        /** Löschen, in jedem Zustand. */
+        DELETE
+    }
+
+    /**
+     * Welche Zustandsaktion auf einem Platz liegt, allein aus {@link JobLifecycleState#actions()} (State Object, ADR
+     * 0025). {@code null}, wenn der Zustand dort nichts anbietet; dann steht das Symbol blass da ({@link #idleIcon}).
+     */
+    static JobAction actionFor(Slot slot, JobLifecycleState state) {
+        return switch (slot) {
+            case RETRY -> state.allows(JobAction.RETRY_FAILED) ? JobAction.RETRY_FAILED : null;
+            case PLAY_PAUSE -> state.allows(JobAction.PAUSE) ? JobAction.PAUSE
+                    : state.allows(JobAction.RESUME) ? JobAction.RESUME
+                    : state.allows(JobAction.START_NOW) ? JobAction.START_NOW : null;
+            case STOP_FORCE -> state.allows(JobAction.CANCEL) ? JobAction.CANCEL
+                    : state.allows(JobAction.FORCE_REFRESH) ? JobAction.FORCE_REFRESH : null;
+            case DELETE -> JobAction.DELETE;
+        };
+    }
+
+    /** Das blasse Symbol eines Platzes, auf dem der Zustand nichts anbietet. */
+    static javax.swing.Icon idleIcon(Slot slot, JobLifecycleState state) {
+        return switch (slot) {
+            case RETRY -> RETRY_FAILED;
+            case PLAY_PAUSE -> RESUME;
+            // Steht der Auftrag, gehört der Platz zu „Neu erzwingen“, sonst zu Stop.
+            case STOP_FORCE -> state instanceof JobLifecycleState.Stopping ? CANCEL : FORCE_REFRESH;
+            case DELETE -> Glyph.TRASH;
+        };
+    }
+
+    /** Tooltip eines blassen Platzes: was dort sonst geht und warum nicht. */
+    static String idleTip(Slot slot, JobStatus job) {
+        String why = " · in diesem Zustand nicht möglich (" + Texts.state(job) + ")";
+        return switch (slot) {
+            case RETRY -> "Nur Fehler neu versuchen" + why;
+            case PLAY_PAUSE -> "Fortsetzen" + why;
+            case STOP_FORCE -> "Abbrechen bzw. neu erzwingen" + why;
+            case DELETE -> "Auftrag löschen";
+        };
+    }
+
+    /**
+     * Die Aktionen einer Zeile auf ihren festen Plätzen ({@link #SLOTS}): fünf Formate samt Analyse, Abstand, Diagnose,
+     * Inhalte, dann die Zustandsplätze. Die Belegung kommt allein vom Zustand im Core ({@link #actionFor}).
      */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
@@ -915,17 +969,41 @@ public final class ActivitiesView implements View {
             actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
                     : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
         }
+        actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
         actions.add(new RowActions.Action(DIAGNOSIS, failed ? "Fehler diagnostizieren" : "Diagnose ansehen", true,
                 () -> context.navigator().showDiagnosis(job.id())));
         boolean space = job.sourceId() != null && job.partitionKey() != null;
         actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
-        for (JobAction action : job.lifecycle().actions()) {
-            actions.add(new RowActions.Action(actionIcon(action), actionTip(action, job), true,
-                    () -> perform(job, action)));
+        actions.addAll(stateActions(job));
+        return actions;
+    }
+
+    /** Die Zustandsplätze einer Zeile; für Tests ohne Tabelle. */
+    List<RowActions.Action> stateActions(JobStatus job) {
+        return stateActions(job, action -> perform(job, action));
+    }
+
+    /** Die Zustandsplätze einer Zeile, immer {@link Slot#values()} viele, an festen Plätzen. */
+    static List<RowActions.Action> stateActions(JobStatus job, Consumer<JobAction> perform) {
+        JobLifecycleState state = job.lifecycle();
+        List<RowActions.Action> actions = new ArrayList<>();
+        for (Slot slot : Slot.values()) {
+            JobAction action = actionFor(slot, state);
+            actions.add(action != null
+                    ? new RowActions.Action(actionIcon(action), slotTip(action, job), true, () -> perform.accept(action))
+                    : new RowActions.Action(idleIcon(slot, state), idleTip(slot, job), false, () -> { }));
         }
         return actions;
+    }
+
+    /** Wie {@link #actionTip}; Löschen nennt, dass ein laufender Auftrag dafür erst abbricht. */
+    private static String slotTip(JobAction action, JobStatus job) {
+        if (action == JobAction.DELETE && !job.lifecycle().allows(JobAction.DELETE)) {
+            return "Auftrag löschen · bricht ihn vorher ab";
+        }
+        return actionTip(action, job);
     }
 
     static javax.swing.Icon actionIcon(JobAction action) {
@@ -974,7 +1052,14 @@ public final class ActivitiesView implements View {
      */
     void perform(JobStatus job, JobAction action) {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || !job.lifecycle().allows(action)) {
+        if (runtime == null) {
+            return;
+        }
+        if (action == JobAction.DELETE && !job.lifecycle().allows(JobAction.DELETE)) {
+            deleteRunning(runtime, job);
+            return;
+        }
+        if (!job.lifecycle().allows(action)) {
             return;
         }
         switch (action) {
@@ -1005,6 +1090,53 @@ public final class ActivitiesView implements View {
             } else if (action == JobAction.RESUME || action == JobAction.RETRY_FAILED
                     || action == JobAction.FORCE_REFRESH) {
                 show(after.id());
+            }
+            poll();
+        }, feedback::problem);
+    }
+
+    /** So lange wartet Löschen eines laufenden Auftrags auf das Ende des Abbruchs. */
+    static final java.time.Duration DELETE_WAIT = java.time.Duration.ofSeconds(30);
+
+    /**
+     * Löschen in jedem Zustand (Angelo 10.11.2026): Ein laufender oder wartender Auftrag bricht nach „Ja“ erst ab, dann
+     * wird er gelöscht, sobald der Core das Löschen erlaubt. Bricht er in {@link #DELETE_WAIT} nicht ab, bleibt er mit
+     * einem Hinweis stehen.
+     */
+    private void deleteRunning(AppRuntime runtime, JobStatus job) {
+        if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
+                + " wirklich löschen? Er wird dafür abgebrochen; der Auftrag und seine Diagnoseereignisse werden "
+                + "dauerhaft gelöscht. " + KEPT)) {
+            return;
+        }
+        Background.run(() -> {
+            var workspace = runtime.workspace();
+            JobStatus current = workspace.job(job.id());
+            if (current.lifecycle().allows(JobAction.CANCEL)) {
+                current = workspace.performJobAction(job.id(), JobAction.CANCEL);
+            }
+            long until = System.nanoTime() + DELETE_WAIT.toNanos();
+            while (!current.lifecycle().allows(JobAction.DELETE) && System.nanoTime() < until) {
+                Thread.sleep(250);
+                current = workspace.job(job.id());
+            }
+            if (!current.lifecycle().allows(JobAction.DELETE)) {
+                return false;
+            }
+            workspace.performJobAction(job.id(), JobAction.DELETE);
+            return true;
+        }, deleted -> {
+            if (deleted) {
+                if (job.id().equals(selectedId)) {
+                    selectedId = null;
+                    detail = null;
+                    table.clearSelection();
+                    render();
+                }
+                feedback.success("Auftrag gelöscht");
+            } else {
+                feedback.warning("Der Auftrag bricht noch ab",
+                        "Gelöscht werden kann er, sobald er abgebrochen ist.");
             }
             poll();
         }, feedback::problem);

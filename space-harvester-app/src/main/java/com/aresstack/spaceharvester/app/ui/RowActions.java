@@ -21,9 +21,15 @@ import java.util.function.IntFunction;
  */
 final class RowActions extends JComponent implements TableCellRenderer {
 
-    /** Eine Aktion einer Zeile. */
+    /** Eine Aktion einer Zeile; {@link #EMPTY} hält nur den Platz frei, damit die Spalten untereinander stehen. */
     record Action(Icon icon, String tooltip, boolean enabled, Runnable run) {
+        boolean empty() {
+            return icon == null;
+        }
     }
+
+    /** Ein freier Platz: nichts gezeichnet, kein Tooltip, kein Klick. */
+    static final Action EMPTY = new Action(null, null, false, () -> { });
 
     static final int SLOT = 28;
 
@@ -129,6 +135,9 @@ final class RowActions extends JComponent implements TableCellRenderer {
         int start = getWidth() - 4 - shown.size() * SLOT;
         for (int i = 0; i < shown.size(); i++) {
             Action action = shown.get(i);
+            if (action.empty()) {
+                continue;
+            }
             int x = start + i * SLOT;
             if (action.enabled() && row == hoverRow && i == hoverSlot) {
                 RoundHover.paint(graphics, x, 0, SLOT, getHeight(), false);
