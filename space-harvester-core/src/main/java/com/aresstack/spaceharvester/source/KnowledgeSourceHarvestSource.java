@@ -150,6 +150,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         this.title = title;
         this.port = port;
         this.inFlight = inFlight;
+        // Kennung der Adapter-Instanz (nicht geheim): Einmalcode-Abfrage, Absenden und Abrufe zeigen sie, damit das
+        // Protokoll zeigt, ob alles über dieselbe Instanz und damit dieselbe Web-Sitzung läuft (#571).
+        LOG.info("Quelle {} geöffnet: Adapter-Instanz {}", id, instance(port));
         this.scope = port instanceof PartitionListingSource ? null : scope;
         this.restriction = port instanceof PartitionListingSource ? scope : null;
     }
@@ -1121,6 +1124,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private SourceAccessException accessFailure(KnowledgeSourceException e) {
         if (e instanceof OneTimeCodeRequiredException required) {
             // ADR 0018: die Einmalcode-Abfrage des Adapters geht an den Auftrag, nicht als bloße Verweigerung.
+            LOG.info("Quelle {}: Einmalcode-Abfrage {} von Adapter-Instanz {}", id, instance(required.challenge()),
+                    instance(port));
             return new SignInRequiredException(id, e.getMessage(), new Challenge(required.challenge()), e);
         }
         if (e instanceof RateLimitedException) {
@@ -1142,6 +1147,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             return new SourceAccessException(id, reason, "Quelle: " + reason, null);
         }
         return new SourceAccessException(id, reason, e.getMessage(), e);
+    }
+
+    /** Nicht geheime Kennung eines Objekts fürs Protokoll: gleiche Kennung, dasselbe Objekt. */
+    static String instance(Object object) {
+        return object == null ? "-" : "#" + Integer.toHexString(System.identityHashCode(object));
     }
 
     /** Die Einmalcode-Abfrage des Adapters als Abfrage des Core; Sitzung und Formular bleiben im Adapter. */
@@ -1180,9 +1190,17 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
         @Override
         public SignInChallenge submit(char[] code) {
+            // Nie der Code, nur welche Abfrage über welche Instanz gesendet wird und wie es ausging (#571).
+            LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} gesendet", id, instance(challenge),
+                    instance(port));
             try {
-                return next(challenge.submit(code));
+                OneTimeCodeChallenge again = challenge.submit(code);
+                LOG.info("Quelle {}: Einmalcode für Abfrage {}: {}", id, instance(challenge),
+                        again == null ? "angenommen" : "neue Abfrage " + instance(again));
+                return next(again);
             } catch (KnowledgeSourceException e) {
+                LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
+                        e.getClass().getSimpleName(), e.kind());
                 throw sendFailure(e);
             }
         }

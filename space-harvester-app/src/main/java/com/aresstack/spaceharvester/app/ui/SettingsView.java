@@ -529,7 +529,7 @@ public final class SettingsView implements View {
     }
 
     /** Wie logback.xml: {@code SPACE_HARVESTER_LOG_DIR} oder {@code <Benutzerordner>/.space-harvester/logs}. */
-    static Path logDirectory() {
+    public static Path logDirectory() {
         String configured = System.getenv("SPACE_HARVESTER_LOG_DIR");
         return configured == null || configured.isBlank()
                 ? Path.of(System.getProperty("user.home"), ".space-harvester", "logs") : Path.of(configured);

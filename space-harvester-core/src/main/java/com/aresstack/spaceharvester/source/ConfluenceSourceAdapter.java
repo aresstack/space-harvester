@@ -44,14 +44,17 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
 
     /** Ob die Quelle wie im Enterprise AI Client geöffnet wird ({@link #desktop()}) statt mit den Dienst-Standards. */
     private final boolean desktop;
+    /** Nur Desktop: Ordner für HTML-Antworten statt Dateien wie im EAC (neben dem Protokoll) oder {@code null}. */
+    private final java.nio.file.Path diagnosticsDirectory;
 
     /** Mit den Standards des Dienstes: Netzfehler und 5xx zweimal wiederholt, keine Weiterleitung auf fremde Hosts. */
     public ConfluenceSourceAdapter() {
-        this(false);
+        this(false, null);
     }
 
-    private ConfluenceSourceAdapter(boolean desktop) {
+    private ConfluenceSourceAdapter(boolean desktop, java.nio.file.Path diagnosticsDirectory) {
         this.desktop = desktop;
+        this.diagnosticsDirectory = diagnosticsDirectory;
     }
 
     /**
@@ -61,7 +64,18 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
      * Sitzung mit eigenem Code per Mail; der EAC wiederholt nicht. Eigene {@code options} der Quelle gelten weiter.
      */
     public static ConfluenceSourceAdapter desktop() {
-        return new ConfluenceSourceAdapter(true);
+        return desktop(null);
+    }
+
+    /**
+     * Wie {@link #desktop()}, und der Confluence-Adapter wird gebaut wie im Enterprise AI Client 0.80.98
+     * ({@code AdapterAssembly.sourceProviders}): ohne asynchronen Transport (Seiten über denselben UrlConnection-Weg
+     * wie Dateien und Einmalcode) und mit Diagnoseordner für HTML-Antworten statt Dateien (#571).
+     *
+     * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
+     */
+    public static ConfluenceSourceAdapter desktop(java.nio.file.Path diagnosticsDirectory) {
+        return new ConfluenceSourceAdapter(true, diagnosticsDirectory);
     }
 
     /** Schlüssel, die der Adapter selbst setzt und die nicht über {@code options} kommen dürfen. */
@@ -158,8 +172,12 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }
         String thumbprint = certificate.enabled() ? certificate.thumbprint() : null;
-        KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, context.routes(), context.userAgent(),
-                trust, thumbprint, context.async());
+        // Desktop wie der EAC: kein asynchroner Transport (WebClient), Diagnoseordner neben dem Protokoll (#571).
+        KnowledgeSourceProvider provider = desktop
+                ? ConfluenceSources.desktopProvider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
+                        diagnosticsDirectory)
+                : ConfluenceSources.provider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
+                        context.async());
         SourceSettings settings = settings(config, desktop);
         List<String> invalid = provider.validate(settings);
         if (!invalid.isEmpty()) {
