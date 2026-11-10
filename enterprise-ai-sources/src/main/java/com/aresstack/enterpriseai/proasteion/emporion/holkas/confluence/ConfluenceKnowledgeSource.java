@@ -157,6 +157,7 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
     private final ConfluenceConfig config;
     private final Pattern addressPattern;
     private final ConfluenceRestClient client;
+    private final ConfluenceHttpTransport transport;
     private final SecretProvider secrets;
     private final VaultEntryOptions options;
     /** Nur bei {@link AsyncConfluenceKnowledgeSource}: asynchroner Transport und Executor der JSON-Abbildung. */
@@ -195,10 +196,19 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
         this.config = config;
         this.addressPattern = ConfluenceLinks.addressPattern();
         this.client = new ConfluenceRestClient(config, transport);
+        this.transport = transport;
         this.secrets = secrets;
         this.options = options;
         this.async = async;
         this.mapping = mapping;
+    }
+
+    /**
+     * Create an independent Confluence web session using the existing HTTP transport and TLS configuration.
+     * Keep cookies and OTP state isolated without reloading the client certificate or reopening the source.
+     */
+    public ConfluenceKnowledgeSource newWebSession() {
+        return new ConfluenceKnowledgeSource(sourceId, config, transport, secrets, options);
     }
 
     @Override
