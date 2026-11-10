@@ -220,7 +220,19 @@ final class SetupWizard {
                 wizard.completed();
             }
         });
-        Dialogs.present(dialog, new Dimension(860, 600));
+        Dimension size = preferredContentSize(java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .getMaximumWindowBounds());
+        wizard.root.setPreferredSize(size);
+        Dialogs.present(dialog, new Dimension(Math.min(860, size.width), Math.min(600, size.height)));
+    }
+
+    /**
+     * Bound the dialog content to the usable display area, leaving room for its header, border and taskbar.
+     * Otherwise an oversized first step can put the fixed navigation below the bottom edge of the screen.
+     */
+    static Dimension preferredContentSize(java.awt.Rectangle screen) {
+        return new Dimension(Math.max(320, Math.min(900, screen.width - 96)),
+                Math.max(260, Math.min(600, screen.height - 120)));
     }
 
     /** Beim Start: nur, solange die Datei keinen Abschluss kennt. */
