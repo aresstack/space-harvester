@@ -732,23 +732,37 @@ class KnowledgeSourceHarvestSourceTest {
         List<String> seen = new java.util.ArrayList<>();
         WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
         WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
-        List<WebFiles> opened = new java.util.ArrayList<>();
+        int[] opened = {0};
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
                 tokenPort, null, null, true, () -> {
-                    opened.add(webPort);
+                    opened[0]++;
                     return webPort;
                 });
+        assertThat(opened[0]).isZero();
         HarvestSource.ViewImage image =
                 new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
                         null, null, null);
+        // Wie das Codefeld: Anforderung öffnen, dann Code mit Benutzer und Passwort über SignInRequests senden. In
+        // beta.364 hing genau dieses Absenden ohne Protokollzeile (#571); es muss sofort zurückkommen.
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
         SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
                 () -> source.viewImage(image, 1000), SignInRequiredException.class);
-        assertThat(required.challenge().asksForLogin()).isTrue();
+        // Die zweite Web-Sitzung entsteht, wenn Confluence den Code anfordert, nicht beim Start und nicht beim Absenden.
+        assertThat(opened[0]).isEqualTo(1);
+        assertThat(source.webPort()).isSameAs(webPort);
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "anna", required.challenge());
+        assertThat(request.asksForLogin()).isTrue();
         char[] password = "pw-value".toCharArray();
 
-        assertThat(required.challenge().submit("000000".toCharArray(), "anna", password)).isNull();
+        assertThat(org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10),
+                () -> signIns.submit(request.id(), "000000".toCharArray(), "anna", password)))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
 
-        assertThat(opened).hasSize(1);
+        assertThat(password).containsOnly('\0');
+        assertThat(opened[0]).isEqualTo(1);
         assertThat(seen).containsExactly("token-port image -:pat-value", "web-port image anna:pw-value",
                 "web-port code anna:pw-value");
         assertThat(source.viewImage(image, 1000)).containsExactly(1, 2, 3);
@@ -796,12 +810,8 @@ class KnowledgeSourceHarvestSourceTest {
         List<String> seen = new java.util.ArrayList<>();
         WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
         WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "failFirst");
-        int[] opened = {0};
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
-                tokenPort, null, null, true, () -> {
-                    opened[0]++;
-                    return webPort;
-                });
+                tokenPort, null, null, true, () -> webPort);
         HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
                 null);
         SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
@@ -814,7 +824,6 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(again.asksForLogin()).isFalse();
         assertThat(again.error()).isEqualTo("Verbindung abgelehnt (ConnectException) – Ziel wiki.example.org");
         assertThat(again.submit("000000".toCharArray())).isNull();
-        assertThat(opened[0]).isEqualTo(1);
         assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
     }
 

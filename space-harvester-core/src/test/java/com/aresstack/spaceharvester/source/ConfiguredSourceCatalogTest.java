@@ -147,6 +147,26 @@ class ConfiguredSourceCatalogTest {
                 .hasMessageContaining("sources[0] (id=docs): options.maxFileMegabytes darf höchstens 64 sein");
     }
 
+    /**
+     * #571: Eine Quelle mit Token kann eine zweite Instanz für Dateien mit Benutzer und Passwort öffnen, tut es beim
+     * Start aber nicht, sondern erst, wenn Confluence den Code anfordert; dann ist es eine eigene Instanz.
+     */
+    @Test
+    void aTokenSourceOpensItsSecondWebSessionOnlyOnDemand() {
+        ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(
+                source("pat", new Auth(AuthType.PAT, null, null, "token")),
+                source("basic", new Auth(AuthType.BASIC, "harvester", "secret", null))), "test");
+
+        KnowledgeSourceHarvestSource pat = (KnowledgeSourceHarvestSource) catalog.find("pat").orElseThrow();
+        KnowledgeSourceHarvestSource basic = (KnowledgeSourceHarvestSource) catalog.find("basic").orElseThrow();
+
+        assertThat(pat.opensWebSessions()).isTrue();
+        assertThat(pat.webPort()).isNull();
+        assertThat(pat.openWebPort()).isNotNull().isNotSameAs(pat.port()).isSameAs(pat.webPort());
+        assertThat(pat.webPort().getClass()).isEqualTo(pat.port().getClass());
+        assertThat(basic.opensWebSessions()).isFalse();
+    }
+
     @Test
     void toStringNeverShowsSecrets() {
         SourceSettingsConfig config = source("wiki", new Auth(AuthType.BASIC, "harvester", "geheim-123", null));

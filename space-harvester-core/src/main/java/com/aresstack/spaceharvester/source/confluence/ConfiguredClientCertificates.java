@@ -37,6 +37,13 @@ final class ConfiguredClientCertificates implements ConfluenceSourceProvider.Cli
     private final SecretProvider secrets;
     private final X509TrustManager trust;
     private final String thumbprint;
+    /**
+     * Schon geladene TLS-Kontexte je Alias, Datei und Passwort-Verweis: eine zweite Instanz des Ports derselben Quelle
+     * (Web-Sitzung mit Benutzer und Passwort, #571) lädt Windows-MY bzw. die PKCS12-Datei nicht noch einmal. Nur
+     * Erfolge; ein Fehler wird beim nächsten Mal neu versucht.
+     */
+    private final java.util.Map<java.util.List<Object>, SSLContext> loaded =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * @param trust      Server-Vertrauen der Quelle; {@code null} = JVM-Standard
@@ -58,6 +65,18 @@ final class ConfiguredClientCertificates implements ConfluenceSourceProvider.Cli
      * ({@link WebClientConfluenceTransport}), der eine {@code SSLEngine} statt einer Socket-Fabrik braucht.
      */
     SSLContext sslContext(String alias, Path keyStoreFile, SecretRef passwordRef) {
+        java.util.List<Object> key = java.util.Arrays.asList(alias, keyStoreFile,
+                passwordRef == null ? null : passwordRef.id());
+        SSLContext known = loaded.get(key);
+        if (known != null) {
+            return known;
+        }
+        SSLContext context = load(alias, keyStoreFile, passwordRef);
+        loaded.put(key, context);
+        return context;
+    }
+
+    private SSLContext load(String alias, Path keyStoreFile, SecretRef passwordRef) {
         char[] password = null;
         try {
             KeyStore store;

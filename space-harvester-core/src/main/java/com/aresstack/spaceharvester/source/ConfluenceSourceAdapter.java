@@ -216,8 +216,13 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             // Startpunkte und Tiefe wie beim Indexieren im Client gelten auch beim Abgleich; ohne eigene Startpunkte
             // (Standard alle Spaces) bleibt die Auflistung je Space unverändert.
             SourceScope scope = provider.scope(settings);
+            // Mit Token bei Bedarf eine zweite Instanz mit eigener Web-Sitzung für Dateiabrufe mit Benutzer und Passwort
+            // (#571): nur der Port aus demselben Anbieter, mit dem schon geladenen Zertifikat, ohne Netz.
+            java.util.function.Supplier<com.aresstack.enterpriseai.source.api.KnowledgeSourcePort> webPorts =
+                    config.auth().type() == SourceSettingsConfig.AuthType.PAT
+                            ? () -> provider.open(SourceAddress.of(config.id()), settings) : null;
             return new OpenedSource(port, delegated,
-                    scope.startPoints().equals(List.of(ALL_SPACES)) ? null : scope);
+                    scope.startPoints().equals(List.of(ALL_SPACES)) ? null : scope, webPorts);
         } catch (ClientCertificateException e) {
             throw new InvalidSourceConfigurationException(List.of("client-certificate: " + e.getMessage()));
         }

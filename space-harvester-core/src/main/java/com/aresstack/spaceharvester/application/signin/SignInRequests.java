@@ -320,6 +320,9 @@ public class SignInRequests {
             if (pending == null) {
                 return SignInRequest.Answer.GONE;
             }
+            // Erste Zeile des Absendens: fehlt danach jede weitere, steht im Protokoll, wo es hängt (#571).
+            LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} wird gesendet{1}", pending.sourceId,
+                    username == null || password == null ? "" : " (mit Benutzeranmeldung)");
             synchronized (pending.sending) {
                 SignInChallenge challenge;
                 synchronized (this) {

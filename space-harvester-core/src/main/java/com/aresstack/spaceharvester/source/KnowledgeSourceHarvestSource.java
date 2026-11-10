@@ -130,11 +130,17 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     private final boolean tokenLogin;
     /**
-     * Öffnet für eine Quelle mit Personal Access Token eine weitere Adapter-Instanz mit eigener, leerer Web-Sitzung
+     * Öffnet für eine Quelle mit Personal Access Token eine weitere Instanz des Ports mit eigener, leerer Web-Sitzung
      * (#571); {@code null} ohne Token. Die Zwei-Faktor-Anmeldung nimmt den Code nur in einer Web-Sitzung an, die mit
      * Benutzer und Passwort entstand; eine Sitzung, die ein Bearer-Abruf eröffnet hat, endet beim Absenden mit HTTP 500.
+     * Geöffnet wird erst, wenn die Zwei-Faktor-Anmeldung den Code anfordert, und nur der Port: gleicher Anbieter,
+     * gleiche Einstellungen, schon geladenes Zertifikat, ohne Netz und ohne Anmeldung (die kommt erst mit dem
+     * Dateiabruf nach dem Absenden).
      */
     private final java.util.function.Supplier<KnowledgeSourcePort> webPorts;
+    /** Die einmal geöffnete Instanz aus {@link #webPorts}, sonst {@code null}. */
+    private volatile KnowledgeSourcePort webPort;
+    private final Object webPortLock = new Object();
     /** Dateiabrufe mit Benutzer und Passwort über eine eigene Web-Sitzung, sobald einmal angegeben; sonst {@code null}. */
     private volatile WebLogin web;
     /**
@@ -185,8 +191,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * @param webPorts für eine Quelle mit Token: öffnet eine weitere Adapter-Instanz derselben Quelle für Dateiabrufe
-     *                 mit Benutzer und Passwort (#571); {@code null} ohne
+     * @param webPorts für eine Quelle mit Token: öffnet bei Bedarf eine weitere Instanz des Ports derselben Quelle für
+     *                 Dateiabrufe mit Benutzer und Passwort (#571); {@code null} ohne
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope, boolean tokenLogin,
@@ -203,6 +209,41 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         LOG.info("Quelle {} geöffnet: Adapter-Instanz {}", id, instance(port));
         this.scope = port instanceof PartitionListingSource ? null : scope;
         this.restriction = port instanceof PartitionListingSource ? scope : null;
+    }
+
+    /** Die Adapter-Instanz der Quelle (Prüfungen im Paket). */
+    KnowledgeSourcePort port() {
+        return port;
+    }
+
+    /** Die schon geöffnete zweite Instanz für Dateiabrufe mit Benutzer und Passwort, sonst {@code null} (#571). */
+    KnowledgeSourcePort webPort() {
+        return webPort;
+    }
+
+    /** Ob die Quelle für Dateiabrufe mit Benutzer und Passwort eine zweite Instanz öffnen kann (#571). */
+    boolean opensWebSessions() {
+        return webPorts != null;
+    }
+
+    /**
+     * Die zweite Instanz für Dateiabrufe mit Benutzer und Passwort, beim ersten Aufruf geöffnet (#571). Die Zeilen
+     * davor und danach zeigen im Protokoll, ob das Öffnen hängt oder scheitert.
+     */
+    KnowledgeSourcePort openWebPort() {
+        KnowledgeSourcePort opened = webPort;
+        if (opened != null) {
+            return opened;
+        }
+        synchronized (webPortLock) {
+            if (webPort == null) {
+                LOG.info("Quelle {}: neue Web-Sitzung für Bilder und Anhänge wird geöffnet", id);
+                KnowledgeSourcePort created = webPorts.get();
+                LOG.info("Quelle {}: neue Web-Sitzung geöffnet: Adapter-Instanz {}", id, instance(created));
+                webPort = created;
+            }
+            return webPort;
+        }
     }
 
     /** Ob die Seiten über {@code discover} und {@code load} kommen statt über eine Seitenliste je Partition. */
@@ -1229,6 +1270,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (OneTimeCodeRequiredException required) {
             if (webPorts != null) {
                 retries.put(required.challenge(), fetch);
+                // Die Zwei-Faktor-Anmeldung fordert gerade den Code an: jetzt die zweite Web-Sitzung bereitstellen,
+                // damit das Absenden nichts mehr öffnen muss. Scheitert das, versucht es das Absenden noch einmal.
+                try {
+                    openWebPort();
+                } catch (RuntimeException e) {
+                    LOG.info("Quelle {}: neue Web-Sitzung nicht geöffnet ({})", id, e.getClass().getSimpleName());
+                }
             }
             throw required;
         }
@@ -1328,8 +1376,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return submit(code);
             }
             FileFetch<?> retry = retries.get(challenge);
+            LOG.info("Quelle {}: Einmalcode für Abfrage {} wird mit Benutzeranmeldung gesendet ({})", id,
+                    instance(challenge), webPorts != null && retry != null ? "Dateiabruf in neuer Web-Sitzung"
+                            : "dieselbe Web-Sitzung");
             if (webPorts != null && retry != null) {
-                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPorts.get()), retry);
+                KnowledgeSourcePort files;
+                try {
+                    files = openWebPort();
+                } catch (RuntimeException e) {
+                    LOG.info("Quelle {}: neue Web-Sitzung nicht geöffnet ({})", id, e.getClass().getSimpleName());
+                    throw new SourceAccessException(id, SourceAccessException.Reason.UNAVAILABLE,
+                            "Neue Web-Sitzung für Bilder und Anhänge nicht geöffnet (" + e.getClass().getSimpleName()
+                                    + ")", e);
+                }
+                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), files), retry);
             }
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} mit Benutzeranmeldung gesendet", id,
                     instance(challenge), instance(port));
