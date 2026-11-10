@@ -205,6 +205,31 @@ public class TermRelations {
      * außer {@link RelationType#RELATED}, global oder für diese Quelle. Nie transitiv; Fundstellen der Ausweitung
      * prüft die Suche selbst.
      */
+    /**
+     * Für die Suche (#336, Teil 4): die bestätigten Gegenstücke eines Begriffs im Umfang der Suche. Global gilt
+     * überall; eine Beziehung der Quelle gilt in der Quelle und in jedem ihrer Spaces; eine Beziehung eines Space nur
+     * bei einer Suche in genau diesem Space. Nie Vorschläge, Abgelehntes oder „verwandt“; nicht transitiv.
+     *
+     * @param sourceId Quelle der Suche oder {@code null} für alle Quellen (dann nur globale Beziehungen)
+     * @param spaceKey Space der Suche oder {@code null} für die ganze Quelle
+     */
+    public List<String> expansions(AccessContext caller, String term, String sourceId, String spaceKey) {
+        String normalized = TermText.normalize(term);
+        Visibility visibility = new Visibility(caller);
+        Set<String> found = new LinkedHashSet<>();
+        for (TermRelation relation : store.all()) {
+            RelationScope scope = relation.scope();
+            boolean inScope = scope.global()
+                    || sourceId != null && scope.sourceId().equals(sourceId)
+                    && (scope.spaceKey() == null || scope.spaceKey().equals(spaceKey));
+            if (inScope && relation.status() == ReviewStatus.CONFIRMED && relation.type().expandsSearch()
+                    && relation.touches(normalized) && visibility.visible(relation).isPresent()) {
+                found.add(relation.other(normalized));
+            }
+        }
+        return List.copyOf(found);
+    }
+
     public List<String> expansions(AccessContext caller, String term, String sourceId) {
         String normalized = TermText.normalize(term);
         Visibility visibility = new Visibility(caller);

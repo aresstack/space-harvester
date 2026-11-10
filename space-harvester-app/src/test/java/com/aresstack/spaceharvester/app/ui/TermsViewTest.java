@@ -73,6 +73,185 @@ class TermsViewTest {
     }
 
     @Test
+    void theSynonymButtonSitsInTheTabRowAndTheRunReportsToTheStatusLine() throws Exception {
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView view = new TermsView(null);
+            seen.add(view.proposeSynonymsButton().getText());
+            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
+            view.tabs().select(TermsView.SYNONYMS);
+            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
+            // In der Reiterzeile (Aktionen rechts), nicht unter dem Inhalt.
+            seen.add(String.valueOf(SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.tabs())
+                    && !SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.synonyms().directory())));
+            seen.add(String.valueOf(view.synonymOverlay().content() == view.synonyms().directory()));
+            view.tabs().select(TermsView.RELATIONS);
+            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
+        });
+        assertThat(seen).containsExactly(TermsView.PROPOSE_SYNONYMS, "false", "true", "true", "true", "false");
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus done = job(
+                com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED, 12, 12, 3, null);
+        assertThat(TermsView.outcomeText(done, false)).isEqualTo("Synonymerkennung abgeschlossen: 3 Vorschläge neu "
+                + "oder geändert");
+        assertThat(TermsView.outcomeText(done, true)).endsWith(TermsView.RULES_ONLY);
+        assertThat(TermsView.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED, 12, 4,
+                0, null), false)).isEqualTo(TermsView.CANCELLED);
+        assertThat(TermsView.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.FAILED, 12, 4, 0,
+                new com.aresstack.spaceharvester.application.jobs.JobError("ai-unreachable", "KI-Dienst nicht "
+                        + "erreichbar")), false)).contains("KI-Dienst nicht erreichbar").contains("bleiben");
+        assertThat(TermsView.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 12, 4,
+                0, null))).isEqualTo(TermsView.PROPOSING + " 4 von 12 Paaren geprüft");
+        assertThat(TermsView.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 0, 0,
+                0, null))).isEqualTo(TermsView.PROPOSING);
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.JobStatus job(
+            com.aresstack.spaceharvester.application.jobs.JobState state, long discovered, long processed,
+            long written, com.aresstack.spaceharvester.application.jobs.JobError error) {
+        java.time.Instant now = java.time.Instant.parse("2026-11-10T00:00:00Z");
+        return new com.aresstack.spaceharvester.application.jobs.JobStatus("j1",
+                com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT, "*", null, "app", state,
+                new com.aresstack.spaceharvester.application.jobs.JobProgress(discovered, processed, written, 0),
+                error, false, now, now, state.terminal() ? now : null, null, null);
+    }
+
+    @Test
+    void theSynonymRunFormOffersAllSourcesASourceOrASpaceAndExplainsWhatTheRunCanDo() throws Exception {
+        com.aresstack.spaceharvester.application.sources.HarvestSource wiki = source("wiki", "Wiki");
+        com.aresstack.spaceharvester.application.sources.HarvestSource intern = source("intern", "intern");
+        com.aresstack.spaceharvester.application.terms.SynonymBudget budget =
+                new com.aresstack.spaceharvester.application.terms.SynonymBudget(2000, 500, 40);
+        java.util.function.Function<com.aresstack.spaceharvester.application.terms.SynonymScope,
+                com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability> availability = scope ->
+                new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(false,
+                        scope.global() ? List.of("wiki") : List.of(), scope.global() ? List.of("intern")
+                        : List.of(scope.sourceId()), budget);
+        SynonymRunForm[] form = new SynonymRunForm[1];
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SynonymRunForm(List.of(wiki, intern), id -> List.of(
+                    new com.aresstack.spaceharvester.application.sources.Partition("DEV", "Entwicklung", null)),
+                    availability, budget.maxJudgedPairs());
+            seen.add(form[0].scope().toString());
+            seen.add(String.valueOf(form[0].maxJudgedPairs()));
+        });
+        awaitEdt(() -> form[0].statusText().contains("wiki"));
+        SwingUtilities.invokeAndWait(() -> {
+            seen.add(form[0].statusText());
+            form[0].sourceBox().setSelectedIndex(1);
+            seen.add(form[0].scope().toString());
+        });
+        awaitEdt(() -> form[0].spaceBox().getItemCount() == 2);
+        SwingUtilities.invokeAndWait(() -> {
+            form[0].spaceBox().setSelectedIndex(1);
+            seen.add(form[0].request().scope().toString());
+            seen.add(String.valueOf(form[0].sourceBox().getItemAt(1)));
+        });
+        awaitEdt(() -> form[0].statusText().contains("Nicht freigegeben, kein Text an den Dienst: wiki"));
+        assertThat(seen).containsExactly(
+                com.aresstack.spaceharvester.application.terms.SynonymScope.ALL.toString(), "40",
+                SynonymRunForm.NO_MODEL + "\nFreigegeben: wiki.\nNicht freigegeben, kein Text an den Dienst: intern.",
+                com.aresstack.spaceharvester.application.terms.SynonymScope.source("wiki").toString(),
+                com.aresstack.spaceharvester.application.terms.SynonymScope.space("wiki", "DEV").toString(),
+                "Wiki (wiki)");
+    }
+
+    /**
+     * Codex zu #581: Der Hinweis kommt nach dem Packen. Der Hinweis bricht in der Breite des Formulars um und das
+     * Formular wächst mit ihm in die Höhe, statt ihn in einer Rasterzeile abzuschneiden (ohne Fenster prüfbar; das
+     * Fenster zieht {@code SynonymRunForm} selbst nach).
+     */
+    @Test
+    void theRunFormGrowsWithTheDescriptionInsteadOfClippingIt() throws Exception {
+        com.aresstack.spaceharvester.application.terms.SynonymBudget budget =
+                new com.aresstack.spaceharvester.application.terms.SynonymBudget(2000, 500, 40);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        List<String> many = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            many.add("quelle-" + i + "-mit-langem-namen");
+        }
+        java.util.function.Function<com.aresstack.spaceharvester.application.terms.SynonymScope,
+                com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability> availability = scope -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(true, many,
+                    many, budget);
+        };
+        SynonymRunForm[] form = new SynonymRunForm[1];
+        int[] packed = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SynonymRunForm(List.of(), id -> List.of(), availability, budget.maxJudgedPairs());
+            form[0].setSize(form[0].getPreferredSize().width, form[0].getPreferredSize().height);
+            form[0].doLayout();
+            packed[0] = form[0].getHeight();
+        });
+        release.countDown();
+        awaitEdt(() -> form[0].statusText().contains("quelle-11"));
+        SwingUtilities.invokeAndWait(() -> {
+            int width = 440;
+            form[0].setSize(width, form[0].getPreferredSize().height);
+            form[0].doLayout();
+            javax.swing.JTextArea status = (javax.swing.JTextArea) form[0].getComponent(1);
+            assertThat(form[0].getPreferredSize().height).isGreaterThan(packed[0]);
+            assertThat(status.getWidth()).isEqualTo(width);
+            assertThat(status.getHeight()).isGreaterThanOrEqualTo(
+                    ((com.aresstack.spaceharvester.app.ui.controls.WrappedText) status).heightFor(width));
+            assertThat(status.getY() + status.getHeight()).isLessThanOrEqualTo(form[0].getHeight());
+        });
+    }
+
+    private static com.aresstack.spaceharvester.application.sources.HarvestSource source(String id, String title) {
+        return new com.aresstack.spaceharvester.application.sources.HarvestSource() {
+            @Override
+            public String id() {
+                return id;
+            }
+
+            @Override
+            public String type() {
+                return "files";
+            }
+
+            @Override
+            public String title() {
+                return title;
+            }
+
+            @Override
+            public List<com.aresstack.spaceharvester.application.sources.Partition> partitions() {
+                return List.of();
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.sources.PageMetadataBatch pageMetadata(
+                    String partitionKey, String cursor, int limit) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.sources.PageMetadata pageMetadata(String pageId) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
+    private static void awaitEdt(java.util.function.BooleanSupplier condition) throws Exception {
+        for (int i = 0; i < 200; i++) {
+            boolean[] ok = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> ok[0] = condition.getAsBoolean());
+            if (ok[0]) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Bedingung nicht erfüllt");
+    }
+
+    @Test
     void aRowNamesExpansionsForAcronymsAndSpellingsForIdentifiers() {
         assertThat(TermsView.rows(List.of(
                 new TermQueries.TermSummary("API", "api", TermKind.ACRONYM, 43, 12, 2, List.of("API"),

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import java.time.Clock;
 import java.time.Duration;
@@ -53,6 +54,70 @@ class SignInSlotTest {
         await(() -> !slot[0].isVisible());
         // Angenommen: die Ansicht lädt die gezeigte Seite neu (Bilder und Anhänge ohne Sperre).
         await(() -> accepted.get() == 1);
+    }
+
+    @Test
+    void aFailedSendShowsTheCauseFromTheCoreAndASuccessfulOneClearsIt() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        SourceAccessException[] transport = {new SourceAccessException("wiki",
+                SourceAccessException.Reason.UNAVAILABLE, "Einmalcode nicht gesendet (HttpRetryException)",
+                new Exception("Einmalcode nicht gesendet", new java.net.HttpRetryException(
+                        "cannot retry due to proxy authentication, in streaming mode", 407)))};
+        SignInChallenge challenge = new SignInChallenge() {
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            public String title() {
+                return "";
+            }
+
+            public String message() {
+                return "";
+            }
+
+            public String error() {
+                return "";
+            }
+
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            public SignInChallenge submit(char[] code) {
+                if (transport[0] != null) {
+                    throw transport[0];
+                }
+                return null;
+            }
+
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        CompletableFuture<SignInRequests.Outcome> waiting = CompletableFuture.supplyAsync(() -> requests.await("wiki",
+                "job-1", challenge, Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0].codeField().setText("000000");
+            slot[0].submitButton().doClick();
+        });
+        // Statt der Pauschalmeldung die Ursache des Core (#571), ohne den Code.
+        await(() -> slot[0].errorText().equals("Proxy verlangt Anmeldung (HTTP 407) – Ziel wiki.example.org")
+                && slot[0].submitButton().isEnabled());
+        assertThat(slot[0].errorText()).doesNotContain(SignInSlot.SEND_FAILED).doesNotContain("000000");
+        assertThat(waiting).isNotDone();
+
+        transport[0] = null;
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0].codeField().setText("123456");
+            slot[0].submitButton().doClick();
+        });
+        assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
+        await(() -> !slot[0].isVisible());
     }
 
     /** Eine Abfrage der Quelle: „123456“ gilt, alles andere bringt „Code ungültig“. */

@@ -44,6 +44,7 @@ public final class SignInSlot extends JPanel {
     static final String RESEND_TEXT = "Code erneut senden";
     static final String DECLINE_TEXT = "Ohne Anmeldung fortfahren";
     static final String SENDING_TEXT = "Wird gesendet …";
+    /** Nur, wenn der Core keine Ursache an der Anforderung nennt ({@code SignInRequest.failure()} leer). */
     static final String SEND_FAILED = "Senden fehlgeschlagen: die Quelle ist nicht erreichbar.";
 
     private final Supplier<SignInRequests> source;
@@ -167,7 +168,10 @@ public final class SignInSlot extends JPanel {
         String hint = next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
         String where = next.title().isEmpty() ? next.service() : next.title();
         message.setText(hint + (where.isEmpty() ? "" : "\n(" + where + ")"));
-        String problem = localError != null ? localError : next.error();
+        // Die Ursache eines gescheiterten Sendens (407, TLS, Zeitüberschreitung …) nennt seit #571 der Core an der
+        // Anforderung; die Pauschalmeldung der App bleibt nur für den Fall, dass er keine hat.
+        String problem = !next.failure().isEmpty() ? next.failure()
+                : localError != null ? localError : next.error();
         error.setText(problem);
         error.setVisible(!problem.isEmpty());
         resendButton.setVisible(next.resendAvailable());
