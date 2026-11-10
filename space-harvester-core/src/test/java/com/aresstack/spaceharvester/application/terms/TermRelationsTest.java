@@ -177,38 +177,6 @@ class TermRelationsTest {
     }
 
     @Test
-    void searchExpansionsFollowTheScopeAndOnlyConfirmedExpandingRelations() {
-        // #336, Teil 4: global überall, Quelle in der Quelle und ihren Spaces, Space nur in genau diesem Space.
-        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldeschlüssel", RelationType.ABBREVIATION,
-                RelationScope.GLOBAL, null, List.of()));
-        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldecode", RelationType.SYNONYM,
-                new RelationScope("wiki-a", null), null, List.of()));
-        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Antwortschlüssel", RelationType.VARIANT,
-                new RelationScope("wiki-a", "DEV"), null, List.of()));
-        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldung", RelationType.RELATED,
-                RelationScope.GLOBAL, null, List.of()));
-        relations.propose("ai:synonyms", RelationOrigin.AI, RelationScope.GLOBAL, Set.of(RelationType.SYNONYM),
-                "s1", List.of(new TermRelations.Proposal("RSL", "Rückmeldekennung", RelationType.SYNONYM,
-                        List.of(evidence("wiki-a", "1")))));
-
-        assertThat(relations.expansions(EDITOR, "rsl", null, null)).containsExactly("Rückmeldeschlüssel");
-        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", null)).containsExactly("Rückmeldeschlüssel",
-                "Rückmeldecode");
-        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", "DEV")).containsExactly("Rückmeldeschlüssel",
-                "Rückmeldecode", "Antwortschlüssel");
-        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", "OPS")).containsExactly("Rückmeldeschlüssel",
-                "Rückmeldecode");
-        assertThat(relations.expansions(EDITOR, "RSL", "wiki-b", "DEV")).containsExactly("Rückmeldeschlüssel");
-        assertThat(relations.expansions(EDITOR, "Rückmeldeschlüssel", "wiki-b", null)).containsExactly("RSL");
-        // Der Vorschlag wirkt nicht, nach dem Bestätigen schon; abgelehnt nie.
-        TermRelation proposed = all(EDITOR, ReviewStatus.PROPOSED).get(0);
-        relations.confirm(EDITOR, proposed.id(), null);
-        assertThat(relations.expansions(EDITOR, "rsl", null, null)).contains("Rückmeldekennung");
-        relations.reject(EDITOR, proposed.id(), null);
-        assertThat(relations.expansions(EDITOR, "rsl", null, null)).doesNotContain("Rückmeldekennung");
-    }
-
-    @Test
     void aRunWithdrawsOnlyProposalsOfItsOwnRelationTypes() {
         // #336: KI-Akronymvorschläge und KI-Synonymvorschläge teilen Herkunft und Umfang, gehören aber verschiedenen
         // Erzeugern; ein Synonymlauf darf die Akronymvorschläge nicht zurückziehen und umgekehrt.

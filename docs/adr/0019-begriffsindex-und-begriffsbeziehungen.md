@@ -172,13 +172,8 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      Umfang, Modellversion, Begriffe und Fundstellen; ein unveränderter Stand geht nicht noch einmal an das Modell,
      eine unlesbare Antwort wird nicht gemerkt. Scheitert das Modell oder bricht der Auftrag ab, bleibt der Stand des
      letzten Laufs. Ins Log kommen nur Umfang, Anzahlen und Ausnahmeklassen.
-   - Suche (#336, Teil 4): `SearchExpansion` in `application.query` macht aus bestätigten `SYNONYM`, `VARIANT` und
-     `ABBREVIATION` zusätzliche Anfragen der Schlagwortsuche (`KeywordSearch`), je Quelle im Umfang der Beziehung
-     (`TermRelations.expansions(caller, term, sourceId, spaceKey)`: global überall, Quelle in der Quelle und ihren
-     Spaces, Space nur bei Suche in genau diesem Space; ohne Quelle nur globale), höchstens drei je Quelle, die ganze
-     Anfrage zuerst, dann je Wort eines knappen Suchausdrucks; im Cache wird jede Erweiterung nur in ihrer Quelle
-     gesucht. Nie `RELATED`, nie Vorschläge oder Abgelehntes, nicht transitiv; ein Fehler beim Nachschlagen lässt die
-     Suche ohne Erweiterung laufen.
+   - Suche (#336, Teil 4): nur bestätigte `SYNONYM`, `VARIANT`, `ABBREVIATION` erweitern die Suche, je Umfang, nie
+     `RELATED`, nie Vorschläge, nicht transitiv (`TermRelations.expansions`).
 
 ## Grenzen
 

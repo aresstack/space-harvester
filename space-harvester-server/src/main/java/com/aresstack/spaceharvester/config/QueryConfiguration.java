@@ -20,8 +20,6 @@ import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
-import com.aresstack.spaceharvester.application.terms.TermRelations;
-import com.aresstack.spaceharvester.application.query.SearchExpansion;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
@@ -166,8 +164,7 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.loads:}") String loadsValue,
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
                                 SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store,
-                                LiveConfiguration live, ObjectProvider<SyncBeforeSearch> syncBeforeSearch,
-                                ObjectProvider<TermRelations> relations) {
+                                LiveConfiguration live, ObjectProvider<SyncBeforeSearch> syncBeforeSearch) {
         // Auszüge aus semantischen Absätzen, wo welche zum abgelegten Text gespeichert sind (#181, ADR 0020).
         PageTextIndex index = texts.getIfAvailable();
         EnrichmentStore enrichments = store.getIfAvailable();
@@ -176,10 +173,7 @@ class QueryConfiguration {
         return new KeywordSearch(catalog, access, snippets, prefetch, maxQueries,
                 excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
                 findings, () -> live.current().search().prefetchHits(),
-                sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)),
-                // #336, Teil 4: bestätigte Synonyme, Varianten und Ausschreibungen als Anfragen je Quelle.
-                relations.getIfAvailable() == null ? SearchExpansion.NONE
-                        : new SearchExpansion(relations.getIfAvailable()::expansions));
+                sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)));
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */

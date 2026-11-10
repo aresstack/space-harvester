@@ -139,7 +139,6 @@ public class KeywordSearch {
     private final CandidateSelectionStrategy selection;
     private final SearchRunLog runs;
     private final FindingCatalog findings;
-    private final SearchExpansion expansion;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -233,19 +232,6 @@ public class KeywordSearch {
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
                          BeforeSearch before) {
-        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, prefetching, before,
-                SearchExpansion.NONE);
-    }
-
-    /**
-     * @param expansion bestätigte Begriffsbeziehungen als zusätzliche Anfragen je Quelle (#336, Teil 4) oder
-     *                  {@link SearchExpansion#NONE}
-     */
-    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
-                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
-                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
-                         BeforeSearch before, SearchExpansion expansion) {
-        this.expansion = Objects.requireNonNull(expansion, "expansion");
         this.before = Objects.requireNonNull(before, "before");
         this.prefetching = Objects.requireNonNull(prefetching, "prefetching");
         this.findings = Objects.requireNonNull(findings, "findings");
@@ -504,22 +490,14 @@ public class KeywordSearch {
             searches.add(new LiveSearch(source, offset, Math.min(offset + limit + 1, MAX_DEPTH), states.size()));
             states.add(null);
         }
-        // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen. Je Quelle kommen die
-        // bestätigten Begriffsbeziehungen ihres Umfangs als Anfragen dazu (#336).
+        // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen.
         List<String> nativeQueries = nativeQueries(query.text());
-        String spaceKey = query.singleSpace();
-        Map<String, List<String>> expansions = new HashMap<>();
         tally.queries = searches.isEmpty() ? 0 : nativeQueries.size();
         List<List<Future<List<SourceSearchMatch>>>> calls = new ArrayList<>();
         try (ExecutorService searching = Executors.newVirtualThreadPerTaskExecutor()) {
             for (LiveSearch search : searches) {
                 List<Future<List<SourceSearchMatch>>> perQuery = new ArrayList<>();
-                List<String> expanded = expansion.expand(caller, query.text(), search.source().id(), spaceKey);
-                expansions.put(search.source().id(), expanded);
-                tally.queries = Math.max(tally.queries, nativeQueries.size() + expanded.size());
-                List<String> all = new ArrayList<>(nativeQueries);
-                all.addAll(expanded);
-                for (String text : all) {
+                for (String text : nativeQueries) {
                     perQuery.add(searching.submit(() -> search.source().searchPages(text, search.wanted(),
                             query.spaces())));
                 }
@@ -673,21 +651,7 @@ public class KeywordSearch {
         if (!searchable.isEmpty() && delivered.size() < MAX_DEPTH) {
             try {
                 int wanted = Math.min(delivered.size() + limit + 1, MAX_DEPTH);
-                List<PageTextIndex.Match> matches = new ArrayList<>(texts.search(query.text(), searchable,
-                        query.spaces(), wanted));
-                // Erweiterungen je Quelle, nur in dieser Quelle gesucht, damit Beziehungen ihres Umfangs bleiben.
-                for (String sourceId : searchable) {
-                    List<String> expanded = expansions.computeIfAbsent(sourceId, id ->
-                            expansion.expand(caller, query.text(), id, spaceKey));
-                    for (String text : expanded) {
-                        matches.addAll(texts.search(text, Set.of(sourceId), query.spaces(), wanted));
-                    }
-                }
-                Set<String> seenMatches = new HashSet<>();
-                for (PageTextIndex.Match match : matches) {
-                    if (!seenMatches.add(mark(match.sourceId(), match.pageId()))) {
-                        continue;
-                    }
+                for (PageTextIndex.Match match : texts.search(query.text(), searchable, query.spaces(), wanted)) {
                     String mark = mark(match.sourceId(), match.pageId());
                     if (delivered.contains(mark)) {
                         continue;
@@ -1220,11 +1184,6 @@ public class KeywordSearch {
         /** Der Space-Filter für die Quelle. */
         public SearchSpaces spaces() {
             return new SearchSpaces(spaceKeys, excludedSpaceKeys);
-        }
-
-        /** Der eine Space der Suche oder {@code null}, wenn sie mehrere oder alle Spaces durchsucht. */
-        String singleSpace() {
-            return spaceKeys.size() == 1 ? spaceKeys.iterator().next() : null;
         }
 
         PageSearchQuery scope() {

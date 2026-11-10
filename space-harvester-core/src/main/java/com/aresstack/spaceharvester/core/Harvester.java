@@ -74,7 +74,6 @@ import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
-import com.aresstack.spaceharvester.application.query.SearchExpansion;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
@@ -632,7 +631,7 @@ public final class Harvester implements AutoCloseable {
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, new SearchExpansion(termRelations::expansions));
+                    });
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
