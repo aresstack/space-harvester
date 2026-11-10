@@ -61,6 +61,11 @@ public class Jobs implements AutoCloseable {
     private final Object lock = new Object();
     private final Deque<Job> queued = new ArrayDeque<>();
     private final Map<String, Job> open = new HashMap<>();
+    /**
+     * Angehaltene, gescheiterte und abgebrochene Aufträge einer Art mit {@link JobType#resumable()}, die sich im selben
+     * Eintrag fortsetzen lassen; nur bis zum Ende dieses Dienstes, denn die Arbeit selbst lässt sich nicht ablegen.
+     */
+    private final Map<String, Job> stopped = new HashMap<>();
     private int running;
     /** Laufende Folgeaufträge ({@link JobType#followUp()}). */
     private int runningFollowUps;
@@ -119,23 +124,10 @@ public class Jobs implements AutoCloseable {
                 clock.instant());
         JobStatus status;
         synchronized (lock) {
-            int capacity = limits.maxConcurrent() + limits.maxQueued();
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
-            // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
-            // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
-            // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
-            if (open.values().stream().filter(other -> other.type.followUp() == type.followUp()).count()
-                    >= capacity) {
-                throw new JobCapacityExceededException(capacity);
-            }
-            int perOwner = type.followUp() ? 2 * limits.maxOpenPerOwner() : limits.maxOpenPerOwner();
-            if (owner != null && open.values().stream()
-                    .filter(other -> other.type.followUp() == type.followUp() && owner.equals(other.owner))
-                    .count() >= perOwner) {
-                throw JobCapacityExceededException.perOwner(perOwner);
-            }
+            requireCapacity(type, owner);
             // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
@@ -146,6 +138,23 @@ public class Jobs implements AutoCloseable {
         }
         dispatch();
         return status;
+    }
+
+    /** Unter dem Sperrobjekt: ob noch ein Auftrag dieser Art für diesen Eigentümer Platz hat. */
+    private void requireCapacity(JobType type, String owner) {
+        int capacity = limits.maxConcurrent() + limits.maxQueued();
+        // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
+        // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
+        // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
+        if (open.values().stream().filter(other -> other.type.followUp() == type.followUp()).count() >= capacity) {
+            throw new JobCapacityExceededException(capacity);
+        }
+        int perOwner = type.followUp() ? 2 * limits.maxOpenPerOwner() : limits.maxOpenPerOwner();
+        if (owner != null && open.values().stream()
+                .filter(other -> other.type.followUp() == type.followUp() && owner.equals(other.owner))
+                .count() >= perOwner) {
+            throw JobCapacityExceededException.perOwner(perOwner);
+        }
     }
 
     /** @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt */
@@ -199,6 +208,108 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Hält einen eigenen Auftrag an (ADR 0025). Ein wartender ist danach {@link JobState#PAUSED}, ein laufender beendet
+     * seinen Schritt am nächsten {@link JobContext#checkpoint()} und ist dann angehalten; was er bis dahin geladen
+     * hat, bleibt. Für einen beendeten Auftrag ändert sich nichts.
+     *
+     * @throws UnknownJobException       wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobNotResumableException wenn sich Aufträge dieser Art nicht fortsetzen lassen
+     */
+    public JobStatus pause(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        if (!current.type().resumable()) {
+            throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht anhalten");
+        }
+        synchronized (lock) {
+            Job job = open.get(jobId);
+            if (job != null) {
+                if (job.cancelRequested && !job.pauseRequested) {
+                    // Ein angeforderter Abbruch bleibt ein Abbruch.
+                    return job.snapshot();
+                }
+                job.pauseRequested = true;
+                job.cancelRequested = true;
+                boolean wasQueued = job.state == JobState.QUEUED;
+                if (wasQueued) {
+                    queued.remove(job);
+                    open.remove(jobId);
+                    lock.notifyAll();
+                    job.finish(JobState.PAUSED, null, clock.instant());
+                    stopped.put(jobId, job);
+                }
+                job.emit(wasQueued, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
+                        wasQueued ? "PAUSED" : null, wasQueued ? "Auftrag vor dem Start angehalten"
+                                : "Anhalten angefordert", null, null, null, null);
+                JobStatus status = job.snapshot();
+                store.save(status);
+                return status;
+            }
+        }
+        return current;
+    }
+
+    /**
+     * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Auftrag im selben Eintrag fort (ADR 0025): er
+     * wartet wieder auf einen Platz und läuft dann von vorn, holt aber nur, was noch fehlt, weil bereits geladene
+     * Seiten liegen bleiben. Die Zähler beginnen dabei neu, damit keine Seite doppelt zählt.
+     *
+     * @throws UnknownJobException          wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobNotResumableException    wenn die Art kein Fortsetzen kennt, der Auftrag noch läuft oder fertig ist,
+     *                                      oder er aus der Zeit vor dem letzten Neustart des Dienstes stammt
+     * @throws JobCapacityExceededException wenn zu viele Aufträge offen sind
+     */
+    public JobStatus resume(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        if (!current.type().resumable()) {
+            throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht fortsetzen");
+        }
+        if (!resumableState(current.state())) {
+            throw new JobNotResumableException(jobId, current.state().terminal() ? "der Auftrag ist fertig"
+                    : "der Auftrag wartet oder läuft noch");
+        }
+        JobStatus status;
+        synchronized (lock) {
+            Job job = stopped.get(jobId);
+            if (job == null) {
+                throw new JobNotResumableException(jobId, "der Auftrag stammt aus der Zeit vor dem letzten Neustart; "
+                        + "ein neuer Start holt ebenfalls nur, was noch fehlt");
+            }
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            requireCapacity(job.type, job.owner);
+            stopped.remove(jobId);
+            job.reopen();
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag fortgesetzt", null,
+                    null, null, null);
+            open.put(job.id, job);
+            queued.addLast(job);
+            status = job.snapshot();
+            store.save(status);
+        }
+        dispatch();
+        return status;
+    }
+
+    /** Ob ein Auftrag in diesem Zustand im selben Eintrag fortgesetzt werden kann, sofern seine Art es erlaubt. */
+    public static boolean resumableState(JobState state) {
+        return state == JobState.PAUSED || state == JobState.FAILED || state == JobState.CANCELLED;
+    }
+
+    /**
+     * Ob sich dieser eigene Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resume(String, String)}); sonst
+     * startet ein Client ihn mit denselben Angaben neu.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public boolean resumable(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        synchronized (lock) {
+            return current.type().resumable() && resumableState(current.state()) && stopped.containsKey(jobId);
+        }
+    }
+
+    /**
      * Diagnoseereignisse eines Auftrags in ihrer Reihenfolge.
      *
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt
@@ -248,6 +359,13 @@ public class Jobs implements AutoCloseable {
         // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
         events.delete(status.id());
         store.delete(status.id());
+        forget(status.id());
+    }
+
+    private void forget(String jobId) {
+        synchronized (lock) {
+            stopped.remove(jobId);
+        }
     }
 
     /**
@@ -264,6 +382,7 @@ public class Jobs implements AutoCloseable {
                     && (type == null || status.type() == type)) {
                 events.delete(status.id());
                 store.delete(status.id());
+                forget(status.id());
                 removed++;
             }
         }
@@ -371,6 +490,8 @@ public class Jobs implements AutoCloseable {
         List<String> ids;
         synchronized (lock) {
             ids = open.values().stream().filter(affected).map(job -> job.id).toList();
+            // Ohne Quelle gibt es nichts fortzusetzen.
+            stopped.values().removeIf(affected);
         }
         for (String id : ids) {
             try {
@@ -404,12 +525,15 @@ public class Jobs implements AutoCloseable {
             Job job = open.get(jobId);
             if (job != null) {
                 job.cancelRequested = true;
+                // Abbrechen geht vor Anhalten.
+                job.pauseRequested = false;
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
                     queued.remove(job);
                     open.remove(jobId);
                     lock.notifyAll();
                     job.finish(JobState.CANCELLED, null, clock.instant());
+                    keepResumable(job);
                 }
                 // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
@@ -461,6 +585,7 @@ public class Jobs implements AutoCloseable {
                 // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der nächste Lauf versucht es erneut.
                 if (deleteEventsQuietly(status.id())) {
                     store.delete(status.id());
+                    forget(status.id());
                     removed++;
                 }
             }
@@ -580,10 +705,11 @@ public class Jobs implements AutoCloseable {
             if (cause == null) {
                 job.finish(JobState.COMPLETED, null, now);
             } else if (cause instanceof JobCancelledException) {
-                job.finish(JobState.CANCELLED, null, now);
+                job.finish(job.pauseRequested ? JobState.PAUSED : JobState.CANCELLED, null, now);
             } else {
                 job.finish(JobState.FAILED, errorOf(cause), now);
             }
+            keepResumable(job);
             running--;
             if (job.type.followUp()) {
                 runningFollowUps--;
@@ -598,6 +724,13 @@ public class Jobs implements AutoCloseable {
         dispatch();
     }
 
+    /** Unter dem Sperrobjekt: hält einen beendeten Auftrag zum Fortsetzen bereit, wenn Art und Zustand es erlauben. */
+    private void keepResumable(Job job) {
+        if (job.type.resumable() && resumableState(job.state)) {
+            stopped.put(job.id, job);
+        }
+    }
+
     private void recordEnd(Job job, JobStatus finished, Throwable cause) {
         JobProgress progress = finished.progress();
         switch (finished.state()) {
@@ -606,6 +739,9 @@ public class Jobs implements AutoCloseable {
                             + " geschrieben, " + progress.failed() + " gescheitert", null, null, null, null);
             case CANCELLED -> job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED",
                     "Auftrag abgebrochen", null, null, null, null);
+            case PAUSED -> job.emit(true, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, "PAUSED",
+                    "Auftrag angehalten: " + progress.processed() + " Seiten verarbeitet; Fortsetzen holt nur, was "
+                            + "noch fehlt", null, null, null, null);
             default -> {
                 JobError error = finished.error();
                 FailureDiagnosis.Findings findings = FailureDiagnosis.of(cause, error.code());
@@ -667,6 +803,8 @@ public class Jobs implements AutoCloseable {
         final AtomicLong failedPages = new AtomicLong();
         volatile JobState state = JobState.QUEUED;
         volatile boolean cancelRequested;
+        /** Mit {@link #cancelRequested}: der Benutzer hält an, statt abzubrechen. */
+        volatile boolean pauseRequested;
         volatile Instant startedAt;
         volatile Instant deadline;
         Instant finishedAt;
@@ -692,6 +830,21 @@ public class Jobs implements AutoCloseable {
             state = end;
             error = failure;
             finishedAt = at;
+        }
+
+        /** Unter dem Sperrobjekt: wieder wartend wie neu angenommen, mit leeren Zählern (ADR 0025). */
+        void reopen() {
+            state = JobState.QUEUED;
+            error = null;
+            finishedAt = null;
+            startedAt = null;
+            deadline = null;
+            cancelRequested = false;
+            pauseRequested = false;
+            discovered.set(0);
+            processed.set(0);
+            written.set(0);
+            failedPages.set(0);
         }
 
         JobStatus snapshot() {

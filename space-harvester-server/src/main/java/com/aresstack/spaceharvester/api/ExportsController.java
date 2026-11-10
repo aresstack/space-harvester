@@ -186,6 +186,41 @@ public class ExportsController {
         return ResponseEntity.accepted().body(ExportResponse.of(jobs.cancel(exportId, owner(caller)), null));
     }
 
+    @PostMapping(path = EXPORTS + "/{exportId}/pause", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Export anhalten",
+            description = "Wie Abbrechen, aber der Export endet als PAUSED (angehalten): bereits geladene Seiten "
+                    + "bleiben, und Fortsetzen holt nur, was noch fehlt (ADR 0025). Ein wartender Export ist sofort "
+                    + "angehalten, ein laufender beim nächsten Prüfpunkt. Ein beendeter Export bleibt unverändert.")
+    @ApiResponse(responseCode = "202", description = "Anhalten angenommen; Zustand danach")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<ExportResponse> pause(@Parameter(hidden = true) AccessContext caller,
+                                                @PathVariable String exportId) {
+        ownExport(caller, exportId);
+        return ResponseEntity.accepted().body(ExportResponse.of(jobs.pause(exportId, owner(caller)), null));
+    }
+
+    @PostMapping(path = EXPORTS + "/{exportId}/resume", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Export fortsetzen",
+            description = "Setzt einen angehaltenen, gescheiterten oder abgebrochenen Export unter derselben ID fort: "
+                    + "er wartet wieder auf einen Platz, das Einlesen holt nur, was noch fehlt, und die Zähler "
+                    + "beginnen neu (ADR 0025). Nach einem Neustart des Dienstes geht das nicht mehr (409 "
+                    + "job-not-resumable); ein neuer Export mit denselben Angaben holt dann ebenfalls nur den Rest.")
+    @ApiResponse(responseCode = "202", description = "Wieder eingereiht; Zustand danach")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Nicht fortsetzbar: läuft noch, ist fertig oder stammt aus der "
+            + "Zeit vor dem letzten Neustart (job-not-resumable)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<ExportResponse> resume(@Parameter(hidden = true) AccessContext caller,
+                                                 @PathVariable String exportId) {
+        ownExport(caller, exportId);
+        return ResponseEntity.accepted().body(ExportResponse.of(exports.resume(exportId, owner(caller)), null));
+    }
+
     @DeleteMapping(path = EXPORTS + "/{exportId}")
     @Operation(summary = "Beendeten Export löschen",
             description = "Entfernt den Export samt Diagnoseereignissen; sein Artefakt im Exportverzeichnis "

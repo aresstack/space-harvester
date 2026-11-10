@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -10,7 +11,9 @@ import java.util.Optional;
  *
  * <p>Alle Schreibvorgänge eines Laufs gehen über eine {@link StagedGeneration} und werden erst mit
  * {@link StagedGeneration#commit} sichtbar, zusammen mit der neuen Generation. Leser des Caches sehen daher nie
- * Änderungen eines Laufs, dessen Generation nicht bestätigt ist.
+ * Änderungen eines Laufs, dessen Generation nicht bestätigt ist. Einzige Ausnahme sind neue, bisher unbekannte Seiten
+ * über {@link #keepLoaded} (ADR 0025): Sie erscheinen wie ein Abruf schon vor der Generation, damit ein abgebrochener
+ * Lauf fortgesetzt statt neu begonnen wird.
  */
 public interface SyncBaselineStore {
 
@@ -45,6 +48,25 @@ public interface SyncBaselineStore {
 
     /** Ein Space einer Quelle. */
     record SpaceRef(String sourceId, String spaceKey) {
+    }
+
+    /**
+     * Ob {@link #keepLoaded} neue Seiten sofort ablegen kann (ADR 0025). Ohne das merkt ein Lauf alles in der
+     * {@link StagedGeneration} vor, und ein Abbruch verwirft auch bereits geladene neue Seiten. Standard: nein.
+     */
+    default boolean keepsLoadedPages() {
+        return false;
+    }
+
+    /**
+     * Legt den Inhalt einer Seite, die weder Generation noch Cache kennen, sofort ab wie ein Abruf (ADR 0014, Punkt 2;
+     * ADR 0025): ohne Generation, aber dauerhaft. Bricht der Lauf danach ab, kennt der nächste sie über
+     * {@link #knownPages} und lädt sie nicht erneut. Nie für Änderungen bekannter Seiten, die bleiben atomar.
+     *
+     * @return ob abgelegt wurde; sonst merkt der Lauf die Seite wie bisher vor
+     */
+    default boolean keepLoaded(PageSnapshot snapshot) {
+        return false;
     }
 
     /** Beginnt die Schreibvorgänge eines Laufs für diesen Space; bis zum Commit für Leser unsichtbar. */

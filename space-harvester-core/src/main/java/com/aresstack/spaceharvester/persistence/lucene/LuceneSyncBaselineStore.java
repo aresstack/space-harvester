@@ -49,6 +49,17 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
     }
 
     @Override
+    public boolean keepsLoadedPages() {
+        return true;
+    }
+
+    /** Wie die Beschaffung: wartet begrenzt auf die Schreibsperre und überschreibt nichts, was inzwischen neuer ist. */
+    @Override
+    public boolean keepLoaded(PageSnapshot snapshot) {
+        return cache.saveWaiting(snapshot, cache.state(snapshot.key()));
+    }
+
+    @Override
     public StagedGeneration begin(String sourceId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");

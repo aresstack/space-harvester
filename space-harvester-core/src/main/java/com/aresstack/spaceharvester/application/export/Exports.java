@@ -194,6 +194,25 @@ public class Exports {
     }
 
     /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Export im selben Auftrag fort
+     * ({@link Jobs#resume}, ADR 0025): das Einlesen holt nur, was noch fehlt, und das Artefakt entsteht neu.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wie {@link Jobs#resume}
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus resume(String exportId, String owner) {
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new com.aresstack.spaceharvester.application.jobs.UnknownJobException(exportId);
+        }
+        purgeQuietly();
+        writer.requireCapacity();
+        return jobs.resume(exportId, owner);
+    }
+
+    /**
      * Das veröffentlichte Artefakt des eigenen Exports oder leer, solange es keines gibt.
      *
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es keinen Export mit dieser ID für
