@@ -16,6 +16,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -44,6 +45,7 @@ public final class SignInSlot extends JPanel {
     static final String RESEND_TEXT = "Code erneut senden";
     static final String DECLINE_TEXT = "Ohne Anmeldung fortfahren";
     static final String SENDING_TEXT = "Wird gesendet …";
+    static final String LOGIN_REQUIRED = "Bitte Benutzername und Passwort eingeben.";
     /** Nur, wenn der Core keine Ursache an der Anforderung nennt ({@code SignInRequest.failure()} leer). */
     static final String SEND_FAILED = "Senden fehlgeschlagen: die Quelle ist nicht erreichbar.";
 
@@ -51,6 +53,9 @@ public final class SignInSlot extends JPanel {
     private final Function<SignInRequests, Optional<SignInRequest>> which;
     private final ComicPalette palette = ComicPalette.defaultPalette();
     private final JPasswordField codeField = new JPasswordField(16);
+    private final JTextField usernameField = new JTextField(20);
+    private final JPasswordField passwordField = new JPasswordField(20);
+    private final JPanel loginFields = new JPanel();
     private final ComicButton resendButton = new ComicButton(RESEND_TEXT);
     private final ComicButton submitButton = new ComicButton(SUBMIT_TEXT);
     private final ComicButton declineButton = new ComicButton(DECLINE_TEXT);
@@ -95,6 +100,24 @@ public final class SignInSlot extends JPanel {
         card.add(Box.createVerticalStrut(4));
         card.add(error);
         card.add(Box.createVerticalStrut(10));
+        loginFields.setLayout(new BoxLayout(loginFields, BoxLayout.Y_AXIS));
+        loginFields.setAlignmentX(LEFT_ALIGNMENT);
+        loginFields.setOpaque(false);
+        JLabel loginHint = new JLabel("Für die OTP-Bestätigung zusätzlich Benutzername und Passwort eingeben.");
+        loginHint.setForeground(Comic.MUTED);
+        loginHint.setFont(Comic.regular(12f));
+        loginHint.setAlignmentX(LEFT_ALIGNMENT);
+        loginFields.add(loginHint);
+        loginFields.add(Box.createVerticalStrut(8));
+        usernameField.setBorder(ComicBorder.roundedBorder(palette, 4));
+        passwordField.setBorder(ComicBorder.roundedBorder(palette, 4));
+        PasswordReveal.install(passwordField);
+        loginFields.add(loginRow("Benutzername:", usernameField));
+        loginFields.add(Box.createVerticalStrut(6));
+        loginFields.add(loginRow("Passwort:", passwordField));
+        loginFields.add(Box.createVerticalStrut(10));
+        loginFields.setVisible(false);
+        card.add(loginFields);
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         row.setOpaque(false);
         row.setAlignmentX(LEFT_ALIGNMENT);
@@ -152,6 +175,8 @@ public final class SignInSlot extends JPanel {
             shown = null;
             localError = null;
             codeField.setText("");
+            clearLoginFields();
+            loginFields.setVisible(false);
             setVisible(false);
             revalidateParent();
             return;
@@ -160,11 +185,14 @@ public final class SignInSlot extends JPanel {
         boolean other = shown == null || !shown.id().equals(next.id());
         if (other) {
             codeField.setText("");
+            clearLoginFields();
             localError = null;
         } else if (!next.error().equals(shown.error())) {
             localError = null;
         }
         shown = next;
+        boolean loginVisibilityChanged = loginFields.isVisible() != next.asksForLogin();
+        loginFields.setVisible(next.asksForLogin());
         String hint = next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
         String where = next.title().isEmpty() ? next.service() : next.title();
         message.setText(hint + (where.isEmpty() ? "" : "\n(" + where + ")"));
@@ -176,6 +204,9 @@ public final class SignInSlot extends JPanel {
         error.setVisible(!problem.isEmpty());
         resendButton.setVisible(next.resendAvailable());
         setSending(sending);
+        if (loginVisibilityChanged) {
+            revalidateParent();
+        }
         if (!isVisible()) {
             setVisible(true);
             revalidateParent();
@@ -208,12 +239,32 @@ public final class SignInSlot extends JPanel {
             codeField.requestFocusInWindow();
             return;
         }
+        String username = request.asksForLogin() ? usernameField.getText().trim() : null;
+        char[] password = request.asksForLogin() ? passwordField.getPassword() : null;
+        if (request.asksForLogin() && (username.isEmpty() || password.length == 0)) {
+            Arrays.fill(code, '\0');
+            Arrays.fill(password, '\0');
+            localError = LOGIN_REQUIRED;
+            error.setText(localError);
+            error.setVisible(true);
+            (username.isEmpty() ? usernameField : passwordField).requestFocusInWindow();
+            return;
+        }
         codeField.setText("");
+        passwordField.setText("");
         setSending(true);
-        // Der Core überschreibt das übergebene Feld nach dem Senden.
-        Background.run(() -> requests.submit(request.id(), code), answer -> {
+        // Clear secrets after the background call, including exceptional completion.
+        Background.run(() -> {
+            try {
+                return requests.submit(request.id(), code, username, password);
+            } finally {
+                Arrays.fill(code, '\0');
+                if (password != null) {
+                    Arrays.fill(password, '\0');
+                }
+            }
+        }, answer -> {
             setSending(false);
-            // Abgelehnt nennt die Quelle den Grund selbst (error der Anforderung).
             localError = answer == SignInRequest.Answer.FAILED ? SEND_FAILED : null;
             refresh();
             if (answer == SignInRequest.Answer.ACCEPTED) {
@@ -221,6 +272,9 @@ public final class SignInSlot extends JPanel {
             }
         }, failure -> {
             Arrays.fill(code, '\0');
+            if (password != null) {
+                Arrays.fill(password, '\0');
+            }
             setSending(false);
             localError = SEND_FAILED;
             refresh();
@@ -268,6 +322,25 @@ public final class SignInSlot extends JPanel {
         resendButton.setEnabled(!value);
         declineButton.setEnabled(!value);
         codeField.setEnabled(!value);
+        usernameField.setEnabled(!value);
+        passwordField.setEnabled(!value);
+    }
+
+    private void clearLoginFields() {
+        usernameField.setText("");
+        passwordField.setText("");
+    }
+
+    private JPanel loginRow(String label, JTextField field) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        JLabel caption = new JLabel(label);
+        caption.setFont(Comic.regular(13f));
+        caption.setLabelFor(field);
+        row.add(caption);
+        row.add(field);
+        return row;
     }
 
     private void revalidateParent() {
@@ -307,6 +380,18 @@ public final class SignInSlot extends JPanel {
 
     JPasswordField codeField() {
         return codeField;
+    }
+
+    JTextField usernameField() {
+        return usernameField;
+    }
+
+    JPasswordField passwordField() {
+        return passwordField;
+    }
+
+    boolean loginFieldsVisible() {
+        return loginFields.isVisible();
     }
 
     ComicButton submitButton() {
