@@ -113,11 +113,16 @@ class ExportAssetCollectionTest {
 
         JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
         assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
-        // 100: Anhänge bild.png und ablauf.drawio, ein Bild der Lese-Ansicht, das kein Anhang ist, und das Dokument
-        // handbuch.pdf (ADR 0023); 101: ein fehlender Anhang.
-        assertThat(collection.progress().discovered()).isEqualTo(5);
-        assertThat(collection.progress().written()).isEqualTo(4);
+        // 100: Anhänge bild.png und ablauf.drawio und ein Bild der Lese-Ansicht, das kein Anhang ist; 101: ein
+        // fehlender Anhang. Das Dokument handbuch.pdf (ADR 0023) beschafft der eigene Auftrag „Anhänge beschaffen“.
+        assertThat(collection.progress().discovered()).isEqualTo(4);
+        assertThat(collection.progress().written()).isEqualTo(3);
         assertThat(collection.progress().failed()).isEqualTo(1);
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(documents -> {
+            assertThat(documents.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(documents.progress().discovered()).isEqualTo(1);
+            assertThat(documents.progress().written()).isEqualTo(1);
+        });
         ExportDatasetInfo info = conversions.dataset(export.id(), "client-a").orElseThrow();
         assertThat(info.images()).isEqualTo(ExportDatasetInfo.Images.INCOMPLETE);
         ExportAssetManifest manifest = writer.assets(export.id()).orElseThrow();
@@ -236,8 +241,8 @@ class ExportAssetCollectionTest {
         assertThat(done.incomplete()).isTrue();
         assertThat(done.lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
         // Zähler wie bei einem Lauf ohne Pause, Seite 100 ohne neuen Abruf.
-        assertThat(done.progress().discovered()).isEqualTo(5);
-        assertThat(done.progress().written()).isEqualTo(4);
+        assertThat(done.progress().discovered()).isEqualTo(4);
+        assertThat(done.progress().written()).isEqualTo(3);
         assertThat(done.progress().failed()).isEqualTo(1);
         assertThat(source.listed.subList(listedBefore.size(), source.listed.size())).doesNotContain("100");
         assertThat(source.downloads).isEqualTo(downloads);

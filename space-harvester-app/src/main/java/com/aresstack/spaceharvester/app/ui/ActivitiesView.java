@@ -1075,6 +1075,10 @@ public final class ActivitiesView implements View {
                 return new Step("Bilder beschaffen · " + p.processed() + " von " + total + " Bildern geprüft, "
                         + p.written() + " abgelegt", p.processed(), total);
             }
+            if (type == JobType.ATTACHMENTS) {
+                return new Step("Anhänge beschaffen · " + p.processed() + " von " + total + " Anhängen geprüft, "
+                        + p.written() + " abgelegt", p.processed(), total);
+            }
             if (type == JobType.STATEMENT_ANALYSIS) {
                 long skipped = p.processed() - p.written() - p.failed();
                 return new Step((phase == null ? "Aussagenanalyse" : phase) + " · " + p.processed() + " von " + total
@@ -1118,6 +1122,7 @@ public final class ActivitiesView implements View {
                 case ENRICHMENT -> new Counters("Schritte (Seiten × Prozessoren)", "Erledigt", "Neu berechnet",
                         "Fehlgeschlagen");
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
+                case ATTACHMENTS -> new Counters("Anhänge", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",

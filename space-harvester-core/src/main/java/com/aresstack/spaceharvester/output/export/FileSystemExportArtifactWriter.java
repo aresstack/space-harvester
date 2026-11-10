@@ -331,7 +331,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                     ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason"),
                     rendition(entry.path("rendition"))));
         }
-        return Optional.of(new ExportAssetManifest(node.path("complete").asBoolean(false), entries));
+        boolean complete = node.path("complete").asBoolean(false);
+        // Vor der Trennung in Bilder und Anhänge gab es nur „complete“; es galt für beide.
+        return Optional.of(new ExportAssetManifest(node.path("imagesComplete").asBoolean(complete),
+                node.path("documentsComplete").asBoolean(complete), entries));
     }
 
     private static ExportAssetManifest.Rendition rendition(JsonNode node) {
@@ -351,6 +354,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         generator.writeStartObject();
         generator.writeStringProperty("format", ExportAssetManifest.FORMAT);
         generator.writeBooleanProperty("complete", manifest.complete());
+        generator.writeBooleanProperty("imagesComplete", manifest.imagesComplete());
+        generator.writeBooleanProperty("documentsComplete", manifest.documentsComplete());
         generator.writeName("assets");
         generator.writeStartArray();
         for (ExportAssetManifest.Entry entry : manifest.assets()) {

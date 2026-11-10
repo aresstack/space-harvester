@@ -63,6 +63,14 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     Ohne Oberfläche (Dienst) gilt beim Einmalcode das alte Verhalten. Der Zustand heißt dann `PAUSED_SIGN_IN_REQUIRED`
     bzw. `PAUSED_CONNECTION_LOST`, die Aktionen sind dieselben wie bei „Angehalten“.
 
+11. **Anhänge als eigener Auftrag** (Angelo 10.11.2026). Bei eingeschalteten Anhängen (`export.attachments`) startet
+    nach dem Export neben „Bilder beschaffen“ ein Auftrag `JobType#ATTACHMENTS` („Anhänge beschaffen“), ebenfalls
+    Folgeauftrag, anhaltbar und fortsetzbar, mit denselben Zuständen und Aktionen. Beide sind derselbe Code
+    (`ExportAssetCollection`, Art `MEDIA` oder `DOCUMENTS`) mit demselben Download, derselben Anmeldung und Ablage.
+    Beide schreiben in `assets.json`, jeder nur seine eigenen Einträge, unter einem Schloss je Export;
+    `imagesComplete` und `documentsComplete` vermerken die Vollständigkeit je Art, `complete` gilt für beide.
+    `attachments.json` im Paket entsteht wie bisher erst beim Konvertieren aus den Dokument-Einträgen.
+
 Folgen in eigenen Schritten: einheitliche, einstellbare Wiederholungen ohne zweite Schleife über dem REST-Client,
 „Nur Fehler neu versuchen“ und „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar), beide im selben Eintrag.
 

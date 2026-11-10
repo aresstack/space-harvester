@@ -107,10 +107,11 @@ public class ExportConversions {
     }
 
     /**
-     * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Bilderauftrag im selben Eintrag fort
+     * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Bilder- oder Anhängeauftrag im selben Eintrag
+     * fort
      * ({@link ExportAssetCollection#resume}).
      *
-     * @throws UnknownJobException wenn es keinen eigenen Bilderauftrag mit dieser ID gibt
+     * @throws UnknownJobException wenn es keinen eigenen Bilder- oder Anhängeauftrag mit dieser ID gibt
      * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht fortsetzen lässt
      */
     public JobStatus resumeImages(String jobId, String owner) {

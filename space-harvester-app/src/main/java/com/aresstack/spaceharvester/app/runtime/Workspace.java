@@ -864,7 +864,7 @@ public final class Workspace {
         JobStatus status = job(jobId);
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
-            case ASSETS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
             default -> harvester.exports().resume(jobId, Harvester.OWNER);
         };
     }
@@ -919,6 +919,7 @@ public final class Workspace {
         // Anreicherungen und Bilder plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
         List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         for (JobStatus enrichment : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
                 try {
