@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -192,8 +193,9 @@ public final class ActivitiesView implements View {
 
         javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, list,
                 Comic.column(details));
-        split.setBorder(BorderFactory.createEmptyBorder());
         split.setBackground(Comic.SURFACE);
+        // Derselbe Trenner wie neben der Wissensquellen-Liste, nur liegend.
+        ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.4);
         split.setDividerLocation(260);
         split.setContinuousLayout(true);
