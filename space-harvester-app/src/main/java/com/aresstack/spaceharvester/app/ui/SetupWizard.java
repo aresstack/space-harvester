@@ -9,7 +9,6 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.ui.brand.BrandImages;
-import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.spaceharvester.application.sources.ConnectionStep;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 
@@ -526,16 +525,13 @@ final class SetupWizard {
     }
 
     /**
-     * Every step scrolls independently of the navigation buttons, including before the first layout pass.
-     * Keep the width attached to the viewport so wrapped content cannot hide the right edge.
+     * Keep a vertical scrollbar visible from the first step onward; never nest two scroll panes.
+     * The wizard navigation is separate from the page and therefore remains accessible.
      */
     private static JComponent page(JComponent content) {
-        ScrollColumn column = new ScrollColumn(new BorderLayout());
-        column.add(Comic.column(content), BorderLayout.NORTH);
-        JScrollPane scroll = Comic.scroll(column);
+        JScrollPane scroll = Comic.column(content);
         scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        scroll.setBorder(BorderFactory.createEmptyBorder());
         return scroll;
     }
 
