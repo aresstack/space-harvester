@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
@@ -16,6 +17,7 @@ import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * Aussagenanalyse einer einzelnen Seite auf ausdrückliche Anforderung (#499, ADR 0024). Analysiert genau die
@@ -28,6 +30,15 @@ import java.util.function.Supplier;
  * bis der Nutzer erneut klickt.
  */
 public class StatementAnalysis {
+
+    /** Zeichen strukturierter Zeilen (Daten, Code, Konfiguration, Tabellenzeilen aus Tika), die nie verbunden werden. */
+    private static final String STRUCTURE = "\t=\"{}[]<>|;";
+    /** Kürzeste Zeile, die wie ein Umbruch an der Zeilenbreite aussieht; Überschriften und Datensätze sind kürzer. */
+    static final int WRAPPED_LINE = 40;
+    /** Höchstens so viele Zeilen werden zu einem Satz verbunden, damit kein Satz ausufert und Abbrechen greift. */
+    static final int MAX_JOINED_LINES = 10;
+    /** Kennzeichen am Zeilenanfang („Betreff:“, „Von:“, „datasource:“). */
+    private static final Pattern LABEL = Pattern.compile("^[\\p{L}][\\p{L}.-]{0,30}+:(?:\\s|$)");
 
     private final Function<PageSnapshot, Optional<PageText>> texts;
     private final KnowledgeGraphStore store;
@@ -103,8 +114,8 @@ public class StatementAnalysis {
         String input = text.get().inputSha256();
         // Die Version steht vor dem Rechnen fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = parser.version();
-        ParsedStatements result = parser.analyze(PageStatementAnalysis.documentId(key, input), text.get().text(),
-                cancelled);
+        ParsedStatements result = parser.analyze(PageStatementAnalysis.documentId(key, input),
+                analyzerText(text.get()), cancelled);
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
@@ -135,6 +146,98 @@ public class StatementAnalysis {
     private void require(AccessContext caller, PageSnapshot snapshot) {
         access.require(caller, ResourceScope.page(snapshot.key().sourceId(), snapshot.spaceKey(),
                 snapshot.key().pageId()), AccessKind.CONTENT);
+    }
+
+    /**
+     * Der Text für den Analysator: die Textprojektion, in der jeder Zeilenumbruch eine Blockgrenze ist. Ein weicher
+     * Umbruch an der Zeilenbreite mitten im Satz (Text- und PDF-Dateien) wird zum Leerzeichen, alles andere bleibt,
+     * denn ohne Leerzeilen ist dort oft jede Zeile ein eigener Absatz, eine Überschrift, ein Listenpunkt oder ein
+     * Datensatz. Im Zweifel bleibt der Umbruch, also die Satzgrenze. Nur innerhalb eines Absatzblocks
+     * ({@link PassageSegmentation#blocks}, ADR 0020); eine Confluence-Projektion trennt Blöcke je Zeile und bleibt
+     * gleich. Die Länge ändert sich nie, alle Spannen bleiben gültig.
+     */
+    static String analyzerText(PageText text) {
+        String content = text.text();
+        char[] chars = content.toCharArray();
+        for (PassageSegmentation.Block block : PassageSegmentation.blocks(text)) {
+            if (block.kind() != PassageSegmentation.Kind.PARAGRAPH) {
+                continue;
+            }
+            int lineStart = block.start();
+            int joined = 0;
+            for (int i = content.indexOf('\n', block.start()); i >= 0 && i < block.end();
+                 i = content.indexOf('\n', i + 1)) {
+                String before = content.substring(lineStart, i).strip();
+                int nextEnd = content.indexOf('\n', i + 1);
+                String after = content.substring(i + 1, nextEnd < 0 || nextEnd > block.end() ? block.end() : nextEnd);
+                if (joined + 1 < MAX_JOINED_LINES && softBreak(before, after, joined > 0)) {
+                    chars[i] = ' ';
+                    joined++;
+                } else {
+                    joined = 0;
+                }
+                lineStart = i + 1;
+            }
+        }
+        return new String(chars);
+    }
+
+    /**
+     * Weich ist ein Umbruch, wenn beide Zeilen Fließtext sind (kein Kennzeichen wie „Von:“, keine Zeichen aus
+     * {@link #STRUCTURE}, keine gleich vielen Kommas wie in einer CSV-Zeile), die Zeile davor die Zeilenbreite
+     * erreicht ({@link #WRAPPED_LINE}), einen Satz beginnt (Großbuchstabe) oder einen schon verbundenen fortsetzt,
+     * nicht mit einem Satzzeichen endet, und die nächste Zeile mit einem Buchstaben beginnt: mit einem
+     * kleingeschriebenen Wort, das weitere Wörter oder ein Satzende hat, oder die Zeile davor endet mit einem Komma.
+     * Kleingeschriebene Datensätze (Protokolle, Glossare, Tabellenzeilen) beginnen so nie eine Verbindung.
+     */
+    static boolean softBreak(String before, String after, boolean continuing) {
+        String next = after.strip();
+        if (before.length() < WRAPPED_LINE || before.indexOf(' ') < 0 || next.isEmpty()
+                || !continuing && !Character.isUpperCase(before.charAt(0))
+                || !prose(before) || !prose(next) || !Character.isLetter(next.charAt(0)) || enumerator(next)) {
+            return false;
+        }
+        char last = before.charAt(before.length() - 1);
+        if (".!?:;".indexOf(last) >= 0) {
+            return false;
+        }
+        int commas = count(before, ',');
+        if (commas > 0 && commas == count(next, ',')) {
+            return false; // gleich gebaute Zeilen: Datensätze, keine Fortsetzung
+        }
+        if (last == ',') {
+            return true;
+        }
+        int space = next.indexOf(' ');
+        char end = next.charAt(next.length() - 1);
+        return Character.isLowerCase(next.charAt(0)) && (space > 0 || end == '.' || end == '!' || end == '?');
+    }
+
+    private static boolean prose(String line) {
+        for (int i = 0; i < line.length(); i++) {
+            if (STRUCTURE.indexOf(line.charAt(i)) >= 0) {
+                return false;
+            }
+        }
+        return !LABEL.matcher(line).find() && !line.contains("://");
+    }
+
+    /** „a)“, „bb)“, „iv.“ am Zeilenanfang. */
+    private static boolean enumerator(String line) {
+        int i = 0;
+        while (i < line.length() && i < 4 && Character.isLetterOrDigit(line.charAt(i))) {
+            i++;
+        }
+        return i > 0 && i < line.length() && (line.charAt(i) == ')' || line.charAt(i) == '.' && i <= 3
+                && line.substring(0, i).chars().allMatch(c -> "ivxlc".indexOf(c) >= 0 || Character.isDigit(c)));
+    }
+
+    private static int count(String line, char wanted) {
+        int found = 0;
+        for (int i = 0; i < line.length(); i++) {
+            found += line.charAt(i) == wanted ? 1 : 0;
+        }
+        return found;
     }
 
     /** Ein Analysator darf nur Spannen im Text und Beteiligte auf eigene Erwähnungen liefern; sonst wird nichts gespeichert. */

@@ -860,6 +860,7 @@ final class KnowledgeGraphTab extends JPanel {
             case "COORDINATION" -> "Koordination";
             case "CASE_HEURISTIC" -> "Kasusregel";
             case "LEXICON" -> "Lexikon";
+            case "HEURISTIC" -> "Heuristik";
             default -> origin;
         };
     }

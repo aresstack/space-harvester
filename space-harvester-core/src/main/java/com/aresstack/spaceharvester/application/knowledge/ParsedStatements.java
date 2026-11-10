@@ -184,7 +184,9 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         PARSER,
         COORDINATION,
         CASE_HEURISTIC,
-        LEXICON
+        LEXICON,
+        /** Strukturelle Heuristik gegen eine erkennbar fehlerhafte Parserkante; immer unsicher. */
+        HEURISTIC
     }
 
     /**

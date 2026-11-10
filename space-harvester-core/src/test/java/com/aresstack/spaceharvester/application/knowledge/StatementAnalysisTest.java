@@ -31,6 +31,68 @@ class StatementAnalysisTest {
     private AccessGuard access = new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW);
 
     @Test
+    void onlySoftLineBreaksMidSentenceReachTheAnalyzerAsSpaces() {
+        String file = String.join("\n",
+                "Kurzbeschreibung",
+                "Das Programm übernimmt die Stammdaten aus dem Altverfahren und",
+                "verarbeitet sie gemeinsam mit den Bewegungsdaten, die der Kunde,",
+                "Antragsteller oder Vertreter über das Portal einreicht.",
+                "Einleitung",
+                "==========",
+                "a) Der Server prüft die Daten",
+                "b) Der Client sendet die Antwort",
+                "– Der Server prüft",
+                "– Der Client sendet",
+                "Betreff: Antrag",
+                "Von: Amt",
+                "name,wert",
+                "anna,3");
+        String analyzed = StatementAnalysis.analyzerText(new PageText("file-text/v1", file, List.of()));
+        assertThat(analyzed).hasSameSizeAs(file).isEqualTo(file
+                .replace("Altverfahren und\nverarbeitet", "Altverfahren und verarbeitet")
+                .replace("Kunde,\nAntragsteller", "Kunde, Antragsteller"));
+        assertThat(StatementAnalysis.analyzerText(new PageText("file-text/v1", "Das Programm\nverarbeitet die Daten.",
+                List.of()))).as("kurze Zeilen sind kein Umbruch an der Zeilenbreite, im Zweifel bleibt die Grenze")
+                .isEqualTo("Das Programm\nverarbeitet die Daten.");
+
+        String log = "benutzer anna meldet sich am server mit ihrem konto an\n".repeat(30);
+        assertThat(StatementAnalysis.analyzerText(new PageText("file-text/v1", log, List.of())))
+                .as("kleingeschriebene Datensätze beginnen keine Verbindung").isEqualTo(log);
+        String prose = "Der Antrag wird von der zuständigen Stelle geprüft und dann\n"
+                + "anschließend von der zuständigen Stelle bearbeitet und dann\n".repeat(30);
+        assertThat(StatementAnalysis.analyzerText(new PageText("file-text/v1", prose, List.of())).split("\n"))
+                .as("höchstens " + StatementAnalysis.MAX_JOINED_LINES + " Zeilen je Satz")
+                .hasSizeGreaterThan(1).allMatch(line -> line.length() <= StatementAnalysis.MAX_JOINED_LINES * 61);
+
+        for (String structured : List.of(
+                "{\n  \"name\": \"Max Mustermann\",\n  \"ort\": \"Berlin\"\n}",
+                "name, ort, status\nanna, berlin, aktiv\nbernd, hamburg, inaktiv",
+                "Müller, Hans, Berlin,\nSchmidt, Anna, Hamburg,",
+                "spring:\n  datasource: jdbc\n  username: admin",
+                "app.name = Space Harvester\napp.version = 1.0",
+                "Tabelle1\n\tMüller Hans\tBerlin\tja\n\tnein\tSchmidt Anna",
+                "java.lang.NullPointerException: Cannot invoke foo()\n\tat com.foo.Bar.baz(Bar.java:12)",
+                "a) die Anschrift,\nb) das Geburtsdatum,\nc) die Staatsangehörigkeit.",
+                "– Kopie des Ausweises,\n– aktuelle Meldebescheinigung",
+                "An: Herr Müller, Frau Schmidt,\nCc: Referat Z 3",
+                "Siehe https://example.org/a b\nund weiter",
+                "aschmidt;Anna Schmidt;Referat Z 3;Berlin Mitte\nbmeier;Bernd Meier;Referat Z 4;Hamburg Nord",
+                "Glossar\nbackend serverseitiger Teil der Anwendung\nfrontend clientseitiger Teil der Anwendung",
+                "Unterstützte Systeme\nmacOS wird ab Version 12 unterstützt.")) {
+            assertThat(StatementAnalysis.analyzerText(new PageText("file-text/v1", structured, List.of())))
+                    .as(structured).isEqualTo(structured);
+        }
+
+        String document = "Kurzbeschreibung\nDas Vorhaben führt Daten zusammen.\nKomponenten\nDer Server verarbeitet die\nAnfragen.";
+        assertThat(StatementAnalysis.analyzerText(new PageText("file-document-text/v1", document, List.of())))
+                .as("Überschriften und Absätze ohne Leerzeile bleiben getrennt").isEqualTo(document);
+
+        String confluence = "Kurzbeschreibung\nDas Vorhaben führt Daten zusammen.";
+        assertThat(StatementAnalysis.analyzerText(new PageText("confluence-storage-text/v1", confluence, List.of())))
+                .as("eine Confluence-Projektion trennt Blöcke je Zeile").isEqualTo(confluence);
+    }
+
+    @Test
     void readingNeverParsesAndAnAnalysisIsReadBackWithoutRecompute() {
         PageSnapshot page = page("1", "3", REFERENCE);
         StatementAnalysis analysis = analysis();

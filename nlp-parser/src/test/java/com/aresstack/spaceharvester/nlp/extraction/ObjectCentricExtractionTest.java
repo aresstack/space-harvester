@@ -314,4 +314,65 @@ class ObjectCentricExtractionTest {
         assertEquals(List.of("anrufen", "einreichen"), analysis.statements().stream()
                 .map(statement -> statement.predicate().lemma()).toList());
     }
+
+    @Test
+    void clauseBoundariesThatMustNotBlockInheritanceOrAuxiliaries() {
+        ObjectCentricAnalysis analysis = Gold.analyze("clause-boundaries.conllu");
+
+        Statement approves = analysis.statements().stream()
+                .filter(statement -> statement.predicate().lemma().equals("genehmigen") && statement.sentence() == 0)
+                .findFirst().orElseThrow();
+        assertEquals("Der Sachbearbeiter", text(analysis, approves.core(Role.ACTOR)),
+                "ein geschlossener Relativsatz dazwischen verhindert die Übernahme nicht");
+        assertFalse(approves.has(Finding.COORDINATION_ACROSS_CLAUSE));
+
+        List<Statement> second = analysis.statements().stream().filter(s -> s.sentence() == 1).toList();
+        Statement checked = second.stream().filter(s -> s.predicate().lemma().equals("prüfen")).findFirst().orElseThrow();
+        assertEquals(Voice.PASSIVE, checked.voice(), "geteiltes Hilfsverb im Verbalkomplex zählt");
+        assertEquals("geprüft … wird", checked.predicate().text());
+        assertFalse(checked.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        Statement approved = second.stream().filter(s -> s.predicate().lemma().equals("genehmigen")).findFirst()
+                .orElseThrow();
+        assertEquals(Voice.PASSIVE, approved.voice());
+        assertEquals("der Antrag", text(analysis, approved.core(Role.AFFECTED_OBJECT)));
+
+        Statement evaluated = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("auswerten"))
+                .findFirst().orElseThrow();
+        assertEquals("werden … ausgewertet", evaluated.predicate().text(), "Hilfsverb vor dem Einschub zählt");
+        assertEquals(Voice.PASSIVE, evaluated.voice());
+        assertTrue(evaluated.withRole(Role.TIME).isEmpty(), "„Daten“ ist nie eine Zeitangabe");
+
+        Statement worked = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("arbeiten"))
+                .findFirst().orElseThrow();
+        assertEquals("gearbeitet … wird", worked.predicate().text(),
+                "Artikel und Nomen eines gereihten Verbs dazwischen lassen das Hilfsverb im Verbalkomplex");
+        assertEquals(Voice.PASSIVE, worked.voice());
+        assertFalse(worked.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+    }
+
+    @Test
+    void anAuxiliaryBehindACommaThatOpensAClauseStaysWithTheClause() {
+        ObjectCentricAnalysis analysis = Gold.analyze("clause-boundaries.conllu");
+
+        Statement collected = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("sammeln") && s.sentence() == 4).findFirst().orElseThrow();
+        assertEquals("hat … gesammelt", collected.predicate().text(), "„werden“ des Relativsatzes gehört nicht dazu");
+        assertEquals(Voice.ACTIVE, collected.voice());
+        assertTrue(collected.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        assertEquals("Das Amt", text(analysis, collected.core(Role.ACTOR)));
+
+        Statement managed = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 4).findFirst().orElseThrow();
+        assertEquals("verwaltet werden", managed.predicate().text());
+        assertEquals(Voice.PASSIVE, managed.voice());
+
+        Statement gathered = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("sammeln") && s.sentence() == 5).findFirst().orElseThrow();
+        assertEquals("gesammelt hat", gathered.predicate().text(), "das Verb hat sein Hilfsverb schon");
+        assertEquals(Voice.ACTIVE, gathered.voice());
+        assertEquals("das Amt", text(analysis, gathered.core(Role.ACTOR)));
+        Statement reports = analysis.statements().stream()
+                .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 5).findFirst().orElseThrow();
+        assertEquals("verwaltet werden", reports.predicate().text());
+    }
 }

@@ -56,6 +56,30 @@
 18	.	.	PUNCT	_	_	4	punct	_	_
 
 # sent_id = 4
+# text = Das Vorhaben Datenhaus stellt die Daten der Haushaltsabteilung bereit, die bislang in unterschiedlichen Verfahrenskomponenten isoliert verwaltet und ausgewertet werden.
+1	Das	der	DET	_	_	2	det	_	_
+2	Vorhaben	vorhaben	NOUN	_	_	4	nsubj	_	_
+3	Datenhaus	datenhaus	ADV	_	_	4	advmod	_	_
+4	stellt	stellen	VERB	_	_	0	root	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Daten	datum	NOUN	_	_	9	nsubj	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Haushaltsabteilung	haushaltsabteilung	NOUN	_	_	6	nmod	_	_
+9	bereit	bereit	ADJ	_	_	4	xcomp	_	SpaceAfter=No
+10	,	,	PUNCT	_	_	16	punct	_	_
+11	die	der	DET	_	_	16	nsubj	_	_
+12	bislang	bislang	ADV	_	_	16	advmod	_	_
+13	in	in	ADP	_	_	15	case	_	_
+14	unterschiedlichen	unterschiedlich	ADJ	_	_	15	amod	_	_
+15	Verfahrenskomponenten	verfahrenskomponenten	NOUN	_	_	16	obl	_	_
+16	isoliert	isolieren	VERB	_	_	9	xcomp	_	_
+17	verwaltet	verwalten	VERB	_	_	16	xcomp	_	_
+18	und	und	CCONJ	_	_	19	cc	_	_
+19	ausgewertet	auswerten	VERB	_	_	4	conj	_	_
+20	werden	werden	AUX	_	_	4	aux:pass	_	SpaceAfter=No
+21	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 5
 # text = Das Vorhaben Datenhaus hat sich die Vision gesetzt, die Daten der Haushaltsabteilung zentral bereitzustellen.
 1	Das	der	DET	_	_	2	det	_	_
 2	Vorhaben	vorhaben	NOUN	_	_	8	nsubj	_	_
@@ -74,7 +98,7 @@
 15	bereitzustellen	bereitstellen	VERB	_	_	7	acl:relcl	_	SpaceAfter=No
 16	.	.	PUNCT	_	_	8	punct	_	_
 
-# sent_id = 5
+# sent_id = 6
 # text = Das Datenhaus ermöglicht mit den Daten der Haushaltsabteilung eine übergreifende Auswertung.
 1	Das	der	DET	_	_	2	det	_	_
 2	Datenhaus	datenhaus	NOUN	_	_	3	nsubj	_	_
@@ -89,7 +113,7 @@
 11	Auswertung	auswertung	NOUN	_	_	3	obj	_	SpaceAfter=No
 12	.	.	PUNCT	_	_	3	punct	_	_
 
-# sent_id = 6
+# sent_id = 7
 # text = Über die einzelnen Vorhaben hinweg ist das Datenhaus die zentrale Plattform.
 1	Über	über	ADP	_	_	4	case	_	_
 2	die	der	DET	_	_	4	det	_	_
@@ -104,11 +128,11 @@
 11	Plattform	plattform	NOUN	_	_	8	nsubj	_	SpaceAfter=No
 12	.	.	PUNCT	_	_	8	punct	_	_
 
-# sent_id = 7
+# sent_id = 8
 # text = Komponenten
 1	Komponenten	komponente	NOUN	_	_	0	root	_	_
 
-# sent_id = 8
+# sent_id = 9
 # text = Berechtigungsmanagement: setzt datenproduktspezifische Freigaben um und stellt durch die Integration in andere Komponenten des Datenhauses die Einhaltung von Zugriffsbeschränkungen sicher.
 1	Berechtigungsmanagement	berechtigungsmanagement	NOUN	_	_	3	nsubj	_	SpaceAfter=No
 2	:	:	PUNCT	_	_	1	punct	_	_
@@ -133,7 +157,7 @@
 21	sicher	sicher	ADJ	_	_	8	xcomp	_	SpaceAfter=No
 22	.	.	PUNCT	_	_	3	punct	_	_
 
-# sent_id = 9
+# sent_id = 10
 # text = Datenprodukt-API: Erlaubt den Abruf von Datenprodukten, welchen das Interaktionsmuster API zugewiesen ist, über eine Rest-API.
 1	Datenprodukt	datenprodukt	NOUN	_	_	0	root	_	SpaceAfter=No
 2	-	-	PUNCT	_	_	3	punct	_	SpaceAfter=No
@@ -159,7 +183,7 @@
 22	API	api	PROPN	_	_	20	appos	_	SpaceAfter=No
 23	.	.	PUNCT	_	_	1	punct	_	_
 
-# sent_id = 10
+# sent_id = 11
 # text = Marktplatz: bildet die zentrale Anwenderschnittstelle des Datenhauses und ermöglicht verschiedenen Nutzergruppen den selbstständigen Zugriff auf und Austausch von Angeboten, Bedarfen und Funktionen innerhalb thematisch strukturierter und erweiterbarer Self-Service-Bereiche.
 1	Marktplatz	marktplatz	PROPN	_	_	3	nsubj	_	SpaceAfter=No
 2	:	:	PUNCT	_	_	1	punct	_	_
@@ -197,7 +221,7 @@
 34	Bereiche	bereich	NOUN	_	_	18	nmod	_	SpaceAfter=No
 35	.	.	PUNCT	_	_	3	punct	_	_
 
-# sent_id = 11
+# sent_id = 12
 # text = Register: Register erweitern Datenprodukte um zusätzliche Datenattribute, ohne deren Datenbestände zu verändern, und verleihen dem Datenhaus dadurch die Fähigkeit zur operativen Datenerfassung.
 1	Register	register	NOUN	_	_	4	nsubj	_	SpaceAfter=No
 2	:	:	PUNCT	_	_	1	punct	_	_
@@ -228,7 +252,7 @@
 26	Datenerfassung	datenerfassung	NOUN	_	_	22	nmod	_	SpaceAfter=No
 27	.	.	PUNCT	_	_	4	punct	_	_
 
-# sent_id = 12
+# sent_id = 13
 # text = Datenkatalog: organisiert und stellt Metadaten zu verfügbaren Datenprodukten zentral bereit.
 1	Datenkatalog	datenkatalog	NOUN	_	_	0	root	_	SpaceAfter=No
 2	:	:	PUNCT	_	_	1	punct	_	_

@@ -1,6 +1,7 @@
 Kurzbeschreibung
 Das Programm zur Modernisierung der Haushaltsverfahren des Bundes steht sowohl für die Optimierung der Verfahren als auch für die Nutzung der Daten.
 Das Vorhaben Datenhaus führt Daten zusammen, die bislang in unterschiedlichen Verfahrenskomponenten isoliert verwaltet und ausgewertet werden.
+Das Vorhaben Datenhaus stellt die Daten der Haushaltsabteilung bereit, die bislang in unterschiedlichen Verfahrenskomponenten isoliert verwaltet und ausgewertet werden.
 Das Vorhaben Datenhaus hat sich die Vision gesetzt, die Daten der Haushaltsabteilung zentral bereitzustellen.
 Das Datenhaus ermöglicht mit den Daten der Haushaltsabteilung eine übergreifende Auswertung.
 Über die einzelnen Vorhaben hinweg ist das Datenhaus die zentrale Plattform.

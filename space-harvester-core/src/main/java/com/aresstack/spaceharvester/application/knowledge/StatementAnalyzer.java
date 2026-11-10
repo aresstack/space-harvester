@@ -24,7 +24,9 @@ public interface StatementAnalyzer {
      * Analysiert den Text. Lädt das Modell beim ersten Aufruf.
      *
      * @param documentId Präfix der IDs ({@code quelle/seite@fassung}); jede Erwähnung und Aussage beginnt damit
-     * @param text       genau die Textprojektion, die der Leser zeigt; Spannen beziehen sich darauf
+     * @param text       die Textprojektion, die der Leser zeigt, gleich lang und mit gleichen Spannen; jeder
+     *                   Zeilenumbruch ist eine Blockgrenze (Überschrift, Absatz, Listenpunkt), weiche Umbrüche
+     *                   innerhalb eines Absatzes sind schon Leerzeichen ({@link StatementAnalysis#analyzerText})
      * @param cancelled  wird zwischen den Sätzen gefragt; {@code true} bricht ab
      * @throws AnalyzerUnavailableException wenn Modell oder Laufzeit fehlen oder defekt sind
      * @throws CancellationException        nach einem Abbruch

@@ -26,5 +26,14 @@ public enum Finding {
      * Eine Zeitangabe mit Präposition hing laut Parser am Dativempfänger ({@code dem Vorgesetzten am Montag}) und
      * ist als Zeitkontext der Aussage übernommen; der nominale Bezug bleibt daneben erhalten.
      */
-    TIME_FROM_NOMINAL
+    TIME_FROM_NOMINAL,
+    /** Ein Reflexivpronomen ({@code sich}) am Prädikat; es ist kein eigener Beteiligter. */
+    REFLEXIVE,
+    /**
+     * Ein Hilfsverb, das der Parser über eine Teilsatzgrenze an dieses Prädikat gehängt hat, zählt nicht
+     * ({@code stellt … bereit, die … ausgewertet werden}).
+     */
+    AUXILIARY_OUTSIDE_CLAUSE,
+    /** Kein Subjekt übernommen: zwischen den gereihten Prädikaten beginnt ein Teilsatz mit eigenem Subjekt. */
+    COORDINATION_ACROSS_CLAUSE
 }

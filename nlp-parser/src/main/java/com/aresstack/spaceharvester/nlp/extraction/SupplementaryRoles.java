@@ -49,7 +49,8 @@ final class SupplementaryRoles {
         findings.addAll(statement.findings());
         for (Token dependent : sentence.dependents(statement.predicate().verb())) {
             String relation = dependent.deprel();
-            if (relation == null || !"obl".equals(dependent.baseRelation()) && !"iobj".equals(relation)) {
+            if (relation == null || !"obl".equals(dependent.baseRelation()) && !"iobj".equals(relation)
+                    || PrimaryRelationExtraction.reflexive(dependent)) {
                 continue;
             }
             Mention mention = mentions.at(document, sentence, dependent);
@@ -93,8 +94,7 @@ final class SupplementaryRoles {
                     continue;
                 }
                 Mention mention = mentions.at(document, sentence, nominal);
-                String word = (mention.lemma() != null ? mention.lemma() : mention.headForm()).toLowerCase(Locale.ROOT);
-                if (TIME_WORDS.contains(word)) {
+                if (timeWord(mention)) {
                     arguments.add(new Argument(Role.TIME, mention.id(), nominal.deprel(), marker, Priority.CONTEXT,
                             Basis.LEXICON, false));
                     findings.add(Finding.TIME_FROM_NOMINAL);
@@ -103,9 +103,22 @@ final class SupplementaryRoles {
         }
     }
 
+    /**
+     * Ob die Erwähnung eine Zeitangabe ist. Die Wortform „Daten“ zählt nie, obwohl OpenNLP sie auf „Datum“ zurückführt:
+     * der Plural ist zwischen Kalenderdaten und Information mehrdeutig, im Fachtext fast immer Information. Der
+     * Singular „Datum“ bleibt Zeitangabe.
+     */
+    static boolean timeWord(Mention mention) {
+        String head = mention.headForm() == null ? "" : mention.headForm().toLowerCase(Locale.ROOT);
+        if ("daten".equals(head)) {
+            return false;
+        }
+        String word = mention.lemma() != null ? mention.lemma().toLowerCase(Locale.ROOT) : head;
+        return TIME_WORDS.contains(word);
+    }
+
     private static Argument circumstance(Mention mention, String relation, String marker) {
-        String word = (mention.lemma() != null ? mention.lemma() : mention.headForm()).toLowerCase(Locale.ROOT);
-        if (TIME_WORDS.contains(word)) {
+        if (timeWord(mention)) {
             return new Argument(Role.TIME, mention.id(), relation, marker, Priority.CONTEXT, Basis.LEXICON, true);
         }
         if (marker != null && INSTRUMENT_PREPOSITIONS.contains(marker.toLowerCase(Locale.ROOT))) {

@@ -45,7 +45,7 @@ ohne Parser im Dienst, ohne Hintergrundanalyse, ohne KI-Dienst und ohne automati
    (`DOCUMENT` = Seite in der analysierten Fassung, `MENTION`, `STATEMENT`) und typisierte Kanten ab: Dokument →
    Aussage/Erwähnung (`CONTAINS`), Aussage → Erwähnung je Rolle (`ACTOR`, `AFFECTED_OBJECT`, `RECIPIENT`,
    `PREPOSITIONAL_OBJECT`, `INSTRUMENT`, `TIME`, `CIRCUMSTANCE`), Erwähnung → Erwähnung (`NOMINAL`, kein Besitz). Jede
-   Kante trägt Herkunft (`PARSER`, `COORDINATION`, `CASE_HEURISTIC`, `LEXICON`, `STRUCTURE`), UD-Relation,
+   Kante trägt Herkunft (`PARSER`, `COORDINATION`, `CASE_HEURISTIC`, `LEXICON`, `HEURISTIC`, `STRUCTURE`), UD-Relation,
    Präposition, Beleg (Satz) und Sicherheit. IDs enthalten Quelle, Seite und die ersten 12 Zeichen des Eingabe-Hashs
    (`quelle/seite@fassung#s<Satz>.t<Token>` bzw. `.v<Verb>`). Weil eine neue Analyse die Datei der Seite ersetzt,
    ersetzt sie genau deren Projektion: keine verwaisten oder doppelten Knoten, andere Seiten unberührt, Wiederholung
@@ -104,17 +104,17 @@ der Core bereits.
 
 | Fall | Befund | Zwischenstand (Ursache) | Stufe | Behebung |
 |---|---|---|---|---|
-| A | „Kurzbeschreibung“, „Komponenten“ werden Handelnde | Satzerkennung übergeht den Zeilenumbruch nach der Überschrift | Satzgrenzen | Zeilenumbruch der Textprojektion ist harte Satzgrenze, vor OpenNLP (umgesetzt, Regelversion 3) |
+| A | „Kurzbeschreibung“, „Komponenten“ werden Handelnde | Satzerkennung übergeht den Zeilenumbruch nach der Überschrift | Satzgrenzen | Zeilenumbruch der Textprojektion ist harte Satzgrenze, vor OpenNLP (umgesetzt, Regelversion 3); nur ein weicher Umbruch an der Zeilenbreite mitten im Satz (Text-, PDF-Dateien: zwei Fließtextzeilen, die erste mindestens 40 Zeichen, beginnt groß oder setzt eine Verbindung fort, ohne Satzende, die zweite setzt kleingeschrieben fort oder die erste endet mit Komma; höchstens 10 Zeilen je Satz) wird vorher zum Leerzeichen, gleich lang; Überschriften, Listenpunkte, Datensätze, Code und Absätze ohne Leerzeile bleiben getrennt, im Zweifel bleibt die Satzgrenze (Regelversion 4) |
 | B | Aussage „welchen“ | OpenNLP taggt das Relativpronomen als `VERB`, MaltParser macht es zur Wurzel | Wortart | Korrektur geschlossener Wortklassen nach dem Tagger, vor dem Parser (`GermanTagCorrections`, Regelversion 3) |
 | G | Passivaussage „hinweg ist“ | OpenNLP taggt die Postposition als `VERB`, „ist“ wird `aux:pass` | Wortart | wie B (umgesetzt, Regelversion 3) |
 | C | „aufermöglichen“ | MaltParser hängt die Präposition als `compound:prt` an | MaltParser | Extraktion folgt der Kante nicht (#563, Regelversion 2) |
-| D | „den Daten“ als Zeitangabe | OpenNLP-Grundform „datum“, die Zeitregel liest das Lemma | Grundform + Regel | Zeitregel nicht über die Grundform „datum“ bei der Wortform „Daten“ |
-| E | Relativpronomen zugleich Handelnder (aktiv) und Betroffenes (passiv) | gemeinsames Passiv-„werden“ hängt nur am letzten Glied | MaltParser + Regel | Stimme über gereihte Partizipien mit gemeinsamem Hilfsverb weitergeben; keine Übernahme über Stimmengrenzen |
-| F | „Das Vorhaben → setzen → sich“ | „sich“ als `obj`, „die Vision“ als zweites `nsubj` | MaltParser + Regel | Reflexivpronomen nie betroffenes Objekt; zweites Subjekt höchstens unsicheres Objekt (Grundlage Heuristik) |
+| D | „den Daten“ als Zeitangabe | OpenNLP-Grundform „datum“, die Zeitregel liest das Lemma | Grundform + Regel | Zeitregel nicht über die Grundform „datum“ bei der Wortform „Daten“ (umgesetzt, Regelversion 4) |
+| E | „ausgewertet → Handelnder: Das Vorhaben“; Hauptsatz wird passiv | Passiv-„werden“ des Relativsatzes hängt am Hauptverb, „ausgewertet“ als dessen `conj` | MaltParser + Regel | Hilfsverb hinter dem Verb zählt nur im Verbalkomplex, sonst gehört es dem Verb direkt davor; keine Subjektübernahme in einen Teilsatz mit eigenem Subjekt (umgesetzt, Regelversion 4) |
+| F | „Das Vorhaben → setzen → sich“ | „sich“ als `obj`, „die Vision“ als zweites `nsubj` | MaltParser + Regel | Reflexivpronomen nie Beteiligter; zweites Subjekt höchstens unsicheres Objekt, Grundlage `HEURISTIC` (umgesetzt, Regelversion 4) |
 | H | „stellt … sicher“ ohne Objekt | Verbzusatz „sicher“/„bereit“ als `xcomp`, Objekt als dessen `nsubj` | MaltParser | Regel für prädikative Verbzusätze, Objekt nur unsicher (Heuristik) |
 | I | „Register → erweitern → Register“ | Listenkennung „Register:“ als `nsubj`, eigentliches Subjekt als `obj` | Struktur + MaltParser | Listenkennung vor Doppelpunkt nie Beteiligter neben eigenem Subjekt; fehlt eins, ist sie impliziter Handelnder mit Grundlage Heuristik und höchstens UNCERTAIN |
 | J | Listeneintrag „Datenprodukt-API: Erlaubt …“ ohne Prädikat | großgeschriebenes Verb nach Doppelpunkt als `PROPN` | Wortart | keine deterministische Korrektur ohne Lexikon; die Qualitätsstufe markiert solche Aussagen |
-| K | Grundform „bereitzustellen“ | OpenNLP lässt zu-Infinitive mit Verbzusatz unverändert | Grundform | Grundform-Korrektur „Verbzusatz + zu + Verb“ nach dem Lemmatisierer (umgesetzt, Regelversion 3) |
+| K | Grundform „bereitzustellen“ | OpenNLP lässt zu-Infinitive mit Verbzusatz unverändert | Grundform | Grundform-Korrektur „Verbzusatz + zu + Verb“ nach dem Lemmatisierer (umgesetzt, Regelversion 3); gewöhnliche Infinitive wie „hinzufügen“, „anzupfen“ bleiben, „hinzuweisen“ wird „hinweisen“ (Regelversion 4) |
 
 Jede Regeländerung erhöht `ObjectCentricExtraction.RULES_VERSION`; gespeicherte Analysen werden dadurch
 `STALE ANALYZER_CHANGED` und erst auf Klick neu berechnet. Danach folgt eine deterministische Qualitätsstufe
