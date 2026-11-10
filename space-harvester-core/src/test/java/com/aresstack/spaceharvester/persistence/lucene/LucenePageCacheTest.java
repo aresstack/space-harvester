@@ -143,6 +143,38 @@ class LucenePageCacheTest {
     }
 
     @Test
+    void anAcquisitionWaitsForARunningWriteWhileAQuickFillGivesUp() throws Exception {
+        LucenePageCache cache = open();
+        PageSnapshot fetched = page("wiki", "106", "DEV", null, "1", json("{}"));
+        String seen = cache.state(fetched.key());
+        java.util.concurrent.CountDownLatch holding = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        // Ein anderer Schreiblauf (etwa das Katalogisieren der Funde) hält die Sperre länger als FILL_WAIT.
+        Thread writer = Thread.ofPlatform().start(() -> {
+            try (LucenePageCache.Batch batch = cache.begin()) {
+                holding.countDown();
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        holding.await();
+
+        assertThat(cache.trySave(fetched, seen)).isFalse();
+        assertThat(cache.find(fetched.key())).isEmpty();
+
+        java.util.concurrent.CompletableFuture<Boolean> acquired = java.util.concurrent.CompletableFuture
+                .supplyAsync(() -> cache.saveWaiting(fetched, seen));
+        Thread.sleep(LucenePageCache.FILL_WAIT.toMillis() * 2);
+        assertThat(acquired).isNotDone();
+        release.countDown();
+        writer.join();
+
+        assertThat(acquired.get(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(cache.find(fetched.key())).contains(fetched);
+    }
+
+    @Test
     void aLateFillNeverOverwritesNewerHeadersOfASync() {
         LucenePageCache cache = open();
         PageSnapshot fetched = page("wiki", "105", "DEV", null, "1", json("{}"));

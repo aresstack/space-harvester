@@ -195,9 +195,28 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
      * @return ob gespeichert wurde
      */
     public boolean trySave(PageSnapshot snapshot, String expectedState) {
+        return saveIfUnchanged(snapshot, expectedState, FILL_WAIT);
+    }
+
+    /** Längste Wartezeit von {@link #saveWaiting} auf die Schreibsperre. */
+    static final Duration ACQUIRE_WAIT = Duration.ofSeconds(60);
+
+    /**
+     * Wie {@link #trySave}, wartet aber bis {@link #ACQUIRE_WAIT} auf die Schreibsperre: für die Beschaffung (ADR 0016),
+     * die auf eigenen Threads läuft und deren Seite sonst verloren wäre, obwohl sie schon geholt ist. Gleichzeitige
+     * Ablagen (Katalogisieren der Funde, die übrigen Funde desselben Stapels) halten die Sperre je für einen Commit;
+     * unter Last dauert das länger als {@link #FILL_WAIT}. Die Prüfung auf den vorher gelesenen Stand bleibt.
+     *
+     * @return ob gespeichert wurde
+     */
+    public boolean saveWaiting(PageSnapshot snapshot, String expectedState) {
+        return saveIfUnchanged(snapshot, expectedState, ACQUIRE_WAIT);
+    }
+
+    private boolean saveIfUnchanged(PageSnapshot snapshot, String expectedState, Duration wait) {
         requireOpen();
         try {
-            if (!writeLock.tryLock(FILL_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+            if (!writeLock.tryLock(wait.toMillis(), TimeUnit.MILLISECONDS)) {
                 return false;
             }
         } catch (InterruptedException e) {

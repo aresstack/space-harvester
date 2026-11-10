@@ -34,7 +34,22 @@ public interface PageCacheFill {
      */
     boolean store(PageSnapshot snapshot, String expectedState);
 
+    /**
+     * Wie {@link #store}, darf aber auf einen gerade laufenden Schreiblauf warten: für die Beschaffung im Hintergrund
+     * des {@code AcquisitionScheduler} (ADR 0016), die niemanden aufhält und deren schon geholte Seite sonst verloren
+     * wäre. Standard: wie {@link #store}.
+     */
+    default boolean storeWaiting(PageSnapshot snapshot, String expectedState) {
+        return store(snapshot, expectedState);
+    }
+
     static PageCacheFill of(Function<PageKey, String> state, BiPredicate<PageSnapshot, String> store) {
+        return of(state, store, store);
+    }
+
+    /** @param storeWaiting {@link #storeWaiting} */
+    static PageCacheFill of(Function<PageKey, String> state, BiPredicate<PageSnapshot, String> store,
+                            BiPredicate<PageSnapshot, String> storeWaiting) {
         return new PageCacheFill() {
             @Override
             public String state(PageKey key) {
@@ -44,6 +59,11 @@ public interface PageCacheFill {
             @Override
             public boolean store(PageSnapshot snapshot, String expectedState) {
                 return store.test(snapshot, expectedState);
+            }
+
+            @Override
+            public boolean storeWaiting(PageSnapshot snapshot, String expectedState) {
+                return storeWaiting.test(snapshot, expectedState);
             }
         };
     }
