@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeExcept
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -320,7 +321,8 @@ public class Assets {
 
     /**
      * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
-     * ist, sonst die Anforderung angelegt. Code und Token sieht diese Stelle nie.
+     * ist, sonst die Anforderung angelegt. Ist sie schon offen, fragt der Lesezugriff die Quelle nicht noch einmal
+     * ({@link #holdWhileSignInOpen}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
      */
     private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
         java.time.Instant started = clock.instant();
@@ -356,6 +358,7 @@ public class Assets {
         if (stored.isPresent()) {
             return read(stored.get());
         }
+        holdWhileSignInOpen(sourceId);
         byte[] content;
         try {
             if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
@@ -954,6 +957,7 @@ public class Assets {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }
+        holdWhileSignInOpen(sourceId);
         // Die Größe der Vorschau ist vorher unbekannt; es gilt die des Anhangs (unbekannt zählt als groß).
         try (LargeFileGate.Permit permit = gate.enter(sourceId, attachment.fileSize())) {
             return fetchPreview(list, attachment, source, kinds, version, mayStore);
@@ -1291,6 +1295,7 @@ public class Assets {
     }
 
     private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
+        holdWhileSignInOpen(source.id());
         AttachmentFile file;
         // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
         try {
@@ -1381,6 +1386,25 @@ public class Assets {
             return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht keine geschützte Datei
+     * ans Netz (#571): jede Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Sitzungs-Cookie die gemeinsame Sitzung
+     * überschreibt, und der Code der offenen Anforderung passte beim Senden nicht mehr (HTTP 500). Wirft stattdessen,
+     * was die Quelle geworfen hätte, mit der Seite der offenen Anforderung; Lesen auf Abruf schließt sich ihr damit an
+     * ({@link #unlocking}), ein Auftrag wartet auf sie ({@link SignInRequests#await}). Abgelegte Dateien kommen
+     * weiter aus der Ablage; nach Annahme, Ablehnung oder Ablauf der Anforderung liest diese Stelle wieder normal.
+     */
+    private void holdWhileSignInOpen(String sourceId) {
+        if (signIns == null) {
+            return;
+        }
+        Optional<SignInChallenge> open = signIns.pendingChallenge(sourceId);
+        if (open.isPresent()) {
+            throw new SignInRequiredException(sourceId, "Die Anmeldung der Quelle ist offen (Einmalcode)", open.get(),
+                    null);
         }
     }
 
