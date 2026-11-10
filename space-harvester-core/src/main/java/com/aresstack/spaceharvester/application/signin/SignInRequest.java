@@ -63,6 +63,11 @@ public record SignInRequest(String id, String sourceId, String service, String t
         /** Nicht angenommen; die Anforderung bleibt offen, {@link #error()} nennt den Grund der Quelle. */
         REJECTED,
         /**
+         * Nur angemeldet (erster Schritt bei einem Token, {@link SignInRequests#beginWebLogin}); die Anforderung
+         * fragt jetzt den Code der neuen Web-Sitzung ab.
+         */
+        NEXT_STEP,
+        /**
          * Senden gescheitert (keine Verbindung, Proxy, TLS, HTTP-Fehler der Quelle …); die Anforderung bleibt offen,
          * {@link #failure()} nennt die Ursache.
          */

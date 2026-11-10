@@ -1301,8 +1301,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         private final OneTimeCodeChallenge challenge;
         /** Die Web-Sitzung mit Benutzer und Passwort, aus der die Abfrage stammt; {@code null}: Sitzung des Ports. */
         private final WebLogin bound;
-        /** Eigener Hinweis statt des Fehlers der Seite, sonst {@code null}. */
+        /** Eigener Text statt des Fehlers der Seite, sonst {@code null}. */
         private final String note;
+        /** {@link #note} ist ein Hinweis (nächster Schritt), kein Fehler: steht als Meldung, ohne Fehler der Seite. */
+        private final boolean hint;
 
         Challenge(OneTimeCodeChallenge challenge) {
             this(challenge, null, null);
@@ -1313,9 +1315,15 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
 
         Challenge(OneTimeCodeChallenge challenge, WebLogin bound, String note) {
+            this(challenge, bound, note, false);
+        }
+
+        /** @param hint {@code note} ist ein Hinweis (LOGIN_NOTE, NEW_SESSION_NOTE), kein Fehler */
+        Challenge(OneTimeCodeChallenge challenge, WebLogin bound, String note, boolean hint) {
             this.challenge = challenge;
             this.bound = bound;
             this.note = note;
+            this.hint = hint;
         }
 
         @Override
@@ -1330,12 +1338,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
         @Override
         public String message() {
-            return challenge.message();
+            return hint ? note : challenge.message();
         }
 
         @Override
         public String error() {
-            return note != null ? note : challenge.error();
+            return hint ? "" : note != null ? note : challenge.error();
         }
 
         @Override
@@ -1438,7 +1446,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (code.length == 0) {
                 // Erster Schritt des Codefelds: nur anmelden. Den Code der Token-Sitzung nimmt Confluence hier ohnehin
                 // nicht an; gefragt wird nur der Code, den die neue Sitzung schickt (Angelo 10.11.2026).
-                return new Challenge(fresh, login, LOGIN_NOTE);
+                return new Challenge(fresh, login, LOGIN_NOTE, true);
             }
             Challenge inSession = new Challenge(fresh, login);
             SignInChallenge again;
@@ -1449,7 +1457,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return new Challenge(fresh, login, SignInFailures.describe(e, fresh.service()));
             }
             if (again instanceof Challenge rejected && rejected.note == null) {
-                return new Challenge(rejected.challenge, login, NEW_SESSION_NOTE);
+                return new Challenge(rejected.challenge, login, NEW_SESSION_NOTE, true);
             }
             return again;
         }

@@ -42,6 +42,8 @@ public final class SignInSlot extends JPanel {
 
     static final String HEADING = "Zusätzliche Anmeldung erforderlich";
     static final String SUBMIT_TEXT = "Bestätigen";
+    /** Knopf im ersten Schritt bei einem Token. */
+    static final String LOGIN_TEXT = "Anmelden";
     static final String RESEND_TEXT = "Code erneut senden";
     static final String DECLINE_TEXT = "Ohne Anmeldung fortfahren";
     static final String SENDING_TEXT = "Wird gesendet …";
@@ -201,8 +203,13 @@ public final class SignInSlot extends JPanel {
         }
         shown = next;
         boolean loginVisibilityChanged = loginFields.isVisible() != next.asksForLogin();
+        if (loginVisibilityChanged && !next.asksForLogin()) {
+            clearLoginFields();
+        }
         showLogin(next.asksForLogin());
-        String hint = next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
+        // Im ersten Schritt gibt es noch keinen Code für diese Anmeldung: nur der Hinweis über den Feldern.
+        String hint = next.asksForLogin() ? "Für geschützte Bilder und Anhänge ist eine eigene Web-Anmeldung nötig."
+                : next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
         String where = next.title().isEmpty() ? next.service() : next.title();
         message.setText(hint + (where.isEmpty() ? "" : "\n(" + where + ")"));
         // Die Ursache eines gescheiterten Sendens (407, TLS, Zeitüberschreitung …) nennt seit #571 der Core an der
@@ -211,7 +218,8 @@ public final class SignInSlot extends JPanel {
                 : localError != null ? localError : next.error();
         error.setText(problem);
         error.setVisible(!problem.isEmpty());
-        resendButton.setVisible(next.resendAvailable());
+        // „Code erneut senden“ erst im zweiten Schritt, wenn es ein Codefeld gibt.
+        resendButton.setVisible(!next.asksForLogin() && next.resendAvailable());
         setSending(sending);
         if (loginVisibilityChanged) {
             revalidateParent();
@@ -268,7 +276,8 @@ public final class SignInSlot extends JPanel {
         // Clear secrets after the background call, including exceptional completion.
         Background.run(() -> {
             try {
-                return requests.submit(request.id(), code, username, password);
+                return username != null ? requests.beginWebLogin(request.id(), username, password)
+                        : requests.submit(request.id(), code);
             } finally {
                 Arrays.fill(code, '\0');
                 if (password != null) {
@@ -329,7 +338,8 @@ public final class SignInSlot extends JPanel {
 
     private void setSending(boolean value) {
         sending = value;
-        submitButton.setText(value ? SENDING_TEXT : SUBMIT_TEXT);
+        submitButton.setText(value ? SENDING_TEXT
+                : shown != null && shown.asksForLogin() ? LOGIN_TEXT : SUBMIT_TEXT);
         submitButton.setEnabled(!value);
         resendButton.setEnabled(!value);
         declineButton.setEnabled(!value);
