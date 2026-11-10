@@ -378,8 +378,10 @@ public class Exports {
             ExportRequest request = access.apply(request(status));
             return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats())));
         }
+        // Ein angehaltenes Nachladen oder Neu-Erzwingen setzt als solches fort, nicht als gewöhnlicher Lauf.
         return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
-                ? new ExportTask(access.apply(export.request), export.selected) : task);
+                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll)
+                : task);
     }
 
     /**
@@ -522,11 +524,11 @@ public class Exports {
      *                  waren für den Auftraggeber schon lesbar und zählen weiter als gescheitert
      */
     private record Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed,
-                            List<String> warnings, boolean counted, Set<String> unchecked) {
+                            List<String> warnings, boolean counted, Set<String> unchecked, Set<String> dropped) {
 
         Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed, List<String> warnings,
                  boolean counted) {
-            this(startedAt, generation, unrefreshed, warnings, counted, Set.of());
+            this(startedAt, generation, unrefreshed, warnings, counted, Set.of(), Set.of());
         }
     }
 
@@ -553,7 +555,8 @@ public class Exports {
         CacheGeneration generation = cache.currentGeneration(request.sourceId(), request.spaceKey())
                 .orElseThrow(() -> new JobFailedException("SYNC_INCOMPLETE", "Nach dem Nachladen liegt für Space "
                         + request.spaceKey() + " der Quelle " + request.sourceId() + " keine Generation vor"));
-        return new Prepared(startedAt, generation, retried.failedPages(), List.of(), false, retried.unchecked());
+        return new Prepared(startedAt, generation, retried.failedPages(), List.of(), false, retried.unchecked(),
+                retried.dropped());
     }
 
     /**
@@ -660,6 +663,12 @@ public class Exports {
                     after = listed.pageId();
                     if (subtree != null && !subtree.contains(listed.pageId())) {
                         // Außerhalb des Teilbaums: gehört nicht zu diesem Export.
+                        continue;
+                    }
+                    if (prepared.dropped().contains(listed.pageId())) {
+                        // Beim Nachladen nicht mehr in der Quelle, nicht mehr lesbar oder verschoben: der alte Stand
+                        // im Cache gehört nicht mehr ins Ergebnis, wird aber weder genannt noch gezählt.
+                        hidden.add(listed.pageId());
                         continue;
                     }
                     if (!request.visible().test(listed.header())) {

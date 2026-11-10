@@ -151,14 +151,22 @@ public interface SpaceProvisioning {
      * @param failedPages frische Kopfdaten der zulässigen Seiten, deren Abruf wieder scheiterte
      * @param unchecked   Seiten, deren Kopfdaten die Quelle nicht lieferte (Verbindung, Drosselung, Fehler); sie
      *                    bleiben, wie sie waren, und gelten weiter als gescheitert
+     * @param dropped     Seiten, die die Quelle nicht mehr führt, die in einem anderen Space liegen oder die
+     *                    {@code allowed} nicht mehr zulässt; ein alter Stand im Cache gehört nicht mehr ins Ergebnis
      */
-    record Retried(boolean done, List<PageHeader> failedPages, java.util.Set<String> unchecked) {
+    record Retried(boolean done, List<PageHeader> failedPages, java.util.Set<String> unchecked,
+                   java.util.Set<String> dropped) {
 
         public static final Retried UNAVAILABLE = new Retried(false, List.of(), java.util.Set.of());
+
+        public Retried(boolean done, List<PageHeader> failedPages, java.util.Set<String> unchecked) {
+            this(done, failedPages, unchecked, java.util.Set.of());
+        }
 
         public Retried {
             failedPages = List.copyOf(failedPages);
             unchecked = java.util.Set.copyOf(unchecked);
+            dropped = java.util.Set.copyOf(dropped);
         }
     }
 

@@ -96,6 +96,20 @@ class FailedPageRetryTest {
     }
 
     @Test
+    void aKnownPageWhoseRetryFailsBecomesStale() {
+        syncWithPage3Failing();
+        source.change("2", "2", 1);
+        failing.add("2");
+
+        SpaceProvisioning.Retried retried = syncs.retry(context(), "wiki", "DOC", Set.of("2"), header -> true);
+
+        assertThat(retried.failedPages()).extracting(header -> header.key().pageId()).containsExactly("2");
+        SyncBaseline after = store.confirmed("wiki", "DOC").orElseThrow();
+        assertThat(after.pages()).containsKey("2");
+        assertThat(after.stalePageIds()).containsExactly("2");
+    }
+
+    @Test
     void aPageTheCallerMayNotSeeIsNeitherLoadedNorReported() {
         syncWithPage3Failing();
 
@@ -105,6 +119,7 @@ class FailedPageRetryTest {
         assertThat(retried.done()).isTrue();
         assertThat(retried.failedPages()).isEmpty();
         assertThat(retried.unchecked()).isEmpty();
+        assertThat(retried.dropped()).containsExactly("3");
         assertThat(fetched).isEmpty();
         assertThat(store.confirmed("wiki", "DOC").orElseThrow().missingPageIds()).containsExactly("3");
     }
@@ -119,6 +134,7 @@ class FailedPageRetryTest {
 
         assertThat(retried.failedPages()).isEmpty();
         assertThat(retried.unchecked()).containsExactly("4");
+        assertThat(retried.dropped()).containsExactly("3");
         assertThat(fetched).isEmpty();
     }
 

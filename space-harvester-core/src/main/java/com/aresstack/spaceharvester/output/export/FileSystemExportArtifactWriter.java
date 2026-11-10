@@ -116,6 +116,35 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.maxTotalBytes = maxTotalBytes;
+        recoverAll();
+    }
+
+    /** Beim Start: Artefakte, deren Austausch ein Absturz unterbrochen hat, zurück an ihren Platz. */
+    private void recoverAll() {
+        for (String exportId : exportIds(root.resolve(REPLACED))) {
+            try {
+                recover(exportId);
+            } catch (IOException | UncheckedIOException e) {
+                // Bleibt unter .replaced liegen; der nächste Start oder Austausch versucht es erneut.
+            }
+        }
+    }
+
+    /**
+     * Ein Absturz zwischen den beiden Umbenennungen eines Austauschs ließe das bisherige Artefakt nur unter
+     * {@code .replaced/} zurück: Fehlt das veröffentlichte, kommt es zurück; sonst ist die Sicherung überflüssig.
+     */
+    private void recover(String exportId) throws IOException {
+        Path backup = root.resolve(REPLACED).resolve(exportId);
+        if (!Files.isDirectory(backup)) {
+            return;
+        }
+        Path target = root.resolve(exportId);
+        if (Files.exists(target)) {
+            deleteRecursively(backup);
+        } else {
+            move(backup, target);
+        }
     }
 
     @Override
@@ -163,7 +192,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht");
             }
             deleteRecursively(work);
-            deleteRecursively(root.resolve(REPLACED).resolve(exportId));
+            recover(exportId);
             long published = publishedBytes();
             if (published + inProgress.get() >= maxTotalBytes) {
                 throw new ExportStorageFullException(maxTotalBytes);
@@ -505,6 +534,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final List<Conversion> conversions = new ArrayList<>();
         private boolean published;
         private final boolean replacing;
+        /** Die geschriebenen Seiten; beim Austausch wandern nur ihre Bilder und Lese-Ansichten mit. */
+        private final java.util.Set<String> pageIds = new java.util.HashSet<>();
 
         FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin,
                     boolean replacing) throws IOException {
@@ -538,6 +569,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalArgumentException("Kopfdaten und Snapshot gehören zu verschiedenen Seiten");
             }
             String pageId = header.key().pageId();
+            pageIds.add(pageId);
             NativePayload payload = snapshot.payload();
             byte[] bytes = payload.bytes();
             String rawName = RAW + "/" + rawFileName(pageId, payload.mediaType());
@@ -630,15 +662,22 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
          * zurück.
          */
         private void swap() throws IOException {
-            Path views = target.resolve(VIEWS);
-            if (Files.isDirectory(views)) {
-                copyRecursively(views, work.resolve(VIEWS));
+            // Nur für Seiten, die im neuen Artefakt stehen: was nicht mehr lesbar oder weg ist, nimmt nichts mit.
+            for (String pageId : pageIds) {
+                Path view = target.resolve(viewFileName(pageId));
+                if (Files.isRegularFile(view)) {
+                    Path copy = work.resolve(viewFileName(pageId));
+                    Files.createDirectories(copy.getParent());
+                    Files.copy(view, copy, StandardCopyOption.REPLACE_EXISTING);
+                }
             }
             Optional<ExportAssetManifest> assets = assets(exportId);
             if (assets.isPresent()) {
                 // Neue Seiten haben noch keine Bilder und Anhänge: unvollständig, bis die Aufträge sie beschafft haben.
+                List<ExportAssetManifest.Entry> kept = assets.get().assets().stream()
+                        .filter(entry -> pageIds.contains(entry.pageId())).toList();
                 try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(work.resolve(ASSETS)))) {
-                    writeAssets(generator, new ExportAssetManifest(false, false, assets.get().assets()));
+                    writeAssets(generator, new ExportAssetManifest(false, false, kept));
                 }
             }
             Path backup = root.resolve(REPLACED).resolve(exportId);
@@ -799,19 +838,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(from, to);
-        }
-    }
-
-    private static void copyRecursively(Path from, Path to) throws IOException {
-        try (Stream<Path> paths = Files.walk(from)) {
-            for (Path each : paths.toList()) {
-                Path copy = to.resolve(from.relativize(each).toString());
-                if (Files.isDirectory(each)) {
-                    Files.createDirectories(copy);
-                } else if (!each.getFileName().toString().endsWith(".part")) {
-                    Files.copy(each, copy, StandardCopyOption.REPLACE_EXISTING);
-                }
-            }
         }
     }
 

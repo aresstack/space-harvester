@@ -214,6 +214,62 @@ class FileSystemExportArtifactWriterTest {
     }
 
     @Test
+    void aReplacementCarriesOnlyTheAssetsAndViewsOfItsOwnPages() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        try (ExportArtifactWriter.Session session = writer.begin("job-f", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            write(session, snapshot("101", "100", "{\"id\":\"101\"}".getBytes(StandardCharsets.UTF_8)));
+            session.publish(tree(new PageTree.Node("100", List.of(new PageTree.Node("101", List.of())))),
+                    summary("job-f", 2, List.of(), true));
+        }
+        writer.putAssets("job-f", new com.aresstack.spaceharvester.application.convert.ExportAssetManifest(true,
+                true, List.of(asset("100", "att1"), asset("101", "att2"))));
+        for (String pageId : List.of("100", "101")) {
+            writer.putReadingView("job-f", new com.aresstack.spaceharvester.application.convert.ExportReadingView(
+                    pageId, "3", com.aresstack.spaceharvester.application.convert.ExportReadingView.Status.AVAILABLE,
+                    null, "<p>a</p>", "https://wiki.example.org/", "a"));
+        }
+
+        // Seite 101 ist inzwischen nicht mehr lesbar und fehlt im neuen Artefakt.
+        try (ExportArtifactWriter.Session session = writer.replace("job-f", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-f", 1, List.of(), true));
+        }
+
+        assertThat(writer.assets("job-f").orElseThrow().assets())
+                .extracting(com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry::pageId)
+                .containsExactly("100");
+        assertThat(writer.dataset("job-f").orElseThrow().readingView("100")).isPresent();
+        assertThat(root.resolve("job-f").resolve(FileSystemExportArtifactWriter.viewFileName("101"))).doesNotExist();
+    }
+
+    @Test
+    void aSwapInterruptedByACrashBringsThePreviousArtifactBack() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        try (ExportArtifactWriter.Session session = writer.begin("job-c", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-c", 1, List.of(), true));
+        }
+        // Absturz zwischen den Umbenennungen: das bisherige liegt nur noch unter .replaced/.
+        Files.createDirectories(root.resolve(".replaced"));
+        Files.move(root.resolve("job-c"), root.resolve(".replaced").resolve("job-c"));
+
+        FileSystemExportArtifactWriter restarted = new FileSystemExportArtifactWriter(root);
+
+        assertThat(restarted.find("job-c")).isPresent();
+        assertThat(restarted.pageIds("job-c").orElseThrow()).containsExactly("100");
+        assertThat(root.resolve(".replaced").resolve("job-c")).doesNotExist();
+    }
+
+    private static com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry asset(String pageId,
+                                                                                                    String id) {
+        return new com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry(pageId,
+                com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Reference.attachment(id,
+                        id + ".png"), id, "1", id + ".png", "image/png", 3, "sha256:aa",
+                com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Status.STORED, null);
+    }
+
+    @Test
     void incompleteExportSaysSoInTheManifest() throws Exception {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         PageFailure missing = new PageFailure("7", "PAYLOAD_MISSING", "Payload von Seite 7 fehlt");

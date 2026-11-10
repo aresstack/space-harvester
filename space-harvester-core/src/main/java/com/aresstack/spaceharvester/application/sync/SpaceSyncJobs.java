@@ -240,7 +240,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         if (result.get().run() != null) {
             afterCommit(result.get().run(), sourceId, spaceKey, context.owner());
         }
-        return new Retried(true, result.get().failedPages(), result.get().unchecked());
+        return new Retried(true, result.get().failedPages(), result.get().unchecked(), result.get().dropped());
     }
 
     private java.util.Optional<FailedPageRetry.Result> retryOnce(String sourceId, String spaceKey, Set<String> pageIds,

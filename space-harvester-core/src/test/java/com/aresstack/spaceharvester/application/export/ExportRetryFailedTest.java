@@ -54,6 +54,7 @@ class ExportRetryFailedTest {
     private SpaceProvisioning.Retried retryResult;
     private List<PageSnapshot> afterRetry;
     private Predicate<PageHeader> allowed;
+    private boolean pauseOnce;
 
     /** Erstes Einlesen: Seite 3 stand in der Inventur, ihr Abruf scheiterte. */
     private final SpaceProvisioning provisioning = new SpaceProvisioning() {
@@ -85,6 +86,10 @@ class ExportRetryFailedTest {
                              Predicate<PageHeader> allowed) {
             retried.add(Set.copyOf(pageIds));
             ExportRetryFailedTest.this.allowed = allowed;
+            if (pauseOnce) {
+                pauseOnce = false;
+                context.pause(com.aresstack.spaceharvester.application.jobs.PauseReason.CONNECTION_LOST);
+            }
             cache.publish("confluence", "DEV", confirmed("g2"), afterRetry);
             return retryResult;
         }
@@ -221,5 +226,35 @@ class ExportRetryFailedTest {
         assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.FORCE_REFRESH))
                 .isInstanceOf(JobNotResumableException.class);
         assertThat(reloads).containsExactly(false);
+    }
+
+    @Test
+    void aRetryThatPausedResumesAsARetryWithoutAnInventory() {
+        JobStatus export = exportWithPage3Failing(dev());
+        afterRetry = List.of(one, two, three);
+        retryResult = new SpaceProvisioning.Retried(true, List.of(), Set.of());
+        pauseOnce = true;
+
+        actions.perform(export.id(), "client-a", JobAction.RETRY_FAILED);
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.PAUSED);
+        actions.perform(export.id(), "client-a", JobAction.RESUME);
+
+        assertThat(retried).containsExactly(Set.of("3"), Set.of("3"));
+        assertThat(inventories).isEqualTo(1);
+        assertThat(jobs.status(export.id()).lifecycle().key()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void aPageTheSourceNoLongerKnowsLeavesTheResultWithoutBeingMentioned() {
+        JobStatus export = exportWithPage3Failing(dev());
+        // Ein alter Stand von Seite 3 liegt noch im Cache.
+        afterRetry = List.of(one, two, three);
+        retryResult = new SpaceProvisioning.Retried(true, List.of(), Set.of(), Set.of("3"));
+
+        actions.perform(export.id(), "client-a", JobAction.RETRY_FAILED);
+
+        assertThat(writer.published.get(export.id()).pageIds()).containsExactly("1", "2");
+        assertThat(jobs.status(export.id()).progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        assertThat(writer.published.get(export.id()).summary().warnings()).isEmpty();
     }
 }

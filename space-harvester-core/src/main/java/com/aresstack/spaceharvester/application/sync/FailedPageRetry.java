@@ -57,12 +57,16 @@ public class FailedPageRetry {
      * @param run         der bestätigte Lauf, oder {@code null}, wenn keine Seite zu laden war
      * @param failedPages frische Kopfdaten der zulässigen Seiten, deren Inhaltsabruf scheiterte
      * @param unchecked   Seiten, deren Kopfdaten die Quelle nicht lieferte (Verbindung, Drosselung, Fehler)
+     * @param dropped     Seiten, die die Quelle nicht mehr führt, die in einem anderen Space liegen oder die
+     *                    {@code allowed} nicht zulässt
      */
-    public record Result(SpaceSync.SyncRun run, List<PageHeader> failedPages, Set<String> unchecked) {
+    public record Result(SpaceSync.SyncRun run, List<PageHeader> failedPages, Set<String> unchecked,
+                         Set<String> dropped) {
 
         public Result {
             failedPages = List.copyOf(failedPages);
             unchecked = Set.copyOf(unchecked);
+            dropped = Set.copyOf(dropped);
         }
     }
 
@@ -84,6 +88,7 @@ public class FailedPageRetry {
         List<PageMetadataListing.Entry> listed = new ArrayList<>();
         Map<String, PageHeader> headers = new HashMap<>();
         Set<String> unchecked = new TreeSet<>();
+        Set<String> dropped = new TreeSet<>();
         int unreachable = 0;
         for (String pageId : new TreeSet<>(pageIds)) {
             listener.checkpoint();
@@ -94,6 +99,7 @@ public class FailedPageRetry {
             } catch (SourceAccessException e) {
                 if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
                     unreachable = 0;
+                    dropped.add(pageId);
                     continue;
                 }
                 unchecked.add(pageId);
@@ -107,11 +113,13 @@ public class FailedPageRetry {
                 continue;
             }
             if (!spaceKey.equals(current.page().partitionKey()) || !pageId.equals(current.page().pageId())) {
+                dropped.add(pageId);
                 continue;
             }
             PageHeader header = new PageHeader(new PageKey(sourceId, pageId), current.page(), current.metadataHash(),
                     current.attributesHash(), startedAt);
             if (!allowed.test(header)) {
+                dropped.add(pageId);
                 continue;
             }
             // Immer laden: Die Seite fehlt oder ist veraltet, auch wenn ihre Version schon bekannt ist.
@@ -122,7 +130,7 @@ public class FailedPageRetry {
             headers.put(pageId, header);
         }
         if (changes.isEmpty()) {
-            return Optional.of(new Result(null, List.of(), unchecked));
+            return Optional.of(new Result(null, List.of(), unchecked, dropped));
         }
         Inventory inventory = new Inventory(sourceId, spaceKey, Inventory.Status.CHANGES, null, listed, startedAt,
                 clock.instant());
@@ -136,7 +144,8 @@ public class FailedPageRetry {
         }
         List<PageHeader> failedPages = new ArrayList<>();
         new TreeSet<>(failed).forEach(pageId -> failedPages.add(headers.get(pageId)));
-        return Optional.of(new Result(new SpaceSync.SyncRun(plan, failed, next, null), failedPages, unchecked));
+        return Optional.of(new Result(new SpaceSync.SyncRun(plan, failed, next, null), failedPages, unchecked,
+                dropped));
     }
 
     /** Die Generation mit den nachgeladenen Seiten; alles andere, auch der Zeitpunkt für das Nachholen, bleibt. */
@@ -148,8 +157,10 @@ public class FailedPageRetry {
         for (PageChange change : changes) {
             String pageId = change.pageId();
             if (failed.contains(pageId)) {
-                // Bisheriger Stand bleibt veraltet, eine neue Seite fehlt weiter.
-                if (!pages.containsKey(pageId)) {
+                // Bisheriger Stand bleibt als veraltet, eine neue Seite fehlt weiter.
+                if (pages.containsKey(pageId)) {
+                    stale.add(pageId);
+                } else {
                     missing.add(pageId);
                 }
                 continue;
