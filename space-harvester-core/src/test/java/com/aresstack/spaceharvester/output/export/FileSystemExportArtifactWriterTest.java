@@ -195,7 +195,8 @@ class FileSystemExportArtifactWriterTest {
             write(session, snapshot("100", null, PRETTY));
             write(session, snapshot("101", "100", "{\"id\":\"101\"}".getBytes(StandardCharsets.UTF_8)));
             write(session, snapshot("102", "100", "{\"id\":\"102\"}".getBytes(StandardCharsets.UTF_8)));
-            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-r", 3, List.of(), true));
+            session.publish(tree(new PageTree.Node("100", List.of(new PageTree.Node("101", List.of()),
+                    new PageTree.Node("102", List.of())))), summary("job-r", 3, List.of(), true));
         }
 
         assertThat(writer.find("job-r").orElseThrow().complete()).isTrue();
