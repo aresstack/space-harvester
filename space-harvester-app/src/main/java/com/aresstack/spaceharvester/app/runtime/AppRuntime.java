@@ -431,6 +431,9 @@ public final class AppRuntime implements AutoCloseable {
 
         /** @param login {@link #login} der Anmeldung, für die der Wert gilt */
         public void put(String sourceId, String login, char[] secret) {
+            // Neue Zugangsdaten: Die Zusatzfelder eines KeePass-Eintrags gelten nur, wenn sie danach wieder gesetzt
+            // werden ({@link #keePassFields}), etwa nach einem Wechsel auf „Manuell“ nicht mehr.
+            withoutLogin.remove(sourceId);
             secrets.put(sourceId, new Value(login, new String(secret)));
             java.util.Arrays.fill(secret, '\0');
         }
@@ -462,12 +465,17 @@ public final class AppRuntime implements AutoCloseable {
          * Authorization-Header, nur mit dem Client-Zertifikat, wie in MainframeMate.
          */
         public void keePassFields(String sourceId, Map<String, String> fields) {
-            String requiresLogin = fields == null ? null : fields.get("MM_RequiresLogin");
-            if (requiresLogin != null && "false".equalsIgnoreCase(requiresLogin.strip())) {
+            if (withoutLogin(fields)) {
                 withoutLogin.add(sourceId);
             } else {
                 withoutLogin.remove(sourceId);
             }
+        }
+
+        /** Ob die Felder eines KeePass-Eintrags {@code MM_RequiresLogin=false} tragen. */
+        public static boolean withoutLogin(Map<String, String> fields) {
+            String requiresLogin = fields == null ? null : fields.get("MM_RequiresLogin");
+            return requiresLogin != null && "false".equalsIgnoreCase(requiresLogin.strip());
         }
 
         /** Ob der KeePass-Eintrag der Quelle {@code MM_RequiresLogin=false} trägt ({@link #keePassFields}). */

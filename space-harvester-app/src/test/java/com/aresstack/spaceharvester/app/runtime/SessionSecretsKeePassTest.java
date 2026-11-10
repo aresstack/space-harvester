@@ -28,4 +28,17 @@ class SessionSecretsKeePassTest {
         secrets.keePassFields("wiki", Map.of("MM_RequiresLogin", "true"));
         assertThat(secrets.apply(SOURCE).auth().token()).isEqualTo("geheim");
     }
+
+    @Test
+    void newCredentialsDropTheFieldsOfTheEarlierKeePassEntry() {
+        // Etwa nach einem Wechsel auf „Manuell“: Der neue Wert gilt, nicht MM_RequiresLogin des alten Eintrags.
+        AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        secrets.put("wiki", "pat|", new char[0]);
+        secrets.keePassFields("wiki", Map.of("MM_RequiresLogin", "false"));
+
+        secrets.put("wiki", "pat|", "neu".toCharArray());
+
+        assertThat(secrets.withoutLogin("wiki")).isFalse();
+        assertThat(secrets.apply(SOURCE).auth().token()).isEqualTo("neu");
+    }
 }
