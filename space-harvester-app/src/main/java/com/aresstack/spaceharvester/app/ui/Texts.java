@@ -62,6 +62,7 @@ public final class Texts {
             case COMPLETED -> "Fertig";
             case FAILED -> "Fehlgeschlagen";
             case CANCELLED -> "Abgebrochen";
+            case PAUSED -> "Angehalten";
         };
     }
 
@@ -71,6 +72,7 @@ public final class Texts {
             case COMPLETED -> Comic.Tone.GOOD;
             case FAILED -> Comic.Tone.PROBLEM;
             case CANCELLED -> Comic.Tone.WARNING;
+            case PAUSED -> Comic.Tone.NEUTRAL;
         };
     }
 

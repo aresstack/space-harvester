@@ -41,4 +41,12 @@ public enum JobType {
     public boolean followUp() {
         return this == ENRICHMENT || this == ASSETS;
     }
+
+    /**
+     * Lässt sich anhalten und im selben Eintrag fortsetzen (ADR 0025): Einlesen und Download legen jede geladene neue
+     * Seite sofort ab, ein neuer Lauf holt nur, was fehlt.
+     */
+    public boolean resumable() {
+        return this == SYNC || this == EXPORT;
+    }
 }

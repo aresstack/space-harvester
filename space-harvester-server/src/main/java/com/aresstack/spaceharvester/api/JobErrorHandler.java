@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetDamagedExcep
 import com.aresstack.spaceharvester.application.export.ExportNotConvertibleException;
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
+import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import java.net.URI;
@@ -44,6 +45,14 @@ class JobErrorHandler {
         return problem(HttpStatus.CONFLICT, "job-running", "Auftrag läuft noch",
                 "Ein wartender oder laufender Auftrag lässt sich nicht löschen; erst abbrechen und das Ende "
                         + "abwarten.");
+    }
+
+    @ExceptionHandler(JobNotResumableException.class)
+    ProblemDetail notResumable(JobNotResumableException e) {
+        // Die Meldung nennt die Job-ID; die Antwort bleibt allgemein.
+        return problem(HttpStatus.CONFLICT, "job-not-resumable", "Auftrag nicht fortsetzbar",
+                "Der Auftrag läuft noch, ist fertig, lässt sich nicht anhalten oder stammt aus der Zeit vor dem letzten "
+                        + "Neustart; ein neuer Start mit denselben Angaben holt nur, was noch fehlt.");
     }
 
     @ExceptionHandler(JobCapacityExceededException.class)

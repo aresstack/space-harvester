@@ -839,6 +839,38 @@ public final class Workspace {
     }
 
     /**
+     * Hält einen Download oder Abgleich an (Pause, ADR 0025): er beendet seinen Schritt und steht dann auf
+     * „Angehalten“; was er geladen hat, bleibt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException bei anderen Auftragsarten
+     */
+    public JobStatus pauseJob(String jobId) {
+        JobStatus status = job(jobId);
+        return status.type() == JobType.SYNC ? harvester.syncs().pause(jobId, Harvester.OWNER).status()
+                : harvester.jobs().pause(jobId, Harvester.OWNER);
+    }
+
+    /**
+     * Setzt einen angehaltenen, gescheiterten oder abgebrochenen Download oder Abgleich im selben Eintrag fort (ADR
+     * 0025); er holt nur, was noch fehlt. Geht das nicht ({@link #canResume}), startet die App ihn mit denselben
+     * Angaben neu, was ebenfalls nur den Rest holt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht im selben
+     *                                                                               Eintrag fortsetzen lässt
+     */
+    public JobStatus resumeJob(String jobId) {
+        JobStatus status = job(jobId);
+        return status.type() == JobType.SYNC ? harvester.syncs().resume(jobId, Harvester.OWNER).status()
+                : harvester.exports().resume(jobId, Harvester.OWNER);
+    }
+
+    /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
+    public boolean canResume(String jobId) {
+        job(jobId);
+        return harvester.jobs().resumable(jobId, Harvester.OWNER);
+    }
+
+    /**
      * Alle Aufträge dieser App, die die Auftragsablage noch kennt, neueste zuerst. Abgelaufene oder fremde
      * Aufträge vergisst die Liste.
      */

@@ -7,7 +7,11 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -41,6 +45,63 @@ public class PlanApplier {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
     }
 
+    /**
+     * Vorab, vor {@link SyncBaselineStore#begin} (ADR 0025): lädt alle {@link PageChange.Kind#NEW}-Seiten und legt sie
+     * mit {@code keep} sofort ab, mit {@link SyncListener#checkpoint()} vor jedem Abruf. Ein Abbruch behält, was schon
+     * abgelegt ist; der nächste Lauf lädt es nicht erneut. Was {@code keep} nicht annimmt, bleibt zum Vormerken in
+     * {@link Prefetched#held()}.
+     */
+    public Prefetched loadNew(SyncPlan plan, SyncBaselineStore store, SyncListener listener) {
+        String sourceId = plan.inventory().sourceId();
+        Set<String> handled = new HashSet<>();
+        Set<String> failed = new TreeSet<>();
+        List<PageSnapshot> held = new ArrayList<>();
+        for (PageChange change : plan.changes()) {
+            if (change.kind() != PageChange.Kind.NEW) {
+                continue;
+            }
+            listener.checkpoint();
+            PageKey key = new PageKey(sourceId, change.pageId());
+            // Vor dem Abruf: was ein anderer Lauf währenddessen ablegt, darf diese Antwort nicht überschreiben.
+            String before = store.loadState(key);
+            PageSnapshot snapshot = matching(key, change.current().page());
+            handled.add(change.pageId());
+            boolean superseded = false;
+            if (snapshot == null) {
+                failed.add(change.pageId());
+            } else {
+                switch (store.keepLoaded(snapshot, before)) {
+                    case STORED -> { }
+                    case DEFERRED -> held.add(snapshot);
+                    case SUPERSEDED -> {
+                        failed.add(change.pageId());
+                        superseded = true;
+                    }
+                }
+            }
+            listener.pageDone(change, snapshot != null && !superseded, snapshot == null || superseded);
+        }
+        return new Prefetched(handled, failed, held);
+    }
+
+    /**
+     * Ergebnis von {@link #loadNew}.
+     *
+     * @param handled alle bearbeiteten neuen Seiten
+     * @param failed  davon gescheitert
+     * @param held    geladen, aber nicht abgelegt; werden in der Generation vorgemerkt
+     */
+    public record Prefetched(Set<String> handled, Set<String> failed, List<PageSnapshot> held) {
+
+        public static final Prefetched NONE = new Prefetched(Set.of(), Set.of(), List.of());
+
+        public Prefetched {
+            handled = Set.copyOf(handled);
+            failed = Set.copyOf(failed);
+            held = List.copyOf(held);
+        }
+    }
+
     /** @return die Seiten, deren Abgleich fehlgeschlagen ist, für {@link SyncPlan#nextBaseline} */
     public Set<String> apply(SyncPlan plan, StagedGeneration target) {
         return apply(plan, target, SyncListener.NONE);
@@ -51,10 +112,19 @@ public class PlanApplier {
      * vor jedem Inhaltsabruf.
      */
     public Set<String> apply(SyncPlan plan, StagedGeneration target, SyncListener listener) {
+        return apply(plan, target, listener, Prefetched.NONE);
+    }
+
+    /** Wie {@link #apply(SyncPlan, StagedGeneration, SyncListener)} nach {@link #loadNew}: die neuen Seiten sind erledigt. */
+    public Set<String> apply(SyncPlan plan, StagedGeneration target, SyncListener listener, Prefetched prefetched) {
         String sourceId = plan.inventory().sourceId();
         Instant observedAt = plan.inventory().finishedAt();
-        Set<String> failed = new TreeSet<>();
+        Set<String> failed = new TreeSet<>(prefetched.failed());
+        prefetched.held().forEach(target::save);
         for (PageChange change : plan.changes()) {
+            if (prefetched.handled().contains(change.pageId())) {
+                continue;
+            }
             PageKey key = new PageKey(sourceId, change.pageId());
             boolean written = true;
             switch (change.kind()) {
@@ -100,19 +170,25 @@ public class PlanApplier {
     }
 
     private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target) {
+        PageSnapshot snapshot = matching(key, expected);
+        if (snapshot != null) {
+            target.save(snapshot);
+        }
+        return snapshot != null;
+    }
+
+    /** Der geladene Snapshot, wenn er zur Inventur passt; sonst {@code null}. */
+    private PageSnapshot matching(PageKey key, PageMetadata expected) {
         PageSnapshot snapshot;
         try {
             snapshot = fetcher.fetch(key.sourceId(), key.pageId());
         } catch (SourceAccessException e) {
-            return false;
+            return null;
         }
         boolean matches = snapshot.key().equals(key)
                 && expected.partitionKey().equals(snapshot.spaceKey())
                 && (expected.version() == null || expected.version().equals(snapshot.revision()));
-        if (matches) {
-            target.save(snapshot);
-        }
-        return matches;
+        return matches ? snapshot : null;
     }
 
     private static PageHeader header(PageKey key, PageMetadataListing.Entry entry, Instant observedAt) {

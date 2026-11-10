@@ -407,6 +407,39 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /**
+     * Hält den eigenen Abgleich an ({@link Jobs#pause}, ADR 0025): er beendet seinen Schritt, geladene neue Seiten
+     * bleiben, und {@link #resume} holt nur, was noch fehlt.
+     *
+     * @throws UnknownJobException wie {@link #status}
+     */
+    public SyncJob pause(String jobId, String owner) {
+        view(jobs.status(jobId, owner));
+        return view(jobs.pause(jobId, owner));
+    }
+
+    /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Abgleich im selben Auftrag fort
+     * ({@link Jobs#resume}, ADR 0025).
+     *
+     * @throws UnknownJobException                                              wie {@link #status}
+     * @throws SyncAlreadyRunningException                                      wenn für den Space inzwischen ein
+     *                                                                          anderer Abgleich wartet oder läuft
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wie {@link Jobs#resume}
+     */
+    public synchronized SyncJob resume(String jobId, String owner) {
+        JobStatus current = jobs.status(jobId, owner);
+        view(current);
+        String space = current.sourceId() + "/" + current.partitionKey();
+        String running = activeBySpace.get(space);
+        if (running != null && !running.equals(jobId) && !finished(running)) {
+            throw new SyncAlreadyRunningException(running);
+        }
+        JobStatus resumed = jobs.resume(jobId, owner);
+        activeBySpace.put(space, jobId);
+        return view(resumed);
+    }
+
+    /**
      * Löscht einen eigenen beendeten Abgleich samt Delta und Diagnoseereignissen.
      *
      * @throws UnknownJobException wie {@link #status}

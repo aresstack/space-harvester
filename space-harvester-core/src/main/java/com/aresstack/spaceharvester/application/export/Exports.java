@@ -190,7 +190,53 @@ public class Exports {
         purgeQuietly();
         writer.requireCapacity();
         return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
-                request.owner(), JobTask.blocking(context -> export(context, request, selected)));
+                request.owner(), new ExportTask(request, selected));
+    }
+
+    /** Die Arbeit eines Exports; trägt ihren Auftrag, damit Fortsetzen den Zugang des Aufrufers erneuern kann. */
+    private final class ExportTask implements JobTask {
+
+        private final ExportRequest request;
+        private final List<ExportConverter> selected;
+
+        ExportTask(ExportRequest request, List<ExportConverter> selected) {
+            this.request = request;
+            this.selected = selected;
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
+            return JobTask.blocking(running -> export(running, request, selected)).start(context);
+        }
+    }
+
+    /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Export im selben Auftrag fort
+     * ({@link Jobs#resume}, ADR 0025): das Einlesen holt nur, was noch fehlt, und das Artefakt entsteht neu.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wie {@link Jobs#resume}
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus resume(String exportId, String owner) {
+        return resume(exportId, owner, java.util.function.UnaryOperator.identity());
+    }
+
+    /**
+     * Wie {@link #resume(String, String)}; {@code access} erneuert vorher Lese- und Exportprüfung des Auftrags mit dem
+     * aktuellen Zugang des Aufrufers (etwa einem neuen Token), statt den vom Start weiterzuverwenden.
+     */
+    public JobStatus resume(String exportId, String owner, java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new com.aresstack.spaceharvester.application.jobs.UnknownJobException(exportId);
+        }
+        purgeQuietly();
+        writer.requireCapacity();
+        return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
+                ? new ExportTask(access.apply(export.request), export.selected) : task);
     }
 
     /**

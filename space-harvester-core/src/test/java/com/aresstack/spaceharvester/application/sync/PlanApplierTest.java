@@ -33,6 +33,8 @@ class PlanApplierTest {
     /** Was die Quelle beim Inhaltsabruf liefert, wenn es von der Listung abweicht. */
     private final Map<String, PageMetadata> fetchAnswers = new HashMap<>();
     private String crashAtFetchOf;
+    /** Legt beim Abruf dieser Seite gleichzeitig einen anderen Stand ab, wie ein paralleler Lauf. */
+    private String concurrentSaveOf;
     private final SpaceSync sync = new SpaceSync(source.queries(), store, FakeSource.CLOCK);
     private final PlanApplier applier = new PlanApplier((sourceId, pageId) -> {
         if (pageId.equals(crashAtFetchOf)) {
@@ -43,6 +45,11 @@ class PlanApplierTest {
                     null);
         }
         fetched.add(pageId);
+        if (pageId.equals(concurrentSaveOf)) {
+            PageMetadata newer = FakeSource.page(pageId, "DOC", null, "9", null);
+            repository.save(PageSnapshot.of(sourceId, newer, new NativePayload("{}".getBytes(StandardCharsets.UTF_8),
+                    "application/json", "confluence-content/v1"), FakeSource.CLOCK.instant()));
+        }
         PageMetadata page = fetchAnswers.getOrDefault(pageId, source.pageMetadata(pageId));
         return PageSnapshot.of(sourceId, page, new NativePayload(
                 ("{\"id\":\"" + pageId + "\",\"version\":\"" + page.version() + "\"}").getBytes(StandardCharsets.UTF_8),
@@ -235,5 +242,52 @@ class PlanApplierTest {
 
         assertThat(fetched).containsExactly("3");
         assertThat(revision("3")).isEqualTo("8");
+    }
+
+    @Test
+    void anAbortedFirstLoadKeepsTheLoadedPagesAndTheNextRunContinues() {
+        store.keepsLoaded = true;
+        crashAtFetchOf = "3";
+
+        assertThatThrownBy(this::run).isInstanceOf(IllegalStateException.class);
+
+        // Keine Generation, aber die schon geladenen neuen Seiten bleiben (ADR 0025).
+        assertThat(store.confirmed("wiki", "DOC")).isEmpty();
+        assertThat(repository.find(key("1"))).isPresent();
+        assertThat(repository.find(key("2"))).isPresent();
+
+        crashAtFetchOf = null;
+        SpaceSync.SyncRun next = run();
+
+        assertThat(fetched).containsExactly("3");
+        assertThat(next.confirmed().generation()).isEqualTo(1);
+        assertThat(next.confirmed().pages()).containsOnlyKeys("1", "2", "3");
+    }
+
+    @Test
+    void aNewPageSavedConcurrentlyDuringItsFetchIsNotOverwritten() {
+        store.keepsLoaded = true;
+        concurrentSaveOf = "2";
+
+        SpaceSync.SyncRun run = run();
+
+        // Der parallele Stand bleibt; dieser Lauf führt die Seite als gescheitert, der nächste gleicht sie ab.
+        assertThat(revision("2")).isEqualTo("9");
+        assertThat(run.failedPageIds()).containsExactly("2");
+    }
+
+    @Test
+    void changesOfKnownPagesStayAtomicEvenWhenNewPagesAreKept() {
+        store.keepsLoaded = true;
+        run();
+        source.put("1", "DOC", null, "4", "api").put("4", "DOC", null, "1", null);
+        crashAtFetchOf = "1";
+
+        assertThatThrownBy(this::run).isInstanceOf(IllegalStateException.class);
+
+        // Die neue Seite 4 bleibt, die geänderte Seite 1 steht weiter auf dem bestätigten Stand.
+        assertThat(repository.find(key("4"))).isPresent();
+        assertThat(repository.find(key("1"))).get().extracting(PageSnapshot::revision).isEqualTo("3");
+        assertThat(store.confirmed("wiki", "DOC")).get().extracting(SyncBaseline::generation).isEqualTo(1L);
     }
 }
