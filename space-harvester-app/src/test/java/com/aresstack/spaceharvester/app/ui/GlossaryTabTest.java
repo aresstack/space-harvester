@@ -171,15 +171,15 @@ class GlossaryTabTest {
         });
         await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
         SwingUtilities.invokeAndWait(() -> tab[0].detect("wiki", null));
-        await("Lauf läuft im Schleier", () -> tab[0].jobId() != null && tab[0].overlay().isBusy());
+        await("Lauf läuft im Schleier", () -> !tab[0].jobIds().isEmpty() && tab[0].overlay().isBusy());
         assertThat(glossary.calls).contains("classify wiki/null");
         glossary.progress = new JobProgress(40, 12, 3, 0);
         await("Fortschritt", () -> tab[0].overlay().text().equals(
-                "Fachbegriffe ermitteln · 12 von 40 Seiten · 3 Einträge"));
+                "Fachbegriffe ermitteln · 12 von 40 Begriffen · 3 Einträge"));
         SwingUtilities.invokeAndWait(() -> assertThat(tab[0].detectButton().isEnabled()).isFalse());
         glossary.put(entry("9", "Datenprodukt", "wiki", null, RelationOrigin.AI, ReviewStatus.PROPOSED, 2, false));
         glossary.state = JobState.COMPLETED;
-        await("Schleier weg, Liste neu", () -> !tab[0].overlay().isBusy() && tab[0].jobId() == null
+        await("Schleier weg, Liste neu", () -> !tab[0].overlay().isBusy() && tab[0].jobIds().isEmpty()
                 && tab[0].directory().table().getRowCount() == 1);
         SwingUtilities.invokeAndWait(() -> assertThat(tab[0].detectButton().isEnabled()).isTrue());
     }
@@ -187,13 +187,21 @@ class GlossaryTabTest {
     @Test
     void textsForProgressOutcomeAndDetails() {
         assertThat(GlossaryTab.progressText(JobProgress.NONE, false))
-                .isEqualTo("Fachbegriffe ermitteln · Seiten werden gesammelt …");
+                .isEqualTo("Fachbegriffe ermitteln · Begriffe werden gesammelt …");
         assertThat(GlossaryTab.progressText(new JobProgress(5, 2, 1, 0), true))
-                .isEqualTo("Fachbegriffe ermitteln · 2 von 5 Seiten · 1 Eintrag · wird abgebrochen …");
-        assertThat(GlossaryTab.outcomeText(job("j", JobState.CANCELLED, new JobProgress(5, 2, 1, 0), null)))
-                .isEqualTo("Fachbegriffe ermitteln abgebrochen; 1 Eintrag bleiben, Entscheidungen unverändert");
-        assertThat(GlossaryTab.outcomeText(job("j", JobState.FAILED, JobProgress.NONE, new JobError("ai",
-                "Dienst nicht erreichbar")))).contains("fehlgeschlagen: Dienst nicht erreichbar");
+                .isEqualTo("Fachbegriffe ermitteln · 2 von 5 Begriffen · 1 Eintrag · wird abgebrochen …");
+        // Mehrere Quellen: Summen und die Zahl der Quellen.
+        assertThat(GlossaryTab.progressText(List.of(job("a", JobState.RUNNING, new JobProgress(5, 2, 1, 0), null),
+                job("b", JobState.RUNNING, new JobProgress(3, 3, 2, 0), null))))
+                .isEqualTo("Fachbegriffe ermitteln · 5 von 8 Begriffen · 3 Einträge · 2 Quellen");
+        assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.CANCELLED, new JobProgress(5, 2, 1, 0), null))))
+                .isEqualTo("Fachbegriffe ermitteln abgebrochen; 1 Eintrag bleibt, Entscheidungen unverändert");
+        assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.COMPLETED, new JobProgress(5, 5, 2, 0), null),
+                job("k", JobState.FAILED, JobProgress.NONE, new JobError("ai", "Dienst nicht erreichbar")))))
+                .isEqualTo("Fachbegriffe ermitteln fehlgeschlagen (Quelle wiki): Dienst nicht erreichbar · "
+                        + "Entscheidungen unverändert");
+        assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.COMPLETED, new JobProgress(5, 5, 2, 0), null))))
+                .isEqualTo("Fachbegriffe ermitteln abgeschlossen: 2 Einträge aus 5 geprüften Begriffen");
         Entry stale = entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.CONFIRMED, 2, true);
         String text = GlossaryTab.detailText(stale, List.of("Seite A: … das Datenprodukt liefert …"));
         assertThat(text).startsWith("Beschreibt ein Produkt\n\nGilt für: wiki · DH\nHerkunft: KI (gpt-4o/p1) · "
@@ -338,9 +346,9 @@ class GlossaryTabTest {
         }
 
         @Override
-        public JobStatus classify(String sourceId, String spaceKey) {
+        public List<JobStatus> classify(String sourceId, String spaceKey) {
             calls.add("classify " + sourceId + "/" + spaceKey);
-            return classification("job-1");
+            return List.of(classification("job-1"));
         }
 
         @Override

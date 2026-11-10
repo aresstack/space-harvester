@@ -96,8 +96,8 @@ final class GlossaryTab {
     private boolean aiAvailable;
     private int request;
     private String keepSelected;
-    /** Der laufende Auftrag „Fachbegriffe ermitteln“ oder {@code null}. */
-    private String jobId;
+    /** Die laufenden Aufträge „Fachbegriffe ermitteln“ (je Quelle einer) mit ihrem letzten Stand; leer ohne Lauf. */
+    private final Map<String, JobStatus> jobs = new LinkedHashMap<>();
     private final Timer poll = new Timer(POLL_MS, e -> pollJob());
 
     /**
@@ -245,7 +245,7 @@ final class GlossaryTab {
     }
 
     private void updateDetect() {
-        boolean running = jobId != null;
+        boolean running = !jobs.isEmpty();
         detect.setEnabled(aiAvailable && !running);
         detect.setToolTipText(!aiAvailable ? NO_AI : running ? RUNNING : "Die KI beurteilt die Bezeichner und "
                 + "Akronyme der indexierten Seiten; nur ungeprüfte Vorschläge ändern sich");
@@ -454,7 +454,7 @@ final class GlossaryTab {
 
     /** „Fachbegriffe ermitteln“: Umfang (alle Quellen, eine Quelle, ein Space), dann der Auftrag. */
     private void askDetect() {
-        if (context == null || access.get().isEmpty() || jobId != null) {
+        if (context == null || access.get().isEmpty() || !jobs.isEmpty()) {
             return;
         }
         javax.swing.JDialog dialog = Dialogs.dialog(directory, DETECT);
@@ -479,18 +479,22 @@ final class GlossaryTab {
         Dialogs.show(dialog, DETECT, form, cancel, ok);
     }
 
-    /** Startet den Lauf im Core und zeigt den Schleier mit Fortschritt, bis er endet. */
+    /** Startet den Lauf im Core (je Quelle ein Auftrag) und zeigt den Schleier mit Fortschritt, bis alle enden. */
     void detect(String sourceId, String spaceKey) {
         Optional<GlossaryAccess> glossary = access.get();
-        if (glossary.isEmpty() || jobId != null) {
+        if (glossary.isEmpty() || !jobs.isEmpty()) {
             return;
         }
         overlay.setText(DETECT + " · wird gestartet …");
         overlay.setBusy(true);
         Background.run(() -> glossary.get().classify(sourceId, spaceKey), started -> {
-            jobId = started.id();
+            if (started.isEmpty()) {
+                overlay.setBusy(false);
+                return;
+            }
+            started.forEach(status -> jobs.put(status.id(), status));
             updateDetect();
-            track(started);
+            started.forEach(this::track);
         }, failure -> {
             overlay.setBusy(false);
             directory.message(notice(failure instanceof GlossaryAccess.AiUnavailableException ? NO_AI
@@ -501,48 +505,76 @@ final class GlossaryTab {
 
     private void pollJob() {
         Optional<GlossaryAccess> glossary = access.get();
-        String id = jobId;
-        if (id == null || glossary.isEmpty()) {
+        List<String> open = jobs.values().stream().filter(s -> !s.state().terminal()).map(JobStatus::id).toList();
+        if (open.isEmpty() || glossary.isEmpty()) {
             return;
         }
-        Background.run(() -> glossary.get().classification(id), this::track, failure -> finish(null, failure));
+        Background.run(() -> {
+            List<JobStatus> states = new ArrayList<>();
+            for (String id : open) {
+                states.add(glossary.get().classification(id));
+            }
+            return states;
+        }, states -> states.forEach(this::track), failure -> finish(failure));
     }
 
-    /** Fortschritt im Schleier; am Ende Rückmeldung in die Statuszeile und die Liste neu. */
+    /** Fortschritt aller Aufträge im Schleier; sind alle zu Ende, Rückmeldung in die Statuszeile und die Liste neu. */
     void track(JobStatus status) {
-        if (!status.id().equals(jobId)) {
+        if (!jobs.containsKey(status.id())) {
             return;
         }
-        if (status.state().terminal()) {
-            finish(status, null);
+        jobs.put(status.id(), status);
+        if (jobs.values().stream().allMatch(s -> s.state().terminal())) {
+            finish(null);
             return;
         }
-        overlay.setText(progressText(status.progress(), status.cancelRequested()));
+        overlay.setText(progressText(List.copyOf(jobs.values())));
         poll.restart();
     }
 
-    private void finish(JobStatus status, Throwable failure) {
+    private void finish(Throwable failure) {
         poll.stop();
-        jobId = null;
+        List<JobStatus> ended = List.copyOf(jobs.values());
+        jobs.clear();
         overlay.setBusy(false);
+        updateDetect();
         if (failure != null) {
             load(notice(DETECT + ": Stand nicht lesbar: " + failure.getMessage(), Severity.ERROR));
         } else {
-            Severity severity = status.state() == JobState.FAILED ? Severity.ERROR
-                    : status.state() == JobState.CANCELLED ? Severity.WARN : Severity.INFO;
-            String text = notice(outcomeText(status), severity);
+            JobState worst = ended.stream().map(JobStatus::state).anyMatch(s -> s == JobState.FAILED)
+                    ? JobState.FAILED : ended.stream().map(JobStatus::state).anyMatch(s -> s == JobState.CANCELLED)
+                    ? JobState.CANCELLED : JobState.COMPLETED;
+            Severity severity = worst == JobState.FAILED ? Severity.ERROR
+                    : worst == JobState.CANCELLED ? Severity.WARN : Severity.INFO;
+            String text = notice(outcomeText(ended), severity);
             load(severity == Severity.INFO ? null : text);
         }
     }
 
-    /** „Fachbegriffe ermitteln · 12 von 40 Seiten · 3 Einträge“; ohne Zahlen „Seiten werden gesammelt …“. */
+    /** Fortschritt über alle Aufträge: Summen je Zähler; abgebrochen wird gemeldet, sobald einer es ist. */
+    static String progressText(List<JobStatus> states) {
+        long discovered = 0;
+        long processed = 0;
+        long written = 0;
+        boolean cancelling = false;
+        for (JobStatus status : states) {
+            discovered += status.progress().discovered();
+            processed += status.progress().processed();
+            written += status.progress().written();
+            cancelling |= status.cancelRequested();
+        }
+        String text = progressText(new JobProgress(discovered, processed, written, 0), cancelling);
+        return states.size() > 1 ? text + " · " + states.size() + " Quellen" : text;
+    }
+
+    /** „Fachbegriffe ermitteln · 12 von 40 Begriffen · 3 Einträge“; ohne Zahlen „Begriffe werden gesammelt …“. */
     static String progressText(JobProgress progress, boolean cancelRequested) {
         StringBuilder text = new StringBuilder(DETECT);
         if (progress.discovered() == 0) {
-            text.append(" · Seiten werden gesammelt …");
+            text.append(" · Begriffe werden gesammelt …");
         } else {
             text.append(" · ").append(progress.processed()).append(" von ").append(progress.discovered())
-                    .append(" Seiten · ").append(Texts.count(progress.written(), "Eintrag", "Einträge"));
+                    .append(" Begriffen · ").append(Texts.count(progress.written(), "Eintrag", "Einträge"));
         }
         if (cancelRequested) {
             text.append(" · wird abgebrochen …");
@@ -550,27 +582,40 @@ final class GlossaryTab {
         return text.toString();
     }
 
-    /** Die Rückmeldung am Ende des Laufs. */
-    static String outcomeText(JobStatus status) {
-        String written = Texts.count(status.progress().written(), "Eintrag", "Einträge");
-        return switch (status.state()) {
-            case COMPLETED -> DETECT + " abgeschlossen: " + written + " aus "
-                    + Texts.count(status.progress().processed(), "Seite", "Seiten");
-            case CANCELLED -> DETECT + " abgebrochen; " + written + " bleiben, Entscheidungen unverändert";
-            case FAILED -> DETECT + " fehlgeschlagen: "
-                    + (status.error() == null ? "" : status.error().message()) + " · Entscheidungen unverändert";
-            default -> DETECT + ": " + Texts.state(status.state());
-        };
+    /** Die Rückmeldung am Ende: fehlgeschlagen vor abgebrochen vor abgeschlossen, mit den Summen aller Aufträge. */
+    static String outcomeText(List<JobStatus> ended) {
+        long processed = ended.stream().mapToLong(s -> s.progress().processed()).sum();
+        long writtenCount = ended.stream().mapToLong(s -> s.progress().written()).sum();
+        String written = Texts.count(writtenCount, "Eintrag", "Einträge");
+        Optional<JobStatus> failed = ended.stream().filter(s -> s.state() == JobState.FAILED).findFirst();
+        if (failed.isPresent()) {
+            JobStatus status = failed.get();
+            return DETECT + " fehlgeschlagen" + (ended.size() > 1 ? " (Quelle " + status.sourceId() + ")" : "")
+                    + ": " + (status.error() == null ? "" : status.error().message())
+                    + " · Entscheidungen unverändert";
+        }
+        if (ended.stream().anyMatch(s -> s.state() == JobState.CANCELLED)) {
+            return DETECT + " abgebrochen; " + written + " " + (writtenCount == 1 ? "bleibt" : "bleiben")
+                    + ", Entscheidungen unverändert";
+        }
+        return DETECT + " abgeschlossen: " + written + " aus "
+                + Texts.count(processed, "geprüften Begriff", "geprüften Begriffen");
     }
 
     private void cancelJob() {
         Optional<GlossaryAccess> glossary = access.get();
-        String id = jobId;
-        if (id == null || glossary.isEmpty()) {
+        List<String> open = jobs.values().stream().filter(s -> !s.state().terminal()).map(JobStatus::id).toList();
+        if (open.isEmpty() || glossary.isEmpty()) {
             overlay.setBusy(false);
             return;
         }
-        Background.run(() -> glossary.get().cancelClassification(id), this::track,
+        Background.run(() -> {
+            List<JobStatus> states = new ArrayList<>();
+            for (String id : open) {
+                states.add(glossary.get().cancelClassification(id));
+            }
+            return states;
+        }, states -> states.forEach(this::track),
                 failure -> directory.message(notice("Abbrechen nicht möglich: " + failure.getMessage(),
                         Severity.ERROR)));
     }
@@ -729,8 +774,8 @@ final class GlossaryTab {
         return filters.get(label);
     }
 
-    String jobId() {
-        return jobId;
+    List<String> jobIds() {
+        return List.copyOf(jobs.keySet());
     }
 
     List<Entry> shownEntries() {
