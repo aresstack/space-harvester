@@ -352,7 +352,19 @@ public class Jobs implements AutoCloseable {
      * @throws JobCapacityExceededException wenn zu viele Aufträge offen sind
      */
     public JobStatus rerun(String jobId, String owner, JobTask task) {
+        return rerun(jobId, owner, null, task);
+    }
+
+    /**
+     * Wie {@link #rerun(String, String, JobTask)}; {@code parameters} ersetzt die abgelegten Angaben, damit ein
+     * Fortsetzen nach einem Neustart dieselbe Arbeit wiederherstellt, etwa „Neu erzwingen“ statt eines gewöhnlichen
+     * Laufs.
+     *
+     * @param parameters die neuen Angaben, oder {@code null} für unverändert
+     */
+    public JobStatus rerun(String jobId, String owner, Map<String, String> parameters, JobTask task) {
         Objects.requireNonNull(task, "task");
+        Map<String, String> renewed = parameters == null ? null : Map.copyOf(parameters);
         JobStatus current = requireOwner(status(jobId), owner);
         if (!current.type().resumable()) {
             throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
@@ -380,6 +392,9 @@ public class Jobs implements AutoCloseable {
             requireCapacity(job.type, job.owner);
             stopped.remove(jobId);
             job.task = task;
+            if (renewed != null) {
+                job.parameters = renewed;
+            }
             job.reopen();
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag erneut gestartet",
                     null, null, null, null);
@@ -921,7 +936,8 @@ public class Jobs implements AutoCloseable {
         final String partitionKey;
         final String rootPageId;
         final String owner;
-        final Map<String, String> parameters;
+        /** Nur unter dem Sperrobjekt neu gesetzt, bei {@link #rerun(String, String, Map, JobTask)}. */
+        volatile Map<String, String> parameters;
         /** Ergebnis unvollständig ({@link JobContext#incomplete()}). */
         volatile boolean incomplete;
         /** Nur unter dem Sperrobjekt neu gesetzt, beim Fortsetzen ({@link #resume(String, String, UnaryOperator)}). */

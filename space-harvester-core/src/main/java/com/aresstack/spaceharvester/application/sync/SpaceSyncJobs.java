@@ -291,6 +291,13 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     static final String MODE = JobLifecycleState.SYNC_MODE;
     /** Wiederanlauf-Angabe: {@code changes} für Nachholen ({@link #catchUp}), sonst Inventur. */
     static final String LISTING = "listing";
+    /**
+     * Wiederanlauf-Angabe: der Lauf ist „Nur Fehler neu versuchen“ ({@link #RETRY_FAILED}) oder „Neu erzwingen“
+     * ({@link #FORCE_REFRESH}); fehlt für einen gewöhnlichen Abgleich.
+     */
+    static final String RERUN = "rerun";
+    static final String RETRY_FAILED = "retry-failed";
+    static final String FORCE_REFRESH = "force-refresh";
     /** Wiederanlauf-Angabe: Nachholen ab diesem Zeitpunkt (ISO-8601), fehlt für den Stand der letzten Generation. */
     static final String SINCE = "since";
 
@@ -559,9 +566,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             resumed = jobs.resume(jobId, owner);
         } else {
             // Nach einem Neustart: derselbe Eintrag mit derselben Arbeit aus den abgelegten Angaben.
-            Run work = work(current);
-            resumed = jobs.rerun(jobId, owner, JobTask.blocking(context ->
-                    run(context, current.sourceId(), current.partitionKey(), work)));
+            resumed = jobs.rerun(jobId, owner, JobTask.blocking(stored(current)::run));
         }
         activeBySpace.put(space, jobId);
         return view(resumed);
@@ -582,9 +587,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public synchronized SyncJob retryFailed(String jobId, String owner) {
         JobStatus current = requireAction(jobId, owner, JobAction.RETRY_FAILED);
         Set<String> pageIds = failures.getOrDefault(jobId, unloaded(current));
-        String sourceId = current.sourceId();
-        String spaceKey = current.partitionKey();
-        return rerun(current, owner, context -> retry(context, sourceId, spaceKey, pageIds));
+        return rerun(current, owner, RETRY_FAILED, retryWork(current, pageIds));
     }
 
     /**
@@ -600,14 +603,37 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     public synchronized SyncJob forceRefresh(String jobId, String owner) {
         JobStatus current = requireAction(jobId, owner, JobAction.FORCE_REFRESH);
-        SyncMode mode = inventoryMode(current);
-        String sourceId = current.sourceId();
-        String spaceKey = current.partitionKey();
-        return rerun(current, owner, context -> {
+        return rerun(current, owner, FORCE_REFRESH, forceWork(current));
+    }
+
+    private Work retryWork(JobStatus status, Set<String> pageIds) {
+        String sourceId = status.sourceId();
+        String spaceKey = status.partitionKey();
+        return context -> retry(context, sourceId, spaceKey, pageIds);
+    }
+
+    private Work forceWork(JobStatus status) {
+        SyncMode mode = inventoryMode(status);
+        String sourceId = status.sourceId();
+        String spaceKey = status.partitionKey();
+        return context -> {
             context.phase(COMPONENT, "Inventur, alles neu laden");
             SpaceSync.SyncRun run = sync.run(sourceId, spaceKey, applier, listener(context), mode, null, true);
             finish(context, sourceId, spaceKey, run);
-        });
+        };
+    }
+
+    /** Die Arbeit aus den abgelegten Angaben, auch „Nur Fehler“ und „Neu erzwingen“ ({@link #RERUN}). */
+    private Work stored(JobStatus status) {
+        String rerun = status.parameter(RERUN);
+        if (RETRY_FAILED.equals(rerun)) {
+            return retryWork(status, unloaded(status));
+        }
+        if (FORCE_REFRESH.equals(rerun)) {
+            return forceWork(status);
+        }
+        Run work = work(status);
+        return context -> run(context, status.sourceId(), status.partitionKey(), work);
     }
 
     private JobStatus requireAction(String jobId, String owner, JobAction action) {
@@ -630,8 +656,10 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         void run(JobContext context);
     }
 
-    private SyncJob rerun(JobStatus current, String owner, Work work) {
-        JobStatus rerun = jobs.rerun(current.id(), owner, JobTask.blocking(work::run));
+    private SyncJob rerun(JobStatus current, String owner, String operation, Work work) {
+        Map<String, String> parameters = new java.util.HashMap<>(current.parameters());
+        parameters.put(RERUN, operation);
+        JobStatus rerun = jobs.rerun(current.id(), owner, parameters, JobTask.blocking(work::run));
         activeBySpace.put(current.sourceId() + "/" + current.partitionKey(), current.id());
         return view(rerun);
     }
@@ -644,9 +672,13 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                 : syncMode;
     }
 
-    /** Nach einem Neustart: was die bestätigte Generation als nicht geladen führt, soweit der Abgleich es lädt. */
+    /**
+     * Nach einem Neustart: was die bestätigte Generation als nicht geladen führt, soweit der Abgleich es lädt; ein
+     * vollständiges Nachholen über die Änderungssuche lädt auch unbekannte Seiten.
+     */
     private Set<String> unloaded(JobStatus status) {
-        boolean loadsUnknown = inventoryMode(status).loadsUnknown();
+        String mode = status.parameter(MODE);
+        boolean loadsUnknown = (mode == null ? SyncMode.SYNC_CACHE : SyncMode.valueOf(mode)).loadsUnknown();
         return store.confirmed(status.sourceId(), status.partitionKey()).map(baseline -> {
             Set<String> ids = new java.util.TreeSet<>(baseline.stalePageIds());
             if (loadsUnknown) {

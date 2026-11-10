@@ -149,6 +149,42 @@ class SyncRetryAndForceTest {
     }
 
     @Test
+    void aForcedRefreshPausedBeforeARestartResumesAsAForcedRefresh() {
+        JobStatus first = syncs.start("wiki", "DOC", "client:a", SyncMode.FULL);
+        runQueued();
+        fetched.clear();
+        syncs.forceRefresh(first.id(), "client:a");
+        syncs.pause(first.id(), "client:a");
+        runQueued();
+        assertThat(syncs.status(first.id(), "client:a").status().state()).isEqualTo(JobState.PAUSED);
+
+        Jobs restarted = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs second = new SpaceSyncJobs(restarted, source.queries(), store, fetcher, FakeSource.CLOCK);
+        second.resume(first.id(), "client:a");
+        runQueued();
+
+        assertThat(fetched).containsExactlyInAnyOrder("1", "2", "3");
+        assertThat(second.status(first.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void aRetryPausedBeforeARestartResumesWithoutAnInventory() {
+        JobStatus partial = syncWithPage3Failing();
+        syncs.retryFailed(partial.id(), "client:a");
+        syncs.pause(partial.id(), "client:a");
+        runQueued();
+
+        Jobs restarted = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs second = new SpaceSyncJobs(restarted, source.queries(), store, fetcher, FakeSource.CLOCK);
+        source.failListingAtCall(0);
+        second.resume(partial.id(), "client:a");
+        runQueued();
+
+        assertThat(fetched).containsExactly("3");
+        assertThat(second.status(partial.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void aCatalogOnlySyncHasNothingToForce() {
         JobStatus catalog = syncs.start("wiki", "DOC", "client:a", SyncMode.CATALOG_ONLY);
         runQueued();
