@@ -186,6 +186,42 @@ class AssetsSignInTest {
     }
 
     @Test
+    void afterTheFirstFileArrivesWaitingDownloadsRunInParallelAgain() throws Exception {
+        Assets assets = assets(new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC()));
+        source.locked = false;
+        java.util.concurrent.CountDownLatch firstFile = new java.util.concurrent.CountDownLatch(1);
+        source.gate = firstFile;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            java.util.concurrent.Future<?> first = pool.submit(() -> assets.content(list(), "att1", false));
+            while (source.calls.get() == 0) {
+                Thread.onSpinWait();
+            }
+            java.util.concurrent.Future<?> second = pool.submit(() -> assets.content(list(), "att2", false));
+            java.util.concurrent.Future<?> third = pool.submit(() -> assets.preview(list(), "att1",
+                    AttachmentPreview.THUMBNAIL, false));
+            Thread.sleep(200);
+            // Bis die Quelle eine Datei geliefert hat, nur ein Abruf.
+            assertThat(source.calls).hasValue(1);
+            java.util.concurrent.CountDownLatch parallel = new java.util.concurrent.CountDownLatch(1);
+            source.gate = parallel;
+            firstFile.countDown();
+            first.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            // Die beiden Wartenden laufen jetzt gleichzeitig: beide stehen in der Quelle, bevor einer fertig ist.
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (source.calls.get() < 3 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            assertThat(source.calls).hasValue(3);
+            parallel.countDown();
+            second.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            third.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void whileTheRequestIsOpenStoredFilesStillComeFromTheStore() {
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
         Assets assets = assets(signIns);

@@ -1415,7 +1415,8 @@ public class Assets {
      *       Sitzung und eigener Mail, und der eingegebene Code passte nicht zur Sitzung (HTTP 500). Wer währenddessen
      *       wartete, fragt die Quelle nicht mehr, wenn der laufende Abruf auf die Zwei-Faktor-Seite traf, sondern
      *       bekommt dieselbe Seite.</li>
-     *   <li>Nach einer gelieferten Datei laufen Abrufe wieder parallel.</li>
+     *   <li>Nach einer gelieferten Datei laufen Abrufe wieder parallel, auch die schon wartenden. Länger als
+     *       {@code DOWNLOAD_WAIT} wartet niemand auf den Abruf vor ihm ({@code RATE_LIMITED}).</li>
      * </ul>
      * Lesen auf Abruf schließt sich damit derselben Anforderung an ({@link #unlocking}), ein Auftrag wartet auf sie
      * ({@link SignInRequests#await}). Abgelegte Dateien kommen weiter aus der Ablage. Code und Token sieht diese Stelle
@@ -1429,21 +1430,32 @@ public class Assets {
         }
         long before = state.challenges;
         try {
-            state.probe.lockInterruptibly();
+            if (!state.probe.tryLock(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                        "Die Quelle antwortet noch auf einen anderen Download", null);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
                     e);
         }
+        boolean locked = true;
         try {
             holdWhileSignInOpen(sourceId);
             SignInChallenge seen = state.challenge;
             if (state.challenges != before && seen != null) {
                 throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen, null);
             }
+            if (state.flowing) {
+                // Der vorige Abruf hat eine Datei geliefert: wieder parallel, wer noch wartet, kommt sofort dran.
+                state.probe.unlock();
+                locked = false;
+            }
             return observed(state, call);
         } finally {
-            state.probe.unlock();
+            if (locked) {
+                state.probe.unlock();
+            }
         }
     }
 
