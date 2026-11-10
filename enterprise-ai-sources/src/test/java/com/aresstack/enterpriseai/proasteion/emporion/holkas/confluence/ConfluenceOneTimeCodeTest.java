@@ -178,6 +178,29 @@ public class ConfluenceOneTimeCodeTest {
     }
 
     @Test
+    public void aNewWebSessionReusesTheTransportButNotTheOriginalOtpCookies() throws Exception {
+        ConfluenceKnowledgeSource original = source();
+        String image = BASE + "/download/attachments/7/bild.png?version=1";
+        challengeOf(() -> original.loadViewImage(image));
+
+        assertEquals(DownloadAccess.ONE_TIME_CODE_REQUIRED, original.downloadAccess());
+        assertEquals(1, sessions);
+
+        ConfluenceKnowledgeSource independent = original.newWebSession();
+        assertEquals(DownloadAccess.OPEN, independent.downloadAccess());
+        assertEquals(1, sessions);
+
+        OneTimeCodeChallenge newChallenge = challengeOf(() -> independent.loadViewImage(image));
+
+        assertEquals(2, sessions);
+        assertNull("The new session must not send the PAT-initialized cookie",
+                fileRequests.get(1).get("Cookie"));
+        assertNull(newChallenge.submit("482913".toCharArray()));
+        assertEquals(DownloadAccess.UNLOCKED, independent.downloadAccess());
+        assertEquals(DownloadAccess.ONE_TIME_CODE_REQUIRED, original.downloadAccess());
+    }
+
+    @Test
     public void aWrongCodeComesBackWithTheMessageOfThePage() throws Exception {
         ConfluenceKnowledgeSource source = source();
         PageView.Attachment pdf = source.pageView(page()).attachments().get(0);
