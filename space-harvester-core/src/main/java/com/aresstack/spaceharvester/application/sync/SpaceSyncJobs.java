@@ -136,6 +136,14 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public Provisioned provision(JobContext context, String sourceId, String spaceKey,
                                  Predicate<PageHeader> counted) {
         Objects.requireNonNull(counted, "counted");
+        return provisionScoped(context, sourceId, spaceKey, headers -> counted);
+    }
+
+    /** Wie oben; die Zählregel entsteht aus der Inventur, etwa nur der Teilbaum einer Startseite. */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting) {
+        Objects.requireNonNull(counting, "counting");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -145,7 +153,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         SpaceSync.SyncRun run;
         try {
             context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counted));
+            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counting));
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }
@@ -513,18 +521,23 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /** Fortschritt des Einlesens im Export: nur lesbare Seiten, nur gefunden und abgeglichen. */
-    private static SyncListener provisionListener(JobContext context, Predicate<PageHeader> counted) {
+    private static SyncListener provisionListener(JobContext context,
+                                                  java.util.function.Function<List<PageHeader>,
+                                                          Predicate<PageHeader>> counting) {
         Set<String> visible = ConcurrentHashMap.newKeySet();
         return new SyncListener() {
 
             @Override
             public void inventoried(Inventory inventory) {
                 context.phase(COMPONENT, "Seiten abrufen");
-                for (PageMetadataListing.Entry entry : inventory.pages()) {
-                    PageHeader header = new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()),
-                            entry.page(), entry.metadataHash(), entry.attributesHash(), inventory.finishedAt());
+                List<PageHeader> headers = inventory.pages().stream()
+                        .map(entry -> new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()),
+                                entry.page(), entry.metadataHash(), entry.attributesHash(), inventory.finishedAt()))
+                        .toList();
+                Predicate<PageHeader> counted = counting.apply(headers);
+                for (PageHeader header : headers) {
                     if (counted.test(header)) {
-                        visible.add(entry.page().pageId());
+                        visible.add(header.key().pageId());
                     }
                 }
                 context.discovered(visible.size());
