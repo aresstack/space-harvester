@@ -163,13 +163,7 @@ public final class SignInSlot extends JPanel {
     /** Setzt den Fokus ins Codefeld, sobald es sichtbar ist (Klick auf den Hinweis in der Statuszeile). */
     public void focusCode() {
         if (isVisible()) {
-            SwingUtilities.invokeLater(() -> {
-                if (next.asksForLogin()) {
-                    usernameField.requestFocusInWindow();
-                } else {
-                    codeField.requestFocusInWindow();
-                }
-            });
+            SwingUtilities.invokeLater(codeField::requestFocusInWindow);
         }
     }
 
