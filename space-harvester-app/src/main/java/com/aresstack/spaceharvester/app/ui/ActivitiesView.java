@@ -1015,6 +1015,20 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /**
+     * Die Spalte „Fortschritt“: derselbe Zähler, den Statuszeile und Kachel „Auftrag“ zeigen. Ein Download zählt beim
+     * Abrufen die geladenen oder geprüften Seiten und erst beim Exportieren die exportierten (vorher stünde dort
+     * 0 von N, obwohl die Statuszeile längst hochzählt); die Zeile kennt keine Phase, aber exportiert ist erst, wenn
+     * das Abrufen durch ist. Ein beendeter Download zeigt immer die exportierten Seiten, auch 0 von N, wenn alle
+     * fehlten. Alle anderen Arten zählen verarbeitete Seiten.
+     */
+    static String progressText(JobStatus status) {
+        JobProgress p = status.progress();
+        boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
+        long done = status.type() == JobType.EXPORT && !fetching ? p.written() : p.processed();
+        return done + "/" + p.discovered() + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
+    }
+
     /** Was die vier Zähler je Auftragsart bedeuten. */
     record Counters(String discovered, String processed, String written, String failed) {
 
@@ -1135,9 +1149,7 @@ public final class ActivitiesView implements View {
                 case 0 -> Texts.type(status.type());
                 case 1 -> where(status);
                 case 2 -> status.state();
-                case 3 -> (status.type() == JobType.EXPORT ? status.progress().written() : status.progress().processed())
-                        + "/" + status.progress().discovered()
-                        + (status.progress().failed() > 0 ? " · " + status.progress().failed() + " Fehler" : "");
+                case 3 -> progressText(status);
                 case 4 -> Texts.time(status.createdAt());
                 default -> "";
             };
