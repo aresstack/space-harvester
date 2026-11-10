@@ -77,14 +77,21 @@ public class JobActions {
             case CANCEL -> sync ? syncs.cancel(jobId, owner).status() : jobs.cancel(jobId, owner);
             case RESUME -> resume(current, owner, access);
             case RETRY_FAILED -> {
+                if (sync) {
+                    yield syncs.retryFailed(jobId, owner).status();
+                }
                 if (current.type() != JobType.EXPORT) {
-                    throw new JobNotResumableException(jobId, "nur Downloads laden gescheiterte Seiten gezielt nach");
+                    throw new JobNotResumableException(jobId,
+                            "nur Downloads und Abgleiche laden gescheiterte Seiten gezielt nach");
                 }
                 yield exports.retryFailed(jobId, owner, access);
             }
             case FORCE_REFRESH -> {
+                if (sync) {
+                    yield syncs.forceRefresh(jobId, owner).status();
+                }
                 if (current.type() != JobType.EXPORT) {
-                    throw new JobNotResumableException(jobId, "nur Downloads erzwingen einen neuen Stand");
+                    throw new JobNotResumableException(jobId, "nur Downloads und Abgleiche erzwingen einen neuen Stand");
                 }
                 yield exports.forceRefresh(jobId, owner, access);
             }
