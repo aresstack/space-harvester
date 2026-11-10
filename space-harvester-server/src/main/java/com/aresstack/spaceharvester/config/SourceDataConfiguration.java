@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import java.time.Clock;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -39,7 +40,10 @@ class SourceDataConfiguration {
                                     ObjectProvider<LuceneEnrichmentStore> enrichments,
                                     ObjectProvider<AssetStore> assets, ObjectProvider<ExportArtifactWriter> exports,
                                     ObjectProvider<TermRelations> relations,
+                                    @Qualifier("acronymResolutionCache")
                                     ObjectProvider<FileResolutionCache> resolutions,
+                                    @Qualifier("synonymResolutionCache")
+                                    ObjectProvider<FileResolutionCache> synonymCache,
                                     ObjectProvider<Glossary> glossary,
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
@@ -53,6 +57,7 @@ class SourceDataConfiguration {
             stores.assets(files, writer, clock);
         }
         relations.ifAvailable(found -> stores.termRelations(found, resolutions.getIfAvailable()));
+        synonymCache.ifAvailable(stores::synonymCache);
         glossary.ifAvailable(stores::glossary);
         facts.ifAvailable(found -> stores.factEdits(found, clock));
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {

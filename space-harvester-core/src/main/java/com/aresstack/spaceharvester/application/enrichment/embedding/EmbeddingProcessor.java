@@ -140,6 +140,11 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      *
      * @throws IllegalArgumentException wenn Kennung oder Dimension unbrauchbar sind
      */
+    /** Das Modell dieses Augenblicks oder leer, wenn gerade keines eingestellt ist (ADR 0015). */
+    public Optional<EmbeddingProvider> currentProvider() {
+        return Optional.ofNullable(provider.get());
+    }
+
     public static void check(EmbeddingProvider provider) {
         if (!MODEL_ID.matcher(provider.modelId()).matches()) {
             throw new IllegalArgumentException("Ungültige Modellkennung");

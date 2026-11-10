@@ -288,7 +288,7 @@ public class AcronymResolution {
             context.checkpoint();
         }
         phase(context, PHASE + ": Abgleich");
-        TermRelations.ProposalRun run = relations.propose(ACTOR, RelationOrigin.AI, scope,
+        TermRelations.ProposalRun run = relations.propose(ACTOR, RelationOrigin.AI, scope, Set.of(RelationType.ABBREVIATION),
                 version + "@" + clock.instant(), proposals);
         // Erst nach dem Abgleich: Ein abgebrochener Lauf hinterlässt keinen Cache ohne Beziehungen.
         try {

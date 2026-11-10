@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
@@ -91,6 +92,15 @@ public final class SourceDataStores {
                 resolutions.removeSource(sourceId);
             }
         });
+    }
+
+    /**
+     * Ergebnis-Cache der Synonymerkennung (#336): mit der Quelle entfallen auch die Läufe je Space der Quelle und die
+     * globalen Läufe, an denen sie beteiligt war; sonst gälten ihre Paare nach erneutem Laden als schon beantwortet.
+     */
+    public SourceDataStores synonymCache(FileResolutionCache cache) {
+        Objects.requireNonNull(cache, "cache");
+        return add("Synonym-Cache", sourceId -> cache.removeSources(SynonymDiscovery.cacheKeysOf(sourceId)));
     }
 
     /** KI-Einträge des Fachglossars dieser Quelle und alle Belege aus ihr; manuelle Einträge bleiben. */

@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,6 +55,11 @@ class ConfigurationParityTest {
                   - confluence/DOC
                 mode: sync-cache
                 catch-up-on-start: true
+              terms:
+                synonyms:
+                  max-terms: 300
+                  max-embedded-terms: 100
+                  max-judged-pairs: 50
             """;
 
     private static final String TOKEN = "parity-token";
@@ -94,5 +101,12 @@ class ConfigurationParityTest {
         assertThat(app.sync().spaces()).isEqualTo(sync.spaces()).containsExactly("confluence/DOC");
         assertThat(app.sync().mode()).isEqualTo(sync.mode());
         assertThat(app.sync().catchUpOnStart()).isEqualTo(sync.catchUpOnStart());
+
+        // #336: Budget der Synonymerkennung geht beim Dienst über withSyncRules in die HarvesterConfiguration.
+        HarvesterConfiguration service2 = ConfigurationManagerConfiguration.withSyncRules(
+                HarvesterConfiguration.DEFAULT, binder);
+        SynonymBudget budget = service2.terms().synonyms();
+        assertThat(app.terms().synonyms()).isEqualTo(budget);
+        assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
     }
 }

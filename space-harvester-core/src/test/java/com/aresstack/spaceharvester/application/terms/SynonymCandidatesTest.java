@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.terms;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
@@ -12,6 +13,8 @@ import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -281,6 +284,63 @@ class SynonymCandidatesTest {
         assertThat(limited.embeddingUsed()).isFalse();
         assertThat(unembedded.embeddingUsed()).isFalse();
         assertThat(unembedded.terms()).isGreaterThan(1);
+    }
+
+    @Test
+    void theTermBudgetBoundsEveryRuleNotOnlySpelling() {
+        // Codex-Befund zu #572: Formulierungen, Akronym-Geschwister und anderswo Bestätigtes paaren nur gewählte Begriffe.
+        cached("Der Rückmeldeschlüssel, auch bezeichnet als Antwortschlüssel, steht in jeder Meldung.");
+        cached("Der Antwortschlüssel ist Pflicht. Die Meldung auch. Die Meldung kommt täglich.");
+        cached("Die Meldung wird geprüft. Jede Meldung zählt.");
+
+        SynonymCandidates.Collected limited = candidates.collect(SynonymScope.source("wiki"),
+                new SynonymBudget(1, 0, 200), null);
+
+        assertThat(limited.terms()).isEqualTo(1);
+        assertThat(limited.candidates()).isEmpty();
+        assertThat(find(collect(SynonymScope.source("wiki")), "Rückmeldeschlüssel", "Antwortschlüssel")).isPresent();
+    }
+
+    @Test
+    void aCancelledJobEndsTheEmbeddingStageInsteadOfSkippingIt() {
+        provider = Optional.of(keywords);
+        cached("Der Sachbearbeiter prüft den Vorgang. Der Sachbearbeiter entscheidet.");
+        cached("Der Fallbearbeiter prüft den Antrag.");
+        JobContext cancelled = new JobContext() {
+            @Override
+            public String jobId() {
+                return "job-1";
+            }
+
+            @Override
+            public void checkpoint() {
+                throw new JobCancelledException(jobId());
+            }
+
+            @Override
+            public boolean cancelRequested() {
+                return true;
+            }
+
+            @Override
+            public void discovered(long pages) {
+            }
+
+            @Override
+            public void processed(long pages) {
+            }
+
+            @Override
+            public void written(long pages) {
+            }
+
+            @Override
+            public void failed(long pages) {
+            }
+        };
+
+        assertThatThrownBy(() -> candidates.collect(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, cancelled))
+                .isInstanceOf(JobCancelledException.class);
     }
 
     @Test

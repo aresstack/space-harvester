@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.terms.SynonymScope;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
@@ -55,13 +57,15 @@ public class TermRelationsController {
     private final TermRelations relations;
     private final AcronymRelationRule acronymRule;
     private final AcronymResolution resolution;
+    private final SynonymDiscovery synonyms;
     private final Jobs jobs;
 
     public TermRelationsController(TermRelations relations, AcronymRelationRule acronymRule,
-                                   AcronymResolution resolution, Jobs jobs) {
+                                   AcronymResolution resolution, SynonymDiscovery synonyms, Jobs jobs) {
         this.relations = relations;
         this.acronymRule = acronymRule;
         this.resolution = resolution;
+        this.synonyms = synonyms;
         this.jobs = jobs;
     }
 
@@ -194,35 +198,53 @@ public class TermRelationsController {
     }
 
     @PostMapping("/refresh")
-    @Operation(summary = "KI-Akronymauflösung einer Quelle starten (#122)",
-            description = "Asynchroner Vorschlagslauf: Je Akronym gehen wenige kurze Fundstellen aus dem Cache an das "
-                    + "Chat-Modell; jede Ausschreibung muss in einer Fundstelle wörtlich stehen. Ergebnis sind nur "
-                    + "Vorschläge (ai, proposed); bestätigte, manuelle und Regelbeziehungen bleiben, abgelehnte kommen "
-                    + "nie wieder. Läuft als Auftrag ENRICHMENT der Quelle ohne Space; scheitert er, bleibt der Stand "
-                    + "des letzten Laufs. Nur für Quellen in external-processing-sources.")
+    @Operation(summary = "KI-Vorschlagslauf starten: Akronymauflösung (#122) oder Synonymerkennung (#336)",
+            description = "Asynchroner Vorschlagslauf. kind=acronym (Vorgabe, sourceId Pflicht): Je Akronym gehen "
+                    + "wenige kurze Fundstellen aus dem Cache an das Chat-Modell; jede Ausschreibung muss in einer "
+                    + "Fundstelle wörtlich stehen. kind=synonyms: Kandidatenpaare aus Schreibvarianten, Textmustern "
+                    + "und Embedding-Nachbarschaft; das Chat-Modell beurteilt jedes Paar anhand kurzer Fundstellen "
+                    + "(synonym, variant, related), nur Text aus freigegebenen Quellen; ohne Chat-Modell nur die "
+                    + "Regelvorschläge. Umfang: sourceId=* alle Quellen (global), sonst die Quelle, mit "
+                    + "spaceKey der Space. Ergebnis sind nur Vorschläge (ai bzw. rule, proposed); bestätigte, "
+                    + "manuelle und andere Beziehungsarten bleiben, abgelehnte kommen nie wieder. Läuft als Auftrag "
+                    + "ENRICHMENT; scheitert er, bleibt der Stand des letzten Laufs.")
     @ApiResponse(responseCode = "202", description = "RefreshJobResponse; Location nennt den Auftrag")
-    @ApiResponse(responseCode = "400", description = "kind ist nicht acronym (invalid-request)")
-    @ApiResponse(responseCode = "403", description = "Keine sync-Freigabe auf die Quelle (access-denied)")
+    @ApiResponse(responseCode = "400", description = "kind ist weder acronym noch synonyms, spaceKey bei sourceId=* "
+            + "oder maxJudgedPairs negativ (invalid-request)")
+    @ApiResponse(responseCode = "403", description = "Keine sync-Freigabe auf den Umfang (access-denied)")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found)")
     @ApiResponse(responseCode = "409", description = "Quelle nicht für den KI-Dienst freigegeben "
-            + "(external-processing-not-allowed)")
-    @ApiResponse(responseCode = "503", description = "Kein Chat-Modell eingestellt (ai-unavailable)")
+            + "(external-processing-not-allowed), nur bei acronym")
+    @ApiResponse(responseCode = "503", description = "Kein Chat-Modell eingestellt (ai-unavailable), nur bei acronym")
     public ResponseEntity<RefreshJobResponse> refresh(@Parameter(hidden = true) AccessContext caller,
                                                       @RequestParam String sourceId,
+                                                      @RequestParam(required = false) String spaceKey,
                                                       @RequestBody(required = false) RefreshRequest request) {
         String kind = request == null ? null : blankToNull(request.kind());
-        if (kind != null && !"acronym".equals(kind)) {
-            throw new InvalidQueryException("kind muss acronym sein");
+        String source = sourceId.trim();
+        String space = blankToNull(spaceKey);
+        JobStatus job;
+        if ("synonyms".equals(kind)) {
+            boolean all = Jobs.ALL_SOURCES.equals(source);
+            if (all && space != null) {
+                throw new InvalidQueryException("spaceKey braucht eine Quelle");
+            }
+            SynonymScope scope = all ? SynonymScope.ALL
+                    : space == null ? SynonymScope.source(source) : SynonymScope.space(source, space);
+            job = synonyms.start(caller, new SynonymDiscovery.Request(scope, request.maxJudgedPairs()));
+        } else if (kind == null || "acronym".equals(kind)) {
+            job = resolution.start(caller, source);
+        } else {
+            throw new InvalidQueryException("kind muss acronym oder synonyms sein");
         }
-        JobStatus job = resolution.start(caller, sourceId.trim());
         return ResponseEntity.accepted().location(URI.create(REFRESH_JOBS + "/" + job.id()))
                 .body(RefreshJobResponse.of(job));
     }
 
     @GetMapping("/refresh-jobs/{jobId}")
-    @Operation(summary = "Stand eines eigenen Laufs der KI-Akronymauflösung",
-            description = "Zustand, Fortschritt (discovered = gefragte Akronyme, processed = beantwortete, written = "
-                    + "neue oder geänderte Vorschläge) und Fehler.")
+    @Operation(summary = "Stand eines eigenen Vorschlagslaufs (Akronyme oder Synonyme)",
+            description = "Zustand, Fortschritt (discovered = gefragte Akronyme bzw. Kandidatenpaare, processed = "
+                    + "beantwortete, written = neue oder geänderte Vorschläge) und Fehler.")
     @ApiResponse(responseCode = "200", description = "RefreshJobResponse")
     @ApiResponse(responseCode = "404", description = "Kein eigener Auftrag mit dieser ID (job-not-found)")
     public RefreshJobResponse refreshJob(@Parameter(hidden = true) AccessContext caller,
@@ -241,13 +263,14 @@ public class TermRelationsController {
         return ResponseEntity.accepted().body(RefreshJobResponse.of(jobs.cancel(jobId, caller.jobOwner())));
     }
 
-    /** Nur eigene Aufträge der KI-Akronymauflösung; andere Anreicherungsaufträge gelten als unbekannt. */
+    /** Nur eigene Vorschlagsläufe (Akronyme oder Synonyme); andere Anreicherungsaufträge gelten als unbekannt. */
     private JobStatus ownRefresh(AccessContext caller, String jobId) {
-        if (!resolution.started(jobId)) {
+        boolean acronyms = resolution.started(jobId);
+        if (!acronyms && !synonyms.started(jobId)) {
             throw new UnknownJobException(jobId);
         }
         JobStatus job = jobs.status(jobId, caller.jobOwner());
-        if (job.type() != JobType.ENRICHMENT || job.partitionKey() != null) {
+        if (job.type() != JobType.ENRICHMENT || (acronyms && job.partitionKey() != null)) {
             throw new UnknownJobException(jobId);
         }
         return job;
@@ -304,8 +327,12 @@ public class TermRelationsController {
     public record RelationListResponse(List<RelationEntry> relations, String nextCursor) {
     }
 
-    /** Art des Vorschlagslaufs; ohne Angabe acronym, heute die einzige. */
-    public record RefreshRequest(@Schema(allowableValues = {"acronym"}, nullable = true) String kind) {
+    /**
+     * Art des Vorschlagslaufs; ohne Angabe acronym. {@code maxJudgedPairs} gilt nur für synonyms: höchstens so viele
+     * Paare an das Modell, 0 nur Regelvorschläge, ohne Angabe der Wert aus {@code terms.synonyms.max-judged-pairs}.
+     */
+    public record RefreshRequest(@Schema(allowableValues = {"acronym", "synonyms"}, nullable = true) String kind,
+                                 @Schema(nullable = true) Integer maxJudgedPairs) {
     }
 
     /** Ein Lauf der KI-Akronymauflösung. */

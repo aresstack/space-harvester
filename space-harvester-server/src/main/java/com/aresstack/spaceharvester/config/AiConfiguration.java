@@ -31,6 +31,8 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
+import com.aresstack.spaceharvester.application.terms.SynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
@@ -212,6 +214,13 @@ class AiConfiguration {
     AcronymExpansionModel acronymExpansions(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                             ObjectProvider<BuildProperties> build, LiveConfiguration live) {
         return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /** Bedeutungsprüfung der Synonymerkennung (#336) über dasselbe Chat-Modell wie die Akronymauflösung. */
+    @Bean
+    SynonymJudgmentModel synonymJudgments(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatSynonymJudgmentModel(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
