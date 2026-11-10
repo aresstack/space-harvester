@@ -183,8 +183,9 @@ public final class StatusView implements View {
                 .setContents(new StringSelection(detail.getText()), null));
         delete.addActionListener(e -> {
             Entry chosen = selected();
-            if (chosen != null && Dialogs.confirm(root, "Ereignis löschen?", "Das gewählte Ereignis wird dauerhaft "
-                    + "aus dem Protokoll gelöscht; der Auftrag und seine übrigen Ereignisse bleiben.", "Löschen")) {
+            if (chosen != null && Dialogs.confirm(root, "Ereignis löschen?", "Ereignis wirklich löschen? Das gewählte "
+                    + "Ereignis wird dauerhaft aus dem Protokoll gelöscht; der Auftrag und seine übrigen Ereignisse "
+                    + "bleiben.")) {
                 deleteEntry(chosen);
             }
         });
@@ -375,8 +376,8 @@ public final class StatusView implements View {
         choice.setSelectedIndex(1);
         Instant[] result = {null};
         javax.swing.JDialog dialog = Dialogs.dialog(root, "Protokoll bereinigen");
-        ComposerButton yes = Comic.danger("Löschen", null);
-        ComposerButton no = Comic.button("Abbrechen", null);
+        ComposerButton yes = Comic.danger(Dialogs.YES, null);
+        ComposerButton no = Comic.button(Dialogs.NO, null);
         yes.addActionListener(e -> {
             Choice chosen = (Choice) choice.getSelectedItem();
             result[0] = chosen == null || chosen.age() == null ? Instant.MAX : Instant.now().minus(chosen.age());
@@ -385,7 +386,7 @@ public final class StatusView implements View {
         no.addActionListener(e -> dialog.dispose());
         JPanel body = new JPanel(new BorderLayout(0, 8));
         body.setOpaque(false);
-        body.add(Comic.note("Löscht die Diagnoseereignisse beendeter Aufträge dauerhaft. Die Aufträge selbst bleiben "
+        body.add(Comic.note("Diagnoseereignisse wirklich löschen? Das löscht die Ereignisse beendeter Aufträge dauerhaft. Die Aufträge selbst bleiben "
                 + "unter „Aufträge“, Ereignisse laufender Aufträge bleiben ebenfalls."), BorderLayout.NORTH);
         body.add(choice, BorderLayout.CENTER);
         Dialogs.show(dialog, "Protokoll bereinigen", body, no, yes);

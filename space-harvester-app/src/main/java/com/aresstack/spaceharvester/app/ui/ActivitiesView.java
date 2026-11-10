@@ -979,14 +979,15 @@ public final class ActivitiesView implements View {
         }
         switch (action) {
             case CANCEL -> {
-                if (!Dialogs.yesNo(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
+                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
                         + job.partitionKey() + " wirklich abbrechen? Bereits Gelesenes bleibt unbestätigt.")) {
                     return;
                 }
             }
             case DELETE -> {
                 if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
-                        + " und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT, "Löschen")) {
+                        + " wirklich löschen? Der Auftrag und seine Diagnoseereignisse werden dauerhaft gelöscht. "
+                        + KEPT)) {
                     return;
                 }
             }
@@ -1145,10 +1146,10 @@ public final class ActivitiesView implements View {
             return;
         }
         long running = model.rows.size() - finished;
-        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(finished, "beendeter Auftrag",
-                "beendete Aufträge") + " (abgeschlossen, gescheitert, abgebrochen) und ihre Diagnoseereignisse werden "
-                + "dauerhaft gelöscht." + (running == 0 ? "" : " " + Texts.count(running, "laufender Auftrag bleibt",
-                "laufende Aufträge bleiben") + ".") + " " + KEPT, "Löschen")) {
+        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(finished, "beendeten Auftrag",
+                "beendete Aufträge") + " wirklich löschen? Sie (abgeschlossen, gescheitert, abgebrochen) und ihre "
+                + "Diagnoseereignisse werden dauerhaft gelöscht." + (running == 0 ? "" : " " + Texts.count(running, "laufender Auftrag bleibt",
+                "laufende Aufträge bleiben") + ".") + " " + KEPT)) {
             return;
         }
         boolean selectedFinished = currentStatus().map(s -> s.state().terminal()).orElse(false);

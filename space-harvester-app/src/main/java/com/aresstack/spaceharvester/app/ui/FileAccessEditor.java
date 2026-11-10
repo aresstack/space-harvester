@@ -70,7 +70,6 @@ final class FileAccessEditor {
             + "Windows-Benutzerkonto lesen kann. Das kann persönliche, vertrauliche und dienstliche Dateien sowie "
             + "erreichbare Netzlaufwerke umfassen. Die Freigabe betrifft den Dateizugriff; ein Einlesen aller "
             + "Laufwerke wird dadurch nicht automatisch gestartet.";
-    static final String CONFIRM_LABEL = "Alle Dateizugriffe freigeben";
 
     /** Die zweite Bestätigung, bevor alles freigegeben wird; Tests ersetzen sie. */
     interface Confirmation {
@@ -112,8 +111,7 @@ final class FileAccessEditor {
     private boolean loaded;
 
     FileAccessEditor(AppContext context) {
-        this(context, parent -> Dialogs.confirm(parent, CONFIRM_TITLE, CONFIRM_QUESTION + " " + CONFIRM_TEXT,
-                CONFIRM_LABEL));
+        this(context, parent -> Dialogs.confirm(parent, CONFIRM_TITLE, CONFIRM_QUESTION + " " + CONFIRM_TEXT));
     }
 
     FileAccessEditor(AppContext context, Confirmation confirmation) {
