@@ -68,7 +68,7 @@ public final class TermsView implements View {
     static final String PROPOSE_SYNONYMS = "Synonyme vorschlagen";
     static final String PROPOSING = "Synonyme werden vorgeschlagen …";
     /** Meldungen in der Statuszeile des Hauptfensters; kein Meldungsband unter dem Reiter. */
-    static final String RULES_ONLY = "Ohne Chat-Modell nur Regelvorschläge";
+    static final String RULES_ONLY = "Ohne Embedding-Modell nur Regelvorschläge";
     static final String CANCELLED = "Synonymerkennung abgebrochen; bisherige Vorschläge bleiben";
     private static final int NOTICE_MS = 8000;
     private static final int POLL_MS = 400;
@@ -247,8 +247,7 @@ public final class TermsView implements View {
         synonymOverlay.setBusy(true);
         proposeSynonyms.setEnabled(false);
         Background.run(() -> {
-            synonymRulesOnly = !workspace.synonymAvailability(request.scope()).chatModel()
-                    || (request.maxJudgedPairs() != null && request.maxJudgedPairs() == 0);
+            synonymRulesOnly = !workspace.synonymAvailability(request.scope()).embeddingModel();
             return workspace.startSynonymDiscovery(request.scope(), request.maxJudgedPairs());
         }, status -> {
             synonymJob = status.id();

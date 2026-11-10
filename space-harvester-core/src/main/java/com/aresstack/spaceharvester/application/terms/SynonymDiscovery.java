@@ -40,7 +40,9 @@ import tools.jackson.databind.node.ObjectNode;
 /**
  * Synonymerkennung auf Knopfdruck (#336): ein asynchroner Vorschlagslauf je Umfang ({@link SynonymScope}) als Auftrag
  * {@link JobType#ENRICHMENT}, Phase {@value #PHASE}. Die Kandidaten liefert {@link SynonymCandidates} (Stufen A
- * und B); Stufe C fragt ein Chat-Modell je Paar mit Fundstellen beider Begriffe, ob die Bezeichnungen im belegten
+ * und B). Standard ist nur das Embedding-Modell: Paare mit ähnlichen Vektoren werden direkt Synonymvorschläge
+ * ({@code ai:synonyms}, {@code PROPOSED}). Stufe C ist zuschaltbar ({@code maxJudgedPairs} über 0) und fragt dann
+ * ein Chat-Modell je Paar mit Fundstellen beider Begriffe, ob die Bezeichnungen im belegten
  * Kontext austauschbar sind ({@code synonym}), nur anders geschrieben ({@code variant}), nur fachlich verwandt
  * ({@code related}), verschieden oder unklar. Jede Antwort muss Fundstellen beider Begriffe nennen; was dort nicht
  * belegt ist, fällt weg. Abkürzungen sind Sache der Akronymauflösung (#122) und werden verworfen.
@@ -50,7 +52,7 @@ import tools.jackson.databind.node.ObjectNode;
  * KI-Vorschläge als {@code ai:synonyms}. Akronymvorschläge, manuelle Beziehungen und Benutzerentscheidungen bleiben
  * unberührt; abgelehnte Schlüssel kommen nie wieder; nichts wird transitiv geschlossen. Erst wenn alle Anfragen
  * beantwortet sind, wird abgeglichen; scheitert eine Anfrage oder bricht der Auftrag ab, bleibt der Stand des
- * letzten Laufs. Ohne Chat-Modell oder ohne KI-Budget läuft nur die Regelstufe.
+ * letzten Laufs. Ohne Chat-Modell oder mit Budget 0 gelten Regeln und Embedding-Paare unmittelbar.
  *
  * <p>Text geht nur aus Quellen in {@code external-processing-sources} an das Modell, geprüft vor jeder Anfrage;
  * Kandidaten ohne Fundstelle aus einer freigegebenen Quelle werden nicht gefragt. Ins Log kommen nur Umfang und
@@ -131,13 +133,14 @@ public class SynonymDiscovery {
     /**
      * Was ein Lauf gerade könnte, für die Oberfläche vor dem Start.
      *
-     * @param chatModel ob ein Chat-Modell eingestellt ist (Stufe C); ohne bleibt es bei Regelvorschlägen
-     * @param released  Quellen des Umfangs, deren Text an den Dienst gehen darf
-     * @param withheld  Quellen des Umfangs ohne Freigabe; sie liefern nur Regelvorschläge
-     * @param budget    das Budget der wirksamen Konfiguration
+     * @param chatModel      ob ein Chat-Modell eingestellt ist (Stufe C, optional über {@code maxJudgedPairs})
+     * @param embeddingModel ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleibt es bei Regelvorschlägen
+     * @param released       Quellen des Umfangs, deren Text an den Dienst gehen darf
+     * @param withheld       Quellen des Umfangs ohne Freigabe; sie liefern nur Regelvorschläge
+     * @param budget         das Budget der wirksamen Konfiguration
      */
-    public record Availability(boolean chatModel, List<String> released, List<String> withheld,
-                               SynonymBudget budget) {
+    public record Availability(boolean chatModel, boolean embeddingModel, List<String> released,
+                               List<String> withheld, SynonymBudget budget) {
     }
 
     public Availability availability(SynonymScope scope) {
@@ -147,7 +150,8 @@ public class SynonymDiscovery {
         for (String sourceId : sourceIds(scope)) {
             (model.mayProcess(sourceId) ? released : withheld).add(sourceId);
         }
-        return new Availability(model.available(), released, withheld, budget.get());
+        return new Availability(model.available(), candidates.embeddingAvailable(), released, withheld,
+                budget.get());
     }
 
     /**
@@ -238,7 +242,7 @@ public class SynonymDiscovery {
     public record Outcome(int candidates, TermRelations.ProposalRun rules, TermRelations.ProposalRun ai, int asked,
                           int reused, int skipped, int rejected, boolean embeddingUsed) {
 
-        /** Ob Stufe C lief. */
+        /** Ob Vorschläge aus einem Modell abgeglichen wurden: Embedding (Stufe B) oder Chat-Prüfung (Stufe C). */
         public boolean aiUsed() {
             return ai != null;
         }
@@ -264,14 +268,63 @@ public class SynonymDiscovery {
         }
         checkpoint(context);
         String ruleGeneration = "rules-" + PROMPT_VERSION + stamp;
+        Map<String, TermRelation> earlier = new HashMap<>();
+        relations.automatic(RelationOrigin.AI, relationScope).forEach(relation -> {
+            if (PRODUCED.contains(relation.type())) {
+                earlier.put(relation.id(), relation);
+            }
+        });
         if (!model.available() || budget.maxJudgedPairs() == 0) {
-            phase(context, PHASE + ": Abgleich der Regeln");
+            // Ohne Chat-Prüfung (Standard): Ähnliche Vektoren sind der Vorschlag. Nur das Embedding-Modell sieht
+            // Text, und nur aus freigegebenen Quellen; Paare, die schon entschieden oder manuell sind, bleiben aus.
+            // Die Ähnlichkeit steht nur, wenn Stufe B das Paar ab der Schwelle fand, auch wenn eine Regel es zuerst
+            // nannte. Hat das eingestellte Chat-Modell dasselbe Paar mit denselben Fundstellen schon beurteilt, gilt
+            // sein Urteil weiter (Cache), sonst stünde der Vorschlag beim nächsten Zuschalten im Widerspruch dazu.
+            Set<String> known = knownPairs(relationScope);
+            List<TermRelations.Proposal> embeddingProposals = new ArrayList<>();
+            int skipped = 0;
+            int reused = 0;
+            for (SynonymCandidate candidate : open) {
+                if (candidate.similarity() <= 0) {
+                    skipped++;
+                    continue;
+                }
+                if (known.contains(candidate.pairKey())) {
+                    continue;
+                }
+                Optional<List<String>> judged = cachedJudgment(scope, candidate);
+                if (judged.isPresent()) {
+                    reused++;
+                    for (String id : judged.get()) {
+                        TermRelation relation = earlier.get(id);
+                        if (relation != null) {
+                            embeddingProposals.add(proposalOf(relation));
+                        }
+                    }
+                    continue;
+                }
+                embeddingProposals.add(new TermRelations.Proposal(candidate.fromTerm(), candidate.toTerm(),
+                        RelationType.SYNONYM, evidence(candidate.fromContext(), candidate.toContext())));
+            }
+            checkpoint(context);
+            phase(context, PHASE + ": Abgleich");
             TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
                     PRODUCED, ruleGeneration, ruleProposals);
+            // Lief Stufe B nicht (kein Modell, kein Budget, Dienst gestört), bleiben die bisherigen Vorschläge.
+            TermRelations.ProposalRun embedding = collected.embeddingUsed()
+                    ? relations.propose(ACTOR_AI, RelationOrigin.AI, relationScope, PRODUCED,
+                            "embedding" + stamp, embeddingProposals)
+                    : null;
+            if (context != null) {
+                context.written(rules.added() + rules.updated()
+                        + (embedding == null ? 0 : embedding.added() + embedding.updated()));
+            }
             LOG.log(System.Logger.Level.INFO, "Synonymerkennung ({0}): {1} Kandidaten, Regeln {2} neu, {3} geändert, "
-                    + "{4} entfallen; ohne KI-Prüfung", describe(scope), collected.candidates().size(), rules.added(),
-                    rules.updated(), rules.withdrawn());
-            return new Outcome(collected.candidates().size(), rules, null, 0, 0, open.size(), 0,
+                    + "{4} entfallen; Embedding {5}; ohne Chat-Prüfung", describe(scope),
+                    collected.candidates().size(), rules.added(), rules.updated(), rules.withdrawn(),
+                    embedding == null ? "nicht gelaufen" : embedding.added() + " neu, " + embedding.updated()
+                            + " geändert, " + embedding.withdrawn() + " entfallen");
+            return new Outcome(collected.candidates().size(), rules, embedding, 0, reused, skipped, 0,
                     collected.embeddingUsed());
         }
         // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel; das Budget zählt
@@ -292,15 +345,10 @@ public class SynonymDiscovery {
             asked.add(new Pair(asked.size() + 1, candidate, a, b));
         }
         String version = model.version();
-        Map<String, TermRelation> earlier = new HashMap<>();
-        relations.automatic(RelationOrigin.AI, relationScope).forEach(relation -> {
-            if (PRODUCED.contains(relation.type())) {
-                earlier.put(relation.id(), relation);
-            }
-        });
         List<TermRelations.Proposal> proposals = new ArrayList<>();
         Map<String, List<String>> answered = new HashMap<>();
         Set<String> keptPairs = new HashSet<>();
+        Set<String> judged = new HashSet<>();
         int reused = 0;
         for (var iterator = asked.iterator(); iterator.hasNext(); ) {
             Pair pair = iterator.next();
@@ -313,8 +361,10 @@ public class SynonymDiscovery {
                         proposals.add(proposalOf(relation));
                     }
                 }
+                // Das Urteil aus dem Cache gilt, auch gegen einen Vorschlag, den ein Lauf ohne Chat-Prüfung
+                // inzwischen aus der Ähnlichkeit gebildet hat: nur die genannten Beziehungen bleiben.
                 answered.put(pair.fingerprint, cached.get());
-                keptPairs.add(pair.candidate.pairKey());
+                judged.add(pair.candidate.pairKey());
                 iterator.remove();
                 reused++;
             }
@@ -368,7 +418,6 @@ public class SynonymDiscovery {
         }
         // Paare über dem Budget, ohne Freigabe oder ohne lesbare Antwort behalten ihre Vorschläge: unverändert
         // genannt, schreibt der Abgleich nichts. Paare, die kein Kandidat mehr sind, verlieren ihre Vorschläge.
-        Set<String> judged = new HashSet<>();
         asked.forEach(pair -> judged.add(pair.candidate.pairKey()));
         for (TermRelation relation : earlier.values()) {
             String key = pairKey(relation.fromTerm(), relation.toTerm());
@@ -399,6 +448,19 @@ public class SynonymDiscovery {
                 reused, skipped, rejected, rules.added(), ai.added(), ai.updated(), ai.withdrawn(), ai.suppressed());
         return new Outcome(collected.candidates().size(), rules, ai, asked.size(), reused, skipped, rejected,
                 collected.embeddingUsed());
+    }
+
+    /** Das Urteil des eingestellten Chat-Modells zu diesem Paar mit diesen Fundstellen, falls es schon gefragt war. */
+    private Optional<List<String>> cachedJudgment(SynonymScope scope, SynonymCandidate candidate) {
+        if (!model.available()) {
+            return Optional.empty();
+        }
+        List<SynonymCandidate.Context> a = releasedContexts(candidate.fromContext());
+        List<SynonymCandidate.Context> b = releasedContexts(candidate.toContext());
+        if (a.isEmpty() || b.isEmpty()) {
+            return Optional.empty();
+        }
+        return cache.find(fingerprint(scope, model.version(), new Pair(0, candidate, a, b)));
     }
 
     private Set<String> candidateKeys(List<SynonymCandidate> open) {

@@ -19,18 +19,21 @@ import javax.swing.SwingUtilities;
 
 /**
  * Das Formular hinter „Synonyme vorschlagen“ (#336): Umfang (alle Quellen, eine Quelle, ein Space), höchstens so viele
- * Paare an das Chat-Modell (vorbelegt aus {@code terms.synonyms.max-judged-pairs}, 0 heißt nur Regelvorschläge) und
- * ein gedämpfter, umbrechender Hinweis, der vor dem Start sagt, was der Lauf im gewählten Umfang kann: Chat-Modell ja
- * oder nein, welche Quellen freigegeben sind. Reihenfolge = Entscheidungsfluss: Umfang → Budget → Erläuterung. Der
+ * Paare zusätzlich an das Chat-Modell (vorbelegt aus {@code terms.synonyms.max-judged-pairs}, Standard 0 = aus) und
+ * ein gedämpfter, umbrechender Hinweis, der vor dem Start sagt, was der Lauf im gewählten Umfang kann: Embedding-Modell ja
+ * oder nein, Chat-Prüfung möglich, welche Quellen freigegeben sind. Reihenfolge = Entscheidungsfluss: Umfang → Budget → Erläuterung. Der
  * Hinweis kommt aus dem Hintergrund, nachdem der Dialog gepackt ist; deshalb wächst das Fenster mit ihm nach.
  */
 final class SynonymRunForm extends JPanel {
 
     static final String ALL_SOURCES = "Alle Quellen";
     static final String WHOLE_SOURCE = "Ganze Quelle";
-    static final String NO_MODEL = "Kein Chat-Modell eingestellt: nur Regelvorschläge (Schreibvarianten, "
+    static final String NO_MODEL = "Kein Embedding-Modell eingestellt: nur Regelvorschläge (Schreibvarianten, "
             + "Formulierungen im Text).";
-    static final String MODEL = "Chat-Modell eingestellt: Kandidatenpaare werden mit kurzen Fundstellen geprüft.";
+    static final String MODEL = "Embedding-Modell eingestellt: Begriffe mit ähnlichen Vektoren werden "
+            + "Synonymvorschläge.";
+    static final String CHAT = "Chat-Modell eingestellt: prüft auf Wunsch zusätzlich so viele Paare mit kurzen "
+            + "Fundstellen; 0 lässt es aus.";
     static final int MAX_PAIRS = 100_000;
 
     private final JComboBox<String> source = Comic.combo();
@@ -60,8 +63,8 @@ final class SynonymRunForm extends JPanel {
         this.availability = availability;
         pairs = new JSpinner(new SpinnerNumberModel(Math.min(Math.max(maxJudgedPairs, 0), MAX_PAIRS), 0, MAX_PAIRS,
                 10));
-        pairs.setToolTipText("Höchstens so viele Kandidatenpaare gehen an das Chat-Modell; 0 heißt nur "
-                + "Regelvorschläge");
+        pairs.setToolTipText("Zusätzliche Chat-Prüfung: höchstens so viele Kandidatenpaare gehen an das "
+                + "Chat-Modell; 0 (Standard) lässt sie aus");
         source.addItem(ALL_SOURCES);
         for (HarvestSource entry : this.sources) {
             source.addItem(label(entry));
@@ -72,7 +75,7 @@ final class SynonymRunForm extends JPanel {
         fields.add(source);
         fields.add(Comic.caption("Space"));
         fields.add(space);
-        fields.add(Comic.caption("Höchstens Paare an das Chat-Modell"));
+        fields.add(Comic.caption("Zusätzlich vom Chat-Modell prüfen lassen, höchstens Paare"));
         fields.add(pairs);
         add(fields, BorderLayout.NORTH);
         add(status, BorderLayout.CENTER);
@@ -187,7 +190,10 @@ final class SynonymRunForm extends JPanel {
     /** Der Hinweis unter dem Formular, als Text mit Zeilenumbrüchen: Modell, freigegebene und zurückgehaltene Quellen. */
     static String describe(SynonymDiscovery.Availability availability) {
         List<String> parts = new ArrayList<>();
-        parts.add(availability.chatModel() ? MODEL : NO_MODEL);
+        parts.add(availability.embeddingModel() ? MODEL : NO_MODEL);
+        if (availability.chatModel()) {
+            parts.add(CHAT);
+        }
         if (!availability.released().isEmpty()) {
             parts.add("Freigegeben: " + String.join(", ", availability.released()) + ".");
         }
