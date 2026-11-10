@@ -147,6 +147,24 @@ class ConfiguredSourceCatalogTest {
                 .hasMessageContaining("sources[0] (id=docs): options.maxFileMegabytes darf höchstens 64 sein");
     }
 
+    /**
+     * #571: Eine Quelle mit Token bringt ihre zweite Adapter-Instanz für Dateien mit Benutzer und Passwort schon beim
+     * Öffnen mit. Beim Absenden des Einmalcodes wird nichts mehr geöffnet; das hielt in beta.364 das Codefeld an.
+     */
+    @Test
+    void aTokenSourceOpensItsSecondWebSessionInstanceTogetherWithTheSource() {
+        ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(
+                source("pat", new Auth(AuthType.PAT, null, null, "token")),
+                source("basic", new Auth(AuthType.BASIC, "harvester", "secret", null))), "test");
+
+        KnowledgeSourceHarvestSource pat = (KnowledgeSourceHarvestSource) catalog.find("pat").orElseThrow();
+        KnowledgeSourceHarvestSource basic = (KnowledgeSourceHarvestSource) catalog.find("basic").orElseThrow();
+
+        assertThat(pat.webPort()).isNotNull().isNotSameAs(pat.port());
+        assertThat(pat.webPort().getClass()).isEqualTo(pat.port().getClass());
+        assertThat(basic.webPort()).isNull();
+    }
+
     @Test
     void toStringNeverShowsSecrets() {
         SourceSettingsConfig config = source("wiki", new Auth(AuthType.BASIC, "harvester", "geheim-123", null));

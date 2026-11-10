@@ -130,11 +130,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     private final boolean tokenLogin;
     /**
-     * Öffnet für eine Quelle mit Personal Access Token eine weitere Adapter-Instanz mit eigener, leerer Web-Sitzung
-     * (#571); {@code null} ohne Token. Die Zwei-Faktor-Anmeldung nimmt den Code nur in einer Web-Sitzung an, die mit
-     * Benutzer und Passwort entstand; eine Sitzung, die ein Bearer-Abruf eröffnet hat, endet beim Absenden mit HTTP 500.
+     * Für eine Quelle mit Personal Access Token eine weitere Adapter-Instanz mit eigener, leerer Web-Sitzung (#571),
+     * zusammen mit der Quelle geöffnet; {@code null} ohne Token. Die Zwei-Faktor-Anmeldung nimmt den Code nur in einer
+     * Web-Sitzung an, die mit Benutzer und Passwort entstand; eine Sitzung, die ein Bearer-Abruf eröffnet hat, endet
+     * beim Absenden mit HTTP 500. Beim Absenden wird nichts mehr geöffnet: das Öffnen einer Adapter-Instanz in diesem
+     * Moment (Transporte, Zertifikat, Proxy) hielt das Codefeld in beta.364 ohne jede Protokollzeile an.
      */
-    private final java.util.function.Supplier<KnowledgeSourcePort> webPorts;
+    private final KnowledgeSourcePort webPort;
     /** Dateiabrufe mit Benutzer und Passwort über eine eigene Web-Sitzung, sobald einmal angegeben; sonst {@code null}. */
     private volatile WebLogin web;
     /**
@@ -185,24 +187,39 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * @param webPorts für eine Quelle mit Token: öffnet eine weitere Adapter-Instanz derselben Quelle für Dateiabrufe
-     *                 mit Benutzer und Passwort (#571); {@code null} ohne
+     * @param webPort für eine Quelle mit Token: eine weitere, schon geöffnete Adapter-Instanz derselben Quelle für
+     *                Dateiabrufe mit Benutzer und Passwort (#571); {@code null} ohne
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope, boolean tokenLogin,
-                                 java.util.function.Supplier<KnowledgeSourcePort> webPorts) {
+                                 KnowledgeSourcePort webPort) {
         this.id = id;
         this.tokenLogin = tokenLogin;
-        this.webPorts = tokenLogin ? webPorts : null;
+        this.webPort = tokenLogin ? webPort : null;
         this.type = type;
         this.title = title;
         this.port = port;
         this.inFlight = inFlight;
         // Kennung der Adapter-Instanz (nicht geheim): Einmalcode-Abfrage, Absenden und Abrufe zeigen sie, damit das
         // Protokoll zeigt, ob alles über dieselbe Instanz und damit dieselbe Web-Sitzung läuft (#571).
-        LOG.info("Quelle {} geöffnet: Adapter-Instanz {}", id, instance(port));
+        if (this.webPort == null) {
+            LOG.info("Quelle {} geöffnet: Adapter-Instanz {}", id, instance(port));
+        } else {
+            LOG.info("Quelle {} geöffnet: Adapter-Instanz {}, für Dateien mit Benutzeranmeldung {}", id, instance(port),
+                    instance(this.webPort));
+        }
         this.scope = port instanceof PartitionListingSource ? null : scope;
         this.restriction = port instanceof PartitionListingSource ? scope : null;
+    }
+
+    /** Die Adapter-Instanz der Quelle (Prüfungen im Paket). */
+    KnowledgeSourcePort port() {
+        return port;
+    }
+
+    /** Die zweite Adapter-Instanz für Dateiabrufe mit Benutzer und Passwort, {@code null} ohne Token (#571). */
+    KnowledgeSourcePort webPort() {
+        return webPort;
     }
 
     /** Ob die Seiten über {@code discover} und {@code load} kommen statt über eine Seitenliste je Partition. */
@@ -1227,7 +1244,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             return login == null ? fetch.from(port) : withWebLogin(login, () -> fetch.from(login.port()));
         } catch (OneTimeCodeRequiredException required) {
-            if (webPorts != null) {
+            if (webPort != null) {
                 retries.put(required.challenge(), fetch);
             }
             throw required;
@@ -1328,8 +1345,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return submit(code);
             }
             FileFetch<?> retry = retries.get(challenge);
-            if (webPorts != null && retry != null) {
-                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPorts.get()), retry);
+            LOG.info("Quelle {}: Einmalcode für Abfrage {} wird mit Benutzeranmeldung gesendet ({})", id,
+                    instance(challenge), webPort != null && retry != null ? "Dateiabruf in neuer Web-Sitzung"
+                            : "dieselbe Web-Sitzung");
+            if (webPort != null && retry != null) {
+                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPort), retry);
             }
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} mit Benutzeranmeldung gesendet", id,
                     instance(challenge), instance(port));
