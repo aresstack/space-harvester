@@ -122,6 +122,22 @@ class RealModelSmokeTest {
     }
 
     @Test
+    void datenhFixtureIsThePinnedPipelineOutput() throws IOException {
+        // Zwischenstand der Ursachenmatrix (DatenhRegressionTest) gegen die echte Kette: weicht die Ausgabe ab,
+        // muss datenh.conllu neu erzeugt und die Abweichung im Test begründet werden.
+        String text = resource("datenh.txt").stripTrailing();
+        List<String> actual = analysisLines(ConllU.write(analyze(text)));
+        List<String> expected = analysisLines(resource("datenh.conllu"));
+        assertEquals(String.join("\n", expected), String.join("\n", actual));
+    }
+
+    /** Satztexte und Tokenzeilen, ohne Kommentare und Dokumentkennung. */
+    private static List<String> analysisLines(String conllu) {
+        return conllu.lines().filter(line -> line.startsWith("# text = ") || !line.isEmpty()
+                && Character.isDigit(line.charAt(0))).toList();
+    }
+
+    @Test
     void throughputSingleAndParallel() throws Exception {
         List<String> texts = new ArrayList<>();
         for (String name : GOLD) {
@@ -186,10 +202,13 @@ class RealModelSmokeTest {
     }
 
     private static ParsedDocument gold(String name) throws IOException {
+        return ConllU.read(new DocumentRef("gold", name, null), resource(name), List.of());
+    }
+
+    private static String resource(String name) throws IOException {
         try (InputStream input = RealModelSmokeTest.class.getResourceAsStream(
                 "/com/aresstack/spaceharvester/nlp/extraction/" + name)) {
-            return ConllU.read(new DocumentRef("gold", name, null),
-                    new String(input.readAllBytes(), StandardCharsets.UTF_8), List.of());
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 

@@ -137,7 +137,11 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   (`AcronymSettings`: zehn Buchstaben, Versalzeile ab 60 % und drei Wörtern) sind fest, im EAC einstellbar; der
   Begriffsindex und die Leseansicht zeigen die erste Ausschreibung, die Fakten alle. Die Versionen nennen die
   Satzgrenzen (`4;sentences=opennlp-de`, ohne Satzmodell `splitter`; `terms` mit der ganzen Akronymversion,
-  `5;acronyms=4;sentences=…`), ein Wechsel veraltet die Ergebnisse. Der Begriffsindex sucht Akronyme unter der
+  `6;acronyms=4;sentences=…`), ein Wechsel veraltet die Ergebnisse. Bezeichner (`noun`) ab `terms` 6: Ein
+  Einzelwort ohne Artikel am Satz- oder Listenanfang zählt nicht, wenn es auf der Seite sonst nie großgeschrieben mitten
+  im Satz steht und wie Verb, Partizip oder Adjektiv aussieht (`Erlaubt`, `Angeboten`, `Zentral`) oder nie ein Nomen
+  ist (`Siehe`); Vorderglieder mit Ergänzungsstrich (`Bundes- und …`) zählen nicht; ein Genitiv-s (`Haushalts`,
+  `Ansatzes`) fällt auf die Grundform, nur wenn diese selbst auf der Seite steht (ohne Wörterbuch wird nichts geraten). Der Begriffsindex sucht Akronyme unter der
   Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
   stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
 - Kein Fachglossar und keine KI in Index und Abfragen.
