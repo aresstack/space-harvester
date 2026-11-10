@@ -91,14 +91,13 @@ class SetupWizardTest {
             SetupWizard wizard = new SetupWizard(context);
             java.util.List<javax.swing.JScrollPane> pages = SourceFormLayoutTest.find(
                     wizard.component(), javax.swing.JScrollPane.class).stream()
-                    .filter(scroll -> scroll.getViewport().getView()
-                            instanceof com.aresstack.spaceharvester.app.ui.controls.ScrollColumn)
+                    .filter(scroll -> scroll.getVerticalScrollBarPolicy()
+                            == javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS)
                     .toList();
 
             assertThat(pages).hasSize(SetupWizard.STEPS.length);
             for (javax.swing.JScrollPane page : pages) {
-                assertThat(page.getVerticalScrollBarPolicy())
-                        .isEqualTo(javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+                assertThat(page.getViewport().getView()).isInstanceOf(javax.swing.Scrollable.class);
                 assertThat(page.getHorizontalScrollBarPolicy())
                         .isEqualTo(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(wizard.next, page)).isFalse();
