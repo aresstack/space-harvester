@@ -1,11 +1,11 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 
 import javax.swing.BorderFactory;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.table.AbstractTableModel;
@@ -23,14 +23,17 @@ final class References extends JPanel {
 
     private final Model model = new Model();
     private final JTable table = Comic.table(new JTable(model));
-    private final JLabel hint = Comic.muted(" ");
+    private final TabHeader head = new TabHeader("Verweise dieser Seite");
+    private String hint = " ";
     private Consumer<String> onOpen = pageId -> { };
+    private Consumer<String> onStatus = text -> { };
 
     References() {
-        super(new BorderLayout(0, 6));
+        super(new BorderLayout(0, 10));
         setOpaque(false);
-        setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
-        add(hint, BorderLayout.NORTH);
+        setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
+        head.copy(this::copyText);
+        add(head, BorderLayout.NORTH);
         add(Comic.scroll(table), BorderLayout.CENTER);
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && table.getSelectedRow() >= 0) {
@@ -43,9 +46,25 @@ final class References extends JPanel {
         onOpen = Objects.requireNonNull(listener, "listener");
     }
 
+    /** {@code listener} bekommt die Zusammenfassung („verweist auf 3 Seiten …“) für die Statuszeile. */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
+    }
+
     void message(String text) {
         model.set(List.of());
-        hint.setText(text);
+        hint = text;
+        onStatus.accept(text);
+    }
+
+    /** Die Tabelle als Zeilen: Richtung, Seite, Space, durch Tabulator getrennt. */
+    String copyText() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < model.getRowCount(); i++) {
+            text.append(model.getValueAt(i, 0)).append('\t').append(model.getValueAt(i, 1)).append('\t')
+                    .append(model.getValueAt(i, 2)).append('\n');
+        }
+        return text.toString().stripTrailing();
     }
 
     void show(PageNavigation.References references) {
@@ -55,7 +74,8 @@ final class References extends JPanel {
             references.incoming().forEach(node -> rows.add(new Row("verwiesen von", node)));
         }
         model.set(rows);
-        hint.setText(hint(references));
+        hint = hint(references);
+        onStatus.accept(hint);
     }
 
     static String hint(PageNavigation.References references) {
@@ -77,7 +97,7 @@ final class References extends JPanel {
     }
 
     String hint() {
-        return hint.getText();
+        return hint;
     }
 
     private record Row(String direction, PageNode node) {
@@ -114,7 +134,9 @@ final class References extends JPanel {
             return switch (column) {
                 case 0 -> row.direction();
                 case 1 -> Breadcrumbs.title(row.node());
-                default -> row.node().partitionKey();
+                // Verweisziele kennen ihren Space oft nicht (nur der Bestand kennt ihn): dann „–“ statt leer.
+                default -> row.node().partitionKey() == null || row.node().partitionKey().isBlank() ? "–"
+                        : row.node().partitionKey();
             };
         }
     }

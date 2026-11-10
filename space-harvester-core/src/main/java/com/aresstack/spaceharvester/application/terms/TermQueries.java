@@ -371,7 +371,7 @@ public class TermQueries {
     }
 
     /** Kontext um eine Fundstelle, ohne Ersatzzeichen zu teilen. */
-    static Snippet snippet(String text, TermOccurrence occurrence, int chars) {
+    public static Snippet snippet(String text, TermOccurrence occurrence, int chars) {
         int end = Math.min(occurrence.end(), text.length());
         int start = Math.min(occurrence.start(), end);
         int from = Math.max(0, start - chars);

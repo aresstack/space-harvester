@@ -121,6 +121,27 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
      kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
      macht alte Einträge damit wirkungslos.
+7. **Fachglossar (#122 Stufe 2)**: eigene Nutzerdaten (`application.glossary`), kein Index und kein zweiter
+   Beziehungsspeicher. Ein Eintrag ist ein Begriff in einem Geltungsbereich (global, Quelle, Space; Kennung aus Suchwert
+   und Geltungsbereich, darum keine Dubletten) mit Herkunft `manual`/`ai` getrennt vom Prüfstatus
+   `proposed`/`confirmed`/`rejected`, Belegen als Fundstellen, `evidenceStale`, optionaler Erläuterung des Bearbeiters,
+   Modell- und Promptfassung des Laufs, Zeitstempeln, Revision und Protokoll. Ablage `glossary/v1` unter
+   `<dataDirectory>/glossary` (Server `space-harvester.glossary.directory`, Standard `data/glossary`), außerhalb des
+   Caches, atomar ersetzt. REST unter `/api/v1/glossary`.
+   - „Fachbegriffe ermitteln“ (`GlossaryClassification`, `POST /api/v1/glossary/classify?sourceId=&spaceKey=`) läuft
+     nur auf ausdrücklichen Wunsch, nie beim Start, Abgleich, bei der Anreicherung oder beim Öffnen eines Reiters. Je
+     Quelle ein abbrechbarer Auftrag; ohne `sourceId` alle freigegebenen Quellen. Kandidaten sind Bezeichner und
+     Akronyme des Begriffsindex im Umfang (aktuelle Revision, keine nachgeladenen Seiten), je Kandidat bis zu drei
+     Fundstellen von verschiedenen Seiten mit 160 Zeichen Kontext. Das Chat-Modell (dasselbe wie für #122) wählt nur
+     aus; Begriffe außerhalb der Anfrage fallen weg, Erläuterungen schreibt es keine. Budget je Lauf: 300 Kandidaten,
+     600 000 Zeichen Eingabe; der Rest behält seinen Stand. Unveränderte Kandidaten beantwortet ein Ergebnis-Cache im
+     Speicher.
+   - Schutzregeln: Manuelle, bestätigte und abgelehnte Einträge gehen nicht an das Modell und ändert kein Lauf; eine
+     Ablehnung hängt an Begriff und Geltungsbereich, gilt also über Neustarts und Modellwechsel. Nur ungeprüfte
+     KI-Vorschläge ersetzt oder entfernt ein Lauf; ein bestätigter KI-Eintrag, den der Begriffsindex nicht mehr kennt,
+     wird nur `evidenceStale`. Abgeglichen wird erst nach der letzten Antwort in einem Schritt; Abbruch, Modellfehler
+     oder Sperre der Quelle lassen den Stand unverändert. Ablehnungen lassen sich aufheben (`restore`). Das Glossar
+     weitet keine Suche aus.
 
 ## Grenzen
 
@@ -144,7 +165,7 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   `Ansatzes`) fällt auf die Grundform, nur wenn diese selbst auf der Seite steht (ohne Wörterbuch wird nichts geraten). Der Begriffsindex sucht Akronyme unter der
   Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
   stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
-- Kein Fachglossar und keine KI in Index und Abfragen.
+- Keine KI in Index und Abfragen; das Fachglossar (Punkt 7) nutzt sie nur auf Knopfdruck.
 
 ## Folgen
 

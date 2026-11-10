@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.HintActions;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -16,6 +18,7 @@ import java.awt.Dimension;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Der Reiter „Bilder“ der Leseansicht (#362): je Bild der Seite Vorschau, die Beschreibung des Vision-Modells aus der
@@ -41,38 +44,50 @@ final class ImagesTab extends JPanel {
     static final String NOT_RELEASED = "Diese Quelle ist nicht für den KI-Dienst freigegeben (Quellenformular › "
             + "„Inhalte dieser Quelle dürfen an den KI-Dienst gehen“); ihre Bilder werden nicht beschrieben.";
     static final String DESCRIBE = "Bilder beschreiben";
+    static final String DESCRIBE_ONCE = "Nur diese Seite einmalig beschreiben";
+    static final String RELEASE_SOURCE = "Diese Quelle freigeben";
 
-    private final JLabel state = new JLabel(" ");
+    private final TabHeader head = new TabHeader("Bilder dieser Seite");
     private final JPanel list = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private final List<String> lines = new ArrayList<>();
+    private final List<String> copyLines = new ArrayList<>();
+    /** Die Erläuterung zum Stand, ob sie im Reiter oder in der Statuszeile steht. */
+    private String explanation = " ";
+    private Consumer<String> onStatus = text -> { };
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton describe = Comic.button(DESCRIBE,
             "Lässt die Bilder dieser Seite vom Vision-Modell beschreiben; läuft im Hintergrund");
     private Runnable onDescribe = () -> { };
+    private Runnable onDescribeOnce = () -> { };
+    private Runnable onRelease = () -> { };
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton describeOnce = Comic.button(
+            DESCRIBE_ONCE, "Schickt nur die Bilder dieser Seite an das Vision-Modell; die Quelle bleibt gesperrt");
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton release = Comic.button(RELEASE_SOURCE,
+            "Setzt im Quellenformular „Inhalte dieser Quelle dürfen an den KI-Dienst gehen“ und beschreibt die "
+                    + "Bilder dieser Seite");
+    /** Quelle nicht freigegeben: Hinweis mit der Wahl, es für diese Seite oder die Quelle zu erlauben. */
+    private final HintActions notReleased = new HintActions(NOT_RELEASED, describeOnce, release);
+    private boolean released = true;
 
     ImagesTab() {
         super(new BorderLayout(0, 10));
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        JLabel title = Comic.text("Bilder dieser Seite");
-        title.setFont(Comic.semiBold(15f));
-        head.add(title, BorderLayout.WEST);
-        state.setFont(Comic.semiBold(12f));
-        state.setOpaque(true);
-        head.add(state, BorderLayout.EAST);
-        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
-        actions.setOpaque(false);
-        actions.add(describe);
-        head.add(actions, BorderLayout.SOUTH);
+        head.action(describe).copy(() -> String.join("\n", copyLines));
         describe.addActionListener(e -> onDescribe.run());
+        describeOnce.addActionListener(e -> onDescribeOnce.run());
+        release.addActionListener(e -> onRelease.run());
+        notReleased.setVisible(false);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout(0, 8));
         body.setOpaque(false);
         body.add(list, BorderLayout.NORTH);
-        body.add(hint, BorderLayout.CENTER);
+        JPanel hints = new JPanel(new BorderLayout(0, 8));
+        hints.setOpaque(false);
+        hints.add(hint, BorderLayout.NORTH);
+        hints.add(notReleased, BorderLayout.CENTER);
+        body.add(hints, BorderLayout.CENTER);
         add(head, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
         show(PassagesTab.State.MISSING, null, List.of());
@@ -83,21 +98,48 @@ final class ImagesTab extends JPanel {
         onDescribe = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Sperrt „Bilder beschreiben“, solange eine Beschreibung läuft. */
+    /** {@code listener} bekommt die Erläuterung zum Stand für die Statuszeile des Hauptfensters (" " ohne). */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} beschreibt nur die Bilder dieser Seite, obwohl die Quelle nicht freigegeben ist. */
+    void onDescribeOnce(Runnable listener) {
+        onDescribeOnce = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} gibt die Quelle für den KI-Dienst frei und beschreibt dann die Bilder dieser Seite. */
+    void onRelease(Runnable listener) {
+        onRelease = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Ob die Quelle für das Vision-Modell freigegeben ist; vor {@link #show} setzen. Nicht freigegeben zeigt der
+     * Reiter das Knopfpaar auch dann, wenn es schon Beschreibungen gibt (nach „einmalig“): „Bilder beschreiben“ wäre
+     * für die gesperrte Quelle nur eine Fehlermeldung.
+     */
+    void released(boolean released) {
+        this.released = released;
+    }
+
+    /** Sperrt „Bilder beschreiben“ und die Freigabe-Knöpfe, solange eine Beschreibung läuft. */
     void describing(boolean running) {
         describe.setEnabled(!running);
+        describeOnce.setEnabled(!running);
+        release.setEnabled(!running);
     }
 
     /** Solange die gespeicherten Beschreibungen laden: kein Stand, keine Bilder, „Bilder beschreiben“ gesperrt. */
     void loading() {
         describing(true);
-        state.setText("Wird geladen …");
-        state.setForeground(Comic.MUTED);
-        state.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true),
-                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        head.status("Wird geladen …", Comic.MUTED);
         list.removeAll();
         lines.clear();
+        copyLines.clear();
         hint.setText(" ");
+        notReleased.setVisible(false);
+        explanation = " ";
+        onStatus.accept(" ");
         list.revalidate();
         list.repaint();
     }
@@ -115,21 +157,19 @@ final class ImagesTab extends JPanel {
      * @param warnings Hinweise des Core ({@code PageImages.warnings()}), etwa {@code page-changed}
      */
     void show(PassagesTab.State current, String reason, List<String> warnings, List<Image> images) {
-        boolean blocked = "vision-model-missing".equals(reason) || "source-not-released".equals(reason);
-        describe.setVisible(!blocked);
-        state.setText(stateText(current));
+        boolean unreleased = "source-not-released".equals(reason) || !released;
+        describe.setVisible(!"vision-model-missing".equals(reason) && !unreleased);
+        notReleased.setVisible(unreleased);
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
             case STALE -> Comic.ORANGE;
             case FAILED -> Comic.RED;
             case MISSING -> Comic.MUTED;
         };
-        state.setForeground(tone);
-        state.setBackground(Comic.SURFACE);
-        state.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
-                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        head.status(stateText(current), tone);
         list.removeAll();
         lines.clear();
+        copyLines.clear();
         boolean stale = current == PassagesTab.State.STALE;
         List<Image> shown = current == PassagesTab.State.CURRENT || stale ? images : List.of();
         for (int i = 0; i < shown.size(); i++) {
@@ -138,10 +178,20 @@ final class ImagesTab extends JPanel {
             }
             list.add(entry(shown.get(i), stale));
             lines.add(shown.get(i).name() + " · " + statusText(shown.get(i)) + (stale ? " · Veraltet" : ""));
+            copyLines.add(lines.get(lines.size() - 1));
+            if (shown.get(i).description() != null && !shown.get(i).description().isBlank()) {
+                copyLines.add(shown.get(i).description());
+                copyLines.add("");
+            }
         }
-        hint.setText("vision-model-missing".equals(reason) ? NO_MODEL
+        String text = "vision-model-missing".equals(reason) ? NO_MODEL
                 : "source-not-released".equals(reason) ? NOT_RELEASED
-                : hint(current, reason, warnings == null ? List.of() : warnings, shown.size()));
+                : hint(current, reason, warnings == null ? List.of() : warnings, shown.size());
+        // Ohne Bilder steht der Grund im Reiter; mit Bildern nur in der Statuszeile. Die fehlende Freigabe steht
+        // über ihren Knöpfen.
+        explanation = text;
+        hint.setText(shown.isEmpty() && !notReleased.isVisible() ? text : " ");
+        onStatus.accept(shown.isEmpty() ? " " : text);
         list.revalidate();
         list.repaint();
     }
@@ -239,11 +289,23 @@ final class ImagesTab extends JPanel {
     }
 
     String stateLabel() {
-        return state.getText();
+        return head.statusText();
     }
 
     boolean describeOffered() {
         return describe.isVisible() && describe.isEnabled();
+    }
+
+    boolean releaseOffered() {
+        return notReleased.isVisible() && describeOnce.isEnabled();
+    }
+
+    void clickDescribeOnce() {
+        describeOnce.doClick();
+    }
+
+    void clickRelease() {
+        release.doClick();
     }
 
     void clickDescribe() {
@@ -251,6 +313,6 @@ final class ImagesTab extends JPanel {
     }
 
     String hint() {
-        return hint.getText();
+        return explanation;
     }
 }

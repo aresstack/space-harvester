@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.facts.FactEdit;
@@ -90,6 +91,12 @@ public final class SourceDataStores {
                 resolutions.removeSource(sourceId);
             }
         });
+    }
+
+    /** KI-Einträge des Fachglossars dieser Quelle und alle Belege aus ihr; manuelle Einträge bleiben. */
+    public SourceDataStores glossary(Glossary glossary) {
+        Objects.requireNonNull(glossary, "glossary");
+        return add("Fachglossar", sourceId -> glossary.removeSource(sourceId, ACTOR));
     }
 
     /** Manuelle und geprüfte Fakten der Seiten dieser Quelle (Prüfablage). */

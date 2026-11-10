@@ -57,6 +57,34 @@ class PassagesTabTest {
         assertThat(seen).containsExactly(new PassagesTab.Passage("p1", "Betrieb", null, 9, 20), 1, "null", -1, -1);
     }
 
+    /** Codex zu #573: Themenzeile und Anriss brechen um und bleiben trotzdem anklickbar. */
+    @Test
+    void longTitlesWrapAndStayClickable() throws Exception {
+        List<List<TermsTab.Span>> jumped = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            PassagesTab tab = new PassagesTab();
+            tab.onJump(jumped::add);
+            tab.show(PassagesTab.State.CURRENT, List.of(new PassagesTab.Passage("p0",
+                    "Eine sehr lange Themenzeile ".repeat(8), "Anriss ".repeat(60), 0, 50)), false);
+            tab.setSize(360, 400);
+            tab.addNotify();
+            tab.validate();
+            tab.validate();
+            java.awt.Container row = (java.awt.Container) tab.rowForTest(0);
+            assertThat(row.getWidth()).isLessThanOrEqualTo(360);
+            java.awt.Container lines = (java.awt.Container) row.getComponent(1);
+            java.awt.Component title = lines.getComponent(0);
+            assertThat(title.getHeight()).as("die Themenzeile bricht um").isGreaterThan(30);
+            java.awt.event.MouseEvent click = new java.awt.event.MouseEvent(title,
+                    java.awt.event.MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, 1, 1, false,
+                    java.awt.event.MouseEvent.BUTTON1);
+            for (java.awt.event.MouseListener listener : title.getMouseListeners()) {
+                listener.mouseClicked(click);
+            }
+        });
+        assertThat(jumped).containsExactly(List.of(new TermsTab.Span(0, 50)));
+    }
+
     @Test
     void thePreviewIsTheTextAfterTheTopicLineShortened() {
         String text = "Architektur und Komponenten. " + "Die Bausteine sprechen über REST. ".repeat(10);
@@ -80,8 +108,9 @@ class PassagesTabTest {
     }
 
     @Test
-    void titleAndPreviewLeaveTheClickToTheirRow() throws Exception {
-        // Swing gibt einen Klick an die tiefste Komponente mit Maus-Hörern; Titel und Anriss haben keine, also die Zeile.
+    void titleAndPreviewCarryTheClickOfTheirRow() throws Exception {
+        // Themenzeile und Anriss sind umbrechende Textfelder, die Mausklicks selbst abfangen; deshalb tragen sie den
+        // Klick der Zeile selbst (Codex zu #573).
         List<Integer> listeners = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             PassagesTab tab = new PassagesTab();
@@ -91,12 +120,14 @@ class PassagesTabTest {
             collect(row, listeners);
         });
         assertThat(listeners.get(0)).isPositive();
-        assertThat(listeners.subList(1, listeners.size())).isNotEmpty().containsOnly(0);
+        assertThat(listeners.subList(1, listeners.size())).as("Titel und Anriss").hasSize(2).allMatch(n -> n > 0);
     }
 
     private static void collect(java.awt.Container parent, List<Integer> into) {
         for (java.awt.Component child : parent.getComponents()) {
-            into.add(child.getMouseListeners().length);
+            if (child instanceof javax.swing.text.JTextComponent) {
+                into.add(child.getMouseListeners().length);
+            }
             if (child instanceof java.awt.Container container) {
                 collect(container, into);
             }

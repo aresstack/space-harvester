@@ -14,10 +14,11 @@ import java.util.Objects;
 public final class ObjectCentricExtraction {
 
     /**
-     * Version der Regeln dieses Pakets. Steigt mit jeder Änderung, die andere Erwähnungen, Aussagen, Rollen oder
+     * Version der Regeln dieses Pakets und der deterministischen Vorverarbeitung davor (Satzgrenzen, Korrekturen in
+     * {@code GermanTagCorrections}). Steigt mit jeder Änderung, die andere Sätze, Erwähnungen, Aussagen, Rollen oder
      * Hinweise liefert; gespeicherte Aussagenanalysen der Desktop-App (#499) gelten dann als veraltet.
      */
-    public static final String RULES_VERSION = "2";
+    public static final String RULES_VERSION = "3";
 
     private final ExtractionSettings settings;
 
