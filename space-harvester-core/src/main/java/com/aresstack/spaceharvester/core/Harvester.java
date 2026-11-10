@@ -53,6 +53,7 @@ import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -290,6 +291,7 @@ public final class Harvester implements AutoCloseable {
     private final Reconciliation inventories;
     private final Exports exports;
     private final ExportConversions conversions;
+    private final JobActions jobActions;
     private final Assets assets;
     private final PageImageAnalysis imageAnalysis;
     private final StatementAnalysis statementAnalysis;
@@ -752,6 +754,7 @@ public final class Harvester implements AutoCloseable {
                     exportSettings(manager));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
+            this.jobActions = new JobActions(jobs, exports, syncs, conversions);
             // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
             FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
             KnowledgeGraph graph = this.knowledgeGraph;
@@ -1415,6 +1418,14 @@ public final class Harvester implements AutoCloseable {
      */
     public ExportConversions conversions() {
         return conversions;
+    }
+
+    /**
+     * Aktionen auf Aufträgen (Anhalten, Fortsetzen, Jetzt starten, Abbrechen, Löschen) mit Prüfung am Zustandsobjekt;
+     * Fortsetzen bleibt im selben Eintrag, auch nach einem Neustart.
+     */
+    public JobActions jobActions() {
+        return jobActions;
     }
 
     /** Alle Aufträge dieses Harvesters. */

@@ -15,7 +15,9 @@ import com.aresstack.spaceharvester.application.images.ImagePayload;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -860,8 +862,37 @@ public final class Workspace {
      */
     public JobStatus resumeJob(String jobId) {
         JobStatus status = job(jobId);
-        return status.type() == JobType.SYNC ? harvester.syncs().resume(jobId, Harvester.OWNER).status()
-                : harvester.exports().resume(jobId, Harvester.OWNER);
+        return switch (status.type()) {
+            case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
+            case ASSETS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            default -> harvester.exports().resume(jobId, Harvester.OWNER);
+        };
+    }
+
+    /**
+     * Der wirksame Zustand eines Auftrags mit den Aktionen, die die Oberfläche jetzt anbietet, in Anzeigereihenfolge
+     * ({@link JobLifecycleState#actions()}).
+     */
+    public JobLifecycleState jobState(String jobId) {
+        return job(jobId).lifecycle();
+    }
+
+    /**
+     * Führt eine Aktion auf einem Auftrag dieser App aus, nachdem der Core sie am Zustand geprüft hat
+     * ({@link com.aresstack.spaceharvester.application.jobcontrol.JobActions}). Fortsetzen bleibt im selben Eintrag,
+     * auch nach einem Neustart der App; Löschen entfernt nur den Auftrag, nie die geladenen Daten.
+     *
+     * @return der Zustand danach; bei {@link JobAction#DELETE} der letzte vor dem Löschen
+     * @throws com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException wenn der Zustand die Aktion
+     *                                                                                   nicht anbietet
+     */
+    public JobStatus performJobAction(String jobId, JobAction action) {
+        job(jobId);
+        JobStatus status = harvester.jobActions().perform(jobId, Harvester.OWNER, action);
+        if (action == JobAction.DELETE) {
+            activities.forget(jobId);
+        }
+        return status;
     }
 
     /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */

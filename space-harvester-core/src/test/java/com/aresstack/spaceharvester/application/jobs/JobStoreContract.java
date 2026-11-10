@@ -69,6 +69,23 @@ public abstract class JobStoreContract {
     }
 
     @Test
+    void restartParametersAndAnIncompleteResultComeBack() {
+        JobStore store = newStore();
+        JobStatus status = new JobStatus("a", JobType.EXPORT, "confluence", "DEV", "TECHNICAL_CLIENT:etl",
+                JobState.COMPLETED, new JobProgress(2, 2, 1, 1), null, false, T0, T0.plusSeconds(1),
+                T0.plusSeconds(2), "100", "Seite 100", java.util.Map.of("depth", "0", "formats", "json,md"), true,
+                false);
+
+        store.save(status);
+
+        assertThat(store.find("a")).contains(status);
+        // Einträge aus der Zeit davor: keine Angaben, Ergebnis vollständig.
+        store.save(queued("b"));
+        assertThat(store.find("b")).get().extracting(JobStatus::parameters, JobStatus::incomplete)
+                .containsExactly(java.util.Map.of(), false);
+    }
+
+    @Test
     void saveReplacesThePreviousStatusOfTheSameJob() {
         JobStore store = newStore();
         store.save(queued("a"));

@@ -211,17 +211,53 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     public synchronized JobStatus start(String sourceId, String spaceKey, String owner, SyncMode mode) {
         Objects.requireNonNull(mode, "mode");
-        return submit(sourceId, spaceKey, owner, context -> {
+        return submit(sourceId, spaceKey, owner, Map.of(MODE, mode.name()), inventory(sourceId, spaceKey, mode));
+    }
+
+    /** Wiederanlauf-Angabe: Betriebsart ({@link SyncMode}). */
+    static final String MODE = "mode";
+    /** Wiederanlauf-Angabe: {@code changes} für Nachholen ({@link #catchUp}), sonst Inventur. */
+    static final String LISTING = "listing";
+    /** Wiederanlauf-Angabe: Nachholen ab diesem Zeitpunkt (ISO-8601), fehlt für den Stand der letzten Generation. */
+    static final String SINCE = "since";
+
+    private Run inventory(String sourceId, String spaceKey, SyncMode mode) {
+        return context -> {
             context.phase(COMPONENT, "Inventur");
             return sync.run(sourceId, spaceKey, applier, listener(context), mode);
-        });
+        };
+    }
+
+    private Run changes(String sourceId, String spaceKey, Instant since, SyncMode mode) {
+        return context -> {
+            if (changeSync.supported(sourceId)) {
+                context.phase(COMPONENT, "Änderungssuche");
+                return changeSync.run(sourceId, spaceKey, since, applier, listener(context), mode);
+            }
+            context.phase(COMPONENT, "Inventur");
+            return sync.run(sourceId, spaceKey, applier, listener(context),
+                    mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
+        };
+    }
+
+    /** Dieselbe Arbeit wie beim Start, aus den abgelegten Angaben ({@link JobStatus#parameters()}). */
+    private Run work(JobStatus status) {
+        String mode = status.parameter(MODE);
+        SyncMode syncMode = mode == null ? SyncMode.SYNC_CACHE : SyncMode.valueOf(mode);
+        if ("changes".equals(status.parameter(LISTING))) {
+            String since = status.parameter(SINCE);
+            return changes(status.sourceId(), status.partitionKey(), since == null ? null : Instant.parse(since),
+                    syncMode);
+        }
+        return inventory(status.sourceId(), status.partitionKey(), syncMode);
     }
 
     private interface Run {
         SpaceSync.SyncRun run(JobContext context);
     }
 
-    private JobStatus submit(String sourceId, String spaceKey, String owner, Run work) {
+    private JobStatus submit(String sourceId, String spaceKey, String owner, Map<String, String> parameters,
+                             Run work) {
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -233,7 +269,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         if (running != null && !finished(running)) {
             throw new SyncAlreadyRunningException(running);
         }
-        JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, owner,
+        JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, null, owner, parameters,
                 JobTask.blocking(context -> run(context, sourceId, spaceKey, work)));
         activeBySpace.put(space, status.id());
         return status;
@@ -261,15 +297,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
                                           SyncMode mode) {
         Objects.requireNonNull(mode, "mode");
-        return submit(sourceId, spaceKey, owner, context -> {
-            if (changeSync.supported(sourceId)) {
-                context.phase(COMPONENT, "Änderungssuche");
-                return changeSync.run(sourceId, spaceKey, since, applier, listener(context), mode);
-            }
-            context.phase(COMPONENT, "Inventur");
-            return sync.run(sourceId, spaceKey, applier, listener(context),
-                    mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
-        });
+        Map<String, String> parameters = new java.util.TreeMap<>(Map.of(MODE, mode.name(), LISTING, "changes"));
+        if (since != null) {
+            parameters.put(SINCE, since.toString());
+        }
+        return submit(sourceId, spaceKey, owner, parameters, changes(sourceId, spaceKey, since, mode));
     }
 
     /**
@@ -449,7 +481,15 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         if (running != null && !running.equals(jobId) && !finished(running)) {
             throw new SyncAlreadyRunningException(running);
         }
-        JobStatus resumed = jobs.resume(jobId, owner);
+        JobStatus resumed;
+        if (jobs.resumable(jobId, owner) || !Jobs.resumableState(current.state())) {
+            resumed = jobs.resume(jobId, owner);
+        } else {
+            // Nach einem Neustart: derselbe Eintrag mit derselben Arbeit aus den abgelegten Angaben.
+            Run work = work(current);
+            resumed = jobs.rerun(jobId, owner, JobTask.blocking(context ->
+                    run(context, current.sourceId(), current.partitionKey(), work)));
+        }
         activeBySpace.put(space, jobId);
         return view(resumed);
     }

@@ -130,6 +130,32 @@ class ExportsTest {
     }
 
     @Test
+    void afterARestartResumingASinglePageExportKeepsTheEntryAndItsDepth() {
+        publishTwoBranches();
+        InMemoryJobStore store = new InMemoryJobStore();
+        java.util.Queue<Runnable> queue = new java.util.ArrayDeque<>();
+        JobLimits limits = new JobLimits(1, 5, Duration.ofHours(1));
+        Jobs before = new Jobs(store, queue::add, limits, clock);
+        JobStatus job = new Exports(before, cache, writer, clock).start(ExportRequest.of("confluence", "DEV",
+                "client-a", List.of()).withPage("100"));
+        before.pause(job.id(), "client-a");
+        queue.poll().run();
+        assertThat(before.status(job.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(before.status(job.id()).parameters()).containsEntry("depth", "0");
+
+        Jobs restarted = new Jobs(store, queue::add, limits, clock);
+        JobStatus resumed = new Exports(restarted, cache, writer, clock).resume(job.id(), "client-a");
+        queue.poll().run();
+
+        assertThat(resumed.id()).isEqualTo(job.id());
+        assertThat(restarted.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(restarted.list("client-a", com.aresstack.spaceharvester.application.jobs.JobType.EXPORT))
+                .hasSize(1);
+        // Ohne die abgelegte Tiefe kämen die Unterseiten 101, 102 und 103 mit.
+        assertThat(writer.published.get(job.id()).pageIds()).containsExactly("100");
+    }
+
+    @Test
     void depthLimitsTheLevelsBelowTheStartPage() {
         publishTwoBranches();
 

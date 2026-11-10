@@ -209,6 +209,104 @@ class JobsTest {
     }
 
     @Test
+    void afterARestartAJobRunsAgainInTheSameEntryWithItsParameters() {
+        InMemoryJobEventStore events = new InMemoryJobEventStore();
+        JobLimits limits = new JobLimits(1, 5, Duration.ofHours(1));
+        Jobs jobs = new Jobs(store, events, RouteLookup.NONE, executor, limits, clock);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "100", "client-a",
+                java.util.Map.of("depth", "0"), JobTask.blocking(JobContext::checkpoint));
+        jobs.pause(export.id(), "client-a");
+        executor.runNext();
+        Jobs restarted = new Jobs(store, events, RouteLookup.NONE, executor, limits, clock);
+        List<String> runs = new ArrayList<>();
+
+        JobStatus again = restarted.rerun(export.id(), "client-a", JobTask.blocking(context -> {
+            runs.add(context.jobId());
+            context.processed(2);
+        }));
+        executor.runNext();
+
+        assertThat(again.id()).isEqualTo(export.id());
+        assertThat(runs).containsExactly(export.id());
+        JobStatus done = restarted.status(export.id());
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.rootPageId()).isEqualTo("100");
+        assertThat(done.parameters()).containsEntry("depth", "0");
+        assertThat(done.progress().processed()).isEqualTo(2);
+        assertThat(restarted.list("client-a", JobType.EXPORT)).hasSize(1);
+        // Die Diagnose läuft im selben Eintrag weiter, ohne Nummern doppelt zu vergeben.
+        List<JobEvent> diagnosis = restarted.events(export.id());
+        assertThat(diagnosis).extracting(JobEvent::sequence).doesNotHaveDuplicates();
+        assertThat(diagnosis).extracting(JobEvent::message).contains("Auftrag angehalten: 0 Seiten verarbeitet; "
+                + "Fortsetzen holt nur, was noch fehlt", "Auftrag erneut gestartet");
+    }
+
+    @Test
+    void aFinishedJobRunsAgainInTheSameEntryButNotWhileItRuns() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus done = jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> {
+            context.failed(1);
+        }));
+        executor.runNext();
+        assertThat(jobs.status(done.id()).lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+
+        JobStatus again = jobs.rerun(done.id(), "client-a", JobTask.blocking(JobContext::checkpoint));
+
+        assertThat(again.id()).isEqualTo(done.id());
+        assertThat(again.progress()).isEqualTo(JobProgress.NONE);
+        assertThatThrownBy(() -> jobs.rerun(done.id(), "client-a", JobTask.blocking(context -> { })))
+                .isInstanceOf(JobNotResumableException.class);
+        assertThatThrownBy(() -> jobs.rerun(done.id(), "client-b", JobTask.blocking(context -> { })))
+                .isInstanceOf(UnknownJobException.class);
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "DEV", "client-a",
+                JobTask.blocking(context -> { }));
+        executor.runNext();
+        executor.runNext();
+        assertThatThrownBy(() -> jobs.rerun(enrichment.id(), "client-a", JobTask.blocking(context -> { })))
+                .isInstanceOf(JobNotResumableException.class);
+    }
+
+    @Test
+    void startNowMovesAWaitingJobToTheFrontOfTheQueue() {
+        Jobs jobs = jobs(1, 5);
+        List<String> order = new ArrayList<>();
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> order.add("A")));
+        jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> order.add("B")));
+        JobStatus c = jobs.submit(JobType.EXPORT, "confluence", "C", "client-a",
+                JobTask.blocking(context -> order.add("C")));
+        assertThat(c.lifecycle().actions()).containsExactly(JobAction.START_NOW, JobAction.CANCEL);
+
+        jobs.prioritize(c.id(), "client-a");
+        executor.runNext();
+        executor.runNext();
+        executor.runNext();
+
+        assertThat(order).containsExactly("A", "C", "B");
+    }
+
+    @Test
+    void aRequestedPauseShowsUntilTheJobStopsAndAnIncompleteResultIsNotFinished() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+
+        JobStatus pausing = jobs.pause(export.id(), "client-a");
+
+        assertThat(pausing.pauseRequested()).isTrue();
+        assertThat(pausing.lifecycle().key()).isEqualTo("PAUSE_REQUESTED");
+        assertThat(pausing.lifecycle().actions()).containsExactly(JobAction.CANCEL);
+        executor.runNext();
+        assertThat(jobs.status(export.id()).pauseRequested()).isFalse();
+
+        JobStatus partial = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::incomplete));
+        executor.runNext();
+        assertThat(jobs.status(partial.id()).incomplete()).isTrue();
+        assertThat(jobs.status(partial.id()).lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+        assertThat(store.find(partial.id())).get().extracting(JobStatus::incomplete).isEqualTo(true);
+    }
+
+    @Test
     void submittedStatusIsQueued() {
         Jobs jobs = jobs(1, 5);
         jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));

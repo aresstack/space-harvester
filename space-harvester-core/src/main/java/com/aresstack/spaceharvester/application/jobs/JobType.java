@@ -44,9 +44,10 @@ public enum JobType {
 
     /**
      * Lässt sich anhalten und im selben Eintrag fortsetzen (ADR 0025): Einlesen und Download legen jede geladene neue
-     * Seite sofort ab, ein neuer Lauf holt nur, was fehlt.
+     * Seite sofort ab, ein neuer Lauf holt nur, was fehlt. Bilder ({@link #ASSETS}) legen jede Datei sofort im
+     * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
      */
     public boolean resumable() {
-        return this == SYNC || this == EXPORT;
+        return this == SYNC || this == EXPORT || this == ASSETS;
     }
 }

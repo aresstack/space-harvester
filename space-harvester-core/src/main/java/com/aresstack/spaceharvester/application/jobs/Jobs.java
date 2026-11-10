@@ -118,12 +118,22 @@ public class Jobs implements AutoCloseable {
      */
     public JobStatus submit(JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
                             JobTask task) {
+        return submit(type, sourceId, partitionKey, rootPageId, owner, Map.of(), task);
+    }
+
+    /**
+     * Wie {@link #submit(JobType, String, String, String, String, JobTask)}, mit den Angaben, aus denen sich der
+     * Auftrag nach einem Neustart gleichwertig neu anlegen lässt ({@link JobStatus#parameters()}).
+     */
+    public JobStatus submit(JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
+                            Map<String, String> parameters, JobTask task) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(parameters, "parameters");
         purgeExpired();
-        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner, task,
-                clock.instant());
+        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
+                Map.copyOf(parameters), task, clock.instant());
         JobStatus status;
         synchronized (lock) {
             if (closed) {
@@ -251,6 +261,28 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Zieht einen eigenen wartenden Auftrag an den Anfang der Warteschlange („Jetzt starten“); er startet, sobald ein
+     * Platz frei ist, die Grenze gleichzeitiger Aufträge gilt weiter. Abgleiche und Exporte starten weiterhin vor
+     * Folgeaufträgen. Für einen laufenden oder beendeten Auftrag ändert sich nichts.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public JobStatus prioritize(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        synchronized (lock) {
+            Job job = open.get(jobId);
+            if (job == null || job.state != JobState.QUEUED || !queued.remove(job)) {
+                return current;
+            }
+            queued.addFirst(job);
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag vorgezogen", null,
+                    null, null, null);
+        }
+        dispatch();
+        return status(jobId);
+    }
+
+    /**
      * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Auftrag im selben Eintrag fort (ADR 0025): er
      * wartet wieder auf einen Platz und läuft dann von vorn, holt aber nur, was noch fehlt, weil bereits geladene
      * Seiten liegen bleiben. Die Zähler beginnen dabei neu, damit keine Seite doppelt zählt.
@@ -296,6 +328,60 @@ public class Jobs implements AutoCloseable {
             job.reopen();
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag fortgesetzt", null,
                     null, null, null);
+            open.put(job.id, job);
+            queued.addLast(job);
+            status = job.snapshot();
+            store.save(status);
+        }
+        dispatch();
+        return status;
+    }
+
+    /**
+     * Lässt einen eigenen beendeten Auftrag einer fortsetzbaren Art im selben Eintrag mit neuer Arbeit wieder laufen
+     * („Fortsetzen“ nach einem Neustart, „Nur Fehler neu versuchen“, „Neu erzwingen“): kein neuer Auftrag, dieselbe
+     * ID, dieselben Angaben ({@link JobStatus#parameters()}), die Diagnose läuft weiter. Anders als
+     * {@link #resume(String, String, UnaryOperator)} geht das auch für fertige Aufträge und für Aufträge aus der Zeit
+     * vor dem letzten Neustart; die Arbeit liefert der Aufrufer, meist aus den abgelegten Angaben. Die Zähler beginnen
+     * neu.
+     *
+     * @param task die neue Arbeit des Auftrags
+     * @throws UnknownJobException          wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobNotResumableException    wenn die Art kein Fortsetzen kennt oder der Auftrag noch wartet oder läuft
+     * @throws JobCapacityExceededException wenn zu viele Aufträge offen sind
+     */
+    public JobStatus rerun(String jobId, String owner, JobTask task) {
+        Objects.requireNonNull(task, "task");
+        JobStatus current = requireOwner(status(jobId), owner);
+        if (!current.type().resumable()) {
+            throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
+        }
+        JobStatus status;
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (open.containsKey(jobId)) {
+                throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
+            }
+            Job job = stopped.get(jobId);
+            if (job == null) {
+                // Unter dem Sperrobjekt erneut gelesen: ein paralleles Löschen gewinnt.
+                JobStatus stored = store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
+                if (!stored.state().terminal()) {
+                    throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
+                }
+                job = new Job(stored.id(), stored.type(), stored.sourceId(), stored.partitionKey(),
+                        stored.rootPageId(), stored.owner(), stored.parameters(), task, stored.createdAt());
+                job.rootTitle = stored.rootTitle();
+                job.sequence.set(events.events(jobId).stream().mapToLong(JobEvent::sequence).max().orElse(0));
+            }
+            requireCapacity(job.type, job.owner);
+            stopped.remove(jobId);
+            job.task = task;
+            job.reopen();
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag erneut gestartet",
+                    null, null, null, null);
             open.put(job.id, job);
             queued.addLast(job);
             status = job.snapshot();
@@ -601,12 +687,8 @@ public class Jobs implements AutoCloseable {
         Instant now = clock.instant();
         for (JobStatus status : store.all()) {
             if (!status.state().terminal()) {
-                store.save(new JobStatus(status.id(), status.type(), status.sourceId(), status.partitionKey(),
-                        status.owner(), JobState.FAILED, status.progress(),
-                        new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags beendet; der Auftrag wird "
-                                + "nicht fortgesetzt und muss neu gestartet werden"),
-                        status.cancelRequested(), status.createdAt(), status.startedAt(), now, status.rootPageId(),
-                        status.rootTitle()));
+                store.save(status.interrupted(new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags "
+                        + "beendet; der Auftrag wird nicht fortgesetzt und muss neu gestartet werden"), now));
                 // Nach der höchsten Nummer, nicht nach der Anzahl: gelöschte Ereignisse hinterlassen Lücken.
                 long next = events.events(status.id()).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
                 appendQuietly(new JobEvent(status.id(), next, now, status.type(),
@@ -829,6 +911,9 @@ public class Jobs implements AutoCloseable {
         final String partitionKey;
         final String rootPageId;
         final String owner;
+        final Map<String, String> parameters;
+        /** Ergebnis unvollständig ({@link JobContext#incomplete()}). */
+        volatile boolean incomplete;
         /** Nur unter dem Sperrobjekt neu gesetzt, beim Fortsetzen ({@link #resume(String, String, UnaryOperator)}). */
         volatile JobTask task;
         final Instant createdAt;
@@ -850,7 +935,8 @@ public class Jobs implements AutoCloseable {
         volatile String rootTitle;
 
         Job(String id, JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
-            JobTask task, Instant createdAt) {
+            Map<String, String> parameters, JobTask task, Instant createdAt) {
+            this.parameters = parameters;
             this.id = id;
             this.type = type;
             this.sourceId = sourceId;
@@ -876,6 +962,7 @@ public class Jobs implements AutoCloseable {
             deadline = null;
             cancelRequested = false;
             pauseRequested = false;
+            incomplete = false;
             discovered.set(0);
             processed.set(0);
             written.set(0);
@@ -886,7 +973,13 @@ public class Jobs implements AutoCloseable {
             return new JobStatus(id, type, sourceId, partitionKey, owner, state,
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
                     cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt, rootPageId,
-                    rootPageId == null ? null : rootTitle);
+                    rootPageId == null ? null : rootTitle, parameters, incomplete && state == JobState.COMPLETED,
+                    pauseRequested && cancelRequested && !state.terminal());
+        }
+
+        @Override
+        public void incomplete() {
+            this.incomplete = true;
         }
 
         @Override
