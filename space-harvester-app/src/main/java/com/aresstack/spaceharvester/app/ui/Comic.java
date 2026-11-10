@@ -142,6 +142,9 @@ public final class Comic {
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         scroll.getViewport().setBackground(view instanceof JTable ? Color.WHITE : SURFACE);
         scroll.setBorder(BorderFactory.createEmptyBorder());
+        // Liegt die Fläche in einer Seite, die selbst scrollt (Einstellungen), reicht sie das Rad weiter, sobald
+        // sie nichts mehr zu scrollen hat; sonst verschluckt eine Tabelle das Rad.
+        com.aresstack.spaceharvester.app.ui.controls.WheelForwarding.install(scroll);
         return scroll;
     }
 
