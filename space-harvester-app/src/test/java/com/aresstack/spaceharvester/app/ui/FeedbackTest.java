@@ -223,6 +223,25 @@ class FeedbackTest {
         });
     }
 
+    /** Codex zu #566: „Seite wird geladen …“ stand in der Statuszeile, bis etwas anderes sie ablöste. */
+    @Test
+    void clearingEndsARunningMessageInTheStatusLine() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            java.util.List<String> line = new java.util.ArrayList<>();
+            Feedback feedback = new Feedback();
+            feedback.statusLine((text, tone) -> line.add(text));
+            feedback.working("Seite wird geladen …");
+            assertThat(line).containsExactly("Seite wird geladen …");
+            assertThat(feedback.isVisible()).isFalse();
+
+            feedback.clear();
+            assertThat(line).as("die Laufmeldung endet mit dem Vorgang").containsExactly("Seite wird geladen …", "");
+
+            feedback.clear();
+            assertThat(line).as("ohne eigene Meldung bleibt die Statuszeile unberührt").hasSize(2);
+        });
+    }
+
     private static java.awt.event.MouseWheelEvent wheel(java.awt.Component source) {
         return new java.awt.event.MouseWheelEvent(source, java.awt.event.MouseEvent.MOUSE_WHEEL,
                 System.currentTimeMillis(), 0, 5, 5, 0, false, java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, 1);

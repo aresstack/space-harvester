@@ -27,6 +27,8 @@ public final class ContentView implements View {
     private final JPanel root = new JPanel(new BorderLayout());
     private final JLabel crumbs = new JLabel(" ");
     private final PageDetailPanel detail;
+    /** Stand des gezeigten Reiters (etwa „50 Knoten, 51 Kanten“) links in der Statuszeile des Hauptfensters. */
+    private final JLabel statusInfo = Comic.muted(" ");
     private final JPanel body = new JPanel(new BorderLayout());
     /** Die Einmalcode-Abfrage der gezeigten Wissensquelle (ADR 0018), etwa für Anhänge und Bilder. */
     private final SignInSlot signIn;
@@ -38,6 +40,7 @@ public final class ContentView implements View {
         this.context = context;
         this.detail = new PageDetailPanel(context);
         detail.onShown(this::pageShown);
+        detail.onStatus(text -> statusInfo.setText(text == null || text.isBlank() ? " " : text));
         this.signIn = new SignInSlot(context, requests -> sourceId == null ? java.util.Optional.empty()
                 : requests.pendingFor(sourceId));
         // Nach dem Einmalcode lädt die gezeigte Seite neu, damit Bilder und Anhänge ohne Sperre erscheinen.
@@ -169,6 +172,11 @@ public final class ContentView implements View {
 
     String crumbs() {
         return crumbs.getText();
+    }
+
+    @Override
+    public JComponent statusInfo() {
+        return statusInfo;
     }
 
     PageDetailPanel detail() {

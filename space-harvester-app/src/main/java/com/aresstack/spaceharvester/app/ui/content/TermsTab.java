@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.terms.TermKind;
@@ -39,13 +40,14 @@ final class TermsTab extends JPanel {
 
     static final String NOT_YET = "–";
 
-    private final JLabel state = badge();
+    private final TabHeader head = new TabHeader("Begriffe dieser Seite");
     private final JLabel acronymCount = number();
     private final JLabel identifierCount = number();
     private final JLabel relationCount = number();
     private final JLabel completeness = badge();
     private final JLabel analysis = Comic.text("Analyse vom letzten Seitenabgleich");
     private final PlaceholderField filter = new PlaceholderField(12, "Begriffe filtern …");
+    private final JLabel acronymTitle = Comic.text("Akronyme");
     private final JPanel chips = new JPanel(new WrapFlow());
     private final JLabel identifierTitle = Comic.text("Bezeichner");
     private final JPanel identifierChips = new JPanel(new WrapFlow());
@@ -65,12 +67,7 @@ final class TermsTab extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        JLabel title = Comic.text("Begriffe dieser Seite");
-        title.setFont(Comic.semiBold(15f));
-        head.add(title, BorderLayout.WEST);
-        head.add(state, BorderLayout.EAST);
+        head.search(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter)).copy(this::copyText);
 
         JPanel counts = new JPanel(new GridLayout(1, 3, 12, 0));
         counts.setOpaque(false);
@@ -83,17 +80,10 @@ final class TermsTab extends JPanel {
         analysisRow.add(analysis, BorderLayout.WEST);
         analysisRow.add(completeness, BorderLayout.EAST);
 
-        JPanel listHead = new JPanel(new BorderLayout(8, 0));
-        listHead.setOpaque(false);
-        JLabel listTitle = Comic.text("Erkannte Begriffe und ihre Fundstellen");
-        listTitle.setFont(Comic.semiBold(13f));
-        listHead.add(listTitle, BorderLayout.WEST);
-        listHead.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.EAST);
-
         JPanel top = new JPanel();
         top.setOpaque(false);
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
-        for (JPanel row : List.of(head, counts, analysisRow, listHead)) {
+        for (JPanel row : List.of(head, counts, analysisRow)) {
             row.setAlignmentX(LEFT_ALIGNMENT);
             top.add(row);
             top.add(javax.swing.Box.createVerticalStrut(10));
@@ -101,6 +91,11 @@ final class TermsTab extends JPanel {
 
         chips.setOpaque(false);
         identifierChips.setOpaque(false);
+        acronymTitle.setFont(Comic.semiBold(13f));
+        JPanel acronyms = new JPanel(new BorderLayout(0, 4));
+        acronyms.setOpaque(false);
+        acronyms.add(acronymTitle, BorderLayout.NORTH);
+        acronyms.add(chips, BorderLayout.CENTER);
         identifierTitle.setFont(Comic.semiBold(13f));
         JPanel identifiers = new JPanel(new BorderLayout(0, 4));
         identifiers.setOpaque(false);
@@ -115,7 +110,7 @@ final class TermsTab extends JPanel {
         relations.add(relationLines, BorderLayout.CENTER);
         JPanel lists = new JPanel(new BorderLayout(0, 10));
         lists.setOpaque(false);
-        lists.add(chips, BorderLayout.NORTH);
+        lists.add(acronyms, BorderLayout.NORTH);
         lists.add(identifiers, BorderLayout.CENTER);
         lists.add(relations, BorderLayout.SOUTH);
         JPanel body = new JPanel(new BorderLayout(0, 6));
@@ -163,8 +158,7 @@ final class TermsTab extends JPanel {
         shown = acronyms;
         shownTerms = terms;
         PageAcronyms.State current = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
-        state.setText(stateText(current));
-        tone(state, stateColor(current));
+        head.status(stateText(current), stateColor(current));
         // Nur ein aktuelles Ergebnis hat Begriffe und Fundstellen; veraltet oder fehlgeschlagen zählt nichts.
         boolean any = current == PageAcronyms.State.CURRENT;
         acronymCount.setText(any ? String.valueOf(acronyms.acronyms().size()) : NOT_YET);
@@ -231,12 +225,31 @@ final class TermsTab extends JPanel {
                 identifiers++;
             }
         }
+        acronymTitle.setVisible(!visible.isEmpty());
         identifierTitle.setVisible(identifiers > 0);
         hint.setText(hint(shown, visible.size() + identifiers, !query.isEmpty()));
         for (JPanel list : List.of(chips, identifierChips)) {
             list.revalidate();
             list.repaint();
         }
+    }
+
+    /** Die gezeigten Begriffe als Text: Akronyme, Bezeichner und Beziehungen als Listen unter ihren Überschriften. */
+    String copyText() {
+        StringBuilder text = new StringBuilder();
+        List<String> acronyms = chips().stream().map(ResearchPillButton::getText).toList();
+        List<String> identifiers = identifierChips().stream().map(ResearchPillButton::getText).toList();
+        List<String> relations = relationLines();
+        if (!acronyms.isEmpty()) {
+            text.append("Akronyme\n").append(String.join("\n", acronyms)).append("\n\n");
+        }
+        if (!identifiers.isEmpty()) {
+            text.append("Bezeichner\n").append(String.join("\n", identifiers)).append("\n\n");
+        }
+        if (!relations.isEmpty()) {
+            text.append("Beziehungen\n").append(String.join("\n", relations)).append("\n");
+        }
+        return text.toString().stripTrailing();
     }
 
     private ResearchPillButton chip(String label, String tooltip, List<Span> spans) {
@@ -325,23 +338,17 @@ final class TermsTab extends JPanel {
     }
 
     private static JLabel badge() {
-        JLabel label = new JLabel(" ");
-        label.setFont(Comic.semiBold(12f));
-        label.setOpaque(true);
-        return label;
+        return TabHeader.statusBadge(" ", Comic.MUTED);
     }
 
     private static void tone(JLabel badge, Color color) {
-        badge.setForeground(color);
-        badge.setBackground(Comic.SURFACE);
-        badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(color, 1, true),
-                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        TabHeader.tone(badge, color);
     }
 
     // ---- für Tests
 
     String stateLabel() {
-        return state.getText();
+        return head.statusText();
     }
 
     List<String> counts() {

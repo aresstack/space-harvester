@@ -9,16 +9,16 @@ import java.awt.RenderingHints;
  * Der einheitliche Stil der Symbolaktionen: schlichtes Symbol, beim Darüberfahren ein heller Kreis mit Tintenrand
  * (Knöpfe an den Quellenkarten, Download je Space, Aktionen im Explorer und in der Auftragsliste).
  */
-final class RoundHover {
+public final class RoundHover {
 
-    static final int SIZE = 26;
+    public static final int SIZE = 26;
     private static final Color FILL = new Color(255, 255, 255, 170);
 
     private RoundHover() {
     }
 
     /** Zeichnet den Kreis zentriert in die Fläche {@code x, y, width, height}. */
-    static void paint(Graphics graphics, int x, int y, int width, int height, boolean pressed) {
+    public static void paint(Graphics graphics, int x, int y, int width, int height, boolean pressed) {
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
