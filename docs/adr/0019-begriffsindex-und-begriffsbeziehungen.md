@@ -154,14 +154,17 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      anderen Umfang → nur Kandidat). B optional, nur mit Embedding-Modell und nur für Fundstellen freigegebener
      Quellen: die häufigsten Begriffe (`max-embedded-terms`) werden mit je einem Kontext eingebettet und per
      Zufallshyperebenen-LSH in Eimer sortiert; verglichen wird nur innerhalb eines Eimers (höchstens 200), keine
-     vollständige paarweise Prüfung; ab Kosinus 0,80, höchstens drei Nachbarn. C Bedeutungsprüfung: je Paar kurze
+     vollständige paarweise Prüfung; ab Kosinus 0,80, höchstens drei Nachbarn. Ein solches Paar wird direkt ein
+     Synonymvorschlag (`ai:synonyms`, `PROPOSED`): Angelo (2026-11-10) will nur das Embedding-Modell, kein
+     Chat-Modell, das Synonyme erzeugt. C ist zuschaltbar (`max-judged-pairs` über 0, Standard 0) und prüft dann
+     statt der unmittelbaren Übernahme: je Paar kurze
      Fundstellen (höchstens vier je Begriff, 120 Zeichen, nur freigegebene Quellen) an das Chat-Modell
      (`SynonymJudgmentModel`, `ChatSynonymJudgmentModel` über `RemoteAi.termCompletions()`), Urteil `synonym`,
      `variant`, `related`, `abbreviation`, `different`, `unclear` als JSON mit den Nummern der Belege. Die Antwort ist
      nicht vertrauenswürdig: nur gefragte Paare zählen, nur bekannte Urteile, Belege müssen auf beiden Seiten genannt
      sein; `abbreviation` gehört der Akronymauflösung und wird verworfen, `different`/`unclear` ergeben nichts.
-     Regelkandidaten mit festem Typ (A) werden ohne Modell als `rule`/`proposed` abgeglichen; ohne Chat-Modell endet
-     der Lauf nach Stufe A, die Statuszeile sagt es.
+     Regelkandidaten mit festem Typ (A) werden ohne Modell als `rule`/`proposed` abgeglichen; ohne Chat-Prüfung
+     gelten Regeln und Embedding-Paare unmittelbar, ohne Embedding-Modell nur die Regeln, die Statuszeile sagt es.
    - Abgleich je Erzeuger: `propose` bekommt seit #336 die Menge der Beziehungsarten, die der Erzeuger liefert, und
      zieht nur Vorschläge gleicher Herkunft, gleichen Umfangs und dieser Arten zurück. Ein Synonymlauf (`ai`,
      {`SYNONYM`, `VARIANT`, `RELATED`}) ändert damit nie Akronymvorschläge (`ai`, {`ABBREVIATION`}), manuelle

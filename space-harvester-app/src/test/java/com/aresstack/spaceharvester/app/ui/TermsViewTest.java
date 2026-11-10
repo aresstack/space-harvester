@@ -124,7 +124,7 @@ class TermsViewTest {
                 new com.aresstack.spaceharvester.application.terms.SynonymBudget(2000, 500, 40);
         java.util.function.Function<com.aresstack.spaceharvester.application.terms.SynonymScope,
                 com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability> availability = scope ->
-                new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(false,
+                new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(false, false,
                         scope.global() ? List.of("wiki") : List.of(), scope.global() ? List.of("intern")
                         : List.of(scope.sourceId()), budget);
         SynonymRunForm[] form = new SynonymRunForm[1];
@@ -178,7 +178,7 @@ class TermsViewTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            return new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(true, many,
+            return new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(true, true, many,
                     many, budget);
         };
         SynonymRunForm[] form = new SynonymRunForm[1];
