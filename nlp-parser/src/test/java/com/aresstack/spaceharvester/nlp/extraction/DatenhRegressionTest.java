@@ -65,47 +65,61 @@ class DatenhRegressionTest {
         assertEquals("ermöglicht", statement("ermöglichen", "Marktplatz:").predicate().text());
     }
 
-    // ---- A: Überschrift verschmilzt mit dem Folgesatz (Satzgrenzen vor OpenNLP) -----------------------------------
+    // ---- A: Überschrift verschmolz mit dem Folgesatz (Satzgrenzen vor OpenNLP, behoben) ------------------------------
 
     @Test
-    void causeA_headingMergedIntoTheNextSentence_isASentenceBoundaryError() {
-        // Zwischenstand: OpenNLP übergeht den Zeilenumbruch nach „Kurzbeschreibung“ und „Komponenten“
-        assertTrue(sentence("Kurzbeschreibung").text().startsWith("Kurzbeschreibung Das Programm"));
-        assertTrue(sentence("Komponenten").text().startsWith("Komponenten Berechtigungsmanagement:"));
-        assertEquals(10, DOCUMENT.sentences().size(), "12 Zeilen, aber nur 10 Sätze");
+    void causeA_aHeadingIsItsOwnSentence() {
+        // Zwischenstand: der Zeilenumbruch nach „Kurzbeschreibung“ und „Komponenten“ ist eine harte Satzgrenze
+        assertEquals("Kurzbeschreibung", sentence("Kurzbeschreibung").text());
+        assertEquals("Komponenten", sentence("Komponenten").text());
+        assertEquals(12, DOCUMENT.sentences().size(), "12 Zeilen, 12 Sätze");
 
-        // IST (Folgefehler, kein Regelfehler): die Überschrift wird zum Handelnden
+        // Endergebnis: die Überschrift ist kein Beteiligter, der eigentliche Handelnde kommt zurück
         List<String> relations = relations();
-        assertTrue(relations.contains("stehen ACTOR Kurzbeschreibung"), relations.toString());
-        assertTrue(relations.stream().anyMatch(r -> r.startsWith("umsetzen ACTOR Komponenten")), relations.toString());
+        assertTrue(relations.stream().noneMatch(r -> r.contains("Kurzbeschreibung") || r.contains("Komponenten B")),
+                "verboten: Überschrift als Beteiligter " + relations);
+        assertTrue(relations.contains("stehen ACTOR Das Programm"), relations.toString());
+        assertTrue(relations.contains("umsetzen ACTOR Berechtigungsmanagement"), relations.toString());
     }
 
-    // ---- B: „welchen“ als Verb (OpenNLP-Wortart) -------------------------------------------------------------------
+    // ---- B: „welchen“ als Verb (OpenNLP-Wortart, behoben vor dem Parser) ---------------------------------------------
 
     @Test
-    void causeB_relativePronounTaggedAsVerb_isATaggerError() {
+    void causeB_relativePronounIsNoLongerAVerb() {
         Sentence sentence = sentence("Datenprodukt-API:");
         Token welchen = token(sentence, "welchen");
-        assertEquals("VERB", welchen.upos(), "Zwischenstand: OpenNLP taggt das Relativpronomen als Verb");
-        assertEquals("root", welchen.deprel(), "MaltParser folgt der Wortart und macht es zur Wurzel");
+        assertEquals("PRON", welchen.upos(), "Zwischenstand: Wortart nach der Korrektur geschlossener Klassen");
+        assertEquals("acl:relcl", sentence.head(welchen).deprel(), "MaltParser bildet jetzt einen Relativsatz");
 
-        // IST (Folgefehler): eine Aussage mit dem Prädikat „welchen“
-        assertEquals("welcher", statement("welcher", "Datenprodukt-API:").predicate().lemma());
+        // Endergebnis: keine Aussage „welchen“; das Pronomen bleibt offen und unsicher
+        assertTrue(ANALYSIS.statements().stream().noneMatch(s -> s.predicate().lemma().equals("welcher")),
+                "verboten: Prädikat welchen");
+        Statement assigned = statement("zuweisen", "Datenprodukt-API:");
+        assertTrue(assigned.has(Finding.UNRESOLVED_PRONOUN));
     }
 
-    // ---- G: „hinweg“ als Verb (OpenNLP-Wortart) --------------------------------------------------------------------
+    // ---- G: „hinweg“ als Verb (OpenNLP-Wortart, behoben vor dem Parser) ----------------------------------------------
 
     @Test
-    void causeG_postpositionTaggedAsVerb_isATaggerError() {
+    void causeG_postpositionIsNoLongerAVerb() {
         Sentence sentence = sentence("Über die einzelnen Vorhaben hinweg");
         Token hinweg = token(sentence, "hinweg");
-        assertEquals("VERB", hinweg.upos(), "Zwischenstand: OpenNLP taggt die Postposition als Verb");
-        assertEquals("aux:pass", token(sentence, "ist").deprel(), "MaltParser macht „ist“ zum Passivhilfsverb");
+        assertEquals("ADP", hinweg.upos(), "Zwischenstand: Wortart nach der Korrektur geschlossener Klassen");
+        assertEquals("case", hinweg.deprel());
+        assertEquals("cop", token(sentence, "ist").deprel(), "„ist“ ist Kopula, kein Passivhilfsverb");
 
-        // IST (Folgefehler): Passivaussage „hinweg ist“ mit zwei betroffenen Objekten
-        Statement statement = statement("hinweg", "Über die einzelnen Vorhaben hinweg");
-        assertEquals(Statement.Voice.PASSIVE, statement.voice());
-        assertEquals(2, statement.withRole(Role.AFFECTED_OBJECT).size());
+        // Endergebnis: keine Passivaussage „hinweg ist“
+        assertTrue(ANALYSIS.statements().stream().noneMatch(s -> s.predicate().lemma().equals("hinweg")),
+                "verboten: Prädikat hinweg");
+    }
+
+    // ---- K: Grundform des zu-Infinitivs (OpenNLP-Grundform, behoben nach dem Lemmatisierer) --------------------------
+
+    @Test
+    void causeK_zuInfinitiveGetsItsInfinitive() {
+        Sentence sentence = sentence("Das Vorhaben Datenhaus hat sich");
+        assertEquals("bereitstellen", token(sentence, "bereitzustellen").lemma(), "Zwischenstand: Grundform korrigiert");
+        assertEquals("bereitzustellen", statement("bereitstellen", "Das Vorhaben Datenhaus hat sich").predicate().text());
     }
 
     // ---- D: „Daten“ als Zeitangabe (OpenNLP-Grundform + Lexikonregel) ----------------------------------------------
@@ -167,13 +181,13 @@ class DatenhRegressionTest {
 
     @Test
     void causeH_adjectivalParticleAsXcomp_losesTheObject() {
-        Sentence sentence = sentence("Komponenten");
+        Sentence sentence = sentence("Berechtigungsmanagement:");
         Token sicher = token(sentence, "sicher");
         assertEquals("xcomp", sicher.deprel(), "Zwischenstand: „sicher“ (sicherstellen) als xcomp, nicht als Partikel");
         assertEquals("nsubj", token(sentence, "Einhaltung").deprel(), "das Objekt hängt als Subjekt an „sicher“");
 
         // IST: „stellt“ ohne Verbzusatz und ohne Objekt
-        Statement statement = statement("stellen", "Komponenten");
+        Statement statement = statement("stellen", "Berechtigungsmanagement:");
         assertEquals("stellt", statement.predicate().text());
         assertNull(statement.core(Role.AFFECTED_OBJECT));
     }
