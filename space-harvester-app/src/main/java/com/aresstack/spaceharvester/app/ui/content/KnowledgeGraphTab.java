@@ -20,6 +20,7 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
@@ -272,8 +273,10 @@ final class KnowledgeGraphTab extends JPanel {
         detailPanel.add(detailActions, BorderLayout.SOUTH);
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, cards, detailPanel);
         split.setResizeWeight(0.75);
-        split.setBorder(null);
         split.setOpaque(false);
+        split.setBackground(Comic.SURFACE);
+        // Derselbe Trenner wie neben der Wissensquellen-Liste, nur liegend.
+        ComicDivider.install(split, Comic.PALETTE);
 
         add(head, BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
