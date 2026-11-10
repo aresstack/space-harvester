@@ -31,6 +31,23 @@ class FileResolutionCacheTest {
         assertThat(reopened.find("f3")).contains(List.of("r3"));
     }
 
+    @Test
+    void removeSourcesForgetsEveryMatchingKey() {
+        FileResolutionCache cache = new FileResolutionCache(directory);
+        cache.replace("wiki", Map.of("f1", List.of("r1")));
+        cache.replace("wiki/DEV", Map.of("f2", List.of("r2")));
+        cache.replace("*", Map.of("f3", List.of("r3")));
+        cache.replace("intern", Map.of("f4", List.of("r4")));
+
+        cache.removeSources(key -> key.equals("*") || key.startsWith("wiki"));
+
+        FileResolutionCache reopened = new FileResolutionCache(directory);
+        assertThat(reopened.find("f1")).isEmpty();
+        assertThat(reopened.find("f2")).isEmpty();
+        assertThat(reopened.find("f3")).isEmpty();
+        assertThat(reopened.find("f4")).contains(List.of("r4"));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "{kaputt",

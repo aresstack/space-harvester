@@ -136,6 +136,16 @@ class SynonymDiscoveryTest {
                 && (type == null || relation.type() == type)).toList();
     }
 
+    /** Ein Urteil „synonym“ mit Beleg 1 auf beiden Seiten je gefragtem Paar, mit den Nummern aus der Anfrage. */
+    private static String synonymForEveryPair(String input) {
+        java.util.regex.Matcher pairs = java.util.regex.Pattern.compile("\"pair\":(\\d+)").matcher(input);
+        List<String> judgments = new ArrayList<>();
+        while (pairs.find()) {
+            judgments.add("{\"pair\":" + pairs.group(1) + ",\"relation\":\"synonym\",\"a\":[1],\"b\":[1]}");
+        }
+        return "{\"judgments\":[" + String.join(",", judgments) + "]}";
+    }
+
     private SynonymDiscovery.Outcome run(SynonymScope scope) {
         return discovery.run(scope, SynonymBudget.DEFAULT, null);
     }
@@ -289,6 +299,59 @@ class SynonymDiscoveryTest {
         assertThatThrownBy(() -> run(SynonymScope.source("wiki"))).isInstanceOf(JobFailedException.class)
                 .hasMessageNotContaining("Rückmelde");
         assertThat(automatic(RelationOrigin.AI, null)).hasSize(1);
+    }
+
+    @Test
+    void theBudgetCountsOnlyNewRequestsSoLaterPairsAreNotStarved() {
+        // Codex-Befund zu #579: Beantwortete Paare aus dem Cache verdrängen keine späteren.
+        siblings("wiki");
+        cached("wiki", "DEV", "Der RSL heißt auch Rückmeldecode. Der Rückmeldecode steht in der Meldung.");
+        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldecode", RelationType.ABBREVIATION,
+                RelationScope.GLOBAL, null, List.of()));
+        SynonymBudget one = SynonymBudget.DEFAULT.withMaxJudgedPairs(1);
+        answers = (instructions, input) -> synonymForEveryPair(input);
+
+        SynonymDiscovery.Outcome first = discovery.run(SynonymScope.source("wiki"), one, null);
+        SynonymDiscovery.Outcome second = discovery.run(SynonymScope.source("wiki"), one, null);
+        SynonymDiscovery.Outcome third = discovery.run(SynonymScope.source("wiki"), one, null);
+
+        assertThat(first.candidates()).isEqualTo(3);
+        assertThat(first.asked()).isEqualTo(1);
+        assertThat(first.skipped()).isEqualTo(2);
+        assertThat(second.asked()).isEqualTo(1);
+        assertThat(second.reused()).isEqualTo(1);
+        assertThat(third.asked()).isEqualTo(1);
+        assertThat(third.reused()).isEqualTo(2);
+        assertThat(inputs).hasSize(3);
+        assertThat(automatic(RelationOrigin.AI, null)).hasSize(3);
+    }
+
+    @Test
+    void aModelFailureLeavesTheRuleProposalsOfTheLastRunToo() {
+        // Codex-Befund zu #579: Der Abgleich der Regeln wartet auf das Modell.
+        cached("wiki", "DEV", "Die E-Mail geht an die Fachabteilung.");
+        cached("wiki", "DEV", "Jede Email wird im Postfach archiviert.");
+        siblings("wiki");
+        answers = (instructions, input) -> {
+            throw new IllegalStateException("Dienst weg");
+        };
+
+        assertThatThrownBy(() -> run(SynonymScope.source("wiki"))).isInstanceOf(JobFailedException.class);
+
+        assertThat(automatic(RelationOrigin.RULE, null)).isEmpty();
+        assertThat(automatic(RelationOrigin.AI, null)).isEmpty();
+    }
+
+    @Test
+    void cleaningASourceForgetsItsSpaceAndGlobalRuns() {
+        java.util.function.Predicate<String> keys = SynonymDiscovery.cacheKeysOf("wiki");
+        assertThat(keys.test("*")).isTrue();
+        assertThat(keys.test("wiki")).isTrue();
+        assertThat(keys.test("wiki/DEV")).isTrue();
+        assertThat(keys.test("wikipedia")).isFalse();
+        assertThat(keys.test("intern/DEV")).isFalse();
+        assertThat(SynonymDiscovery.cacheKey(SynonymScope.ALL)).isEqualTo("*");
+        assertThat(SynonymDiscovery.cacheKey(SynonymScope.space("wiki", "DEV"))).isEqualTo("wiki/DEV");
     }
 
     @Test

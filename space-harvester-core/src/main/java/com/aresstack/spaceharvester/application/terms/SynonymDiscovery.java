@@ -263,17 +263,19 @@ public class SynonymDiscovery {
             }
         }
         checkpoint(context);
-        phase(context, PHASE + ": Abgleich der Regeln");
-        TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
-                PRODUCED, "rules-" + PROMPT_VERSION + stamp, ruleProposals);
+        String ruleGeneration = "rules-" + PROMPT_VERSION + stamp;
         if (!model.available() || budget.maxJudgedPairs() == 0) {
+            phase(context, PHASE + ": Abgleich der Regeln");
+            TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
+                    PRODUCED, ruleGeneration, ruleProposals);
             LOG.log(System.Logger.Level.INFO, "Synonymerkennung ({0}): {1} Kandidaten, Regeln {2} neu, {3} geändert, "
                     + "{4} entfallen; ohne KI-Prüfung", describe(scope), collected.candidates().size(), rules.added(),
                     rules.updated(), rules.withdrawn());
             return new Outcome(collected.candidates().size(), rules, null, 0, 0, open.size(), 0,
                     collected.embeddingUsed());
         }
-        // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel, bis zum Budget.
+        // Stufe C: nur Paare mit Fundstellen aus freigegebenen Quellen, nur unbekannte Schlüssel; das Budget zählt
+        // erst nach dem Cache, damit beantwortete Paare keine späteren verdrängen.
         Set<String> known = knownPairs(relationScope);
         List<Pair> asked = new ArrayList<>();
         int skipped = 0;
@@ -283,7 +285,7 @@ public class SynonymDiscovery {
             }
             List<SynonymCandidate.Context> a = releasedContexts(candidate.fromContext());
             List<SynonymCandidate.Context> b = releasedContexts(candidate.toContext());
-            if (a.isEmpty() || b.isEmpty() || asked.size() >= budget.maxJudgedPairs()) {
+            if (a.isEmpty() || b.isEmpty()) {
                 skipped++;
                 continue;
             }
@@ -316,6 +318,11 @@ public class SynonymDiscovery {
                 iterator.remove();
                 reused++;
             }
+        }
+        if (asked.size() > budget.maxJudgedPairs()) {
+            List<Pair> over = asked.subList(budget.maxJudgedPairs(), asked.size());
+            skipped += over.size();
+            over.clear();
         }
         if (context != null) {
             context.discovered(asked.size());
@@ -370,7 +377,11 @@ public class SynonymDiscovery {
             }
         }
         checkpoint(context);
+        // Abgleich erst, wenn jede Anfrage beantwortet ist: scheitert das Modell oder bricht der Auftrag ab, bleibt
+        // auch der Stand der Regelvorschläge.
         phase(context, PHASE + ": Abgleich");
+        TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
+                PRODUCED, ruleGeneration, ruleProposals);
         TermRelations.ProposalRun ai = relations.propose(ACTOR_AI, RelationOrigin.AI, relationScope, PRODUCED,
                 version + stamp, proposals);
         try {
@@ -450,6 +461,15 @@ public class SynonymDiscovery {
         String from = TermText.normalize(a);
         String to = TermText.normalize(b);
         return from.compareTo(to) <= 0 ? from + '\u0000' + to : to + '\u0000' + from;
+    }
+
+    /**
+     * Die Cache-Schlüssel, an denen eine Quelle beteiligt ist: ihr eigener, ihre Spaces und der globale Lauf; sie
+     * entfallen mit „Daten bereinigen“ der Quelle.
+     */
+    public static java.util.function.Predicate<String> cacheKeysOf(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return key -> key.equals("*") || key.equals(sourceId) || key.startsWith(sourceId + "/");
     }
 
     static String cacheKey(SynonymScope scope) {
