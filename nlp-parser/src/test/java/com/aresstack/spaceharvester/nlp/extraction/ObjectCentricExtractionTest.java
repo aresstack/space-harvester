@@ -375,4 +375,39 @@ class ObjectCentricExtractionTest {
                 .filter(s -> s.predicate().lemma().equals("verwalten") && s.sentence() == 5).findFirst().orElseThrow();
         assertEquals("verwaltet werden", reports.predicate().text());
     }
+
+    @Test
+    void structuralHeuristicsStayOutOfOrdinarySentences() {
+        ObjectCentricAnalysis analysis = Gold.analyze("structure.conllu");
+
+        Statement checked = analysis.statements().get(0);
+        Argument applicant = checked.core(Role.AFFECTED_OBJECT);
+        assertEquals("Der Antrag", text(analysis, applicant));
+        assertEquals(Basis.PARSER, applicant.basis(), "eigenes Subjekt schlägt die Kennung");
+        assertFalse(checked.has(Finding.SUBJECT_FROM_LABEL));
+        assertTrue(checked.arguments().stream().noneMatch(a -> text(analysis, a).contains("Hinweis")));
+
+        Statement feels = analysis.statements().get(1);
+        assertEquals("fühlen", feels.predicate().lemma(), "„sicher“ ist bei „fühlen“ kein Verbzusatz");
+        assertFalse(feels.has(Finding.PREDICATIVE_PARTICLE));
+        assertTrue(feels.has(Finding.REFLEXIVE));
+        assertNull(feels.core(Role.AFFECTED_OBJECT), "weder „sich“ noch eine Heuristik als Objekt");
+
+        Statement shopping = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("einkaufen"))
+                .findFirst().orElseThrow();
+        assertFalse(shopping.has(Finding.SUBJECT_FROM_LABEL), "ein Teilsatz hat die Kennung nie als Handelnden");
+        assertTrue(shopping.arguments().stream().noneMatch(a -> text(analysis, a).contains("Hinweis")));
+
+        Statement ready = analysis.statements().stream().filter(s -> s.sentence() == 3).findFirst().orElseThrow();
+        assertEquals("bereithalten", ready.predicate().lemma());
+        assertTrue(ready.has(Finding.REFLEXIVE));
+        assertNull(ready.core(Role.AFFECTED_OBJECT), "„sich“ am Verbzusatz ist kein Objekt");
+
+        Statement taught = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("lehren"))
+                .findFirst().orElseThrow();
+        assertEquals("Der Lehrer", text(analysis, taught.core(Role.ACTOR)), "Reihung schlägt die Vorfeld-Heuristik");
+        assertEquals(Basis.COORDINATION, taught.core(Role.ACTOR).basis());
+        assertEquals(List.of("die Kinder", "das Schwimmen"), taught.withRole(Role.AFFECTED_OBJECT).stream()
+                .map(a -> text(analysis, a)).toList());
+    }
 }

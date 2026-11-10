@@ -35,5 +35,18 @@ public enum Finding {
      */
     AUXILIARY_OUTSIDE_CLAUSE,
     /** Kein Subjekt übernommen: zwischen den gereihten Prädikaten beginnt ein Teilsatz mit eigenem Subjekt. */
-    COORDINATION_ACROSS_CLAUSE
+    COORDINATION_ACROSS_CLAUSE,
+    /**
+     * Impliziter Handelnder aus der Kennung eines Listeneintrags ohne Subjektkante („Datenkatalog: organisiert und
+     * stellt … bereit“); immer {@link Basis#HEURISTIC} und unsicher. Hängt der Parser die Kennung selbst als Subjekt
+     * an, ist das Parserevidenz und kein solcher Fall.
+     */
+    SUBJECT_FROM_LABEL,
+    /** Die Wiederholung der Kennung im Vorfeld („Register: Register erweitern …“) ist dasselbe Subjekt, kein Objekt. */
+    LABEL_REPEATED,
+    /**
+     * Verbzusatz, den der Parser als prädikatives Adjektiv anhängt („stellt … sicher“), ist ins Prädikat übernommen;
+     * ein daran hängendes Subjekt gilt als unsicheres Objekt.
+     */
+    PREDICATIVE_PARTICLE
 }

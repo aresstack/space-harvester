@@ -2,7 +2,6 @@ package com.aresstack.spaceharvester.nlp.extraction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.aresstack.spaceharvester.nlp.syntax.ParsedDocument;
@@ -176,10 +175,10 @@ class DatenhRegressionTest {
         assertEquals("conj", ausgewertet.deprel());
 
         // Endergebnis: Hauptsatz aktiv mit seinem Handelnden, „ausgewertet werden“ passiv ohne geerbten Handelnden
-        Statement main = statement("stellen", "Das Vorhaben Datenhaus stellt");
+        Statement main = statement("bereitstellen", "Das Vorhaben Datenhaus stellt");
         assertEquals(Statement.Voice.ACTIVE, main.voice());
         assertEquals("Das Vorhaben", text(main.core(Role.ACTOR)));
-        assertEquals("stellt", main.predicate().text());
+        assertEquals("stellt … bereit", main.predicate().text(), "ohne das fremde „werden“");
         assertTrue(main.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
         Statement passive = statement("auswerten", "Das Vorhaben Datenhaus stellt");
         assertEquals(Statement.Voice.PASSIVE, passive.voice());
@@ -209,31 +208,56 @@ class DatenhRegressionTest {
         assertFalse(vision.certain());
     }
 
-    // ---- H: Verbzusatz als prädikatives Adjektiv (MaltParser) -------------------------------------------------------
+    // ---- H: Verbzusatz als prädikatives Adjektiv (MaltParser, behoben in der Prädikatsregel) -------------------------
 
     @Test
-    void causeH_adjectivalParticleAsXcomp_losesTheObject() {
+    void causeH_predicativeParticleJoinsThePredicate() {
         Sentence sentence = sentence("Berechtigungsmanagement:");
         Token sicher = token(sentence, "sicher");
-        assertEquals("xcomp", sicher.deprel(), "Zwischenstand: „sicher“ (sicherstellen) als xcomp, nicht als Partikel");
+        assertEquals("xcomp", sicher.deprel(), "Zwischenstand: „sicher“ (sicherstellen) weiter als xcomp");
         assertEquals("nsubj", token(sentence, "Einhaltung").deprel(), "das Objekt hängt als Subjekt an „sicher“");
 
-        // IST: „stellt“ ohne Verbzusatz und ohne Objekt
-        Statement statement = statement("stellen", "Berechtigungsmanagement:");
-        assertEquals("stellt", statement.predicate().text());
-        assertNull(statement.core(Role.AFFECTED_OBJECT));
+        // Endergebnis: „stellt … sicher (sicherstellen)“ mit unsicherem Objekt aus der Heuristik
+        Statement statement = statement("sicherstellen", "Berechtigungsmanagement:");
+        assertEquals("stellt … sicher", statement.predicate().text());
+        assertTrue(statement.has(Finding.PREDICATIVE_PARTICLE));
+        Argument object = statement.core(Role.AFFECTED_OBJECT);
+        assertEquals("die Einhaltung", text(object));
+        assertEquals(Basis.HEURISTIC, object.basis());
+        assertFalse(object.certain());
+        assertTrue(ANALYSIS.statements().stream().noneMatch(s -> s.predicate().lemma().equals("stellen")),
+                "verboten: „stellen“ ohne Verbzusatz");
     }
 
     // ---- I: Listenkennung als Subjekt (Struktur + MaltParser) -------------------------------------------------------
 
     @Test
-    void causeI_listLabelAsSubject_pushesTheRealSubjectIntoTheObject() {
+    void causeI_listLabelWithParserEdgeIsEvidenceImplicitLabelOnlyAHeuristic() {
         Sentence sentence = sentence("Register:");
         assertEquals("nsubj", sentence.token(1).deprel(), "Zwischenstand: Kennung „Register:“ als Subjekt");
-        assertEquals("obj", sentence.token(3).deprel(), "das eigentliche Subjekt „Register“ als Objekt");
+        assertEquals("obj", sentence.token(3).deprel(), "die Wiederholung „Register“ als Objekt");
 
-        // IST: Kernrelation „Register → erweitern → Register“
-        assertTrue(relations().contains("erweitern AFFECTED_OBJECT Register"));
+        // Endergebnis: die Wiederholung ist kein Objekt mehr; Register → erweitern → Datenprodukte aus Parserkanten
+        assertFalse(relations().contains("erweitern AFFECTED_OBJECT Register"), "verboten: Register → erweitern → Register");
+        Statement extend = statement("erweitern", "Register:");
+        assertTrue(extend.has(Finding.LABEL_REPEATED));
+        assertEquals("Datenprodukte", text(extend.core(Role.AFFECTED_OBJECT)));
+
+        // Kennung mit Subjektkante des Parsers bleibt Parserevidenz (Entscheidung zum Nachtrag ADR 0024)
+        for (String prefix : List.of("Berechtigungsmanagement:", "Marktplatz:", "Register:")) {
+            Statement first = ANALYSIS.statements().stream()
+                    .filter(s -> s.sentence() == sentence(prefix).index()).findFirst().orElseThrow();
+            assertEquals(Basis.PARSER, first.core(Role.ACTOR).basis(), prefix);
+            assertTrue(first.core(Role.ACTOR).certain(), prefix);
+            assertFalse(first.has(Finding.SUBJECT_FROM_LABEL), prefix);
+        }
+        // Listeneintrag ohne Subjektkante: Kennung als impliziter, unsicherer Handelnder
+        Statement catalog = statement("bereitstellen", "Datenkatalog:");
+        assertEquals("Datenkatalog", text(catalog.core(Role.ACTOR)));
+        assertEquals(Basis.HEURISTIC, catalog.core(Role.ACTOR).basis());
+        assertFalse(catalog.core(Role.ACTOR).certain());
+        assertTrue(catalog.has(Finding.SUBJECT_FROM_LABEL));
+        assertEquals("Metadaten", text(catalog.core(Role.AFFECTED_OBJECT)));
     }
 
     // ---- Hilfen -----------------------------------------------------------------------------------------------------
