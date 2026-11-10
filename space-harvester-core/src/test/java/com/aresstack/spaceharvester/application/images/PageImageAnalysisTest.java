@@ -225,6 +225,26 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void describeOnceSendsOnlyThisPageOfAnUnreleasedSourceAndStoresNoRelease() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", PNG);
+        describer.released = false;
+        PageImageAnalysis analysis = analysis();
+
+        PageImages once = analysis.describeOnce(page("1", "Text"));
+
+        assertThat(once.state()).isEqualTo(PageImages.State.CURRENT);
+        assertThat(once.describedCount()).isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(1);
+        // Die Quelle bleibt gesperrt: die nächste Seite geht weiter nicht an das Modell.
+        assertThat(analysis.read(page("2", "Text")).reason()).isEqualTo(PageImages.SOURCE_NOT_RELEASED);
+        assertThatThrownBy(() -> analysis.describe(page("2", "Text")))
+                .isInstanceOfSatisfying(ImageDescriptionException.class,
+                        e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_RELEASED));
+        assertThat(describer.calls).isEqualTo(1);
+    }
+
+    @Test
     void diagramPreviewsAndSvgAreSkippedBecauseTheirTextualSourceCounts() {
         source.image("1", null, "ablauf.png", PNG);
         source.image("1", "att2", "skizze.svg", "<svg/>".getBytes(StandardCharsets.UTF_8));
