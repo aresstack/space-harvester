@@ -36,6 +36,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import java.util.Set;
 import java.util.function.BiFunction;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,7 +77,9 @@ class SynonymDiscoveryTest {
     private final Set<String> released = new HashSet<>(Set.of("wiki"));
     private final ResolutionCache resolutionCache = ResolutionCache.inMemory();
     private BiFunction<String, String, String> answers = (instructions, input) -> SYNONYM;
+    private static final SynonymBudget CHAT_BUDGET = SynonymBudget.DEFAULT.withMaxJudgedPairs(200);
     private boolean available = true;
+    private Optional<EmbeddingProvider> provider = Optional.empty();
     private TermRelations relations;
     private SynonymDiscovery discovery;
     private int pages;
@@ -146,8 +149,9 @@ class SynonymDiscoveryTest {
         return "{\"judgments\":[" + String.join(",", judgments) + "]}";
     }
 
+    /** Ein Lauf mit zugeschalteter Chat-Prüfung (Standardbudget ist 0 = aus). */
     private SynonymDiscovery.Outcome run(SynonymScope scope) {
-        return discovery.run(scope, SynonymBudget.DEFAULT, null);
+        return discovery.run(scope, CHAT_BUDGET, null);
     }
 
     @BeforeEach
@@ -158,7 +162,7 @@ class SynonymDiscoveryTest {
                 key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header), Clock.fixed(T0, ZoneOffset.UTC));
         SynonymCandidates candidates = new SynonymCandidates(catalog, store,
                 key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
-                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), relations, Optional::empty,
+                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), relations, () -> provider,
                 released::contains, new TermProcessor().version());
         discovery = new SynonymDiscovery(catalog, candidates, guard, relations, model, resolutionCache, jobs,
                 () -> SynonymBudget.DEFAULT, Clock.fixed(T0, ZoneOffset.UTC));
@@ -184,6 +188,73 @@ class SynonymDiscoveryTest {
         assertThat(variant.evidence()).isNotEmpty();
         assertThat(variant.createdBy()).isEqualTo(SynonymDiscovery.ACTOR_RULE);
         assertThat(automatic(RelationOrigin.AI, null)).isEmpty();
+    }
+
+    /**
+     * Angelo (2026-11-10): nur das Embedding-Modell. Ähnliche Vektoren werden ohne Chat-Modell direkt ein Vorschlag;
+     * ein Chat-Modell wird nicht gefragt, solange das Budget 0 ist.
+     */
+    @Test
+    void similarVectorsBecomeSynonymProposalsWithoutAnyChatModel() {
+        available = false;
+        provider = Optional.of(vectorsByWord(Map.of("auto", 0, "kfz", 0, "wagen", 0, "meldung", 1, "antrag", 2)));
+        cached("wiki", "DEV", "Das Auto steht in der Garage. Das Auto ist neu.");
+        cached("wiki", "DEV", "Das Kfz wird zugelassen. Jedes Kfz braucht ein Kennzeichen.");
+        cached("wiki", "DEV", "Die Meldung kommt täglich. Die Meldung wird geprüft. Der Antrag liegt vor.");
+
+        SynonymDiscovery.Outcome outcome = discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null);
+
+        assertThat(inputs).isEmpty();
+        assertThat(outcome.embeddingUsed()).isTrue();
+        assertThat(outcome.ai()).isNotNull();
+        List<TermRelation> proposals = automatic(RelationOrigin.AI, RelationType.SYNONYM);
+        assertThat(proposals).hasSize(1);
+        TermRelation pair = proposals.get(0);
+        assertThat(Set.of(pair.fromTerm(), pair.toTerm())).containsExactlyInAnyOrder("Auto", "Kfz");
+        assertThat(pair.status()).isEqualTo(ReviewStatus.PROPOSED);
+        assertThat(pair.createdBy()).isEqualTo(SynonymDiscovery.ACTOR_AI);
+        assertThat(pair.evidence()).isNotEmpty();
+
+        // Mit Chat-Modell, aber Budget 0 (Standard) bleibt es dabei: nichts geht an den Chat.
+        available = true;
+        assertThat(discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT, null).ai()).isNotNull();
+        assertThat(inputs).isEmpty();
+        assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).hasSize(1);
+
+        // Zuschaltbar: mit Budget fragt der Lauf das Chat-Modell und folgt dessen Urteil.
+        answers = (instructions, input) -> "{\"judgments\":[{\"pair\":1,\"relation\":\"different\",\"a\":[1],\"b\":[1]}]}";
+        discovery.run(SynonymScope.source("wiki"), SynonymBudget.DEFAULT.withMaxJudgedPairs(10), null);
+        assertThat(inputs).hasSize(1);
+        assertThat(automatic(RelationOrigin.AI, RelationType.SYNONYM)).isEmpty();
+    }
+
+    /** Vektoren je Wort: Begriffe derselben Gruppe liegen aufeinander, jedes andere Wort steht senkrecht dazu. */
+    private static EmbeddingProvider vectorsByWord(Map<String, Integer> groups) {
+        Map<String, Integer> axes = new HashMap<>(groups);
+        return new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return "fake-embeddings@1";
+            }
+
+            @Override
+            public int dimensions() {
+                return 64;
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                List<float[]> vectors = new ArrayList<>();
+                for (String text : texts) {
+                    String word = text.substring(0, text.indexOf(':')).toLowerCase(java.util.Locale.ROOT);
+                    int axis = axes.computeIfAbsent(word, w -> Math.min(63, 8 + axes.size()));
+                    float[] vector = new float[64];
+                    vector[axis] = 1f;
+                    vectors.add(vector);
+                }
+                return vectors;
+            }
+        };
     }
 
     @Test

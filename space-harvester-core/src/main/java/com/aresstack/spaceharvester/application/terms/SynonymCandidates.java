@@ -47,8 +47,8 @@ import java.util.regex.Pattern;
  * Stufe B, nur mit Embedding-Modell und nur für Begriffe mit Fundstellen aus freigegebenen Quellen: Je Begriff geht
  * ein kurzer Kontext (Begriff und Fundstellen) an das Modell; ähnliche Kontexte werden Kandidaten. Kein paarweiser
  * Vollvergleich: Zufallshyperebenen (LSH) sortieren die Vektoren in Eimer, verglichen wird nur innerhalb eines Eimers,
- * je Begriff bleiben die {@value #NEIGHBOURS} ähnlichsten. Ähnlichkeit allein bestätigt nie etwas; sie macht nur
- * einen Kandidaten für die KI-Prüfung.
+ * je Begriff bleiben die {@value #NEIGHBOURS} ähnlichsten. Ein solches Paar wird ohne Chat-Prüfung direkt ein
+ * Synonymvorschlag (Angelo: nur das Embedding-Modell); die Chat-Prüfung (Stufe C) ist zuschaltbar.
  *
  * <p>Budget ({@link SynonymBudget}): höchstens {@code maxTerms} Begriffe, die mit den meisten Seiten zuerst, je
  * Begriff höchstens {@value #MAX_CONTEXTS} Fundstellen von verschiedenen Seiten; höchstens {@code maxEmbeddedTerms}
@@ -134,6 +134,15 @@ public class SynonymCandidates {
 
         public Collected {
             candidates = List.copyOf(candidates);
+        }
+    }
+
+    /** Ob ein Embedding-Modell eingestellt ist (Stufe B); ohne bleiben nur die Regeln. */
+    public boolean embeddingAvailable() {
+        try {
+            return embeddings.get().isPresent();
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

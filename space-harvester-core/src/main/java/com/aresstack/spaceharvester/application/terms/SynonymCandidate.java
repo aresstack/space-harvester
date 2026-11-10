@@ -37,7 +37,10 @@ public record SynonymCandidate(String fromTerm, String toTerm, Reason reason, Li
         ACRONYM_SIBLINGS(null),
         /** In einem anderen Geltungsbereich bestätigt; hier kommen beide Begriffe ebenfalls vor. */
         CONFIRMED_ELSEWHERE(null),
-        /** Ähnliche Kontexte nach dem Embedding-Modell; allein nie ein Beleg. */
+        /**
+         * Ähnliche Vektoren nach dem Embedding-Modell; ohne Chat-Prüfung direkt ein Synonymvorschlag mit der
+         * Ähnlichkeit als Grund, mit Chat-Prüfung erst nach deren Urteil.
+         */
         EMBEDDING(null);
 
         private final RelationType ruleType;
