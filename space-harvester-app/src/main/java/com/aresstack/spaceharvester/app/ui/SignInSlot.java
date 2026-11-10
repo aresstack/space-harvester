@@ -245,12 +245,32 @@ public final class SignInSlot extends JPanel {
             codeField.requestFocusInWindow();
             return;
         }
+        String username = request.asksForLogin() ? usernameField.getText().trim() : null;
+        char[] password = request.asksForLogin() ? passwordField.getPassword() : null;
+        if (request.asksForLogin() && (username.isEmpty() || password.length == 0)) {
+            Arrays.fill(code, '\0');
+            Arrays.fill(password, '\0');
+            localError = LOGIN_REQUIRED;
+            error.setText(localError);
+            error.setVisible(true);
+            (username.isEmpty() ? usernameField : passwordField).requestFocusInWindow();
+            return;
+        }
         codeField.setText("");
+        passwordField.setText("");
         setSending(true);
-        // Der Core überschreibt das übergebene Feld nach dem Senden.
-        Background.run(() -> requests.submit(request.id(), code), answer -> {
+        // Clear secrets after the background call, including exceptional completion.
+        Background.run(() -> {
+            try {
+                return requests.submit(request.id(), code, username, password);
+            } finally {
+                Arrays.fill(code, '\0');
+                if (password != null) {
+                    Arrays.fill(password, '\0');
+                }
+            }
+        }, answer -> {
             setSending(false);
-            // Abgelehnt nennt die Quelle den Grund selbst (error der Anforderung).
             localError = answer == SignInRequest.Answer.FAILED ? SEND_FAILED : null;
             refresh();
             if (answer == SignInRequest.Answer.ACCEPTED) {
@@ -258,6 +278,9 @@ public final class SignInSlot extends JPanel {
             }
         }, failure -> {
             Arrays.fill(code, '\0');
+            if (password != null) {
+                Arrays.fill(password, '\0');
+            }
             setSending(false);
             localError = SEND_FAILED;
             refresh();
