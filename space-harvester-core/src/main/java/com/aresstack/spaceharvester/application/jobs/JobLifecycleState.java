@@ -15,6 +15,13 @@ import java.util.Objects;
  */
 public sealed interface JobLifecycleState {
 
+    /** Fehlercode eines Abgleichs mit bestätigter Generation, aber nicht geladenen Seiten. */
+    String SYNC_PARTIAL = "SYNC_PARTIAL";
+    /** Angabe der Betriebsart eines Abgleichs in {@link JobStatus#parameters()}. */
+    String SYNC_MODE = "mode";
+    /** Betriebsart „nur katalogisieren“ eines Abgleichs. */
+    String CATALOG_ONLY = "CATALOG_ONLY";
+
     /** Stabiler Schlüssel des Zustands, etwa für Texte und REST, z. B. {@code WAITING}. */
     String key();
 
@@ -30,15 +37,21 @@ public sealed interface JobLifecycleState {
     static JobLifecycleState of(JobStatus status) {
         Objects.requireNonNull(status, "status");
         boolean resumable = status.type().resumable();
-        // Nur Downloads laden gezielt nach oder erzwingen einen neuen Stand (ADR 0025).
+        // Downloads und Abgleiche laden gezielt nach oder erzwingen einen neuen Stand (ADR 0025); ein reiner
+        // Katalogabgleich lädt keine Inhalte und hat nichts zu erzwingen.
         boolean download = status.type() == JobType.EXPORT;
+        boolean sync = status.type() == JobType.SYNC;
+        boolean forceable = download || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
             case PAUSED -> new Paused(status.pauseReason());
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download) : new Completed(download);
-            case FAILED, CANCELLED -> new Stopped(status.state(), resumable, download);
+                    ? new CompletedWithErrors(download) : new Completed(forceable);
+            // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
+            case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
+                    ? new CompletedWithErrors(true) : new Stopped(status.state(), resumable, forceable);
+            case CANCELLED -> new Stopped(status.state(), resumable, forceable);
         };
     }
 
@@ -101,7 +114,7 @@ public sealed interface JobLifecycleState {
     }
 
     /**
-     * Fertig, und nichts fehlt. Ein Download bietet „Neu erzwingen“ an ({@link JobAction#FORCE_REFRESH}).
+     * Fertig, und nichts fehlt. Downloads und Abgleiche bieten „Neu erzwingen“ an ({@link JobAction#FORCE_REFRESH}).
      *
      * @param forceable ob die Art einen neuen Stand erzwingen kann
      */
@@ -123,8 +136,9 @@ public sealed interface JobLifecycleState {
     }
 
     /**
-     * Technisch fertig, aber Seiten oder Bilder fehlen. Ein Download bietet „Nur Fehler neu versuchen“ und „Neu
-     * erzwingen“ an ({@link JobAction#RETRY_FAILED}, {@link JobAction#FORCE_REFRESH}).
+     * Technisch fertig, aber Seiten oder Bilder fehlen. Downloads und Abgleiche bieten „Nur Fehler neu versuchen“ und
+     * „Neu erzwingen“ an ({@link JobAction#RETRY_FAILED}, {@link JobAction#FORCE_REFRESH}). Bei einem Abgleich ist das
+     * der Fehlschlag {@link #SYNC_PARTIAL}: Die Generation ist bestätigt, nur einzelne Seiten fehlen.
      *
      * @param retryable ob die Art gescheiterte Seiten gezielt nachladen und einen neuen Stand erzwingen kann
      */
@@ -147,7 +161,7 @@ public sealed interface JobLifecycleState {
     }
 
     /**
-     * Gescheitert oder abgebrochen. Ein Download bietet neben Fortsetzen auch „Neu erzwingen“ an.
+     * Gescheitert oder abgebrochen. Downloads und Abgleiche bieten neben Fortsetzen auch „Neu erzwingen“ an.
      *
      * @param forceable ob die Art einen neuen Stand erzwingen kann
      */

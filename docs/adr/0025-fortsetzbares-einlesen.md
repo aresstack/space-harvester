@@ -106,7 +106,17 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     Ein Abbruch verwirft das Vorgemerkte, Bestand und Artefakt bleiben. Das neue Artefakt ersetzt das bisherige erst
     nach Erfolg (`ExportArtifactWriter#replace`), Bilder und Anhänge laufen danach in ihren Einträgen erneut; solange
     sie noch laufen, lehnt ⟲ ab. Ein Teilbaum-Export lädt nur seinen Teilbaum neu. In der App steht ⟲ als eigener
-    Knopf neben ↻; ↻ lädt bei Downloads nur noch gescheiterte Seiten nach. Abgleiche folgen in einem eigenen Schritt.
+    Knopf neben ↻; ↻ lädt bei Downloads nur noch gescheiterte Seiten nach.
+
+15. **↻ und ⟲ für Abgleiche.** Ein Abgleich, der seine Generation bestätigt, aber Seiten nicht geladen hat
+    (`SYNC_PARTIAL`), ist `COMPLETED_WITH_ERRORS` und bietet `RETRY_FAILED`, `FORCE_REFRESH` und `DELETE` an.
+    `SpaceSyncJobs#retryFailed` lädt im selben Eintrag genau die Seiten nach, die der letzte Lauf nicht laden oder
+    prüfen konnte (nach einem Neustart: die veralteten der bestätigten Generation, bei einem vollständigen Abgleich
+    auch die fehlenden), über `FailedPageRetry`, ohne Inventur; scheitern wieder welche, bleibt er `SYNC_PARTIAL`.
+    `SpaceSyncJobs#forceRefresh` inventarisiert im selben Eintrag in seiner Betriebsart neu und lädt mit
+    `SyncPlan#withContentReloaded` auch unveränderte Seiten neu; die bisherige Generation gilt, bis der Lauf
+    bestätigt. Fertige, gescheiterte und abgebrochene Abgleiche bieten ⟲ an, ein reiner Katalogabgleich
+    (`CATALOG_ONLY`) nicht. Ein Abgleich, der keine Generation bestätigt hat, setzt wie bisher fort (▶).
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

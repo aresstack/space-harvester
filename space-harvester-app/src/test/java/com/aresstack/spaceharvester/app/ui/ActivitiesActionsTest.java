@@ -44,7 +44,7 @@ class ActivitiesActionsTest {
         assertThat(withFailures().lifecycle().actions())
                 .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(job(JobType.SYNC, JobState.COMPLETED, false).lifecycle().actions())
-                .containsExactly(JobAction.DELETE);
+                .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
         // Kein Zustand bietet mehr Aktionen an, als die Spalte breit ist.
         for (JobType type : JobType.values()) {
             for (JobState state : JobState.values()) {

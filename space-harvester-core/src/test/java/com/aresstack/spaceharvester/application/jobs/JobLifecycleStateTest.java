@@ -47,7 +47,8 @@ class JobLifecycleStateTest {
                 .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.EXPORT, JobState.COMPLETED, 1, false))
                 .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
-        assertThat(actions(JobType.SYNC, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
+        assertThat(actions(JobType.SYNC, JobState.COMPLETED, 0, false))
+                .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 1, false)).containsExactly(JobAction.DELETE);
         assertThat(status(JobType.EXPORT, JobState.COMPLETED, 1, false, false, false).lifecycle().key())
                 .isEqualTo("COMPLETED_WITH_ERRORS");
@@ -60,9 +61,30 @@ class JobLifecycleStateTest {
         assertThat(actions(JobType.EXPORT, JobState.FAILED, 0, false))
                 .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.SYNC, JobState.CANCELLED, 0, false))
-                .containsExactly(JobAction.RESUME, JobAction.DELETE);
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.ENRICHMENT, JobState.FAILED, 0, false)).containsExactly(JobAction.DELETE);
         assertThat(actions(JobType.ENRICHMENT, JobState.RUNNING, 0, false)).containsExactly(JobAction.CANCEL);
+    }
+
+    @Test
+    void aSyncThatConfirmedButMissedPagesIsFinishedWithErrors() {
+        JobStatus partial = new JobStatus("j", JobType.SYNC, "confluence", "DEV", "client-a", JobState.FAILED,
+                new JobProgress(3, 3, 2, 1), new JobError(JobLifecycleState.SYNC_PARTIAL, "1 Seite fehlt"), false, T0,
+                null, null, null, null, Map.of(), false, false, null);
+        assertThat(partial.lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+        assertThat(partial.lifecycle().actions())
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        // Ein Abgleich ohne bestätigte Generation setzt fort, wie bisher.
+        assertThat(actions(JobType.SYNC, JobState.FAILED, 0, false))
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
+    }
+
+    @Test
+    void aCatalogOnlySyncHasNothingToForce() {
+        JobStatus catalog = new JobStatus("j", JobType.SYNC, "confluence", "DEV", null, JobState.COMPLETED,
+                new JobProgress(3, 3, 3, 0), null, false, T0, null, null, null, null,
+                Map.of(JobLifecycleState.SYNC_MODE, JobLifecycleState.CATALOG_ONLY), false, false, null);
+        assertThat(catalog.lifecycle().actions()).containsExactly(JobAction.DELETE);
     }
 
     @Test
