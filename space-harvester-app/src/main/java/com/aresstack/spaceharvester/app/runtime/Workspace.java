@@ -87,12 +87,14 @@ public final class Workspace {
     private final Harvester harvester;
     private final AccessGuard access;
     private final AccessContext caller;
+    private final GlossaryAccess glossary;
     private final ActivityLog activities;
 
     public Workspace(Harvester harvester, AccessGuard access, ActivityLog activities) {
         this.harvester = Objects.requireNonNull(harvester, "harvester");
         this.access = access;
         this.caller = harvester.caller();
+        this.glossary = new CoreGlossaryAccess(harvester, caller);
         this.activities = Objects.requireNonNull(activities, "activities");
     }
 
@@ -236,6 +238,15 @@ public final class Workspace {
      */
     public TermRelations.ProposalRun proposeAcronymRelations(String sourceId) {
         return harvester.acronymRelationRule().run(caller, sourceId);
+    }
+
+    /**
+     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Begriffe) des Core mit den Rechten dieser App
+     * ({@code Harvester.glossary()}, {@code glossaryClassification()}); die Rückgabe bleibt {@code Optional}, damit der
+     * Reiter ohne Unterbau „noch nicht verfügbar“ zeigen kann.
+     */
+    public Optional<GlossaryAccess> glossary() {
+        return Optional.of(glossary);
     }
 
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
