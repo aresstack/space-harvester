@@ -82,12 +82,14 @@ public final class SourceDataStores {
     }
 
     /** Begriffsbeziehungen der Quelle und ihre Belege, dazu der Ergebnis-Cache der KI-Akronymauflösung. */
-    public SourceDataStores termRelations(TermRelations relations, FileResolutionCache resolutions) {
+    public SourceDataStores termRelations(TermRelations relations, FileResolutionCache... resolutions) {
         Objects.requireNonNull(relations, "relations");
         return add("Begriffsbeziehungen", sourceId -> {
             relations.removeSource(sourceId, ACTOR);
-            if (resolutions != null) {
-                resolutions.removeSource(sourceId);
+            for (FileResolutionCache cache : resolutions) {
+                if (cache != null) {
+                    cache.removeSource(sourceId);
+                }
             }
         });
     }

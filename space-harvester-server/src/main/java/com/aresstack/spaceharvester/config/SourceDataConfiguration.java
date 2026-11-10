@@ -50,7 +50,8 @@ class SourceDataConfiguration {
         if (assets.getIfAvailable() instanceof FileSystemAssetStore files && writer != null) {
             stores.assets(files, writer, clock);
         }
-        relations.ifAvailable(found -> stores.termRelations(found, resolutions.getIfAvailable()));
+        relations.ifAvailable(found -> stores.termRelations(found,
+                resolutions.stream().toArray(FileResolutionCache[]::new)));
         facts.ifAvailable(found -> stores.factEdits(found, clock));
         if (inventory.getIfAvailable() instanceof FileInventoryLog log) {
             stores.inventoryLog(log);

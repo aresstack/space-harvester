@@ -17,6 +17,10 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.AcronymResolution;
+import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.terms.SynonymJudgmentModel;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -32,6 +36,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -74,7 +79,8 @@ class TermConfiguration {
 
     @Bean
     AcronymResolution acronymResolution(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
-                                        TermRelations relations, Jobs jobs, FileResolutionCache resolutions,
+                                        TermRelations relations, Jobs jobs,
+                                        @Qualifier("acronymResolutionCache") FileResolutionCache resolutions,
                                         ObjectProvider<AcronymExpansionModel> model,
                                         ObjectProvider<SnapshotRepository> repository,
                                         ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
@@ -88,6 +94,41 @@ class TermConfiguration {
                 model.getIfAvailable(() -> AcronymExpansionModel.NONE), resolutions, jobs,
                 termsVersion(sentences),
                 Clock.systemUTC());
+    }
+
+    /** Ergebnis-Cache der Synonymerkennung (#336) neben dem der Akronymauflösung; „Daten bereinigen“ leert ihn. */
+    @Bean
+    FileResolutionCache synonymResolutionCache(
+            @Value("${space-harvester.term-relations.directory:data/term-relations}") Path directory) {
+        return new FileResolutionCache(directory.resolve("synonyms"));
+    }
+
+    /**
+     * Synonymerkennung auf Knopfdruck (#336): {@code POST /api/v1/term-relations/refresh} mit {@code kind=synonyms}.
+     * Embedding-Modell und Chat-Modell folgen der wirksamen Konfiguration; Text geht nur aus freigegebenen Quellen an
+     * den Dienst; das Budget kommt aus {@code space-harvester.terms.synonyms.*}.
+     */
+    @Bean
+    SynonymDiscovery synonymDiscovery(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
+                                      TermRelations relations, Jobs jobs,
+                                      @Qualifier("synonymResolutionCache") FileResolutionCache resolutions,
+                                      ObjectProvider<SynonymJudgmentModel> model,
+                                      ObjectProvider<EmbeddingProcessor> embeddings, LiveConfiguration live,
+                                      ObjectProvider<SnapshotRepository> repository,
+                                      ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
+        TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
+        SnapshotRepository snapshots = repository.getIfAvailable();
+        PageCacheReader cache = reader.getIfAvailable();
+        Function<PageKey, Optional<PageSnapshot>> payloads = payloads(snapshots, cache);
+        PageTextProjector projector = projector();
+        SynonymJudgmentModel judge = model.getIfAvailable(() -> SynonymJudgmentModel.NONE);
+        EmbeddingProcessor processor = embeddings.getIfAvailable();
+        SynonymCandidates candidates = new SynonymCandidates(catalog, index, headers(snapshots, cache),
+                key -> payloads.apply(key).flatMap(projector::project), relations,
+                () -> processor == null ? Optional.empty() : processor.currentProvider(), judge::mayProcess,
+                termsVersion(sentences));
+        return new SynonymDiscovery(catalog, candidates, access, relations, judge, resolutions, jobs,
+                () -> live.current().terms().synonyms(), Clock.systemUTC());
     }
 
     private static Function<PageKey, Optional<PageSnapshot>> payloads(SnapshotRepository snapshots,

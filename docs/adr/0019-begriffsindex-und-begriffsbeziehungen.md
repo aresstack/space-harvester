@@ -121,6 +121,38 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
      kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
      macht alte Einträge damit wirkungslos.
+9. Synonymerkennung (#336) auf Knopfdruck, `Harvester.synonymDiscovery()` → `SynonymDiscovery`, REST
+   `POST /api/v1/term-relations/refresh` mit `kind=synonyms` (`sourceId=*` alle Quellen, sonst die Quelle, mit
+   `spaceKey` der Space; `maxJudgedPairs` je Lauf), in der App der Knopf „Synonyme vorschlagen“ im
+   Synonym-Reiter. Nie beim Start, Abgleich, Suchen oder Öffnen einer Seite.
+   - Drei Stufen, alle begrenzt (`SynonymBudget`, Schlüssel `space-harvester.terms.synonyms.max-terms`,
+     `max-embedded-terms`, `max-judged-pairs`, in Dienst und App dieselben; Laufzeit begrenzt `jobs.max-runtime`):
+     A `SynonymCandidates` sammelt deterministisch aus dem Begriffsindex Kandidatenpaare (Schreibvarianten über
+     Faltung ä→ae, ß→ss, Bindestriche, Groß/Klein → `VARIANT`; Textmuster „X, auch Y genannt“, „X (auch: Y)“ →
+     `SYNONYM`; Begriffe mit derselben bestätigten Ausschreibung oder derselben bestätigten Synonymbeziehung in einem
+     anderen Umfang → nur Kandidat). B optional, nur mit Embedding-Modell und nur für Fundstellen freigegebener
+     Quellen: die häufigsten Begriffe (`max-embedded-terms`) werden mit je einem Kontext eingebettet und per
+     Zufallshyperebenen-LSH in Eimer sortiert; verglichen wird nur innerhalb eines Eimers (höchstens 200), keine
+     vollständige paarweise Prüfung; ab Kosinus 0,80, höchstens drei Nachbarn. C Bedeutungsprüfung: je Paar kurze
+     Fundstellen (höchstens vier je Begriff, 120 Zeichen, nur freigegebene Quellen) an das Chat-Modell
+     (`SynonymJudgmentModel`, `ChatSynonymJudgmentModel` über `RemoteAi.termCompletions()`), Urteil `synonym`,
+     `variant`, `related`, `abbreviation`, `different`, `unclear` als JSON mit den Nummern der Belege. Die Antwort ist
+     nicht vertrauenswürdig: nur gefragte Paare zählen, nur bekannte Urteile, Belege müssen auf beiden Seiten genannt
+     sein; `abbreviation` gehört der Akronymauflösung und wird verworfen, `different`/`unclear` ergeben nichts.
+     Regelkandidaten mit festem Typ (A) werden ohne Modell als `rule`/`proposed` abgeglichen; ohne Chat-Modell endet
+     der Lauf nach Stufe A, die Statuszeile sagt es.
+   - Abgleich je Erzeuger: `propose` bekommt seit #336 die Menge der Beziehungsarten, die der Erzeuger liefert, und
+     zieht nur Vorschläge gleicher Herkunft, gleichen Umfangs und dieser Arten zurück. Ein Synonymlauf (`ai`,
+     {`SYNONYM`, `VARIANT`, `RELATED`}) ändert damit nie Akronymvorschläge (`ai`, {`ABBREVIATION`}), manuelle
+     Beziehungen oder Entscheidungen; eine bestätigte oder abgelehnte Beziehung desselben Schlüssels wird nicht erneut
+     vorgeschlagen und nicht gefragt. Keine transitive Bildung: jede Beziehung hat eine eigene Fundstelle, Umfänge
+     (global, Quelle, Space) bleiben getrennt.
+   - Cache `term-relations/synonyms/ai-cache.json` wie bei der Akronymauflösung: je Paar ein SHA-256 über Verfahren,
+     Umfang, Modellversion, Begriffe und Fundstellen; ein unveränderter Stand geht nicht noch einmal an das Modell,
+     eine unlesbare Antwort wird nicht gemerkt. Scheitert das Modell oder bricht der Auftrag ab, bleibt der Stand des
+     letzten Laufs. Ins Log kommen nur Umfang, Anzahlen und Ausnahmeklassen.
+   - Suche (#336, Teil 4): nur bestätigte `SYNONYM`, `VARIANT`, `ABBREVIATION` erweitern die Suche, je Umfang, nie
+     `RELATED`, nie Vorschläge, nicht transitiv (`TermRelations.expansions`).
 
 ## Grenzen
 

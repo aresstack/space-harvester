@@ -3,7 +3,9 @@ package com.aresstack.spaceharvester.application.terms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -271,12 +273,21 @@ public class SynonymCandidates {
             }
         }
 
-        /** Die Begriffe mit den meisten Seiten zuerst, bis zum Budget. */
+        /**
+         * Die Begriffe mit den meisten Seiten zuerst, bis zum Budget; alle anderen kennt der Lauf danach nicht mehr,
+         * damit auch Formulierungen, Akronym-Geschwister und anderswo Bestätigtes nur gewählte Begriffe paaren.
+         */
         List<Term> select() {
             List<Term> ranked = new ArrayList<>(terms.values());
             ranked.sort(Comparator.comparingInt((Term term) -> -term.pages).thenComparing(term -> term.normalized));
-            return ranked.size() > budget.maxTerms() ? new ArrayList<>(ranked.subList(0, budget.maxTerms()))
-                    : ranked;
+            if (ranked.size() <= budget.maxTerms()) {
+                return ranked;
+            }
+            List<Term> selected = new ArrayList<>(ranked.subList(0, budget.maxTerms()));
+            Set<String> keep = new HashSet<>();
+            selected.forEach(term -> keep.add(term.normalized));
+            terms.keySet().retainAll(keep);
+            return selected;
         }
 
         void spelling(List<Term> selected) {
@@ -581,6 +592,9 @@ public class SynonymCandidates {
                         embeddable.get(from + i).vector = EmbeddingIndex.normalized(vector);
                     }
                 }
+            } catch (JobCancelledException | JobFailedException e) {
+                // Abbruch oder Frist des Auftrags: kein Dienstfehler, der Lauf endet.
+                throw e;
             } catch (RuntimeException e) {
                 // Nur der Typ ins Log; die übrigen Stufen bleiben nutzbar.
                 LOG.log(System.Logger.Level.WARNING, "Semantische Vorauswahl der Synonyme übersprungen ({0})",

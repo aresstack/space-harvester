@@ -5,6 +5,8 @@ import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.configuration.TermSettings;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -213,7 +215,26 @@ public final class AppSettingsLoader {
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
-                inactiveRoots(get(app, "inactive-roots"), problems));
+                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems));
+    }
+
+    /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
+    private TermSettings terms(Map<?, ?> terms, List<String> problems) {
+        Map<?, ?> synonyms = map(get(terms, "synonyms"));
+        String prefix = SynonymBudget.PREFIX;
+        SynonymBudget fallback = SynonymBudget.DEFAULT;
+        int maxTerms = integer(get(synonyms, SynonymBudget.MAX_TERMS), fallback.maxTerms(),
+                prefix + SynonymBudget.MAX_TERMS, problems);
+        int maxEmbedded = integer(get(synonyms, SynonymBudget.MAX_EMBEDDED_TERMS), fallback.maxEmbeddedTerms(),
+                prefix + SynonymBudget.MAX_EMBEDDED_TERMS, problems);
+        int maxJudged = integer(get(synonyms, SynonymBudget.MAX_JUDGED_PAIRS), fallback.maxJudgedPairs(),
+                prefix + SynonymBudget.MAX_JUDGED_PAIRS, problems);
+        try {
+            return new TermSettings(new SynonymBudget(maxTerms, maxEmbedded, maxJudged));
+        } catch (IllegalArgumentException e) {
+            problems.add(prefix + "*: " + e.getMessage());
+            return TermSettings.DEFAULT;
+        }
     }
 
     /**

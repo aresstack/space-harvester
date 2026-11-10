@@ -193,6 +193,17 @@ public final class RemoteAi {
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
      */
     public BinaryOperator<String> acronymExpansions() {
+        return termCompletions();
+    }
+
+    /**
+     * Dasselbe Chat-Modell für die Bedeutungsprüfung der Synonymerkennung (#336): Anweisung und JSON-Eingabe hinein,
+     * der Text der Antwort heraus; geprüft wird die Antwort in {@code SynonymDiscovery}. Frist und Obergrenze wie
+     * {@link #acronymExpansions()}.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public BinaryOperator<String> termCompletions() {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }

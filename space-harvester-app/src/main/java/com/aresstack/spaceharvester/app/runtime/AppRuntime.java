@@ -231,7 +231,8 @@ public final class AppRuntime implements AutoCloseable {
 
     /**
      * Die Laufzeitkonfiguration aus der Datei der App (ADR 0015): KI-Dienst mit dem Key der Sitzung, Aktualität,
-     * Synchronisierung samt Regeln je Quelle, Freigaben an den KI-Dienst und freigegebene Ordner. Proxy und TLS übergibt die App typisiert
+     * Synchronisierung samt Regeln je Quelle, Freigaben an den KI-Dienst, freigegebene Ordner und das Budget der
+     * Synonymerkennung. Proxy und TLS übergibt die App typisiert
      * beim Bauen; ein anderer Datenordner wirkt erst nach einem Neustart.
      */
     static HarvesterConfiguration configuration(AppSettings settings, SessionSecrets secrets, String version) {
@@ -243,7 +244,7 @@ public final class AppRuntime implements AutoCloseable {
                 new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
                 NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
-                .withLocalFiles(settings.localFiles());
+                .withLocalFiles(settings.localFiles()).withTerms(settings.terms());
     }
 
     /**
