@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -862,6 +863,9 @@ public final class ActivitiesView implements View {
 
     private static final javax.swing.Icon RETRY = ComposerIcons.refresh();
     static final String RETRY_TIP = "Erneut versuchen";
+    /** Tooltip des Pfeils im Kreis bei einem mit Fehlern fertigen Download (ADR 0025). */
+    static final String RETRY_FAILED_TIP = "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
+            + "ohne neue Inventur, im selben Eintrag";
     private static final javax.swing.Icon PAUSE = ComposerIcons.pause();
     private static final javax.swing.Icon RESUME = ComposerIcons.play();
     static final String PAUSE_TIP = "Anhalten";
@@ -972,6 +976,9 @@ public final class ActivitiesView implements View {
         if (blocked != null) {
             return RETRY_TIP + " · " + blocked;
         }
+        if (job.lifecycle().allows(JobAction.RETRY_FAILED)) {
+            return RETRY_FAILED_TIP;
+        }
         int signIn = dataset == null ? 0 : dataset.media().signInRequired();
         if (signIn > 0) {
             return RETRY_TIP + " · " + Texts.count(signIn, "Datei fehlt", "Dateien fehlen")
@@ -982,14 +989,25 @@ public final class ActivitiesView implements View {
     }
 
     /**
-     * Startet denselben Auftrag noch einmal (Pfeil im Kreis in der Zeile): einen Download mit Quelle, Space und
-     * Startseite wie zuvor als neuen Export-Auftrag, einen Abgleich mit Quelle und Space. Verlangt die Quelle wieder
-     * einen Einmalcode, erscheint die Abfrage wie beim ersten Mal über die Anforderungen.
+     * Pfeil im Kreis in der Zeile: Ein mit Fehlern fertiger Download lädt nur die gescheiterten Seiten nach, ein
+     * gescheiterter oder abgebrochener setzt fort, beides im selben Eintrag (ADR 0025). Sonst startet er denselben
+     * Auftrag noch einmal: einen Download mit Quelle, Space und Startseite wie zuvor, einen Abgleich mit Quelle und
+     * Space. Verlangt die Quelle wieder einen Einmalcode, erscheint die Abfrage wie beim ersten Mal über die
+     * Anforderungen.
      */
     void retry(JobStatus job) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || retryBlocked(job) != null) {
             return;
+        }
+        if (job.type() == JobType.EXPORT) {
+            for (JobAction action : List.of(JobAction.RETRY_FAILED, JobAction.RESUME)) {
+                if (job.lifecycle().allows(action)) {
+                    Background.run(() -> runtime.workspace().performJobAction(job.id(), action),
+                            started -> show(started.id()), feedback::problem);
+                    return;
+                }
+            }
         }
         Background.run(() -> job.type() == JobType.SYNC
                         ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())

@@ -117,6 +117,40 @@ public interface SpaceProvisioning {
     }
 
     /**
+     * „Nur Fehler neu versuchen“ (ADR 0025): lädt genau diese Seiten nach, ohne Inventur, auf der bestätigten
+     * Generation des Space, und bestätigt danach die nächste Generation. Jede Seite wird einzeln nachgefragt; was
+     * {@code allowed} nach den frischen Kopfdaten nicht zulässt (nicht lesbar, außerhalb des Umfangs), fällt still weg,
+     * ebenso Seiten, die die Quelle nicht mehr führt. Standard: nicht möglich.
+     *
+     * @return {@link Retried#UNAVAILABLE}, wenn es keine bestätigte Generation gibt oder die Umsetzung es nicht kann;
+     *         dann liest der Aufrufer wie gewohnt ein
+     * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException wenn die Quelle nicht konfiguriert
+     *                                                                                 ist
+     */
+    default Retried retry(JobContext context, String sourceId, String spaceKey, java.util.Set<String> pageIds,
+                          Predicate<PageHeader> allowed) {
+        return Retried.UNAVAILABLE;
+    }
+
+    /**
+     * Ergebnis von {@link #retry}.
+     *
+     * @param done        ob nachgeladen wurde
+     * @param failedPages frische Kopfdaten der zulässigen Seiten, deren Abruf wieder scheiterte
+     * @param unchecked   Seiten, deren Kopfdaten die Quelle nicht lieferte (Verbindung, Drosselung, Fehler); sie
+     *                    bleiben, wie sie waren, und gelten weiter als gescheitert
+     */
+    record Retried(boolean done, List<PageHeader> failedPages, java.util.Set<String> unchecked) {
+
+        public static final Retried UNAVAILABLE = new Retried(false, List.of(), java.util.Set.of());
+
+        public Retried {
+            failedPages = List.copyOf(failedPages);
+            unchecked = java.util.Set.copyOf(unchecked);
+        }
+    }
+
+    /**
      * Ergebnis des Einlesens.
      *
      * @param confirmed     eine Generation ist bestätigt (eigene oder die eines gleichzeitigen Abgleichs)

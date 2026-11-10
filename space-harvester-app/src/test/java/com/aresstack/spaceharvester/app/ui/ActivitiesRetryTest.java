@@ -47,6 +47,16 @@ class ActivitiesRetryTest {
                 .isEqualTo("Erneut versuchen · läuft noch");
     }
 
+    @Test
+    void aDownloadWithFailuresOffersToRetryOnlyTheFailedPages() {
+        JobStatus failures = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(6, 6, 0, 6), null, false, Instant.EPOCH, null, null, null, null);
+
+        assertThat(ActivitiesView.retryBlocked(failures)).isNull();
+        assertThat(ActivitiesView.retryTip(failures, null)).isEqualTo(ActivitiesView.RETRY_FAILED_TIP)
+                .startsWith("Nur Fehler neu versuchen");
+    }
+
     private static ExportDatasetInfo dataset(ExportDatasetInfo.Media media) {
         return new ExportDatasetInfo("j1", "wiki", "OPS", 3, true, ExportDatasetInfo.Images.NOT_COLLECTED, List.of("json"),
                 media);

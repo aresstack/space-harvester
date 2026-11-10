@@ -235,16 +235,72 @@ public class Exports {
 
         private final ExportRequest request;
         private final List<ExportConverter> selected;
+        /** Nur „Nur Fehler neu versuchen“: die Seiten, die nachzuladen sind; sonst {@code null}. */
+        private final Set<String> retry;
 
         ExportTask(ExportRequest request, List<ExportConverter> selected) {
+            this(request, selected, null);
+        }
+
+        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry) {
             this.request = request;
             this.selected = selected;
+            this.retry = retry == null ? null : Set.copyOf(retry);
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
-            return JobTask.blocking(running -> export(running, request, selected)).start(context);
+            return JobTask.blocking(running -> export(running, request, selected, retry)).start(context);
         }
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ für den eigenen Export im selben Eintrag (ADR 0025): lädt nur die Seiten nach, die
+     * beim letzten Lauf scheiterten ({@link ExportArtifactWriter#retryPages}), ohne neue Inventur, und ersetzt danach
+     * das Artefakt; scheitert der Lauf, bleibt das bisherige. Lesbarkeit und Umfang werden für jede Seite an ihren
+     * frischen Kopfdaten neu geprüft. Ohne bestätigte Generation liest der Lauf wie beim Fortsetzen ein.
+     *
+     * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws JobNotResumableException wenn der Export noch läuft, nicht fertig ist oder seine Bilder oder Anhänge noch
+     *                                  beschafft werden
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus retryFailed(String exportId, String owner,
+                                 java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new UnknownJobException(exportId);
+        }
+        if (status.state() != com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED) {
+            throw new JobNotResumableException(exportId, status.state().terminal()
+                    ? "der Export ist nicht fertig geworden; Fortsetzen holt den Rest"
+                    : "der Export wartet oder läuft noch");
+        }
+        if (followUpRunning(exportId, owner)) {
+            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
+            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
+                    + "erst anhalten oder abwarten");
+        }
+        purgeQuietly();
+        writer.requireCapacity();
+        Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
+        ExportRequest request = access.apply(request(status));
+        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds));
+    }
+
+    /** Ob für diesen Export ein Bilder- oder Anhängeauftrag wartet oder läuft. */
+    private boolean followUpRunning(String exportId, String owner) {
+        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
+            for (JobStatus job : jobs.list(owner, type)) {
+                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -382,10 +438,11 @@ public class Exports {
         }
     }
 
-    private void export(JobContext context, ExportRequest request, List<ExportConverter> selected) {
+    private void export(JobContext context, ExportRequest request, List<ExportConverter> selected,
+                        Set<String> retry) {
         try {
             requireAuthorized(request);
-            Prepared prepared = prepare(context, request);
+            Prepared prepared = retry == null ? prepare(context, request) : prepareRetry(context, request, retry);
             exportGeneration(context, request, prepared, selected);
         } catch (UnknownSourceException e) {
             throw new JobFailedException("UNKNOWN_SOURCE", "Die Quelle " + request.sourceId()
@@ -419,9 +476,44 @@ public class Exports {
      *
      * @param unrefreshed Seiten, deren Abruf beim Einlesen scheiterte; nur intern, nach außen zählen nur lesbare
      */
-    /** @param counted ob das Einlesen die lesbaren Seiten schon als gefunden und beschafft gezählt hat */
+    /**
+     * @param counted   ob das Einlesen die lesbaren Seiten schon als gefunden und beschafft gezählt hat
+     * @param unchecked nur beim Nachladen: zuvor gescheiterte Seiten, deren Kopfdaten die Quelle nicht lieferte; sie
+     *                  waren für den Auftraggeber schon lesbar und zählen weiter als gescheitert
+     */
     private record Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed,
-                            List<String> warnings, boolean counted) {
+                            List<String> warnings, boolean counted, Set<String> unchecked) {
+
+        Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed, List<String> warnings,
+                 boolean counted) {
+            this(startedAt, generation, unrefreshed, warnings, counted, Set.of());
+        }
+    }
+
+    /**
+     * Bestand für „Nur Fehler neu versuchen“: lädt nur die Seiten nach, ohne Inventur, auf der bestätigten Generation
+     * ({@link SpaceProvisioning#retry}); geht das nicht (kein Einlesen angebunden, keine bestätigte Generation), wie
+     * {@link #prepare}.
+     */
+    private Prepared prepareRetry(JobContext context, ExportRequest request, Set<String> pageIds) {
+        if (!provisioning.available() || cache.currentGeneration(request.sourceId(), request.spaceKey()).isEmpty()) {
+            return prepare(context, request);
+        }
+        Instant startedAt = clock.instant();
+        context.phase(COMPONENT, "Fehlgeschlagene Seiten nachladen");
+        // Nur Seiten, die der Auftraggeber im letzten Ergebnis schon als gescheitert sah: die Zahl verrät nichts Neues.
+        context.record(JobEvent.Draft.info(COMPONENT, pageIds.size() + " gescheiterte Seiten werden gezielt "
+                + "nachgeladen, ohne neue Inventur"));
+        SpaceProvisioning.Retried retried = provisioning.retry(new ProvisioningContext(context), request.sourceId(),
+                request.spaceKey(), pageIds, request.visible());
+        context.checkpoint();
+        if (!retried.done()) {
+            return prepare(context, request);
+        }
+        CacheGeneration generation = cache.currentGeneration(request.sourceId(), request.spaceKey())
+                .orElseThrow(() -> new JobFailedException("SYNC_INCOMPLETE", "Nach dem Nachladen liegt für Space "
+                        + request.spaceKey() + " der Quelle " + request.sourceId() + " keine Generation vor"));
+        return new Prepared(startedAt, generation, retried.failedPages(), List.of(), false, retried.unchecked());
     }
 
     /**
@@ -498,9 +590,16 @@ public class Exports {
                 .filter(request.visible()).toList();
         Set<String> failedIds = new HashSet<>();
         failedVisible.forEach(header -> failedIds.add(header.key().pageId()));
-        int unrefreshed = failedVisible.size();
+        // Zuvor gescheitert und jetzt nicht nachprüfbar: bleiben „nicht abgerufen“ wie Seiten, deren Abruf scheiterte.
+        Set<String> unfetched = new java.util.TreeSet<>(failedIds);
+        unfetched.addAll(prepared.unchecked());
+        failedIds.addAll(prepared.unchecked());
+        int unrefreshed = unfetched.size();
         context.phase(COMPONENT, "Seiten exportieren");
-        try (ExportArtifactWriter.Session session = writer.begin(context.jobId(), scope)) {
+        // Ein schon veröffentlichtes Artefakt (Nachladen) bleibt sichtbar, bis das neue fertig ist.
+        boolean replacing = writer.find(context.jobId()).isPresent();
+        try (ExportArtifactWriter.Session session = replacing ? writer.replace(context.jobId(), scope)
+                : writer.begin(context.jobId(), scope)) {
             String after = null;
             List<ListedPage> batch;
             do {
@@ -546,7 +645,9 @@ public class Exports {
             } while (batch.size() == BATCH_SIZE);
             // Lesbar, aber ohne Stand im Cache: fehlt im Export und zählt als gescheitert.
             if (!prepared.counted()) {
+                // Versucht, aber nicht abgelegt (Nachladen): gefunden und bearbeitet, als gescheitert gezählt.
                 context.discovered(failedIds.size());
+                context.processed(failedIds.size());
             }
             context.failed(failedIds.size());
             context.checkpoint();
@@ -595,7 +696,7 @@ public class Exports {
                 context.incomplete();
             }
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
-                    entries.size(), failures, warnings, complete));
+                    entries.size(), failures, warnings, complete, List.copyOf(unfetched)));
             afterPublish(context);
         }
     }

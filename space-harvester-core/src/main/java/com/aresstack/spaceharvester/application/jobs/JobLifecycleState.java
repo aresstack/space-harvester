@@ -34,8 +34,8 @@ public sealed interface JobLifecycleState {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
             case PAUSED -> new Paused(status.pauseReason());
-            case COMPLETED -> status.incomplete() || status.progress().failed() > 0 ? new CompletedWithErrors()
-                    : new Completed();
+            case COMPLETED -> status.incomplete() || status.progress().failed() > 0
+                    ? new CompletedWithErrors(status.type() == JobType.EXPORT) : new Completed();
             case FAILED, CANCELLED -> new Stopped(status.state(), resumable);
         };
     }
@@ -111,8 +111,18 @@ public sealed interface JobLifecycleState {
         }
     }
 
-    /** Technisch fertig, aber Seiten oder Bilder fehlen. */
-    record CompletedWithErrors() implements JobLifecycleState {
+    /**
+     * Technisch fertig, aber Seiten oder Bilder fehlen. Ein Download bietet „Nur Fehler neu versuchen“ an
+     * ({@link JobAction#RETRY_FAILED}).
+     *
+     * @param retryable ob die Art gescheiterte Seiten gezielt nachladen kann
+     */
+    record CompletedWithErrors(boolean retryable) implements JobLifecycleState {
+
+        public CompletedWithErrors() {
+            this(false);
+        }
+
         @Override
         public String key() {
             return "COMPLETED_WITH_ERRORS";
@@ -120,7 +130,7 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return List.of(JobAction.DELETE);
+            return retryable ? List.of(JobAction.RETRY_FAILED, JobAction.DELETE) : List.of(JobAction.DELETE);
         }
     }
 

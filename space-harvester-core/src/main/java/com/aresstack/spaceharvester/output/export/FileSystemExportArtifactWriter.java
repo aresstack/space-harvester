@@ -84,6 +84,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String RAW = "raw";
     static final String VIEWS = "views";
     static final String INCOMPLETE = ".incomplete";
+    /** Ein ersetztes Artefakt, kurz während des Austauschs ({@link #replace}). */
+    static final String REPLACED = ".replaced";
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
     /** Dateinamen konvertierter Dateien. */
@@ -140,20 +142,34 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     @Override
     public Session begin(String exportId, ExportScope scope) {
+        return open(exportId, scope, false);
+    }
+
+    /**
+     * Schreibt das neue Artefakt neben dem bisherigen; erst {@link Session#publish} tauscht beide aus. Mit Bildern,
+     * Anhängen und Lese-Ansichten des bisherigen, das Bildermanifest als unvollständig.
+     */
+    @Override
+    public Session replace(String exportId, ExportScope scope) {
+        return open(exportId, scope, true);
+    }
+
+    private Session open(String exportId, ExportScope scope, boolean replacing) {
         requireSafe(exportId);
         Path target = root.resolve(exportId);
         Path work = root.resolve(INCOMPLETE).resolve(exportId);
         try {
-            if (Files.exists(target)) {
+            if (!replacing && Files.exists(target)) {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht");
             }
             deleteRecursively(work);
+            deleteRecursively(root.resolve(REPLACED).resolve(exportId));
             long published = publishedBytes();
             if (published + inProgress.get() >= maxTotalBytes) {
                 throw new ExportStorageFullException(maxTotalBytes);
             }
             Files.createDirectories(work.resolve(RAW));
-            return new FileSession(exportId, scope, work, target, published);
+            return new FileSession(exportId, scope, work, target, published, replacing);
         } catch (IOException e) {
             throw new UncheckedIOException("Exportverzeichnis für " + exportId + " nicht anlegbar", e);
         }
@@ -488,9 +504,11 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final List<ExportArtifact.File> convertedFiles = new ArrayList<>();
         private final List<Conversion> conversions = new ArrayList<>();
         private boolean published;
+        private final boolean replacing;
 
-        FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin)
-                throws IOException {
+        FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin,
+                    boolean replacing) throws IOException {
+            this.replacing = replacing;
             this.exportId = exportId;
             this.scope = scope;
             this.work = work;
@@ -591,10 +609,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 allWarnings.addAll(warnings);
                 writeJson(MANIFEST, generator -> writeManifest(generator, summary, allWarnings, files, conversions));
                 Files.createDirectories(root);
-                try {
-                    Files.move(work, target, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(work, target);
+                if (replacing && Files.isDirectory(target)) {
+                    swap();
+                } else {
+                    move(work, target);
                 }
                 published = true;
                 release();
@@ -603,6 +621,40 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht", e);
             } catch (IOException e) {
                 throw new UncheckedIOException("Export " + exportId + " nicht veröffentlichbar", e);
+            }
+        }
+
+        /**
+         * Setzt das neue Artefakt an die Stelle des bisherigen: Bilder, Anhänge und Lese-Ansichten wandern mit, dann
+         * zwei Umbenennungen. Scheitert die erste, bleibt das bisherige unberührt; scheitert die zweite, kommt es
+         * zurück.
+         */
+        private void swap() throws IOException {
+            Path views = target.resolve(VIEWS);
+            if (Files.isDirectory(views)) {
+                copyRecursively(views, work.resolve(VIEWS));
+            }
+            Optional<ExportAssetManifest> assets = assets(exportId);
+            if (assets.isPresent()) {
+                // Neue Seiten haben noch keine Bilder und Anhänge: unvollständig, bis die Aufträge sie beschafft haben.
+                try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(work.resolve(ASSETS)))) {
+                    writeAssets(generator, new ExportAssetManifest(false, false, assets.get().assets()));
+                }
+            }
+            Path backup = root.resolve(REPLACED).resolve(exportId);
+            deleteRecursively(backup);
+            Files.createDirectories(backup.getParent());
+            move(target, backup);
+            try {
+                move(work, target);
+            } catch (IOException e) {
+                move(backup, target);
+                throw e;
+            }
+            try {
+                deleteRecursively(backup);
+            } catch (IOException e) {
+                // Bleibt liegen, bis der nächste Austausch desselben Exports es entfernt; zählt nicht als Export.
             }
         }
 
@@ -720,6 +772,15 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             generator.writeEndObject();
         }
         generator.writeEndArray();
+        if (!summary.unfetched().isEmpty()) {
+            // Lesbare Seiten, deren Abruf beim Einlesen scheiterte; „Nur Fehler neu versuchen“ lädt sie nach.
+            generator.writeName("unfetched");
+            generator.writeStartArray();
+            for (String pageId : summary.unfetched()) {
+                generator.writeString(pageId);
+            }
+            generator.writeEndArray();
+        }
         generator.writeName("warnings");
         generator.writeStartArray();
         for (String warning : warnings) {
@@ -731,6 +792,49 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     private static String text(Instant instant) {
         return PageJson.text(instant);
+    }
+
+    private static void move(Path from, Path to) throws IOException {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(from, to);
+        }
+    }
+
+    private static void copyRecursively(Path from, Path to) throws IOException {
+        try (Stream<Path> paths = Files.walk(from)) {
+            for (Path each : paths.toList()) {
+                Path copy = to.resolve(from.relativize(each).toString());
+                if (Files.isDirectory(each)) {
+                    Files.createDirectories(copy);
+                } else if (!each.getFileName().toString().endsWith(".part")) {
+                    Files.copy(each, copy, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
+    @Override
+    public Optional<Set<String>> retryPages(String exportId) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return Optional.empty();
+        }
+        Path manifest = root.resolve(exportId).resolve(MANIFEST);
+        if (!Files.isRegularFile(manifest)) {
+            return Optional.empty();
+        }
+        JsonNode node = json.readTree(manifest.toFile());
+        Set<String> pageIds = new java.util.TreeSet<>();
+        for (JsonNode pageId : node.path("unfetched")) {
+            pageIds.add(pageId.asString());
+        }
+        for (JsonNode failure : node.path("failures")) {
+            if (failure.hasNonNull("pageId")) {
+                pageIds.add(failure.path("pageId").asString());
+            }
+        }
+        return Optional.of(Set.copyOf(pageIds));
     }
 
     private static void deleteRecursively(Path path) throws IOException {

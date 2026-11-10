@@ -117,6 +117,10 @@ die Dokument-Anhänge auf demselben Weg; seine Zähler gelten Anhängen statt Bi
 (`DOCUMENT`) ins selbe `assets.json` und lässt die Bilder stehen, wie umgekehrt; `imagesComplete` und
 `documentsComplete` zeigen, welche Art vollständig ist (ADR 0025, Punkt 11).
 
+„Nur Fehler neu versuchen“ (ADR 0025, Punkt 13) läuft im selben Exportauftrag erneut („Auftrag erneut gestartet“).
+Die Phase „Fehlgeschlagene Seiten nachladen“ meldet einmal, wie viele zuvor gescheiterte Seiten nachgeladen werden,
+ohne Seiten-IDs; eine Inventur gibt es dabei nicht. `manifest.json` führt solche Seiten unter `unfetched`.
+
 ## Aussagenanalyse
 
 Der Auftrag `STATEMENT_ANALYSIS` (#499, ADR 0024) startet nur auf ausdrücklichen Wunsch in der Desktop-App für eine

@@ -13,7 +13,8 @@ import java.util.Set;
 /**
  * Ablage für Exportartefakte (#11). Ein Artefakt entsteht unsichtbar und wird erst mit
  * {@link Session#publish(PageTree, ExportSummary)} als Ganzes sichtbar; ein abgebrochener oder gescheiterter Export
- * hinterlässt nichts. Ein veröffentlichtes Artefakt wird nie überschrieben.
+ * hinterlässt nichts. Ein veröffentlichtes Artefakt wird nie überschrieben, nur als Ganzes durch ein neues ersetzt
+ * ({@link #replace}), sobald dieses vollständig geschrieben ist.
  */
 public interface ExportArtifactWriter {
 
@@ -24,6 +25,28 @@ public interface ExportArtifactWriter {
      * @throws ExportStorageFullException wenn die Ablage schon voll ist
      */
     Session begin(String exportId, ExportScope scope);
+
+    /**
+     * Wie {@link #begin}, aber für einen Export, dessen Artefakt schon veröffentlicht ist („Nur Fehler neu versuchen“,
+     * ADR 0025): Das bisherige bleibt sichtbar, bis {@link Session#publish} das neue an seine Stelle setzt; scheitert
+     * der Lauf, bleibt das bisherige. Bilder- und Anhängemanifest sowie Lese-Ansichten wandern mit, das Manifest als
+     * unvollständig, weil neue Seiten noch keine Bilder haben. Standard (etwa Testablagen): erst entfernen, dann neu
+     * beginnen.
+     */
+    default Session replace(String exportId, ExportScope scope) {
+        delete(exportId);
+        return begin(exportId, scope);
+    }
+
+    /**
+     * Was „Nur Fehler neu versuchen“ nachlädt: die Seiten, deren Abruf beim Einlesen scheiterte
+     * ({@link ExportSummary#unfetched()}), und die, die im Artefakt fehlen ({@link ExportSummary#failures()}).
+     *
+     * @return leer, wenn es das Artefakt nicht gibt oder die Ablage es nicht kennt
+     */
+    default Optional<Set<String>> retryPages(String exportId) {
+        return Optional.empty();
+    }
 
     /**
      * Prüft vor der Annahme eines Exports, ob die Ablage noch Platz hat.

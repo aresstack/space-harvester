@@ -164,6 +164,55 @@ class FileSystemExportArtifactWriterTest {
     }
 
     @Test
+    void retryingFailuresReplacesThePublishedArtifactOnlyOnceTheNewOneIsDone() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        PageFailure missing = new PageFailure("101", "PAYLOAD_MISSING", "Payload von Seite 101 fehlt");
+        try (ExportArtifactWriter.Session session = writer.begin("job-r", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of())), new ExportSummary("job-r", SCOPE, NOW,
+                    NOW.plusSeconds(5), 1, List.of(missing), List.of(), false, List.of("102")));
+        }
+        assertThat(json.readTree(root.resolve("job-r/manifest.json").toFile()).path("unfetched").get(0).asString())
+                .isEqualTo("102");
+        assertThat(writer.retryPages("job-r")).contains(Set.of("101", "102"));
+        writer.putAssets("job-r", new com.aresstack.spaceharvester.application.convert.ExportAssetManifest(true,
+                true, List.of(new com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry("100",
+                        com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Reference.attachment(
+                                "att1", "plan.png"), "att1", "2", "plan.png", "image/png", 3, "sha256:aa",
+                        com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Status.STORED, null))));
+        writer.putReadingView("job-r", new com.aresstack.spaceharvester.application.convert.ExportReadingView("100",
+                "3", com.aresstack.spaceharvester.application.convert.ExportReadingView.Status.AVAILABLE, null,
+                "<p>a</p>", "https://wiki.example.org/", "a"));
+
+        // Ein gescheiterter neuer Lauf lässt das bisherige Artefakt unberührt.
+        try (ExportArtifactWriter.Session session = writer.replace("job-r", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            assertThat(writer.find("job-r")).isPresent();
+        }
+        assertThat(writer.retryPages("job-r")).contains(Set.of("101", "102"));
+
+        try (ExportArtifactWriter.Session session = writer.replace("job-r", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            write(session, snapshot("101", "100", "{\"id\":\"101\"}".getBytes(StandardCharsets.UTF_8)));
+            write(session, snapshot("102", "100", "{\"id\":\"102\"}".getBytes(StandardCharsets.UTF_8)));
+            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-r", 3, List.of(), true));
+        }
+
+        assertThat(writer.find("job-r").orElseThrow().complete()).isTrue();
+        assertThat(writer.pageIds("job-r").orElseThrow()).containsExactly("100", "101", "102");
+        assertThat(writer.retryPages("job-r")).contains(Set.of());
+        // Bilder und Lese-Ansichten wandern mit; neue Seiten haben noch keine Bilder.
+        var assets = writer.assets("job-r").orElseThrow();
+        assertThat(assets.imagesComplete()).isFalse();
+        assertThat(assets.documentsComplete()).isFalse();
+        assertThat(assets.assets()).hasSize(1);
+        assertThat(writer.dataset("job-r").orElseThrow().readingView("100")).isPresent();
+        assertThat(writer.published()).containsExactly("job-r");
+        assertThat(writer.unpublished()).isEmpty();
+        assertThat(root.resolve(".replaced").resolve("job-r")).doesNotExist();
+    }
+
+    @Test
     void incompleteExportSaysSoInTheManifest() throws Exception {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         PageFailure missing = new PageFailure("7", "PAYLOAD_MISSING", "Payload von Seite 7 fehlt");

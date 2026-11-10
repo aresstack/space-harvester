@@ -82,6 +82,17 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
     }
 
     @Override
+    public Optional<Set<String>> retryPages(String exportId) {
+        Published p = published.get(exportId);
+        if (p == null) {
+            return Optional.empty();
+        }
+        Set<String> pageIds = new HashSet<>(p.summary().unfetched());
+        p.summary().failures().forEach(failure -> pageIds.add(failure.pageId()));
+        return Optional.of(pageIds);
+    }
+
+    @Override
     public Set<String> published() {
         return Set.copyOf(published.keySet());
     }

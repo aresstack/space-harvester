@@ -15,6 +15,12 @@ public enum JobAction {
      * {@link JobStatus#parameters()}. Beides holt nur, was noch fehlt.
      */
     RESUME,
+    /**
+     * „Nur Fehler neu versuchen“ (↻): bei einem mit Fehlern fertigen Download nur die gescheiterten Seiten gezielt
+     * nachladen, ohne neue Inventur, im selben Eintrag; das Ergebnis ersetzt das bisherige erst nach Erfolg
+     * (ADR 0025).
+     */
+    RETRY_FAILED,
     /** Einen wartenden oder laufenden Auftrag abbrechen. */
     CANCEL,
     /** Einen beendeten Auftrag aus der Liste entfernen; geladene Daten bleiben. */

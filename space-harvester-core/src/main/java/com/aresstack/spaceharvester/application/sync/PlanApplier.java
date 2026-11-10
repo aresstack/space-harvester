@@ -67,6 +67,11 @@ public class PlanApplier {
         connectionLostAfter = count;
     }
 
+    /** Die wirksame Grenze aus {@link #connectionLostAfter(int)}, auch für {@link FailedPageRetry}. */
+    public int connectionLostLimit() {
+        return connectionLostAfter;
+    }
+
     /**
      * Vorab, vor {@link SyncBaselineStore#begin} (ADR 0025): lädt alle {@link PageChange.Kind#NEW}-Seiten und legt sie
      * mit {@code keep} sofort ab, mit {@link SyncListener#checkpoint()} vor jedem Abruf. Ein Abbruch behält, was schon
