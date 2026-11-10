@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
 import java.util.function.Supplier;
@@ -136,11 +137,6 @@ public class ExportAssetCollection {
             this.label = label;
         }
 
-        /** Ob der Eintrag zu dieser Art gehört; die anderen schreibt der andere Auftrag. */
-        boolean owns(ExportAssetManifest.Entry entry) {
-            return entry.document() == (this == DOCUMENTS);
-        }
-
         static Scope of(JobType type) {
             for (Scope scope : values()) {
                 if (scope.type == type) {
@@ -196,18 +192,28 @@ public class ExportAssetCollection {
         if (dataset.isEmpty()) {
             return Optional.empty();
         }
-        Optional<JobStatus> media = submit(Scope.MEDIA, dataset.get(), exportId, owner);
         ExportSettings current = settings.get();
-        if (current != null && current.attachments()) {
-            submit(Scope.DOCUMENTS, dataset.get(), exportId, owner);
+        boolean attachments = current != null && current.attachments();
+        // Nimmt die Auftragsverwaltung keinen zweiten Folgeauftrag an (etwa ein Platz, keine Warteschlange), beschafft
+        // der Bilderauftrag die Anhänge mit, wie vor der Trennung; er wartet beim Start auf diese Entscheidung.
+        CompletableFuture<Boolean> together = new CompletableFuture<>();
+        try {
+            Optional<JobStatus> media = submit(Scope.MEDIA, dataset.get(), exportId, owner,
+                    new AssetTask(exportId, Scope.MEDIA, together));
+            boolean separate = !attachments || media.isEmpty() || submit(Scope.DOCUMENTS, dataset.get(), exportId,
+                    owner, new AssetTask(exportId, Scope.DOCUMENTS)).isPresent();
+            together.complete(!separate);
+            return media;
+        } finally {
+            together.complete(false);
         }
-        return media;
     }
 
-    private Optional<JobStatus> submit(Scope scope, ConversionInput dataset, String exportId, String owner) {
+    private Optional<JobStatus> submit(Scope scope, ConversionInput dataset, String exportId, String owner,
+                                       AssetTask task) {
         try {
             JobStatus status = jobs.submit(scope.type, dataset.sourceId(), dataset.spaceKey(), null, owner,
-                    Map.of(EXPORT_ID, exportId), new AssetTask(exportId, scope));
+                    Map.of(EXPORT_ID, exportId), task);
             running.put(scope.key(exportId), status.id());
             return Optional.of(status);
         } catch (JobCapacityExceededException | IllegalStateException e) {
@@ -242,12 +248,23 @@ public class ExportAssetCollection {
         } else if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         } else {
-            resumed = jobs.rerun(jobId, owner, new AssetTask(exportId, scope));
+            resumed = jobs.rerun(jobId, owner, new AssetTask(exportId, scope,
+                    CompletableFuture.completedFuture(scope == Scope.MEDIA && documentsWithImages(exportId, owner))));
         }
         if (exportId != null) {
             running.put(scope.key(exportId), jobId);
         }
         return resumed;
+    }
+
+    /**
+     * Ob ein Bilderauftrag nach einem Neustart die Anhänge mitbeschafft: bei eingeschalteten Anhängen, wenn es für den
+     * Export keinen eigenen Auftrag „Anhänge beschaffen“ gibt.
+     */
+    private boolean documentsWithImages(String exportId, String owner) {
+        ExportSettings current = settings.get();
+        return current != null && current.attachments() && jobs.list(owner, JobType.ATTACHMENTS).stream()
+                .noneMatch(job -> exportId.equals(job.parameter(EXPORT_ID)));
     }
 
     /**
@@ -258,17 +275,33 @@ public class ExportAssetCollection {
 
         private final String exportId;
         private final Scope scope;
+        /** Nur Bilder: ob dieser Lauf auch die Anhänge beschafft, weil sie keinen eigenen Auftrag bekamen. */
+        private final CompletableFuture<Boolean> withDocuments;
         private final Map<String, CheckedPage> checked = new ConcurrentHashMap<>();
 
         AssetTask(String exportId, Scope scope) {
+            this(exportId, scope, CompletableFuture.completedFuture(false));
+        }
+
+        AssetTask(String exportId, Scope scope, CompletableFuture<Boolean> withDocuments) {
             this.exportId = exportId;
             this.scope = scope;
+            this.withDocuments = withDocuments;
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
             running.put(scope.key(exportId), context.jobId());
-            return JobTask.blocking(job -> collect(job, scope, exportId, checked)).start(context);
+            return JobTask.blocking(job -> collect(job, scope, new Share(scope == Scope.MEDIA,
+                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked)).start(context);
+        }
+    }
+
+    /** Welche Einträge ein Lauf beschafft und schreibt: Bilder, Dokumente oder beides. */
+    private record Share(boolean images, boolean documents) {
+
+        boolean owns(ExportAssetManifest.Entry entry) {
+            return entry.document() ? documents : images;
         }
     }
 
@@ -434,7 +467,7 @@ public class ExportAssetCollection {
         };
     }
 
-    private void collect(JobContext job, Scope scope, String exportId, Map<String, CheckedPage> done) {
+    private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done) {
         Tally context = new Tally(job);
         List<ExportAssetManifest.Entry> entries = new ArrayList<>();
         Set<String> checked = new HashSet<>();
@@ -443,7 +476,7 @@ public class ExportAssetCollection {
             ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, scope.phase);
-            run = new Run(context, scope, dataset.sourceId(), settings.get());
+            run = new Run(context, scope, share, dataset.sourceId(), settings.get());
             Run current = run;
             boolean[] complete = {true};
             dataset.forEachPage(page -> {
@@ -482,7 +515,7 @@ public class ExportAssetCollection {
                     context.pause(PauseReason.CONNECTION_LOST);
                 }
             });
-            List<ExportAssetManifest.Entry> own = write(scope, exportId, entries, checked, complete[0], run.settings);
+            List<ExportAssetManifest.Entry> own = write(share, exportId, entries, checked, complete[0], run.settings);
             if (!(complete[0] && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
                 context.incomplete();
             }
@@ -491,7 +524,7 @@ public class ExportAssetCollection {
         } catch (JobCancelledException e) {
             // Angehalten oder abgebrochen: was bis hier abgelegt ist, steht im Manifest; vollständig ist es nicht.
             try {
-                write(scope, exportId, entries, checked, false, run == null ? settings.get() : run.settings);
+                write(share, exportId, entries, checked, false, run == null ? settings.get() : run.settings);
             } catch (RuntimeException failure) {
                 LOG.log(System.Logger.Level.WARNING, "Bisheriges Manifest für Export {0} nicht geschrieben ({1})",
                         exportId, failure.getClass().getName());
@@ -503,26 +536,28 @@ public class ExportAssetCollection {
     }
 
     /**
-     * Mischt die Einträge eines Laufs ins Manifest, unter dem Schloss des Exports: die eigene Art wie {@link #merged},
-     * die Einträge und die Vollständigkeit der anderen Art bleiben, wie der andere Auftrag sie geschrieben hat.
+     * Mischt die Einträge eines Laufs ins Manifest, unter dem Schloss des Exports: die eigenen Arten wie
+     * {@link #merged}, die Einträge und die Vollständigkeit der anderen Art bleiben, wie der andere Auftrag sie
+     * geschrieben hat.
      * Hat er noch nie geschrieben, gelten Dokumente bei ausgeschalteten Anhängen als vollständig, Bilder nie.
      *
      * @return die Einträge der eigenen Art, wie sie jetzt im Manifest stehen
      */
-    private List<ExportAssetManifest.Entry> write(Scope scope, String exportId, List<ExportAssetManifest.Entry> entries,
+    private List<ExportAssetManifest.Entry> write(Share share, String exportId, List<ExportAssetManifest.Entry> entries,
                                                   Set<String> checked, boolean pagesComplete,
                                                   ExportSettings current) {
         synchronized (manifests.computeIfAbsent(exportId, id -> new Object())) {
             Optional<ExportAssetManifest> previous = writer.assets(exportId);
             List<ExportAssetManifest.Entry> own = merged(previous.map(manifest -> new ExportAssetManifest(false,
-                    manifest.assets().stream().filter(scope::owns).toList())), entries, checked);
-            boolean ownComplete = pagesComplete && own.stream().allMatch(ExportAssetManifest.Entry::present);
+                    manifest.assets().stream().filter(share::owns).toList())), entries, checked);
             List<ExportAssetManifest.Entry> result = new ArrayList<>(own);
-            previous.ifPresent(manifest -> manifest.assets().stream().filter(entry -> !scope.owns(entry))
+            previous.ifPresent(manifest -> manifest.assets().stream().filter(entry -> !share.owns(entry))
                     .forEach(result::add));
-            boolean images = scope == Scope.MEDIA ? ownComplete
+            boolean images = share.images() ? pagesComplete && own.stream().filter(entry -> !entry.document())
+                    .allMatch(ExportAssetManifest.Entry::present)
                     : previous.map(ExportAssetManifest::imagesComplete).orElse(false);
-            boolean documents = scope == Scope.DOCUMENTS ? ownComplete
+            boolean documents = share.documents() ? pagesComplete && own.stream()
+                    .filter(ExportAssetManifest.Entry::document).allMatch(ExportAssetManifest.Entry::present)
                     : previous.map(ExportAssetManifest::documentsComplete)
                             .orElse(current == null || !current.attachments());
             writer.putAssets(exportId, new ExportAssetManifest(images, documents, result));
@@ -600,12 +635,12 @@ public class ExportAssetCollection {
                     ownAttachments.add(attachment.attachmentId());
                     AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
                     if (kind == AssetKind.OTHER) {
-                        if (run.scope == Scope.DOCUMENTS && run.settings.attachments()) {
+                        if (run.share.documents() && run.settings.attachments()) {
                             byId.put(attachment.attachmentId(), document(run, list, pageId, attachment));
                         }
                         continue;
                     }
-                    if (run.scope != Scope.MEDIA) {
+                    if (!run.share.images()) {
                         continue;
                     }
                     attachmentIds.add(attachment.attachmentId());
@@ -648,7 +683,7 @@ public class ExportAssetCollection {
                 checked = false;
             }
         }
-        if (run.scope != Scope.MEDIA) {
+        if (!run.share.images()) {
             // Lese-Ansicht und Mermaid gehören zu den Bildern.
             return checked;
         }
@@ -884,13 +919,15 @@ public class ExportAssetCollection {
 
         final JobContext context;
         final Scope scope;
+        final Share share;
         final String sourceId;
         final ExportSettings settings;
         boolean declined;
 
-        Run(JobContext context, Scope scope, String sourceId, ExportSettings settings) {
+        Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings) {
             this.context = context;
             this.scope = scope;
+            this.share = share;
             this.sourceId = sourceId;
             this.settings = settings == null ? ExportSettings.DEFAULT : settings;
         }

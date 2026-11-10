@@ -71,7 +71,7 @@ class ExportAssetCollectionAttachmentsTest {
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-11-09T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
-    private final Jobs jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 10, Duration.ofHours(1)),
+    private Jobs jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 10, Duration.ofHours(1)),
             clock);
     private final InMemoryPageCache cache = new InMemoryPageCache();
     private final ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter(),
@@ -233,6 +233,24 @@ class ExportAssetCollectionAttachmentsTest {
         assertThat(after.documents()).containsExactlyElementsOf(result.manifest.documents());
         assertThat(after.images()).hasSize(1);
         assertThat(after.complete()).isTrue();
+    }
+
+    @Test
+    void withASingleSlotTheImageJobCollectsTheAttachmentsToo() throws Exception {
+        // Ein Platz, keine Warteschlange: ein zweiter Folgeauftrag wird abgelehnt; die Anhänge gehen nicht verloren.
+        jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(1, 0, Duration.ofHours(1)), clock);
+        Result result = export(ExportSettings.DEFAULT);
+
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().discovered()).isEqualTo(5);
+        });
+        assertThat(result.manifest.documents()).hasSize(4);
+        assertThat(result.manifest.imagesComplete()).isTrue();
+        assertThat(result.manifest.documentsComplete()).isTrue();
+        assertThat(find(result.json("attachments.json"), "handbuch.pdf").path("status").asString())
+                .isEqualTo("STORED");
     }
 
     @Test

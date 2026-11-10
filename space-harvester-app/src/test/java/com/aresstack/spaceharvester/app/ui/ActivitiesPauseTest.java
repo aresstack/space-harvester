@@ -28,8 +28,11 @@ class ActivitiesPauseTest {
                 .isEqualTo("schon fertig");
         assertThat(ActivitiesView.pauseResumeBlocked(job(JobType.EXPORT, JobState.RUNNING, true)))
                 .isEqualTo("Abbruch angefordert");
+        // Bilder und Anhänge halten sich selbst an (Anmeldung, Verbindung) und lassen sich fortsetzen (ADR 0025).
+        assertThat(ActivitiesView.pauseResumeBlocked(job(JobType.ASSETS, JobState.PAUSED, false))).isNull();
+        assertThat(ActivitiesView.pauseResumeBlocked(job(JobType.ATTACHMENTS, JobState.RUNNING, false))).isNull();
         assertThat(ActivitiesView.pauseResumeBlocked(job(JobType.ENRICHMENT, JobState.RUNNING, false)))
-                .isEqualTo("nur für Downloads und Abgleiche");
+                .isEqualTo("nur für Downloads, Abgleiche, Bilder und Anhänge");
     }
 
     @Test
@@ -41,7 +44,7 @@ class ActivitiesPauseTest {
         assertThat(ActivitiesView.pauseResumeTip(job(JobType.EXPORT, JobState.COMPLETED, false)))
                 .isEqualTo("Fortsetzen · schon fertig");
         assertThat(ActivitiesView.pauseResumeTip(job(JobType.ENRICHMENT, JobState.RUNNING, false)))
-                .isEqualTo("Anhalten · nur für Downloads und Abgleiche");
+                .isEqualTo("Anhalten · nur für Downloads, Abgleiche, Bilder und Anhänge");
     }
 
     private static JobStatus job(JobType type, JobState state, boolean cancelRequested) {
