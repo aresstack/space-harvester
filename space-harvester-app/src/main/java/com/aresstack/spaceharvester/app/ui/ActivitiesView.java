@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.Inventory;
@@ -247,6 +248,25 @@ public final class ActivitiesView implements View {
         selectedId = jobId;
         poll();
         timer.start();
+    }
+
+    /**
+     * Zeigt das Codefeld dieser Anforderung (Klick auf den Hinweis in der Statuszeile): den ersten wartenden Auftrag,
+     * ohne wartenden Auftrag (Lesen auf Abruf) keinen, dann steht die erste offene Anforderung oben.
+     */
+    public void showSignIn(SignInRequest request) {
+        if (request.jobIds().isEmpty()) {
+            selectedId = null;
+            detail = null;
+            table.clearSelection();
+            render();
+            poll();
+            timer.start();
+        } else {
+            show(request.jobIds().get(0));
+        }
+        signIn.refresh();
+        signIn.focusCode();
     }
 
     private void poll() {

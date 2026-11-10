@@ -136,6 +136,13 @@ public final class SignInSlot extends JPanel {
         this.onAccepted = action == null ? () -> { } : action;
     }
 
+    /** Setzt den Fokus ins Codefeld, sobald es sichtbar ist (Klick auf den Hinweis in der Statuszeile). */
+    public void focusCode() {
+        if (isVisible()) {
+            SwingUtilities.invokeLater(codeField::requestFocusInWindow);
+        }
+    }
+
     /** Zeigt die Anforderung, die {@code which} jetzt liefert; eine gleiche bleibt samt eingetipptem Code stehen. */
     public void refresh() {
         SignInRequests requests = watch();
