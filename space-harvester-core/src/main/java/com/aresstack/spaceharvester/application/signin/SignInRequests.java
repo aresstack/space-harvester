@@ -84,6 +84,7 @@ public class SignInRequests {
     /**
      * Legt für Lesen auf Abruf die Anforderung der Quelle an, ohne zu warten, oder nimmt die offene; idempotent je
      * Quelle. Der Aufrufer wird Halter ({@link #ownedBy}) und lädt nach {@link SignInRequest.Answer#ACCEPTED} neu.
+     * Bringt er eine neuere Seite der Quelle mit, gilt sie für die offene Anforderung (Kennung bleibt, #571).
      * Der Aufrufer hat vorher geprüft, dass er die Seite lesen darf.
      *
      * @throws IllegalStateException ohne Oberfläche ({@link #interactive()} ist {@code false})
@@ -100,12 +101,15 @@ public class SignInRequests {
         synchronized (this) {
             purge();
             Pending pending = bySource.get(sourceId);
+            boolean newer = false;
             if (pending == null) {
                 pending = new Pending(UUID.randomUUID().toString(), sourceId, challenge, clock.instant());
                 bySource.put(sourceId, pending);
                 LOG.log(System.Logger.Level.INFO, "Quelle {0} verlangt eine Anmeldung (Einmalcode)", sourceId);
+            } else {
+                newer = newer(pending, challenge);
             }
-            changed = pending.owners.add(owner);
+            changed = pending.owners.add(owner) | newer;
             Instant until = clock.instant().plus(wait);
             if (pending.until == null || until.isAfter(pending.until)) {
                 pending.until = until;
@@ -116,6 +120,32 @@ public class SignInRequests {
             changed();
         }
         return view;
+    }
+
+    /**
+     * Übernimmt eine neuere Seite der Quelle in die offene Anforderung, Kennung und Halter bleiben (#571). Abfragen,
+     * die schon liefen, als die Anforderung entstand, bringen je eine neue Zwei-Faktor-Seite mit; deren Cookie steht
+     * danach in der gemeinsamen Sitzung, und ihr Code ist der zuletzt verschickte. Gesendet wird daher immer mit der
+     * neuesten Seite. Nicht ersetzt wird, solange ein Code oder eine neue Anforderung für sie unterwegs ist
+     * ({@link #submit}, {@link #resend}), und nie durch eine Seite, die schon einmal galt (etwa die aus
+     * {@link #pendingChallenge}, die ein Leser zurückbringt). Unter dem Sperrobjekt.
+     *
+     * @return ob sich die sichtbare Anforderung geändert hat
+     */
+    private boolean newer(Pending pending, SignInChallenge challenge) {
+        if (pending.state != State.OPEN || pending.sendingNow || challenge == pending.challenge
+                || pending.superseded.contains(challenge)) {
+            return false;
+        }
+        SignInRequest before = pending.view();
+        pending.superseded.add(pending.challenge);
+        pending.challenge = challenge;
+        return !before.equals(pending.view());
+    }
+
+    /** Senden oder Anfordern mit der Seite von {@code pending} ist vorbei; ab jetzt darf eine neuere sie ersetzen. */
+    private synchronized void sent(Pending pending) {
+        pending.sendingNow = false;
     }
 
     /** Ob {@code owner} die offene Anforderung {@code requestId} über {@link #open} hält. */
@@ -158,6 +188,8 @@ public class SignInRequests {
                 pending = new Pending(UUID.randomUUID().toString(), sourceId, challenge, clock.instant());
                 bySource.put(sourceId, pending);
                 LOG.log(System.Logger.Level.INFO, "Quelle {0} verlangt eine Anmeldung (Einmalcode)", sourceId);
+            } else {
+                newer(pending, challenge);
             }
             pending.jobs.add(jobId == null ? "" : jobId);
         }
@@ -225,10 +257,12 @@ public class SignInRequests {
     }
 
     /**
-     * Die Anmeldeseite der offenen Anforderung einer Quelle (#571). Solange es sie gibt, gehen geschützte Dateien der
-     * Quelle nicht ans Netz: jede weitere Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Sitzungs-Cookie die
-     * gemeinsame Sitzung der Quelle überschreibt, und der Code der ersten Seite passte beim Senden nicht mehr. Wer lesen
-     * will, schließt sich mit dieser Seite der offenen Anforderung an ({@link #open}, {@link #await}).
+     * Die Anmeldeseite der offenen Anforderung einer Quelle (#571): die neueste, die die Quelle geliefert hat
+     * (Abfragen, die beim Anlegen schon liefen, bringen neuere mit). Ihr Sitzungs-Cookie steht in der gemeinsamen
+     * Sitzung, ihr Code wurde zuletzt verschickt. Solange es sie gibt, gehen geschützte Dateien der Quelle nicht ans
+     * Netz: jede weitere Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Cookie die gemeinsame Sitzung überschreibt.
+     * Wer lesen will, schließt sich mit dieser Seite der offenen Anforderung an ({@link #open}, {@link #await}); sie
+     * ersetzt dort nichts.
      */
     public synchronized Optional<SignInChallenge> pendingChallenge(String sourceId) {
         purge();
@@ -271,15 +305,21 @@ public class SignInRequests {
                                 : SignInRequest.Answer.GONE;
                     }
                     challenge = pending.challenge;
+                    pending.sendingNow = true;
                 }
                 SignInChallenge next;
                 try {
                     next = challenge.submit(code);
                 } catch (SourceAccessException e) {
+                    sent(pending);
                     failed(pending, challenge, e, code, "Einmalcode");
                     return SignInRequest.Answer.FAILED;
+                } catch (RuntimeException | Error e) {
+                    sent(pending);
+                    throw e;
                 }
                 synchronized (this) {
+                    pending.sendingNow = false;
                     pending.failure = "";
                     if (next == null) {
                         pending.state = State.UNLOCKED;
@@ -289,6 +329,7 @@ public class SignInRequests {
                         }
                         notifyAll();
                     } else {
+                        pending.superseded.add(challenge);
                         pending.challenge = next;
                     }
                 }
@@ -324,17 +365,24 @@ public class SignInRequests {
                     return Optional.empty();
                 }
                 challenge = pending.challenge;
+                pending.sendingNow = true;
             }
             SignInChallenge next;
             try {
                 next = challenge.resend();
             } catch (SourceAccessException e) {
+                sent(pending);
                 failed(pending, challenge, e, null, "Neuer Einmalcode");
+                throw e;
+            } catch (RuntimeException | Error e) {
+                sent(pending);
                 throw e;
             }
             synchronized (this) {
+                pending.sendingNow = false;
                 pending.failure = "";
-                if (next != null) {
+                if (next != null && next != challenge) {
+                    pending.superseded.add(challenge);
                     pending.challenge = next;
                 }
             }
@@ -429,6 +477,10 @@ public class SignInRequests {
         /** Bis wann die Halter sie offen halten; {@code null} ohne Halter. */
         Instant until;
         final Object sending = new Object();
+        /** Ob gerade ein Code oder eine neue Anforderung mit {@link #challenge} unterwegs ist (unter dem Sperrobjekt). */
+        boolean sendingNow;
+        /** Seiten, die schon einmal galten; sie ersetzen die aktuelle nie wieder ({@link SignInRequests#newer}). */
+        final Set<SignInChallenge> superseded = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         SignInChallenge challenge;
         State state = State.OPEN;
         /** Ursache des letzten gescheiterten Sendens oder Anforderns, sonst leer ({@link SignInRequest#failure()}). */
