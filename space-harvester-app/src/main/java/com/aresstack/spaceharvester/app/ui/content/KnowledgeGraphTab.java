@@ -290,6 +290,18 @@ final class KnowledgeGraphTab extends JPanel {
         refresh();
     }
 
+    private Consumer<String> onStatus = text -> { };
+
+    /** {@code listener} bekommt den Stand des Graphen („50 Knoten, 51 Kanten …“) für die Statuszeile. */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
+    }
+
+    private void status(String text) {
+        status.setText(text);
+        onStatus.accept(text);
+    }
+
     /** {@code listener} springt zu Fundstellen im Reiter „Text“ ({@code PageDetailPanel#jumpTo}). */
     void onJump(Consumer<List<TermsTab.Span>> listener) {
         onJump = Objects.requireNonNull(listener, "listener");
@@ -408,7 +420,7 @@ final class KnowledgeGraphTab extends JPanel {
             requested.clear();
             requested.addAll(steps);
         }
-        status.setText("Lädt Teilgraph …");
+        status("Lädt Teilgraph …");
         runner.run(() -> {
             Actions current = actionsOrThrow();
             GraphNeighbourhood.Subgraph base = replay ? start.run(current, options) : null;
@@ -462,7 +474,7 @@ final class KnowledgeGraphTab extends JPanel {
                 requested.clear();
                 requested.addAll(expansions);
                 restore(appliedFilters);
-                status.setText("Graph nicht geladen: " + Problems.describe(error).title());
+                status("Graph nicht geladen: " + Problems.describe(error).title());
             }
         });
     }
@@ -858,11 +870,11 @@ final class KnowledgeGraphTab extends JPanel {
         tableModel.reload();
         syncTable();
         if (nodes.isEmpty()) {
-            status.setText(page == null ? "Keine Seite geöffnet." : pageLoaded ? " " : "Teilgraph lädt beim Öffnen.");
+            status(page == null ? "Keine Seite geöffnet." : pageLoaded ? " " : "Teilgraph lädt beim Öffnen.");
         } else {
             long stalePages = nodes.values().stream().filter(node -> node.page().state() == PageStatements.State.STALE)
                     .map(node -> node.page().key()).distinct().count();
-            status.setText(nodes.size() + " Knoten, " + edges.size() + " Kanten"
+            status(nodes.size() + " Knoten, " + edges.size() + " Kanten"
                     + (truncated ? " · gekürzt" + (hidden > 0 && !merged ? ", "
                     + (entry instanceof Entry.Term ? "mindestens " : "") + hidden + " weitere Knoten" : "")
                     + " – gezielt erweitern" : "")

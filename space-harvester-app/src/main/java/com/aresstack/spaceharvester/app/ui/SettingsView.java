@@ -25,7 +25,8 @@ import java.util.Locale;
  * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und
  * Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“
  * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
- * lokal gespeicherte Zugangsdaten lassen sich dort je Eintrag löschen. Jede
+ * lokal gespeicherte Zugangsdaten lassen sich dort je Eintrag löschen. „Bibliotheken“ ({@link LibrariesView}) hängt
+ * als letzte Zeile am Boden des Drawers über „Zurück“, getrennt von den Einstellungsbereichen darüber. Jede
  * Änderung schreibt die Datei und startet die Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
 public final class SettingsView implements View {
@@ -36,6 +37,7 @@ public final class SettingsView implements View {
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
     static final String SECURITY = "Sicherheit";
+    static final String LIBRARIES = "Bibliotheken";
     /** Tooltip der Tresor-Zeilen, deren Wert nur in KeePass liegt: lokal gibt es nichts zu löschen. */
     static final String KEEPASS_TIP = "Die Zugangsdaten liegen nur in KeePass und werden bei Bedarf über die Kopplung "
             + "gelesen; lokal ist nichts gespeichert. Die Verbindung trennt „Entkoppeln“ im Abschnitt KeePass.";
@@ -65,6 +67,8 @@ public final class SettingsView implements View {
     /** Links im Drawer: die Bereiche untereinander. */
     private final JPanel drawer = new JPanel(new BorderLayout(0, 6));
     private final JPanel navRows = new JPanel();
+    /** Unten im Drawer, über „Zurück“: Zeilen, die nicht mitscrollen (Bibliotheken). */
+    private final JPanel bottomRows = new JPanel();
     private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
     private String selected;
     /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
@@ -74,6 +78,8 @@ public final class SettingsView implements View {
     private final AiSettingsPanel ai;
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
+    /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
+    final LibrariesView libraries = new LibrariesView();
     private final Facts runtime = new Facts();
     private final Feedback feedback = new Feedback();
     private final ComposerButton reload = Comic.primary("Neu laden", "Konfiguration neu lesen und Laufzeit neu starten");
@@ -177,6 +183,8 @@ public final class SettingsView implements View {
         vault.add(securityFeedback, BorderLayout.SOUTH);
         page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
                 Comic.plate("Tresor", Comic.RED, vault)));
+        page(LIBRARIES, Comic.column(Comic.plate(LibrariesView.HEADING, Comic.DARK, libraries.component())),
+                bottomRows);
         pageDeck.setOpaque(false);
         root.add(pageDeck, BorderLayout.CENTER);
         buildDrawer();
@@ -195,17 +203,23 @@ public final class SettingsView implements View {
     }
 
     private void page(String name, JComponent content) {
+        page(name, content, navRows);
+    }
+
+    /** @param into die Zeilenliste im Drawer: {@link #navRows} (scrollt) oder {@link #bottomRows} (am Boden) */
+    private void page(String name, JComponent content, JPanel into) {
         pageDeck.add(content, name);
         SettingsNavRow row = new SettingsNavRow(name, () -> select(name));
         row.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
         rows.put(name, row);
-        navRows.add(row);
-        navRows.add(javax.swing.Box.createVerticalStrut(2));
+        into.add(row);
+        into.add(javax.swing.Box.createVerticalStrut(2));
     }
 
     /**
      * Der Drawer wie im AskAI-Client ({@code ChatWorkspacePanel.renderSettingsRows} und {@code buildSettingsFooter}):
-     * Überschrift, die Bereiche als Zeilen untereinander, unten der Weg zurück.
+     * Überschrift, die Bereiche als Zeilen untereinander, unten der Weg zurück. Zwischen beiden, am Boden angeheftet
+     * und nicht mitscrollend, die Zeile „Bibliotheken“ (Angelo, 09.11.2026).
      */
     private void buildDrawer() {
         drawer.setOpaque(false);
@@ -220,10 +234,17 @@ public final class SettingsView implements View {
         scroll.getViewport().setOpaque(false);
         drawer.add(scroll, BorderLayout.CENTER);
         back.addActionListener(e -> leave.run());
+        bottomRows.setLayout(new javax.swing.BoxLayout(bottomRows, javax.swing.BoxLayout.Y_AXIS));
+        bottomRows.setOpaque(false);
+        bottomRows.setBorder(javax.swing.BorderFactory.createEmptyBorder(4, 0, 4, 0));
         JPanel foot = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
         foot.setOpaque(false);
         foot.add(back);
-        drawer.add(foot, BorderLayout.SOUTH);
+        JPanel floor = new JPanel(new BorderLayout(0, 6));
+        floor.setOpaque(false);
+        floor.add(bottomRows, BorderLayout.NORTH);
+        floor.add(foot, BorderLayout.SOUTH);
+        drawer.add(floor, BorderLayout.SOUTH);
     }
 
     /** Zeigt rechts den Bereich {@code name} und markiert ihn links im Drawer. */

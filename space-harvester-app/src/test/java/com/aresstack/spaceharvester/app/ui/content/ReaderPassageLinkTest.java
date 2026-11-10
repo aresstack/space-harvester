@@ -117,7 +117,8 @@ class ReaderPassageLinkTest {
                     found.passages()));
             return null;
         });
-        assertThat(onEdt(() -> panel.feedback().isVisible())).isTrue();
+        // Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte bleibt zu.
+        assertThat(onEdt(() -> panel.feedback().isVisible())).isFalse();
         assertThat(onEdt(() -> panel.feedback().text())).startsWith(PageDetailPanel.PASSAGE_MISSING);
 
         // Neue Fassung der Seite: dieselbe ID öffnet die Seite trotzdem, mit Hinweis und ohne gewählten Absatz.
@@ -131,8 +132,8 @@ class ReaderPassageLinkTest {
             view.openPassage("wiki", target.id());
             return null;
         });
-        awaitTrue(() -> onEdt(() -> panel.shownPage() != null && panel.feedback().isVisible()));
-        assertThat(onEdt(() -> panel.feedback().text())).startsWith(PageDetailPanel.PASSAGE_OLDER);
+        awaitTrue(() -> onEdt(() -> panel.shownPage() != null
+                && panel.feedback().text().startsWith(PageDetailPanel.PASSAGE_OLDER)));
         assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> panel.passages().selectedIndex())).isEqualTo(-1);
         assertThat(onEdt(() -> panel.passages().titles())).isNotEmpty();

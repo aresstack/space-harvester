@@ -61,6 +61,10 @@ public final class Feedback extends JPanel {
     private final ComposerButton details = Comic.button("Technische Details", "Klasse und Meldung der Ausnahme");
     /** Zeigt die Meldungen an dieser Stelle statt hier (ein Statusbereich für mehrere Ansichten, Assistent). */
     private Feedback target;
+    /** Nimmt Lauf-, Erfolgs- und Infomeldungen entgegen (Statuszeile); die Platte zeigt dann nur noch Probleme. */
+    private java.util.function.BiConsumer<String, Color> statusLine;
+    /** Ob die zuletzt gezeigte Meldung in der Statuszeile steht (und {@link #clear()} sie dort beenden muss). */
+    private boolean inStatusLine;
     /** Die Höhe, die der Behälter zuletzt als Wunschhöhe bekommen hat. */
     private int reported = -1;
     private int checkedWidth = -1;
@@ -355,6 +359,11 @@ public final class Feedback extends JPanel {
             return;
         }
         setVisible(false);
+        if (statusLine != null && inStatusLine) {
+            // Die Laufmeldung („… wird geladen“) steht in der Statuszeile; sie endet mit dem Vorgang.
+            inStatusLine = false;
+            statusLine.accept("", Comic.MUTED);
+        }
     }
 
     /**
@@ -366,10 +375,32 @@ public final class Feedback extends JPanel {
         setVisible(false);
     }
 
+    /**
+     * Lauf-, Erfolgs- und Infomeldungen gehen künftig an {@code sink} (Text und Farbe), etwa in die Statuszeile des
+     * Hauptfensters; die Platte erscheint nur noch für Warnungen und Probleme. {@link #text()} nennt weiter die
+     * letzte Meldung.
+     */
+    public void statusLine(java.util.function.BiConsumer<String, Color> sink) {
+        this.statusLine = sink;
+    }
+
     private void show(Color stripe, String heading, String text, String tech) {
         if (target != null) {
             target.show(stripe, heading, text, tech);
             return;
+        }
+        if (statusLine != null && (stripe == Comic.BLUE || stripe == Comic.GREEN || stripe == Comic.PETROL)) {
+            title.setText(heading);
+            message.setText(text == null ? "" : text);
+            setVisible(false);
+            inStatusLine = true;
+            statusLine.accept(text == null || text.isEmpty() ? heading : heading + ": " + text, stripe);
+            return;
+        }
+        if (statusLine != null) {
+            // Eine Warnung oder ein Problem löst die Laufmeldung („… wird geladen“) in der Statuszeile ab.
+            inStatusLine = false;
+            statusLine.accept("", stripe);
         }
         plate.setAccentStripe(stripe);
         title.setText(heading);

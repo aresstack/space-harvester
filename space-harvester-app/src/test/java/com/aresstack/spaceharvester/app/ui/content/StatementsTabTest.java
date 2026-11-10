@@ -142,6 +142,18 @@ class StatementsTabTest {
         assertThat(tab.progressText()).startsWith("Abgebrochen");
     }
 
+    /** Codex zu #566: Beim Seitenwechsel kopierte der Knopf noch die Aussagen der vorigen Seite. */
+    @Test
+    void leavingThePageEmptiesTheClipboardText() {
+        tab.page(page("1"), text());
+        runner.runAll();
+        tab.render(analysed(), List.of());
+        assertThat(tab.copyText()).isNotBlank();
+
+        tab.pending(new PageKey("wiki", "2"));
+        assertThat(tab.copyText()).isEmpty();
+    }
+
     @Test
     void reloadingTheSamePageKeepsARunningAnalysis() {
         tab.page(page("1"), text());
