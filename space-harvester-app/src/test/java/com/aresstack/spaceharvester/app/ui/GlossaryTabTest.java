@@ -185,6 +185,31 @@ class GlossaryTabTest {
     }
 
     @Test
+    void cancellingWhileTheRunStartsIsForwardedOnceTheJobsHaveTheirIds() throws Exception {
+        FakeGlossary glossary = new FakeGlossary();
+        glossary.aiAvailable = true;
+        glossary.startGate = new java.util.concurrent.CountDownLatch(1);
+        GlossaryTab[] tab = new GlossaryTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].load();
+        });
+        await("geladen", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0].detect(null, null);
+            assertThat(tab[0].starting()).isTrue();
+            assertThat(tab[0].detectButton().isEnabled()).isFalse();
+            tab[0].cancelFromOverlay();
+            // Der Schleier bleibt, bis der Abbruch wirklich beim Core ist.
+            assertThat(tab[0].overlay().isBusy()).isTrue();
+            assertThat(tab[0].overlay().text()).contains("wird abgebrochen");
+        });
+        glossary.startGate.countDown();
+        await("Abbruch nachgeholt, Schleier weg", () -> !tab[0].overlay().isBusy() && tab[0].jobIds().isEmpty());
+        assertThat(glossary.calls).containsExactly("classify null/null", "cancel job-1");
+    }
+
+    @Test
     void textsForProgressOutcomeAndDetails() {
         assertThat(GlossaryTab.progressText(JobProgress.NONE, false))
                 .isEqualTo("Fachbegriffe ermitteln · Begriffe werden gesammelt …");
@@ -260,6 +285,8 @@ class GlossaryTabTest {
         volatile boolean conflictOnce;
         volatile JobProgress progress = JobProgress.NONE;
         volatile JobState state = JobState.RUNNING;
+        /** Hält {@link #classify} auf, bis der Test ihn freigibt. */
+        volatile java.util.concurrent.CountDownLatch startGate;
         private int next = 3;
 
         synchronized void put(Entry entry) {
@@ -348,6 +375,13 @@ class GlossaryTabTest {
         @Override
         public List<JobStatus> classify(String sourceId, String spaceKey) {
             calls.add("classify " + sourceId + "/" + spaceKey);
+            if (startGate != null) {
+                try {
+                    startGate.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             return List.of(classification("job-1"));
         }
 

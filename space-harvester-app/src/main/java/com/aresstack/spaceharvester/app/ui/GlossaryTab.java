@@ -98,6 +98,9 @@ final class GlossaryTab {
     private String keepSelected;
     /** Die laufenden Aufträge „Fachbegriffe ermitteln“ (je Quelle einer) mit ihrem letzten Stand; leer ohne Lauf. */
     private final Map<String, JobStatus> jobs = new LinkedHashMap<>();
+    /** Der Lauf wird gerade gestartet (Aufträge noch ohne Kennung); Abbrechen in dieser Zeit wird vorgemerkt. */
+    private boolean starting;
+    private boolean cancelWhileStarting;
     private final Timer poll = new Timer(POLL_MS, e -> pollJob());
 
     /**
@@ -245,7 +248,7 @@ final class GlossaryTab {
     }
 
     private void updateDetect() {
-        boolean running = !jobs.isEmpty();
+        boolean running = !jobs.isEmpty() || starting;
         detect.setEnabled(aiAvailable && !running);
         detect.setToolTipText(!aiAvailable ? NO_AI : running ? RUNNING : "Die KI beurteilt die Bezeichner und "
                 + "Akronyme der indexierten Seiten; nur ungeprüfte Vorschläge ändern sich");
@@ -454,7 +457,7 @@ final class GlossaryTab {
 
     /** „Fachbegriffe ermitteln“: Umfang (alle Quellen, eine Quelle, ein Space), dann der Auftrag. */
     private void askDetect() {
-        if (context == null || access.get().isEmpty() || !jobs.isEmpty()) {
+        if (context == null || access.get().isEmpty() || !jobs.isEmpty() || starting) {
             return;
         }
         javax.swing.JDialog dialog = Dialogs.dialog(directory, DETECT);
@@ -482,20 +485,32 @@ final class GlossaryTab {
     /** Startet den Lauf im Core (je Quelle ein Auftrag) und zeigt den Schleier mit Fortschritt, bis alle enden. */
     void detect(String sourceId, String spaceKey) {
         Optional<GlossaryAccess> glossary = access.get();
-        if (glossary.isEmpty() || !jobs.isEmpty()) {
+        if (glossary.isEmpty() || !jobs.isEmpty() || starting) {
             return;
         }
+        starting = true;
+        cancelWhileStarting = false;
+        updateDetect();
         overlay.setText(DETECT + " · wird gestartet …");
         overlay.setBusy(true);
         Background.run(() -> glossary.get().classify(sourceId, spaceKey), started -> {
+            starting = false;
             if (started.isEmpty()) {
                 overlay.setBusy(false);
+                updateDetect();
                 return;
             }
             started.forEach(status -> jobs.put(status.id(), status));
             updateDetect();
             started.forEach(this::track);
+            if (cancelWhileStarting) {
+                // Esc kam, bevor die Aufträge ihre Kennung hatten: jetzt nachholen.
+                cancelWhileStarting = false;
+                cancelJob();
+            }
         }, failure -> {
+            starting = false;
+            updateDetect();
             overlay.setBusy(false);
             directory.message(notice(failure instanceof GlossaryAccess.AiUnavailableException ? NO_AI
                     : failure instanceof GlossaryAccess.NotAllowedException ? failure.getMessage()
@@ -604,6 +619,12 @@ final class GlossaryTab {
 
     private void cancelJob() {
         Optional<GlossaryAccess> glossary = access.get();
+        if (starting) {
+            // Die Aufträge haben noch keine Kennung; der Abbruch folgt, sobald sie da ist. Der Schleier bleibt.
+            cancelWhileStarting = true;
+            overlay.setText(DETECT + " · wird abgebrochen …");
+            return;
+        }
         List<String> open = jobs.values().stream().filter(s -> !s.state().terminal()).map(JobStatus::id).toList();
         if (open.isEmpty() || glossary.isEmpty()) {
             overlay.setBusy(false);
@@ -636,15 +657,22 @@ final class GlossaryTab {
                 Optional<TermQueries.Snippet> snippet = glossary.get().snippet(e, SNIPPET_CHARS);
                 String title = glossary.get().pageTitle(e.sourceId(), e.pageId()).orElse(e.pageId());
                 titles.add(title);
-                lines.add(title + ": " + snippet.map(GlossaryTab::snippetText)
+                lines.add((evidence.size() == 1 ? "" : (lines.size() + 1) + ". ") + title + ": "
+                        + snippet.map(GlossaryTab::snippetText)
                         .orElse("Kontext nicht mehr lesbar (Seite geändert oder nicht im Cache)"));
             }
             return new Details(lines, titles);
         }, details -> {
+            if (!directory.table().isShowing()) {
+                // Inzwischen ist ein anderer Reiter oder Bereich zu sehen; ein Fenster dort hätte keinen Anker.
+                return;
+            }
             InfoPopup popup = new InfoPopup().text(entry.term(), detailText(entry, details.lines()));
             for (int i = 0; i < evidence.size(); i++) {
                 RelationEvidence e = evidence.get(i);
-                popup.link("Zur Seite „" + shorten(details.titles().get(i)) + "“",
+                // Kurze Linktexte, damit bis zu drei nebeneinander in die Breite des Fensters passen; der Titel
+                // steht in der Belegzeile darüber.
+                popup.link(evidence.size() == 1 ? "Zur Seite" : "Zu Beleg " + (i + 1),
                         () -> context.navigator().openPage(e.sourceId(), e.pageId()));
             }
             popup.showAt(directory.table(), x, y);
@@ -657,10 +685,6 @@ final class GlossaryTab {
     static String snippetText(TermQueries.Snippet s) {
         return ((s.truncatedBefore() ? "…" : "") + s.before() + s.match() + s.after()
                 + (s.truncatedAfter() ? "…" : "")).replaceAll("\\s+", " ").trim();
-    }
-
-    private static String shorten(String title) {
-        return title.length() > 40 ? title.substring(0, 39) + "…" : title;
     }
 
     /** Der Text des Fensters: Erläuterung, Geltungsbereich, Herkunft und Stand, Belege. */
@@ -776,6 +800,15 @@ final class GlossaryTab {
 
     List<String> jobIds() {
         return List.copyOf(jobs.keySet());
+    }
+
+    boolean starting() {
+        return starting;
+    }
+
+    /** Was Esc im Schleier auslöst (für Tests). */
+    void cancelFromOverlay() {
+        cancelJob();
     }
 
     List<Entry> shownEntries() {
