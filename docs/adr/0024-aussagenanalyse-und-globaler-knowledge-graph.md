@@ -92,6 +92,34 @@ das Verzeichnis erst dann an seinen Platz; Abbruch oder Fehler lassen ein vorhan
 Start, nie im Core, nie im Dienst; das Modell wird nie neu trainiert. Die manuelle Installation bleibt möglich, ein
 von Hand entpacktes Modell gilt ohne Neustart.
 
+### Ursachenmatrix der Aussagenqualität (Nachtrag 09.11.2026)
+
+Angelos Beta-Befunde am Confluence-Text „Kurzbeschreibung DATENH“ zeigen falsche Aussagen. Jeder Fehler wird an der
+Stufe behoben, an der er entsteht, nicht nachträglich in der Projektion: Satzgrenzen → OpenNLP (Wortart, Grundform)
+→ MaltParser → Extraktion → Projektion. Grundlage ist `nlp-parser/src/test/resources/…/extraction/datenh.conllu`,
+die unveränderte Ausgabe der gepinnten Kette für `datenh.txt` (`RealModelSmokeTest` prüft sie gegen die echte Kette,
+`DatenhRegressionTest` prüft je Fall Zwischenstand und Endergebnis). Kein Fall wird durch Nachtrainieren, neue
+Bibliotheken oder KI-Aufrufe behoben; eine neue Strukturierungsstufe entsteht nicht, Überschriften und Absätze kennt
+der Core bereits.
+
+| Fall | Befund | Zwischenstand (Ursache) | Stufe | Behebung |
+|---|---|---|---|---|
+| A | „Kurzbeschreibung“, „Komponenten“ werden Handelnde | Satzerkennung übergeht den Zeilenumbruch nach der Überschrift | Satzgrenzen | Zeilenumbruch der Textprojektion ist harte Satzgrenze, vor OpenNLP |
+| B | Aussage „welchen“ | OpenNLP taggt das Relativpronomen als `VERB`, MaltParser macht es zur Wurzel | Wortart | Korrektur geschlossener Wortklassen nach dem Tagger, vor dem Parser |
+| G | Passivaussage „hinweg ist“ | OpenNLP taggt die Postposition als `VERB`, „ist“ wird `aux:pass` | Wortart | wie B |
+| C | „aufermöglichen“ | MaltParser hängt die Präposition als `compound:prt` an | MaltParser | Extraktion folgt der Kante nicht (#563, Regelversion 2) |
+| D | „den Daten“ als Zeitangabe | OpenNLP-Grundform „datum“, die Zeitregel liest das Lemma | Grundform + Regel | Zeitregel nicht über die Grundform „datum“ bei der Wortform „Daten“ |
+| E | Relativpronomen zugleich Handelnder (aktiv) und Betroffenes (passiv) | gemeinsames Passiv-„werden“ hängt nur am letzten Glied | MaltParser + Regel | Stimme über gereihte Partizipien mit gemeinsamem Hilfsverb weitergeben; keine Übernahme über Stimmengrenzen |
+| F | „Das Vorhaben → setzen → sich“ | „sich“ als `obj`, „die Vision“ als zweites `nsubj` | MaltParser + Regel | Reflexivpronomen nie betroffenes Objekt; zweites Subjekt höchstens unsicheres Objekt (Grundlage Heuristik) |
+| H | „stellt … sicher“ ohne Objekt | Verbzusatz „sicher“/„bereit“ als `xcomp`, Objekt als dessen `nsubj` | MaltParser | Regel für prädikative Verbzusätze, Objekt nur unsicher (Heuristik) |
+| I | „Register → erweitern → Register“ | Listenkennung „Register:“ als `nsubj`, eigentliches Subjekt als `obj` | Struktur + MaltParser | Listenkennung vor Doppelpunkt nie Beteiligter neben eigenem Subjekt; fehlt eins, ist sie impliziter Handelnder mit Grundlage Heuristik und höchstens UNCERTAIN |
+| J | Listeneintrag „Datenprodukt-API: Erlaubt …“ ohne Prädikat | großgeschriebenes Verb nach Doppelpunkt als `PROPN` | Wortart | keine deterministische Korrektur ohne Lexikon; die Qualitätsstufe markiert solche Aussagen |
+| K | Grundform „bereitzustellen“ | OpenNLP lässt zu-Infinitive mit Verbzusatz unverändert | Grundform | Grundform-Korrektur „Verbzusatz + zu + Verb“ nach dem Lemmatisierer |
+
+Jede Regeländerung erhöht `ObjectCentricExtraction.RULES_VERSION`; gespeicherte Analysen werden dadurch
+`STALE ANALYZER_CHANGED` und erst auf Klick neu berechnet. Danach folgt eine deterministische Qualitätsstufe
+(PLAUSIBLE/UNCERTAIN/INVALID, ohne Prozentwerte) zwischen Extraktion und Graph-Projektion.
+
 ## Alternativen
 
 | Option | Bewertung |

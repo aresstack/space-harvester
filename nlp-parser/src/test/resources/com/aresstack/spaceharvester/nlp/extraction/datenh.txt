@@ -1,0 +1,12 @@
+Kurzbeschreibung
+Das Programm zur Modernisierung der Haushaltsverfahren des Bundes steht sowohl für die Optimierung der Verfahren als auch für die Nutzung der Daten.
+Das Vorhaben Datenhaus führt Daten zusammen, die bislang in unterschiedlichen Verfahrenskomponenten isoliert verwaltet und ausgewertet werden.
+Das Vorhaben Datenhaus hat sich die Vision gesetzt, die Daten der Haushaltsabteilung zentral bereitzustellen.
+Das Datenhaus ermöglicht mit den Daten der Haushaltsabteilung eine übergreifende Auswertung.
+Über die einzelnen Vorhaben hinweg ist das Datenhaus die zentrale Plattform.
+Komponenten
+Berechtigungsmanagement: setzt datenproduktspezifische Freigaben um und stellt durch die Integration in andere Komponenten des Datenhauses die Einhaltung von Zugriffsbeschränkungen sicher.
+Datenprodukt-API: Erlaubt den Abruf von Datenprodukten, welchen das Interaktionsmuster API zugewiesen ist, über eine Rest-API.
+Marktplatz: bildet die zentrale Anwenderschnittstelle des Datenhauses und ermöglicht verschiedenen Nutzergruppen den selbstständigen Zugriff auf und Austausch von Angeboten, Bedarfen und Funktionen innerhalb thematisch strukturierter und erweiterbarer Self-Service-Bereiche.
+Register: Register erweitern Datenprodukte um zusätzliche Datenattribute, ohne deren Datenbestände zu verändern, und verleihen dem Datenhaus dadurch die Fähigkeit zur operativen Datenerfassung.
+Datenkatalog: organisiert und stellt Metadaten zu verfügbaren Datenprodukten zentral bereit.
