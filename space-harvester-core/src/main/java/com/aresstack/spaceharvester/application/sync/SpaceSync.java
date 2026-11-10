@@ -176,7 +176,7 @@ public class SpaceSync {
         // Neue Seiten zuerst und dauerhaft (ADR 0025): ein Abbruch oder Verbindungsverlust verwirft sie nicht, der
         // nächste Lauf setzt fort. Nebenbei hält das die Schreibsperre des Caches nicht über den ganzen Abruf.
         PlanApplier.Prefetched prefetched = store.keepsLoadedPages()
-                ? applier.loadNew(plan, store::keepLoaded, listener) : PlanApplier.Prefetched.NONE;
+                ? applier.loadNew(plan, store, listener) : PlanApplier.Prefetched.NONE;
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
             Set<String> failed = applier.apply(plan, staged, listener, prefetched);
             SyncBaseline next = plan.nextBaseline(clock.instant(), failed);

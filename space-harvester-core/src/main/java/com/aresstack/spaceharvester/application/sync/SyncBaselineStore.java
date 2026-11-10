@@ -59,14 +59,34 @@ public interface SyncBaselineStore {
     }
 
     /**
-     * Legt den Inhalt einer Seite, die weder Generation noch Cache kennen, sofort ab wie ein Abruf (ADR 0014, Punkt 2;
-     * ADR 0025): ohne Generation, aber dauerhaft. Bricht der Lauf danach ab, kennt der nächste sie über
-     * {@link #knownPages} und lädt sie nicht erneut. Nie für Änderungen bekannter Seiten, die bleiben atomar.
-     *
-     * @return ob abgelegt wurde; sonst merkt der Lauf die Seite wie bisher vor
+     * Der Stand einer Seite im Cache vor ihrem Abruf, für {@link #keepLoaded}: so überschreibt ein Lauf nichts, was ein
+     * anderer inzwischen abgelegt hat. Standard: {@code null}.
      */
-    default boolean keepLoaded(PageSnapshot snapshot) {
-        return false;
+    default String loadState(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return null;
+    }
+
+    /**
+     * Legt den Inhalt einer Seite, die weder Generation noch Cache kennen, sofort ab wie ein Abruf (ADR 0014, Punkt 2;
+     * ADR 0025): ohne Generation, aber dauerhaft, und nur, wenn der Cache noch auf {@code expectedState}
+     * ({@link #loadState}, vor dem Abruf gelesen) steht. Bricht der Lauf danach ab, kennt der nächste sie über
+     * {@link #knownPages} und lädt sie nicht erneut. Nie für Änderungen bekannter Seiten, die bleiben atomar.
+     */
+    default Kept keepLoaded(PageSnapshot snapshot, String expectedState) {
+        return Kept.DEFERRED;
+    }
+
+    /** Ausgang von {@link #keepLoaded}. */
+    enum Kept {
+        /** Dauerhaft abgelegt. */
+        STORED,
+        /** Nicht abgelegt, Cache unverändert (etwa Sperre belegt): der Lauf merkt die Seite wie bisher vor. */
+        DEFERRED,
+        /**
+         * Nicht abgelegt, weil ein anderer Lauf die Seite inzwischen abgelegt hat: der Lauf überschreibt sie nicht und
+         * führt sie als gescheitert, der nächste gleicht sie ab.
+         */
+        SUPERSEDED
     }
 
     /** Beginnt die Schreibvorgänge eines Laufs für diesen Space; bis zum Commit für Leser unsichtbar. */

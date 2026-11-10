@@ -33,6 +33,8 @@ class PlanApplierTest {
     /** Was die Quelle beim Inhaltsabruf liefert, wenn es von der Listung abweicht. */
     private final Map<String, PageMetadata> fetchAnswers = new HashMap<>();
     private String crashAtFetchOf;
+    /** Legt beim Abruf dieser Seite gleichzeitig einen anderen Stand ab, wie ein paralleler Lauf. */
+    private String concurrentSaveOf;
     private final SpaceSync sync = new SpaceSync(source.queries(), store, FakeSource.CLOCK);
     private final PlanApplier applier = new PlanApplier((sourceId, pageId) -> {
         if (pageId.equals(crashAtFetchOf)) {
@@ -43,6 +45,11 @@ class PlanApplierTest {
                     null);
         }
         fetched.add(pageId);
+        if (pageId.equals(concurrentSaveOf)) {
+            PageMetadata newer = FakeSource.page(pageId, "DOC", null, "9", null);
+            repository.save(PageSnapshot.of(sourceId, newer, new NativePayload("{}".getBytes(StandardCharsets.UTF_8),
+                    "application/json", "confluence-content/v1"), FakeSource.CLOCK.instant()));
+        }
         PageMetadata page = fetchAnswers.getOrDefault(pageId, source.pageMetadata(pageId));
         return PageSnapshot.of(sourceId, page, new NativePayload(
                 ("{\"id\":\"" + pageId + "\",\"version\":\"" + page.version() + "\"}").getBytes(StandardCharsets.UTF_8),
@@ -255,6 +262,18 @@ class PlanApplierTest {
         assertThat(fetched).containsExactly("3");
         assertThat(next.confirmed().generation()).isEqualTo(1);
         assertThat(next.confirmed().pages()).containsOnlyKeys("1", "2", "3");
+    }
+
+    @Test
+    void aNewPageSavedConcurrentlyDuringItsFetchIsNotOverwritten() {
+        store.keepsLoaded = true;
+        concurrentSaveOf = "2";
+
+        SpaceSync.SyncRun run = run();
+
+        // Der parallele Stand bleibt; dieser Lauf führt die Seite als gescheitert, der nächste gleicht sie ab.
+        assertThat(revision("2")).isEqualTo("9");
+        assertThat(run.failedPageIds()).containsExactly("2");
     }
 
     @Test

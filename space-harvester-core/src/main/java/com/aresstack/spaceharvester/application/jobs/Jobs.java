@@ -13,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -23,6 +24,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.UnaryOperator;
 
 /**
  * Nimmt Aufträge an, führt höchstens {@link JobLimits#maxConcurrent()} gleichzeitig aus und hält ihren Zustand fest.
@@ -259,6 +261,16 @@ public class Jobs implements AutoCloseable {
      * @throws JobCapacityExceededException wenn zu viele Aufträge offen sind
      */
     public JobStatus resume(String jobId, String owner) {
+        return resume(jobId, owner, null);
+    }
+
+    /**
+     * Wie {@link #resume(String, String)}; {@code renew} ersetzt vorher die Arbeit des Auftrags, etwa um die
+     * Berechtigungsprüfung des Auftraggebers mit seinem aktuellen Zugang statt dem vom Start zu führen.
+     *
+     * @param renew bekommt die bisherige Arbeit und liefert die neue, oder {@code null} für unverändert
+     */
+    public JobStatus resume(String jobId, String owner, UnaryOperator<JobTask> renew) {
         JobStatus current = requireOwner(status(jobId), owner);
         if (!current.type().resumable()) {
             throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht fortsetzen");
@@ -278,7 +290,9 @@ public class Jobs implements AutoCloseable {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
             requireCapacity(job.type, job.owner);
+            JobTask task = renew == null ? job.task : Objects.requireNonNull(renew.apply(job.task), "task");
             stopped.remove(jobId);
+            job.task = task;
             job.reopen();
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag fortgesetzt", null,
                     null, null, null);
@@ -355,16 +369,13 @@ public class Jobs implements AutoCloseable {
      * @throws JobStillRunningException wenn der Auftrag noch wartet oder läuft (vorher {@link #cancel(String, String)})
      */
     public void delete(String jobId, String owner) {
-        JobStatus status = requireFinished(requireOwner(status(jobId), owner));
-        // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
-        events.delete(status.id());
-        store.delete(status.id());
-        forget(status.id());
-    }
-
-    private void forget(String jobId) {
+        // Unter dem Sperrobjekt, damit kein gleichzeitiges Fortsetzen einen gerade gelöschten Auftrag wieder öffnet.
         synchronized (lock) {
-            stopped.remove(jobId);
+            JobStatus status = requireFinished(requireOwner(status(jobId), owner));
+            stopped.remove(status.id());
+            // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
+            events.delete(status.id());
+            store.delete(status.id());
         }
     }
 
@@ -378,11 +389,8 @@ public class Jobs implements AutoCloseable {
     public int deleteFinished(String owner, JobType type) {
         int removed = 0;
         for (JobStatus status : store.all()) {
-            if (Objects.equals(status.owner(), owner) && status.state().terminal()
-                    && (type == null || status.type() == type)) {
-                events.delete(status.id());
-                store.delete(status.id());
-                forget(status.id());
+            if (Objects.equals(status.owner(), owner) && (type == null || status.type() == type)
+                    && deleteIfFinished(status.id(), false)) {
                 removed++;
             }
         }
@@ -581,13 +589,9 @@ public class Jobs implements AutoCloseable {
         Instant limit = clock.instant().minus(limits.retention());
         int removed = 0;
         for (JobStatus status : store.all()) {
-            if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)) {
-                // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der nächste Lauf versucht es erneut.
-                if (deleteEventsQuietly(status.id())) {
-                    store.delete(status.id());
-                    forget(status.id());
-                    removed++;
-                }
+            if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)
+                    && deleteIfFinished(status.id(), true)) {
+                removed++;
             }
         }
         return removed;
@@ -610,6 +614,36 @@ public class Jobs implements AutoCloseable {
                         COMPONENT, null, INTERRUPTED, "Der Dienst wurde während des Auftrags beendet", null, null,
                         null, null));
             }
+        }
+    }
+
+    /**
+     * Löscht einen beendeten Auftrag samt Ereignissen, geprüft und gelöscht unter dem Sperrobjekt, damit ein
+     * gleichzeitiges {@link #resume} ihn nicht dazwischen wieder öffnet.
+     *
+     * @param quietly Fehler beim Löschen der Ereignisse nur protokollieren; der Auftrag bleibt dann stehen
+     * @return ob gelöscht wurde
+     */
+    private boolean deleteIfFinished(String jobId, boolean quietly) {
+        synchronized (lock) {
+            if (open.containsKey(jobId)) {
+                return false;
+            }
+            Optional<JobStatus> stored = store.find(jobId);
+            if (stored.isEmpty() || !stored.get().state().terminal()) {
+                return false;
+            }
+            // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der nächste Lauf versucht es erneut.
+            if (quietly) {
+                if (!deleteEventsQuietly(jobId)) {
+                    return false;
+                }
+            } else {
+                events.delete(jobId);
+            }
+            stopped.remove(jobId);
+            store.delete(jobId);
+            return true;
         }
     }
 
@@ -795,7 +829,8 @@ public class Jobs implements AutoCloseable {
         final String partitionKey;
         final String rootPageId;
         final String owner;
-        final JobTask task;
+        /** Nur unter dem Sperrobjekt neu gesetzt, beim Fortsetzen ({@link #resume(String, String, UnaryOperator)}). */
+        volatile JobTask task;
         final Instant createdAt;
         final AtomicLong discovered = new AtomicLong();
         final AtomicLong processed = new AtomicLong();

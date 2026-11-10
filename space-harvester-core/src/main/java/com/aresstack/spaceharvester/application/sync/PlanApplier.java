@@ -51,7 +51,7 @@ public class PlanApplier {
      * abgelegt ist; der nächste Lauf lädt es nicht erneut. Was {@code keep} nicht annimmt, bleibt zum Vormerken in
      * {@link Prefetched#held()}.
      */
-    public Prefetched loadNew(SyncPlan plan, Predicate<PageSnapshot> keep, SyncListener listener) {
+    public Prefetched loadNew(SyncPlan plan, SyncBaselineStore store, SyncListener listener) {
         String sourceId = plan.inventory().sourceId();
         Set<String> handled = new HashSet<>();
         Set<String> failed = new TreeSet<>();
@@ -62,14 +62,24 @@ public class PlanApplier {
             }
             listener.checkpoint();
             PageKey key = new PageKey(sourceId, change.pageId());
+            // Vor dem Abruf: was ein anderer Lauf währenddessen ablegt, darf diese Antwort nicht überschreiben.
+            String before = store.loadState(key);
             PageSnapshot snapshot = matching(key, change.current().page());
             handled.add(change.pageId());
+            boolean superseded = false;
             if (snapshot == null) {
                 failed.add(change.pageId());
-            } else if (!keep.test(snapshot)) {
-                held.add(snapshot);
+            } else {
+                switch (store.keepLoaded(snapshot, before)) {
+                    case STORED -> { }
+                    case DEFERRED -> held.add(snapshot);
+                    case SUPERSEDED -> {
+                        failed.add(change.pageId());
+                        superseded = true;
+                    }
+                }
             }
-            listener.pageDone(change, snapshot != null, snapshot == null);
+            listener.pageDone(change, snapshot != null && !superseded, snapshot == null || superseded);
         }
         return new Prefetched(handled, failed, held);
     }

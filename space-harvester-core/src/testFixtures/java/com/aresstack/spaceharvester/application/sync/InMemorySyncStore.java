@@ -79,12 +79,20 @@ public final class InMemorySyncStore implements SyncBaselineStore {
     }
 
     @Override
-    public synchronized boolean keepLoaded(PageSnapshot snapshot) {
+    public synchronized String loadState(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return repository.find(key).map(PageSnapshot::revision).orElse(null);
+    }
+
+    @Override
+    public synchronized Kept keepLoaded(PageSnapshot snapshot, String expectedState) {
         if (!keepsLoaded) {
-            return false;
+            return Kept.DEFERRED;
+        }
+        if (!java.util.Objects.equals(loadState(snapshot.key()), expectedState)) {
+            return Kept.SUPERSEDED;
         }
         repository.save(snapshot);
-        return true;
+        return Kept.STORED;
     }
 
     @Override

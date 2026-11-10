@@ -218,7 +218,12 @@ public class ExportsController {
     public ResponseEntity<ExportResponse> resume(@Parameter(hidden = true) AccessContext caller,
                                                  @PathVariable String exportId) {
         ownExport(caller, exportId);
-        return ResponseEntity.accepted().body(ExportResponse.of(exports.resume(exportId, owner(caller)), null));
+        // Mit dem Zugang dieser Anfrage weiter, nicht mit dem vom Start: ein Token kann inzwischen erneuert sein.
+        JobStatus resumed = exports.resume(exportId, owner(caller), request -> request
+                .withVisible(header -> access.canRead(caller, header.key().sourceId(),
+                        header.metadata().partitionKey(), header.key().pageId()))
+                .withAuthorized(() -> permitsExport(caller, request.sourceId(), request.spaceKey())));
+        return ResponseEntity.accepted().body(ExportResponse.of(resumed, null));
     }
 
     @DeleteMapping(path = EXPORTS + "/{exportId}")

@@ -156,6 +156,30 @@ class JobsTest {
     }
 
     @Test
+    void resumingCanRenewTheWorkAndADeletedJobCannotBeResumed() {
+        Jobs jobs = jobs(1, 5);
+        List<String> runs = new ArrayList<>();
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(context -> {
+                    runs.add("alt");
+                    context.checkpoint();
+                }));
+        jobs.pause(export.id(), "client-a");
+        executor.runNext();
+
+        jobs.resume(export.id(), "client-a", old -> JobTask.blocking(context -> runs.add("neu")));
+        executor.runNext();
+        assertThat(runs).containsExactly("alt", "neu");
+
+        JobStatus other = jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+        jobs.pause(other.id(), "client-a");
+        executor.runNext();
+        jobs.delete(other.id(), "client-a");
+        assertThatThrownBy(() -> jobs.resume(other.id(), "client-a")).isInstanceOf(UnknownJobException.class);
+    }
+
+    @Test
     void cancellingWinsOverPausing() {
         Jobs jobs = jobs(1, 5);
         JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
