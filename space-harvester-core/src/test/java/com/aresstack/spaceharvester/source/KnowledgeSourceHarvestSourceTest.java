@@ -732,8 +732,13 @@ class KnowledgeSourceHarvestSourceTest {
         List<String> seen = new java.util.ArrayList<>();
         WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
         WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        int[] opened = {0};
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
-                tokenPort, null, null, true, webPort);
+                tokenPort, null, null, true, () -> {
+                    opened[0]++;
+                    return webPort;
+                });
+        assertThat(opened[0]).isZero();
         HarvestSource.ViewImage image =
                 new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
                         null, null, null);
@@ -744,6 +749,9 @@ class KnowledgeSourceHarvestSourceTest {
                         java.time.Clock.systemUTC());
         SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
                 () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        // Die zweite Web-Sitzung entsteht, wenn Confluence den Code anfordert, nicht beim Start und nicht beim Absenden.
+        assertThat(opened[0]).isEqualTo(1);
+        assertThat(source.webPort()).isSameAs(webPort);
         com.aresstack.spaceharvester.application.signin.SignInRequest request =
                 signIns.open("wiki", "anna", required.challenge());
         assertThat(request.asksForLogin()).isTrue();
@@ -754,6 +762,7 @@ class KnowledgeSourceHarvestSourceTest {
                 .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
 
         assertThat(password).containsOnly('\0');
+        assertThat(opened[0]).isEqualTo(1);
         assertThat(seen).containsExactly("token-port image -:pat-value", "web-port image anna:pw-value",
                 "web-port code anna:pw-value");
         assertThat(source.viewImage(image, 1000)).containsExactly(1, 2, 3);
@@ -773,7 +782,7 @@ class KnowledgeSourceHarvestSourceTest {
         WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
         WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "rejectFirst");
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
-                tokenPort, null, null, true, webPort);
+                tokenPort, null, null, true, () -> webPort);
         HarvestSource.ViewImage image =
                 new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
                         null, null, null);
@@ -802,7 +811,7 @@ class KnowledgeSourceHarvestSourceTest {
         WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
         WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "failFirst");
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
-                tokenPort, null, null, true, webPort);
+                tokenPort, null, null, true, () -> webPort);
         HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
                 null);
         SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(

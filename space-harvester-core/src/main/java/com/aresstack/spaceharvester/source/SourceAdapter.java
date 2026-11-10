@@ -108,18 +108,15 @@ public interface SourceAdapter {
      * @param scope     Umfang für Quellen ohne {@code PartitionListingSource} (#187): Startpunkte, Tiefe und
      *                  Höchstzahl, mit denen der Core {@code discover} aufruft, wie die Indexierung im Enterprise AI
      *                  Client ({@code KnowledgeSourceProvider.scope}); {@code null} ohne diesen Weg
-     * @param webPort   für eine Quelle mit Personal Access Token eine zweite, zugleich geöffnete Instanz desselben
-     *                  Ports mit eigener Web-Sitzung für Dateiabrufe mit Benutzer und Passwort (#571); sonst
-     *                  {@code null}
+     * @param webPorts  für eine Quelle mit Personal Access Token: öffnet bei Bedarf eine zweite Instanz desselben
+     *                  Ports mit eigener Web-Sitzung für Dateiabrufe mit Benutzer und Passwort (#571), ohne Netz und
+     *                  ohne das Zertifikat neu zu laden; sonst {@code null}
      */
     record OpenedSource(KnowledgeSourcePort port, DelegatedConfluenceHttp delegated, SourceScope scope,
-                        KnowledgeSourcePort webPort) {
+                        java.util.function.Supplier<KnowledgeSourcePort> webPorts) {
         public OpenedSource {
             if (port == null) {
                 throw new IllegalArgumentException("port must not be null");
-            }
-            if (webPort == port) {
-                throw new IllegalArgumentException("webPort must be a separate instance");
             }
         }
 

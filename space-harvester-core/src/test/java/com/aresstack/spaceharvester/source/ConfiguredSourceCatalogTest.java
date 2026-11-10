@@ -148,11 +148,11 @@ class ConfiguredSourceCatalogTest {
     }
 
     /**
-     * #571: Eine Quelle mit Token bringt ihre zweite Adapter-Instanz für Dateien mit Benutzer und Passwort schon beim
-     * Öffnen mit. Beim Absenden des Einmalcodes wird nichts mehr geöffnet; das hielt in beta.364 das Codefeld an.
+     * #571: Eine Quelle mit Token kann eine zweite Instanz für Dateien mit Benutzer und Passwort öffnen, tut es beim
+     * Start aber nicht, sondern erst, wenn Confluence den Code anfordert; dann ist es eine eigene Instanz.
      */
     @Test
-    void aTokenSourceOpensItsSecondWebSessionInstanceTogetherWithTheSource() {
+    void aTokenSourceOpensItsSecondWebSessionOnlyOnDemand() {
         ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(
                 source("pat", new Auth(AuthType.PAT, null, null, "token")),
                 source("basic", new Auth(AuthType.BASIC, "harvester", "secret", null))), "test");
@@ -160,9 +160,11 @@ class ConfiguredSourceCatalogTest {
         KnowledgeSourceHarvestSource pat = (KnowledgeSourceHarvestSource) catalog.find("pat").orElseThrow();
         KnowledgeSourceHarvestSource basic = (KnowledgeSourceHarvestSource) catalog.find("basic").orElseThrow();
 
-        assertThat(pat.webPort()).isNotNull().isNotSameAs(pat.port());
+        assertThat(pat.opensWebSessions()).isTrue();
+        assertThat(pat.webPort()).isNull();
+        assertThat(pat.openWebPort()).isNotNull().isNotSameAs(pat.port()).isSameAs(pat.webPort());
         assertThat(pat.webPort().getClass()).isEqualTo(pat.port().getClass());
-        assertThat(basic.webPort()).isNull();
+        assertThat(basic.opensWebSessions()).isFalse();
     }
 
     @Test

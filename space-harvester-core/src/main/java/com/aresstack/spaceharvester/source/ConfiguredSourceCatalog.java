@@ -232,15 +232,15 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     private static Opened open(SourceSettingsConfig config, SourceAdapter adapter, SourceAdapter.Context context) {
         String title = config.title() == null || config.title().isBlank() ? config.id() : config.title();
         SourceAdapter.OpenedSource source = adapter.open(config, context);
-        // Mit Token bringt die Quelle eine zweite Adapter-Instanz für Dateien mit Benutzer und Passwort mit, in deren
-        // Web-Sitzung die Zwei-Faktor-Anmeldung den Code annimmt (#571).
+        // Mit Token öffnet die Quelle bei Bedarf eine zweite Instanz des Ports für Dateien mit Benutzer und Passwort, in
+        // deren Web-Sitzung die Zwei-Faktor-Anmeldung den Code annimmt (#571).
         boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
         URI baseUrl = config.baseUrl();
         boolean http = baseUrl != null && baseUrl.getScheme() != null
                 && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT));
         return new Opened(config, new KnowledgeSourceHarvestSource(config.id(), config.type(), title, source.port(),
                 context.async() == null ? null : context.async().inFlight(), source.scope(), token,
-                token ? source.webPort() : null), source.delegated(),
+                token ? source.webPorts() : null), source.delegated(),
                 http ? baseUrl : null, true);
     }
 
