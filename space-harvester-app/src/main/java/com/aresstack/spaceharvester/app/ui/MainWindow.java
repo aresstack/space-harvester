@@ -529,9 +529,9 @@ public final class MainWindow implements AppContext.Navigator {
         } catch (RuntimeException e) {
             running = 0;
         }
-        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", Texts.count(running, "Auftrag läuft",
-                "Aufträge laufen") + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.",
-                "Beenden");
+        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", "Space Harvester wirklich beenden? "
+                + Texts.count(running, "Auftrag läuft", "Aufträge laufen")
+                + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
     }
 
     private static Icon icon(AppContext.Section section) {
