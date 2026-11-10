@@ -966,7 +966,7 @@ final class SourceForm {
         if (fields.certificateMissing() && !GraphicsEnvironment.isHeadless() && !Dialogs.confirm(root,
                 "Hinweis: Kein Zertifikat", "„Zertifikat verwenden“ ist eingeschaltet, aber kein Zertifikat gewählt. "
                         + "Ohne mTLS-Zertifikat kann die Verbindung fehlschlagen, wenn der Server eines verlangt. "
-                        + "Trotzdem ohne Zertifikat speichern?", "Ohne Zertifikat speichern")) {
+                        + "Wirklich ohne Zertifikat speichern?")) {
             return;
         }
         if (!validateInput() || !Dialogs.restartAllowed(root, context)) {

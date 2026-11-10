@@ -47,26 +47,12 @@ public final class Dialogs {
     private Dialogs() {
     }
 
-    /** Fragt eine riskante Aktion ab; {@code true} nur nach ausdrücklicher Bestätigung. */
-    public static boolean confirm(Component parent, String title, String text, String action) {
-        boolean[] result = {false};
-        JDialog dialog = dialog(parent, title);
-        ComposerButton yes = Comic.danger(action, null);
-        ComposerButton no = Comic.button("Abbrechen", null);
-        yes.addActionListener(e -> {
-            result[0] = true;
-            dialog.dispose();
-        });
-        no.addActionListener(e -> dialog.dispose());
-        show(dialog, title, Comic.note(text), no, yes);
-        return result[0];
-    }
-
     /**
-     * Eine Ja/Nein-Frage, wo der Name der Aktion selbst „Abbrechen“ wäre (Auftrag abbrechen): Neben „Abbrechen“ als
-     * Aktion hieße der Knopf zum Zurücktreten genauso (Angelo 10.11.2026). {@code true} nur nach „Ja“.
+     * Fragt eine riskante Aktion ab, mit „Nein“ und „Ja“ (rot); {@code true} nur nach „Ja“. Die Frage im Text sagt
+     * „wirklich“ („Auftrag wirklich löschen?“), damit klar ist, dass es eine Vorsichtsabfrage ist (Angelo 10.11.2026).
+     * Escape und ✕ heißen „Nein“.
      */
-    public static boolean yesNo(Component parent, String title, String text) {
+    public static boolean confirm(Component parent, String title, String question) {
         boolean[] result = {false};
         JDialog dialog = dialog(parent, title);
         ComposerButton yes = Comic.danger(YES, null);
@@ -76,7 +62,7 @@ public final class Dialogs {
             dialog.dispose();
         });
         no.addActionListener(e -> dialog.dispose());
-        show(dialog, title, Comic.note(text), no, yes);
+        show(dialog, title, Comic.note(question), no, yes);
         return result[0];
     }
 
@@ -119,8 +105,8 @@ public final class Dialogs {
         return confirm(parent, "Laufende Aufträge", Texts.count(running.size(), "Auftrag läuft", "Aufträge laufen")
                 + " noch: " + jobs + ". Zum Übernehmen startet die App die Quellen neu; "
                 + (running.size() == 1 ? "dieser Auftrag bricht" : "diese Aufträge brechen") + " dabei ab. "
-                + "Wer das nicht will, wartet, bis sie unter „Aufträge“ fertig sind, und übernimmt dann.",
-                "Trotzdem übernehmen");
+                + "Wer das nicht will, wartet, bis sie unter „Aufträge“ fertig sind, und übernimmt dann.\n\n"
+                + "Wirklich übernehmen und " + (running.size() == 1 ? "den Auftrag" : "die Aufträge") + " abbrechen?");
     }
 
     /**

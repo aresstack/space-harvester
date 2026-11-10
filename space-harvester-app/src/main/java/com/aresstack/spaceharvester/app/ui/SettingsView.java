@@ -297,8 +297,8 @@ public final class SettingsView implements View {
         }), securityFeedback::problem);
         button.addActionListener(e -> {
             if (Dialogs.restartAllowed(root, context) && Dialogs.confirm(root, "Zugangsdaten löschen?", what
-                    + ": die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, damit der Wert "
-                    + "sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.", "Löschen")) {
+                    + " wirklich löschen? Die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, "
+                    + "damit der Wert sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.")) {
                 run.run();
             }
         });
