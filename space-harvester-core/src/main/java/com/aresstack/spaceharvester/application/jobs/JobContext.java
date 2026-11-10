@@ -55,4 +55,11 @@ public interface JobContext {
      */
     default void rootTitle(String title) {
     }
+
+    /**
+     * Meldet, dass das Ergebnis unvollständig ist, obwohl der Auftrag regulär endet ({@link JobStatus#incomplete()}),
+     * etwa weil Seiten oder Bilder fehlen. Ohne Wirkung außerhalb eines Auftrags.
+     */
+    default void incomplete() {
+    }
 }

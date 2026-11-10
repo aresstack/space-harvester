@@ -78,6 +78,30 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void afterARestartResumingASyncKeepsTheEntryAndItsMode() {
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        JobLimits limits = new JobLimits(2, 10, Duration.ofHours(1));
+        Jobs before = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs first = new SpaceSyncJobs(before, source.queries(), store, fetcher, FakeSource.CLOCK);
+        JobStatus accepted = first.start("wiki", "DOC", "client:a", SyncMode.FULL);
+        first.pause(accepted.id(), "client:a");
+        runQueued();
+        assertThat(first.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.PAUSED);
+
+        Jobs restarted = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs second = new SpaceSyncJobs(restarted, source.queries(), store, fetcher, FakeSource.CLOCK);
+        SpaceSyncJobs.SyncJob resumed = second.resume(accepted.id(), "client:a");
+        runQueued();
+
+        assertThat(resumed.status().id()).isEqualTo(accepted.id());
+        JobStatus done = second.status(accepted.id(), "client:a").status();
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.parameters()).containsEntry("mode", "FULL");
+        assertThat(done.progress().written()).isEqualTo(3);
+        assertThat(restarted.list("client:a", JobType.SYNC)).hasSize(1);
+    }
+
+    @Test
     void catchingUpUsesTheChangeSearchWhereTheSourceListsChanges() {
         source.listingChanges();
         runQueued();

@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -190,7 +191,43 @@ public class Exports {
         purgeQuietly();
         writer.requireCapacity();
         return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
-                request.owner(), new ExportTask(request, selected));
+                request.owner(), parameters(request), new ExportTask(request, selected));
+    }
+
+    /** Wiederanlauf-Angabe: Ebenen unter der Startseite ({@link ExportRequest#depth()}). */
+    static final String DEPTH = "depth";
+    /** Wiederanlauf-Angabe: vorher gegen die Quelle abgleichen ({@link ExportRequest#refresh()}). */
+    static final String REFRESH = "refresh";
+    /** Wiederanlauf-Angabe: abgeleitete Formate, durch Komma getrennt ({@link ExportRequest#formats()}). */
+    static final String FORMATS = "formats";
+
+    /** Was ein Wiederanlauf braucht, um denselben Umfang zu bearbeiten ({@link JobStatus#parameters()}). */
+    static Map<String, String> parameters(ExportRequest request) {
+        Map<String, String> parameters = new java.util.TreeMap<>();
+        if (request.depth() != null) {
+            parameters.put(DEPTH, request.depth().toString());
+        }
+        if (request.refresh()) {
+            parameters.put(REFRESH, "true");
+        }
+        if (!request.formats().isEmpty()) {
+            parameters.put(FORMATS, String.join(",", request.formats()));
+        }
+        return parameters;
+    }
+
+    /**
+     * Derselbe Auftrag wie beim Start, aus den abgelegten Angaben; Lese- und Exportprüfung wie bei
+     * {@link ExportRequest#of}, bis {@code access} sie erneuert.
+     */
+    static ExportRequest request(JobStatus status) {
+        String formats = status.parameter(FORMATS);
+        String depth = status.parameter(DEPTH);
+        return ExportRequest.of(status.sourceId(), status.partitionKey(), status.owner(),
+                        formats == null || formats.isBlank() ? List.of() : List.of(formats.split(",")))
+                .withRefresh(Boolean.parseBoolean(status.parameter(REFRESH)))
+                .withRoot(status.rootPageId())
+                .withDepth(status.rootPageId() == null || depth == null ? null : Integer.valueOf(depth));
     }
 
     /** Die Arbeit eines Exports; trägt ihren Auftrag, damit Fortsetzen den Zugang des Aufrufers erneuern kann. */
@@ -212,7 +249,9 @@ public class Exports {
 
     /**
      * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Export im selben Auftrag fort
-     * ({@link Jobs#resume}, ADR 0025): das Einlesen holt nur, was noch fehlt, und das Artefakt entsteht neu.
+     * ({@link Jobs#resume}, ADR 0025): das Einlesen holt nur, was noch fehlt, und das Artefakt entsteht neu. Nach einem
+     * Neustart läuft derselbe Eintrag mit denselben Angaben (Startseite, Tiefe, Formate, Aktualität) neu
+     * ({@link Jobs#rerun}).
      *
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
      *                                                                               dieser ID gibt
@@ -235,6 +274,15 @@ public class Exports {
         }
         purgeQuietly();
         writer.requireCapacity();
+        if (!jobs.resumable(exportId, owner)) {
+            if (!Jobs.resumableState(status.state())) {
+                throw new JobNotResumableException(exportId, status.state().terminal() ? "der Export ist fertig"
+                        : "der Export wartet oder läuft noch");
+            }
+            // Nach einem Neustart: derselbe Eintrag mit derselben Arbeit aus den abgelegten Angaben.
+            ExportRequest request = access.apply(request(status));
+            return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats())));
+        }
         return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
                 ? new ExportTask(access.apply(export.request), export.selected) : task);
     }
@@ -543,6 +591,9 @@ public class Exports {
             }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
             boolean complete = covers(request, generation, subtree) && failures.isEmpty() && unrefreshed == 0;
+            if (!complete) {
+                context.incomplete();
+            }
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
                     entries.size(), failures, warnings, complete));
             afterPublish(context);

@@ -107,6 +107,20 @@ public class ExportConversions {
     }
 
     /**
+     * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Bilderauftrag im selben Eintrag fort
+     * ({@link ExportAssetCollection#resume}).
+     *
+     * @throws UnknownJobException wenn es keinen eigenen Bilderauftrag mit dieser ID gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht fortsetzen lässt
+     */
+    public JobStatus resumeImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.resume(jobId, owner);
+    }
+
+    /**
      * Schreibt die Datei in {@code directory}. Eine vorhandene Datei wird nie überschrieben; der Name bekommt dann
      * einen Zähler. Die Datei entsteht erst als {@code .part} und erscheint vollständig oder gar nicht.
      *

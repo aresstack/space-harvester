@@ -12,8 +12,10 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -153,14 +155,143 @@ public class ExportAssetCollection {
         String sourceId = dataset.get().sourceId();
         String spaceKey = dataset.get().spaceKey();
         try {
-            JobStatus status = jobs.submit(JobType.ASSETS, sourceId, spaceKey, owner,
-                    JobTask.blocking(context -> collect(context, exportId)));
+            JobStatus status = jobs.submit(JobType.ASSETS, sourceId, spaceKey, null, owner,
+                    Map.of(EXPORT_ID, exportId), new AssetTask(exportId));
             running.put(exportId, status.id());
             return Optional.of(status);
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Bilder für Export {0} nicht eingeplant ({1})", exportId,
                     e.getClass().getSimpleName());
             return Optional.empty();
+        }
+    }
+
+    /** Wiederanlauf-Angabe: der Export, dessen Bilder der Auftrag beschafft ({@link JobStatus#parameters()}). */
+    public static final String EXPORT_ID = "exportId";
+
+    /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Bilderauftrag im selben Eintrag fort (ADR 0025):
+     * Seiten, die er schon vollständig geprüft hat, übernimmt er ohne Abruf; schon abgelegte Dateien kommen aus dem
+     * Speicher. Nach einem Neustart läuft derselbe Eintrag für denselben Export neu ({@link Jobs#rerun}).
+     *
+     * @throws UnknownJobException wenn es keinen eigenen Bilderauftrag mit dieser ID gibt
+     * @throws JobNotResumableException wie {@link Jobs#resume}, oder wenn ein alter Auftrag seinen Export nicht nennt
+     */
+    public JobStatus resume(String jobId, String owner) {
+        JobStatus status = jobs.status(jobId, owner);
+        if (status.type() != JobType.ASSETS) {
+            throw new UnknownJobException(jobId);
+        }
+        String exportId = status.parameter(EXPORT_ID);
+        JobStatus resumed;
+        if (jobs.resumable(jobId, owner) || !Jobs.resumableState(status.state())) {
+            resumed = jobs.resume(jobId, owner);
+        } else if (exportId == null) {
+            throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
+        } else {
+            resumed = jobs.rerun(jobId, owner, new AssetTask(exportId));
+        }
+        if (exportId != null) {
+            running.put(exportId, jobId);
+        }
+        return resumed;
+    }
+
+    /**
+     * Die Arbeit eines Bilderauftrags. Merkt sich über Anhalten und Fortsetzen hinweg, welche Seiten fertig geprüft
+     * sind, mit ihren Manifest-Einträgen und Zählern, damit ein Fortsetzen sie nicht erneut abruft.
+     */
+    private final class AssetTask implements JobTask {
+
+        private final String exportId;
+        private final Map<String, CheckedPage> checked = new ConcurrentHashMap<>();
+
+        AssetTask(String exportId) {
+            this.exportId = exportId;
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
+            running.put(exportId, context.jobId());
+            return JobTask.blocking(job -> collect(job, exportId, checked)).start(context);
+        }
+    }
+
+    /** Eine fertig geprüfte Seite: ihre Einträge und was sie zu den Zählern beitrug. */
+    private record CheckedPage(List<ExportAssetManifest.Entry> entries, long discovered, long processed,
+                               long written, long failed) {
+    }
+
+    /** Zählt mit, was ein Lauf meldet, und reicht alles an den Auftrag weiter. */
+    private static final class Tally implements JobContext {
+
+        private final JobContext context;
+        long discovered;
+        long processed;
+        long written;
+        long failed;
+
+        Tally(JobContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public String jobId() {
+            return context.jobId();
+        }
+
+        @Override
+        public String owner() {
+            return context.owner();
+        }
+
+        @Override
+        public void checkpoint() {
+            context.checkpoint();
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return context.cancelRequested();
+        }
+
+        @Override
+        public synchronized void discovered(long pages) {
+            discovered += pages;
+            context.discovered(pages);
+        }
+
+        @Override
+        public synchronized void processed(long pages) {
+            processed += pages;
+            context.processed(pages);
+        }
+
+        @Override
+        public synchronized void written(long pages) {
+            written += pages;
+            context.written(pages);
+        }
+
+        @Override
+        public synchronized void failed(long pages) {
+            failed += pages;
+            context.failed(pages);
+        }
+
+        @Override
+        public void phase(String component, String phase) {
+            context.phase(component, phase);
+        }
+
+        @Override
+        public void record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft event) {
+            context.record(event);
+        }
+
+        @Override
+        public void incomplete() {
+            context.incomplete();
         }
     }
 
@@ -242,24 +373,45 @@ public class ExportAssetCollection {
         };
     }
 
-    private void collect(JobContext context, String exportId) {
+    private void collect(JobContext job, String exportId, Map<String, CheckedPage> done) {
+        Tally context = new Tally(job);
+        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
+        Set<String> checked = new HashSet<>();
         try {
             ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, PHASE);
-            List<ExportAssetManifest.Entry> entries = new ArrayList<>();
             Run run = new Run(context, dataset.sourceId(), settings.get());
             boolean[] complete = {true};
             boolean[] stopped = {false};
-            Set<String> checked = new HashSet<>();
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 if (stopped[0]) {
                     return;
                 }
+                String pageId = page.snapshot().key().pageId();
+                CheckedPage earlier = done.get(pageId);
+                if (earlier != null) {
+                    // Vor dem Anhalten schon vollständig geprüft: ohne Abruf übernehmen.
+                    entries.addAll(earlier.entries());
+                    context.discovered(earlier.discovered());
+                    context.processed(earlier.processed());
+                    context.written(earlier.written());
+                    context.failed(earlier.failed());
+                    checked.add(pageId);
+                    return;
+                }
+                int first = entries.size();
+                long discovered = context.discovered;
+                long processed = context.processed;
+                long written = context.written;
+                long failed = context.failed;
                 try {
                     if (collectPage(run, exportId, dataset, page.snapshot(), entries)) {
-                        checked.add(page.snapshot().key().pageId());
+                        checked.add(pageId);
+                        done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
+                                context.discovered - discovered, context.processed - processed,
+                                context.written - written, context.failed - failed));
                     } else {
                         complete[0] = false;
                     }
@@ -275,8 +427,21 @@ public class ExportAssetCollection {
             List<ExportAssetManifest.Entry> result = merged(writer.assets(exportId), entries, checked);
             boolean allStored = result.stream().allMatch(ExportAssetManifest.Entry::present);
             writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, result));
+            if (!(complete[0] && allStored)) {
+                context.incomplete();
+            }
             LOG.log(System.Logger.Level.INFO, "Bilder für Export {0}: {1} Referenzen, {2} fehlend", exportId,
                     result.size(), result.stream().filter(entry -> !entry.present()).count());
+        } catch (JobCancelledException e) {
+            // Angehalten oder abgebrochen: was bis hier abgelegt ist, steht im Manifest; vollständig ist es nicht.
+            try {
+                writer.putAssets(exportId, new ExportAssetManifest(false,
+                        merged(writer.assets(exportId), entries, checked)));
+            } catch (RuntimeException failure) {
+                LOG.log(System.Logger.Level.WARNING, "Bisheriges Manifest für Export {0} nicht geschrieben ({1})",
+                        exportId, failure.getClass().getName());
+            }
+            throw e;
         } finally {
             running.remove(exportId);
         }
