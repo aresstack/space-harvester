@@ -201,6 +201,15 @@ public final class Workspace {
         return harvester.acronymRelationRule().run(caller, sourceId);
     }
 
+    /**
+     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Begriffe): leer, solange der Core keinen Glossar-Unterbau
+     * hat; der Reiter zeigt dann „noch nicht verfügbar“. Kommt der Unterbau ({@code Harvester.glossary()}), liefert
+     * diese Methode den Zugriff mit den Rechten dieser App.
+     */
+    public Optional<GlossaryAccess> glossary() {
+        return Optional.empty();
+    }
+
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
     public TermRelation confirmRelation(String id, long revision) {
         return harvester.termRelations().confirm(caller, id, revision);
