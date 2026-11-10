@@ -1105,7 +1105,18 @@ public class Assets {
      */
     public DescribedImage describeViewImage(String sourceId, String pageId, String pageVersion,
                                             HarvestSource.ViewImage image) {
-        ImageDescriber model = describer(sourceId);
+        return describeViewImage(sourceId, pageId, pageVersion, image, false);
+    }
+
+    /**
+     * Wie {@link #describeViewImage(String, String, String, HarvestSource.ViewImage)}; mit {@code releasedOnce} geht
+     * das Bild auch aus einer nicht freigegebenen Quelle an das Modell, weil der Benutzer es für genau diese Seite
+     * ausdrücklich erlaubt hat (Reiter „Bilder“, „Nur diese Seite einmalig beschreiben“). Gespeichert wird keine
+     * Freigabe.
+     */
+    public DescribedImage describeViewImage(String sourceId, String pageId, String pageVersion,
+                                            HarvestSource.ViewImage image, boolean releasedOnce) {
+        ImageDescriber model = releasedOnce ? describer() : describer(sourceId);
         AssetContent content = viewImage(sourceId, pageId, pageVersion, image);
         // Nur Rasterbilder: SVG ist Text und geht als Quelle in die Analyse, nicht als Bild an das Modell.
         if (content.asset().kind() != AssetKind.IMAGE) {
