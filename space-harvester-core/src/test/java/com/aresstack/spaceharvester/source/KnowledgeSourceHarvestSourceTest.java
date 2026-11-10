@@ -794,7 +794,8 @@ class KnowledgeSourceHarvestSourceTest {
 
         assertThat(again).isNotNull();
         assertThat(again.asksForLogin()).isFalse();
-        assertThat(again.error()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(again.error()).isEmpty();
         assertThat(again.submit("111111".toCharArray())).isNull();
         assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
     }
@@ -822,7 +823,8 @@ class KnowledgeSourceHarvestSourceTest {
 
         assertThat(again).isNotNull();
         assertThat(again.asksForLogin()).isFalse();
-        assertThat(again.error()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(again.error()).isEmpty();
         assertThat(seen).as("angemeldet, aber kein Code gesendet").endsWith("web-port image anna:pw-value")
                 .doesNotContain("web-port code anna:pw-value");
         assertThat(again.submit("111111".toCharArray())).isNull();
