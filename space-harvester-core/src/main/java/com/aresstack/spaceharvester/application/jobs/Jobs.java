@@ -240,6 +240,7 @@ public class Jobs implements AutoCloseable {
                     return job.snapshot();
                 }
                 job.pauseRequested = true;
+                job.pauseReason = PauseReason.USER;
                 job.cancelRequested = true;
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
@@ -855,9 +856,18 @@ public class Jobs implements AutoCloseable {
                             + " geschrieben, " + progress.failed() + " gescheitert", null, null, null, null);
             case CANCELLED -> job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED",
                     "Auftrag abgebrochen", null, null, null, null);
-            case PAUSED -> job.emit(true, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, "PAUSED",
-                    "Auftrag angehalten: " + progress.processed() + " Seiten verarbeitet; Fortsetzen holt nur, was "
-                            + "noch fehlt", null, null, null, null);
+            case PAUSED -> {
+                PauseReason reason = finished.pauseReason();
+                String why = switch (reason) {
+                    case SIGN_IN_REQUIRED -> "Auftrag angehalten, weil die Anmeldung fehlt: ";
+                    case CONNECTION_LOST -> "Auftrag angehalten, weil die Quelle nicht erreichbar ist: ";
+                    case USER -> "Auftrag angehalten: ";
+                };
+                job.emit(true, reason == PauseReason.USER ? JobEvent.Severity.INFO : JobEvent.Severity.WARNING,
+                        JobEvent.Category.JOB, COMPONENT, reason == PauseReason.USER ? "PAUSED" : reason.name(),
+                        why + progress.processed() + " Seiten verarbeitet; Fortsetzen holt nur, was noch fehlt", null,
+                        null, null, null);
+            }
             default -> {
                 JobError error = finished.error();
                 FailureDiagnosis.Findings findings = FailureDiagnosis.of(cause, error.code());
@@ -925,6 +935,8 @@ public class Jobs implements AutoCloseable {
         volatile boolean cancelRequested;
         /** Mit {@link #cancelRequested}: der Benutzer hält an, statt abzubrechen. */
         volatile boolean pauseRequested;
+        /** Warum angehalten wird; {@code null} heißt durch den Benutzer. */
+        volatile PauseReason pauseReason;
         volatile Instant startedAt;
         volatile Instant deadline;
         Instant finishedAt;
@@ -962,6 +974,7 @@ public class Jobs implements AutoCloseable {
             deadline = null;
             cancelRequested = false;
             pauseRequested = false;
+            pauseReason = null;
             incomplete = false;
             discovered.set(0);
             processed.set(0);
@@ -974,7 +987,20 @@ public class Jobs implements AutoCloseable {
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
                     cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt, rootPageId,
                     rootPageId == null ? null : rootTitle, parameters, incomplete && state == JobState.COMPLETED,
-                    pauseRequested && cancelRequested && !state.terminal());
+                    pauseRequested && cancelRequested && !state.terminal(), pauseReason);
+        }
+
+        @Override
+        public void pause(PauseReason reason) {
+            synchronized (lock) {
+                // Ein angeforderter Abbruch bleibt ein Abbruch.
+                if (!cancelRequested || pauseRequested) {
+                    pauseReason = reason == null ? PauseReason.USER : reason;
+                    pauseRequested = true;
+                    cancelRequested = true;
+                }
+            }
+            throw new JobCancelledException(id);
         }
 
         @Override

@@ -76,6 +76,11 @@ public interface SpaceProvisioning {
             public void phase(String component, String phase) {
                 context.phase(component, phase);
             }
+
+            @Override
+            public void pause(com.aresstack.spaceharvester.application.jobs.PauseReason reason) {
+                context.pause(reason);
+            }
         }, sourceId, spaceKey);
     }
 

@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ForeignContent;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -293,6 +294,11 @@ public class ExportAssetCollection {
         public void incomplete() {
             context.incomplete();
         }
+
+        @Override
+        public void pause(PauseReason reason) {
+            context.pause(reason);
+        }
     }
 
     /** Stand der Bilder eines Exports. */
@@ -383,12 +389,8 @@ public class ExportAssetCollection {
             context.phase(COMPONENT, PHASE);
             Run run = new Run(context, dataset.sourceId(), settings.get());
             boolean[] complete = {true};
-            boolean[] stopped = {false};
             dataset.forEachPage(page -> {
                 context.checkpoint();
-                if (stopped[0]) {
-                    return;
-                }
                 String pageId = page.snapshot().key().pageId();
                 CheckedPage earlier = done.get(pageId);
                 if (earlier != null) {
@@ -416,12 +418,11 @@ public class ExportAssetCollection {
                         complete[0] = false;
                     }
                 } catch (SourceUnreachable e) {
-                    // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen, der nächste Export
-                    // holt die Bilder nach.
-                    complete[0] = false;
-                    stopped[0] = true;
-                    LOG.log(System.Logger.Level.INFO, "Bilder für Export {0} abgebrochen: Quelle {1}", exportId,
+                    // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler
+                    // zählen; der Auftrag hält an, ▶ macht später weiter.
+                    LOG.log(System.Logger.Level.INFO, "Bilder für Export {0} angehalten: Quelle {1}", exportId,
                             e.reason);
+                    context.pause(PauseReason.CONNECTION_LOST);
                 }
             });
             List<ExportAssetManifest.Entry> result = merged(writer.assets(exportId), entries, checked);
@@ -819,6 +820,13 @@ public class ExportAssetCollection {
                     context.phase(COMPONENT, PHASE);
                 }
                 if (outcome != SignInRequests.Outcome.UNLOCKED) {
+                    if (signIns.interactive()) {
+                        // Mit Oberfläche zählen die übrigen Dateien nicht als Fehler: der Auftrag hält an, das
+                        // Manifest behält das Abgelegte, und ▶ macht nach der Anmeldung weiter.
+                        LOG.log(System.Logger.Level.INFO, "Bilder der Quelle {0} angehalten: Anmeldung fehlt",
+                                sourceId);
+                        context.pause(PauseReason.SIGN_IN_REQUIRED);
+                    }
                     declined = true;
                     LOG.log(System.Logger.Level.INFO, "Bilder der Quelle {0} ohne Anmeldung weiter", sourceId);
                     throw e;

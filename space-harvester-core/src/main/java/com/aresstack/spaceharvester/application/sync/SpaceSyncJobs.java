@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -656,6 +657,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             public void checkpoint() {
                 context.checkpoint();
             }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
+            }
         };
     }
 
@@ -682,6 +688,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             @Override
             public void checkpoint() {
                 context.checkpoint();
+            }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
             }
         };
     }

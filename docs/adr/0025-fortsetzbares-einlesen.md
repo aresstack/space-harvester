@@ -54,6 +54,15 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
    Fortsetzen übernimmt fertig geprüfte Seiten mit ihren Einträgen und Zählern ohne Abruf, schon abgelegte Dateien
    kommen aus dem Speicher.
 
+10. **Selbst anhalten statt Fehler zählen** (Angelo 10.11.2026, CLUK: 5535 „Fehler“ nach abgelaufener Code-Abfrage).
+    `JobContext#pause(PauseReason)` beendet einen Auftrag als `PAUSED` mit Grund (`JobStatus#pauseReason`):
+    `SIGN_IN_REQUIRED`, wenn mit Oberfläche die Anmeldung nicht rechtzeitig kommt oder abgelehnt wird (vorher
+    zählten alle übrigen Dateien sofort als „Anmeldung fehlt“), `CONNECTION_LOST`, wenn Bilder die Quelle nicht
+    erreichen oder das Einlesen von Export und Abgleich `PlanApplier#CONNECTION_LOST_AFTER` (5) Inhaltsabrufe
+    nacheinander an fehlender Verbindung oder Drosselung scheitert; jede Antwort der Quelle setzt die Zählung zurück.
+    Ohne Oberfläche (Dienst) gilt beim Einmalcode das alte Verhalten. Der Zustand heißt dann `PAUSED_SIGN_IN_REQUIRED`
+    bzw. `PAUSED_CONNECTION_LOST`, die Aktionen sind dieselben wie bei „Angehalten“.
+
 Folgen in eigenen Schritten: einheitliche, einstellbare Wiederholungen ohne zweite Schleife über dem REST-Client,
 „Nur Fehler neu versuchen“ und „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar), beide im selben Eintrag.
 

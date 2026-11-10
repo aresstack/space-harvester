@@ -102,6 +102,32 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void whenTheSourceStaysUnreachableTheSyncPausesInsteadOfFailingEveryPage() {
+        for (int i = 4; i <= 12; i++) {
+            source.put(String.valueOf(i), "DOC", null, "1", null);
+        }
+        beforeFetch = pageId -> {
+            throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "kein Netz", null);
+        };
+
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        JobStatus paused = syncs.status(accepted.id(), "client:a").status();
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.pauseReason()).isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason
+                .CONNECTION_LOST);
+        assertThat(paused.lifecycle().key()).isEqualTo("PAUSED_CONNECTION_LOST");
+        // Nach fünf Versuchen hört er auf, statt alle zwölf Seiten als Fehler zu zählen.
+        assertThat(paused.progress().failed()).isLessThan(12);
+
+        beforeFetch = pageId -> { };
+        syncs.resume(accepted.id(), "client:a");
+        runQueued();
+        assertThat(syncs.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void catchingUpUsesTheChangeSearchWhereTheSourceListsChanges() {
         source.listingChanges();
         runQueued();

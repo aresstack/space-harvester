@@ -39,6 +39,12 @@ import java.util.TreeSet;
  */
 public class PlanApplier {
 
+    /**
+     * So viele Inhaltsabrufe nacheinander dürfen an fehlender Verbindung oder Drosselung scheitern, bevor der Lauf
+     * {@link SyncListener#connectionLost()} meldet; jede Antwort der Quelle setzt die Zählung zurück.
+     */
+    public static final int CONNECTION_LOST_AFTER = 5;
+
     private final PageContentFetcher fetcher;
 
     public PlanApplier(PageContentFetcher fetcher) {
@@ -56,6 +62,7 @@ public class PlanApplier {
         Set<String> handled = new HashSet<>();
         Set<String> failed = new TreeSet<>();
         List<PageSnapshot> held = new ArrayList<>();
+        Reachability reachability = new Reachability(listener);
         for (PageChange change : plan.changes()) {
             if (change.kind() != PageChange.Kind.NEW) {
                 continue;
@@ -64,7 +71,7 @@ public class PlanApplier {
             PageKey key = new PageKey(sourceId, change.pageId());
             // Vor dem Abruf: was ein anderer Lauf währenddessen ablegt, darf diese Antwort nicht überschreiben.
             String before = store.loadState(key);
-            PageSnapshot snapshot = matching(key, change.current().page());
+            PageSnapshot snapshot = matching(key, change.current().page(), reachability);
             handled.add(change.pageId());
             boolean superseded = false;
             if (snapshot == null) {
@@ -121,6 +128,7 @@ public class PlanApplier {
         Instant observedAt = plan.inventory().finishedAt();
         Set<String> failed = new TreeSet<>(prefetched.failed());
         prefetched.held().forEach(target::save);
+        Reachability reachability = new Reachability(listener);
         for (PageChange change : plan.changes()) {
             if (prefetched.handled().contains(change.pageId())) {
                 continue;
@@ -130,7 +138,7 @@ public class PlanApplier {
             switch (change.kind()) {
                 case NEW, CONTENT_CHANGED -> {
                     listener.checkpoint();
-                    if (!fetch(key, change.current().page(), target)) {
+                    if (!fetch(key, change.current().page(), target, reachability)) {
                         failed.add(change.pageId());
                         written = false;
                     }
@@ -169,8 +177,8 @@ public class PlanApplier {
         return failed;
     }
 
-    private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target) {
-        PageSnapshot snapshot = matching(key, expected);
+    private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target, Reachability reachability) {
+        PageSnapshot snapshot = matching(key, expected, reachability);
         if (snapshot != null) {
             target.save(snapshot);
         }
@@ -178,13 +186,15 @@ public class PlanApplier {
     }
 
     /** Der geladene Snapshot, wenn er zur Inventur passt; sonst {@code null}. */
-    private PageSnapshot matching(PageKey key, PageMetadata expected) {
+    private PageSnapshot matching(PageKey key, PageMetadata expected, Reachability reachability) {
         PageSnapshot snapshot;
         try {
             snapshot = fetcher.fetch(key.sourceId(), key.pageId());
         } catch (SourceAccessException e) {
+            reachability.failed(e.reason());
             return null;
         }
+        reachability.answered();
         boolean matches = snapshot.key().equals(key)
                 && expected.partitionKey().equals(snapshot.spaceKey())
                 && (expected.version() == null || expected.version().equals(snapshot.revision()));
@@ -193,5 +203,33 @@ public class PlanApplier {
 
     private static PageHeader header(PageKey key, PageMetadataListing.Entry entry, Instant observedAt) {
         return new PageHeader(key, entry.page(), entry.metadataHash(), entry.attributesHash(), observedAt);
+    }
+
+    /** Zählt Abrufe nacheinander, die an fehlender Verbindung oder Drosselung scheitern; je Lauf. */
+    private static final class Reachability {
+
+        private final SyncListener listener;
+        private int unreachable;
+
+        Reachability(SyncListener listener) {
+            this.listener = listener;
+        }
+
+        void answered() {
+            unreachable = 0;
+        }
+
+        void failed(SourceAccessException.Reason reason) {
+            if (reason != SourceAccessException.Reason.UNAVAILABLE
+                    && reason != SourceAccessException.Reason.RATE_LIMITED) {
+                // Die Quelle hat geantwortet, nur nicht mit dieser Seite.
+                unreachable = 0;
+                return;
+            }
+            if (++unreachable >= CONNECTION_LOST_AFTER) {
+                unreachable = 0;
+                listener.connectionLost();
+            }
+        }
     }
 }
