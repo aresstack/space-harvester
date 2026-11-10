@@ -123,6 +123,7 @@ public final class SignInSlot extends JPanel {
         passwordField.setPreferredSize(usernameField.getPreferredSize());
         addLoginRow(loginGrid, "Benutzername:", usernameField, 0);
         addLoginRow(loginGrid, "Passwort:", passwordField, 1);
+        loginGrid.setMaximumSize(loginGrid.getPreferredSize());
         loginFields.add(loginGrid);
         loginFields.add(Box.createVerticalStrut(10));
         loginFields.setVisible(false);
