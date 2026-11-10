@@ -149,6 +149,7 @@ class SettingDialogsTest {
             again[0].save();
         });
         assertThat(manual.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.secrets().withoutLogin("wiki")).as("keine Zusatzfelder aus KeePass mehr").isFalse();
         assertThat(Files.readString(config)).doesNotContain("PAT_Confluence", "getippt");
         assertThat(vault.has("wiki")).isTrue();
     }

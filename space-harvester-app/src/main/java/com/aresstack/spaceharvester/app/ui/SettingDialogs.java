@@ -269,6 +269,7 @@ final class SettingDialogs {
             readEntry.run();
         });
         origin.addActionListener(e -> {
+            visibility.run(); // Eintragszeile sofort zeigen bzw. verbergen, auch wenn das Laden scheitert
             if (keePass.get() && context.keePass().paired()) {
                 loadEntries.run();
             } else {
@@ -1274,8 +1275,8 @@ final class SettingDialogs {
                 AppSettings before = context.settings();
                 String entryBefore = before == null ? null : before.keePassEntry(source.id());
                 boolean entryChanged = keePass != null && !Objects.equals(keePass.entry(), entryBefore);
-                boolean sessionNew = session.length > 0
-                        && !context.secrets().has(source.id(), SourceSaving.login(source));
+                // Ein frisch aus KeePass gelesener Wert gilt immer als neu: Er kann rotiert sein, ebenso die Zusatzfelder.
+                boolean sessionNew = session.length > 0;
                 if (source.equals(editing.draft()) && value.length == 0 && !entryChanged && !sessionNew) {
                     Arrays.fill(session, '\0');
                     finish();
@@ -1307,6 +1308,9 @@ final class SettingDialogs {
                     if (keePass != null && keePass.entry() != null && keePass.fields() != null) {
                         // Wie beim Start (AppContext.unlockFromKeePass): Zusatzfelder des Eintrags gelten sofort.
                         context.secrets().keePassFields(id, keePass.fields());
+                    } else if (keePass != null && keePass.entry() == null) {
+                        // Ohne KeePass gelten auch dessen Zusatzfelder nicht mehr (etwa MM_RequiresLogin=false).
+                        context.secrets().keePassFields(id, Map.of());
                     }
                     Arrays.fill(value, '\0');
                     Arrays.fill(session, '\0');
