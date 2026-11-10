@@ -392,5 +392,22 @@ class ObjectCentricExtractionTest {
         assertFalse(feels.has(Finding.PREDICATIVE_PARTICLE));
         assertTrue(feels.has(Finding.REFLEXIVE));
         assertNull(feels.core(Role.AFFECTED_OBJECT), "weder „sich“ noch eine Heuristik als Objekt");
+
+        Statement shopping = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("einkaufen"))
+                .findFirst().orElseThrow();
+        assertFalse(shopping.has(Finding.SUBJECT_FROM_LABEL), "ein Teilsatz hat die Kennung nie als Handelnden");
+        assertTrue(shopping.arguments().stream().noneMatch(a -> text(analysis, a).contains("Hinweis")));
+
+        Statement ready = analysis.statements().stream().filter(s -> s.sentence() == 3).findFirst().orElseThrow();
+        assertEquals("bereithalten", ready.predicate().lemma());
+        assertTrue(ready.has(Finding.REFLEXIVE));
+        assertNull(ready.core(Role.AFFECTED_OBJECT), "„sich“ am Verbzusatz ist kein Objekt");
+
+        Statement taught = analysis.statements().stream().filter(s -> s.predicate().lemma().equals("lehren"))
+                .findFirst().orElseThrow();
+        assertEquals("Der Lehrer", text(analysis, taught.core(Role.ACTOR)), "Reihung schlägt die Vorfeld-Heuristik");
+        assertEquals(Basis.COORDINATION, taught.core(Role.ACTOR).basis());
+        assertEquals(List.of("die Kinder", "das Schwimmen"), taught.withRole(Role.AFFECTED_OBJECT).stream()
+                .map(a -> text(analysis, a)).toList());
     }
 }

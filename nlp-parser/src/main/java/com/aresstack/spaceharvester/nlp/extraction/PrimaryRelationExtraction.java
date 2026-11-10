@@ -112,9 +112,9 @@ final class PrimaryRelationExtraction {
                 findings.add(Finding.LABEL_REPEATED);
             }
         }
-        // Zwei Akkusativobjekte, das erste im Vorfeld vor dem Verb, und kein Subjekt: das erste ist wahrscheinlich das
-        // Subjekt, nur als Heuristik.
-        Token vorfeld = !passive && clause != Clause.SUBORDINATE && subject == null
+        // Zwei Akkusativobjekte, das erste im Vorfeld vor dem Verb, und kein Subjekt, auch keins aus der Reihung: das
+        // erste ist wahrscheinlich das Subjekt, nur als Heuristik.
+        Token vorfeld = !passive && clause != Clause.SUBORDINATE && subject == null && inherited == null
                 && objects.size() >= 2 && objects.get(0).id() < verb.id() ? objects.remove(0) : null;
         List<Argument> arguments = new ArrayList<>();
         if (vorfeld != null) {
@@ -148,6 +148,10 @@ final class PrimaryRelationExtraction {
             if (objects.isEmpty()) {
                 // „stellt … die Einhaltung … sicher“: der Parser hängt das Objekt als Subjekt an „sicher“
                 for (Token object : sentence.dependents(predicative.id(), "nsubj")) {
+                    if (reflexive(object)) {
+                        findings.add(Finding.REFLEXIVE); // „hält sich bereit“
+                        continue;
+                    }
                     Mention mention = mentions.at(document, sentence, object);
                     arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), object.deprel(), null,
                             Priority.CORE, Basis.HEURISTIC, false));
@@ -333,8 +337,14 @@ final class PrimaryRelationExtraction {
     private static boolean ownClauseOfTheEntry(Sentence sentence, Token verb) {
         Token current = verb;
         while (current != null) {
-            if (!sentence.dependents(current.id(), "mark").isEmpty() || current.deprel() != null
-                    && (current.deprel().startsWith("acl") || "advcl".equals(current.deprel()))) {
+            // Ein Teilsatz unter einem anderen Prädikat („geht einkaufen“ als xcomp, „dass …“) hat nie die Kennung
+            // als Handelnden; ein xcomp am Doppelpunkt der Kennung selbst („Datenkatalog: organisiert …“) ist der
+            // Eintrag.
+            Token governor = sentence.head(current);
+            boolean underAPredicate = governor != null && governor.hasUpos("VERB", "AUX");
+            String relation = current.baseRelation();
+            if (!sentence.dependents(current.id(), "mark").isEmpty() || "acl".equals(relation)
+                    || "advcl".equals(relation) || underAPredicate && SUBORDINATE.contains(relation)) {
                 return false;
             }
             if (!"conj".equals(current.baseRelation())) {

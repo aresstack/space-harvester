@@ -1,5 +1,7 @@
 # Gold-Analysen (MIT) zu Ursachen H und I (ADR 0024, Ursachenmatrix): Fälle, in denen die strukturellen Heuristiken
-# NICHT greifen dürfen. Satz 1: Kennung vor eigenem Subjekt; Satz 2: „sicher“ an einem Verb ohne Partikelverb.
+# NICHT greifen dürfen. Satz 1: Kennung vor eigenem Subjekt; Satz 2: „sicher“ an einem Verb ohne Partikelverb;
+# Satz 3: Kennung nie Handelnder eines Teilsatzes (xcomp); Satz 4: „sich“ am Verbzusatz kein Objekt; Satz 5: zwei
+# Objekte vor dem gereihten Partizip, das Subjekt kommt aus der Reihung.
 # sent_id = 1
 # text = Hinweis: Der Antrag wird geprüft.
 1	Hinweis	Hinweis	NOUN	NN	_	6	dep	_	SpaceAfter=No
@@ -17,3 +19,37 @@
 3	sich	er	PRON	PRF	_	2	obj	_	_
 4	sicher	sicher	ADJ	ADJD	_	2	xcomp	_	SpaceAfter=No
 5	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 3
+# text = Hinweis: Der Nutzer geht einkaufen.
+1	Hinweis	Hinweis	NOUN	NN	_	5	dep	_	SpaceAfter=No
+2	:	:	PUNCT	$.	_	1	punct	_	_
+3	Der	der	DET	ART	_	4	det	_	_
+4	Nutzer	Nutzer	NOUN	NN	_	5	nsubj	_	_
+5	geht	gehen	VERB	VVFIN	_	0	root	_	_
+6	einkaufen	einkaufen	VERB	VVINF	_	5	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	$.	_	5	punct	_	_
+
+# sent_id = 4
+# text = Er hält sich bereit.
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	hält	halten	VERB	VVFIN	_	0	root	_	_
+3	sich	er	PRON	PRF	_	4	nsubj	_	_
+4	bereit	bereit	ADJ	ADJD	_	2	xcomp	_	SpaceAfter=No
+5	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 5
+# text = Der Lehrer hat die Klasse begrüßt und die Kinder das Schwimmen gelehrt.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Lehrer	Lehrer	NOUN	NN	_	6	nsubj	_	_
+3	hat	haben	AUX	VAFIN	_	6	aux	_	_
+4	die	der	DET	ART	_	5	det	_	_
+5	Klasse	Klasse	NOUN	NN	_	6	obj	_	_
+6	begrüßt	begrüßen	VERB	VVPP	_	0	root	_	_
+7	und	und	CCONJ	KON	_	12	cc	_	_
+8	die	der	DET	ART	_	9	det	_	_
+9	Kinder	Kind	NOUN	NN	_	12	obj	_	_
+10	das	der	DET	ART	_	11	det	_	_
+11	Schwimmen	Schwimmen	NOUN	NN	_	12	obj	_	_
+12	gelehrt	lehren	VERB	VVPP	_	6	conj	_	SpaceAfter=No
+13	.	.	PUNCT	$.	_	6	punct	_	_
