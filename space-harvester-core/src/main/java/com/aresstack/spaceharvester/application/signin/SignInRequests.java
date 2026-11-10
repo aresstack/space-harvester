@@ -67,6 +67,11 @@ public class SignInRequests {
     }
 
     /** Ohne Oberfläche: niemand wartet, jede Anforderung endet sofort mit {@link Outcome#DECLINED}. */
+    /** Wie lange ein Auftrag höchstens auf den Code wartet bzw. ein Leser auf Abruf die Anforderung hält. */
+    public Duration waitTime() {
+        return wait;
+    }
+
     public static SignInRequests none() {
         return new SignInRequests(Duration.ZERO, Clock.systemUTC());
     }

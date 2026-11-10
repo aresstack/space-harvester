@@ -32,8 +32,9 @@ import java.util.function.Consumer;
  * Suchfeld. Akronyme und Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des
  * EDT abgefragt, sobald der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld, ebenso die Beziehungen (#120);
  * Synonyme sind die Beziehungen der Arten Synonym und Schreibvariante ({@link RelationTab}). Der Graph zeigt einen
- * Begriff mit seinen Nachbarn ({@link TermGraphView}). Für das Fachglossar gibt es noch keinen Unterbau. Nur auf dem
- * EDT.
+ * Begriff mit seinen Nachbarn ({@link TermGraphView}). Das Fachglossar verwaltet die dauerhaft gepflegten
+ * Glossareinträge ({@link GlossaryTab}); seine Knöpfe „Fachbegriffe ermitteln“ und „Fachbegriff hinzufügen …“ stehen
+ * oben rechts in der Reiterzeile und sind nur auf diesem Reiter zu sehen. Nur auf dem EDT.
  */
 public final class TermsView implements View {
 
@@ -68,6 +69,7 @@ public final class TermsView implements View {
     private final RelationTab relationTab;
     private final RelationTab synonymTab;
     private final TermGraphView graph;
+    private final GlossaryTab glossaryTab;
     static final String CONFIRM = "Bestätigen";
     static final String REJECT = "Ablehnen";
     static final String REMOVE = "Entfernen";
@@ -96,15 +98,17 @@ public final class TermsView implements View {
                         Relation.statusText(r.status())),
                 SYNONYM_TYPES, RelationType.SYNONYM, NO_SYNONYMS);
         graph = new TermGraphView(context);
-        JLabel glossary = Comic.muted(NOT_AVAILABLE);
-        glossary.setHorizontalAlignment(SwingConstants.CENTER);
-        glossary.setFont(Comic.regular(14f));
+        glossaryTab = new GlossaryTab(context, () -> context == null || context.runtime() == null
+                ? java.util.Optional.empty() : context.runtime().workspace().glossary());
         tabs.tab(ACRONYMS, acronyms)
                 .tab(IDENTIFIERS, identifiers)
                 .tab(RELATIONS, relationTab.directory())
                 .tab(SYNONYMS, synonymTab.directory())
-                .tab(GLOSSARY, glossary)
-                .tab(GRAPH, graph.component());
+                .tab(GLOSSARY, glossaryTab.component())
+                .tab(GRAPH, graph.component())
+                .actions(glossaryTab.addButton(), glossaryTab.detectButton());
+        glossaryTab.addButton().setVisible(false);
+        glossaryTab.detectButton().setVisible(false);
         root.add(Comic.plate("Begriffe", Comic.PETROL, tabs), BorderLayout.CENTER);
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
@@ -141,6 +145,7 @@ public final class TermsView implements View {
             relationTab.shown();
             synonymTab.shown();
             graph.shown();
+            glossaryTab.shown();
         }
     }
 
@@ -151,12 +156,16 @@ public final class TermsView implements View {
     private void tabSelected(String name) {
         relationTab.forgetRemoved();
         synonymTab.forgetRemoved();
+        // Die Knöpfe des Fachglossars gelten nur dort; auf den anderen Reitern bleibt die Reiterzeile frei.
+        glossaryTab.addButton().setVisible(GLOSSARY.equals(name));
+        glossaryTab.detectButton().setVisible(GLOSSARY.equals(name));
         if (context == null) {
             return;
         }
         switch (name) {
             case RELATIONS -> relationTab.load(null);
             case SYNONYMS -> synonymTab.load(null);
+            case GLOSSARY -> glossaryTab.load();
             case GRAPH -> graph.shown();
             default -> { }
         }
@@ -486,6 +495,10 @@ public final class TermsView implements View {
 
     TermGraphView graph() {
         return graph;
+    }
+
+    GlossaryTab glossary() {
+        return glossaryTab;
     }
 
     /**
