@@ -64,6 +64,15 @@ public class PageImageAnalysis {
     }
 
     /**
+     * Ob die Quelle für das Vision-Modell freigegeben ist ({@code external-processing-sources}); ohne Modell
+     * {@code true}, weil dann nicht die Freigabe fehlt. Unabhängig davon, ob es schon Beschreibungen gibt: Nach
+     * „Nur diese Seite einmalig beschreiben“ bleibt die Quelle gesperrt, und die App bietet die Knöpfe weiter an.
+     */
+    public boolean released(String sourceId) {
+        return assets.describerInUse().map(model -> model.mayDescribe(sourceId)).orElse(true);
+    }
+
+    /**
      * Die gespeicherten Bilder und Beschreibungen der Seite; beschreibt nichts und fragt die Quelle nicht. Ohne
      * Ergebnis nennt {@link PageImages#reason()}, ob ein Modell oder die Freigabe fehlt. Nennt die zuletzt geladene
      * Lese-Ansicht für einen Bildanhang eine andere Version als beim Beschreiben, ist das Ergebnis

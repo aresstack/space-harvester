@@ -444,6 +444,11 @@ public final class Workspace {
         return harvester.imageAnalysis().read(page.snapshot());
     }
 
+    /** Ob die Quelle für das Vision-Modell freigegeben ist; siehe {@code PageImageAnalysis#released}. */
+    public boolean imagesReleased(String sourceId) {
+        return harvester.imageAnalysis().released(sourceId);
+    }
+
     /**
      * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
      * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.

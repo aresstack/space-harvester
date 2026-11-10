@@ -67,6 +67,7 @@ final class ImagesTab extends JPanel {
                     + "Bilder dieser Seite");
     /** Quelle nicht freigegeben: Hinweis mit der Wahl, es für diese Seite oder die Quelle zu erlauben. */
     private final HintActions notReleased = new HintActions(NOT_RELEASED, describeOnce, release);
+    private boolean released = true;
 
     ImagesTab() {
         super(new BorderLayout(0, 10));
@@ -112,6 +113,15 @@ final class ImagesTab extends JPanel {
         onRelease = Objects.requireNonNull(listener, "listener");
     }
 
+    /**
+     * Ob die Quelle für das Vision-Modell freigegeben ist; vor {@link #show} setzen. Nicht freigegeben zeigt der
+     * Reiter das Knopfpaar auch dann, wenn es schon Beschreibungen gibt (nach „einmalig“): „Bilder beschreiben“ wäre
+     * für die gesperrte Quelle nur eine Fehlermeldung.
+     */
+    void released(boolean released) {
+        this.released = released;
+    }
+
     /** Sperrt „Bilder beschreiben“ und die Freigabe-Knöpfe, solange eine Beschreibung läuft. */
     void describing(boolean running) {
         describe.setEnabled(!running);
@@ -147,9 +157,9 @@ final class ImagesTab extends JPanel {
      * @param warnings Hinweise des Core ({@code PageImages.warnings()}), etwa {@code page-changed}
      */
     void show(PassagesTab.State current, String reason, List<String> warnings, List<Image> images) {
-        boolean blocked = "vision-model-missing".equals(reason) || "source-not-released".equals(reason);
-        describe.setVisible(!blocked);
-        notReleased.setVisible("source-not-released".equals(reason));
+        boolean unreleased = "source-not-released".equals(reason) || !released;
+        describe.setVisible(!"vision-model-missing".equals(reason) && !unreleased);
+        notReleased.setVisible(unreleased);
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
             case STALE -> Comic.ORANGE;
