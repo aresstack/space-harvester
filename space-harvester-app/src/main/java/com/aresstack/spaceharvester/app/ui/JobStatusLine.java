@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.event.ApplicationEventBus;
 import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 
@@ -14,8 +15,8 @@ import java.awt.FlowLayout;
 
 /**
  * Mitte der Statuszeile: zeigt nur, was als {@link JobProgressEvent} auf dem Ereignisbus erscheint – links Schritt bzw.
- * Auftrag, mittig „Abbrechen“ (für den laufenden Auftrag) oder der Endzustand. Das Modell {@link #model()} treibt die
- * Füllung der {@link StatusLine}.
+ * Auftrag, mittig „Anhalten“ und „Abbrechen“ (für den laufenden Auftrag), „Fortsetzen“ (für den angehaltenen) oder der
+ * Endzustand. Das Modell {@link #model()} treibt die Füllung der {@link StatusLine}.
  */
 final class JobStatusLine extends JPanel {
 
@@ -23,17 +24,29 @@ final class JobStatusLine extends JPanel {
     final JLabel text = Comic.muted(" ");
     final JLabel endState = new JLabel(" ");
     final ComposerButton cancel = Comic.danger("Abbrechen", "Auftrag abbrechen");
+    final ComposerButton pause = Comic.button(ComposerIcons.pause(), "Anhalten", PAUSE_TIP);
+    final ComposerButton resume = Comic.button(ComposerIcons.play(), "Fortsetzen", RESUME_TIP);
+    static final String PAUSE_TIP = "Auftrag anhalten · Geladenes bleibt, später fortsetzen";
+    static final String RESUME_TIP = "Auftrag fortsetzen · holt nur, was noch fehlt";
     private JobProgressEvent last = JobProgressEvent.none();
 
-    JobStatusLine(ApplicationEventBus events, Runnable onCancel) {
+    /**
+     * @param onCancel      bricht den gezeigten Auftrag ab
+     * @param onPauseResume hält den gezeigten Auftrag an bzw. setzt ihn fort (ADR 0025)
+     */
+    JobStatusLine(ApplicationEventBus events, Runnable onCancel, Runnable onPauseResume) {
         super(new BorderLayout());
         setOpaque(false);
         endState.setFont(Comic.semiBold(13f));
         endState.setForeground(Comic.INK);
         cancel.addActionListener(e -> onCancel.run());
-        JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        pause.addActionListener(e -> onPauseResume.run());
+        resume.addActionListener(e -> onPauseResume.run());
+        JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
         center.setOpaque(false);
+        center.add(pause);
         center.add(cancel);
+        center.add(resume);
         center.add(endState);
         setBorder(BorderFactory.createEmptyBorder());
         add(text, BorderLayout.WEST);
@@ -76,14 +89,19 @@ final class JobStatusLine extends JPanel {
         cancel.setVisible(running);
         cancel.setEnabled(running && !event.cancelRequested());
         cancel.setText(event.cancelRequested() ? "Abbruch angefordert" : "Abbrechen");
+        pause.setVisible(running && event.pausable());
+        pause.setEnabled(running && event.pausable() && !event.cancelRequested());
+        resume.setVisible(outcome == JobProgressEvent.Outcome.PAUSED && event.pausable());
         endState.setVisible(outcome.terminal());
         endState.setText(switch (outcome) {
             case COMPLETED -> "Fertig";
             case CANCELLED -> "Abgebrochen";
             case FAILED -> "Fehlgeschlagen";
+            case PAUSED -> "Angehalten";
             default -> " ";
         });
         endState.setForeground(outcome == JobProgressEvent.Outcome.COMPLETED ? Comic.GREEN
-                : outcome == JobProgressEvent.Outcome.FAILED ? Comic.RED : Comic.ORANGE);
+                : outcome == JobProgressEvent.Outcome.FAILED ? Comic.RED
+                : outcome == JobProgressEvent.Outcome.PAUSED ? Comic.INK : Comic.ORANGE);
     }
 }
