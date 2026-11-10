@@ -41,6 +41,8 @@ public final class Dialogs {
     static final int WINDOW_PADDING = 4;
     static final int RESIZE_GRIP = 6;
     static final int CLOSE_SIZE = 24;
+    static final String YES = "Ja";
+    static final String NO = "Nein";
 
     private Dialogs() {
     }
@@ -51,6 +53,24 @@ public final class Dialogs {
         JDialog dialog = dialog(parent, title);
         ComposerButton yes = Comic.danger(action, null);
         ComposerButton no = Comic.button("Abbrechen", null);
+        yes.addActionListener(e -> {
+            result[0] = true;
+            dialog.dispose();
+        });
+        no.addActionListener(e -> dialog.dispose());
+        show(dialog, title, Comic.note(text), no, yes);
+        return result[0];
+    }
+
+    /**
+     * Eine Ja/Nein-Frage, wo der Name der Aktion selbst „Abbrechen“ wäre (Auftrag abbrechen): Neben „Abbrechen“ als
+     * Aktion hieße der Knopf zum Zurücktreten genauso (Angelo 10.11.2026). {@code true} nur nach „Ja“.
+     */
+    public static boolean yesNo(Component parent, String title, String text) {
+        boolean[] result = {false};
+        JDialog dialog = dialog(parent, title);
+        ComposerButton yes = Comic.danger(YES, null);
+        ComposerButton no = Comic.button(NO, null);
         yes.addActionListener(e -> {
             result[0] = true;
             dialog.dispose();

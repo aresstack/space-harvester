@@ -968,8 +968,8 @@ public final class ActivitiesView implements View {
         }
         switch (action) {
             case CANCEL -> {
-                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
-                        + job.partitionKey() + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
+                if (!Dialogs.yesNo(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
+                        + job.partitionKey() + " wirklich abbrechen? Bereits Gelesenes bleibt unbestätigt.")) {
                     return;
                 }
             }
