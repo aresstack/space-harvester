@@ -33,6 +33,7 @@ class SignInSlotTest {
 
         await(() -> slot[0].isVisible());
         assertThat(slot[0].resendButton().isVisible()).isTrue();
+        assertThat(slot[0].loginFieldsVisible()).isFalse();
         assertThat(slot[0].shown().jobIds()).containsExactly("job-1");
 
         SwingUtilities.invokeAndWait(() -> {
@@ -118,6 +119,91 @@ class SignInSlotTest {
         });
         assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
         await(() -> !slot[0].isVisible());
+    }
+
+    @Test
+    void aPatChallengeRequiresTemporaryCredentialsAndSubmitsThemWithTheOtp() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        java.util.concurrent.atomic.AtomicInteger bareSubmissions = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> submittedLogin = new java.util.concurrent.atomic.AtomicReference<>();
+        SignInChallenge challenge = new SignInChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "Enter the one-time code.";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public boolean asksForLogin() {
+                return true;
+            }
+
+            @Override
+            public SignInChallenge submit(char[] code) {
+                bareSubmissions.incrementAndGet();
+                return null;
+            }
+
+            @Override
+            public SignInChallenge submit(char[] code, String username, char[] password) {
+                submittedLogin.set(username + ":" + new String(password) + ":" + new String(code));
+                return null;
+            }
+
+            @Override
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        CompletableFuture<SignInRequests.Outcome> waiting = CompletableFuture.supplyAsync(() ->
+                requests.await("wiki", "job-2", challenge, Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].shown().asksForLogin()).isTrue();
+            assertThat(slot[0].loginFieldsVisible()).isTrue();
+            slot[0].codeField().setText("123456");
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].errorText()).isEqualTo(SignInSlot.LOGIN_REQUIRED);
+            assertThat(slot[0].codeField().getPassword()).as("keep OTP available while waiting for credentials")
+                    .containsExactly('1', '2', '3', '4', '5', '6');
+            slot[0].usernameField().setText("maria");
+            slot[0].passwordField().setText("temporary-password");
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].codeField().getPassword()).isEmpty();
+            assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        });
+
+        assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .isEqualTo(SignInRequests.Outcome.UNLOCKED);
+        assertThat(bareSubmissions).hasValue(0);
+        assertThat(submittedLogin).hasValue("maria:temporary-password:123456");
+        await(() -> !slot[0].isVisible());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].usernameField().getText()).isEmpty();
+            assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        });
     }
 
     /** Eine Abfrage der Quelle: „123456“ gilt, alles andere bringt „Code ungültig“. */
