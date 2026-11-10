@@ -25,6 +25,8 @@ public final class SpaceHarvesterApp {
         // Das JDK liest die Freigabe von BASIC im HTTPS-Tunnel nur beim ersten Verbindungsaufbau; eine später (nach
         // geänderten Einstellungen) eingerichtete Proxy-Anmeldung braucht sie deshalb schon jetzt (#189).
         ProxyAuthenticator.allowBasicTunneling();
+        // TLS zur Confluence wie im Enterprise AI Client unter Java 8 (#571); das JDK liest das nur einmal.
+        com.aresstack.spaceharvester.source.confluence.Java8Tls.withoutSessionTickets();
         Path config = null;
         Path screenshots = null;
         for (int i = 0; i < args.length; i++) {

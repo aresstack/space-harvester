@@ -37,20 +37,28 @@ final class ConfiguredClientCertificates implements ConfluenceSourceProvider.Cli
     private final SecretProvider secrets;
     private final X509TrustManager trust;
     private final String thumbprint;
+    private final boolean java8Tls;
 
     /**
      * @param trust      Server-Vertrauen der Quelle; {@code null} = JVM-Standard
      * @param thumbprint erwarteter SHA-1- oder SHA-256-Fingerabdruck (hex, Trenner erlaubt) oder {@code null}
      */
     ConfiguredClientCertificates(SecretProvider secrets, X509TrustManager trust, String thumbprint) {
+        this(secrets, trust, thumbprint, false);
+    }
+
+    /** @param java8Tls Verbindungen wie im Enterprise AI Client unter Java 8 ({@link Java8Tls}) */
+    ConfiguredClientCertificates(SecretProvider secrets, X509TrustManager trust, String thumbprint, boolean java8Tls) {
         this.secrets = secrets;
         this.trust = trust;
         this.thumbprint = thumbprint == null || thumbprint.isBlank() ? null : normalize(thumbprint);
+        this.java8Tls = java8Tls;
     }
 
     @Override
     public SSLSocketFactory socketFactory(String alias, Path keyStoreFile, SecretRef passwordRef) {
-        return sslContext(alias, keyStoreFile, passwordRef).getSocketFactory();
+        SSLSocketFactory factory = sslContext(alias, keyStoreFile, passwordRef).getSocketFactory();
+        return java8Tls ? Java8Tls.of(factory) : factory;
     }
 
     /**
