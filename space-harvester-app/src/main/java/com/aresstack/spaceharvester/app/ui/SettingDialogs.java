@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -694,6 +695,106 @@ final class SettingDialogs {
         }, () -> current.equals(draft.get()) && sync.backgroundFill() == fill.get()
                 && sync.backgroundParallelism() == parallelism.get(), context, saved);
         return shell;
+    }
+
+    static final String RETRY_TITLE = "Wiederholungen";
+    static final String RETRY_ATTEMPTS = "Weitere Versuche";
+    static final String RETRY_INITIAL = "Erste Wartezeit";
+    static final String RETRY_MAX = "Längste Wartezeit";
+    static final String RETRY_PAUSE = "Anhalten nach Fehlern";
+
+    /** Eine Zeile für Einstellungen › Netzwerk und die Abschlussseite des Assistenten. */
+    static String retrySummary(RetrySettings retry) {
+        String attempts = retry.maxAttempts() == 0 ? "keine Wiederholung"
+                : Texts.count(retry.maxAttempts(), "weiterer Versuch", "weitere Versuche") + " (Wartezeit "
+                + ConfigFileEditor.delay(retry.initialDelay()) + " bis " + ConfigFileEditor.delay(retry.maxDelay()) + ")";
+        return attempts + " · anhalten nach " + Texts.count(retry.pauseAfterFailures(), "Fehler", "Fehlern")
+                + " nacheinander";
+    }
+
+    /**
+     * Wiederholungen bei vorübergehenden Fehlern für alle Quellen ({@code space-harvester.jobs.retry.*}, ADR 0025),
+     * dieselben Schlüssel wie im Dienst: weitere Versuche nach einem Netzfehler, einer Zeitüberschreitung, 429 oder
+     * 5xx, die Wartezeiten dazwischen und nach wie vielen Fehlern nacheinander sich ein Auftrag selbst anhält.
+     */
+    static Shell retry(Component parent, AppContext context, Runnable saved) {
+        RetrySettings current = context.settings() != null ? context.settings().jobLimits().retry()
+                : RetrySettings.DEFAULT;
+        javax.swing.JSpinner attempts = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                current.maxAttempts(), 0, RetrySettings.MAX_ATTEMPTS_LIMIT, 1));
+        JTextField initial = Comic.field(8);
+        initial.setText(ConfigFileEditor.delay(current.initialDelay()));
+        JTextField max = Comic.field(8);
+        max.setText(ConfigFileEditor.delay(current.maxDelay()));
+        javax.swing.JSpinner pause = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                current.pauseAfterFailures(), 1, RetrySettings.PAUSE_AFTER_LIMIT, 1));
+        Rows rows = new Rows();
+        rows.add(RETRY_ATTEMPTS, attempts, "So oft holt die App eine Seite nach einem Netzfehler, einer "
+                + "Zeitüberschreitung, 429 oder 5xx erneut (0 bis " + RetrySettings.MAX_ATTEMPTS_LIMIT + "; 0 aus). "
+                + "Datei-Downloads und Einmalcodes wiederholt sie nie, es käme sonst eine neue Mail");
+        rows.add(RETRY_INITIAL, initial, "Wartezeit vor dem ersten weiteren Versuch, jede weitere verdoppelt sie, "
+                + "z. B. 500ms oder 1s; höchstens 60s");
+        rows.add(RETRY_MAX, max, "Länger wartet die App nie zwischen zwei Versuchen, z. B. 30s; mindestens die erste "
+                + "Wartezeit, höchstens 300s");
+        rows.add(RETRY_PAUSE, pause, "Nach so vielen Seiten nacheinander ohne Verbindung hält sich ein Auftrag an "
+                + "(„Angehalten – Verbindung unterbrochen“); Fortsetzen holt dann nur, was fehlt");
+        Supplier<RetrySettings> draft = () -> {
+            java.time.Duration first = retryDelay(initial.getText());
+            java.time.Duration longest = retryDelay(max.getText());
+            if (first == null || longest == null) {
+                return null;
+            }
+            try {
+                return new RetrySettings((Integer) attempts.getValue(), first, longest, (Integer) pause.getValue());
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        };
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(wrapped("Gilt für alle Quellen; eigene Optionen einer Quelle (maxRetries) gehen vor."),
+                BorderLayout.NORTH);
+        body.add(rows, BorderLayout.CENTER);
+        // Kein live(): Die Wiederholungen liest die Laufzeit beim Start; laufen Aufträge, fragt Übernehmen vorher nach.
+        Shell shell = new Shell(parent, RETRY_TITLE, body);
+        shell.onSaveFile(() -> {
+            List<String> problems = new ArrayList<>();
+            java.time.Duration first = retryDelay(initial.getText());
+            java.time.Duration longest = retryDelay(max.getText());
+            if (first == null || first.compareTo(java.time.Duration.ofSeconds(60)) > 0) {
+                problems.add("Die erste Wartezeit ist eine Dauer wie 500ms oder 1s, höchstens 60s.");
+            }
+            if (longest == null || longest.compareTo(java.time.Duration.ofSeconds(300)) > 0
+                    || (first != null && longest.compareTo(first) < 0)) {
+                problems.add("Die längste Wartezeit ist eine Dauer wie 30s, mindestens die erste Wartezeit und "
+                        + "höchstens 300s.");
+            }
+            return problems;
+        }, () -> {
+            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+            String text = Files.isRegularFile(context.configFile())
+                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withRetry(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), draft.get());
+            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
+        }, () -> current.equals(draft.get()), context, saved);
+        return shell;
+    }
+
+    /** Eine Wartezeit: Zahl in Sekunden oder mit Einheit ms, s oder m; sonst {@code null}. */
+    static java.time.Duration retryDelay(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,6})\\s*(ms|s|m)?")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches()) {
+            return null;
+        }
+        long amount = Long.parseLong(m.group(1));
+        String unit = m.group(2) == null ? "s" : m.group(2);
+        return switch (unit) {
+            case "ms" -> java.time.Duration.ofMillis(amount);
+            case "m" -> java.time.Duration.ofMinutes(amount);
+            default -> java.time.Duration.ofSeconds(amount);
+        };
     }
 
     static final String SYNC_RULES_TITLE = "Synchronisierung dieser Quelle";

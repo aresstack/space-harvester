@@ -212,6 +212,55 @@ class SettingDialogsTest {
     }
 
     @Test
+    void retriesStartWithTheDefaultsAndWriteJobsRetryForAllSources() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        String before = Files.readString(config);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.retry(null, context, done::countDown);
+            List<javax.swing.JSpinner> spinners = find(shell[0].body(), javax.swing.JSpinner.class);
+            List<JTextField> delays = find(shell[0].body(), JTextField.class).stream()
+                    .filter(field -> !(field instanceof javax.swing.JFormattedTextField)).toList();
+            assertThat(spinners.get(0).getValue()).as("weitere Versuche").isEqualTo(2);
+            assertThat(spinners.get(1).getValue()).as("anhalten nach").isEqualTo(5);
+            assertThat(delays).extracting(JTextField::getText).containsExactly("1s", "30s");
+            delays.get(1).setText("200ms");
+            shell[0].save();
+            assertThat(shell[0].feedback.text()).contains("längste Wartezeit");
+        });
+        assertThat(Files.readString(config)).as("ungültig: nichts geschrieben").isEqualTo(before);
+        SwingUtilities.invokeAndWait(() -> {
+            List<javax.swing.JSpinner> spinners = find(shell[0].body(), javax.swing.JSpinner.class);
+            List<JTextField> delays = find(shell[0].body(), JTextField.class).stream()
+                    .filter(field -> !(field instanceof javax.swing.JFormattedTextField)).toList();
+            spinners.get(0).setValue(4);
+            spinners.get(1).setValue(7);
+            delays.get(0).setText("500ms");
+            delays.get(1).setText("20s");
+            shell[0].save();
+        });
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("  jobs:\n    retry:\n      max-attempts: 4",
+                "initial-delay: 500ms", "max-delay: 20s", "pause-after-failures: 7", "# Kommentar bleibt stehen");
+        assertThat(context.settings().jobLimits().retry()).isEqualTo(new com.aresstack.spaceharvester.application.jobs
+                .RetrySettings(4, java.time.Duration.ofMillis(500), java.time.Duration.ofSeconds(20), 7));
+    }
+
+    @Test
+    void retryDelaysAcceptMillisecondsSecondsAndMinutes() {
+        assertThat(SettingDialogs.retryDelay("500ms")).isEqualTo(java.time.Duration.ofMillis(500));
+        assertThat(SettingDialogs.retryDelay("2")).isEqualTo(java.time.Duration.ofSeconds(2));
+        assertThat(SettingDialogs.retryDelay(" 1 m ")).isEqualTo(java.time.Duration.ofMinutes(1));
+        assertThat(SettingDialogs.retryDelay("1m")).isEqualTo(java.time.Duration.ofMinutes(1));
+        assertThat(SettingDialogs.retryDelay("bald")).isNull();
+        assertThat(SettingDialogs.retrySummary(com.aresstack.spaceharvester.application.jobs.RetrySettings.DEFAULT))
+                .isEqualTo("2 weitere Versuche (Wartezeit 1s bis 30s) · anhalten nach 5 Fehlern nacheinander");
+        assertThat(SettingDialogs.retrySummary(new com.aresstack.spaceharvester.application.jobs.RetrySettings(0,
+                java.time.Duration.ZERO, java.time.Duration.ZERO, 1)))
+                .isEqualTo("keine Wiederholung · anhalten nach 1 Fehler nacheinander");
+    }
+
+    @Test
     void syncRulesOfOneSourceStartAsGlobalAndOnlyChangeThatSource() throws Exception {
         SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
         CountDownLatch done = new CountDownLatch(1);
