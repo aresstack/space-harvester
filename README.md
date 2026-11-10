@@ -20,14 +20,12 @@ Weboberfläche**. Die Quelladapter stammen aus bzw. orientieren sich am
 | **Anreichern** | Seitenbezogene Verarbeitung und Analyse, unter anderem Akronymerkennung; optionale KI- und Embedding-Funktionen |
 | **Betreiben** | Desktop-App ohne lokalen Server oder headless REST-Dienst; Rechteprüfung, Proxy/PAC, TLS/mTLS und Diagnose |
 
-**Noch in Entwicklung:** Die globale Begriffsverwaltung mit **Akronymen, Bezeichnern, Beziehungen und Fachglossar**
-ist als eigener Desktop-Hauptbereich und seitenbezogene Ansicht geplant
-([#339](https://github.com/aresstack/space-harvester/issues/339)).
-Dafür werden der Begriffsindex ([#119](https://github.com/aresstack/space-harvester/issues/119)),
-kuratierbare Beziehungen ([#120](https://github.com/aresstack/space-harvester/issues/120)),
-die Akronymauflösung ([#122](https://github.com/aresstack/space-harvester/issues/122)) und
-automatische Synonymvorschläge ([#336](https://github.com/aresstack/space-harvester/issues/336)) weiterentwickelt.
-Das KI-gestützte Fachglossar ist noch keine fertige Funktion.
+**Begriffe und Analysen:** Der Desktop-Hauptbereich **Begriffe** verwaltet Akronyme, Bezeichner, Beziehungen,
+Synonyme (Vorschläge über das Embedding-Modell) und ein Fachglossar
+([#339](https://github.com/aresstack/space-harvester/issues/339),
+[#336](https://github.com/aresstack/space-harvester/issues/336)). Seitenbezogene Analysen zeigen Aussagen und einen
+Wissensgraphen, der sich als JSON-LD exportieren lässt. Was sich je Version geändert hat, steht in den
+[Release-Notizen](docs/release-notes/).
 
 ## Schnellstart
 
@@ -39,7 +37,8 @@ Die Desktop-Anwendung läuft eigenständig mit direktem Core-Zugriff – **ohne 
 
 1. Im Bereich [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
    `space-harvester-app-<version>.jar` und bei Bedarf die `SHA256SUMS` herunterladen.
-2. Mit Java 21 starten:
+2. Mit Java 21 starten (unter Windows, wenn `java -version` noch 1.8 zeigt, den vollen Pfad zur `java.exe` des
+   JDK 21 verwenden, siehe [Desktop-Dokumentation](docs/DESKTOP_APP.md#starten-unter-windows)):
 
 ```bash
 java -jar space-harvester-app-<version>.jar
