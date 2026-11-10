@@ -555,9 +555,10 @@ public final class SourcesView implements View {
                 }
             });
             if (confluence) {
+                row(EditableProperty.action("Zugangsdaten beziehen über", credentialOrigin(entry), Comic.INK,
+                        "KeePass oder Manuell und den KeePass-Eintrag ändern", () -> edit(entry)));
                 row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart, Benutzer und Token bzw. Passwort ändern",
-                        () -> setting(entry, SettingDialogs::auth)));
+                        "Anmeldeart, Herkunft, KeePass-Eintrag und Zugangsdaten ändern", () -> edit(entry)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
             }
@@ -597,6 +598,13 @@ public final class SourcesView implements View {
         }
         properties.revalidate();
         properties.repaint();
+    }
+
+    /** Zeigt die tatsächliche Herkunft der Zugangsdaten, nicht nur das HTTP-Anmeldeverfahren. */
+    private String credentialOrigin(AppSettings.SourceEntry entry) {
+        AppSettings settings = context.settings();
+        String title = settings == null ? null : settings.keePassEntry(entry.id());
+        return title == null ? AiSettingsPanel.MANUAL : AiSettingsPanel.KEEPASS + " · " + title;
     }
 
     private void row(EditableProperty property) {
