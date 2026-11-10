@@ -1220,7 +1220,37 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             } catch (KnowledgeSourceException e) {
                 LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
                         e.getClass().getSimpleName(), e.kind());
-                throw sendFailure(e);
+                throw sendFailure(e, tokenLogin);
+            }
+        }
+
+        @Override
+        public boolean asksForLogin() {
+            return tokenLogin;
+        }
+
+        /**
+         * Mit Personal Access Token: der Code geht für dieses eine Absenden mit Benutzer und Passwort an dieselbe
+         * Web-Sitzung, weil der Adapter die Anmeldung dabei neu auflöst ({@link ConfiguredSecrets#withLogin}); danach
+         * gilt die freigeschaltete Sitzung, REST bleibt beim Token (#571).
+         */
+        @Override
+        public SignInChallenge submit(char[] code, String username, char[] password) {
+            if (!tokenLogin || username == null || username.isBlank() || password == null || password.length == 0) {
+                return submit(code);
+            }
+            LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} mit Benutzeranmeldung gesendet", id,
+                    instance(challenge), instance(port));
+            try {
+                OneTimeCodeChallenge again = ConfiguredSecrets.withLogin(ConfiguredSecrets.refFor(id),
+                        username.trim(), password, () -> challenge.submit(code));
+                LOG.info("Quelle {}: Einmalcode für Abfrage {}: {}", id, instance(challenge),
+                        again == null ? "angenommen" : "neue Abfrage " + instance(again));
+                return next(again);
+            } catch (KnowledgeSourceException e) {
+                LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
+                        e.getClass().getSimpleName(), e.kind());
+                throw sendFailure(e, false);
             }
         }
 
@@ -1229,7 +1259,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             try {
                 return next(challenge.resend());
             } catch (KnowledgeSourceException e) {
-                throw sendFailure(e);
+                throw sendFailure(e, false);
             }
         }
 
@@ -1239,9 +1269,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          * bleibt, damit {@link SignInFailures#describe} die Art des Fehlers erkennt (#571). Ohne Ursache (Meldungen,
          * die Pfade nennen) bleibt es bei der bloßen Art.
          */
-        private SourceAccessException sendFailure(KnowledgeSourceException e) {
+        private SourceAccessException sendFailure(KnowledgeSourceException e, boolean withToken) {
             Matcher rejected = SERVER_ERROR_AFTER_SENDING.matcher(String.valueOf(e.getMessage()));
-            if (tokenLogin && e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED && rejected.find()) {
+            if (withToken && e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED && rejected.find()) {
                 // Mit Token gibt es keine Web-Sitzung, an die die Zwei-Faktor-Anmeldung den Code bindet; Confluence
                 // antwortet dann mit einem Serverfehler. Statt der bloßen 500 eine klare Meldung (#571).
                 return new SourceAccessException(id, SourceAccessException.Reason.ACCESS_DENIED,
