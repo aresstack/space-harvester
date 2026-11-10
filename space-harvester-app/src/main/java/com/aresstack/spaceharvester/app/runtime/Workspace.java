@@ -38,6 +38,8 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.terms.SynonymScope;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -191,6 +193,41 @@ public final class Workspace {
     public List<TermRelation> termRelationsFor(java.util.Collection<String> normalized, String sourceId,
                                                String spaceKey) {
         return harvester.termRelations().forTerms(caller, normalized, sourceId, spaceKey);
+    }
+
+    // ------------------------------------------------------------------ Synonyme (#336)
+
+    /** Was ein Synonymlauf im Umfang könnte: Chat-Modell, freigegebene und nicht freigegebene Quellen, Budget. */
+    public SynonymDiscovery.Availability synonymAvailability(SynonymScope scope) {
+        return harvester.synonymDiscovery().availability(scope);
+    }
+
+    /**
+     * „Synonyme vorschlagen“ ({@code POST …/term-relations/refresh} mit {@code kind=synonyms}): nur auf Klick, nie
+     * beim Start oder Öffnen. Der Lauf erscheint wie jeder Auftrag in Aktivitäten und Statuszeile.
+     *
+     * @param maxJudgedPairs höchstens so viele Paare an das Chat-Modell, {@code null} für den Wert der Konfiguration
+     */
+    public JobStatus startSynonymDiscovery(SynonymScope scope, Integer maxJudgedPairs) {
+        JobStatus status = harvester.synonymDiscovery().start(caller,
+                new SynonymDiscovery.Request(scope, maxJudgedPairs));
+        activities.remember(status.id());
+        return status;
+    }
+
+    /** Stand eines eigenen Synonymlaufs ({@code GET …/refresh-jobs/{id}}); andere Aufträge gelten als unbekannt. */
+    public JobStatus synonymJob(String jobId) {
+        if (!harvester.synonymDiscovery().started(jobId)) {
+            throw new UnknownJobException(jobId);
+        }
+        // Der Lauf gehört dem Aufrufer der App, nicht dem Core-Eigentümer der Abgleiche.
+        return harvester.jobs().status(jobId, caller.jobOwner());
+    }
+
+    /** Synonymlauf abbrechen; bisherige Vorschläge bleiben. */
+    public JobStatus cancelSynonymJob(String jobId) {
+        synonymJob(jobId);
+        return harvester.jobs().cancel(jobId, caller.jobOwner());
     }
 
     /**
