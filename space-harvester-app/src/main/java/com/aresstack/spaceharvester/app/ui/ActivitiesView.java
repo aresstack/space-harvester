@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
@@ -48,10 +50,12 @@ import java.util.function.Consumer;
 /**
  * Aufträge: Abgleiche und Downloads dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Oben die
  * Auftragsliste über die volle Breite, je Zeile rechtsbündig die Symbolaktionen ({@link RowActions}): Exportieren als
- * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, Anhalten bzw. Fortsetzen,
- * Erneut versuchen, Löschen. Darunter links die Kachel „Auftrag“, rechts „Ergebnis“ und „Exportieren“ (Ausgabeordner,
- * erzeugte Dateien, Hinweise). Der Fortschritt steht im globalen Balken über der Statusleiste ({@link #actions()}),
- * mittig „Anhalten“ und „Abbrechen“, danach „Fortsetzen“ oder der Endzustand. Ein
+ * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, danach genau die Aktionen,
+ * die der Zustand des Auftrags im Core anbietet ({@link JobLifecycleState#actions()}: Jetzt starten, Anhalten,
+ * Fortsetzen, Abbrechen, Löschen; Anhalten und Fortsetzen nie zugleich). Darunter links die Kachel „Auftrag“, rechts
+ * „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Der Fortschritt steht im globalen Balken
+ * über der Statusleiste ({@link #actions()}), mittig „Anhalten“ und „Abbrechen“, danach „Fortsetzen“ oder der
+ * Endzustand. Ein
  * Lauf heißt nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte,
  * erscheint als Warnung mit Grund.
  */
@@ -118,7 +122,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 5, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 2 + MAX_LIFECYCLE_ACTIONS, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -243,13 +247,14 @@ public final class ActivitiesView implements View {
     /** Hält den Auftrag an, dessen Stand die Statuszeile zeigt, bzw. setzt ihn fort (Knöpfe in der Statuszeile). */
     void pauseOrResumeShownJob() {
         JobStatus status = barJob;
-        if (status == null || pauseResumeBlocked(status) != null) {
+        if (status == null) {
             return;
         }
-        if (status.state().terminal()) {
-            resume(status);
-        } else {
-            pause(status);
+        JobLifecycleState state = status.lifecycle();
+        if (state.allows(JobAction.PAUSE)) {
+            perform(status, JobAction.PAUSE);
+        } else if (state.allows(JobAction.RESUME)) {
+            perform(status, JobAction.RESUME);
         }
     }
 
@@ -403,7 +408,7 @@ public final class ActivitiesView implements View {
             done = step.done();
             total = step.total();
         } else {
-            String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
+            String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status);
             text = subject + (running ? " · " + state : "");
         }
         JobProgressEvent.Outcome outcome = switch (status.state()) {
@@ -413,8 +418,9 @@ public final class ActivitiesView implements View {
             case PAUSED -> JobProgressEvent.Outcome.PAUSED;
             default -> running ? JobProgressEvent.Outcome.RUNNING : JobProgressEvent.Outcome.NONE;
         };
+        JobLifecycleState lifecycle = status.lifecycle();
         context.events().publish(new JobProgressEvent(status.id(), text, done, total, running && total == 0, outcome,
-                status.cancelRequested(), pauseResumeBlocked(status) == null));
+                status.cancelRequested(), lifecycle.allows(JobAction.PAUSE) || lifecycle.allows(JobAction.RESUME)));
     }
 
     private void select(String id) {
@@ -470,8 +476,8 @@ public final class ActivitiesView implements View {
         renderBar(status);
         Counters counters = Counters.of(status.type());
         boolean waiting = waitingForSignIn(status.id());
-        facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status.state()),
-                        waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status.state())))
+        facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
+                        waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
                 .add("Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
                 .add("Startseite", startPage(status))
@@ -860,23 +866,22 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
-    private static final javax.swing.Icon RETRY = ComposerIcons.refresh();
-    static final String RETRY_TIP = "Erneut versuchen";
+    private static final javax.swing.Icon START_NOW = ComposerIcons.chevronRight();
     private static final javax.swing.Icon PAUSE = ComposerIcons.pause();
     private static final javax.swing.Icon RESUME = ComposerIcons.play();
-    static final String PAUSE_TIP = "Anhalten";
-    static final String RESUME_TIP = "Fortsetzen";
+    private static final javax.swing.Icon CANCEL = ComposerIcons.stop();
+    /** Mehr Aktionen bietet kein Zustand an ({@link JobLifecycleState#actions()}); so breit ist die Spalte. */
+    static final int MAX_LIFECYCLE_ACTIONS = 2;
 
     /**
-     * Die zehn Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Anhalten bzw. Fortsetzen, Erneut
-     * versuchen, Löschen.
+     * Die Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, dann die des Zustands im Core in dessen
+     * Reihenfolge. Die Oberfläche rechnet nichts selbst: was der Zustand nicht nennt, gibt es nicht.
      */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
             return List.of();
         }
         JobStatus job = model.rows.get(index);
-        boolean running = !job.state().terminal();
         List<RowActions.Action> actions = new ArrayList<>();
         for (String format : FORMATS) {
             String blocked = exportBlocked(job, format);
@@ -889,115 +894,85 @@ public final class ActivitiesView implements View {
         boolean space = job.sourceId() != null && job.partitionKey() != null;
         actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
-        String pauseBlocked = pauseResumeBlocked(job);
-        actions.add(new RowActions.Action(running ? PAUSE : RESUME, pauseResumeTip(job), pauseBlocked == null,
-                () -> { if (running) { pause(job); } else { resume(job); } }));
-        String retryBlocked = retryBlocked(job);
-        actions.add(new RowActions.Action(RETRY, retryTip(job, datasets.get(job.id())), retryBlocked == null,
-                () -> retry(job)));
-        actions.add(new RowActions.Action(Glyph.TRASH, running ? "Auftrag löschen · läuft noch, erst abbrechen"
-                : "Auftrag löschen", !running, () -> deleteJob(job)));
+        for (JobAction action : job.lifecycle().actions()) {
+            actions.add(new RowActions.Action(actionIcon(action), actionTip(action, job), true,
+                    () -> perform(job, action)));
+        }
         return actions;
     }
 
+    static javax.swing.Icon actionIcon(JobAction action) {
+        return switch (action) {
+            case START_NOW -> START_NOW;
+            case PAUSE -> PAUSE;
+            case RESUME -> RESUME;
+            case CANCEL -> CANCEL;
+            case DELETE -> Glyph.TRASH;
+        };
+    }
+
     /**
-     * Warum dieser Auftrag gerade weder angehalten noch fortgesetzt werden kann, oder {@code null}: nur Downloads und
-     * Abgleiche (ADR 0025), nicht nach „Fertig“, nicht bei angefordertem Abbruch.
+     * Der Tooltip einer Zustandsaktion. Hat ein Download Dateien wegen fehlender Anmeldung (Einmalcode) ausgelassen,
+     * sagt „Fortsetzen“ das dazu, denn genau dann kommt die Abfrage wieder.
      */
-    static String pauseResumeBlocked(JobStatus job) {
-        if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
-            return "nur für Downloads und Abgleiche";
-        }
-        if (job.state() == JobState.COMPLETED) {
-            return "schon fertig";
-        }
-        if (!job.state().terminal() && job.cancelRequested()) {
-            return "Abbruch angefordert";
-        }
-        return null;
+    static String actionTip(JobAction action, JobStatus job) {
+        return actionTip(action, job, null);
     }
 
-    /** Der Tooltip von Pause bzw. Play in der Zeile: läuft der Auftrag „Anhalten“, sonst „Fortsetzen“. */
-    static String pauseResumeTip(JobStatus job) {
-        boolean running = !job.state().terminal();
-        String blocked = pauseResumeBlocked(job);
-        if (blocked != null) {
-            return (running ? PAUSE_TIP : RESUME_TIP) + " · " + blocked;
-        }
-        return running ? PAUSE_TIP + " · Geladenes bleibt, später fortsetzen"
-                : RESUME_TIP + " · holt nur, was noch fehlt";
+    static String actionTip(JobAction action, JobStatus job, ExportDatasetInfo dataset) {
+        return switch (action) {
+            case START_NOW -> "Jetzt starten · vor die anderen wartenden Aufträge";
+            case PAUSE -> "Anhalten · Geladenes bleibt, später fortsetzen";
+            case RESUME -> {
+                int signIn = dataset == null ? 0 : dataset.media().signInRequired();
+                yield signIn > 0 ? "Fortsetzen · " + Texts.count(signIn, "Datei fehlt", "Dateien fehlen")
+                        + " wegen fehlender Anmeldung; die Einmalcode-Abfrage kommt dann wieder"
+                        : "Fortsetzen · holt nur, was noch fehlt";
+            }
+            case CANCEL -> job.pauseRequested() ? "Abbrechen · statt nur anzuhalten" : "Abbrechen";
+            case DELETE -> "Auftrag löschen";
+        };
     }
 
-    /** Hält den Auftrag an (Pause in der Zeile oder Statuszeile): er beendet seinen Schritt, Geladenes bleibt. */
-    void pause(JobStatus job) {
+    /**
+     * Führt eine Zustandsaktion aus (Symbol in der Zeile oder Knopf in der Statuszeile): Abbrechen und Löschen nach
+     * Rückfrage, alles über den einen Einstieg des Core, der die Aktion am Zustand prüft. Fortsetzen bleibt im selben
+     * Eintrag, auch nach einem Neustart.
+     */
+    void perform(JobStatus job, JobAction action) {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || job.state().terminal() || pauseResumeBlocked(job) != null) {
+        if (runtime == null || !job.lifecycle().allows(action)) {
             return;
         }
-        Background.run(() -> runtime.workspace().pauseJob(job.id()), s -> poll(), feedback::problem);
-    }
-
-    /**
-     * Setzt den Auftrag fort (Play in der Zeile oder Statuszeile): im selben Eintrag, wenn der Kern ihn noch kennt;
-     * sonst (etwa nach einem Neustart) wie „Erneut versuchen“ mit denselben Angaben, was ebenfalls nur den Rest holt.
-     */
-    void resume(JobStatus job) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || !job.state().terminal() || pauseResumeBlocked(job) != null) {
-            return;
+        switch (action) {
+            case CANCEL -> {
+                if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(job.type()) + " von "
+                        + job.partitionKey() + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
+                    return;
+                }
+            }
+            case DELETE -> {
+                if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(job.type()) + " von " + job.partitionKey()
+                        + " und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT, "Löschen")) {
+                    return;
+                }
+            }
+            default -> { }
         }
-        Background.run(() -> runtime.workspace().canResume(job.id()) ? runtime.workspace().resumeJob(job.id())
-                        : job.type() == JobType.SYNC
-                                ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())
-                                : runtime.workspace().startExport(job.sourceId(), job.partitionKey(), job.rootPageId(),
-                                        List.of(Downloads.FORMAT)),
-                started -> show(started.id()), feedback::problem);
-    }
-
-    /** Warum dieser Auftrag gerade nicht erneut gestartet werden kann, oder {@code null}. */
-    static String retryBlocked(JobStatus job) {
-        if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
-            return "nur für Downloads und Abgleiche";
-        }
-        if (!job.state().terminal()) {
-            return "läuft noch";
-        }
-        return null;
-    }
-
-    /**
-     * Der Tooltip des Pfeils im Kreis: „Erneut versuchen“; hat der Download Dateien wegen fehlender Anmeldung
-     * (Einmalcode) ausgelassen, steht das dabei, denn genau dann kommt die Abfrage beim neuen Versuch wieder.
-     */
-    static String retryTip(JobStatus job, ExportDatasetInfo dataset) {
-        String blocked = retryBlocked(job);
-        if (blocked != null) {
-            return RETRY_TIP + " · " + blocked;
-        }
-        int signIn = dataset == null ? 0 : dataset.media().signInRequired();
-        if (signIn > 0) {
-            return RETRY_TIP + " · " + Texts.count(signIn, "Datei fehlt", "Dateien fehlen")
-                    + " wegen fehlender Anmeldung; die Einmalcode-Abfrage kommt dann wieder";
-        }
-        return RETRY_TIP + " · denselben " + (job.type() == JobType.SYNC ? "Abgleich" : "Download")
-                + " noch einmal starten";
-    }
-
-    /**
-     * Startet denselben Auftrag noch einmal (Pfeil im Kreis in der Zeile): einen Download mit Quelle, Space und
-     * Startseite wie zuvor als neuen Export-Auftrag, einen Abgleich mit Quelle und Space. Verlangt die Quelle wieder
-     * einen Einmalcode, erscheint die Abfrage wie beim ersten Mal über die Anforderungen.
-     */
-    void retry(JobStatus job) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || retryBlocked(job) != null) {
-            return;
-        }
-        Background.run(() -> job.type() == JobType.SYNC
-                        ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())
-                        : runtime.workspace().startExport(job.sourceId(), job.partitionKey(), job.rootPageId(),
-                                List.of(Downloads.FORMAT)),
-                started -> show(started.id()), feedback::problem);
+        Background.run(() -> runtime.workspace().performJobAction(job.id(), action), after -> {
+            if (action == JobAction.DELETE) {
+                if (job.id().equals(selectedId)) {
+                    selectedId = null;
+                    detail = null;
+                    table.clearSelection();
+                    render();
+                }
+                feedback.success("Auftrag gelöscht");
+            } else if (action == JobAction.RESUME) {
+                show(after.id());
+            }
+            poll();
+        }, feedback::problem);
     }
 
     /** Für Tests. */
@@ -1037,20 +1012,10 @@ public final class ActivitiesView implements View {
     }
 
     private void cancelSelected() {
-        AppRuntime runtime = context.runtime();
         JobStatus status = barJob;
-        if (runtime == null || status == null || status.state().terminal()) {
-            return;
+        if (status != null) {
+            perform(status, JobAction.CANCEL);
         }
-        if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(status.type()) + " von " + status.partitionKey()
-                + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
-            return;
-        }
-        Background.run(() -> switch (status.type()) {
-            case SYNC -> runtime.workspace().cancelSync(status.id()).status();
-            case EXPORT -> runtime.workspace().cancelExport(status.id());
-            default -> runtime.workspace().cancelJob(status.id());
-        }, s -> poll(), feedback::problem);
     }
 
     /**
@@ -1132,28 +1097,6 @@ public final class ActivitiesView implements View {
     static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
             + "des Downloads verschwindet mit dem Auftrag.";
 
-    /** Löscht einen beendeten Auftrag samt Diagnose nach Rückfrage (Symbol in der Liste). */
-    private void deleteJob(JobStatus status) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || !status.state().terminal()) {
-            return;
-        }
-        if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(status.type()) + " von " + status.partitionKey()
-                + " und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT, "Löschen")) {
-            return;
-        }
-        Background.execute(() -> runtime.workspace().deleteJob(status.id()), () -> {
-            if (status.id().equals(selectedId)) {
-                selectedId = null;
-                detail = null;
-                table.clearSelection();
-                render();
-            }
-            feedback.success("Auftrag gelöscht");
-            poll();
-        }, feedback::problem);
-    }
-
     private void deleteFinished() {
         AppRuntime runtime = context.runtime();
         // Genau die Aufträge, die der Dialog nennt; was danach erst endet, bleibt stehen.
@@ -1228,7 +1171,7 @@ public final class ActivitiesView implements View {
             return switch (column) {
                 case 0 -> Texts.type(status.type());
                 case 1 -> where(status);
-                case 2 -> status.state();
+                case 2 -> status;
                 case 3 -> progressText(status);
                 case 4 -> Texts.time(status.createdAt());
                 default -> "";
@@ -1236,16 +1179,19 @@ public final class ActivitiesView implements View {
         }
     }
 
-    /** Zustand je Zeile; ein Auftrag, der auf einen Einmalcode wartet, sagt es statt „Läuft“. */
+    /**
+     * Zustand je Zeile nach dem Zustandsobjekt des Core ({@link Texts#state(JobStatus)}); ein Auftrag, der auf einen
+     * Einmalcode wartet, sagt es statt „Läuft“.
+     */
     private final class StateRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
                                                        int row, int column) {
-            JobState state = (JobState) value;
-            boolean waiting = waitingForSignIn(model.rows.get(table.convertRowIndexToModel(row)).id());
-            super.getTableCellRendererComponent(table, waiting ? SIGN_IN : Texts.state(state), selected, focus, row,
+            JobStatus status = (JobStatus) value;
+            boolean waiting = waitingForSignIn(status.id());
+            super.getTableCellRendererComponent(table, waiting ? SIGN_IN : Texts.state(status), selected, focus, row,
                     column);
-            setForeground(selected ? Comic.INK : waiting ? Comic.ORANGE : Comic.tone(Texts.tone(state)));
+            setForeground(selected ? Comic.INK : waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)));
             return this;
         }
     }
