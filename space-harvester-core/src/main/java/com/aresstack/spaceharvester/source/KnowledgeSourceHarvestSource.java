@@ -1327,12 +1327,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
         @Override
         public String message() {
-            return challenge.message();
+            return note != null ? note : challenge.message();
         }
 
         @Override
         public String error() {
-            return note != null ? note : challenge.error();
+            return challenge.error();
         }
 
         @Override
@@ -1431,6 +1431,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 throw sendFailure(e, false);
             }
             web = login;
+            // The PAT session's old OTP is not valid for this newly established Basic web session.
+            // Request the new OTP only after starting the web login; never submit an empty or stale code.
+            if (code.length == 0) {
+                return new Challenge(fresh, login, NEW_SESSION_NOTE);
+            }
             Challenge inSession = new Challenge(fresh, login);
             SignInChallenge again;
             try {
