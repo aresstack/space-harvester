@@ -206,14 +206,54 @@ public final class Dialogs {
     /** Packt, rundet die Ecken, zentriert über dem Besitzer und zeigt den Dialog modal. */
     static void present(JDialog dialog, Dimension minimum) {
         dialog.pack();
+        // Nie höher oder breiter als der nutzbare Bildschirm (ohne Taskleiste): Sonst ragt die Knopfleiste unten
+        // heraus, und der Bildlauf im Inhalt glaubt, alles passe, bis eine Meldung Platz nimmt (Angelo, 10.11.).
+        java.awt.Rectangle screen = usableScreen(dialog);
+        Dimension fitted = fit(dialog.getSize(), minimum, screen);
         if (minimum != null) {
-            dialog.setMinimumSize(minimum);
-            dialog.setSize(Math.max(dialog.getWidth(), minimum.width), Math.max(dialog.getHeight(), minimum.height));
+            dialog.setMinimumSize(fit(minimum, null, screen));
         }
+        dialog.setSize(fitted);
         ComicWindowShape.install(dialog, (JComponent) dialog.getContentPane(), Comic.PALETTE, WINDOW_PADDING,
                 ResearchUiMetrics.RADIUS_WINDOW);
         dialog.setLocationRelativeTo(dialog.getOwner());
+        if (screen != null) {
+            // Ganz auf dem Bildschirm, auch wenn der Besitzer nah am Rand steht.
+            int x = Math.max(screen.x, Math.min(dialog.getX(), screen.x + screen.width - dialog.getWidth()));
+            int y = Math.max(screen.y, Math.min(dialog.getY(), screen.y + screen.height - dialog.getHeight()));
+            dialog.setLocation(x, y);
+        }
         dialog.setVisible(true);
+    }
+
+    /**
+     * Fenstergröße: mindestens {@code minimum}, höchstens der nutzbare Bildschirm {@code screen} ({@code null}: keine
+     * Grenze, etwa ohne Bildschirm). Die Grenze des Bildschirms gewinnt über das Minimum.
+     */
+    static Dimension fit(Dimension size, Dimension minimum, java.awt.Rectangle screen) {
+        int width = minimum == null ? size.width : Math.max(size.width, minimum.width);
+        int height = minimum == null ? size.height : Math.max(size.height, minimum.height);
+        if (screen != null) {
+            width = Math.min(width, screen.width);
+            height = Math.min(height, screen.height);
+        }
+        return new Dimension(width, height);
+    }
+
+    /** Der nutzbare Bereich des Bildschirms, auf dem das Fenster (bzw. sein Besitzer) steht; ohne Bildschirm {@code null}. */
+    static java.awt.Rectangle usableScreen(Window window) {
+        if (java.awt.GraphicsEnvironment.isHeadless()) {
+            return null;
+        }
+        Window anchor = window.getOwner() != null && window.getOwner().isShowing() ? window.getOwner() : window;
+        java.awt.GraphicsConfiguration config = anchor.getGraphicsConfiguration();
+        if (config == null) {
+            return java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        }
+        java.awt.Rectangle bounds = config.getBounds();
+        java.awt.Insets insets = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(config);
+        return new java.awt.Rectangle(bounds.x + insets.left, bounds.y + insets.top,
+                bounds.width - insets.left - insets.right, bounds.height - insets.top - insets.bottom);
     }
 
     /** Zeigt {@code body} in einem rahmenlosen Fenster ohne Knöpfe; Escape und ✕ schließen (z. B. ein vergrößertes Bild). */

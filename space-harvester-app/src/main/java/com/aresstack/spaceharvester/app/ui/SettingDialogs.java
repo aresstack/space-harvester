@@ -88,9 +88,29 @@ final class SettingDialogs {
 
     // ------------------------------------------------------------------ Anmeldung
 
-    /** Anmeldeart, Benutzer und Token bzw. Passwort (verschlüsselt im Tresor, nie in der Datei). */
+    /**
+     * Wie im Quellen-Dialog und im Assistenten, in derselben Reihenfolge: woher die Zugangsdaten kommen (KeePass oder
+     * Manuell), bei KeePass der Eintrag (Knopf im Feld), dann Anmeldeart, Benutzer und Token bzw. Passwort. Aus KeePass
+     * gelesene Werte bleiben nur in der Sitzung; in die Datei kommt nur der Name des Eintrags
+     * ({@code space-harvester-app.source-keepass-entries}). Eingetippte Werte gehen verschlüsselt in den Tresor.
+     */
     static Shell auth(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
         SourceDraft current = editing.draft();
+        AppSettings settings = context.settings();
+        String knownEntry = settings == null ? null : settings.keePassEntry(current.id());
+        JComboBox<String> origin = Comic.combo();
+        origin.addItem(AiSettingsPanel.KEEPASS);
+        origin.addItem(AiSettingsPanel.MANUAL);
+        origin.setSelectedItem(knownEntry != null ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL);
+        JComboBox<String> entry = Comic.combo();
+        entry.setEditable(true);
+        if (knownEntry != null) {
+            entry.addItem(knownEntry);
+            entry.setSelectedItem(knownEntry);
+        }
+        ComposerButton load = Comic.button(context.keePass().paired() ? KEEPASS_RELOAD : KEEPASS_PAIR,
+                "Einträge aus KeePass lesen; ohne Kopplung zeigt KeePass erst einen Code, den du hier einträgst");
+        JPanel entryRow = Comic.fieldWithButton(entry, load);
         JComboBox<String> auth = Comic.combo();
         auth.addItem(PAT);
         auth.addItem(BASIC);
@@ -106,11 +126,21 @@ final class SettingDialogs {
         Comic.style(secret);
         PasswordReveal.install(secret);
         Rows rows = new Rows();
+        rows.add("Zugangsdaten beziehen über", origin, "KeePass liefert Benutzer und Passwort bzw. Token aus einem "
+                + "Eintrag; Manuell legt sie im Tresor ab");
+        rows.add("KeePass-Eintrag", entryRow, KEEPASS_HINT);
         rows.add("Anmeldung", auth, null);
         rows.add("Benutzer", username, null);
         rows.add("Token", secret, null);
+        KeePassRead read = new KeePassRead();
+        Supplier<Boolean> keePass = () -> AiSettingsPanel.KEEPASS.equals(origin.getSelectedItem());
+        Supplier<String> title = () -> {
+            Object typed = entry.getEditor().getItem();
+            return typed == null ? "" : typed.toString().strip();
+        };
         Supplier<AuthType> type = () -> PAT.equals(auth.getSelectedItem()) ? AuthType.PAT
                 : BASIC.equals(auth.getSelectedItem()) ? AuthType.BASIC : AuthType.NONE;
+        Supplier<Boolean> keePassLogin = () -> keePass.get() && type.get() != AuthType.NONE;
         Supplier<SourceDraft> draft = () -> {
             AuthType chosen = type.get();
             String variable = chosen == AuthType.NONE ? null : variable(current, chosen);
@@ -118,33 +148,206 @@ final class SettingDialogs {
                     current.certificateType(), current.certificatePath(), current.certificatePasswordVariable(),
                     current.certificateAlias(), current.thumbprint(), current.trustBundle());
         };
+        // Der Sitzungswert gilt weiter, solange Eintrag und Anmeldung dieselben sind wie in der Datei.
+        Supplier<Boolean> sessionMatchesEntry = () -> {
+            SourceDraft source = draft.get();
+            return title.get().equals(knownEntry) && !SourceSaving.loginChanged(editing, source)
+                    && context.secrets().has(source.id(), SourceSaving.login(source));
+        };
         Runnable visibility = () -> {
             AuthType chosen = type.get();
+            boolean fromKeePass = keePassLogin.get();
+            rows.visible(entryRow, keePass.get());
             rows.visible(username, chosen == AuthType.BASIC);
             rows.visible(secret, chosen != AuthType.NONE);
             rows.label(secret, chosen == AuthType.BASIC ? "Passwort" : "Token");
-            SourceDraft source = draft.get();
-            boolean stored = !SourceSaving.loginChanged(editing, source)
-                    && (context.vault().has(source.id(), SourceSaving.login(source))
-                    || context.secrets().has(source.id(), SourceSaving.login(source)));
-            rows.hint(secret, (stored ? "Schon hinterlegt; leer lassen zum Behalten. " : "")
-                    + (context.vault().available() ? "Wird verschlüsselt für dein Windows-Konto gespeichert, nie in "
-                    + "der Datei." : "Gilt bis zum Schließen der App, nie in der Datei."));
+            boolean show = fromKeePass && read.secret != null && read.secret.length > 0;
+            if (show && !read.shown) {
+                read.shown = true;
+                secret.setText(new String(read.secret));
+                secret.setEditable(false);
+            } else if (!show && read.shown) {
+                read.shown = false;
+                secret.setText("");
+                secret.setEditable(true);
+            }
+            if (fromKeePass) {
+                rows.hint(secret, read.shown ? "Aus KeePass gelesen; bleibt nur im Speicher"
+                        : read.secret != null ? "Der Eintrag hat kein Passwort."
+                        : sessionMatchesEntry.get() ? "Aus KeePass gelesen, gilt für diese Sitzung"
+                        : "Kommt aus dem KeePass-Eintrag");
+            } else {
+                SourceDraft source = draft.get();
+                boolean stored = !SourceSaving.loginChanged(editing, source)
+                        && (context.vault().has(source.id(), SourceSaving.login(source))
+                        || context.secrets().has(source.id(), SourceSaving.login(source)));
+                rows.hint(secret, (stored ? "Schon hinterlegt; leer lassen zum Behalten. " : "")
+                        + (context.vault().available() ? "Wird verschlüsselt für dein Windows-Konto gespeichert, "
+                        + "nie in der Datei." : "Gilt bis zum Schließen der App, nie in der Datei."));
+            }
             rows.revalidate();
         };
-        auth.addActionListener(e -> visibility.run());
+        Runnable forget = () -> {
+            read.forget();
+            visibility.run();
+        };
+        // Liest Benutzer und Passwort bzw. Token des Eintrags; belegt die Anmeldeart vor, solange sie nicht von Hand
+        // gewählt ist (mit Benutzer Benutzer und Passwort, sonst Token).
+        Runnable readEntry = () -> {
+            String wanted = title.get();
+            forget.run();
+            if (!keePass.get() || wanted.isEmpty() || !context.keePass().paired()) {
+                return;
+            }
+            Background.run(() -> {
+                try (var draftEntry = context.keePass().read(wanted)) {
+                    return new Object[] {draftEntry.userName(), draftEntry.copyPassword(),
+                            draftEntry.fields() == null ? Map.of() : new java.util.HashMap<>(draftEntry.fields())};
+                }
+            }, values -> {
+                if (!keePass.get() || !wanted.equals(title.get())) {
+                    Arrays.fill((char[]) values[1], '\0');
+                    return;
+                }
+                String user = values[0] == null ? "" : ((String) values[0]).strip();
+                read.secret = (char[]) values[1];
+                @SuppressWarnings("unchecked")
+                Map<String, String> fields = (Map<String, String>) values[2];
+                read.fields = fields;
+                if (!read.authPicked) {
+                    read.deriving = true;
+                    try {
+                        auth.setSelectedItem(user.isEmpty() ? PAT : BASIC);
+                    } finally {
+                        read.deriving = false;
+                    }
+                }
+                if (!user.isEmpty() && BASIC.equals(auth.getSelectedItem())) {
+                    username.setText(user);
+                }
+                rows.hint(entryRow, read.secret.length == 0 ? "Der Eintrag hat kein Passwort."
+                        : BASIC.equals(auth.getSelectedItem()) ? "Benutzer und Passwort kommen aus KeePass"
+                        : "Das Token kommt aus KeePass");
+                visibility.run();
+            }, error -> rows.hint(entryRow, AiSettingsPanel.keePassReason(error)));
+        };
+        Runnable loadEntries = () -> {
+            load.setEnabled(false);
+            rows.hint(entryRow, "Verbinde mit KeePass …");
+            String keep = title.get();
+            Background.run(() -> context.keePass().entries(), entries -> {
+                load.setEnabled(true);
+                load.setText(KEEPASS_RELOAD);
+                List<String> titles = entries.stream().map(com.aresstack.enterpriseai.adyton.VaultEntry::title)
+                        .filter(t -> t != null && !t.isBlank()).distinct().toList();
+                read.rebuilding = true;
+                try {
+                    entry.removeAllItems();
+                    titles.forEach(entry::addItem);
+                    if (!keep.isEmpty() && !titles.contains(keep)) {
+                        entry.addItem(keep);
+                    }
+                    entry.setSelectedItem(keep.isEmpty() ? null : keep);
+                    entry.getEditor().setItem(keep);
+                } finally {
+                    read.rebuilding = false;
+                }
+                rows.hint(entryRow, "Gekoppelt · " + Texts.count(titles.size(), "Eintrag", "Einträge")
+                        + "; Eintrag wählen oder Namen eintippen");
+                readEntry.run();
+            }, error -> {
+                load.setEnabled(true);
+                rows.hint(entryRow, "Nicht gekoppelt: " + AiSettingsPanel.keePassReason(error));
+            });
+        };
+        load.addActionListener(e -> loadEntries.run());
+        entry.addActionListener(e -> {
+            if (read.rebuilding) {
+                return;
+            }
+            read.authPicked = false; // ein anderer Eintrag belegt die Anmeldeart wieder vor
+            readEntry.run();
+        });
+        origin.addActionListener(e -> {
+            visibility.run(); // Eintragszeile sofort zeigen bzw. verbergen, auch wenn das Laden scheitert
+            if (keePass.get() && context.keePass().paired()) {
+                loadEntries.run();
+            } else {
+                forget.run();
+            }
+        });
+        auth.addActionListener(e -> {
+            if (!read.deriving && keePass.get()) {
+                read.authPicked = true;
+            }
+            visibility.run();
+        });
         visibility.run();
+        if (keePass.get() && context.keePass().paired()) {
+            loadEntries.run();
+        }
         Shell shell = new Shell(parent, "Anmeldung · " + title(current), rows);
         shell.onSave(() -> {
             SourceDraft source = draft.get();
+            boolean fromKeePass = keePassLogin.get();
             List<String> problems = new ArrayList<>(source.problems());
-            if (!SourceSaving.secretAvailable(context, editing, source, secret.getPassword().length > 0)) {
+            boolean keePassRead = read.secret != null && read.secret.length > 0;
+            if (fromKeePass && !context.keePass().paired()) {
+                problems.add("Noch nicht mit KeePass gekoppelt: bitte auf „" + KEEPASS_PAIR + "“ klicken.");
+            } else if (fromKeePass && title.get().isEmpty()) {
+                problems.add("Kein KeePass-Eintrag gewählt.");
+            } else if (fromKeePass && !keePassRead && !sessionMatchesEntry.get()) {
+                problems.add(read.secret != null ? "Der KeePass-Eintrag hat kein Passwort."
+                        : "Der KeePass-Eintrag ist noch nicht gelesen; KeePass starten und koppeln.");
+            } else if (!fromKeePass && !SourceSaving.secretAvailable(context, editing, source,
+                    secret.getPassword().length > 0)) {
                 problems.add(source.authType() == AuthType.PAT ? "Das Token fehlt." : "Das Passwort fehlt.");
             }
-            return problems.isEmpty() ? new Change(source, secret.getPassword()) : Change.rejected(problems);
+            if (!problems.isEmpty()) {
+                return Change.rejected(problems);
+            }
+            if (fromKeePass) {
+                return new Change(source, new char[0], List.of(), new KeePassUse(title.get(),
+                        keePassRead ? read.secret.clone() : new char[0], read.fields));
+            }
+            return new Change(source, secret.getPassword(), List.of(), new KeePassUse(null, new char[0], null));
         }, context, editing, saved);
-        shell.onClose(() -> secret.setText(""));
+        shell.onClose(() -> {
+            read.forget();
+            secret.setText("");
+        });
         return shell;
+    }
+
+    static final String KEEPASS_PAIR = "Mit KeePass koppeln …";
+    static final String KEEPASS_RELOAD = "Einträge neu laden";
+    static final String KEEPASS_HINT = "KeePass muss laufen, mit dem Plugin KeePassRPC";
+
+    /** Was aus dem KeePass-Eintrag gelesen ist; das Geheimnis bleibt nur im Speicher und wird beim Schließen gelöscht. */
+    private static final class KeePassRead {
+        char[] secret;
+        Map<String, String> fields;
+        /** Ob das Feld Token/Passwort gerade den Wert aus KeePass zeigt (maskiert, schreibgeschützt). */
+        boolean shown;
+        /** Ob die Anmeldeart von Hand gewählt wurde; dann belegt ein gelesener Eintrag sie nicht mehr vor. */
+        boolean authPicked;
+        boolean deriving;
+        boolean rebuilding;
+
+        void forget() {
+            if (secret != null) {
+                Arrays.fill(secret, '\0');
+                secret = null;
+            }
+            fields = null;
+        }
+    }
+
+    /**
+     * KeePass-Eintrag einer Quelle beim Speichern: {@code entry} {@code null} entfernt ihn aus der Datei; der aus
+     * KeePass gelesene Wert geht nur in die Sitzung, die Zusatzfelder des Eintrags gelten sofort.
+     */
+    record KeePassUse(String entry, char[] session, Map<String, String> fields) {
     }
 
     /** Die Variable in der Datei: bleibt, außer sie war der Vorschlag der bisherigen Anmeldeart. */
@@ -996,14 +1199,14 @@ final class SettingDialogs {
     }
 
     /** Ergebnis von „Speichern“: die geänderte Quelle oder, was fehlt. */
-    record Change(SourceDraft source, char[] secret, List<String> problems) {
+    record Change(SourceDraft source, char[] secret, List<String> problems, KeePassUse keePass) {
 
         Change(SourceDraft source, char[] secret) {
-            this(source, secret, List.of());
+            this(source, secret, List.of(), null);
         }
 
         static Change rejected(List<String> problems) {
-            return new Change(null, new char[0], List.copyOf(problems));
+            return new Change(null, new char[0], List.copyOf(problems), null);
         }
     }
 
@@ -1067,12 +1270,21 @@ final class SettingDialogs {
                 }
                 SourceDraft source = result.source();
                 char[] value = result.secret();
-                if (source.equals(editing.draft()) && value.length == 0) {
+                KeePassUse keePass = result.keePass();
+                char[] session = keePass == null ? new char[0] : keePass.session();
+                AppSettings before = context.settings();
+                String entryBefore = before == null ? null : before.keePassEntry(source.id());
+                boolean entryChanged = keePass != null && !Objects.equals(keePass.entry(), entryBefore);
+                // Ein frisch aus KeePass gelesener Wert gilt immer als neu: Er kann rotiert sein, ebenso die Zusatzfelder.
+                boolean sessionNew = session.length > 0;
+                if (source.equals(editing.draft()) && value.length == 0 && !entryChanged && !sessionNew) {
+                    Arrays.fill(session, '\0');
                     finish();
                     return;
                 }
                 if (!Dialogs.restartAllowed(body, context)) {
                     Arrays.fill(value, '\0');
+                    Arrays.fill(session, '\0');
                     return;
                 }
                 ConfigFileEditor editor = new ConfigFileEditor(context.loader());
@@ -1083,16 +1295,30 @@ final class SettingDialogs {
                         throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über "
                                 + "⋯ › „Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
                     }
-                    SourceSaving.store(context, editor, editing, source,
-                            editor.replace(context.configFile(), source), value);
+                    ConfigFileEditor.Draft written = editor.replace(context.configFile(), source);
+                    if (keePass != null && (keePass.entry() != null
+                            || written.settings().keePassEntry(source.id()) != null)) {
+                        written = editor.withSourceKeePass(context.configFile(), written, source.id(),
+                                keePass.entry());
+                    }
+                    SourceSaving.store(context, editor, editing, source, written, value);
                     return source.id();
                 }, id -> {
-                    SourceSaving.remember(context, editing, source, value);
+                    SourceSaving.remember(context, editing, source, session.length > 0 ? session : value);
+                    if (keePass != null && keePass.entry() != null && keePass.fields() != null) {
+                        // Wie beim Start (AppContext.unlockFromKeePass): Zusatzfelder des Eintrags gelten sofort.
+                        context.secrets().keePassFields(id, keePass.fields());
+                    } else if (keePass != null && keePass.entry() == null) {
+                        // Ohne KeePass gelten auch dessen Zusatzfelder nicht mehr (etwa MM_RequiresLogin=false).
+                        context.secrets().keePassFields(id, Map.of());
+                    }
                     Arrays.fill(value, '\0');
+                    Arrays.fill(session, '\0');
                     finish();
                     context.reload(() -> saved.accept(id));
                 }, error -> {
                     Arrays.fill(value, '\0');
+                    Arrays.fill(session, '\0');
                     save.setEnabled(true);
                     feedback.problem(error);
                 });
