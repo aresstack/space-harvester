@@ -786,6 +786,39 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * #571: Scheitert das erste Absenden in der neuen Web-Sitzung (Netz), bleibt deren Code-Seite die Abfrage; der
+     * nächste Versuch geht wieder an diese Sitzung, ohne eine weitere zu öffnen.
+     */
+    @Test
+    void aFailedSendInTheNewWebSessionKeepsThatSessionsPage() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "failFirst");
+        int[] opened = {0};
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> {
+                    opened[0]++;
+                    return webPort;
+                });
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit("000000".toCharArray(), "anna", "pw-value".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.error()).isEqualTo("Verbindung abgelehnt (ConnectException) – Ziel wiki.example.org");
+        assertThat(again.submit("000000".toCharArray())).isNull();
+        assertThat(opened[0]).isEqualTo(1);
+        assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
+    }
+
+    /**
      * Bild-Port wie Confluence mit Zwei-Faktor-Anmeldung: die ersten {@code locked} Bildabrufe liefern die Code-Seite,
      * danach das Bild. Merkt sich je Abruf und je Absenden, mit welcher Anmeldung der Adapter es täte.
      */
@@ -817,6 +850,7 @@ class KnowledgeSourceHarvestSourceTest {
 
         private OneTimeCodeChallenge page(boolean rejectFirst) {
             boolean[] rejected = {!rejectFirst};
+            boolean[] failed = {false};
             return new OneTimeCodeChallenge() {
                 @Override
                 public String service() {
@@ -849,6 +883,11 @@ class KnowledgeSourceHarvestSourceTest {
                     if ("token-port".equals(name)) {
                         throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
                                 "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
+                    }
+                    if ("failFirst".equals(mode) && !failed[0]) {
+                        failed[0] = true;
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                                "Einmalcode nicht gesendet (ConnectException)", new java.net.ConnectException("x"));
                     }
                     if (!rejected[0]) {
                         rejected[0] = true;

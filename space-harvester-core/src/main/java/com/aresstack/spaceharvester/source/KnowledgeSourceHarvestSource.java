@@ -137,8 +137,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final java.util.function.Supplier<KnowledgeSourcePort> webPorts;
     /** Dateiabrufe mit Benutzer und Passwort über eine eigene Web-Sitzung, sobald einmal angegeben; sonst {@code null}. */
     private volatile WebLogin web;
-    /** Der letzte Dateiabruf; nach Angabe von Benutzer und Passwort wiederholt er sich in der neuen Web-Sitzung. */
-    private volatile FileFetch<?> lastFetch;
+    /**
+     * Der Dateiabruf je Code-Seite, die er ausgelöst hat; nach Angabe von Benutzer und Passwort wiederholt genau er sich
+     * in der neuen Web-Sitzung, auch wenn andere Abrufe parallel laufen.
+     */
+    private final Map<OneTimeCodeChallenge, FileFetch<?>> retries =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
     /**
@@ -1215,18 +1219,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /**
      * Ein Dateiabruf: über die eigene Web-Sitzung mit Benutzer und Passwort, sobald angegeben (wie bei einer Quelle mit
-     * Benutzer und Passwort), sonst über den Port der Quelle. Der Abruf wird gemerkt, damit er sich nach der Angabe
-     * von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt.
+     * Benutzer und Passwort), sonst über den Port der Quelle. Verlangt er eine Code-Seite, wird er an ihr gemerkt, damit
+     * er sich nach der Angabe von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt.
      */
     private <T> T fetch(FileFetch<T> fetch) throws KnowledgeSourceException {
-        if (webPorts != null) {
-            lastFetch = fetch;
-        }
         WebLogin login = web;
-        if (login == null) {
-            return fetch.from(port);
+        try {
+            return login == null ? fetch.from(port) : withWebLogin(login, () -> fetch.from(login.port()));
+        } catch (OneTimeCodeRequiredException required) {
+            if (webPorts != null) {
+                retries.put(required.challenge(), fetch);
+            }
+            throw required;
         }
-        return withWebLogin(login, () -> fetch.from(login.port()));
     }
 
     private <T> T withWebLogin(WebLogin login, ConfiguredSecrets.LoginUse<T, KnowledgeSourceException> use)
@@ -1322,7 +1327,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     || password.length == 0) {
                 return submit(code);
             }
-            FileFetch<?> retry = lastFetch;
+            FileFetch<?> retry = retries.get(challenge);
             if (webPorts != null && retry != null) {
                 return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPorts.get()), retry);
             }
@@ -1367,7 +1372,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
             web = login;
             Challenge inSession = new Challenge(fresh, login);
-            SignInChallenge again = inSession.submit(code);
+            SignInChallenge again;
+            try {
+                again = inSession.submit(code);
+            } catch (SourceAccessException e) {
+                // Die neue Seite bleibt die Abfrage: Erneut senden und der nächste Code gehen an diese Sitzung.
+                return new Challenge(fresh, login, SignInFailures.describe(e, fresh.service()));
+            }
             if (again instanceof Challenge rejected && rejected.note == null) {
                 return new Challenge(rejected.challenge, login, NEW_SESSION_NOTE);
             }
