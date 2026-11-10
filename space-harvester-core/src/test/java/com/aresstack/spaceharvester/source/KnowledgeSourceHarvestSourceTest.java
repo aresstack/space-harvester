@@ -794,9 +794,47 @@ class KnowledgeSourceHarvestSourceTest {
 
         assertThat(again).isNotNull();
         assertThat(again.asksForLogin()).isFalse();
-        assertThat(again.error()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(again.error()).isEmpty();
         assertThat(again.submit("111111".toCharArray())).isNull();
         assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
+    }
+
+    @Test
+    void aPatWebLoginStartsWithoutSubmittingTheOldOtpAndRequiresTheNewOne() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
+                null, null, null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "user", required.challenge());
+        char[] password = "pw-value".toCharArray();
+
+        assertThat(signIns.beginWebLogin(request.id(), "anna", password))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        assertThat(password).containsOnly('\0');
+        assertThat(signIns.request(request.id())).isPresent();
+        com.aresstack.spaceharvester.application.signin.SignInRequest second = signIns.request(request.id()).get();
+        assertThat(second.asksForLogin()).isFalse();
+        assertThat(second.message()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(second.error()).isEmpty();
+        assertThat(seen).containsExactly("token-port image -:pat-value", "web-port image anna:pw-value");
+
+        assertThat(signIns.submit(request.id(), "111111".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+        assertThat(seen).last().isEqualTo("web-port code anna:pw-value");
+        assertThat(source.viewImage(image, 1000)).containsExactly(1, 2, 3);
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
     }
 
     /**
