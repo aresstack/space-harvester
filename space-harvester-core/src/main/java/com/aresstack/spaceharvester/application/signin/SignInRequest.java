@@ -62,6 +62,8 @@ public record SignInRequest(String id, String sourceId, String service, String t
         ACCEPTED,
         /** Nicht angenommen; die Anforderung bleibt offen, {@link #error()} nennt den Grund der Quelle. */
         REJECTED,
+        /** A login-only step finished; the user must now confirm the OTP for the new web session. */
+        NEXT_STEP,
         /**
          * Senden gescheitert (keine Verbindung, Proxy, TLS, HTTP-Fehler der Quelle …); die Anforderung bleibt offen,
          * {@link #failure()} nennt die Ursache.
