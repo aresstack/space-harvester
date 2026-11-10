@@ -179,30 +179,34 @@ public class GlossaryClassification {
         if (source == null && space != null) {
             throw new InvalidQueryException("spaceKey nur mit sourceId");
         }
-        if (!model.available()) {
-            throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NO_MODEL, source);
-        }
-        List<String> sources = new ArrayList<>();
+        // Erst die Rechte, damit eine Antwort ohne Freigabe nichts über Modell oder Freigaben verrät.
+        List<String> permitted = new ArrayList<>();
         if (source != null) {
             if (catalog.find(source).isEmpty()) {
                 throw new UnknownSourceException(source);
             }
             access.require(caller, space == null ? ResourceScope.source(source) : ResourceScope.space(source, space),
                     AccessKind.SYNC);
-            if (!model.mayProcess(source)) {
-                throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, source);
-            }
-            sources.add(source);
+            permitted.add(source);
         } else {
             for (HarvestSource candidate : catalog.all()) {
-                if (model.mayProcess(candidate.id())
-                        && access.permits(caller, ResourceScope.source(candidate.id()), AccessKind.SYNC)) {
-                    sources.add(candidate.id());
+                if (access.permits(caller, ResourceScope.source(candidate.id()), AccessKind.SYNC)) {
+                    permitted.add(candidate.id());
                 }
             }
-            if (sources.isEmpty()) {
-                throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, null);
+            if (permitted.isEmpty()) {
+                if (catalog.all().isEmpty()) {
+                    throw new InvalidQueryException("Keine Quelle eingerichtet");
+                }
+                access.require(caller, ResourceScope.source(catalog.all().get(0).id()), AccessKind.SYNC);
             }
+        }
+        if (!model.available()) {
+            throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NO_MODEL, source);
+        }
+        List<String> sources = permitted.stream().filter(model::mayProcess).toList();
+        if (sources.isEmpty()) {
+            throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, source);
         }
         List<JobStatus> submitted = new ArrayList<>();
         for (String id : sources) {
