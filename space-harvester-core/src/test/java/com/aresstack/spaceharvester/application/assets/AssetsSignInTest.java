@@ -146,6 +146,46 @@ class AssetsSignInTest {
     }
 
     @Test
+    void simultaneousFirstReadsReachTheSourceOnceAndShareOneRequest() throws Exception {
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("https://wiki.example.org/download/bild.png",
+                "Bild", null, "image/png", null);
+        source.gate = new java.util.concurrent.CountDownLatch(1);
+
+        // Lese-Ansicht und Bildauftrag zugleich, bevor jemand weiß, dass die Quelle einen Code verlangt: bei Confluence
+        // brächte jeder Abruf eine eigene Zwei-Faktor-Sitzung und eine eigene Mail mit Code (#571).
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Throwable> reader = pool.submit(() -> org.assertj.core.api.Assertions
+                    .catchThrowable(() -> assets.viewImage("wiki", "100", "1", image, "anna")));
+            while (source.calls.get() == 0) {
+                Thread.onSpinWait();
+            }
+            java.util.concurrent.Future<Throwable> other = pool.submit(() -> org.assertj.core.api.Assertions
+                    .catchThrowable(() -> assets.content(list(), "att1", false, "bernd")));
+            Thread.sleep(200);
+            assertThat(source.calls).hasValue(1);
+            source.gate.countDown();
+
+            Throwable first = reader.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            Throwable second = other.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(first).isExactlyInstanceOf(SignInPendingException.class);
+            assertThat(second).isExactlyInstanceOf(SignInPendingException.class);
+            assertThat(((SignInPendingException) second).signInRequestId())
+                    .isEqualTo(((SignInPendingException) first).signInRequestId());
+            assertThat(source.calls).hasValue(1);
+
+            assertThat(signIns.submit(((SignInPendingException) first).signInRequestId(), "123456".toCharArray()))
+                    .isEqualTo(SignInRequest.Answer.ACCEPTED);
+            assertThat(source.submittedOnPage).containsExactly(1);
+            assertThat(assets.content(list(), "att1", false, "bernd").content()).isEqualTo(CONTENT);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void whileTheRequestIsOpenStoredFilesStillComeFromTheStore() {
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
         Assets assets = assets(signIns);
@@ -212,8 +252,19 @@ class AssetsSignInTest {
             return capabilities;
         }
 
+        /** Hält den Abruf in der Quelle an, bis er geöffnet wird ({@code null}: sofort). */
+        volatile java.util.concurrent.CountDownLatch gate;
+
         private void guarded() {
             int page = calls.incrementAndGet();
+            java.util.concurrent.CountDownLatch waiting = gate;
+            if (waiting != null) {
+                try {
+                    waiting.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             if (locked) {
                 throw new SignInRequiredException(id(), "Einmalcode verlangt", new Challenge(page), null);
             }

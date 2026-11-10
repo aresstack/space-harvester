@@ -322,7 +322,7 @@ public class Assets {
     /**
      * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
      * ist, sonst die Anforderung angelegt. Ist sie schon offen, fragt der Lesezugriff die Quelle nicht noch einmal
-     * ({@link #holdWhileSignInOpen}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
+     * ({@link #fromSource}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
      */
     private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
         java.time.Instant started = clock.instant();
@@ -358,25 +358,25 @@ public class Assets {
         if (stored.isPresent()) {
             return read(stored.get());
         }
-        holdWhileSignInOpen(sourceId);
-        byte[] content;
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Bildern", null);
+        byte[] content = fromSource(sourceId, () -> {
+            try {
+                if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                            "Zu viele gleichzeitige Downloads von Bildern", null);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                        "Download abgebrochen", e);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
-                    e);
-        }
-        try {
-            content = source.viewImage(image, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(sourceId, maxBytes);
-        } finally {
-            downloads.release();
-        }
+            try {
+                return source.viewImage(image, maxBytes);
+            } catch (AttachmentTooLargeException e) {
+                throw new AssetTooLargeException(sourceId, maxBytes);
+            } finally {
+                downloads.release();
+            }
+        });
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
@@ -957,7 +957,6 @@ public class Assets {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }
-        holdWhileSignInOpen(sourceId);
         // Die Größe der Vorschau ist vorher unbekannt; es gilt die des Anhangs (unbekannt zählt als groß).
         try (LargeFileGate.Permit permit = gate.enter(sourceId, attachment.fileSize())) {
             return fetchPreview(list, attachment, source, kinds, version, mayStore);
@@ -994,6 +993,10 @@ public class Assets {
 
     /** Lädt eine Vorschau über die Quelle, mit derselben Begrenzung gleichzeitiger Downloads wie Anhänge. */
     private byte[] previewBytes(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
+        return fromSource(source.id(), () -> previewBytesNow(source, attachment, kind));
+    }
+
+    private byte[] previewBytesNow(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
         try {
             if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
                 throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
@@ -1295,26 +1298,26 @@ public class Assets {
     }
 
     private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
-        holdWhileSignInOpen(source.id());
-        AttachmentFile file;
         // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Anhängen", null);
+        AttachmentFile file = fromSource(source.id(), () -> {
+            try {
+                if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
+                            "Zu viele gleichzeitige Downloads von Anhängen", null);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                        "Download abgebrochen", e);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
-                    "Download abgebrochen", e);
-        }
-        try {
-            file = source.attachmentFile(attachment, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
-        } finally {
-            downloads.release();
-        }
+            try {
+                return source.attachmentFile(attachment, maxBytes);
+            } catch (AttachmentTooLargeException e) {
+                throw new AssetTooLargeException(source.id(), maxBytes);
+            } finally {
+                downloads.release();
+            }
+        });
         byte[] content = file.content();
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
@@ -1389,14 +1392,75 @@ public class Assets {
         }
     }
 
+    /** Zustand der Dateiabrufe einer Quelle (#571), siehe {@link #fromSource}. */
+    private static final class SourceGate {
+        final java.util.concurrent.locks.ReentrantLock probe = new java.util.concurrent.locks.ReentrantLock(true);
+        /** Ob die Quelle zuletzt eine Datei ohne Einmalcode geliefert hat. */
+        volatile boolean flowing;
+        /** Zählt die gesehenen Zwei-Faktor-Seiten; {@link #challenge} ist die letzte. */
+        volatile long challenges;
+        volatile SignInChallenge challenge;
+    }
+
+    private final ConcurrentHashMap<String, SourceGate> gates = new ConcurrentHashMap<>();
+
     /**
-     * Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht keine geschützte Datei
-     * ans Netz (#571): jede Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Sitzungs-Cookie die gemeinsame Sitzung
-     * überschreibt, und der Code der offenen Anforderung passte beim Senden nicht mehr (HTTP 500). Wirft stattdessen,
-     * was die Quelle geworfen hätte, mit der Seite der offenen Anforderung; Lesen auf Abruf schließt sich ihr damit an
-     * ({@link #unlocking}), ein Auftrag wartet auf sie ({@link SignInRequests#await}). Abgelegte Dateien kommen
-     * weiter aus der Ablage; nach Annahme, Ablehnung oder Ablauf der Anforderung liest diese Stelle wieder normal.
+     * Der eine Weg aller geschützten Dateiabrufe (Bild, Anhang, Vorschau) an die Quelle (#571), damit es wie im
+     * Enterprise AI Client je Quelle nur eine Zwei-Faktor-Sitzung und einen Code gibt:
+     * <ul>
+     *   <li>Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht kein Abruf ans
+     *       Netz; geworfen wird, was die Quelle geworfen hätte, mit der Seite der offenen Anforderung.</li>
+     *   <li>Bis die Quelle eine Datei ohne Einmalcode geliefert hat, läuft je Quelle immer nur ein Abruf. Sonst trafen
+     *       gleichzeitige Abrufe (Lese-Ansicht, Bildauftrag, Vorschauen) je eine eigene Zwei-Faktor-Seite mit eigener
+     *       Sitzung und eigener Mail, und der eingegebene Code passte nicht zur Sitzung (HTTP 500). Wer währenddessen
+     *       wartete, fragt die Quelle nicht mehr, wenn der laufende Abruf auf die Zwei-Faktor-Seite traf, sondern
+     *       bekommt dieselbe Seite.</li>
+     *   <li>Nach einer gelieferten Datei laufen Abrufe wieder parallel.</li>
+     * </ul>
+     * Lesen auf Abruf schließt sich damit derselben Anforderung an ({@link #unlocking}), ein Auftrag wartet auf sie
+     * ({@link SignInRequests#await}). Abgelegte Dateien kommen weiter aus der Ablage. Code und Token sieht diese Stelle
+     * nie.
      */
+    private <T> T fromSource(String sourceId, java.util.function.Supplier<T> call) {
+        SourceGate state = gates.computeIfAbsent(sourceId, id -> new SourceGate());
+        if (state.flowing) {
+            holdWhileSignInOpen(sourceId);
+            return observed(state, call);
+        }
+        long before = state.challenges;
+        try {
+            state.probe.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
+                    e);
+        }
+        try {
+            holdWhileSignInOpen(sourceId);
+            SignInChallenge seen = state.challenge;
+            if (state.challenges != before && seen != null) {
+                throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen, null);
+            }
+            return observed(state, call);
+        } finally {
+            state.probe.unlock();
+        }
+    }
+
+    private <T> T observed(SourceGate state, java.util.function.Supplier<T> call) {
+        try {
+            T result = call.get();
+            state.flowing = true;
+            return result;
+        } catch (SignInRequiredException e) {
+            state.flowing = false;
+            state.challenge = e.challenge();
+            state.challenges++;
+            throw e;
+        }
+    }
+
+    /** Wirft statt eines Abrufs, solange die Anmeldung der Quelle offen ist ({@link #fromSource}). */
     private void holdWhileSignInOpen(String sourceId) {
         if (signIns == null) {
             return;
