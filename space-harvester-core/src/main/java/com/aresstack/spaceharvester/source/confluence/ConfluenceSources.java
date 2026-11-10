@@ -70,7 +70,21 @@ public final class ConfluenceSources {
     public static KnowledgeSourceProvider desktopProvider(SecretProvider secrets, HttpRoutePort routes,
                                                           String userAgent, X509TrustManager trust, String thumbprint,
                                                           Path diagnosticsDirectory) {
-        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, diagnosticsDirectory);
+        return desktopProvider(secrets, routes, userAgent, trust, thumbprint, diagnosticsDirectory, null);
+    }
+
+    /**
+     * Wie {@link #desktopProvider(SecretProvider, HttpRoutePort, String, X509TrustManager, String, Path)}, zusätzlich
+     * mit einer Protokollzeile je Webaufruf außerhalb von {@code /rest/} (Downloads, Zwei-Faktor-Seite, Formularziel,
+     * Weiterleitungen; ohne Query-Werte, #571).
+     *
+     * @param logLabel Quelle und Anmeldeart fürs Protokoll, etwa {@code wiki, PAT}; {@code null} ohne diese Zeilen
+     */
+    public static KnowledgeSourceProvider desktopProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                          String userAgent, X509TrustManager trust, String thumbprint,
+                                                          Path diagnosticsDirectory, String logLabel) {
+        HttpRoutePort logged = logLabel == null || routes == null ? routes : new WebCallLog(routes, logLabel);
+        return confluenceProvider(secrets, logged, userAgent, trust, thumbprint, diagnosticsDirectory);
     }
 
     private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
