@@ -110,6 +110,10 @@ public final class ActivitiesView implements View {
     private JobStatus barJob;
     /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
     private String phase;
+    /** Bildlauf des Detailbereichs unter der Liste. */
+    final javax.swing.JScrollPane detailScroll;
+    /** Beim nächsten Zeichnen nach oben: anderer Auftrag gewählt oder Codefeld neu erschienen. */
+    private boolean toTop;
 
     public ActivitiesView(AppContext context) {
         this.context = context;
@@ -196,8 +200,9 @@ public final class ActivitiesView implements View {
         details.add(tiles, BorderLayout.CENTER);
         this.details = details;
 
+        detailScroll = Comic.column(details);
         javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, list,
-                Comic.column(details));
+                detailScroll);
         split.setBackground(Comic.SURFACE);
         // Derselbe Trenner wie neben der Wissensquellen-Liste, nur liegend.
         ComicDivider.install(split, Comic.PALETTE);
@@ -266,6 +271,7 @@ public final class ActivitiesView implements View {
 
     /** Zeigt einen Auftrag (z. B. direkt nach dem Start). */
     public void show(String jobId) {
+        toTop = toTop || !jobId.equals(selectedId);
         selectedId = jobId;
         poll();
         timer.start();
@@ -427,6 +433,7 @@ public final class ActivitiesView implements View {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
+            toTop = true;
             // Die Karte gehört zum bisherigen Auftrag: sofort ausblenden, nicht erst nach dem nächsten Abruf.
             renderCard();
             details.revalidate();
@@ -457,7 +464,22 @@ public final class ActivitiesView implements View {
         return detail instanceof JobStatus status ? Optional.of(status) : Optional.empty();
     }
 
+    /**
+     * Zeichnet den Detailbereich neu, ohne dass er springt (Angelo 10.11.2026): Die Bildlaufposition bleibt (die
+     * Hinweistexte ziehen sie nicht mehr zu sich, {@link Comic#noAutoScroll}), außer nach einem Auftragswechsel oder
+     * wenn das Codefeld neu erscheint; dann steht der Bereich oben, das Codefeld also sichtbar, ohne zu scrollen.
+     */
     private void render() {
+        boolean codeBefore = signIn.isVisible();
+        draw();
+        if (toTop || (!codeBefore && signIn.isVisible())) {
+            toTop = false;
+            javax.swing.SwingUtilities.invokeLater(() ->
+                    detailScroll.getViewport().setViewPosition(new java.awt.Point(0, 0)));
+        }
+    }
+
+    private void draw() {
         signIn.refresh();
         Optional<JobStatus> current = currentStatus();
         facts.reset();
