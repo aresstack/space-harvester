@@ -26,6 +26,8 @@ final class StatusLine extends JPanel {
     static final int FADE_DELAY_MS = 4000;
     /** Höchstanteil der Breite für den Stand des sichtbaren Bereichs. */
     static final double LEAD_SHARE = 0.5;
+    /** Höchstanteil der Breite für alles links der Mitte zusammen (Hinweis, Stand des Bereichs, Stand der App). */
+    static final double LEFT_SHARE = 0.6;
     /** Die Füllung: helles Blau, damit der Text darauf lesbar bleibt. */
     static final Color FILL = mix(Comic.BLUE, Comic.SURFACE, 0.22);
 
@@ -77,7 +79,10 @@ final class StatusLine extends JPanel {
                 left.add(new Capped(lead, LEAD_SHARE));
             }
             left.add(new Capped(west, 0.4));
-            add(left, BorderLayout.WEST);
+            // Zusammen höchstens LEFT_SHARE: Die Mitte (Abbrechen, Endzustand) und das Copyright behalten ihren
+            // Platz, auch wenn Hinweis, Stand des Bereichs und Stand der App je für sich voll wären; was dann
+            // rechts im linken Teil nicht mehr passt (der Stand der App), fällt weg.
+            add(new Capped(left, LEFT_SHARE), BorderLayout.WEST);
         }
         if (center != null) {
             add(center, BorderLayout.CENTER);

@@ -8,12 +8,15 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.font.TextAttribute;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +31,10 @@ import java.util.function.Supplier;
  * Anforderung. Gespeist allein aus {@link SignInRequests#onChange} und {@link SignInRequests#pending()}: erscheint mit
  * der ersten offenen Anforderung, nennt bei mehreren alle Quellen und verschwindet, sobald keine mehr offen ist
  * (angenommen, abgelehnt oder abgelaufen). Der Code selbst steht hier nie. Nur auf dem EDT.
+ *
+ * <p>Läuft eine Anforderung ab, auf die kein Auftrag wartet (Lesen auf Abruf), meldet der Core das nicht von sich aus:
+ * er räumt sie erst beim nächsten Zugriff weg. Darum fragt der Hinweis genau einmal zum Ablauf der ältesten offenen
+ * Anforderung nach ({@link #expiry}); verlängert ein weiterer Leser sie, frühestens eine Wartezeit später wieder.</p>
  */
 final class SignInNotice extends JPanel {
 
@@ -44,6 +51,8 @@ final class SignInNotice extends JPanel {
     private List<SignInRequest> shown = List.of();
     private SignInRequests watched;
     private AutoCloseable subscription;
+    /** Fragt zum Ablauf der ältesten offenen Anforderung nach; ohne offene Anforderung steht er. */
+    private final Timer expiry = new Timer(1, e -> refresh());
 
     /** @param onClick öffnet das Codefeld der ersten offenen Anforderung */
     SignInNotice(AppContext context, Consumer<SignInRequest> onClick) {
@@ -97,6 +106,7 @@ final class SignInNotice extends JPanel {
             }
         });
         add(label);
+        expiry.setRepeats(false);
         refresh();
     }
 
@@ -105,6 +115,7 @@ final class SignInNotice extends JPanel {
         SignInRequests requests = watch();
         List<SignInRequest> pending = requests == null ? List.of() : requests.pending();
         shown = pending;
+        armExpiry(requests, pending);
         if (pending.isEmpty()) {
             if (isVisible()) {
                 setVisible(false);
@@ -127,6 +138,30 @@ final class SignInNotice extends JPanel {
             setVisible(true);
             revalidateParent();
         }
+    }
+
+    /**
+     * Stellt die Nachfrage auf den Ablauf der ältesten offenen Anforderung (seit + Wartezeit). Ist der schon
+     * vorbei und die Anforderung trotzdem noch offen (ein weiterer Leser hat sie verlängert), eine Wartezeit später.
+     */
+    private void armExpiry(SignInRequests requests, List<SignInRequest> pending) {
+        expiry.stop();
+        if (requests == null || pending.isEmpty() || requests.waitTime().isZero()) {
+            return;
+        }
+        Instant now = Instant.now();
+        Instant earliest = pending.stream().map(SignInRequest::since).min(Instant::compareTo).orElse(now);
+        Duration untilExpiry = Duration.between(now, earliest.plus(requests.waitTime()));
+        if (untilExpiry.isNegative()) {
+            untilExpiry = requests.waitTime();
+        }
+        expiry.setInitialDelay((int) Math.min(Integer.MAX_VALUE, untilExpiry.toMillis() + 1000));
+        expiry.start();
+    }
+
+    /** Für Tests: die Nachfrage zum Ablauf. */
+    Timer expiryTimer() {
+        return expiry;
     }
 
     /** Öffnet das Codefeld der ersten offenen Anforderung. */
@@ -156,6 +191,12 @@ final class SignInNotice extends JPanel {
             }
         }
         return current;
+    }
+
+    @Override
+    public void removeNotify() {
+        expiry.stop();
+        super.removeNotify();
     }
 
     private void revalidateParent() {
