@@ -11,6 +11,8 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.OneTimeCodeChallenge;
+import com.aresstack.enterpriseai.source.api.OneTimeCodeRequiredException;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
@@ -43,6 +45,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.aresstack.spaceharvester.application.signin.SignInFailures;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import org.junit.jupiter.api.Test;
 
 /** Abbildung der Quellressourcen auf {@link PageMetadata}, insbesondere stabil sortierte Labels. */
@@ -499,5 +503,93 @@ class KnowledgeSourceHarvestSourceTest {
         public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
             throw new UnsupportedOperationException();
         }
+    }
+
+    /**
+     * #571: scheitert das Senden des Einmalcodes im Adapter, bleibt dessen Meldung samt Ursachenkette in der
+     * {@link com.aresstack.spaceharvester.application.sources.SourceAccessException} erhalten, ohne Query und
+     * Geheimnisse; daraus nennt {@link SignInFailures} die Art des Fehlers.
+     */
+    @Test
+    void aFailedOneTimeCodeKeepsTheAdaptersCauseWithoutQueryOrSecrets() {
+        java.io.IOException transport = new java.net.HttpRetryException(
+                "cannot retry due to proxy authentication, in streaming mode", 407);
+        OneTimeCodeChallenge failing = new OneTimeCodeChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                        "Einmalcode nicht gesendet (HttpRetryException: https://wiki.example.org/otp?atl_token=t0k3n "
+                                + "Cookie: JSESSIONID=S3SS10N)", transport);
+            }
+
+            @Override
+            public OneTimeCodeChallenge resend() throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "kein neuer Code");
+            }
+        };
+        KnowledgeSourcePort port = new SearchableKnowledgeSource() {
+            @Override
+            public List<SourceSearchHit> search(SourceQuery query) throws KnowledgeSourceException {
+                throw new OneTimeCodeRequiredException("Einmalcode verlangt", failing, null);
+            }
+
+            @Override
+            public SourceAddress sourceId() {
+                return SourceAddress.of("confluence://wiki.example.org");
+            }
+
+            @Override
+            public List<com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource> discover(SourceScope scope) {
+                return List.of();
+            }
+
+            @Override
+            public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "nicht hier");
+            }
+
+            @Override
+            public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+                return List.of();
+            }
+        };
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+
+        SourceAccessException failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> required.challenge().submit("123456".toCharArray()), SourceAccessException.class);
+
+        assertThat(failure.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE);
+        assertThat(failure.getMessage()).startsWith("Einmalcode nicht gesendet (HttpRetryException: "
+                + "https://wiki.example.org/otp?…").doesNotContain("t0k3n").doesNotContain("S3SS10N");
+        assertThat(failure).hasRootCause(transport);
+        assertThat(SignInFailures.describe(failure, required.challenge().service()))
+                .isEqualTo("Proxy verlangt Anmeldung (HTTP 407) – Ziel wiki.example.org");
     }
 }

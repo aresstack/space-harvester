@@ -64,6 +64,15 @@ public class PageImageAnalysis {
     }
 
     /**
+     * Ob die Quelle für das Vision-Modell freigegeben ist ({@code external-processing-sources}); ohne Modell
+     * {@code true}, weil dann nicht die Freigabe fehlt. Unabhängig davon, ob es schon Beschreibungen gibt: Nach
+     * „Nur diese Seite einmalig beschreiben“ bleibt die Quelle gesperrt, und die App bietet die Knöpfe weiter an.
+     */
+    public boolean released(String sourceId) {
+        return assets.describerInUse().map(model -> model.mayDescribe(sourceId)).orElse(true);
+    }
+
+    /**
      * Die gespeicherten Bilder und Beschreibungen der Seite; beschreibt nichts und fragt die Quelle nicht. Ohne
      * Ergebnis nennt {@link PageImages#reason()}, ob ein Modell oder die Freigabe fehlt. Nennt die zuletzt geladene
      * Lese-Ansicht für einen Bildanhang eine andere Version als beim Beschreiben, ist das Ergebnis
@@ -99,10 +108,23 @@ public class PageImageAnalysis {
      * @throws SourceAccessException     wenn die Lese-Ansicht nicht ladbar ist
      */
     public PageImages describe(PageSnapshot snapshot) {
+        return describe(snapshot, false);
+    }
+
+    /**
+     * Wie {@link #describe(PageSnapshot)} für genau diese Seite einer nicht freigegebenen Quelle, weil der Benutzer es
+     * ausdrücklich erlaubt hat („Nur diese Seite einmalig beschreiben“): Nur die Bilder dieser Seite gehen an das
+     * Modell, eine Freigabe wird nicht gespeichert; die nächste Seite derselben Quelle bleibt gesperrt.
+     */
+    public PageImages describeOnce(PageSnapshot snapshot) {
+        return describe(snapshot, true);
+    }
+
+    private PageImages describe(PageSnapshot snapshot, boolean releasedOnce) {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
-        if (!model.mayDescribe(key.sourceId())) {
+        if (!releasedOnce && !model.mayDescribe(key.sourceId())) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Quelle nicht für den KI-Dienst freigegeben", null);
         }
@@ -132,7 +154,7 @@ public class PageImageAnalysis {
                 attachments = attachments(key);
             }
             entries.add(describe(index, key, snapshot.revision(), image, attachments == null ? List.of()
-                    : attachments));
+                    : attachments, releasedOnce));
         }
         Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, text.get().inputSha256(),
                 snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,
@@ -143,7 +165,7 @@ public class PageImageAnalysis {
     }
 
     private ImagePayload.Entry describe(int index, PageKey key, String pageVersion, HarvestSource.ViewImage image,
-                                        List<PageAttachment> attachments) {
+                                        List<PageAttachment> attachments, boolean releasedOnce) {
         String filename = Assets.viewFileName(image);
         String title = image.title();
         if (Assets.diagramPreview(attachments, image)) {
@@ -156,7 +178,7 @@ public class PageImageAnalysis {
         }
         try {
             Assets.DescribedImage described = assets.describeViewImage(key.sourceId(), key.pageId(), pageVersion,
-                    image);
+                    image, releasedOnce);
             return new ImagePayload.Entry(index, described.asset().attachmentId(), described.asset().sha256(),
                     filename, title, described.asset().mediaType(), ImageStatus.DESCRIBED, null,
                     described.description().text(), described.description().describer(),

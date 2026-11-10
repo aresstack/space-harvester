@@ -121,6 +121,59 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
      kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
      macht alte Einträge damit wirkungslos.
+9. **Fachglossar (#122 Stufe 2)**: eigene Nutzerdaten (`application.glossary`), kein Index und kein zweiter
+   Beziehungsspeicher. Ein Eintrag ist ein Begriff in einem Geltungsbereich (global, Quelle, Space; Kennung aus Suchwert
+   und Geltungsbereich, darum keine Dubletten) mit Herkunft `manual`/`ai` getrennt vom Prüfstatus
+   `proposed`/`confirmed`/`rejected`, Belegen als Fundstellen, `evidenceStale`, optionaler Erläuterung des Bearbeiters,
+   Modell- und Promptfassung des Laufs, Zeitstempeln, Revision und Protokoll. Ablage `glossary/v1` unter
+   `<dataDirectory>/glossary` (Server `space-harvester.glossary.directory`, Standard `data/glossary`), außerhalb des
+   Caches, atomar ersetzt. REST unter `/api/v1/glossary`.
+   - „Fachbegriffe ermitteln“ (`GlossaryClassification`, `POST /api/v1/glossary/classify?sourceId=&spaceKey=`) läuft
+     nur auf ausdrücklichen Wunsch, nie beim Start, Abgleich, bei der Anreicherung oder beim Öffnen eines Reiters. Je
+     Quelle ein abbrechbarer Auftrag; ohne `sourceId` alle freigegebenen Quellen. Kandidaten sind Bezeichner und
+     Akronyme des Begriffsindex im Umfang (aktuelle Revision, keine nachgeladenen Seiten), je Kandidat bis zu drei
+     Fundstellen von verschiedenen Seiten mit 160 Zeichen Kontext. Das Chat-Modell (dasselbe wie für #122) wählt nur
+     aus; Begriffe außerhalb der Anfrage fallen weg, Erläuterungen schreibt es keine. Budget je Lauf: 300 Kandidaten,
+     600 000 Zeichen Eingabe; der Rest behält seinen Stand. Unveränderte Kandidaten beantwortet ein Ergebnis-Cache im
+     Speicher.
+   - Schutzregeln: Manuelle, bestätigte und abgelehnte Einträge gehen nicht an das Modell und ändert kein Lauf; eine
+     Ablehnung hängt an Begriff und Geltungsbereich, gilt also über Neustarts und Modellwechsel. Nur ungeprüfte
+     KI-Vorschläge ersetzt oder entfernt ein Lauf; ein bestätigter KI-Eintrag, den der Begriffsindex nicht mehr kennt,
+     wird nur `evidenceStale`. Abgeglichen wird erst nach der letzten Antwort in einem Schritt; Abbruch, Modellfehler
+     oder Sperre der Quelle lassen den Stand unverändert. Ablehnungen lassen sich aufheben (`restore`). Das Glossar
+     weitet keine Suche aus.
+10. Synonymerkennung (#336) auf Knopfdruck, `Harvester.synonymDiscovery()` → `SynonymDiscovery`, REST
+   `POST /api/v1/term-relations/refresh` mit `kind=synonyms` (`sourceId=*` alle Quellen, sonst die Quelle, mit
+   `spaceKey` der Space; `maxJudgedPairs` je Lauf), in der App der Knopf „Synonyme vorschlagen“ im
+   Synonym-Reiter. Nie beim Start, Abgleich, Suchen oder Öffnen einer Seite.
+   - Drei Stufen, alle begrenzt (`SynonymBudget`, Schlüssel `space-harvester.terms.synonyms.max-terms`,
+     `max-embedded-terms`, `max-judged-pairs`, in Dienst und App dieselben; Laufzeit begrenzt `jobs.max-runtime`):
+     A `SynonymCandidates` sammelt deterministisch aus dem Begriffsindex Kandidatenpaare (Schreibvarianten über
+     Faltung ä→ae, ß→ss, Bindestriche, Groß/Klein → `VARIANT`; Textmuster „X, auch Y genannt“, „X (auch: Y)“ →
+     `SYNONYM`; Begriffe mit derselben bestätigten Ausschreibung oder derselben bestätigten Synonymbeziehung in einem
+     anderen Umfang → nur Kandidat). B optional, nur mit Embedding-Modell und nur für Fundstellen freigegebener
+     Quellen: die häufigsten Begriffe (`max-embedded-terms`) werden mit je einem Kontext eingebettet und per
+     Zufallshyperebenen-LSH in Eimer sortiert; verglichen wird nur innerhalb eines Eimers (höchstens 200), keine
+     vollständige paarweise Prüfung; ab Kosinus 0,80, höchstens drei Nachbarn. C Bedeutungsprüfung: je Paar kurze
+     Fundstellen (höchstens vier je Begriff, 120 Zeichen, nur freigegebene Quellen) an das Chat-Modell
+     (`SynonymJudgmentModel`, `ChatSynonymJudgmentModel` über `RemoteAi.termCompletions()`), Urteil `synonym`,
+     `variant`, `related`, `abbreviation`, `different`, `unclear` als JSON mit den Nummern der Belege. Die Antwort ist
+     nicht vertrauenswürdig: nur gefragte Paare zählen, nur bekannte Urteile, Belege müssen auf beiden Seiten genannt
+     sein; `abbreviation` gehört der Akronymauflösung und wird verworfen, `different`/`unclear` ergeben nichts.
+     Regelkandidaten mit festem Typ (A) werden ohne Modell als `rule`/`proposed` abgeglichen; ohne Chat-Modell endet
+     der Lauf nach Stufe A, die Statuszeile sagt es.
+   - Abgleich je Erzeuger: `propose` bekommt seit #336 die Menge der Beziehungsarten, die der Erzeuger liefert, und
+     zieht nur Vorschläge gleicher Herkunft, gleichen Umfangs und dieser Arten zurück. Ein Synonymlauf (`ai`,
+     {`SYNONYM`, `VARIANT`, `RELATED`}) ändert damit nie Akronymvorschläge (`ai`, {`ABBREVIATION`}), manuelle
+     Beziehungen oder Entscheidungen; eine bestätigte oder abgelehnte Beziehung desselben Schlüssels wird nicht erneut
+     vorgeschlagen und nicht gefragt. Keine transitive Bildung: jede Beziehung hat eine eigene Fundstelle, Umfänge
+     (global, Quelle, Space) bleiben getrennt.
+   - Cache `term-relations/synonyms/ai-cache.json` wie bei der Akronymauflösung: je Paar ein SHA-256 über Verfahren,
+     Umfang, Modellversion, Begriffe und Fundstellen; ein unveränderter Stand geht nicht noch einmal an das Modell,
+     eine unlesbare Antwort wird nicht gemerkt. Scheitert das Modell oder bricht der Auftrag ab, bleibt der Stand des
+     letzten Laufs. Ins Log kommen nur Umfang, Anzahlen und Ausnahmeklassen.
+   - Suche (#336, Teil 4): nur bestätigte `SYNONYM`, `VARIANT`, `ABBREVIATION` erweitern die Suche, je Umfang, nie
+     `RELATED`, nie Vorschläge, nicht transitiv (`TermRelations.expansions`).
 
 ## Grenzen
 
@@ -144,7 +197,7 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   `Ansatzes`) fällt auf die Grundform, nur wenn diese selbst auf der Seite steht (ohne Wörterbuch wird nichts geraten). Der Begriffsindex sucht Akronyme unter der
   Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
   stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
-- Kein Fachglossar und keine KI in Index und Abfragen.
+- Keine KI in Index und Abfragen; das Fachglossar (Punkt 7) nutzt sie nur auf Knopfdruck.
 
 ## Folgen
 

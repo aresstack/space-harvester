@@ -36,6 +36,34 @@ class ImagesTabTest {
     }
 
     @Test
+    void anUnreleasedSourceOffersToDescribeThisPageOnceOrToReleaseTheSource() throws Exception {
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            ImagesTab tab = new ImagesTab();
+            tab.onDescribeOnce(() -> seen.add("einmalig"));
+            tab.onRelease(() -> seen.add("freigeben"));
+            tab.show(PassagesTab.State.CURRENT, null, List.of());
+            seen.add(String.valueOf(tab.releaseOffered()));
+            tab.show(PassagesTab.State.MISSING, "source-not-released", List.of());
+            seen.add(String.valueOf(tab.releaseOffered()));
+            seen.add(String.valueOf(tab.describeOffered()));
+            tab.clickDescribeOnce();
+            tab.clickRelease();
+            tab.describing(true);
+            seen.add(String.valueOf(tab.releaseOffered()));
+            // Codex zu #567: Nach „einmalig“ gibt es Beschreibungen, die Quelle bleibt aber gesperrt – die Knöpfe
+            // bleiben, „Bilder beschreiben“ nicht.
+            tab.describing(false);
+            tab.released(false);
+            tab.show(PassagesTab.State.CURRENT, null, List.of(new ImagesTab.Image("Plan", ImagesTab.Status.DESCRIBED,
+                    "Ein Plan", null, null)));
+            seen.add(String.valueOf(tab.releaseOffered()));
+            seen.add(String.valueOf(tab.describeOffered()));
+        });
+        assertThat(seen).containsExactly("false", "true", "false", "einmalig", "freigeben", "false", "true", "false");
+    }
+
+    @Test
     void staleNamesTheCoreReasonAndKeepsTheOldDescriptionsMarkedAsStale() throws Exception {
         List<String> seen = new ArrayList<>();
         List<ImagesTab.Image> old = List.of(new ImagesTab.Image("architektur.png", ImagesTab.Status.DESCRIBED,

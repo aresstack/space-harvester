@@ -277,6 +277,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Dateianhänge im Export (siehe unten) | `export.attachments.enabled` (Standard `true`), `export.attachments.media-types`, `export.attachments.max-size` (Standard `20MB`) | ja, beim nächsten Auftrag „Bilder beschaffen“ |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
 | Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) samt Ergebnis-Cache der KI-Akronymauflösung (#122, `ai-cache.json`: nur Fingerabdrücke und Beziehungs-IDs, Auslösung über `POST /api/v1/term-relations/refresh?sourceId=` mit `{"kind":"acronym"}`, Auftrag unter `/api/v1/term-relations/refresh-jobs/{id}`) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
+| Speicherort des Fachglossars (Nutzerdaten, außerhalb des Caches; „Fachbegriffe ermitteln“ nur auf Knopfdruck über `POST /api/v1/glossary/classify`) | `glossary.directory` (Standard `data/glossary`; im Core `<dataDirectory>/glossary`) | **nein**, wirkt nach Neustart |
 
 ### Regeln je Quelle
 

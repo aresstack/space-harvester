@@ -143,7 +143,7 @@ final class StatementsTab extends JPanel {
         toggleRow.add(syntaxToggle);
         syntaxPanel.add(toggleRow, BorderLayout.NORTH);
         syntaxToggle.addActionListener(e -> toggleSyntax());
-        JPanel body = new JPanel(new BorderLayout(0, 8));
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout(0, 8));
         body.setOpaque(false);
         JPanel north = new JPanel(new BorderLayout(0, 8));
         north.setOpaque(false);

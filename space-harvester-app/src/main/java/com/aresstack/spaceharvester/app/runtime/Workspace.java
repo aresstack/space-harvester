@@ -85,12 +85,14 @@ public final class Workspace {
     private final Harvester harvester;
     private final AccessGuard access;
     private final AccessContext caller;
+    private final GlossaryAccess glossary;
     private final ActivityLog activities;
 
     public Workspace(Harvester harvester, AccessGuard access, ActivityLog activities) {
         this.harvester = Objects.requireNonNull(harvester, "harvester");
         this.access = access;
         this.caller = harvester.caller();
+        this.glossary = new CoreGlossaryAccess(harvester, caller);
         this.activities = Objects.requireNonNull(activities, "activities");
     }
 
@@ -199,6 +201,15 @@ public final class Workspace {
      */
     public TermRelations.ProposalRun proposeAcronymRelations(String sourceId) {
         return harvester.acronymRelationRule().run(caller, sourceId);
+    }
+
+    /**
+     * Das Fachglossar (#122 Stufe 2, Reiter „Fachglossar“ unter Begriffe) des Core mit den Rechten dieser App
+     * ({@code Harvester.glossary()}, {@code glossaryClassification()}); die Rückgabe bleibt {@code Optional}, damit der
+     * Reiter ohne Unterbau „noch nicht verfügbar“ zeigen kann.
+     */
+    public Optional<GlossaryAccess> glossary() {
+        return Optional.of(glossary);
     }
 
     /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
@@ -444,6 +455,11 @@ public final class Workspace {
         return harvester.imageAnalysis().read(page.snapshot());
     }
 
+    /** Ob die Quelle für das Vision-Modell freigegeben ist; siehe {@code PageImageAnalysis#released}. */
+    public boolean imagesReleased(String sourceId) {
+        return harvester.imageAnalysis().released(sourceId);
+    }
+
     /**
      * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
      * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
@@ -452,6 +468,18 @@ public final class Workspace {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
         PageImages images = harvester.imageAnalysis().describe(page.snapshot());
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /**
+     * Wie {@link #describeImages}, aber nur für diese eine Seite einer nicht freigegebenen Quelle, weil der Benutzer
+     * es ausdrücklich erlaubt hat („Nur diese Seite einmalig beschreiben“); speichert keine Freigabe.
+     */
+    public PageImages describeImagesOnce(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = harvester.imageAnalysis().describeOnce(page.snapshot());
         harvester.enrichments().flush();
         return images;
     }

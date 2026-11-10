@@ -305,6 +305,23 @@ public final class AppContext {
         }, saved -> reload(done), failed);
     }
 
+    /**
+     * Gibt eine Quelle für den KI-Dienst frei: dasselbe Häkchen wie im Quellenformular („Inhalte dieser Quelle dürfen
+     * an den KI-Dienst gehen“), derselbe Schlüssel {@code space-harvester.ai.external-processing-sources} in derselben
+     * Datei; danach übernimmt der Core die Freigabe ohne Neustart ({@link #reload}).
+     */
+    public void releaseSource(String sourceId, Runnable done, Consumer<Throwable> failed) {
+        Background.run(() -> {
+            ConfigFileEditor editor = new ConfigFileEditor(loader);
+            String text = Files.isRegularFile(configFile)
+                    ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft base = new ConfigFileEditor.Draft(text, loader.read(configFile, text));
+            editor.save(configFile, editor.withAi(configFile, base,
+                    SourceForm.withRelease(base.settings(), sourceId, true)), !editor.fileHasPlaintextSecret(configFile));
+            return sourceId;
+        }, saved -> reload(done), failed);
+    }
+
     /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */
     public boolean aiKeyAvailable() {
         AppSettings current = settings;

@@ -109,7 +109,7 @@ public class AcronymRelationRule {
         candidates.values().forEach(candidate -> proposals.add(new TermRelations.Proposal(candidate.term,
                 candidate.expansion, RelationType.ABBREVIATION, candidate.evidence)));
         return relations.propose(ACTOR, RelationOrigin.RULE, new RelationScope(sourceId, null),
-                "terms-" + processorVersion + "@" + clock.instant(), proposals);
+                Set.of(RelationType.ABBREVIATION), "terms-" + processorVersion + "@" + clock.instant(), proposals);
     }
 
     private static boolean current(TermPosting posting, Optional<PageHeader> header) {

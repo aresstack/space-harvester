@@ -7,6 +7,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -32,10 +33,11 @@ import java.util.regex.Pattern;
  * @param storage Speicherort; nur nach Neustart wirksam
  * @param localFiles freigegebene Ordner für lokale Dateien
  * @param export  Dateianhänge im Export (ADR 0023)
+ * @param terms   Begriffsindex: Budget der Synonymerkennung (#336)
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                      NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
-                                     ExportSettings export) {
+                                     ExportSettings export, TermSettings terms) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
@@ -43,7 +45,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     /** Ohne KI-Dienst, Schlagwortsuche, bedarfsgesteuerter Abgleich, ohne Proxy. */
     public static final HarvesterConfiguration DEFAULT = new HarvesterConfiguration(AiServiceSettings.NONE,
             SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
-            LocalFileSettings.DEFAULT, ExportSettings.DEFAULT);
+            LocalFileSettings.DEFAULT, ExportSettings.DEFAULT, TermSettings.DEFAULT);
 
     /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
@@ -57,6 +59,13 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         this(ai, search, sync, network, storage, localFiles, ExportSettings.DEFAULT);
     }
 
+    /** Mit dem Standardbudget der Synonymerkennung ({@link TermSettings#DEFAULT}); {@link #withTerms} ergänzt es. */
+    public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
+                                  NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
+                                  ExportSettings export) {
+        this(ai, search, sync, network, storage, localFiles, export, TermSettings.DEFAULT);
+    }
+
     public HarvesterConfiguration {
         ai = ai == null ? AiServiceSettings.NONE : ai;
         search = search == null ? SearchSettings.DEFAULT : search;
@@ -65,6 +74,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         storage = storage == null ? StorageSettings.DEFAULT : storage;
         localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
         export = export == null ? ExportSettings.DEFAULT : export;
+        terms = terms == null ? TermSettings.DEFAULT : terms;
     }
 
     /** Ob die semantische Suche tatsächlich läuft: Haken gesetzt und Embedding-Modell eingestellt. */
@@ -98,31 +108,35 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     }
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
-        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export);
+        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export, terms);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
-        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export);
+        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export, terms);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
-        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export);
+        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export, terms);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export);
+        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export, terms);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export);
+        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export, terms);
     }
 
     public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, value, export);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, value, export, terms);
     }
 
     public HarvesterConfiguration withExport(ExportSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value, terms);
+    }
+
+    public HarvesterConfiguration withTerms(TermSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, value);
     }
 
     /**
@@ -288,8 +302,17 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 read.value(ExportSettings.ATTACHMENTS_MEDIA_TYPES) == null && mediaTypes.isEmpty()
                         ? ExportSettings.DEFAULT_MEDIA_TYPES : mediaTypes,
                 read.size(ExportSettings.ATTACHMENTS_MAX_SIZE, ExportSettings.DEFAULT_MAX_SIZE));
+        TermSettings terms = TermSettings.DEFAULT;
+        try {
+            terms = new TermSettings(new SynonymBudget(
+                    read.integer(TermSettings.SYNONYMS_MAX_TERMS, SynonymBudget.DEFAULT.maxTerms()),
+                    read.integer(TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, SynonymBudget.DEFAULT.maxEmbeddedTerms()),
+                    read.integer(TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, SynonymBudget.DEFAULT.maxJudgedPairs())));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(TermSettings.SYNONYMS_MAX_TERMS, e.getMessage()));
+        }
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage, localFiles, export);
+                storage, localFiles, export, terms);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);
