@@ -755,8 +755,8 @@ final class SettingDialogs {
         body.add(wrapped("Gilt für alle Quellen; eigene Optionen einer Quelle (maxRetries) gehen vor."),
                 BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
+        // Kein live(): Die Wiederholungen liest die Laufzeit beim Start; laufen Aufträge, fragt Übernehmen vorher nach.
         Shell shell = new Shell(parent, RETRY_TITLE, body);
-        shell.live();
         shell.onSaveFile(() -> {
             List<String> problems = new ArrayList<>();
             java.time.Duration first = retryDelay(initial.getText());

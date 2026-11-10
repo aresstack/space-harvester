@@ -549,6 +549,20 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"
+                + "      initial-delay: 2s\n");
+        editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.application.jobs.RetrySettings.DEFAULT));
+
+        String text = Files.readString(file);
+        assertThat(text).doesNotContain("max-attempts: 5", "initial-delay: 2s").contains("max-attempts: 2");
+        assertThat(text.indexOf("max-attempts")).isEqualTo(text.lastIndexOf("max-attempts"));
+        assertThat(loader.load(file).problems()).isEmpty();
+    }
+
+    @Test
     void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");

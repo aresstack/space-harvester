@@ -35,6 +35,8 @@ public final class ConfigFileEditor {
     private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
     private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
     private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
+    /** Ein Schlüssel mit Wert in derselben Zeile; „retry: # Kommentar“ ist ein Blockkopf, kein Wert. */
+    private static final Pattern SCALAR = Pattern.compile(" *([A-Za-z_-]+):\\s*[^\\s#].*");
     /** Schlüssel (normalisiert wie im Loader), deren Wert ein Geheimnis ist. */
     private static final Set<String> SECRET_KEYS = Set.of("password", "token", "secret", "clientsecret", "passphrase",
             "apikey", "keypassword", "storepassword");
@@ -314,7 +316,7 @@ public final class ConfigFileEditor {
         for (int i = network + 1; i < networkEnd; i++) {
             // Ein einzelner Wert wie „max-age: 6h“ wird in seiner Zeile ersetzt, ein Kommentar dahinter entfällt.
             String line = lines.get(i);
-            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SOURCES_INLINE, line, 1, normalized)) {
+            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SCALAR, line, 1, normalized)) {
                 lines.remove(i);
                 add(lines, i, yaml.apply(" ".repeat(proxyIndent)));
                 return String.join(newline, lines) + newline;
@@ -388,7 +390,9 @@ public final class ConfigFileEditor {
                     + inner + RetrySettings.PAUSE_AFTER_FAILURES + ": " + retry.pauseAfterFailures() + "\n";
         });
         AppSettings settings = loader.read(file, text);
-        if (!settings.jobLimits().retry().equals(retry)) {
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.jobLimits().retry().equals(retry)) {
             throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
