@@ -47,6 +47,10 @@ class AssetsSignInTest {
     private final LockedSource source = new LockedSource();
 
     private Assets assets(SignInRequests signIns) {
+        return assets(signIns, Clock.systemUTC());
+    }
+
+    private Assets assets(SignInRequests signIns, Clock clock) {
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -58,7 +62,7 @@ class AssetsSignInTest {
                 return source.id().equals(sourceId) ? Optional.of(source) : Optional.empty();
             }
         };
-        return new Assets(catalog, new FileSystemAssetStore(directory), 1_000_000, Clock.systemUTC(), null, null, null,
+        return new Assets(catalog, new FileSystemAssetStore(directory), 1_000_000, clock, null, null, null,
                 LargeFileGate.defaults(), signIns);
     }
 
@@ -218,6 +222,130 @@ class AssetsSignInTest {
             third.get(10, java.util.concurrent.TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void theDiagramAttemptWithoutRequestAndTheFollowingPreviewShareOneTwoFactorPage() {
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("https://wiki.example.org/download/bild.png",
+                "Bild", null, "image/png", null);
+
+        // Wie die Lese-Ansicht bei einem draw.io-Bild (Angelos Log, beta.344): erst die Quelldaten ohne Anforderung,
+        // die Ablehnung fällt auf die Vorschau zurück. Eine zweite Abfrage brächte eine zweite Seite mit zweiter Mail,
+        // und der Code der ersten passte nicht mehr (#571).
+        assertThatThrownBy(() -> assets.content(list(), "att1", false))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        SignInPendingException preview = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.viewImage("wiki", "100", "1", image, "anna"));
+        assertThat(source.calls).hasValue(1);
+
+        assertThat(signIns.submit(preview.signInRequestId(), "123456".toCharArray()))
+                .isEqualTo(SignInRequest.Answer.ACCEPTED);
+        assertThat(source.submittedOnPage).containsExactly(1);
+        assertThat(assets.viewImage("wiki", "100", "1", image, "anna").content()).isEqualTo(CONTENT);
+        assertThat(source.calls).hasValue(2);
+    }
+
+    @Test
+    void afterADeclineTheNextReadAsksTheSourceAgain() {
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+
+        SignInPendingException first = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.content(list(), "att1", false, "anna"));
+        assertThat(signIns.decline(first.signInRequestId())).isTrue();
+
+        SignInPendingException again = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.content(list(), "att1", false, "anna"));
+        assertThat(source.calls).hasValue(2);
+        assertThat(again.signInRequestId()).isNotEqualTo(first.signInRequestId());
+    }
+
+    @Test
+    void withoutUserInterfaceASeenTwoFactorPageIsNotRequestedAgainForAWhile() {
+        MutableClock clock = new MutableClock(NOW);
+        Assets assets = assets(SignInRequests.none(), clock);
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> assets.content(list(), "att1", false))
+                    .isExactlyInstanceOf(SignInRequiredException.class);
+        }
+        assertThat(source.calls).hasValue(1);
+
+        clock.advance(Duration.ofMinutes(6));
+        assertThatThrownBy(() -> assets.content(list(), "att1", false))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        assertThat(source.calls).hasValue(2);
+    }
+
+    @Test
+    void afterAQuietMinuteTheFirstDownloadRunsAloneAgainBecauseTheSessionMayHaveExpired() throws Exception {
+        MutableClock clock = new MutableClock(NOW);
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns, clock);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("https://wiki.example.org/download/bild.png",
+                "Bild", null, "image/png", null);
+        source.locked = false;
+        assets.content(list(), "att1", false);
+        assertThat(source.calls).hasValue(1);
+
+        // Die freigeschaltete Sitzung ist inzwischen abgelaufen; zwei Bilder zugleich dürfen nicht je eine Seite holen.
+        clock.advance(Duration.ofMinutes(2));
+        source.locked = true;
+        source.gate = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Throwable> one = pool.submit(() -> org.assertj.core.api.Assertions
+                    .catchThrowable(() -> assets.viewImage("wiki", "100", "1", image, "anna")));
+            while (source.calls.get() == 1) {
+                Thread.onSpinWait();
+            }
+            java.util.concurrent.Future<Throwable> two = pool.submit(() -> org.assertj.core.api.Assertions
+                    .catchThrowable(() -> assets.content(list(), "att2", false, "bernd")));
+            Thread.sleep(200);
+            assertThat(source.calls).hasValue(2);
+            source.gate.countDown();
+
+            Throwable first = one.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            Throwable second = two.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(first).isExactlyInstanceOf(SignInPendingException.class);
+            assertThat(second).isExactlyInstanceOf(SignInPendingException.class);
+            assertThat(((SignInPendingException) second).signInRequestId())
+                    .isEqualTo(((SignInPendingException) first).signInRequestId());
+            assertThat(source.calls).hasValue(2);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** Eine Uhr, die der Test vorstellt. */
+    private static final class MutableClock extends Clock {
+
+        private volatile Instant now;
+
+        MutableClock(Instant now) {
+            this.now = now;
+        }
+
+        void advance(Duration duration) {
+            now = now.plus(duration);
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
         }
     }
 

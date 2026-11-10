@@ -55,6 +55,8 @@ public class SignInRequests {
     private final Clock clock;
     private final Map<String, Pending> bySource = new HashMap<>();
     private final Map<String, Instant> unlockedAt = new HashMap<>();
+    /** Zählt je Quelle, wie oft eine Anforderung erledigt wurde (Code angenommen oder abgelehnt). */
+    private final Map<String, Long> settled = new HashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     /** @param wait wie lange ein Auftrag höchstens auf den Code wartet; {@link Duration#ZERO}: nie */
@@ -161,6 +163,15 @@ public class SignInRequests {
     public synchronized boolean unlockedSince(String sourceId, Instant since) {
         Instant unlocked = unlockedAt.get(sourceId);
         return unlocked != null && since != null && !unlocked.isBefore(since.minus(RECENT));
+    }
+
+    /**
+     * Wie oft eine Anforderung der Quelle erledigt wurde, mit angenommenem Code oder abgelehnt. Ändert sich der Wert
+     * nicht, gilt eine zuletzt gesehene Zwei-Faktor-Seite der Quelle weiter (#571); danach fragt ein Abruf die Quelle
+     * wieder.
+     */
+    public synchronized long settlements(String sourceId) {
+        return settled.getOrDefault(sourceId, 0L);
     }
 
     /**
@@ -324,6 +335,7 @@ public class SignInRequests {
                     if (next == null) {
                         pending.state = State.UNLOCKED;
                         unlockedAt.put(pending.sourceId, clock.instant());
+                        settled.merge(pending.sourceId, 1L, Long::sum);
                         if (bySource.get(pending.sourceId) == pending) {
                             bySource.remove(pending.sourceId);
                         }
@@ -417,6 +429,7 @@ public class SignInRequests {
             }
             pending.state = State.DECLINED;
             bySource.remove(pending.sourceId);
+            settled.merge(pending.sourceId, 1L, Long::sum);
             notifyAll();
         }
         changed();
