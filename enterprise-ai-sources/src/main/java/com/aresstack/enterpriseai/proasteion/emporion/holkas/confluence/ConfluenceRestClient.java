@@ -860,9 +860,15 @@ final class ConfluenceRestClient {
             byte[] body = resend ? form.resendBody() : form.submitBody(code);
             ConfluenceHttpResponse response;
             try {
-                response = transport.postForm(form.action(),
-                        withWebCookies(session.headers("text/html,application/xhtml+xml,*/*;q=0.8")), body,
-                        config.maxResponseBytes());
+                Map<String, String> headers =
+                        withWebCookies(session.headers("text/html,application/xhtml+xml,*/*;q=0.8"));
+                String authorization = headers.get("Authorization");
+                String scheme = authorization == null ? "NONE"
+                        : authorization.startsWith("Basic ") ? "BASIC"
+                        : authorization.startsWith("Bearer ") ? "BEARER" : "OTHER";
+                LOG.info("[Confluence] Einmalcode: POST beginnt, auth=" + scheme
+                        + " sitzungsCookies=" + web.cookieNames());
+                response = transport.postForm(form.action(), headers, body, config.maxResponseBytes());
             } catch (IOException e) {
                 throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Einmalcode nicht gesendet (" + cause(e) + ")",
                         e);
