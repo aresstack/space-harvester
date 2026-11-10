@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -55,6 +56,12 @@ class ConfigurationParityTest {
                   - confluence/DOC
                 mode: sync-cache
                 catch-up-on-start: true
+              jobs:
+                retry:
+                  max-attempts: 4
+                  initial-delay: 500ms
+                  max-delay: 20s
+                  pause-after-failures: 7
               terms:
                 synonyms:
                   max-terms: 300
@@ -101,6 +108,11 @@ class ConfigurationParityTest {
         assertThat(app.sync().spaces()).isEqualTo(sync.spaces()).containsExactly("confluence/DOC");
         assertThat(app.sync().mode()).isEqualTo(sync.mode());
         assertThat(app.sync().catchUpOnStart()).isEqualTo(sync.catchUpOnStart());
+
+        // ADR 0025: Wiederholungen unter jobs.retry, beim Dienst in JobsProperties, in der App in den Auftragsgrenzen.
+        JobsProperties jobs = binder.bind("space-harvester.jobs", JobsProperties.class).get();
+        assertThat(app.jobLimits().retry()).isEqualTo(jobs.retry().toSettings())
+                .isEqualTo(new RetrySettings(4, java.time.Duration.ofMillis(500), java.time.Duration.ofSeconds(20), 7));
 
         // #336: Budget der Synonymerkennung geht beim Dienst über withSyncRules in die HarvesterConfiguration.
         HarvesterConfiguration service2 = ConfigurationManagerConfiguration.withSyncRules(

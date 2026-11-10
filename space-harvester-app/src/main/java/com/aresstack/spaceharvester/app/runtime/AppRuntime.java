@@ -197,10 +197,12 @@ public final class AppRuntime implements AutoCloseable {
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
-                // Confluence wie im Enterprise AI Client (#571): keine Wiederholung, Weiterleitungen wie dort, kein
-                // asynchroner Transport, HTML-Antworten statt Dateien neben dem Protokoll.
+                // Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
+                // HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus
+                // jobs.retry (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
                 .sourceAdapter(ConfluenceSourceAdapter.desktop(
-                        com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory()))
+                        com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
+                        .withRetry(settings.jobLimits().retry()))
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())

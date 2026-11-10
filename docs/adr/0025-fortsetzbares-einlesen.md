@@ -71,8 +71,18 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     `imagesComplete` und `documentsComplete` vermerken die Vollständigkeit je Art, `complete` gilt für beide.
     `attachments.json` im Paket entsteht wie bisher erst beim Konvertieren aus den Dokument-Einträgen.
 
-Folgen in eigenen Schritten: einheitliche, einstellbare Wiederholungen ohne zweite Schleife über dem REST-Client,
-„Nur Fehler neu versuchen“ und „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar), beide im selben Eintrag.
+12. **Einstellbare Wiederholungen** (Angelo 10.11.2026). `space-harvester.jobs.retry.*` in Dienst und App
+    (`RetrySettings`, in `JobLimits`): `max-attempts` (0–10, Standard 2 wie bisher im Dienst), `initial-delay` (Standard 1 s), `max-delay`
+    (Standard 30 s), `pause-after-failures` (Standard 5). Es gibt eine Schleife, die des REST-Clients der Quelle
+    (`maxRetries`, `retryBackoffMillis`, `maxRetryBackoffMillis`, exponentiell mit Zufall); eigene `options` einer Quelle
+    gehen vor. Wiederholt werden nur Netzfehler, Zeitüberschreitungen, 429 und 5xx; nie 401, 403, 404, ungültige
+    Antworten, Datei-Downloads und das Absenden eines Einmalcodes (keine neue Sitzung, keine neue Mail). Damit
+    wiederholt auch die Desktop-App Seitenabrufe; die frühere Begründung für 0 (#571) betraf Dateien mit Code-Abfrage,
+    die der Client nicht wiederholt. `pause-after-failures` ersetzt den festen Wert aus Punkt 10. Änderungen wirken
+    nach einem Neustart. Offen: `Retry-After` (nur per Upstream-Patch) und das Abbrechen einer laufenden Wartezeit
+    beim Anhalten; heute wirkt Anhalten nach dem laufenden Abruf, also nach höchstens `max-delay` je Versuch.
+
+Folgen in eigenen Schritten: „Nur Fehler neu versuchen“ und „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar), beide im selben Eintrag.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig
