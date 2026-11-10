@@ -113,6 +113,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static final Pattern SERVER_ERROR_AFTER_SENDING = Pattern.compile(
             "^Einmalcode gesendet\\b.*\\bHTTP (5\\d\\d)\\b");
 
+    /** Hinweis, wenn die neue Web-Sitzung den schon gesendeten Code nicht annimmt (#571). */
+    static final String NEW_SESSION_NOTE = "Mit Benutzer und Passwort neu angemeldet. Confluence hat dafür einen neuen "
+            + "Code per E-Mail gesendet; bitte diesen Code eingeben.";
+
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
 
     private final String id;
@@ -125,6 +129,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      * Web-Sitzung, an die die Zwei-Faktor-Anmeldung einen Einmalcode binden könnte (#571).
      */
     private final boolean tokenLogin;
+    /**
+     * Öffnet für eine Quelle mit Personal Access Token eine weitere Adapter-Instanz mit eigener, leerer Web-Sitzung
+     * (#571); {@code null} ohne Token. Die Zwei-Faktor-Anmeldung nimmt den Code nur in einer Web-Sitzung an, die mit
+     * Benutzer und Passwort entstand; eine Sitzung, die ein Bearer-Abruf eröffnet hat, endet beim Absenden mit HTTP 500.
+     */
+    private final java.util.function.Supplier<KnowledgeSourcePort> webPorts;
+    /** Dateiabrufe mit Benutzer und Passwort über eine eigene Web-Sitzung, sobald einmal angegeben; sonst {@code null}. */
+    private volatile WebLogin web;
+    /**
+     * Der Dateiabruf je Code-Seite, die er ausgelöst hat; nach Angabe von Benutzer und Passwort wiederholt genau er sich
+     * in der neuen Web-Sitzung, auch wenn andere Abrufe parallel laufen.
+     */
+    private final Map<OneTimeCodeChallenge, FileFetch<?>> retries =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
     /**
@@ -163,8 +181,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope, boolean tokenLogin) {
+        this(id, type, title, port, inFlight, scope, tokenLogin, null);
+    }
+
+    /**
+     * @param webPorts für eine Quelle mit Token: öffnet eine weitere Adapter-Instanz derselben Quelle für Dateiabrufe
+     *                 mit Benutzer und Passwort (#571); {@code null} ohne
+     */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight, SourceScope scope, boolean tokenLogin,
+                                 java.util.function.Supplier<KnowledgeSourcePort> webPorts) {
         this.id = id;
         this.tokenLogin = tokenLogin;
+        this.webPorts = tokenLogin ? webPorts : null;
         this.type = type;
         this.title = title;
         this.port = port;
@@ -831,7 +860,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         SourceFile file;
         try {
             // Die Grenze gilt schon beim Lesen im Transport, nicht erst nach dem vollständigen Download.
-            file = files.loadAttachmentFile(resourceId, (int) Math.min(maxBytes, Integer.MAX_VALUE));
+            int limit = (int) Math.min(maxBytes, Integer.MAX_VALUE);
+            file = fetch(p -> ((PageViewSource) p).loadAttachmentFile(resourceId, limit));
         } catch (ResponseTooLargeException e) {
             throw new AttachmentTooLargeException(id, e.maxBytes());
         } catch (KnowledgeSourceException e) {
@@ -872,7 +902,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 : attachment.fileSize(), null, null, EnumSet.of(kind));
         byte[] bytes;
         try {
-            bytes = views.loadAttachmentPreview(described, kind);
+            bytes = fetch(p -> ((PageViewSource) p).loadAttachmentPreview(described, kind));
         } catch (ResponseTooLargeException e) {
             throw new AttachmentTooLargeException(id, e.maxBytes());
         } catch (KnowledgeSourceException e) {
@@ -1039,7 +1069,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         byte[] bytes;
         try {
-            bytes = views.loadViewImage(image.src());
+            bytes = fetch(p -> ((PageViewSource) p).loadViewImage(image.src()));
         } catch (ResponseTooLargeException e) {
             throw new AttachmentTooLargeException(id, e.maxBytes());
         } catch (KnowledgeSourceException e) {
@@ -1145,7 +1175,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             // ADR 0018: die Einmalcode-Abfrage des Adapters geht an den Auftrag, nicht als bloße Verweigerung.
             LOG.info("Quelle {}: Einmalcode-Abfrage {} von Adapter-Instanz {}", id, instance(required.challenge()),
                     instance(port));
-            return new SignInRequiredException(id, e.getMessage(), new Challenge(required.challenge()), e);
+            // Mit eigener Web-Sitzung für Dateien (#571) stammt die Abfrage aus dieser Sitzung.
+            return new SignInRequiredException(id, e.getMessage(), new Challenge(required.challenge(), web), e);
         }
         if (e instanceof RateLimitedException) {
             return new SourceAccessException(id, SourceAccessException.Reason.RATE_LIMITED, e.getMessage(), e);
@@ -1168,6 +1199,46 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return new SourceAccessException(id, reason, e.getMessage(), e);
     }
 
+    /** Ein Dateiabruf über einen Port (Bild, Anhang, Vorschau). */
+    @FunctionalInterface
+    private interface FileFetch<T> {
+        T from(KnowledgeSourcePort port) throws KnowledgeSourceException;
+    }
+
+    /**
+     * Benutzer und Passwort einer Quelle mit Token für Dateiabrufe, nur im Speicher dieser Sitzung, und die
+     * Adapter-Instanz, deren Web-Sitzung damit entstand (#571).
+     */
+    private record WebLogin(String username, char[] password, KnowledgeSourcePort port) {
+
+        @Override
+        public String toString() {
+            return "WebLogin[username=" + username + ", password=***, port=" + instance(port) + "]";
+        }
+    }
+
+    /**
+     * Ein Dateiabruf: über die eigene Web-Sitzung mit Benutzer und Passwort, sobald angegeben (wie bei einer Quelle mit
+     * Benutzer und Passwort), sonst über den Port der Quelle. Verlangt er eine Code-Seite, wird er an ihr gemerkt, damit
+     * er sich nach der Angabe von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt.
+     */
+    private <T> T fetch(FileFetch<T> fetch) throws KnowledgeSourceException {
+        WebLogin login = web;
+        try {
+            return login == null ? fetch.from(port) : withWebLogin(login, () -> fetch.from(login.port()));
+        } catch (OneTimeCodeRequiredException required) {
+            if (webPorts != null) {
+                retries.put(required.challenge(), fetch);
+            }
+            throw required;
+        }
+    }
+
+    private <T> T withWebLogin(WebLogin login, ConfiguredSecrets.LoginUse<T, KnowledgeSourceException> use)
+            throws KnowledgeSourceException {
+        return ConfiguredSecrets.withLogin(ConfiguredSecrets.refFor(id), login.username(), login.password(), use);
+    }
+
     /** Nicht geheime Kennung eines Objekts fürs Protokoll: gleiche Kennung, dasselbe Objekt. */
     static String instance(Object object) {
         return object == null ? "-" : "#" + Integer.toHexString(System.identityHashCode(object));
@@ -1177,9 +1248,23 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final class Challenge implements SignInChallenge {
 
         private final OneTimeCodeChallenge challenge;
+        /** Die Web-Sitzung mit Benutzer und Passwort, aus der die Abfrage stammt; {@code null}: Sitzung des Ports. */
+        private final WebLogin bound;
+        /** Eigener Hinweis statt des Fehlers der Seite, sonst {@code null}. */
+        private final String note;
 
         Challenge(OneTimeCodeChallenge challenge) {
+            this(challenge, null, null);
+        }
+
+        Challenge(OneTimeCodeChallenge challenge, WebLogin bound) {
+            this(challenge, bound, null);
+        }
+
+        Challenge(OneTimeCodeChallenge challenge, WebLogin bound, String note) {
             this.challenge = challenge;
+            this.bound = bound;
+            this.note = note;
         }
 
         @Override
@@ -1199,7 +1284,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
         @Override
         public String error() {
-            return challenge.error();
+            return note != null ? note : challenge.error();
         }
 
         @Override
@@ -1213,20 +1298,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} gesendet", id, instance(challenge),
                     instance(port));
             try {
-                OneTimeCodeChallenge again = challenge.submit(code);
+                OneTimeCodeChallenge again = bound == null ? challenge.submit(code)
+                        : withWebLogin(bound, () -> challenge.submit(code));
                 LOG.info("Quelle {}: Einmalcode für Abfrage {}: {}", id, instance(challenge),
                         again == null ? "angenommen" : "neue Abfrage " + instance(again));
                 return next(again);
             } catch (KnowledgeSourceException e) {
                 LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
                         e.getClass().getSimpleName(), e.kind());
-                throw sendFailure(e, tokenLogin);
+                throw sendFailure(e, tokenLogin && bound == null);
             }
         }
 
+        /** Nur eine Abfrage aus der Sitzung des Token-Ports fragt Benutzer und Passwort ab. */
         @Override
         public boolean asksForLogin() {
-            return tokenLogin;
+            return tokenLogin && bound == null;
         }
 
         /**
@@ -1236,8 +1323,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          */
         @Override
         public SignInChallenge submit(char[] code, String username, char[] password) {
-            if (!tokenLogin || username == null || username.isBlank() || password == null || password.length == 0) {
+            if (!asksForLogin() || username == null || username.isBlank() || password == null
+                    || password.length == 0) {
                 return submit(code);
+            }
+            FileFetch<?> retry = retries.get(challenge);
+            if (webPorts != null && retry != null) {
+                return inNewWebSession(code, new WebLogin(username.trim(), password.clone(), webPorts.get()), retry);
             }
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} mit Benutzeranmeldung gesendet", id,
                     instance(challenge), instance(port));
@@ -1254,10 +1346,49 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
         }
 
+        /**
+         * Wie bei einer Quelle mit Benutzer und Passwort (#571): Der letzte Dateiabruf läuft noch einmal mit Benutzer
+         * und Passwort in einer neuen Web-Sitzung, deren Code-Seite der Code dann beantwortet. Die Sitzung, die der
+         * Bearer-Abruf eröffnet hat, nimmt keinen Code an (HTTP 500, auch mit Basic). Nimmt die neue Seite den
+         * schon gesendeten Code nicht an (Confluence schickt dann einen neuen), bleibt die Abfrage offen und fragt
+         * nur noch den Code ab. Danach laufen alle Dateiabrufe dieser Quelle über diese Sitzung, REST beim Token.
+         */
+        private SignInChallenge inNewWebSession(char[] code, WebLogin login, FileFetch<?> retry) {
+            LOG.info("Quelle {}: Einmalcode für Abfrage {}: Dateiabruf in neuer Web-Sitzung mit Benutzeranmeldung über "
+                    + "Adapter-Instanz {}", id, instance(challenge), instance(login.port()));
+            OneTimeCodeChallenge fresh;
+            try {
+                withWebLogin(login, () -> retry.from(login.port()));
+                web = login;
+                LOG.info("Quelle {}: Dateiabruf mit Benutzeranmeldung ohne neue Abfrage geladen", id);
+                return null;
+            } catch (OneTimeCodeRequiredException required) {
+                fresh = required.challenge();
+            } catch (KnowledgeSourceException e) {
+                LOG.info("Quelle {}: Dateiabruf mit Benutzeranmeldung gescheitert ({}, {})", id,
+                        e.getClass().getSimpleName(), e.kind());
+                Arrays.fill(login.password(), '\0');
+                throw sendFailure(e, false);
+            }
+            web = login;
+            Challenge inSession = new Challenge(fresh, login);
+            SignInChallenge again;
+            try {
+                again = inSession.submit(code);
+            } catch (SourceAccessException e) {
+                // Die neue Seite bleibt die Abfrage: Erneut senden und der nächste Code gehen an diese Sitzung.
+                return new Challenge(fresh, login, SignInFailures.describe(e, fresh.service()));
+            }
+            if (again instanceof Challenge rejected && rejected.note == null) {
+                return new Challenge(rejected.challenge, login, NEW_SESSION_NOTE);
+            }
+            return again;
+        }
+
         @Override
         public SignInChallenge resend() {
             try {
-                return next(challenge.resend());
+                return next(bound == null ? challenge.resend() : withWebLogin(bound, challenge::resend));
             } catch (KnowledgeSourceException e) {
                 throw sendFailure(e, false);
             }
@@ -1285,7 +1416,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
 
         private SignInChallenge next(OneTimeCodeChallenge again) {
-            return again == null ? null : new Challenge(again);
+            return again == null ? null : new Challenge(again, bound);
         }
     }
 }
