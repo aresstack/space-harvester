@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
+import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -196,6 +197,8 @@ public final class AppRuntime implements AutoCloseable {
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
+                // Confluence wie im Enterprise AI Client (#571): keine Wiederholung, Weiterleitungen wie dort.
+                .sourceAdapter(ConfluenceSourceAdapter.desktop())
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())

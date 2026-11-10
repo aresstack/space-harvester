@@ -42,6 +42,28 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
 
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
 
+    /** Ob die Quelle wie im Enterprise AI Client geöffnet wird ({@link #desktop()}) statt mit den Dienst-Standards. */
+    private final boolean desktop;
+
+    /** Mit den Standards des Dienstes: Netzfehler und 5xx zweimal wiederholt, keine Weiterleitung auf fremde Hosts. */
+    public ConfluenceSourceAdapter() {
+        this(false);
+    }
+
+    private ConfluenceSourceAdapter(boolean desktop) {
+        this.desktop = desktop;
+    }
+
+    /**
+     * Für die Desktop-App: genau die Standards des Enterprise AI Client (#571), keine Wiederholung
+     * ({@code maxRetries} 0) und Weiterleitungen beim Datei-Download wie dort ({@code foreignFileRedirects}
+     * Upstream-Standard {@code true}). Mit Zwei-Faktor-Anmeldung öffnete jede Wiederholung bei Confluence eine eigene
+     * Sitzung mit eigenem Code per Mail; der EAC wiederholt nicht. Eigene {@code options} der Quelle gelten weiter.
+     */
+    public static ConfluenceSourceAdapter desktop() {
+        return new ConfluenceSourceAdapter(true);
+    }
+
     /** Schlüssel, die der Adapter selbst setzt und die nicht über {@code options} kommen dürfen. */
     private static final Set<String> RESERVED_OPTIONS = Set.of("baseUrl", "title", "credentialRef",
             "clientCertificate.alias", "clientCertificate.use", "clientCertificate.keyStoreFile",
@@ -100,7 +122,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             }
         }
         String foreign = config.options().get("foreignFileRedirects");
-        if (foreign != null && !FOREIGN_FILE_REDIRECTS.equalsIgnoreCase(foreign.trim())) {
+        if (!desktop && foreign != null && !FOREIGN_FILE_REDIRECTS.equalsIgnoreCase(foreign.trim())) {
             problems.add("options.foreignFileRedirects ist im Dienst nicht einschaltbar; Weiterleitungen auf fremde Hosts"
                     + " werden nie verfolgt");
         }
@@ -138,7 +160,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         String thumbprint = certificate.enabled() ? certificate.thumbprint() : null;
         KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, context.routes(), context.userAgent(),
                 trust, thumbprint, context.async());
-        SourceSettings settings = settings(config);
+        SourceSettings settings = settings(config, desktop);
         List<String> invalid = provider.validate(settings);
         if (!invalid.isEmpty()) {
             throw new InvalidSourceConfigurationException(invalid);
@@ -258,12 +280,19 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     static final String ALL_SPACES = "space:*";
 
     static SourceSettings settings(SourceSettingsConfig config) {
+        return settings(config, false);
+    }
+
+    /** @param desktop Standards des Enterprise AI Client ({@link #desktop()}) statt der des Dienstes */
+    static SourceSettings settings(SourceSettingsConfig config, boolean desktop) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
-        // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
-        // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
-        values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
-        // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird nie dort geladen.
-        values.put("foreignFileRedirects", FOREIGN_FILE_REDIRECTS);
+        if (!desktop) {
+            // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
+            // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
+            values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
+            // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird nie dort geladen.
+            values.put("foreignFileRedirects", FOREIGN_FILE_REDIRECTS);
+        }
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());
