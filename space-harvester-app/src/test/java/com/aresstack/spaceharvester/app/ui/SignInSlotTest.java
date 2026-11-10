@@ -187,6 +187,8 @@ class SignInSlotTest {
             assertThat(slot[0].usernameField().isVisible()).isTrue();
             assertThat(slot[0].passwordField().isVisible()).isTrue();
             assertThat(slot[0].codeField().isVisible()).isFalse();
+            assertThat(slot[0].resendButton().isVisible()).isFalse();
+            assertThat(slot[0].submitButton().getText()).isEqualTo(SignInSlot.LOGIN_TEXT);
             slot[0].submitButton().doClick();
             assertThat(slot[0].errorText()).isEqualTo(SignInSlot.LOGIN_REQUIRED);
             slot[0].usernameField().setText("maria");
