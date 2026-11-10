@@ -675,6 +675,7 @@ public final class Harvester implements AutoCloseable {
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                             // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                             List.of(acronymRelationRule::refresh))), retentionRule(builder));
+            syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);

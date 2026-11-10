@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ForeignContent;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -42,6 +43,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
 import java.util.function.Supplier;
@@ -80,10 +82,12 @@ import tools.jackson.databind.json.JsonMapper;
  * mit {@link ExportAssetManifest.Status#SIGN_IN_REQUIRED}, ohne erneut zu warten; {@link #start} holt sie später nach,
  * schon abgelegte kommen dann aus dem Speicher.
  *
- * <p>Dokument-Anhänge (ADR 0023): Ist {@link ExportSettings#attachments()} an, legt derselbe Lauf auch die übrigen
- * Anhänge der Seite ab (PDF, Office, Mails …), über denselben Download, dieselbe Anmeldung und dieselbe Ablage, als
+ * <p>Dokument-Anhänge (ADR 0023): Ist {@link ExportSettings#attachments()} an, legt ein zweiter Auftrag
+ * {@link JobType#ATTACHMENTS} („Anhänge beschaffen“) die übrigen Anhänge der Seite ab (PDF, Office, Mails …), mit
+ * demselben Code, über denselben Download, dieselbe Anmeldung und dieselbe Ablage, als
  * {@link ExportAssetManifest.Kind#DOCUMENT} im selben Manifest, und liest ihren Text einmal über die Textextraktion
- * der Ablage ({@link Assets#text}). Ein Anhang mit nicht zugelassenem Medientyp oder über der Größengrenze wird nicht
+ * der Ablage ({@link Assets#text}). Jeder der beiden Aufträge schreibt nur seine eigenen Einträge und lässt die des
+ * anderen stehen; beide lassen sich anhalten und im selben Eintrag fortsetzen. Ein Anhang mit nicht zugelassenem Medientyp oder über der Größengrenze wird nicht
  * geladen und steht als {@link ExportAssetManifest.Status#EXCLUDED} mit Grund {@code media-type-excluded} bzw.
  * {@code too-large} im Manifest. Die Einstellung gilt je Lauf, wie sie gerade wirksam ist.
  */
@@ -92,6 +96,7 @@ public class ExportAssetCollection {
     private static final System.Logger LOG = System.getLogger(ExportAssetCollection.class.getName());
     private static final String COMPONENT = "Assets";
     static final String PHASE = "Bilder beschaffen";
+    static final String DOCUMENTS_PHASE = "Anhänge beschaffen";
     /** Phase, solange der Auftrag auf den Einmalcode wartet; die Oberfläche zeigt „Wartet auf Anmeldung“. */
     public static final String SIGN_IN_PHASE = "Wartet auf Anmeldung";
     /** Mermaid-Makros: {@code mermaid}, {@code mermaid-cloud}, {@code mermaid-macro} usw. */
@@ -109,8 +114,42 @@ public class ExportAssetCollection {
     private final BiPredicate<String, String> sourceWide;
     private final SignInRequests signIns;
     private final Supplier<ExportSettings> settings;
-    /** Laufende Aufträge je Export; nach einem Neustart entscheidet allein das Manifest. */
+    /** Laufende Aufträge je Art und Export; nach einem Neustart entscheidet allein das Manifest. */
     private final Map<String, String> running = new ConcurrentHashMap<>();
+    /** Je Export ein Schloss: beide Aufträge lesen, mischen und schreiben dasselbe Manifest. */
+    private final Map<String, Object> manifests = new ConcurrentHashMap<>();
+
+    /**
+     * Was ein Auftrag beschafft: Bilder (mit Lese-Ansicht und Mermaid) oder Dokument-Anhänge. Beide teilen jeden
+     * Schritt; nur die Auswahl der Einträge unterscheidet sich.
+     */
+    enum Scope {
+        MEDIA(JobType.ASSETS, PHASE, "Bilder"),
+        DOCUMENTS(JobType.ATTACHMENTS, DOCUMENTS_PHASE, "Anhänge");
+
+        final JobType type;
+        final String phase;
+        final String label;
+
+        Scope(JobType type, String phase, String label) {
+            this.type = type;
+            this.phase = phase;
+            this.label = label;
+        }
+
+        static Scope of(JobType type) {
+            for (Scope scope : values()) {
+                if (scope.type == type) {
+                    return scope;
+                }
+            }
+            return null;
+        }
+
+        String key(String exportId) {
+            return name() + "\u0000" + exportId;
+        }
+    }
 
     /**
      * @param sourceWide ob ein Auftraggeber ({@link JobContext#owner()}) für eine Quelle alles lesen darf, was ihre
@@ -141,26 +180,44 @@ public class ExportAssetCollection {
     }
 
     /**
-     * Plant das Beschaffen der Bilder für einen veröffentlichten Export ein; für {@link Exports#onPublished}. Nimmt
-     * die Auftragsverwaltung nichts mehr an, bleibt der Export ohne Bilder ({@link ExportDatasetInfo.Images#NOT_COLLECTED})
-     * bis zum nächsten {@link #start}.
+     * Plant das Beschaffen der Bilder für einen veröffentlichten Export ein, bei eingeschalteten Anhängen
+     * ({@link ExportSettings#attachments()}) daneben einen eigenen Auftrag „Anhänge beschaffen“; für
+     * {@link Exports#onPublished}. Nimmt die Auftragsverwaltung nichts mehr an, bleibt der Export ohne Bilder
+     * ({@link ExportDatasetInfo.Images#NOT_COLLECTED}) bis zum nächsten {@link #start}.
      *
-     * @return der Auftrag oder leer, wenn keiner eingeplant wurde
+     * @return der Bilderauftrag oder leer, wenn keiner eingeplant wurde
      */
     public Optional<JobStatus> start(String exportId, String owner) {
         Optional<ConversionInput> dataset = writer.dataset(exportId);
         if (dataset.isEmpty()) {
             return Optional.empty();
         }
-        String sourceId = dataset.get().sourceId();
-        String spaceKey = dataset.get().spaceKey();
+        ExportSettings current = settings.get();
+        boolean attachments = current != null && current.attachments();
+        // Nimmt die Auftragsverwaltung keinen zweiten Folgeauftrag an (etwa ein Platz, keine Warteschlange), beschafft
+        // der Bilderauftrag die Anhänge mit, wie vor der Trennung; er wartet beim Start auf diese Entscheidung.
+        CompletableFuture<Boolean> together = new CompletableFuture<>();
         try {
-            JobStatus status = jobs.submit(JobType.ASSETS, sourceId, spaceKey, null, owner,
-                    Map.of(EXPORT_ID, exportId), new AssetTask(exportId));
-            running.put(exportId, status.id());
+            Optional<JobStatus> media = submit(Scope.MEDIA, dataset.get(), exportId, owner,
+                    new AssetTask(exportId, Scope.MEDIA, together));
+            boolean separate = !attachments || media.isEmpty() || submit(Scope.DOCUMENTS, dataset.get(), exportId,
+                    owner, new AssetTask(exportId, Scope.DOCUMENTS)).isPresent();
+            together.complete(!separate);
+            return media;
+        } finally {
+            together.complete(false);
+        }
+    }
+
+    private Optional<JobStatus> submit(Scope scope, ConversionInput dataset, String exportId, String owner,
+                                       AssetTask task) {
+        try {
+            JobStatus status = jobs.submit(scope.type, dataset.sourceId(), dataset.spaceKey(), null, owner,
+                    Map.of(EXPORT_ID, exportId), task);
+            running.put(scope.key(exportId), status.id());
             return Optional.of(status);
         } catch (JobCapacityExceededException | IllegalStateException e) {
-            LOG.log(System.Logger.Level.INFO, "Bilder für Export {0} nicht eingeplant ({1})", exportId,
+            LOG.log(System.Logger.Level.INFO, "{0} für Export {1} nicht eingeplant ({2})", scope.label, exportId,
                     e.getClass().getSimpleName());
             return Optional.empty();
         }
@@ -170,16 +227,18 @@ public class ExportAssetCollection {
     public static final String EXPORT_ID = "exportId";
 
     /**
-     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Bilderauftrag im selben Eintrag fort (ADR 0025):
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Bilder- oder Anhängeauftrag im selben Eintrag
+     * fort (ADR 0025):
      * Seiten, die er schon vollständig geprüft hat, übernimmt er ohne Abruf; schon abgelegte Dateien kommen aus dem
      * Speicher. Nach einem Neustart läuft derselbe Eintrag für denselben Export neu ({@link Jobs#rerun}).
      *
-     * @throws UnknownJobException wenn es keinen eigenen Bilderauftrag mit dieser ID gibt
+     * @throws UnknownJobException wenn es keinen eigenen Bilder- oder Anhängeauftrag mit dieser ID gibt
      * @throws JobNotResumableException wie {@link Jobs#resume}, oder wenn ein alter Auftrag seinen Export nicht nennt
      */
     public JobStatus resume(String jobId, String owner) {
         JobStatus status = jobs.status(jobId, owner);
-        if (status.type() != JobType.ASSETS) {
+        Scope scope = Scope.of(status.type());
+        if (scope == null) {
             throw new UnknownJobException(jobId);
         }
         String exportId = status.parameter(EXPORT_ID);
@@ -189,12 +248,23 @@ public class ExportAssetCollection {
         } else if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         } else {
-            resumed = jobs.rerun(jobId, owner, new AssetTask(exportId));
+            resumed = jobs.rerun(jobId, owner, new AssetTask(exportId, scope,
+                    CompletableFuture.completedFuture(scope == Scope.MEDIA && documentsWithImages(exportId, owner))));
         }
         if (exportId != null) {
-            running.put(exportId, jobId);
+            running.put(scope.key(exportId), jobId);
         }
         return resumed;
+    }
+
+    /**
+     * Ob ein Bilderauftrag nach einem Neustart die Anhänge mitbeschafft: bei eingeschalteten Anhängen, wenn es für den
+     * Export keinen eigenen Auftrag „Anhänge beschaffen“ gibt.
+     */
+    private boolean documentsWithImages(String exportId, String owner) {
+        ExportSettings current = settings.get();
+        return current != null && current.attachments() && jobs.list(owner, JobType.ATTACHMENTS).stream()
+                .noneMatch(job -> exportId.equals(job.parameter(EXPORT_ID)));
     }
 
     /**
@@ -204,16 +274,34 @@ public class ExportAssetCollection {
     private final class AssetTask implements JobTask {
 
         private final String exportId;
+        private final Scope scope;
+        /** Nur Bilder: ob dieser Lauf auch die Anhänge beschafft, weil sie keinen eigenen Auftrag bekamen. */
+        private final CompletableFuture<Boolean> withDocuments;
         private final Map<String, CheckedPage> checked = new ConcurrentHashMap<>();
 
-        AssetTask(String exportId) {
+        AssetTask(String exportId, Scope scope) {
+            this(exportId, scope, CompletableFuture.completedFuture(false));
+        }
+
+        AssetTask(String exportId, Scope scope, CompletableFuture<Boolean> withDocuments) {
             this.exportId = exportId;
+            this.scope = scope;
+            this.withDocuments = withDocuments;
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
-            running.put(exportId, context.jobId());
-            return JobTask.blocking(job -> collect(job, exportId, checked)).start(context);
+            running.put(scope.key(exportId), context.jobId());
+            return JobTask.blocking(job -> collect(job, scope, new Share(scope == Scope.MEDIA,
+                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked)).start(context);
+        }
+    }
+
+    /** Welche Einträge ein Lauf beschafft und schreibt: Bilder, Dokumente oder beides. */
+    private record Share(boolean images, boolean documents) {
+
+        boolean owns(ExportAssetManifest.Entry entry) {
+            return entry.document() ? documents : images;
         }
     }
 
@@ -293,23 +381,29 @@ public class ExportAssetCollection {
         public void incomplete() {
             context.incomplete();
         }
+
+        @Override
+        public void pause(PauseReason reason) {
+            context.pause(reason);
+        }
     }
 
     /** Stand der Bilder eines Exports. */
     public ExportDatasetInfo.Images images(String exportId) {
-        String jobId = running.get(exportId);
+        String key = Scope.MEDIA.key(exportId);
+        String jobId = running.get(key);
         if (jobId != null) {
             try {
                 if (!jobs.status(jobId).state().terminal()) {
                     return ExportDatasetInfo.Images.COLLECTING;
                 }
             } catch (UnknownJobException e) {
-                running.remove(exportId, jobId);
+                running.remove(key, jobId);
             }
         }
         Optional<ExportAssetManifest> manifest = writer.assets(exportId);
         if (manifest.isPresent()) {
-            return manifest.get().complete() ? ExportDatasetInfo.Images.COMPLETE
+            return manifest.get().imagesComplete() ? ExportDatasetInfo.Images.COMPLETE
                     : ExportDatasetInfo.Images.INCOMPLETE;
         }
         return ExportDatasetInfo.Images.NOT_COLLECTED;
@@ -373,22 +467,20 @@ public class ExportAssetCollection {
         };
     }
 
-    private void collect(JobContext job, String exportId, Map<String, CheckedPage> done) {
+    private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done) {
         Tally context = new Tally(job);
         List<ExportAssetManifest.Entry> entries = new ArrayList<>();
         Set<String> checked = new HashSet<>();
+        Run run = null;
         try {
             ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
-            context.phase(COMPONENT, PHASE);
-            Run run = new Run(context, dataset.sourceId(), settings.get());
+            context.phase(COMPONENT, scope.phase);
+            run = new Run(context, scope, share, dataset.sourceId(), settings.get());
+            Run current = run;
             boolean[] complete = {true};
-            boolean[] stopped = {false};
             dataset.forEachPage(page -> {
                 context.checkpoint();
-                if (stopped[0]) {
-                    return;
-                }
                 String pageId = page.snapshot().key().pageId();
                 CheckedPage earlier = done.get(pageId);
                 if (earlier != null) {
@@ -407,7 +499,7 @@ public class ExportAssetCollection {
                 long written = context.written;
                 long failed = context.failed;
                 try {
-                    if (collectPage(run, exportId, dataset, page.snapshot(), entries)) {
+                    if (collectPage(current, exportId, dataset, page.snapshot(), entries)) {
                         checked.add(pageId);
                         done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
                                 context.discovered - discovered, context.processed - processed,
@@ -416,34 +508,60 @@ public class ExportAssetCollection {
                         complete[0] = false;
                     }
                 } catch (SourceUnreachable e) {
-                    // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen, der nächste Export
-                    // holt die Bilder nach.
-                    complete[0] = false;
-                    stopped[0] = true;
-                    LOG.log(System.Logger.Level.INFO, "Bilder für Export {0} abgebrochen: Quelle {1}", exportId,
-                            e.reason);
+                    // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler
+                    // zählen; der Auftrag hält an, ▶ macht später weiter.
+                    LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
+                            exportId, e.reason);
+                    context.pause(PauseReason.CONNECTION_LOST);
                 }
             });
-            List<ExportAssetManifest.Entry> result = merged(writer.assets(exportId), entries, checked);
-            boolean allStored = result.stream().allMatch(ExportAssetManifest.Entry::present);
-            writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, result));
-            if (!(complete[0] && allStored)) {
+            List<ExportAssetManifest.Entry> own = write(share, exportId, entries, checked, complete[0], run.settings);
+            if (!(complete[0] && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
                 context.incomplete();
             }
-            LOG.log(System.Logger.Level.INFO, "Bilder für Export {0}: {1} Referenzen, {2} fehlend", exportId,
-                    result.size(), result.stream().filter(entry -> !entry.present()).count());
+            LOG.log(System.Logger.Level.INFO, "{0} für Export {1}: {2} Referenzen, {3} fehlend", scope.label,
+                    exportId, own.size(), own.stream().filter(entry -> !entry.present()).count());
         } catch (JobCancelledException e) {
             // Angehalten oder abgebrochen: was bis hier abgelegt ist, steht im Manifest; vollständig ist es nicht.
             try {
-                writer.putAssets(exportId, new ExportAssetManifest(false,
-                        merged(writer.assets(exportId), entries, checked)));
+                write(share, exportId, entries, checked, false, run == null ? settings.get() : run.settings);
             } catch (RuntimeException failure) {
                 LOG.log(System.Logger.Level.WARNING, "Bisheriges Manifest für Export {0} nicht geschrieben ({1})",
                         exportId, failure.getClass().getName());
             }
             throw e;
         } finally {
-            running.remove(exportId);
+            running.remove(scope.key(exportId));
+        }
+    }
+
+    /**
+     * Mischt die Einträge eines Laufs ins Manifest, unter dem Schloss des Exports: die eigenen Arten wie
+     * {@link #merged}, die Einträge und die Vollständigkeit der anderen Art bleiben, wie der andere Auftrag sie
+     * geschrieben hat.
+     * Hat er noch nie geschrieben, gelten Dokumente bei ausgeschalteten Anhängen als vollständig, Bilder nie.
+     *
+     * @return die Einträge der eigenen Art, wie sie jetzt im Manifest stehen
+     */
+    private List<ExportAssetManifest.Entry> write(Share share, String exportId, List<ExportAssetManifest.Entry> entries,
+                                                  Set<String> checked, boolean pagesComplete,
+                                                  ExportSettings current) {
+        synchronized (manifests.computeIfAbsent(exportId, id -> new Object())) {
+            Optional<ExportAssetManifest> previous = writer.assets(exportId);
+            List<ExportAssetManifest.Entry> own = merged(previous.map(manifest -> new ExportAssetManifest(false,
+                    manifest.assets().stream().filter(share::owns).toList())), entries, checked);
+            List<ExportAssetManifest.Entry> result = new ArrayList<>(own);
+            previous.ifPresent(manifest -> manifest.assets().stream().filter(entry -> !share.owns(entry))
+                    .forEach(result::add));
+            boolean images = share.images() ? pagesComplete && own.stream().filter(entry -> !entry.document())
+                    .allMatch(ExportAssetManifest.Entry::present)
+                    : previous.map(ExportAssetManifest::imagesComplete).orElse(false);
+            boolean documents = share.documents() ? pagesComplete && own.stream()
+                    .filter(ExportAssetManifest.Entry::document).allMatch(ExportAssetManifest.Entry::present)
+                    : previous.map(ExportAssetManifest::documentsComplete)
+                            .orElse(current == null || !current.attachments());
+            writer.putAssets(exportId, new ExportAssetManifest(images, documents, result));
+            return own;
         }
     }
 
@@ -517,9 +635,12 @@ public class ExportAssetCollection {
                     ownAttachments.add(attachment.attachmentId());
                     AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
                     if (kind == AssetKind.OTHER) {
-                        if (run.settings.attachments()) {
+                        if (run.share.documents() && run.settings.attachments()) {
                             byId.put(attachment.attachmentId(), document(run, list, pageId, attachment));
                         }
+                        continue;
+                    }
+                    if (!run.share.images()) {
                         continue;
                     }
                     attachmentIds.add(attachment.attachmentId());
@@ -561,6 +682,10 @@ public class ExportAssetCollection {
             if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
                 checked = false;
             }
+        }
+        if (!run.share.images()) {
+            // Lese-Ansicht und Mermaid gehören zu den Bildern.
+            return checked;
         }
         boolean foreign = ForeignContent.of(snapshot).present();
         boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
@@ -793,12 +918,16 @@ public class ExportAssetCollection {
     private final class Run {
 
         final JobContext context;
+        final Scope scope;
+        final Share share;
         final String sourceId;
         final ExportSettings settings;
         boolean declined;
 
-        Run(JobContext context, String sourceId, ExportSettings settings) {
+        Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings) {
             this.context = context;
+            this.scope = scope;
+            this.share = share;
             this.sourceId = sourceId;
             this.settings = settings == null ? ExportSettings.DEFAULT : settings;
         }
@@ -816,11 +945,19 @@ public class ExportAssetCollection {
                 try {
                     outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
                 } finally {
-                    context.phase(COMPONENT, PHASE);
+                    context.phase(COMPONENT, scope.phase);
                 }
                 if (outcome != SignInRequests.Outcome.UNLOCKED) {
+                    if (signIns.interactive()) {
+                        // Mit Oberfläche zählen die übrigen Dateien nicht als Fehler: der Auftrag hält an, das
+                        // Manifest behält das Abgelegte, und ▶ macht nach der Anmeldung weiter.
+                        LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} angehalten: Anmeldung fehlt",
+                                scope.label, sourceId);
+                        context.pause(PauseReason.SIGN_IN_REQUIRED);
+                    }
                     declined = true;
-                    LOG.log(System.Logger.Level.INFO, "Bilder der Quelle {0} ohne Anmeldung weiter", sourceId);
+                    LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} ohne Anmeldung weiter", scope.label,
+                            sourceId);
                     throw e;
                 }
                 // Dieselbe Datei noch einmal, jetzt mit der freigeschalteten Sitzung.

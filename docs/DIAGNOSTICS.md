@@ -112,6 +112,11 @@ Auftrag legt die Lese-Ansicht jeder Seite unter `views/` ab (#218, Format `space
 Status `AVAILABLE`/`RESTRICTED`/`UNSUPPORTED`/`UNAVAILABLE`); nur zur exportierten Version, und bei eingebundenen
 fremden Inhalten nur mit Freigabe der ganzen Quelle. Der Export wartet nicht darauf.
 
+Bei eingeschalteten Anhängen (ADR 0023) beschafft daneben ein eigener Auftrag `ATTACHMENTS` („Anhänge beschaffen“)
+die Dokument-Anhänge auf demselben Weg; seine Zähler gelten Anhängen statt Bildern. Er schreibt seine Einträge
+(`DOCUMENT`) ins selbe `assets.json` und lässt die Bilder stehen, wie umgekehrt; `imagesComplete` und
+`documentsComplete` zeigen, welche Art vollständig ist (ADR 0025, Punkt 11).
+
 ## Aussagenanalyse
 
 Der Auftrag `STATEMENT_ANALYSIS` (#499, ADR 0024) startet nur auf ausdrücklichen Wunsch in der Desktop-App für eine

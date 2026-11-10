@@ -33,7 +33,7 @@ public sealed interface JobLifecycleState {
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
-            case PAUSED -> new Paused();
+            case PAUSED -> new Paused(status.pauseReason());
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0 ? new CompletedWithErrors()
                     : new Completed();
             case FAILED, CANCELLED -> new Stopped(status.state(), resumable);
@@ -82,11 +82,14 @@ public sealed interface JobLifecycleState {
         }
     }
 
-    /** Angehalten; Geladenes bleibt. */
-    record Paused() implements JobLifecycleState {
+    /**
+     * Angehalten; Geladenes bleibt. Hat sich der Auftrag selbst angehalten ({@link PauseReason#SIGN_IN_REQUIRED},
+     * {@link PauseReason#CONNECTION_LOST}), nennt der Schlüssel den Grund, damit die Oberfläche ihn zeigt.
+     */
+    record Paused(PauseReason reason) implements JobLifecycleState {
         @Override
         public String key() {
-            return "PAUSED";
+            return reason == null || reason == PauseReason.USER ? "PAUSED" : "PAUSED_" + reason.name();
         }
 
         @Override

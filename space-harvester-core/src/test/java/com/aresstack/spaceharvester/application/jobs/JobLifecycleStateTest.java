@@ -16,7 +16,7 @@ class JobLifecycleStateTest {
                                     boolean pause) {
         return new JobStatus("j", type, "confluence", "DEV", "client-a", state, new JobProgress(3, 3, 3 - failed,
                 failed), state == JobState.FAILED ? new JobError("X", "kaputt") : null, cancel, T0, null, null, null,
-                null, Map.of(), incomplete, pause);
+                null, Map.of(), incomplete, pause, null);
     }
 
     private static List<JobAction> actions(JobType type, JobState state, long failed, boolean incomplete) {

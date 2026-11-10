@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,11 @@ class ActivitiesActionsTest {
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         assertThat(job(JobType.ENRICHMENT, JobState.RUNNING, false).lifecycle().actions())
                 .containsExactly(JobAction.CANCEL);
+        // Bilder und Anhänge lassen sich anhalten und fortsetzen wie Downloads (ADR 0025).
+        assertThat(job(JobType.ASSETS, JobState.PAUSED, false).lifecycle().actions())
+                .containsExactly(JobAction.RESUME, JobAction.DELETE);
+        assertThat(job(JobType.ATTACHMENTS, JobState.RUNNING, false).lifecycle().actions())
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
         assertThat(job(JobType.EXPORT, JobState.QUEUED, false).lifecycle().actions())
                 .containsExactly(JobAction.START_NOW, JobAction.CANCEL);
         assertThat(job(JobType.EXPORT, JobState.COMPLETED, false).lifecycle().actions())
@@ -73,9 +79,20 @@ class ActivitiesActionsTest {
         assertThat(Texts.tone(complete)).isEqualTo(Comic.Tone.GOOD);
         JobStatus incomplete = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
                 new JobProgress(5, 5, 3, 2), null, false, Instant.EPOCH, null, Instant.EPOCH, null, null, Map.of(),
-                true, false);
+                true, false, null);
         assertThat(Texts.state(incomplete)).isEqualTo("Fertig, unvollständig");
         assertThat(Texts.tone(incomplete)).isEqualTo(Comic.Tone.WARNING);
+        // Selbst angehalten (#611): der Grund steht im Zustand.
+        assertThat(Texts.state(paused(PauseReason.SIGN_IN_REQUIRED))).isEqualTo("Angehalten – wartet auf Anmeldung");
+        assertThat(Texts.state(paused(PauseReason.CONNECTION_LOST)))
+                .isEqualTo("Angehalten – Verbindung unterbrochen");
+        assertThat(Texts.tone(paused(PauseReason.CONNECTION_LOST))).isEqualTo(Comic.Tone.WARNING);
+        assertThat(Texts.state(paused(PauseReason.USER))).isEqualTo("Angehalten");
+    }
+
+    private static JobStatus paused(PauseReason reason) {
+        return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.PAUSED, new JobProgress(9, 4, 4, 0),
+                null, false, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, null, null, Map.of(), false, false, reason);
     }
 
     private static ExportDatasetInfo dataset(ExportDatasetInfo.Media media) {
@@ -87,6 +104,6 @@ class ActivitiesActionsTest {
     private static JobStatus job(JobType type, JobState state, boolean pausing) {
         return new JobStatus("j1", type, "wiki", "OPS", "local", state, new JobProgress(0, 0, 0, 0),
                 state == JobState.FAILED ? new JobError("X", "kaputt") : null, pausing, Instant.EPOCH, null, null,
-                null, null, Map.of(), false, pausing);
+                null, null, Map.of(), false, pausing, null);
     }
 }

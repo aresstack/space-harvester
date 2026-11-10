@@ -62,4 +62,15 @@ public interface JobContext {
      */
     default void incomplete() {
     }
+
+    /**
+     * Hält den eigenen Auftrag an, statt die übrigen Seiten oder Dateien als Fehler zu zählen, etwa wenn die Anmeldung
+     * fehlt oder die Quelle nicht erreichbar ist. Der Auftrag endet als {@link JobState#PAUSED} mit {@code reason};
+     * was er geladen hat, bleibt, und Fortsetzen macht dort weiter.
+     *
+     * @throws JobCancelledException immer; der Aufrufer lässt sie durch
+     */
+    default void pause(PauseReason reason) {
+        throw new JobCancelledException(jobId());
+    }
 }

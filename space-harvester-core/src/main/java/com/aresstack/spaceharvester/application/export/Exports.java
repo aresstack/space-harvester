@@ -973,6 +973,11 @@ public class Exports {
         public void phase(String component, String phase) {
             context.phase(component, phase);
         }
+
+        @Override
+        public void pause(com.aresstack.spaceharvester.application.jobs.PauseReason reason) {
+            context.pause(reason);
+        }
     }
 
     /** Bricht ab, sobald mehr als erlaubt geschrieben würde; nichts wird abgeschnitten. */
