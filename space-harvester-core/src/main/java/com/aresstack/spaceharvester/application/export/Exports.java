@@ -359,8 +359,8 @@ public class Exports {
                 + "der Quelle eingelesen" : request.refresh() ? "Aktueller Stand verlangt; der Space wird von der Quelle "
                 + "eingelesen" : "Bestand nicht bestätigt (" + current.get().state() + "); der Space wird von der "
                 + "Quelle eingelesen"));
-        SpaceProvisioning.Provisioned provisioned = provisioning.provision(
-                new ProvisioningContext(context), sourceId, spaceKey, request.visible());
+        SpaceProvisioning.Provisioned provisioned = provisioning.provisionScoped(
+                new ProvisioningContext(context), sourceId, spaceKey, headers -> counted(request, headers));
         context.checkpoint();
         if (!provisioned.confirmed()) {
             if (current.isEmpty() || request.refresh()) {
@@ -508,6 +508,42 @@ public class Exports {
      * @throws JobFailedException {@code ROOT_NOT_FOUND}, wenn die Startseite im Space fehlt oder nicht lesbar ist;
      *                            beides mit derselben Meldung, die keine Seiten-ID nennt
      */
+    /**
+     * Was beim Einlesen zählt: lesbare Seiten, mit Startseite nur ihr Teilbaum laut Inventur. Sonst stünde bei einem
+     * Teilbaum-Export der ganze Space als „Seiten (Inventur)“ da, und „Exportiert“ sähe unvollständig aus, obwohl
+     * nichts fehlt.
+     */
+    private static java.util.function.Predicate<PageHeader> counted(ExportRequest request, List<PageHeader> headers) {
+        if (request.rootPageId() == null) {
+            return request.visible();
+        }
+        Map<String, String> parents = new HashMap<>();
+        headers.forEach(header -> parents.put(header.key().pageId(), header.metadata().parentPageId()));
+        Set<String> subtree = subtreeOf(parents, request.rootPageId(), request.depth());
+        return header -> subtree.contains(header.key().pageId()) && request.visible().test(header);
+    }
+
+    /** Die Startseite und ihre Unterseiten bis {@code depth} (ohne: alle) nach den Elternverweisen. */
+    private static Set<String> subtreeOf(Map<String, String> parents, String rootPageId, Integer depth) {
+        List<TreeEntry> entries = new ArrayList<>(parents.size());
+        // Die Startseite wird Wurzel, damit ein Zyklus über ihr den Teilbaum nicht zerschneidet.
+        parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId,
+                pageId.equals(rootPageId) ? null : parent)));
+        PageTree tree = PageTreeBuilder.build(entries);
+        Set<String> subtree = new HashSet<>();
+        for (PageTree.Node node : tree.roots()) {
+            if (node.pageId().equals(rootPageId)) {
+                // Ebene 0 ist die Startseite; mit Tiefe kommen nur die Ebenen bis dahin mit (0: Einzelseite).
+                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, level) -> {
+                    if (depth == null || level <= depth) {
+                        subtree.add(pageId);
+                    }
+                });
+            }
+        }
+        return subtree;
+    }
+
     private Set<String> subtree(JobContext context, ExportRequest request, Prepared prepared) {
         context.phase(COMPONENT, "Teilbaum bestimmen");
         String rootPageId = request.rootPageId();
@@ -535,23 +571,7 @@ public class Exports {
         for (PageHeader failed : prepared.unrefreshed()) {
             parents.putIfAbsent(failed.key().pageId(), failed.metadata().parentPageId());
         }
-        List<TreeEntry> entries = new ArrayList<>(parents.size());
-        // Die Startseite wird Wurzel, damit ein Zyklus über ihr den Teilbaum nicht zerschneidet.
-        parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId,
-                pageId.equals(rootPageId) ? null : parent)));
-        PageTree tree = PageTreeBuilder.build(entries);
-        Set<String> subtree = new HashSet<>();
-        for (PageTree.Node node : tree.roots()) {
-            if (node.pageId().equals(rootPageId)) {
-                // Ebene 0 ist die Startseite; mit Tiefe kommen nur die Ebenen bis dahin mit (0: Einzelseite).
-                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, depth) -> {
-                    if (request.depth() == null || depth <= request.depth()) {
-                        subtree.add(pageId);
-                    }
-                });
-            }
-        }
-        return subtree;
+        return subtreeOf(parents, rootPageId, request.depth());
     }
 
     /**

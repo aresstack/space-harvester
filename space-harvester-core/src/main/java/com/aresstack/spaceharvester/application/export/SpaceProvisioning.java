@@ -80,6 +80,17 @@ public interface SpaceProvisioning {
     }
 
     /**
+     * Wie {@link #provision(JobContext, String, String, Predicate)}, aber was zählt, ergibt sich erst aus der Inventur:
+     * {@code counting} bekommt alle Kopfdaten der Inventur und liefert die Zählregel, etwa nur den Teilbaum einer
+     * Startseite. So passen „Seiten (Inventur)“ und „Exportiert“ zum Umfang des Exports, nicht zum ganzen Space.
+     * Standard: die Regel für eine leere Inventur, ohne Blick auf die echte.
+     */
+    default Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting) {
+        return provision(context, sourceId, spaceKey, counting.apply(List.of()));
+    }
+
+    /**
      * Ergebnis des Einlesens.
      *
      * @param confirmed     eine Generation ist bestätigt (eigene oder die eines gleichzeitigen Abgleichs)

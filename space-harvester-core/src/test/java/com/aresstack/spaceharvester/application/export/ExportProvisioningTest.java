@@ -62,16 +62,25 @@ class ExportProvisioningTest {
             public Provisioned provision(JobContext context, String sourceId, String spaceKey,
                                          Predicate<PageHeader> counted) {
                 provisioned.add(sourceId + "/" + spaceKey);
-                ExportProvisioningTest.this.counted = counted;
+                ExportProvisioningTest.this.counting = headers -> counted;
+                return run.apply(context);
+            }
+
+            @Override
+            public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                               Function<List<PageHeader>, Predicate<PageHeader>> counting) {
+                provisioned.add(sourceId + "/" + spaceKey);
+                ExportProvisioningTest.this.counting = counting;
                 return run.apply(context);
             }
         };
     }
 
-    private Predicate<PageHeader> counted = header -> false;
+    private Function<List<PageHeader>, Predicate<PageHeader>> counting = headers -> header -> false;
 
     /** Zählt wie das echte Einlesen: Inventur und Beschaffung nur für Seiten, die der Auftraggeber lesen darf. */
     private void count(JobContext context, List<PageSnapshot> inventory) {
+        Predicate<PageHeader> counted = counting.apply(inventory.stream().map(PageSnapshot::header).toList());
         long visible = inventory.stream().map(PageSnapshot::header).filter(counted).count();
         context.discovered(visible);
         context.processed(visible);
@@ -340,6 +349,17 @@ class ExportProvisioningTest {
     void readInCountsNothingTheCallerCannotSee() {
         JobStatus status = run(exports(publishing("g1", twoPages(), Set.of())), dev());
 
+        assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+    }
+
+    @Test
+    void aSubtreeExportCountsOnlyItsSubtreeNotTheWholeSpace() {
+        List<PageSnapshot> pages = List.of(page("confluence", "DEV", "1", null), page("confluence", "DEV", "2", "1"),
+                page("confluence", "DEV", "3", "2"), page("confluence", "DEV", "4", "1"));
+        JobStatus status = run(exports(publishing("g1", pages, Set.of())), dev().withRoot("2"));
+
+        assertThat(writer.published.get(status.id()).pageIds()).containsExactly("2", "3");
+        // Inventur und Export zählen denselben Umfang: der Auftrag steht bei 2 von 2, nicht bei 2 von 4.
         assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
     }
 }
