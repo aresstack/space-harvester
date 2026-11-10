@@ -111,7 +111,8 @@ public class KnowledgeGraphExportUseCase {
             }
             try (OutputStream out = Files.newOutputStream(temp)) {
                 KnowledgeGraphJsonLd.write(out, new KnowledgeGraphJsonLd.Header(context.jobId(),
-                        request.scope().describe(), clock.instant(), request.includeStale(), true), entries);
+                        request.scope().describe(), clock.instant(), request.includeStale(), true,
+                        request.qualities()), entries);
             }
             context.checkpoint();
             try {
@@ -148,12 +149,26 @@ public class KnowledgeGraphExportUseCase {
     /**
      * @param includeStale veraltete Analysen zusätzlich exportieren (mit Status und Grund)
      * @param directory    Ausgabeordner
+     * @param qualities    exportierte Qualitätsstufen der Aussagen; standardmäßig nur
+     *                     {@link com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Quality#PLAUSIBLE}
      */
-    public record Request(Scope scope, boolean includeStale, Path directory) {
+    public record Request(Scope scope, boolean includeStale, Path directory,
+                          java.util.Set<com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Quality>
+                                  qualities) {
 
         public Request {
             Objects.requireNonNull(scope, "scope");
             Objects.requireNonNull(directory, "directory");
+            qualities = java.util.Set.copyOf(qualities);
+            if (qualities.isEmpty()) {
+                throw new IllegalArgumentException("mindestens eine Qualitätsstufe");
+            }
+        }
+
+        /** Export der Standardansicht: nur plausible Aussagen. */
+        public Request(Scope scope, boolean includeStale, Path directory) {
+            this(scope, includeStale, directory,
+                    com.aresstack.spaceharvester.application.knowledge.PageGraph.DEFAULT_QUALITIES);
         }
     }
 

@@ -15,10 +15,11 @@ public final class ObjectCentricExtraction {
 
     /**
      * Version der Regeln dieses Pakets und der deterministischen Vorverarbeitung davor (Satzgrenzen, Korrekturen in
-     * {@code GermanTagCorrections}). Steigt mit jeder Änderung, die andere Sätze, Erwähnungen, Aussagen, Rollen oder
-     * Hinweise liefert; gespeicherte Aussagenanalysen der Desktop-App (#499) gelten dann als veraltet.
+     * {@code GermanTagCorrections}) und der Qualitätsstufe ({@link StatementQuality}). Steigt mit jeder Änderung, die
+     * andere Sätze, Erwähnungen, Aussagen, Rollen, Hinweise oder Stufen liefert; gespeicherte Aussagenanalysen der
+     * Desktop-App (#499) gelten dann als veraltet.
      */
-    public static final String RULES_VERSION = "5";
+    public static final String RULES_VERSION = "6";
 
     private final ExtractionSettings settings;
 

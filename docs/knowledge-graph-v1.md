@@ -32,7 +32,8 @@ derselbe Text mit demselben Analysator analysiert wird.
 ## Klassen und Eigenschaften
 
 - `sh:GraphExport`: `sh:format`, `sh:scope` (Umfang für Menschen), `prov:generatedAtTime`, `sh:includesStale`,
-  `sh:complete` (alle lesbaren Seiten des Umfangs enthalten), `sh:pageCount`.
+  `sh:complete` (alle lesbaren Seiten des Umfangs enthalten), `sh:pageCount`, `sh:exportedQuality` (exportierte
+  Qualitätsstufen; standardmäßig nur `PLAUSIBLE`, Aussagen anderer Stufen fehlen dann, ihre Erwähnungen bleiben).
 - `sh:Page`: `sh:sourceId`, `sh:pageId`, `sh:spaceKey`, `sh:title`.
 - `sh:PageRevision`: `sh:revisionOf` → Seite, `sh:revision` (Version der Quelle), `sh:inputSha256`, `sh:status`
   (`CURRENT` | `STALE`), `sh:staleReason` (`text-changed`, `analyzer-changed`, `no-text`, `page-missing`).
@@ -44,7 +45,9 @@ derselbe Text mit demselben Analysator analysiert wird.
   Werte auf verschiedenen Seiten sind **lexikalische Kandidaten**, keine bestätigte Identität).
 - `sh:Statement` (Aussage/Handlung als eigener Knoten): `sh:predicate`, `sh:predicateLemma`, `sh:voice`
   (`ACTIVE`/`PASSIVE`/…), `sh:clause` (`MAIN`/`SUBORDINATE`/…), `sh:core` (Kernsicht), `sh:finding` (Unsicherheiten
-  und Hinweise), `sh:sentence`, `sh:start`, `sh:end`, `sh:verificationStatus` (immer `UNVERIFIED_PARSER_OUTPUT`),
+  und Hinweise), `sh:sentence`, `sh:paragraph` (Absatz im Lesetext, ab 0; fehlt, wenn unbekannt), `sh:start`, `sh:end`, `sh:extractionQuality`
+  (`PLAUSIBLE`/`UNCERTAIN`/`INVALID`), `sh:qualityReason` (Gründe, keine Prozentwerte), `sh:verificationStatus`
+  (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen Prüfung, sonst `CONFIRMED`/`REJECTED`),
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
   `sh:instrument`, `sh:time`, `sh:circumstance`.

@@ -7,8 +7,11 @@ import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableExc
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.nlp.malt.ExpectedModel;
 import com.aresstack.spaceharvester.nlp.malt.TestModel;
+import com.aresstack.spaceharvester.nlp.syntax.Sentence;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -27,10 +30,21 @@ class MaltStatementAnalyzerTest {
     Path empty;
 
     @Test
+    void paragraphsCountRunsOfLineBreaksOnceAndIgnoreLeadingOnes() {
+        String text = "\nTitel\nA eins. A zwei.\n\n  \nB drei.\nC vier.";
+        List<Sentence> sentences = new ArrayList<>();
+        for (String part : List.of("Titel", "A eins.", "A zwei.", "B drei.", "C vier.")) {
+            int start = text.indexOf(part);
+            sentences.add(new Sentence(sentences.size(), start, start + part.length(), part, List.of(), List.of()));
+        }
+        assertThat(MaltStatementAnalyzer.paragraphs(text, sentences)).containsExactly(0, 1, 1, 2, 3);
+    }
+
+    @Test
     void theVersionNamesModelAndRulesWithoutLoadingAnything() {
         MaltStatementAnalyzer analyzer = new MaltStatementAnalyzer(empty, TestModel.EXPECTED);
 
-        assertThat(analyzer.version()).isEqualTo("1|maltparser-de-test-v0.1.0|43cc823cf1a3|rules-5");
+        assertThat(analyzer.version()).isEqualTo("1|maltparser-de-test-v0.1.0|43cc823cf1a3|rules-6");
         assertThat(analyzer.id()).isEqualTo("maltparser-de");
         assertThat(analyzer.loaded()).isFalse();
     }

@@ -93,7 +93,7 @@ public class KnowledgeGraph {
      * @param mention     Erwähnung mit Spanne als Beleg
      * @param match       wie sie zum Suchbegriff passt
      * @param matchedTerm der passende Begriff (Suchbegriff oder anderes Ende einer bestätigten Beziehung)
-     * @param statements  Aussagen, an denen sie beteiligt ist
+     * @param statements  Aussagen der Standardansicht (nur plausible), an denen sie beteiligt ist
      */
     public record Hit(PageRef page, ParsedStatements.Mention mention, Match match, String matchedTerm,
                       List<Participation> statements) {
@@ -383,9 +383,13 @@ public class KnowledgeGraph {
         return keys;
     }
 
+    /** Beteiligungen an Aussagen der Standardansicht ({@link PageGraph#DEFAULT_QUALITIES}). */
     private static List<Participation> participations(ParsedStatements result, String mentionId) {
         List<Participation> found = new ArrayList<>();
         for (ParsedStatements.Statement statement : result.statements()) {
+            if (!PageGraph.DEFAULT_QUALITIES.contains(statement.quality())) {
+                continue;
+            }
             for (ParsedStatements.Argument argument : statement.arguments()) {
                 if (argument.mention().equals(mentionId)) {
                     found.add(new Participation(statement, argument.role(), argument.certain()));
