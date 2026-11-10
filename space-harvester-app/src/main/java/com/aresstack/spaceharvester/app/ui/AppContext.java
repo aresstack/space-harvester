@@ -589,9 +589,14 @@ public final class AppContext {
             return;
         }
         try (com.aresstack.enterpriseai.adyton.VaultEntryDraft read = keePass().readSilently(title)) {
+            // Zusatzfelder wie im Enterprise AI Client (MM_RequiresLogin), nie Benutzer oder Passwort (#571).
+            secrets.keePassFields(entry.id(), read.fields());
             char[] value = read.copyPassword();
             if (value != null && value.length > 0) {
                 secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
+            } else if (secrets.withoutLogin(entry.id())) {
+                // Ohne Anmeldung braucht die Quelle kein Passwort; sie gilt trotzdem als bereit.
+                secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), new char[0]);
             }
         } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException | RuntimeException e) {
             // Nur Quelle und Ausnahmeklasse, nie Eintrag oder Wert.

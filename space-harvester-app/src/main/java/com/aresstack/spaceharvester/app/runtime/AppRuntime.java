@@ -392,6 +392,8 @@ public final class AppRuntime implements AutoCloseable {
         }
 
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
+        /** Quellen, deren KeePass-Eintrag {@code MM_RequiresLogin=false} trägt (#571, wie der EAC). */
+        private final java.util.Set<String> withoutLogin = java.util.concurrent.ConcurrentHashMap.newKeySet();
         private volatile String aiKey;
         private volatile char[] proxyPassword;
 
@@ -406,6 +408,7 @@ public final class AppRuntime implements AutoCloseable {
                 hash = secrets.hashCode();
             }
             char[] proxy = proxyPassword;
+            hash = 31 * hash + withoutLogin.hashCode();
             return 31 * hash + (proxy == null ? 0 : java.util.Arrays.hashCode(proxy));
         }
 
@@ -450,11 +453,32 @@ public final class AppRuntime implements AutoCloseable {
 
         public void remove(String sourceId) {
             secrets.remove(sourceId);
+            withoutLogin.remove(sourceId);
+        }
+
+        /**
+         * Übernimmt die Zusatzfelder des KeePass-Eintrags einer Quelle wie der Enterprise AI Client
+         * ({@code VaultEntryOptions.sendsLogin}, #571): Mit {@code MM_RequiresLogin=false} geht die Quelle ohne
+         * Authorization-Header, nur mit dem Client-Zertifikat, wie in MainframeMate.
+         */
+        public void keePassFields(String sourceId, Map<String, String> fields) {
+            String requiresLogin = fields == null ? null : fields.get("MM_RequiresLogin");
+            if (requiresLogin != null && "false".equalsIgnoreCase(requiresLogin.strip())) {
+                withoutLogin.add(sourceId);
+            } else {
+                withoutLogin.remove(sourceId);
+            }
+        }
+
+        /** Ob der KeePass-Eintrag der Quelle {@code MM_RequiresLogin=false} trägt ({@link #keePassFields}). */
+        public boolean withoutLogin(String sourceId) {
+            return withoutLogin.contains(sourceId);
         }
 
         SourceSettingsConfig apply(SourceSettingsConfig config) {
             String secret = secrets.get(config.id()).secret();
-            SourceSettingsConfig.Auth auth = config.auth();
+            SourceSettingsConfig.Auth auth = withoutLogin.contains(config.id())
+                    ? SourceSettingsConfig.Auth.anonymous() : config.auth();
             SourceSettingsConfig.Auth filled = switch (auth.type()) {
                 case NONE -> auth;
                 case BASIC -> new SourceSettingsConfig.Auth(auth.type(), auth.username(), secret, null);

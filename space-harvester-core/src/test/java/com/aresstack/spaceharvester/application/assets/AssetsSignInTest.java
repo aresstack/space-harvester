@@ -249,6 +249,33 @@ class AssetsSignInTest {
     }
 
     @Test
+    void theFirstProtectedFetchForADiagramIsThePreviewImageLikeInTheEnterpriseAiClient() {
+        SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
+        Assets assets = assets(signIns);
+        source.listed = List.of(new PageAttachment("att-d", "confluence:wiki/attachment/att-d", "ablauf.drawio",
+                "application/vnd.jgraph.mxfile", 10L, "1", null, null));
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/100/ablauf.png?version=1", "Ablauf", null, "image/png",
+                null);
+
+        // #571: Das Zwei-Faktor-Plugin leitet nach dem Code auf die Adresse zurück, die die Code-Seite ausgelöst hat.
+        // Im EAC ist das immer ein Bild der Lese-Ansicht, nie der rohe Diagramm-Anhang.
+        assertThatThrownBy(() -> assets.viewDiagram("wiki", "100", "1", preview))
+                .isExactlyInstanceOf(SignInRequiredException.class);
+        assertThat(source.fetched).containsExactly("image");
+
+        SignInPendingException pending = (SignInPendingException) org.assertj.core.api.Assertions.catchThrowable(
+                () -> assets.viewImage("wiki", "100", "1", preview, "anna"));
+        assertThat(source.fetched).containsExactly("image");
+        assertThat(signIns.submit(pending.signInRequestId(), "123456".toCharArray()))
+                .isEqualTo(SignInRequest.Answer.ACCEPTED);
+
+        // Danach wie bisher: Bild geliefert, dann die Quelldaten des Diagramms.
+        assets.viewDiagram("wiki", "100", "1", preview);
+        assertThat(source.fetched).containsExactly("image", "image", "file");
+    }
+
+    @Test
     void afterADeclineTheNextReadAsksTheSourceAgain() {
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), Clock.systemUTC());
         Assets assets = assets(signIns);
@@ -408,6 +435,10 @@ class AssetsSignInTest {
         final java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         /** Die Seite (Nummer der Abfrage), an die ein Code ging. */
         final List<Integer> submittedOnPage = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** Welche Abrufe in welcher Reihenfolge ans Netz gingen: {@code image}, {@code file}, {@code preview}. */
+        final List<String> fetched = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** Die Anhänge der Seite; {@code null}: zwei Textdateien. */
+        volatile List<PageAttachment> listed;
 
         @Override
         public java.util.Set<SourceCapability> capabilities() {
@@ -436,12 +467,14 @@ class AssetsSignInTest {
 
         @Override
         public byte[] viewImage(ViewImage image, long maxBytes) {
+            fetched.add("image");
             guarded();
             return CONTENT;
         }
 
         @Override
         public byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
+            fetched.add("preview");
             guarded();
             return CONTENT;
         }
@@ -479,7 +512,9 @@ class AssetsSignInTest {
 
         @Override
         public PageAttachments attachments(String pageId) {
-            return new PageAttachments(pageId, List.of(attachment("att1"), attachment("att2")), List.of(),
+            List<PageAttachment> own = listed;
+            return new PageAttachments(pageId, own != null ? own : List.of(attachment("att1"), attachment("att2")),
+                    List.of(),
                     "application/json", "test", List.of(), NOW);
         }
 
@@ -490,6 +525,7 @@ class AssetsSignInTest {
 
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
+            fetched.add("file");
             guarded();
             return new AttachmentFile(attachment, CONTENT, NOW);
         }

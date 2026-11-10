@@ -40,6 +40,12 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
      */
     static final String FOREIGN_FILE_REDIRECTS = "false";
 
+    /**
+     * User-Agent des Enterprise AI Client 0.80.98 ({@code NetworkServices.defaultUserAgent}); die Desktop-App schickt
+     * ihn an Confluence, damit die Anfragen dort genauso aussehen wie aus dem EAC (#571).
+     */
+    static final String EAC_USER_AGENT = "EnterpriseAiClient/0.80.98";
+
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
 
     /** Ob die Quelle wie im Enterprise AI Client geöffnet wird ({@link #desktop()}) statt mit den Dienst-Standards. */
@@ -70,7 +76,8 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     /**
      * Wie {@link #desktop()}, und der Confluence-Adapter wird gebaut wie im Enterprise AI Client 0.80.98
      * ({@code AdapterAssembly.sourceProviders}): ohne asynchronen Transport (Seiten über denselben UrlConnection-Weg
-     * wie Dateien und Einmalcode) und mit Diagnoseordner für HTML-Antworten statt Dateien (#571).
+     * wie Dateien und Einmalcode), mit dessen User-Agent und mit Diagnoseordner für HTML-Antworten statt Dateien
+     * (#571).
      *
      * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
      */
@@ -172,9 +179,10 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }
         String thumbprint = certificate.enabled() ? certificate.thumbprint() : null;
-        // Desktop wie der EAC: kein asynchroner Transport (WebClient), Diagnoseordner neben dem Protokoll (#571).
+        // Desktop wie der EAC: kein asynchroner Transport (WebClient), dessen User-Agent, Diagnoseordner neben dem
+        // Protokoll (#571).
         KnowledgeSourceProvider provider = desktop
-                ? ConfluenceSources.desktopProvider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
+                ? ConfluenceSources.desktopProvider(secrets, context.routes(), EAC_USER_AGENT, trust, thumbprint,
                         diagnosticsDirectory)
                 : ConfluenceSources.provider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
                         context.async());
