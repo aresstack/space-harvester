@@ -62,7 +62,7 @@ final class PassagesTab extends JPanel {
         head.copy(this::copyText);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout(0, 8));
         body.setOpaque(false);
         body.add(list, BorderLayout.NORTH);
         body.add(hint, BorderLayout.CENTER);
@@ -169,13 +169,16 @@ final class PassagesTab extends JPanel {
         index.setForeground(Comic.INK);
         index.setPreferredSize(new Dimension(24, 24));
         index.setBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true));
-        JLabel title = Comic.text(passage.title());
+        // Umbrechend: Themenzeile und Anriss folgen der Breite des Reiters, nichts wird rechts abgeschnitten.
+        com.aresstack.spaceharvester.app.ui.controls.WrappedText title = Comic.wrapped(passage.title(), Comic.INK, 14f);
         title.setFont(Comic.semiBold(14f));
         JPanel lines = new JPanel(new BorderLayout(0, 4));
         lines.setOpaque(false);
         lines.add(title, BorderLayout.NORTH);
+        com.aresstack.spaceharvester.app.ui.controls.WrappedText preview = null;
         if (passage.preview() != null && !passage.preview().isBlank()) {
-            lines.add(Comic.muted(passage.preview()), BorderLayout.CENTER);
+            preview = Comic.wrapped(passage.preview(), Comic.MUTED, 13f);
+            lines.add(preview, BorderLayout.CENTER);
         }
         JPanel row = new JPanel(new BorderLayout(10, 0));
         row.setOpaque(false);
@@ -183,14 +186,20 @@ final class PassagesTab extends JPanel {
         row.add(index, BorderLayout.WEST);
         row.add(lines, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
-        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.setToolTipText("Klick markiert den Absatz im Lesetext");
-        row.addMouseListener(new MouseAdapter() {
+        MouseAdapter click = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 onJump.accept(List.of(new TermsTab.Span(passage.start(), passage.end())));
             }
-        });
+        };
+        // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
+        for (java.awt.Component part : preview == null ? List.of(row, title) : List.of(row, title, preview)) {
+            part.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            part.addMouseListener(click);
+            if (part instanceof javax.swing.JComponent component) {
+                component.setToolTipText("Klick markiert den Absatz im Lesetext");
+            }
+        }
         return row;
     }
 

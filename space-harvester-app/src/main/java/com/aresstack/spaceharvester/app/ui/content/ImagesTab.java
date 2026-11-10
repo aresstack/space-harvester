@@ -80,7 +80,7 @@ final class ImagesTab extends JPanel {
         notReleased.setVisible(false);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout(0, 8));
         body.setOpaque(false);
         body.add(list, BorderLayout.NORTH);
         JPanel hints = new JPanel(new BorderLayout(0, 8));
