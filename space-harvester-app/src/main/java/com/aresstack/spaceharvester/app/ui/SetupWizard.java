@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.ui.brand.BrandImages;
+import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.spaceharvester.application.sources.ConnectionStep;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 
@@ -19,6 +20,8 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -522,8 +525,18 @@ final class SetupWizard {
         return value == null || value.isBlank() ? "–" : value;
     }
 
+    /**
+     * Every step scrolls independently of the navigation buttons, including before the first layout pass.
+     * Keep the width attached to the viewport so wrapped content cannot hide the right edge.
+     */
     private static JComponent page(JComponent content) {
-        return Comic.column(content);
+        ScrollColumn column = new ScrollColumn(new BorderLayout());
+        column.add(Comic.column(content), BorderLayout.NORTH);
+        JScrollPane scroll = Comic.scroll(column);
+        scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        return scroll;
     }
 
     private static ImageIcon shipIcon() {
