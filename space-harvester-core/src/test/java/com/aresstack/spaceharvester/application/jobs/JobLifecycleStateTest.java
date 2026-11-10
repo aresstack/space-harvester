@@ -26,11 +26,11 @@ class JobLifecycleStateTest {
     @Test
     void playAndPauseNeverShowTogetherAndWaitingJobsStartNow() {
         assertThat(actions(JobType.EXPORT, JobState.QUEUED, 0, false))
-                .containsExactly(JobAction.START_NOW, JobAction.CANCEL);
+                .containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
         assertThat(actions(JobType.EXPORT, JobState.RUNNING, 0, false))
-                .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
         assertThat(actions(JobType.ASSETS, JobState.RUNNING, 0, false))
-                .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
         assertThat(actions(JobType.EXPORT, JobState.PAUSED, 0, false))
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         for (JobState state : JobState.values()) {
@@ -49,7 +49,12 @@ class JobLifecycleStateTest {
                 .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.SYNC, JobState.COMPLETED, 0, false))
                 .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
-        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 1, false)).containsExactly(JobAction.DELETE);
+        // Bilder und Anhänge: unvollständig → nur Fehlendes neu holen (#628).
+        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 1, false))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(actions(JobType.ATTACHMENTS, JobState.COMPLETED, 0, true))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(actions(JobType.ASSETS, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
         assertThat(status(JobType.EXPORT, JobState.COMPLETED, 1, false, false, false).lifecycle().key())
                 .isEqualTo("COMPLETED_WITH_ERRORS");
         assertThat(status(JobType.ASSETS, JobState.COMPLETED, 0, true, false, false).lifecycle().key())
@@ -63,7 +68,8 @@ class JobLifecycleStateTest {
         assertThat(actions(JobType.SYNC, JobState.CANCELLED, 0, false))
                 .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(actions(JobType.ENRICHMENT, JobState.FAILED, 0, false)).containsExactly(JobAction.DELETE);
-        assertThat(actions(JobType.ENRICHMENT, JobState.RUNNING, 0, false)).containsExactly(JobAction.CANCEL);
+        assertThat(actions(JobType.ENRICHMENT, JobState.RUNNING, 0, false))
+                .containsExactly(JobAction.CANCEL, JobAction.DELETE);
     }
 
     @Test
@@ -80,6 +86,19 @@ class JobLifecycleStateTest {
     }
 
     @Test
+    void everyStateOffersDeleteAsItsLastActionAndNeverMoreThanThree() {
+        for (JobType type : JobType.values()) {
+            for (JobState state : JobState.values()) {
+                for (boolean cancel : new boolean[] {false, true}) {
+                    List<JobAction> actions = status(type, state, 0, false, cancel, false).lifecycle().actions();
+                    assertThat(actions).last().isEqualTo(JobAction.DELETE);
+                    assertThat(actions).hasSizeLessThanOrEqualTo(3);
+                }
+            }
+        }
+    }
+
+    @Test
     void aCatalogOnlySyncHasNothingToForce() {
         JobStatus catalog = new JobStatus("j", JobType.SYNC, "confluence", "DEV", null, JobState.COMPLETED,
                 new JobProgress(3, 3, 3, 0), null, false, T0, null, null, null, null,
@@ -91,10 +110,10 @@ class JobLifecycleStateTest {
     void aRequestedPauseCanStillBecomeACancelButNotTheOtherWayRound() {
         JobLifecycleState pausing = status(JobType.EXPORT, JobState.RUNNING, 0, false, true, true).lifecycle();
         assertThat(pausing.key()).isEqualTo("PAUSE_REQUESTED");
-        assertThat(pausing.actions()).containsExactly(JobAction.CANCEL);
+        assertThat(pausing.actions()).containsExactly(JobAction.CANCEL, JobAction.DELETE);
         JobLifecycleState cancelling = status(JobType.EXPORT, JobState.RUNNING, 0, false, true, false).lifecycle();
         assertThat(cancelling.key()).isEqualTo("CANCEL_REQUESTED");
-        assertThat(cancelling.actions()).isEmpty();
+        assertThat(cancelling.actions()).containsExactly(JobAction.DELETE);
         assertThat(cancelling.allows(JobAction.PAUSE)).isFalse();
     }
 }

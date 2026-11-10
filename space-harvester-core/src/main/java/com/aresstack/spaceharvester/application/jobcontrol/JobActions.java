@@ -80,6 +80,10 @@ public class JobActions {
                 if (sync) {
                     yield syncs.retryFailed(jobId, owner).status();
                 }
+                if (current.type() == JobType.ASSETS || current.type() == JobType.ATTACHMENTS) {
+                    // Holt im selben Eintrag nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
+                    yield resume(current, owner, access);
+                }
                 if (current.type() != JobType.EXPORT) {
                     throw new JobNotResumableException(jobId,
                             "nur Downloads und Abgleiche laden gescheiterte Seiten gezielt nach");

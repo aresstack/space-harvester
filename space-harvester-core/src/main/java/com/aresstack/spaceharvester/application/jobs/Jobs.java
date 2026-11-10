@@ -39,9 +39,15 @@ import java.util.function.UnaryOperator;
  * Start, Phasenwechsel, Meldungen des Auftrags und das Ende, beim Scheitern mit Komponente, Phase, Fehlercode,
  * HTTP-Status, Proxy-Route, TLS-Befund und der maskierten Ausnahmekette. Die Ereignisse leben so lange wie ihr Auftrag.
  *
- * <p>Der Auftraggeber kann beendete Aufträge und ihre Ereignisse selbst löschen ({@link #delete(String, String)},
- * {@link #deleteFinished}, {@link #deleteEvent}, {@link #deleteEventsBefore(Instant, String)}); wartende und laufende
- * Aufträge nie ({@link JobStillRunningException}).
+ * <p>Der Auftraggeber kann seine Aufträge in jedem Zustand löschen ({@link #delete(String, String)},
+ * {@link #deleteAll}); wartende und laufende bricht das vorher ab (ADR 0025). Ereignisse löscht er nur bei beendeten
+ * Aufträgen ({@link #deleteEvent}, {@link #deleteEventsBefore(Instant, String)}, sonst
+ * {@link JobStillRunningException}).
+ *
+ * <p>Erreicht ein laufender Auftrag nach einem angeforderten Abbruch oder Anhalten {@link #STOP_GRACE} lang keinen
+ * {@link JobContext#checkpoint()}, etwa weil ein Abruf der Quelle hängt, gilt er als abgebrochen bzw. angehalten und
+ * gibt seinen Platz frei; die hängende Arbeit wird abgekoppelt: sie meldet nichts mehr, ändert den Eintrag nicht mehr
+ * und endet an ihrem nächsten Prüfpunkt.
  */
 public class Jobs implements AutoCloseable {
 
@@ -52,6 +58,8 @@ public class Jobs implements AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(Jobs.class.getName());
     private static final String COMPONENT = "Jobs";
+    /** So lange darf ein laufender Auftrag nach angefordertem Abbruch oder Anhalten bis zu seinem Prüfpunkt brauchen. */
+    public static final Duration STOP_GRACE = Duration.ofSeconds(30);
 
     private final JobStore store;
     private final JobEventStore events;
@@ -171,13 +179,57 @@ public class Jobs implements AutoCloseable {
 
     /** @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt */
     public JobStatus status(String jobId) {
+        boolean detached = false;
+        JobStatus status = null;
         synchronized (lock) {
             Job job = open.get(jobId);
             if (job != null) {
-                return job.snapshot();
+                detached = detachIfStuck(job);
+                status = job.snapshot();
             }
         }
-        return store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
+        if (detached) {
+            dispatch();
+        }
+        return status != null ? status : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
+    }
+
+    /**
+     * Unter dem Sperrobjekt: beendet einen laufenden Auftrag, der nach angefordertem Abbruch oder Anhalten länger als
+     * {@link #STOP_GRACE} keinen Prüfpunkt erreicht hat, und koppelt seine Arbeit ab.
+     *
+     * @return ob er beendet wurde
+     */
+    private boolean detachIfStuck(Job job) {
+        Instant requested = job.stopRequestedAt;
+        if (job.state != JobState.RUNNING || !job.cancelRequested || requested == null
+                || clock.instant().isBefore(requested.plus(STOP_GRACE))) {
+            return false;
+        }
+        detach(job, job.pauseRequested ? JobState.PAUSED : JobState.CANCELLED,
+                "der laufende Schritt antwortete nicht und wurde abgekoppelt");
+        return true;
+    }
+
+    /**
+     * Unter dem Sperrobjekt: beendet einen laufenden Auftrag sofort mit {@code end}, ohne auf seine Arbeit zu warten,
+     * und gibt seinen Platz frei. Die Arbeit läuft womöglich weiter, bis sie einen Prüfpunkt erreicht; ihr Eintrag
+     * bleibt davon unberührt ({@link Job#detached}). Fortsetzen startet einen neuen Lauf desselben Eintrags.
+     */
+    private void detach(Job job, JobState end, String why) {
+        job.finish(end, null, clock.instant());
+        running--;
+        if (job.type.followUp()) {
+            runningFollowUps--;
+        }
+        open.remove(job.id);
+        lock.notifyAll();
+        JobStatus finished = job.snapshot();
+        job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, end.name(),
+                (end == JobState.PAUSED ? "Auftrag angehalten: " : "Auftrag abgebrochen: ") + why, null, null, null,
+                null);
+        job.detached = true;
+        store.save(finished);
     }
 
     /**
@@ -242,6 +294,9 @@ public class Jobs implements AutoCloseable {
                 job.pauseRequested = true;
                 job.pauseReason = PauseReason.USER;
                 job.cancelRequested = true;
+                if (job.stopRequestedAt == null) {
+                    job.stopRequestedAt = clock.instant();
+                }
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
                     queued.remove(job);
@@ -463,22 +518,80 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
-     * Löscht einen eigenen beendeten Auftrag samt seinen Diagnoseereignissen. Ein Exportartefakt im Exportverzeichnis
-     * gehört zum Auftrag und wird mit ihm unerreichbar; das nächste {@code Exports.purge()} räumt es weg. Kopien, die
-     * der Benutzer anderswo gespeichert hat, bleiben unberührt.
+     * Löscht einen eigenen Auftrag in jedem Zustand samt seinen Diagnoseereignissen (ADR 0025). Ein wartender wird
+     * vorher abgebrochen, ein laufender sofort beendet und seine Arbeit abgekoppelt: sie endet an ihrem nächsten
+     * Prüfpunkt und hinterlässt nichts mehr im Eintrag. Ein Exportartefakt im Exportverzeichnis gehört zum Auftrag und
+     * wird mit ihm unerreichbar; das nächste {@code Exports.purge()} räumt es weg. Kopien, die der Benutzer anderswo
+     * gespeichert hat, bleiben unberührt.
      *
-     * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
-     * @throws JobStillRunningException wenn der Auftrag noch wartet oder läuft (vorher {@link #cancel(String, String)})
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
      */
     public void delete(String jobId, String owner) {
+        boolean freed;
         // Unter dem Sperrobjekt, damit kein gleichzeitiges Fortsetzen einen gerade gelöschten Auftrag wieder öffnet.
         synchronized (lock) {
-            JobStatus status = requireFinished(requireOwner(status(jobId), owner));
+            Job open = this.open.get(jobId);
+            JobStatus status = requireOwner(open != null ? open.snapshot()
+                    : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
+            freed = stop(jobId);
             stopped.remove(status.id());
             // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
             events.delete(status.id());
             store.delete(status.id());
         }
+        if (freed) {
+            dispatch();
+        }
+    }
+
+    /**
+     * Unter dem Sperrobjekt: beendet einen offenen Auftrag fürs Löschen, ohne Ereignis. Ein wartender verlässt die
+     * Warteschlange, ein laufender wird abgekoppelt.
+     *
+     * @return ob ein Platz frei wurde
+     */
+    private boolean stop(String jobId) {
+        Job job = open.get(jobId);
+        if (job == null) {
+            return false;
+        }
+        job.cancelRequested = true;
+        job.pauseRequested = false;
+        job.detached = true;
+        open.remove(jobId);
+        lock.notifyAll();
+        if (job.state == JobState.QUEUED) {
+            queued.remove(job);
+            job.finish(JobState.CANCELLED, null, clock.instant());
+            return false;
+        }
+        job.finish(JobState.CANCELLED, null, clock.instant());
+        running--;
+        if (job.type.followUp()) {
+            runningFollowUps--;
+        }
+        return true;
+    }
+
+    /**
+     * Löscht alle eigenen Aufträge in jedem Zustand samt ihren Ereignissen, wie {@link #delete(String, String)}.
+     *
+     * @param type nur Aufträge dieser Art oder {@code null} für alle
+     * @return Anzahl gelöschter Aufträge
+     */
+    public int deleteAll(String owner, JobType type) {
+        int removed = 0;
+        for (JobStatus status : store.all()) {
+            if (Objects.equals(status.owner(), owner) && (type == null || status.type() == type)) {
+                try {
+                    delete(status.id(), owner);
+                    removed++;
+                } catch (UnknownJobException e) {
+                    // inzwischen gelöscht
+                }
+            }
+        }
+        return removed;
     }
 
     /**
@@ -635,6 +748,9 @@ public class Jobs implements AutoCloseable {
             Job job = open.get(jobId);
             if (job != null) {
                 job.cancelRequested = true;
+                if (job.stopRequestedAt == null) {
+                    job.stopRequestedAt = clock.instant();
+                }
                 // Abbrechen geht vor Anhalten.
                 job.pauseRequested = false;
                 boolean wasQueued = job.state == JobState.QUEUED;
@@ -858,7 +974,7 @@ public class Jobs implements AutoCloseable {
 
     /** Unter dem Sperrobjekt: hält einen beendeten Auftrag zum Fortsetzen bereit, wenn Art und Zustand es erlauben. */
     private void keepResumable(Job job) {
-        if (job.type.resumable() && resumableState(job.state)) {
+        if (!job.detached && job.type.resumable() && resumableState(job.state)) {
             stopped.put(job.id, job);
         }
     }
@@ -951,6 +1067,13 @@ public class Jobs implements AutoCloseable {
         volatile boolean cancelRequested;
         /** Mit {@link #cancelRequested}: der Benutzer hält an, statt abzubrechen. */
         volatile boolean pauseRequested;
+        /** Wann Abbruch oder Anhalten zuerst angefordert wurde, für {@link #STOP_GRACE}. */
+        volatile Instant stopRequestedAt;
+        /**
+         * Die Arbeit ist abgekoppelt: der Eintrag ist beendet oder gelöscht, ihre Ereignisse und ihr Ende zählen nicht
+         * mehr. Wird nie zurückgesetzt; Fortsetzen legt dafür einen neuen Lauf an.
+         */
+        volatile boolean detached;
         /** Warum angehalten wird; {@code null} heißt durch den Benutzer. */
         volatile PauseReason pauseReason;
         volatile Instant startedAt;
@@ -990,6 +1113,7 @@ public class Jobs implements AutoCloseable {
             deadline = null;
             cancelRequested = false;
             pauseRequested = false;
+            stopRequestedAt = null;
             pauseReason = null;
             incomplete = false;
             discovered.set(0);
@@ -1120,6 +1244,9 @@ public class Jobs implements AutoCloseable {
         void emit(boolean end, JobEvent.Severity severity, JobEvent.Category category, String eventComponent,
                   String code, String message, Integer httpStatus, String proxyRoute, String tlsFinding,
                   String detail) {
+            if (detached) {
+                return;
+            }
             long current;
             do {
                 current = sequence.get();

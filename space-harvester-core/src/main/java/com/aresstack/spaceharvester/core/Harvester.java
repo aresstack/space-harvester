@@ -1657,13 +1657,11 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Löscht einen beendeten Auftrag samt seinen Diagnoseereignissen. Das Exportartefakt im Exportverzeichnis
-     * verschwindet mit dem Auftrag beim nächsten Aufräumen; anderswo gespeicherte Kopien bleiben.
+     * Löscht einen Auftrag in jedem Zustand samt seinen Diagnoseereignissen; einen wartenden oder laufenden bricht das
+     * vorher ab ({@link Jobs#delete}). Das Exportartefakt im Exportverzeichnis verschwindet mit dem Auftrag beim
+     * nächsten Aufräumen; anderswo gespeicherte Kopien bleiben.
      *
-     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es den Auftrag nicht gibt
-     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft;
-     *                                                                                vorher {@link #cancel} und das
-     *                                                                                Ende abwarten
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es den Auftrag nicht gibt
      */
     public void deleteJob(String jobId) {
         jobs.delete(jobId, OWNER);
@@ -1677,6 +1675,15 @@ public final class Harvester implements AutoCloseable {
      */
     public int deleteFinishedJobs() {
         return jobs.deleteFinished(OWNER, null);
+    }
+
+    /**
+     * Löscht alle Aufträge in jedem Zustand samt ihren Ereignissen; wartende und laufende werden vorher abgebrochen.
+     *
+     * @return Anzahl gelöschter Aufträge
+     */
+    public int deleteAllJobs() {
+        return jobs.deleteAll(OWNER, null);
     }
 
     /**

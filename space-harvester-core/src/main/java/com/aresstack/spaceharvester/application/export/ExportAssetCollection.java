@@ -237,8 +237,8 @@ public class ExportAssetCollection {
     public static final String EXPORT_ID = "exportId";
 
     /**
-     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Bilder- oder Anhängeauftrag im selben Eintrag
-     * fort (ADR 0025):
+     * Setzt den eigenen angehaltenen, gescheiterten, abgebrochenen oder unvollständig fertigen Bilder- oder
+     * Anhängeauftrag im selben Eintrag fort (ADR 0025, „Nur Fehler neu versuchen“):
      * Seiten, die er schon vollständig geprüft hat, übernimmt er ohne Abruf; schon abgelegte Dateien kommen aus dem
      * Speicher. Nach einem Neustart läuft derselbe Eintrag für denselben Export neu ({@link Jobs#rerun}).
      *
@@ -253,7 +253,7 @@ public class ExportAssetCollection {
         }
         String exportId = status.parameter(EXPORT_ID);
         JobStatus resumed;
-        if (jobs.resumable(jobId, owner) || !Jobs.resumableState(status.state())) {
+        if (jobs.resumable(jobId, owner) || !status.state().terminal()) {
             resumed = jobs.resume(jobId, owner);
         } else if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");

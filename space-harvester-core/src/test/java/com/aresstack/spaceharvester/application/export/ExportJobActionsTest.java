@@ -40,13 +40,10 @@ class ExportJobActionsTest {
         cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null)));
         JobStatus export = exports.start("confluence", "DEV", "client-a", List.of());
         assertThat(actions.state(export.id(), "client-a").actions()).containsExactly(JobAction.PAUSE,
-                JobAction.CANCEL);
+                JobAction.CANCEL, JobAction.DELETE);
         assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.RESUME))
                 .isInstanceOf(JobActionNotAllowedException.class)
                 .hasMessageContaining("RUNNING");
-        assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.DELETE))
-                .isInstanceOf(JobActionNotAllowedException.class);
-
         assertThat(actions.perform(export.id(), "client-a", JobAction.PAUSE).pauseRequested()).isTrue();
         queue.poll().run();
         assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.PAUSED);

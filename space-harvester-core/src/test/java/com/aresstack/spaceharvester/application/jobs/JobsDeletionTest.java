@@ -10,7 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 
-/** Löschen beendeter Aufträge und ihrer Diagnoseereignisse durch den Auftraggeber. */
+/** Löschen von Aufträgen in jedem Zustand und ihrer Diagnoseereignisse durch den Auftraggeber (ADR 0025). */
 class JobsDeletionTest {
 
     private final ManualExecutor executor = new ManualExecutor();
@@ -55,7 +55,7 @@ class JobsDeletionTest {
     }
 
     @Test
-    void waitingAndRunningJobsCannotBeDeleted() {
+    void eventsOfWaitingAndRunningJobsStay() {
         JobStatus running = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a",
                 context -> new CompletableFuture<>());
         executor.runNext();
@@ -63,7 +63,6 @@ class JobsDeletionTest {
         }));
 
         for (JobStatus job : new JobStatus[] {running, waiting}) {
-            assertThatThrownBy(() -> jobs.delete(job.id(), "client-a")).isInstanceOf(JobStillRunningException.class);
             assertThatThrownBy(() -> jobs.deleteEvent(job.id(), 1, "client-a"))
                     .isInstanceOf(JobStillRunningException.class);
             assertThatThrownBy(() -> jobs.deleteEventsBefore(job.id(), Instant.MAX, "client-a"))
@@ -72,6 +71,91 @@ class JobsDeletionTest {
         assertThat(jobs.deleteFinished("client-a", null)).isZero();
         assertThat(jobs.deleteEventsBefore(Instant.MAX, "client-a")).isZero();
         assertThat(jobs.events(running.id())).isNotEmpty();
+    }
+
+    @Test
+    void waitingAndRunningJobsAreStoppedAndDeleted() {
+        CompletableFuture<Void> hanging = new CompletableFuture<>();
+        JobStatus running = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> hanging);
+        executor.runNext();
+        JobStatus waiting = jobs.submit(JobType.EXPORT, "wiki", "OPS", "client-a", JobTask.blocking(context -> {
+        }));
+        assertThat(jobs.status(running.id()).lifecycle().allows(JobAction.DELETE)).isTrue();
+        assertThat(jobs.status(waiting.id()).lifecycle().allows(JobAction.DELETE)).isTrue();
+
+        jobs.delete(running.id(), "client-a");
+        jobs.delete(waiting.id(), "client-a");
+
+        assertThatThrownBy(() -> jobs.status(running.id())).isInstanceOf(UnknownJobException.class);
+        assertThatThrownBy(() -> jobs.status(waiting.id())).isInstanceOf(UnknownJobException.class);
+        assertThat(events.events(running.id())).isEmpty();
+        // Die abgekoppelte Arbeit endet später: sie legt den Eintrag nicht wieder an und meldet nichts mehr.
+        hanging.complete(null);
+        assertThatThrownBy(() -> jobs.status(running.id())).isInstanceOf(UnknownJobException.class);
+        assertThat(events.events(running.id())).isEmpty();
+        // Der Platz ist frei: ein neuer Auftrag startet.
+        JobStatus next = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+        }));
+        while (executor.pending() > 0) {
+            executor.runNext();
+        }
+        assertThat(jobs.status(next.id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void deletingAllRemovesEveryOwnJobInEveryState() {
+        JobStatus done = finished("client-a", JobType.EXPORT);
+        JobStatus running = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a",
+                context -> new CompletableFuture<>());
+        executor.runNext();
+        JobStatus waiting = jobs.submit(JobType.SYNC, "wiki", "OPS", "client-a", JobTask.blocking(context -> {
+        }));
+        JobStatus foreign = finished("client-b", JobType.EXPORT);
+
+        assertThat(jobs.deleteAll("client-a", null)).isEqualTo(3);
+
+        for (JobStatus job : List.of(done, running, waiting)) {
+            assertThatThrownBy(() -> jobs.status(job.id())).isInstanceOf(UnknownJobException.class);
+        }
+        assertThat(jobs.status(foreign.id()).id()).isEqualTo(foreign.id());
+    }
+
+    @Test
+    void aCancelTheRunningStepNeverAnswersEndsAfterTheGraceAndFreesTheSlot() {
+        CompletableFuture<Void> hanging = new CompletableFuture<>();
+        JobStatus stuck = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> hanging);
+        executor.runNext();
+
+        jobs.cancel(stuck.id(), "client-a");
+        assertThat(jobs.status(stuck.id()).lifecycle().key()).isEqualTo("CANCEL_REQUESTED");
+        clock.advance(Jobs.STOP_GRACE.plusSeconds(1));
+
+        JobStatus cancelled = jobs.status(stuck.id());
+        assertThat(cancelled.state()).isEqualTo(JobState.CANCELLED);
+        assertThat(cancelled.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
+        long eventsAtCancel = events.events(stuck.id()).size();
+        // Endet die hängende Arbeit doch noch, ändert sie den Eintrag nicht mehr.
+        hanging.complete(null);
+        assertThat(jobs.status(stuck.id()).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(events.events(stuck.id())).hasSize((int) eventsAtCancel);
+        // Fortsetzen startet einen neuen Lauf im selben Eintrag.
+        JobStatus resumed = jobs.rerun(stuck.id(), "client-a", JobTask.blocking(context -> {
+        }));
+        assertThat(resumed.id()).isEqualTo(stuck.id());
+        executor.runNext();
+        assertThat(jobs.status(stuck.id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void aStepThatReachesItsCheckpointInTimeEndsNormally() {
+        CompletableFuture<Void> slow = new CompletableFuture<>();
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> slow);
+        executor.runNext();
+        jobs.cancel(job.id(), "client-a");
+        clock.advance(Jobs.STOP_GRACE.minusSeconds(1));
+        assertThat(jobs.status(job.id()).lifecycle().key()).isEqualTo("CANCEL_REQUESTED");
+        slow.completeExceptionally(new JobCancelledException(job.id()));
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.CANCELLED);
     }
 
     @Test

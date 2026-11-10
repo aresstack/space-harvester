@@ -24,20 +24,20 @@ class ActivitiesActionsTest {
     @Test
     void theCoreStateDecidesWhichActionsARowOffers() {
         assertThat(job(JobType.EXPORT, JobState.RUNNING, false).lifecycle().actions())
-                .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
         assertThat(job(JobType.EXPORT, JobState.PAUSED, false).lifecycle().actions())
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         assertThat(job(JobType.EXPORT, JobState.FAILED, false).lifecycle().actions())
                 .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(job(JobType.ENRICHMENT, JobState.RUNNING, false).lifecycle().actions())
-                .containsExactly(JobAction.CANCEL);
+                .containsExactly(JobAction.CANCEL, JobAction.DELETE);
         // Bilder und Anhänge lassen sich anhalten und fortsetzen wie Downloads (ADR 0025).
         assertThat(job(JobType.ASSETS, JobState.PAUSED, false).lifecycle().actions())
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         assertThat(job(JobType.ATTACHMENTS, JobState.RUNNING, false).lifecycle().actions())
-                .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
         assertThat(job(JobType.EXPORT, JobState.QUEUED, false).lifecycle().actions())
-                .containsExactly(JobAction.START_NOW, JobAction.CANCEL);
+                .containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
         // Downloads (ADR 0025): fertig → Neu erzwingen; mit Fehlern fertig → zuerst Nur Fehler.
         assertThat(job(JobType.EXPORT, JobState.COMPLETED, false).lifecycle().actions())
                 .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
