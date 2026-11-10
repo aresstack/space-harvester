@@ -86,6 +86,28 @@ class SetupWizardTest {
     }
 
     @Test
+    void everyStepCanScrollVerticallyWithoutHidingNavigation() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            SetupWizard wizard = new SetupWizard(context);
+            java.util.List<javax.swing.JScrollPane> pages = SourceFormLayoutTest.find(
+                    wizard.component(), javax.swing.JScrollPane.class).stream()
+                    .filter(scroll -> scroll.getViewport().getView()
+                            instanceof com.aresstack.spaceharvester.app.ui.controls.ScrollColumn)
+                    .toList();
+
+            assertThat(pages).hasSize(SetupWizard.STEPS.length);
+            for (javax.swing.JScrollPane page : pages) {
+                assertThat(page.getVerticalScrollBarPolicy())
+                        .isEqualTo(javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+                assertThat(page.getHorizontalScrollBarPolicy())
+                        .isEqualTo(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(wizard.next, page)).isFalse();
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(wizard.finish, page)).isFalse();
+            }
+        });
+    }
+
+    @Test
     void theNetworkTestTriesTheSourceAndSaysClearlyThatItFailed() throws Exception {
         SetupWizard[] wizard = new SetupWizard[1];
         CountDownLatch tested = new CountDownLatch(1);
