@@ -54,7 +54,8 @@ class ExportJobActionsTest {
         assertThat(actions.perform(export.id(), "client-a", JobAction.RESUME).id()).isEqualTo(export.id());
         queue.poll().run();
         assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
-        assertThat(actions.state(export.id(), "client-a").actions()).containsExactly(JobAction.DELETE);
+        assertThat(actions.state(export.id(), "client-a").actions()).containsExactly(JobAction.FORCE_REFRESH,
+                JobAction.DELETE);
 
         actions.perform(export.id(), "client-a", JobAction.DELETE);
         assertThatThrownBy(() -> jobs.status(export.id())).isInstanceOf(UnknownJobException.class);

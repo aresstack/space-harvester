@@ -179,9 +179,24 @@ public class SpaceSync {
      */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
                        java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading) {
+        return run(sourceId, spaceKey, applier, listener, mode, loading, false);
+    }
+
+    /**
+     * Wie {@link #run(String, String, PlanApplier, SyncListener, SyncMode, java.util.function.Function)}; mit
+     * {@code reloadAll} („Neu erzwingen“, ADR 0025) lädt der Lauf auch unveränderte Seiten im Ladeumfang neu
+     * ({@link SyncPlan#withContentReloaded}).
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
+                       java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading,
+                       boolean reloadAll) {
         SyncPlan planned = plan(sourceId, spaceKey, mode);
-        SyncPlan plan = loading == null || !planned.inventory().confirmed() ? planned
-                : planned.withLoadingLimitedTo(loading.apply(planned.inventory()));
+        java.util.function.Predicate<String> inScope = loading == null || !planned.inventory().confirmed()
+                ? pageId -> true : loading.apply(planned.inventory());
+        SyncPlan limited = loading == null || !planned.inventory().confirmed() ? planned
+                : planned.withLoadingLimitedTo(inScope);
+        SyncPlan plan = reloadAll && planned.inventory().confirmed() && mode.refreshesContent()
+                ? limited.withContentReloaded(inScope) : limited;
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {

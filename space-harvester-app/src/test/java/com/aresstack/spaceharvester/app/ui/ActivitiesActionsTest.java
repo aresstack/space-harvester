@@ -28,7 +28,7 @@ class ActivitiesActionsTest {
         assertThat(job(JobType.EXPORT, JobState.PAUSED, false).lifecycle().actions())
                 .containsExactly(JobAction.RESUME, JobAction.DELETE);
         assertThat(job(JobType.EXPORT, JobState.FAILED, false).lifecycle().actions())
-                .containsExactly(JobAction.RESUME, JobAction.DELETE);
+                .containsExactly(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE);
         assertThat(job(JobType.ENRICHMENT, JobState.RUNNING, false).lifecycle().actions())
                 .containsExactly(JobAction.CANCEL);
         // Bilder und Anhänge lassen sich anhalten und fortsetzen wie Downloads (ADR 0025).
@@ -38,9 +38,14 @@ class ActivitiesActionsTest {
                 .containsExactly(JobAction.PAUSE, JobAction.CANCEL);
         assertThat(job(JobType.EXPORT, JobState.QUEUED, false).lifecycle().actions())
                 .containsExactly(JobAction.START_NOW, JobAction.CANCEL);
+        // Downloads (ADR 0025): fertig → Neu erzwingen; mit Fehlern fertig → zuerst Nur Fehler.
         assertThat(job(JobType.EXPORT, JobState.COMPLETED, false).lifecycle().actions())
+                .containsExactly(JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(withFailures().lifecycle().actions())
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        assertThat(job(JobType.SYNC, JobState.COMPLETED, false).lifecycle().actions())
                 .containsExactly(JobAction.DELETE);
-        // Kein Zustand bietet mehr als zwei Aktionen an: so breit ist die Spalte.
+        // Kein Zustand bietet mehr Aktionen an, als die Spalte breit ist.
         for (JobType type : JobType.values()) {
             for (JobState state : JobState.values()) {
                 assertThat(job(type, state, false).lifecycle().actions().size())
@@ -65,6 +70,9 @@ class ActivitiesActionsTest {
                 .isEqualTo("Fortsetzen · 2 Dateien fehlen wegen fehlender Anmeldung; "
                         + "die Einmalcode-Abfrage kommt dann wieder");
         assertThat(ActivitiesView.actionTip(JobAction.CANCEL, running)).isEqualTo("Abbrechen");
+        assertThat(ActivitiesView.actionTip(JobAction.RETRY_FAILED, withFailures()))
+                .startsWith("Nur Fehler neu versuchen · ");
+        assertThat(ActivitiesView.actionTip(JobAction.FORCE_REFRESH, withFailures())).startsWith("Neu erzwingen · ");
         assertThat(ActivitiesView.actionTip(JobAction.CANCEL, job(JobType.EXPORT, JobState.RUNNING, true)))
                 .isEqualTo("Abbrechen · statt nur anzuhalten");
     }
@@ -88,6 +96,12 @@ class ActivitiesActionsTest {
                 .isEqualTo("Angehalten – Verbindung unterbrochen");
         assertThat(Texts.tone(paused(PauseReason.CONNECTION_LOST))).isEqualTo(Comic.Tone.WARNING);
         assertThat(Texts.state(paused(PauseReason.USER))).isEqualTo("Angehalten");
+    }
+
+    private static JobStatus withFailures() {
+        return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(6, 6, 0, 6), null, false, Instant.EPOCH, null, Instant.EPOCH, null, null, Map.of(),
+                true, false, null);
     }
 
     private static JobStatus paused(PauseReason reason) {

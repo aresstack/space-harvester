@@ -82,7 +82,31 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     nach einem Neustart. Offen: `Retry-After` (nur per Upstream-Patch) und das Abbrechen einer laufenden Wartezeit
     beim Anhalten; heute wirkt Anhalten nach dem laufenden Abruf, also nach höchstens `max-delay` je Versuch.
 
-Folgen in eigenen Schritten: „Nur Fehler neu versuchen“ und „Neu erzwingen“ (neue Generation, erst nach Erfolg sichtbar), beide im selben Eintrag.
+13. **↻ Nur Fehler neu versuchen** (Angelo 10.11.2026: „Die sechs fehlgeschlagenen Seiten gezielt nachladen, ohne
+    erneute Inventur“; „der retry macht keinen neuen auftrag mehr daraus“). Ein mit Fehlern fertiger Download
+    (`COMPLETED_WITH_ERRORS`) bietet `JobAction#RETRY_FAILED` an. Das Manifest nennt die lesbaren Seiten, deren Abruf
+    beim Einlesen scheiterte (`unfetched`), neben den fehlenden (`failures`); genau sie lädt `Exports#retryFailed`
+    im selben Eintrag nach (`Jobs#rerun`), ohne Inventur: `SpaceProvisioning#retry` bzw. `FailedPageRetry` fragt jede
+    Seite einzeln nach, prüft Lesbarkeit und Umfang an den frischen Kopfdaten (sonst fällt sie still weg, ohne
+    Zähler), lädt den Inhalt über denselben `PlanApplier` und bestätigt darauf die nächste Generation; alle übrigen
+    Seiten bleiben, wie sie sind. Danach entsteht das Artefakt neu und ersetzt das bisherige erst nach Erfolg
+    (`ExportArtifactWriter#replace`); Bilder-, Anhängemanifest und Lese-Ansichten wandern mit, das Manifest als
+    unvollständig, und die vorhandenen Aufträge „Bilder beschaffen“ und „Anhänge beschaffen“ laufen im selben Eintrag
+    erneut. Solange einer davon noch läuft, lehnt ↻ ab (das Artefakt wird gelesen). Zähler: alle exportierten Seiten
+    plus die wieder gescheiterten; was die Quelle nicht nachprüfen konnte, bleibt gescheitert. Ohne bestätigte
+    Generation liest der Lauf wie beim Fortsetzen ein. In der App führt der Pfeil im Kreis bei einem solchen Download
+    ↻ aus, bei einem gescheiterten oder abgebrochenen Fortsetzen.
+
+14. **⟲ Neu erzwingen** (Angelo 10.11.2026: „Den gesamten Datenbestand tatsächlich neu von Confluence abrufen, aber
+    erst nach erfolgreichem Download den bisherigen Bestand ersetzen“). Ein beendeter Download (fertig, mit Fehlern,
+    gescheitert oder abgebrochen) bietet `JobAction#FORCE_REFRESH` an. `Exports#forceRefresh` läuft im selben Eintrag
+    erneut, mit Inventur und `reloadAll` (`SpaceProvisioning#provisionScoped(…, reloadAll)`): `SyncPlan#withContentReloaded`
+    macht auch unveränderte Seiten im Ladeumfang zu `CONTENT_CHANGED`. Sie laufen über die `StagedGeneration`, ersetzen
+    ihren bisherigen Stand also erst mit der neuen Generation; scheitert ein Abruf, bleibt der bisherige als veraltet.
+    Ein Abbruch verwirft das Vorgemerkte, Bestand und Artefakt bleiben. Das neue Artefakt ersetzt das bisherige erst
+    nach Erfolg (`ExportArtifactWriter#replace`), Bilder und Anhänge laufen danach in ihren Einträgen erneut; solange
+    sie noch laufen, lehnt ⟲ ab. Ein Teilbaum-Export lädt nur seinen Teilbaum neu. In der App steht ⟲ als eigener
+    Knopf neben ↻; ↻ lädt bei Downloads nur noch gescheiterte Seiten nach. Abgleiche folgen in einem eigenen Schritt.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

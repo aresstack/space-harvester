@@ -30,13 +30,15 @@ public sealed interface JobLifecycleState {
     static JobLifecycleState of(JobStatus status) {
         Objects.requireNonNull(status, "status");
         boolean resumable = status.type().resumable();
+        // Nur Downloads laden gezielt nach oder erzwingen einen neuen Stand (ADR 0025).
+        boolean download = status.type() == JobType.EXPORT;
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
             case PAUSED -> new Paused(status.pauseReason());
-            case COMPLETED -> status.incomplete() || status.progress().failed() > 0 ? new CompletedWithErrors()
-                    : new Completed();
-            case FAILED, CANCELLED -> new Stopped(status.state(), resumable);
+            case COMPLETED -> status.incomplete() || status.progress().failed() > 0
+                    ? new CompletedWithErrors(download) : new Completed(download);
+            case FAILED, CANCELLED -> new Stopped(status.state(), resumable, download);
         };
     }
 
@@ -98,8 +100,17 @@ public sealed interface JobLifecycleState {
         }
     }
 
-    /** Fertig, und nichts fehlt. */
-    record Completed() implements JobLifecycleState {
+    /**
+     * Fertig, und nichts fehlt. Ein Download bietet „Neu erzwingen“ an ({@link JobAction#FORCE_REFRESH}).
+     *
+     * @param forceable ob die Art einen neuen Stand erzwingen kann
+     */
+    record Completed(boolean forceable) implements JobLifecycleState {
+
+        public Completed() {
+            this(false);
+        }
+
         @Override
         public String key() {
             return "COMPLETED";
@@ -107,12 +118,22 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return List.of(JobAction.DELETE);
+            return forceable ? List.of(JobAction.FORCE_REFRESH, JobAction.DELETE) : List.of(JobAction.DELETE);
         }
     }
 
-    /** Technisch fertig, aber Seiten oder Bilder fehlen. */
-    record CompletedWithErrors() implements JobLifecycleState {
+    /**
+     * Technisch fertig, aber Seiten oder Bilder fehlen. Ein Download bietet „Nur Fehler neu versuchen“ und „Neu
+     * erzwingen“ an ({@link JobAction#RETRY_FAILED}, {@link JobAction#FORCE_REFRESH}).
+     *
+     * @param retryable ob die Art gescheiterte Seiten gezielt nachladen und einen neuen Stand erzwingen kann
+     */
+    record CompletedWithErrors(boolean retryable) implements JobLifecycleState {
+
+        public CompletedWithErrors() {
+            this(false);
+        }
+
         @Override
         public String key() {
             return "COMPLETED_WITH_ERRORS";
@@ -120,12 +141,22 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return List.of(JobAction.DELETE);
+            return retryable ? List.of(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE)
+                    : List.of(JobAction.DELETE);
         }
     }
 
-    /** Gescheitert oder abgebrochen. */
-    record Stopped(JobState state, boolean resumable) implements JobLifecycleState {
+    /**
+     * Gescheitert oder abgebrochen. Ein Download bietet neben Fortsetzen auch „Neu erzwingen“ an.
+     *
+     * @param forceable ob die Art einen neuen Stand erzwingen kann
+     */
+    record Stopped(JobState state, boolean resumable, boolean forceable) implements JobLifecycleState {
+
+        public Stopped(JobState state, boolean resumable) {
+            this(state, resumable, false);
+        }
+
         public Stopped {
             if (state != JobState.FAILED && state != JobState.CANCELLED) {
                 throw new IllegalArgumentException("nur FAILED oder CANCELLED");
@@ -139,7 +170,11 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return resumable ? List.of(JobAction.RESUME, JobAction.DELETE) : List.of(JobAction.DELETE);
+            if (!resumable) {
+                return List.of(JobAction.DELETE);
+            }
+            return forceable ? List.of(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE)
+                    : List.of(JobAction.RESUME, JobAction.DELETE);
         }
     }
 }

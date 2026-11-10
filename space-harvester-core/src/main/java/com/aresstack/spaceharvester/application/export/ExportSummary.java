@@ -19,9 +19,18 @@ import java.util.Objects;
  * @param complete     {@code true} nur, wenn keine Seite fehlt und die Generation bestätigt ist; bei einer Startseite
  *                     genügt, dass die Generation im Teilbaum keine Lücken hat (ADR 0025: ein Teilbaum-Export lädt nur
  *                     seinen Teilbaum, der übrige Space bleibt nur katalogisiert)
+ * @param unfetched    lesbare Seiten im Umfang, deren Abruf beim Einlesen scheiterte (fehlen oder auf altem Stand);
+ *                     „Nur Fehler neu versuchen“ lädt genau sie und die {@code failures} nach (ADR 0025)
  */
 public record ExportSummary(String exportId, ExportScope scope, Instant startedAt, Instant finishedAt,
-                            long pagesWritten, List<PageFailure> failures, List<String> warnings, boolean complete) {
+                            long pagesWritten, List<PageFailure> failures, List<String> warnings, boolean complete,
+                            List<String> unfetched) {
+
+    /** Ohne gescheiterte Abrufe beim Einlesen. */
+    public ExportSummary(String exportId, ExportScope scope, Instant startedAt, Instant finishedAt,
+                         long pagesWritten, List<PageFailure> failures, List<String> warnings, boolean complete) {
+        this(exportId, scope, startedAt, finishedAt, pagesWritten, failures, warnings, complete, List.of());
+    }
 
     /** Kennung des Manifest- und Artefaktformats. */
     public static final String SCHEMA_VERSION = "space-harvester-export/v1";
@@ -33,8 +42,9 @@ public record ExportSummary(String exportId, ExportScope scope, Instant startedA
         Objects.requireNonNull(finishedAt, "finishedAt");
         failures = List.copyOf(failures);
         warnings = List.copyOf(warnings);
+        unfetched = List.copyOf(unfetched == null ? List.of() : unfetched);
         boolean generationFits = scope.generation().state() == CacheState.CONFIRMED || scope.rootPageId() != null;
-        if (complete && (!generationFits || !failures.isEmpty())) {
+        if (complete && (!generationFits || !failures.isEmpty() || !unfetched.isEmpty())) {
             throw new IllegalArgumentException("vollständig nur aus bestätigter Generation (oder lückenlosem Teilbaum) "
                     + "ohne fehlende Seiten");
         }

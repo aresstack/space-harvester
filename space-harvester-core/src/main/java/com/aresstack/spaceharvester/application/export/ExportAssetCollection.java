@@ -209,14 +209,24 @@ public class ExportAssetCollection {
         }
     }
 
+    /**
+     * Plant den Auftrag dieser Art ein. Gibt es für den Export schon einen (etwa nach „Nur Fehler neu versuchen“),
+     * läuft derselbe Eintrag erneut, statt einen zweiten anzulegen; ein noch offener bleibt, wie er ist.
+     */
     private Optional<JobStatus> submit(Scope scope, ConversionInput dataset, String exportId, String owner,
                                        AssetTask task) {
         try {
-            JobStatus status = jobs.submit(scope.type, dataset.sourceId(), dataset.spaceKey(), null, owner,
+            Optional<JobStatus> earlier = jobs.list(owner, scope.type).stream()
+                    .filter(job -> exportId.equals(job.parameter(EXPORT_ID))).findFirst();
+            if (earlier.isPresent() && !earlier.get().state().terminal()) {
+                return earlier;
+            }
+            JobStatus status = earlier.isPresent() ? jobs.rerun(earlier.get().id(), owner, task)
+                    : jobs.submit(scope.type, dataset.sourceId(), dataset.spaceKey(), null, owner,
                     Map.of(EXPORT_ID, exportId), task);
             running.put(scope.key(exportId), status.id());
             return Optional.of(status);
-        } catch (JobCapacityExceededException | IllegalStateException e) {
+        } catch (JobCapacityExceededException | JobNotResumableException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "{0} für Export {1} nicht eingeplant ({2})", scope.label, exportId,
                     e.getClass().getSimpleName());
             return Optional.empty();

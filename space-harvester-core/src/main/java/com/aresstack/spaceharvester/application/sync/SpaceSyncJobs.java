@@ -63,6 +63,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private final SpaceSync sync;
     private final ChangeSync changeSync;
     private final EventSync eventSync;
+    private final FailedPageRetry retry;
     private final SyncBaselineStore store;
     private final PlanApplier applier;
     private final List<SyncCommitted> afterCommit;
@@ -109,6 +110,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         this.store = store;
         this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock);
         this.eventSync = store == null || fetcher == null ? null : new EventSync(queries, store, clock);
+        this.retry = store == null || fetcher == null ? null : new FailedPageRetry(queries, store, clock);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 
@@ -162,6 +164,15 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading) {
+        return provisionScoped(context, sourceId, spaceKey, counting, loading, false);
+    }
+
+    /** Wie oben; mit {@code reloadAll} auch unveränderte Seiten im Ladeumfang neu laden („Neu erzwingen“). */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading,
+                                       boolean reloadAll) {
         Objects.requireNonNull(counting, "counting");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
@@ -179,7 +190,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                         Set<String> ids = new java.util.HashSet<>();
                         listed.stream().filter(load).forEach(header -> ids.add(header.key().pageId()));
                         return ids::contains;
-                    });
+                    }, reloadAll);
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }
@@ -190,6 +201,52 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         }
         afterCommit(run, sourceId, spaceKey, context.owner());
         return new Provisioned(true, false, failedPages(run));
+    }
+
+    /**
+     * Lädt genau diese Seiten im laufenden Auftrag nach, ohne Inventur ({@link FailedPageRetry}), mit derselben
+     * Folgearbeit nach dem Bestätigen. Hat inzwischen ein anderer Lauf bestätigt, versucht es einmal auf dessen
+     * Generation; scheitert auch das, bleiben alle Seiten ungeprüft.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    @Override
+    public Retried retry(JobContext context, String sourceId, String spaceKey, Set<String> pageIds,
+                         Predicate<PageHeader> allowed) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        Objects.requireNonNull(allowed, "allowed");
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        context.phase(COMPONENT, "Fehlgeschlagene Seiten abrufen");
+        SyncListener listener = retryListener(context);
+        java.util.Optional<FailedPageRetry.Result> result;
+        try {
+            result = retryOnce(sourceId, spaceKey, pageIds, allowed, listener);
+        } catch (SyncConflictException first) {
+            try {
+                result = retryOnce(sourceId, spaceKey, pageIds, allowed, listener);
+            } catch (SyncConflictException again) {
+                return new Retried(true, List.of(), pageIds);
+            }
+        }
+        if (result.isEmpty()) {
+            return Retried.UNAVAILABLE;
+        }
+        if (result.get().run() != null) {
+            afterCommit(result.get().run(), sourceId, spaceKey, context.owner());
+        }
+        return new Retried(true, result.get().failedPages(), result.get().unchecked(), result.get().dropped());
+    }
+
+    private java.util.Optional<FailedPageRetry.Result> retryOnce(String sourceId, String spaceKey, Set<String> pageIds,
+                                                                 Predicate<PageHeader> allowed,
+                                                                 SyncListener listener) {
+        return retry.run(sourceId, spaceKey, pageIds, allowed, applier, listener);
     }
 
     /**
@@ -662,6 +719,22 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     context.processed(1);
                 }
             }
+
+            @Override
+            public void checkpoint() {
+                context.checkpoint();
+            }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
+            }
+        };
+    }
+
+    /** Nachladen im Export: nur Abbruch und Verbindungsverlust; zählen tut der Export selbst. */
+    private static SyncListener retryListener(JobContext context) {
+        return new SyncListener() {
 
             @Override
             public void checkpoint() {

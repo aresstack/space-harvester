@@ -892,8 +892,13 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon PAUSE = ComposerIcons.pause();
     private static final javax.swing.Icon RESUME = ComposerIcons.play();
     private static final javax.swing.Icon CANCEL = ComposerIcons.stop();
-    /** Mehr Aktionen bietet kein Zustand an ({@link JobLifecycleState#actions()}); so breit ist die Spalte. */
-    static final int MAX_LIFECYCLE_ACTIONS = 2;
+    private static final javax.swing.Icon RETRY_FAILED = ComposerIcons.refresh();
+    private static final javax.swing.Icon FORCE_REFRESH = ComposerIcons.download();
+    /**
+     * Mehr Aktionen bietet kein Zustand an ({@link JobLifecycleState#actions()}); so breit ist die Spalte. Drei, weil
+     * ein beendeter Download neben Fortsetzen bzw. Nur Fehler auch Neu erzwingen und Löschen anbietet (ADR 0025).
+     */
+    static final int MAX_LIFECYCLE_ACTIONS = 3;
 
     /**
      * Die Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, dann die des Zustands im Core in dessen
@@ -929,6 +934,8 @@ public final class ActivitiesView implements View {
             case PAUSE -> PAUSE;
             case RESUME -> RESUME;
             case CANCEL -> CANCEL;
+            case RETRY_FAILED -> RETRY_FAILED;
+            case FORCE_REFRESH -> FORCE_REFRESH;
             case DELETE -> Glyph.TRASH;
         };
     }
@@ -952,6 +959,10 @@ public final class ActivitiesView implements View {
                         : "Fortsetzen · holt nur, was noch fehlt";
             }
             case CANCEL -> job.pauseRequested() ? "Abbrechen · statt nur anzuhalten" : "Abbrechen";
+            case RETRY_FAILED -> "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
+                    + "ohne neue Inventur, im selben Eintrag";
+            case FORCE_REFRESH -> "Neu erzwingen · alles neu von der Quelle abrufen, auch Unverändertes; "
+                    + "der bisherige Stand bleibt, bis der neue fertig ist";
             case DELETE -> "Auftrag löschen";
         };
     }
@@ -990,7 +1001,8 @@ public final class ActivitiesView implements View {
                     render();
                 }
                 feedback.success("Auftrag gelöscht");
-            } else if (action == JobAction.RESUME) {
+            } else if (action == JobAction.RESUME || action == JobAction.RETRY_FAILED
+                    || action == JobAction.FORCE_REFRESH) {
                 show(after.id());
             }
             poll();
