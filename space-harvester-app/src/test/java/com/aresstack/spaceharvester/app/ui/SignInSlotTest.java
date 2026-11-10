@@ -224,6 +224,11 @@ class SignInSlotTest {
             assertThat(slot[0].otpFieldVisible()).isFalse();
             assertThat(slot[0].resendButton().isVisible()).isFalse();
             assertThat(slot[0].submitButton().getText()).isEqualTo(SignInSlot.LOGIN_TEXT);
+            java.awt.Container credentials = slot[0].usernameField().getParent();
+            credentials.setSize(credentials.getPreferredSize());
+            credentials.doLayout();
+            assertThat(slot[0].passwordField().getX()).isEqualTo(slot[0].usernameField().getX());
+            assertThat(slot[0].passwordField().getWidth()).isEqualTo(slot[0].usernameField().getWidth());
             slot[0].submitButton().doClick();
             assertThat(slot[0].errorText()).isEqualTo(SignInSlot.LOGIN_REQUIRED);
             slot[0].usernameField().setText("maria");
