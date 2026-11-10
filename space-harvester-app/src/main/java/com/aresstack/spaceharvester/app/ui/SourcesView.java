@@ -556,9 +556,10 @@ public final class SourcesView implements View {
             });
             if (confluence) {
                 row(EditableProperty.action("Zugangsdaten beziehen über", credentialOrigin(entry), Comic.INK,
-                        "KeePass oder Manuell und den KeePass-Eintrag ändern", () -> edit(entry)));
+                        "KeePass oder Manuell und den KeePass-Eintrag ändern", () -> editCredentials(entry)));
                 row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart, Herkunft, KeePass-Eintrag und Zugangsdaten ändern", () -> edit(entry)));
+                        "Anmeldeart, Herkunft, KeePass-Eintrag und Zugangsdaten ändern",
+                        () -> editCredentials(entry)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
             }
@@ -763,8 +764,17 @@ public final class SourcesView implements View {
                                     Consumer<String> saved);
     }
 
-    /** Öffnet das Formular der Quelle mit dem Eintrag frisch aus der Datei. */
+    /** Öffnet die Zugangsdaten direkt in derselben Maske wie im Einrichtungsassistenten. */
+    private void editCredentials(AppSettings.SourceEntry entry) {
+        openEditor(entry, true);
+    }
+
+    /** Öffnet das vollständige Quellenformular. */
     private void edit(AppSettings.SourceEntry entry) {
+        openEditor(entry, false);
+    }
+
+    private void openEditor(AppSettings.SourceEntry entry, boolean credentials) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         SourceDraft.Editable editable;
@@ -774,7 +784,11 @@ public final class SourcesView implements View {
             feedback.problem(e);
             return;
         }
-        SourceForm.open(root, context, editable, this::select);
+        if (credentials) {
+            SourceForm.openCredentials(root, context, editable, this::select);
+        } else {
+            SourceForm.open(root, context, editable, this::select);
+        }
     }
 
     private boolean disabled(AppSettings.SourceEntry entry) {
