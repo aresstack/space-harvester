@@ -42,6 +42,7 @@ public final class SignInSlot extends JPanel {
 
     static final String HEADING = "Zusätzliche Anmeldung erforderlich";
     static final String SUBMIT_TEXT = "Bestätigen";
+    static final String LOGIN_TEXT = "Anmelden";
     static final String RESEND_TEXT = "Code erneut senden";
     static final String DECLINE_TEXT = "Ohne Anmeldung fortfahren";
     static final String SENDING_TEXT = "Wird gesendet …";
@@ -202,7 +203,9 @@ public final class SignInSlot extends JPanel {
         shown = next;
         boolean loginVisibilityChanged = loginFields.isVisible() != next.asksForLogin();
         showLogin(next.asksForLogin());
-        String hint = next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
+        String hint = next.asksForLogin()
+                ? "Für geschützte Dateien ist zunächst eine zusätzliche Web-Anmeldung erforderlich."
+                : next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
         String where = next.title().isEmpty() ? next.service() : next.title();
         message.setText(hint + (where.isEmpty() ? "" : "\n(" + where + ")"));
         // Die Ursache eines gescheiterten Sendens (407, TLS, Zeitüberschreitung …) nennt seit #571 der Core an der
@@ -211,7 +214,7 @@ public final class SignInSlot extends JPanel {
                 : localError != null ? localError : next.error();
         error.setText(problem);
         error.setVisible(!problem.isEmpty());
-        resendButton.setVisible(next.resendAvailable());
+        resendButton.setVisible(!next.asksForLogin() && next.resendAvailable());
         setSending(sending);
         if (loginVisibilityChanged) {
             revalidateParent();
@@ -329,7 +332,8 @@ public final class SignInSlot extends JPanel {
 
     private void setSending(boolean value) {
         sending = value;
-        submitButton.setText(value ? SENDING_TEXT : SUBMIT_TEXT);
+        submitButton.setText(value ? SENDING_TEXT
+                : shown != null && shown.asksForLogin() ? LOGIN_TEXT : SUBMIT_TEXT);
         submitButton.setEnabled(!value);
         resendButton.setEnabled(!value);
         declineButton.setEnabled(!value);
