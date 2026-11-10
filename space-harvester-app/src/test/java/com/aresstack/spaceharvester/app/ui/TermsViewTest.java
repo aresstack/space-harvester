@@ -139,23 +139,69 @@ class TermsViewTest {
         awaitEdt(() -> form[0].statusText().contains("wiki"));
         SwingUtilities.invokeAndWait(() -> {
             seen.add(form[0].statusText());
-            ((javax.swing.JComboBox<?>) form[0].getComponent(1)).setSelectedIndex(1);
+            form[0].sourceBox().setSelectedIndex(1);
             seen.add(form[0].scope().toString());
         });
-        awaitEdt(() -> ((javax.swing.JComboBox<?>) form[0].getComponent(3)).getItemCount() == 2);
+        awaitEdt(() -> form[0].spaceBox().getItemCount() == 2);
         SwingUtilities.invokeAndWait(() -> {
-            ((javax.swing.JComboBox<?>) form[0].getComponent(3)).setSelectedIndex(1);
+            form[0].spaceBox().setSelectedIndex(1);
             seen.add(form[0].request().scope().toString());
-            seen.add(String.valueOf(((javax.swing.JComboBox<?>) form[0].getComponent(1)).getItemAt(1)));
+            seen.add(String.valueOf(form[0].sourceBox().getItemAt(1)));
         });
         awaitEdt(() -> form[0].statusText().contains("Nicht freigegeben, kein Text an den Dienst: wiki"));
         assertThat(seen).containsExactly(
                 com.aresstack.spaceharvester.application.terms.SynonymScope.ALL.toString(), "40",
-                "<html>" + SynonymRunForm.NO_MODEL + "<br>Freigegeben: wiki.<br>Nicht freigegeben, kein Text an den "
-                        + "Dienst: intern.</html>",
+                SynonymRunForm.NO_MODEL + "\nFreigegeben: wiki.\nNicht freigegeben, kein Text an den Dienst: intern.",
                 com.aresstack.spaceharvester.application.terms.SynonymScope.source("wiki").toString(),
                 com.aresstack.spaceharvester.application.terms.SynonymScope.space("wiki", "DEV").toString(),
                 "Wiki (wiki)");
+    }
+
+    /**
+     * Codex zu #581: Der Hinweis kommt nach dem Packen. Der Hinweis bricht in der Breite des Formulars um und das
+     * Formular wächst mit ihm in die Höhe, statt ihn in einer Rasterzeile abzuschneiden (ohne Fenster prüfbar; das
+     * Fenster zieht {@code SynonymRunForm} selbst nach).
+     */
+    @Test
+    void theRunFormGrowsWithTheDescriptionInsteadOfClippingIt() throws Exception {
+        com.aresstack.spaceharvester.application.terms.SynonymBudget budget =
+                new com.aresstack.spaceharvester.application.terms.SynonymBudget(2000, 500, 40);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        List<String> many = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            many.add("quelle-" + i + "-mit-langem-namen");
+        }
+        java.util.function.Function<com.aresstack.spaceharvester.application.terms.SynonymScope,
+                com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability> availability = scope -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Availability(true, many,
+                    many, budget);
+        };
+        SynonymRunForm[] form = new SynonymRunForm[1];
+        int[] packed = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SynonymRunForm(List.of(), id -> List.of(), availability, budget.maxJudgedPairs());
+            form[0].setSize(form[0].getPreferredSize().width, form[0].getPreferredSize().height);
+            form[0].doLayout();
+            packed[0] = form[0].getHeight();
+        });
+        release.countDown();
+        awaitEdt(() -> form[0].statusText().contains("quelle-11"));
+        SwingUtilities.invokeAndWait(() -> {
+            int width = 440;
+            form[0].setSize(width, form[0].getPreferredSize().height);
+            form[0].doLayout();
+            javax.swing.JTextArea status = (javax.swing.JTextArea) form[0].getComponent(1);
+            assertThat(form[0].getPreferredSize().height).isGreaterThan(packed[0]);
+            assertThat(status.getWidth()).isEqualTo(width);
+            assertThat(status.getHeight()).isGreaterThanOrEqualTo(
+                    ((com.aresstack.spaceharvester.app.ui.controls.WrappedText) status).heightFor(width));
+            assertThat(status.getY() + status.getHeight()).isLessThanOrEqualTo(form[0].getHeight());
+        });
     }
 
     private static com.aresstack.spaceharvester.application.sources.HarvestSource source(String id, String title) {
