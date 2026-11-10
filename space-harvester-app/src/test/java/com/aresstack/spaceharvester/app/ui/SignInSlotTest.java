@@ -120,6 +120,94 @@ class SignInSlotTest {
         await(() -> !slot[0].isVisible());
     }
 
+    @Test
+    void aSourceAskingForLoginShowsUserAndPasswordAndSendsThemOnlyWithThatSubmit() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        java.util.List<String> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
+        SignInChallenge challenge = new SignInChallenge() {
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            public String title() {
+                return "";
+            }
+
+            public String message() {
+                return "";
+            }
+
+            public String error() {
+                return "";
+            }
+
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public boolean asksForLogin() {
+                return true;
+            }
+
+            public SignInChallenge submit(char[] code) {
+                sent.add("ohne Anmeldung " + new String(code));
+                return this;
+            }
+
+            @Override
+            public SignInChallenge submit(char[] code, String username, char[] password) {
+                sent.add(username + "/" + (password == null ? null : new String(password)) + " " + new String(code));
+                return "123456".equals(new String(code)) ? null : this;
+            }
+
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        CompletableFuture<SignInRequests.Outcome> waiting = CompletableFuture.supplyAsync(() -> requests.await("wiki",
+                "job-1", challenge, Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+        assertThat(slot[0].asksForLogin()).isTrue();
+        assertThat(slot[0].userField().getText()).as("nichts vorbelegt").isEmpty();
+        assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        assertThat(slot[0].passwordField().getEchoChar()).as("Passwort maskiert").isNotEqualTo((char) 0);
+
+        // Leere Felder gehen als null mit; der Core sendet dann wie ohne Anmeldung.
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0].codeField().setText("000000");
+            slot[0].submitButton().doClick();
+        });
+        await(() -> sent.size() == 1 && slot[0].submitButton().isEnabled());
+        assertThat(sent).containsExactly("ohne Anmeldung 000000");
+
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0].codeField().setText("123456");
+            slot[0].userField().setText(" alice ");
+            slot[0].passwordField().setText("geheim");
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].userField().getText()).as("Benutzer wird nicht behalten").isEmpty();
+            assertThat(slot[0].passwordField().getPassword()).as("Passwort wird nicht behalten").isEmpty();
+        });
+        assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
+        assertThat(sent).containsExactly("ohne Anmeldung 000000", "alice/geheim 123456");
+        await(() -> !slot[0].isVisible());
+    }
+
+    @Test
+    void aSourceWithoutLoginHidesUserAndPassword() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        CompletableFuture.runAsync(() -> requests.await("wiki", "job-1", challenge(""), Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+        assertThat(slot[0].asksForLogin()).isFalse();
+        SwingUtilities.invokeAndWait(() -> requests.pendingFor("wiki").ifPresent(r -> requests.decline(r.id())));
+        await(() -> !slot[0].isVisible());
+    }
+
     /** Eine Abfrage der Quelle: „123456“ gilt, alles andere bringt „Code ungültig“. */
     private static SignInChallenge challenge(String error) {
         return new SignInChallenge() {
