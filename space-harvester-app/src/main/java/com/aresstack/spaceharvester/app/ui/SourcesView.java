@@ -555,8 +555,13 @@ public final class SourcesView implements View {
                 }
             });
             if (confluence) {
-                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart, Benutzer und Token bzw. Passwort ändern",
+                String keePassEntry = context.settings() == null ? null
+                        : context.settings().keePassEntry(entry.id());
+                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth())
+                                + (keePassEntry == null || config.auth().type() == SourceSettingsConfig.AuthType.NONE
+                                ? "" : " · aus KeePass „" + keePassEntry + "“"), Comic.INK,
+                        "Zugangsdaten (KeePass oder Manuell), KeePass-Eintrag, Anmeldeart, Benutzer und Token bzw. "
+                                + "Passwort ändern",
                         () -> setting(entry, SettingDialogs::auth)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
