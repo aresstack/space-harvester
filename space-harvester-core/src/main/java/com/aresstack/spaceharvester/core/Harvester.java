@@ -744,6 +744,7 @@ public final class Harvester implements AutoCloseable {
                     .enrichments(enrichmentStore)
                     .assets(assetStore, exportWriter, clock)
                     .termRelations(termRelations, resolutionCache)
+                    .glossary(glossary)
                     .factEdits(factEditStore, clock)
                     .knowledgeGraph(graphStore, graph::forgetInputs)
                     .inventoryLog(inventoryLog)

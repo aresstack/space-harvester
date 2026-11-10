@@ -193,12 +193,12 @@ public class Glossary {
             if (next.status() != ReviewStatus.CONFIRMED) {
                 next = next.reviewed(ReviewStatus.CONFIRMED, actor, now);
             }
-            return next == current ? current : save(next, "confirm", actor);
+            return shown(caller, next == current ? current : save(next, "confirm", actor));
         }
         GlossaryEntry created = new GlossaryEntry(id, entry.term().strip(), TermText.normalize(entry.term()),
                 entry.scope(), RelationOrigin.MANUAL, ReviewStatus.CONFIRMED, entry.evidence(), false, explanation,
                 null, actor, now, now, actor, now, 1);
-        return save(created, "create", actor);
+        return shown(caller, save(created, "create", actor));
     }
 
     /**
@@ -211,9 +211,9 @@ public class Glossary {
         validate(current.term(), explanation, List.of());
         String text = blank(explanation) ? null : explanation.strip();
         if (Objects.equals(text, current.explanation())) {
-            return current;
+            return shown(caller, current);
         }
-        return save(current.explained(text, clock.instant()), "edit", caller.jobOwner());
+        return shown(caller, save(current.explained(text, clock.instant()), "edit", caller.jobOwner()));
     }
 
     /**
@@ -237,11 +237,12 @@ public class Glossary {
     public synchronized GlossaryEntry restore(AccessContext caller, String id, Long expectedRevision) {
         GlossaryEntry current = writable(caller, id, expectedRevision);
         if (current.status() != ReviewStatus.REJECTED) {
-            return current;
+            return shown(caller, current);
         }
         ReviewStatus restored = current.origin() == RelationOrigin.MANUAL ? ReviewStatus.CONFIRMED
                 : ReviewStatus.PROPOSED;
-        return save(current.reviewed(restored, caller.jobOwner(), clock.instant()), "restore", caller.jobOwner());
+        return shown(caller, save(current.reviewed(restored, caller.jobOwner(), clock.instant()), "restore",
+                caller.jobOwner()));
     }
 
     /**
@@ -392,9 +393,16 @@ public class Glossary {
                                  String action) {
         GlossaryEntry current = writable(caller, id, expectedRevision);
         if (current.status() == next) {
-            return current;
+            return shown(caller, current);
         }
-        return save(current.reviewed(next, caller.jobOwner(), clock.instant()), action, caller.jobOwner());
+        return shown(caller, save(current.reviewed(next, caller.jobOwner(), clock.instant()), action,
+                caller.jobOwner()));
+    }
+
+    /** Die Antwort an den Aufrufer: gespeichert wird alles, gezeigt nur Belege, die er lesen darf. */
+    private GlossaryEntry shown(AccessContext caller, GlossaryEntry entry) {
+        Visibility visibility = new Visibility(caller);
+        return visibility.visible(entry).orElseGet(() -> visibility.withoutEvidence(entry));
     }
 
     private GlossaryEntry writable(AccessContext caller, String id, Long expectedRevision) {
@@ -506,6 +514,13 @@ public class Glossary {
                     entry.origin(), entry.status(), evidence, entry.evidenceStale(), entry.explanation(),
                     entry.generation(), entry.createdBy(), entry.createdAt(), entry.updatedAt(), entry.reviewedBy(),
                     entry.reviewedAt(), entry.revision()));
+        }
+
+        GlossaryEntry withoutEvidence(GlossaryEntry entry) {
+            return new GlossaryEntry(entry.id(), entry.term(), entry.normalized(), entry.scope(), entry.origin(),
+                    entry.status(), List.of(), entry.evidenceStale(), entry.explanation(), entry.generation(),
+                    entry.createdBy(), entry.createdAt(), entry.updatedAt(), entry.reviewedBy(), entry.reviewedAt(),
+                    entry.revision());
         }
 
         private boolean scope(RelationScope scope) {

@@ -239,6 +239,35 @@ class GlossaryClassificationTest {
     }
 
     @Test
+    void aStaleConfirmedTermLosesTheMarkWhenItIsFoundAgain() {
+        answers = choosing(Set.of("Datenprodukt"));
+        classification.run(WIKI, null);
+        String id = glossary.confirm(EDITOR, find("datenprodukt", null).orElseThrow().id(), null).id();
+        cached("1", "2", "Hier steht nichts Fachliches mehr.");
+        cached("2", "2", "Auch hier nicht.");
+        classification.run(WIKI, null);
+        assertThat(store.find(id).orElseThrow().evidenceStale()).isTrue();
+
+        cached("1", "3", "Das Datenprodukt ist zurück.");
+        classification.run(WIKI, null);
+
+        GlossaryEntry back = store.find(id).orElseThrow();
+        assertThat(back.evidenceStale()).isFalse();
+        assertThat(back.status()).isEqualTo(ReviewStatus.CONFIRMED);
+    }
+
+    @Test
+    void purgingASourceRemovesItsAiEntriesAndKeepsManualOnes() {
+        answers = choosing(Set.of("Datenprodukt"));
+        classification.run(WIKI, null);
+        GlossaryEntry manual = glossary.add(EDITOR, new Glossary.NewEntry("Datenhaus", WIKI, null, List.of()));
+
+        assertThat(glossary.removeSource("wiki", "purge")).isEqualTo(1);
+
+        assertThat(store.all()).extracting(GlossaryEntry::id).containsExactly(manual.id());
+    }
+
+    @Test
     void onlyUnreviewedProposalsAreReplacedOrWithdrawn() {
         answers = choosing(Set.of("Datenprodukt", "Haushaltsverfahren"));
         classification.run(WIKI, null);

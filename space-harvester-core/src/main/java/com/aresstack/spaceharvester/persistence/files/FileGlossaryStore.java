@@ -99,6 +99,13 @@ public final class FileGlossaryStore implements GlossaryStore {
         next.values().forEach(entry -> list.add(json(entry)));
         try {
             replace(directory.resolve(ENTRIES), JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(root));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        // Erst der Bestand im Speicher, dann das Protokoll: scheitert das Anhängen, weichen Datei und Speicher nicht ab.
+        entries.clear();
+        entries.putAll(next);
+        try {
             if (!audit.isEmpty()) {
                 StringBuilder lines = new StringBuilder();
                 audit.forEach(entry -> lines.append(JSON.writeValueAsString(json(entry))).append('\n'));
@@ -108,8 +115,6 @@ public final class FileGlossaryStore implements GlossaryStore {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        entries.clear();
-        entries.putAll(next);
     }
 
     @Override

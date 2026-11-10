@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -209,16 +210,22 @@ public class GlossaryClassification {
             throw new GlossaryUnavailableException(GlossaryUnavailableException.Reason.NOT_RELEASED, source);
         }
         List<JobStatus> submitted = new ArrayList<>();
-        for (String id : sources) {
-            RelationScope scope = new RelationScope(id, space);
-            JobStatus status = jobs.submit(JobType.ENRICHMENT, id, space, caller.jobOwner(),
-                    JobTask.blocking(context -> {
-                        synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
-                            run(scope, context);
-                        }
-                    }));
-            started.add(status.id());
-            submitted.add(status);
+        try {
+            for (String id : sources) {
+                RelationScope scope = new RelationScope(id, space);
+                JobStatus status = jobs.submit(JobType.ENRICHMENT, id, space, caller.jobOwner(),
+                        JobTask.blocking(context -> {
+                            synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
+                                run(scope, context);
+                            }
+                        }));
+                started.add(status.id());
+                submitted.add(status);
+            }
+        } catch (JobCapacityExceededException e) {
+            // Ganz oder gar nicht: angenommene Aufträge brechen ab, bevor sie abgleichen.
+            submitted.forEach(status -> jobs.cancel(status.id(), caller.jobOwner()));
+            throw e;
         }
         return submitted;
     }
@@ -244,11 +251,19 @@ public class GlossaryClassification {
             }
         }
         Set<String> retained = new HashSet<>();
+        List<Glossary.Proposal> revived = new ArrayList<>();
         List<Candidate> asked = new ArrayList<>();
         for (Candidate candidate : candidates.values()) {
-            if (decided.containsKey(candidate.normalized)) {
+            GlossaryEntry known = decided.get(candidate.normalized);
+            if (known != null) {
                 // Schon entschieden: nicht fragen; im Bestand belegt, also nicht veraltet.
-                retained.add(candidate.normalized);
+                if (known.origin() == RelationOrigin.AI && known.status() == ReviewStatus.CONFIRMED
+                        && known.evidenceStale() && !candidate.evidence.isEmpty()) {
+                    // Wieder gefunden: der Abgleich nimmt die Markierung zurück, Entscheidung und Belege bleiben.
+                    revived.add(candidate.proposal());
+                } else {
+                    retained.add(candidate.normalized);
+                }
             } else if (candidate.snippets.isEmpty()) {
                 // Text gerade nicht lesbar: nicht fragen, bisherigen Stand behalten.
                 retained.add(candidate.normalized);
@@ -262,7 +277,7 @@ public class GlossaryClassification {
             asked.subList(budget.maxTerms(), asked.size()).forEach(candidate -> retained.add(candidate.normalized));
             asked = new ArrayList<>(asked.subList(0, budget.maxTerms()));
         }
-        List<Glossary.Proposal> proposals = new ArrayList<>();
+        List<Glossary.Proposal> proposals = new ArrayList<>(revived);
         Map<String, List<String>> answered = new HashMap<>();
         int reused = 0;
         for (var iterator = asked.iterator(); iterator.hasNext(); ) {
