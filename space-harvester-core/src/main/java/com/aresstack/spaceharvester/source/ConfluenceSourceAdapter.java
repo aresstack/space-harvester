@@ -196,7 +196,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         // Protokoll (#571).
         KnowledgeSourceProvider provider = desktop
                 ? ConfluenceSources.desktopProvider(secrets, context.routes(), EAC_USER_AGENT, trust, thumbprint,
-                        diagnosticsDirectory)
+                        diagnosticsDirectory, config.id() + ", " + config.auth().type())
                 : ConfluenceSources.provider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
                         context.async());
         SourceSettings settings = settings(config, desktop, retry);
