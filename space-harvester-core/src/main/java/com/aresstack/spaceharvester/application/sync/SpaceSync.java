@@ -167,7 +167,21 @@ public class SpaceSync {
 
     /** Wie {@link #run(String, String, PlanApplier, SyncListener, boolean)}, in der Betriebsart {@code mode}. */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode) {
-        SyncPlan plan = plan(sourceId, spaceKey, mode);
+        return run(sourceId, spaceKey, applier, listener, mode, null);
+    }
+
+    /**
+     * Wie {@link #run(String, String, PlanApplier, SyncListener, SyncMode)}; Inhalte lädt der Lauf nur für die Seiten,
+     * die {@code loading} aus der Inventur bestimmt ({@link SyncPlan#withLoadingLimitedTo}), etwa den Teilbaum eines
+     * Exports. Die Generation führt die übrigen als nicht geladen oder veraltet.
+     *
+     * @param loading aus der Inventur die Seiten mit Inhalt, oder {@code null} für alle
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
+                       java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading) {
+        SyncPlan planned = plan(sourceId, spaceKey, mode);
+        SyncPlan plan = loading == null || !planned.inventory().confirmed() ? planned
+                : planned.withLoadingLimitedTo(loading.apply(planned.inventory()));
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {

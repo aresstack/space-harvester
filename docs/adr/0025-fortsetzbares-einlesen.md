@@ -33,6 +33,12 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
 6. **Nach einem Neustart** ist die Arbeit eines Auftrags nicht mehr im Speicher; er bleibt angehalten oder gescheitert,
    `resume` antwortet `job-not-resumable` (409), und der Client startet ihn mit denselben Angaben neu, was nach
    Punkt 2 ebenfalls nur den Rest holt.
+7. **Ein Teilbaum-Export lädt nur seinen Teilbaum.** Die Inventur listet weiter den ganzen Space (für die
+   Elternkette), Inhalte lädt das Einlesen aber nur für Startseite und Unterseiten (`SyncPlan#withLoadingLimitedTo`).
+   Der übrige Space wird wie bei `CATALOG_ONLY` behandelt: unbekannte Seiten kommen nur als Kopfdaten in den Katalog,
+   geänderte bleiben veraltet. Die Generation ist damit nicht `CONFIRMED`; der Export gilt trotzdem als vollständig,
+   wenn ihre Lücken (`SpaceProvisioning#unloaded`) alle außerhalb des Teilbaums liegen. Ein späterer Space-Export
+   liest dann neu ein und lädt nur das Fehlende.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`.
@@ -42,4 +48,6 @@ Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resume
 - Ein abgebrochener Lauf hinterlässt neue Seiten ohne Generation; Suche und Lesen finden sie, der Export erst mit
   einer bestätigten Generation.
 - Die Schreibsperre ist während des Abrufs neuer Seiten nur je Seite belegt.
-- Offen: Die Inventur selbst hält ihren Stand noch nicht fest und läuft sequenziell (eigener Schritt).
+- Ein Teilbaum-Export lädt nur die Seiten seines Teilbaums statt des ganzen Space.
+- Offen: Die Inventur selbst hält ihren Stand noch nicht fest und läuft sequenziell (eigener Schritt; der EAC listet
+  ebenfalls sequenziell).

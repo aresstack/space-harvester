@@ -91,6 +91,27 @@ public interface SpaceProvisioning {
     }
 
     /**
+     * Wie {@link #provisionScoped(JobContext, String, String, java.util.function.Function)}; Inhalte lädt das Einlesen
+     * nur für die Seiten, die {@code loading} aus der Inventur bestimmt, etwa den Teilbaum eines Exports. Der Rest des
+     * Space kommt nur mit Kopfdaten in den Katalog. Standard: wie ohne {@code loading}.
+     *
+     * @param loading aus den Kopfdaten der Inventur die Seiten mit Inhalt, oder {@code null} für alle
+     */
+    default Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading) {
+        return provisionScoped(context, sourceId, spaceKey, counting);
+    }
+
+    /**
+     * Seiten der bestätigten Generation ohne aktuellen Inhalt im Cache: nur katalogisiert, nie geladen oder veraltet.
+     * Ein Export, der eine davon braucht, liest neu ein, statt die Generation zu übernehmen. Standard: keine.
+     */
+    default java.util.Set<String> unloaded(String sourceId, String spaceKey) {
+        return java.util.Set.of();
+    }
+
+    /**
      * Ergebnis des Einlesens.
      *
      * @param confirmed     eine Generation ist bestätigt (eigene oder die eines gleichzeitigen Abgleichs)

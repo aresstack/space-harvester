@@ -41,6 +41,18 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         purges = Set.copyOf(new TreeSet<>(purges));
     }
 
+    /**
+     * Lädt Inhalte nur für Seiten, für die {@code inScope} gilt; alle übrigen behandelt der Lauf wie
+     * {@link SyncMode#CATALOG_ONLY}: nur Kopfdaten, unbekannte bleiben {@link PageChange.Kind#NOT_LOADED}, geänderte
+     * {@link PageChange.Kind#OUTDATED}. So liest ein Teilbaum-Export nur seinen Teilbaum ein und katalogisiert den Rest.
+     */
+    public SyncPlan withLoadingLimitedTo(java.util.function.Predicate<String> inScope) {
+        Objects.requireNonNull(inScope, "inScope");
+        List<PageChange> limited = changes.stream().map(change -> inScope.test(change.pageId()) ? change
+                : SyncPlanner.within(SyncMode.CATALOG_ONLY, change)).toList();
+        return new SyncPlan(inventory, baseline, limited, removals, purges);
+    }
+
     public SyncPlan withRemovals(Map<String, RemovalCheck.Result> checked) {
         return new SyncPlan(inventory, baseline, changes, checked, purges);
     }

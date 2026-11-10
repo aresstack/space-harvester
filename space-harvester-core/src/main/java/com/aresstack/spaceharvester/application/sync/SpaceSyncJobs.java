@@ -143,6 +143,14 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     @Override
     public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
                                        java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting) {
+        return provisionScoped(context, sourceId, spaceKey, counting, null);
+    }
+
+    /** Wie oben; Inhalte nur für die Seiten, die {@code loading} aus der Inventur bestimmt, der Rest nur im Katalog. */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading) {
         Objects.requireNonNull(counting, "counting");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
@@ -153,7 +161,14 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         SpaceSync.SyncRun run;
         try {
             context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counting));
+            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counting), SyncMode.FULL,
+                    loading == null ? null : inventory -> {
+                        List<PageHeader> listed = headers(inventory);
+                        Predicate<PageHeader> load = loading.apply(listed);
+                        Set<String> ids = new java.util.HashSet<>();
+                        listed.stream().filter(load).forEach(header -> ids.add(header.key().pageId()));
+                        return ids::contains;
+                    });
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }
@@ -554,6 +569,23 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /** Fortschritt des Einlesens im Export: nur lesbare Seiten, nur gefunden und abgeglichen. */
+    /** Kopfdaten aller Seiten der Inventur, wie sie Zähl- und Laderegeln eines Exports sehen. */
+    private static List<PageHeader> headers(Inventory inventory) {
+        return inventory.pages().stream()
+                .map(entry -> new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()), entry.page(),
+                        entry.metadataHash(), entry.attributesHash(), inventory.finishedAt()))
+                .toList();
+    }
+
+    @Override
+    public Set<String> unloaded(String sourceId, String spaceKey) {
+        return store.confirmed(sourceId, spaceKey).map(baseline -> {
+            Set<String> ids = new java.util.HashSet<>(baseline.missingPageIds());
+            ids.addAll(baseline.stalePageIds());
+            return Set.copyOf(ids);
+        }).orElse(Set.of());
+    }
+
     private static SyncListener provisionListener(JobContext context,
                                                   java.util.function.Function<List<PageHeader>,
                                                           Predicate<PageHeader>> counting) {
@@ -563,10 +595,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             @Override
             public void inventoried(Inventory inventory) {
                 context.phase(COMPONENT, "Seiten abrufen");
-                List<PageHeader> headers = inventory.pages().stream()
-                        .map(entry -> new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()),
-                                entry.page(), entry.metadataHash(), entry.attributesHash(), inventory.finishedAt()))
-                        .toList();
+                List<PageHeader> headers = headers(inventory);
                 Predicate<PageHeader> counted = counting.apply(headers);
                 for (PageHeader header : headers) {
                     if (counted.test(header)) {

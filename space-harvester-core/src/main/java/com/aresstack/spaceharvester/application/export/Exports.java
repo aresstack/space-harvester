@@ -387,6 +387,8 @@ public class Exports {
         String sourceId = request.sourceId();
         String spaceKey = request.spaceKey();
         Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
+        // Fehlen der Generation Inhalte (nur katalogisiert oder veraltet, etwa nach einem Teilbaum-Export), ist sie
+        // nicht CONFIRMED, und der Export liest neu ein; geladene Seiten bleiben dabei liegen (ADR 0025).
         boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
         if (reusable && !request.refresh()) {
             context.record(JobEvent.Draft.info(COMPONENT, "Bestätigte Generation " + current.get().id()
@@ -401,12 +403,14 @@ public class Exports {
         }
         List<String> warnings = new ArrayList<>();
         context.phase(COMPONENT, "Einlesen");
-        context.record(JobEvent.Draft.info(COMPONENT, current.isEmpty() ? "Kein Bestand im Cache; der Space wird von "
-                + "der Quelle eingelesen" : request.refresh() ? "Aktueller Stand verlangt; der Space wird von der Quelle "
-                + "eingelesen" : "Bestand nicht bestätigt (" + current.get().state() + "); der Space wird von der "
-                + "Quelle eingelesen"));
+        String what = request.rootPageId() == null ? "der Space wird" : "der Teilbaum wird";
+        context.record(JobEvent.Draft.info(COMPONENT, (current.isEmpty() ? "Kein Bestand im Cache; "
+                : request.refresh() ? "Aktueller Stand verlangt; "
+                : "Bestand nicht bestätigt (" + current.get().state() + "); ") + what + " von der Quelle eingelesen"));
+        // Mit Startseite lädt das Einlesen nur deren Teilbaum; der übrige Space kommt nur mit Kopfdaten in den Katalog.
         SpaceProvisioning.Provisioned provisioned = provisioning.provisionScoped(
-                new ProvisioningContext(context), sourceId, spaceKey, headers -> counted(request, headers));
+                new ProvisioningContext(context), sourceId, spaceKey, headers -> counted(request, headers),
+                request.rootPageId() == null ? null : headers -> inSubtree(request, headers));
         context.checkpoint();
         if (!provisioned.confirmed()) {
             if (current.isEmpty() || request.refresh()) {
@@ -516,7 +520,7 @@ public class Exports {
                     case CYCLE -> "Zyklus in der Elternbeziehung aufgebrochen";
                 });
             }
-            if (generation.state() != CacheState.CONFIRMED) {
+            if (!covers(request, generation, subtree)) {
                 warnings.add("Cache-Generation " + generation.id() + " ist " + generation.state()
                         + "; das Artefakt ist kein bestätigter vollständiger Stand");
             }
@@ -538,7 +542,7 @@ public class Exports {
                                 + failures.get(0).message()));
             }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
-            boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
+            boolean complete = covers(request, generation, subtree) && failures.isEmpty() && unrefreshed == 0;
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
                     entries.size(), failures, warnings, complete));
             afterPublish(context);
@@ -555,6 +559,23 @@ public class Exports {
      *                            beides mit derselben Meldung, die keine Seiten-ID nennt
      */
     /**
+     * Ob die Generation alles Nötige für diesen Export mit aktuellem Inhalt führt: bestätigt, oder bei einer Startseite
+     * nur außerhalb ihres Teilbaums mit Lücken. Ein Teilbaum-Export lädt nur seinen Teilbaum und lässt den übrigen
+     * Space nur katalogisiert; das macht ihn nicht unvollständig.
+     */
+    private boolean covers(ExportRequest request, CacheGeneration generation, Set<String> subtree) {
+        if (generation.state() == CacheState.CONFIRMED) {
+            return true;
+        }
+        if (subtree == null) {
+            return false;
+        }
+        // Ohne bestätigte Generation gibt es keine Lückenliste; dann bleibt es unvollständig.
+        Set<String> gaps = provisioning.unloaded(request.sourceId(), request.spaceKey());
+        return !gaps.isEmpty() && java.util.Collections.disjoint(subtree, gaps);
+    }
+
+    /**
      * Was beim Einlesen zählt: lesbare Seiten, mit Startseite nur ihr Teilbaum laut Inventur. Sonst stünde bei einem
      * Teilbaum-Export der ganze Space als „Seiten (Inventur)“ da, und „Exportiert“ sähe unvollständig aus, obwohl
      * nichts fehlt.
@@ -563,10 +584,15 @@ public class Exports {
         if (request.rootPageId() == null) {
             return request.visible();
         }
+        return inSubtree(request, headers).and(request.visible());
+    }
+
+    /** Die Startseite und ihre Unterseiten bis zur Tiefe des Auftrags laut Inventur, lesbar oder nicht. */
+    private static java.util.function.Predicate<PageHeader> inSubtree(ExportRequest request, List<PageHeader> headers) {
         Map<String, String> parents = new HashMap<>();
         headers.forEach(header -> parents.put(header.key().pageId(), header.metadata().parentPageId()));
         Set<String> subtree = subtreeOf(parents, request.rootPageId(), request.depth());
-        return header -> subtree.contains(header.key().pageId()) && request.visible().test(header);
+        return header -> subtree.contains(header.key().pageId());
     }
 
     /** Die Startseite und ihre Unterseiten bis {@code depth} (ohne: alle) nach den Elternverweisen. */
