@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceKnowledgeSource;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -232,15 +234,17 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     private static Opened open(SourceSettingsConfig config, SourceAdapter adapter, SourceAdapter.Context context) {
         String title = config.title() == null || config.title().isBlank() ? config.id() : config.title();
         SourceAdapter.OpenedSource source = adapter.open(config, context);
-        // Mit Token öffnet die Quelle bei Bedarf eine zweite Adapter-Instanz für Dateien mit Benutzer und Passwort, in
-        // deren Web-Sitzung die Zwei-Faktor-Anmeldung den Code annimmt (#571).
+        // Reuse the initialized HTTP transport and client certificate; only the OTP cookie session must be fresh.
         boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
+        java.util.function.Supplier<KnowledgeSourcePort> newWebSession =
+                token && source.port() instanceof ConfluenceKnowledgeSource confluence
+                        ? confluence::newWebSession : null;
         URI baseUrl = config.baseUrl();
         boolean http = baseUrl != null && baseUrl.getScheme() != null
                 && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT));
         return new Opened(config, new KnowledgeSourceHarvestSource(config.id(), config.type(), title, source.port(),
                 context.async() == null ? null : context.async().inFlight(), source.scope(), token,
-                token ? () -> adapter.open(config, context).port() : null), source.delegated(),
+                newWebSession), source.delegated(),
                 http ? baseUrl : null, true);
     }
 
