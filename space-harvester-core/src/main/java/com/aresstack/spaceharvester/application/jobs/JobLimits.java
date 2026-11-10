@@ -12,9 +12,10 @@ import java.util.Objects;
  * @param retention     wie lange ein beendeter Auftrag ab seinem Ende abrufbar bleibt
  * @param maxOpenPerOwner höchstens offene (laufende und wartende) Aufträge je Auslöser, damit ein Client nicht alle
  *                      Plätze belegt; interne Aufträge ohne Auslöser zählen nicht
+ * @param retry         Wiederholungen bei vorübergehenden Fehlern und Selbst-Anhalten ({@code jobs.retry.*})
  */
 public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention,
-        int maxOpenPerOwner) {
+        int maxOpenPerOwner, RetrySettings retry) {
 
     /** Standard für {@link #retention()}. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
@@ -28,7 +29,18 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
         this(maxConcurrent, maxQueued, maxRunTime, retention, maxConcurrent + maxQueued);
     }
 
+    /** Mit den Standard-Wiederholungen ({@link RetrySettings#DEFAULT}). */
+    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner) {
+        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, RetrySettings.DEFAULT);
+    }
+
+    /** Dieselben Grenzen mit anderen Wiederholungen. */
+    public JobLimits withRetry(RetrySettings value) {
+        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, value);
+    }
+
     public JobLimits {
+        retry = retry == null ? RetrySettings.DEFAULT : retry;
         if (maxConcurrent < 1) {
             throw new IllegalArgumentException("maxConcurrent muss mindestens 1 sein");
         }

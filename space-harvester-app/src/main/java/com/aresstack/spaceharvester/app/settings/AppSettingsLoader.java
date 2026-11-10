@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
@@ -715,12 +716,33 @@ public final class AppSettingsLoader {
                 problems);
         Duration retention = duration(get(jobs, "retention"), JobLimits.DEFAULT_RETENTION,
                 "space-harvester.jobs.retention", problems);
+        RetrySettings retry = retry(map(get(jobs, "retry")), problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
-            return new JobLimits(concurrent, queued, runTime, retention);
+            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
-            return new JobLimits(2, 20, Duration.ofHours(6));
+            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry);
+        }
+    }
+
+    /** {@code space-harvester.jobs.retry.*} (ADR 0025), dieselben Schlüssel wie beim Dienst. */
+    private RetrySettings retry(Map<?, ?> retry, List<String> problems) {
+        String prefix = "space-harvester." + RetrySettings.PREFIX;
+        RetrySettings fallback = RetrySettings.DEFAULT;
+        int attempts = integer(get(retry, RetrySettings.MAX_ATTEMPTS), fallback.maxAttempts(),
+                prefix + RetrySettings.MAX_ATTEMPTS, problems);
+        Duration initial = duration(get(retry, RetrySettings.INITIAL_DELAY), fallback.initialDelay(),
+                prefix + RetrySettings.INITIAL_DELAY, problems);
+        Duration max = duration(get(retry, RetrySettings.MAX_DELAY), fallback.maxDelay(),
+                prefix + RetrySettings.MAX_DELAY, problems);
+        int pauseAfter = integer(get(retry, RetrySettings.PAUSE_AFTER_FAILURES), fallback.pauseAfterFailures(),
+                prefix + RetrySettings.PAUSE_AFTER_FAILURES, problems);
+        try {
+            return new RetrySettings(attempts, initial, max, pauseAfter);
+        } catch (IllegalArgumentException e) {
+            problems.add(prefix + "*: " + e.getMessage() + "; es gelten die Standards");
+            return fallback;
         }
     }
 

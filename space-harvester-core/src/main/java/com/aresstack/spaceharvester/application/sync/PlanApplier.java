@@ -40,15 +40,31 @@ import java.util.TreeSet;
 public class PlanApplier {
 
     /**
-     * So viele Inhaltsabrufe nacheinander dürfen an fehlender Verbindung oder Drosselung scheitern, bevor der Lauf
-     * {@link SyncListener#connectionLost()} meldet; jede Antwort der Quelle setzt die Zählung zurück.
+     * Standard: so viele Inhaltsabrufe nacheinander dürfen an fehlender Verbindung oder Drosselung scheitern, bevor der
+     * Lauf {@link SyncListener#connectionLost()} meldet; jede Antwort der Quelle setzt die Zählung zurück. Einstellbar
+     * über {@code jobs.retry.pause-after-failures} ({@link #connectionLostAfter(int)}).
      */
     public static final int CONNECTION_LOST_AFTER = 5;
 
     private final PageContentFetcher fetcher;
+    private volatile int connectionLostAfter = CONNECTION_LOST_AFTER;
 
     public PlanApplier(PageContentFetcher fetcher) {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
+    }
+
+    /**
+     * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung ein Lauf {@link SyncListener#connectionLost()} meldet
+     * ({@link com.aresstack.spaceharvester.application.jobs.RetrySettings#pauseAfterFailures()}); gilt ab dem nächsten
+     * Fehler.
+     *
+     * @throws IllegalArgumentException wenn {@code count} kleiner als 1 ist
+     */
+    public void connectionLostAfter(int count) {
+        if (count < 1) {
+            throw new IllegalArgumentException("count muss mindestens 1 sein");
+        }
+        connectionLostAfter = count;
     }
 
     /**
@@ -62,7 +78,7 @@ public class PlanApplier {
         Set<String> handled = new HashSet<>();
         Set<String> failed = new TreeSet<>();
         List<PageSnapshot> held = new ArrayList<>();
-        Reachability reachability = new Reachability(listener);
+        Reachability reachability = new Reachability(listener, connectionLostAfter);
         for (PageChange change : plan.changes()) {
             if (change.kind() != PageChange.Kind.NEW) {
                 continue;
@@ -128,7 +144,7 @@ public class PlanApplier {
         Instant observedAt = plan.inventory().finishedAt();
         Set<String> failed = new TreeSet<>(prefetched.failed());
         prefetched.held().forEach(target::save);
-        Reachability reachability = new Reachability(listener);
+        Reachability reachability = new Reachability(listener, connectionLostAfter);
         for (PageChange change : plan.changes()) {
             if (prefetched.handled().contains(change.pageId())) {
                 continue;
@@ -209,10 +225,12 @@ public class PlanApplier {
     private static final class Reachability {
 
         private final SyncListener listener;
+        private final int limit;
         private int unreachable;
 
-        Reachability(SyncListener listener) {
+        Reachability(SyncListener listener, int limit) {
             this.listener = listener;
+            this.limit = limit;
         }
 
         void answered() {
@@ -226,7 +244,7 @@ public class PlanApplier {
                 unreachable = 0;
                 return;
             }
-            if (++unreachable >= CONNECTION_LOST_AFTER) {
+            if (++unreachable >= limit) {
                 unreachable = 0;
                 listener.connectionLost();
             }

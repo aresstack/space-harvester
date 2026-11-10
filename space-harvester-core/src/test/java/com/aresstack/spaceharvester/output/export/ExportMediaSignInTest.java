@@ -5,6 +5,7 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -283,6 +284,8 @@ class ExportMediaSignInTest {
         Source source = new Source(true);
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(5), Clock.systemUTC());
         jobs = jobs(3); // zwei Bilder-Aufträge gleichzeitig
+        // Nur Bilderaufträge: „Anhänge beschaffen“ ist ein eigener Auftrag und belegte sonst den zweiten Platz.
+        settings = new ExportSettings(false, ExportSettings.DEFAULT_MEDIA_TYPES, ExportSettings.DEFAULT_MAX_SIZE);
         Setup first = setup(source, signIns, page("confluence", "DEV", "100", null), true);
         JobStatus secondExport = first.exports.start("confluence", "DEV", "client-a", List.of("json"));
         Runnable firstExport = poll();
@@ -379,6 +382,9 @@ class ExportMediaSignInTest {
         return setup(source, signIns, page("confluence", "DEV", "100", null));
     }
 
+    /** Wirksame Export-Einstellung je Lauf; Standard mit Anhängen. */
+    private ExportSettings settings = ExportSettings.DEFAULT;
+
     private Setup setup(Source source, SignInRequests signIns, PageSnapshot page100) {
         return setup(source, signIns, page100, false);
     }
@@ -401,7 +407,7 @@ class ExportMediaSignInTest {
                 Clock.systemUTC(), null, null, null, com.aresstack.spaceharvester.application.assets.LargeFileGate
                 .defaults(), assetsSignIns ? signIns : null);
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
-                (owner, sourceId) -> true, signIns);
+                (owner, sourceId) -> true, signIns, () -> settings);
         Exports exports = new Exports(jobs, cache, writer, converters, Clock.systemUTC());
         exports.onPublished(images::start);
         ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);

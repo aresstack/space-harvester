@@ -45,7 +45,7 @@ class JobsConfiguration {
         RouteLookup routes = sources == null ? RouteLookup.NONE : sources::route;
         return new ExecutorOwningJobs(jobStore, jobEventStore, routes,
                 new JobLimits(properties.maxConcurrent(), properties.maxQueued(), properties.maxRunTime(),
-                        properties.retention(), properties.maxOpenPerOwner()));
+                        properties.retention(), properties.maxOpenPerOwner(), properties.retry().toSettings()));
     }
 
     /**

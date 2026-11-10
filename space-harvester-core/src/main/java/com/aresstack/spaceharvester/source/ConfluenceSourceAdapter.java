@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
@@ -52,15 +53,27 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     private final boolean desktop;
     /** Nur Desktop: Ordner für HTML-Antworten statt Dateien wie im EAC (neben dem Protokoll) oder {@code null}. */
     private final java.nio.file.Path diagnosticsDirectory;
+    /** Wiederholungen aus {@code jobs.retry} oder {@code null} für die Standards von Dienst bzw. Desktop. */
+    private final RetrySettings retry;
 
     /** Mit den Standards des Dienstes: Netzfehler und 5xx zweimal wiederholt, keine Weiterleitung auf fremde Hosts. */
     public ConfluenceSourceAdapter() {
-        this(false, null);
+        this(false, null, null);
     }
 
-    private ConfluenceSourceAdapter(boolean desktop, java.nio.file.Path diagnosticsDirectory) {
+    private ConfluenceSourceAdapter(boolean desktop, java.nio.file.Path diagnosticsDirectory, RetrySettings retry) {
         this.desktop = desktop;
         this.diagnosticsDirectory = diagnosticsDirectory;
+        this.retry = retry;
+    }
+
+    /**
+     * Derselbe Adapter mit den Wiederholungen aus {@code space-harvester.jobs.retry} (ADR 0025): weitere Versuche und
+     * Wartezeiten des REST-Clients bei Netzfehlern, Zeitüberschreitung, 429 und 5xx. Datei-Downloads und das Absenden
+     * eines Einmalcodes wiederholt der Client nie. Eigene {@code options} der Quelle gehen vor.
+     */
+    public ConfluenceSourceAdapter withRetry(RetrySettings value) {
+        return new ConfluenceSourceAdapter(desktop, diagnosticsDirectory, value);
     }
 
     /**
@@ -82,7 +95,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
      * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
      */
     public static ConfluenceSourceAdapter desktop(java.nio.file.Path diagnosticsDirectory) {
-        return new ConfluenceSourceAdapter(true, diagnosticsDirectory);
+        return new ConfluenceSourceAdapter(true, diagnosticsDirectory, null);
     }
 
     /** Schlüssel, die der Adapter selbst setzt und die nicht über {@code options} kommen dürfen. */
@@ -186,7 +199,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
                         diagnosticsDirectory)
                 : ConfluenceSources.provider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
                         context.async());
-        SourceSettings settings = settings(config, desktop);
+        SourceSettings settings = settings(config, desktop, retry);
         List<String> invalid = provider.validate(settings);
         if (!invalid.isEmpty()) {
             throw new InvalidSourceConfigurationException(invalid);
@@ -311,7 +324,18 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
 
     /** @param desktop Standards des Enterprise AI Client ({@link #desktop()}) statt der des Dienstes */
     static SourceSettings settings(SourceSettingsConfig config, boolean desktop) {
+        return settings(config, desktop, null);
+    }
+
+    /** @param retry Wiederholungen aus {@code jobs.retry} oder {@code null} für die Standards von Dienst bzw. Desktop */
+    static SourceSettings settings(SourceSettingsConfig config, boolean desktop, RetrySettings retry) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        if (retry != null) {
+            // Eine Schleife: die des REST-Clients. Was die Quelle selbst angibt, gilt weiter.
+            values.putIfAbsent("maxRetries", Integer.toString(retry.maxAttempts()));
+            values.putIfAbsent("retryBackoffMillis", Long.toString(retry.initialDelay().toMillis()));
+            values.putIfAbsent("maxRetryBackoffMillis", Long.toString(retry.maxDelay().toMillis()));
+        }
         if (!desktop) {
             // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
             // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.

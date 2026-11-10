@@ -905,8 +905,8 @@ public final class ActivitiesView implements View {
      * Abgleiche (ADR 0025), nicht nach „Fertig“, nicht bei angefordertem Abbruch.
      */
     static String pauseResumeBlocked(JobStatus job) {
-        if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
-            return "nur für Downloads und Abgleiche";
+        if (!job.type().resumable()) {
+            return "nur für Downloads, Abgleiche, Bilder und Anhänge";
         }
         if (job.state() == JobState.COMPLETED) {
             return "schon fertig";
@@ -946,12 +946,10 @@ public final class ActivitiesView implements View {
         if (runtime == null || !job.state().terminal() || pauseResumeBlocked(job) != null) {
             return;
         }
-        Background.run(() -> runtime.workspace().canResume(job.id()) ? runtime.workspace().resumeJob(job.id())
-                        : job.type() == JobType.SYNC
-                                ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())
-                                : runtime.workspace().startExport(job.sourceId(), job.partitionKey(), job.rootPageId(),
-                                        List.of(Downloads.FORMAT)),
-                started -> show(started.id()), feedback::problem);
+        // Der Core setzt im selben Eintrag fort, nach einem Neustart der App mit einem neuen Lauf desselben Auftrags
+        // (ADR 0025); auch Bilder und Anhänge, die keinen neuen Download brauchen.
+        Background.run(() -> runtime.workspace().resumeJob(job.id()), started -> show(started.id()),
+                feedback::problem);
     }
 
     /** Warum dieser Auftrag gerade nicht erneut gestartet werden kann, oder {@code null}. */
@@ -1075,6 +1073,10 @@ public final class ActivitiesView implements View {
                 return new Step("Bilder beschaffen · " + p.processed() + " von " + total + " Bildern geprüft, "
                         + p.written() + " abgelegt", p.processed(), total);
             }
+            if (type == JobType.ATTACHMENTS) {
+                return new Step("Anhänge beschaffen · " + p.processed() + " von " + total + " Anhängen geprüft, "
+                        + p.written() + " abgelegt", p.processed(), total);
+            }
             if (type == JobType.STATEMENT_ANALYSIS) {
                 long skipped = p.processed() - p.written() - p.failed();
                 return new Step((phase == null ? "Aussagenanalyse" : phase) + " · " + p.processed() + " von " + total
@@ -1118,6 +1120,7 @@ public final class ActivitiesView implements View {
                 case ENRICHMENT -> new Counters("Schritte (Seiten × Prozessoren)", "Erledigt", "Neu berechnet",
                         "Fehlgeschlagen");
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
+                case ATTACHMENTS -> new Counters("Anhänge", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",

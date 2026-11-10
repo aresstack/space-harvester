@@ -3,10 +3,12 @@ package com.aresstack.spaceharvester.source;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -48,6 +50,23 @@ class ConfluenceSourceAdapterSettingsTest {
                 .noneMatch(problem -> problem.contains("foreignFileRedirects"));
         // Der Dienst bleibt bei seinen Standards.
         assertThat(ConfluenceSourceAdapter.settings(source(Map.of())).get("maxRetries")).isEqualTo("2");
+    }
+
+    @Test
+    void jobsRetryBecomesTheRetryOfTheRestClientUnlessTheSourceSetsItsOwn() {
+        // ADR 0025: eine Schleife, die des REST-Clients; Desktop und Dienst lesen dieselben Werte.
+        RetrySettings retry = new RetrySettings(4, Duration.ofMillis(1500), Duration.ofSeconds(20), 5);
+        for (boolean desktop : new boolean[] {true, false}) {
+            var settings = ConfluenceSourceAdapter.settings(source(Map.of()), desktop, retry);
+            assertThat(settings.get("maxRetries")).isEqualTo("4");
+            assertThat(settings.get("retryBackoffMillis")).isEqualTo("1500");
+            assertThat(settings.get("maxRetryBackoffMillis")).isEqualTo("20000");
+        }
+        var own = ConfluenceSourceAdapter.settings(source(Map.of("maxRetries", "0", "retryBackoffMillis", "100")),
+                true, retry);
+        assertThat(own.get("maxRetries")).isEqualTo("0");
+        assertThat(own.get("retryBackoffMillis")).isEqualTo("100");
+        assertThat(own.get("maxRetryBackoffMillis")).isEqualTo("20000");
     }
 
     @Test

@@ -40,9 +40,12 @@ class SyncConfiguration {
     @Bean
     SpaceSyncJobs spaceSyncJobs(Jobs jobs, SourceQueries queries, ObjectProvider<SyncBaselineStore> store,
                                 ObjectProvider<PageContentFetcher> fetcher, ObjectProvider<SyncCommitted> afterCommit,
-                                LiveConfiguration live) {
-        return new SpaceSyncJobs(jobs, queries, store.getIfAvailable(), fetcher.getIfAvailable(), Clock.systemUTC(),
-                afterCommit.orderedStream().toList(), live::withheldRetentionFor);
+                                LiveConfiguration live, JobsProperties properties) {
+        SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, queries, store.getIfAvailable(), fetcher.getIfAvailable(),
+                Clock.systemUTC(), afterCommit.orderedStream().toList(), live::withheldRetentionFor);
+        // ADR 0025: nach so vielen Netzfehlern nacheinander hält sich der Auftrag an (jobs.retry.pause-after-failures).
+        syncs.connectionLostAfter(properties.retry().toSettings().pauseAfterFailures());
+        return syncs;
     }
 
     /**

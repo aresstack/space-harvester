@@ -96,9 +96,9 @@ public class JobActions {
                 yield syncs.resume(current.id(), owner).status();
             }
             case EXPORT -> exports.resume(current.id(), owner, access);
-            case ASSETS -> {
+            case ASSETS, ATTACHMENTS -> {
                 if (conversions == null) {
-                    throw new JobNotResumableException(current.id(), "keine Bildbeschaffung angebunden");
+                    throw new JobNotResumableException(current.id(), "keine Bild- oder Anhangbeschaffung angebunden");
                 }
                 yield conversions.resumeImages(current.id(), owner);
             }

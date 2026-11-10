@@ -118,6 +118,16 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /**
+     * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung sich Abgleich und Einlesen selbst anhalten
+     * ({@code jobs.retry.pause-after-failures}, ADR 0025); ohne Inhaltsabruf wirkungslos.
+     */
+    public void connectionLostAfter(int count) {
+        if (applier != null) {
+            applier.connectionLostAfter(count);
+        }
+    }
+
+    /**
      * Liest den Space im laufenden Auftrag {@code context} ein, wie es ein Abgleich täte. Hat ein gleichzeitiger
      * Abgleich zuerst bestätigt, gilt dessen Generation.
      *
