@@ -58,7 +58,7 @@ class ApiRouteCoverageTest {
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
             "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS, "/api/v1/terms",
-            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "/api/v1/sources/types");
+            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "GET /api/v1/glossary", "/api/v1/sources/types");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {

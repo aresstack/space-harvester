@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.passages.PassagePayload;
 
@@ -43,11 +44,12 @@ final class PassagesTab extends JPanel {
     /** Stand der Segmentierung gegenüber dem angezeigten Text, wie bei den Begriffen. */
     enum State { CURRENT, STALE, FAILED, MISSING }
 
-    private final JLabel state = new JLabel(" ");
+    private final TabHeader head = new TabHeader("Semantische Absätze");
     private final JPanel list = new JPanel();
     private final JLabel hint = Comic.muted(" ");
-    private final JLabel mode = Comic.muted(" ");
+    private String mode = " ";
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
+    private Consumer<String> onStatus = text -> { };
     private final List<String> titles = new ArrayList<>();
     private final List<Passage> shown = new ArrayList<>();
     private final List<JPanel> rows = new ArrayList<>();
@@ -57,18 +59,10 @@ final class PassagesTab extends JPanel {
         super(new BorderLayout(0, 10));
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        JLabel title = Comic.text("Semantische Absätze");
-        title.setFont(Comic.semiBold(15f));
-        head.add(title, BorderLayout.WEST);
-        state.setFont(Comic.semiBold(12f));
-        state.setOpaque(true);
-        head.add(state, BorderLayout.EAST);
-        head.add(mode, BorderLayout.SOUTH);
+        head.copy(this::copyText);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout(0, 8));
         body.setOpaque(false);
         body.add(list, BorderLayout.NORTH);
         body.add(hint, BorderLayout.CENTER);
@@ -106,6 +100,24 @@ final class PassagesTab extends JPanel {
         onJump = Objects.requireNonNull(listener, "listener");
     }
 
+    /** {@code listener} bekommt die Erläuterung zum Stand für die Statuszeile des Hauptfensters (" " ohne). */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Die Absätze als Text für die Zwischenablage: Nummer, Themenzeile, Anriss. */
+    String copyText() {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < shown.size(); i++) {
+            Passage passage = shown.get(i);
+            text.append(i + 1).append(". ").append(passage.title()).append('\n');
+            if (passage.preview() != null && !passage.preview().isBlank()) {
+                text.append("   ").append(passage.preview()).append('\n');
+            }
+        }
+        return text.toString().stripTrailing();
+    }
+
     static final String STRUCTURAL = "Nach Absätzen und Überschriften gebildet: ohne Embedding-Modell oder ohne "
             + "Freigabe der Quelle für den KI-Dienst erkennt der Core keine Themenwechsel";
 
@@ -115,23 +127,19 @@ final class PassagesTab extends JPanel {
      * @param structural ob der Core auf die Struktur der Seite zurückgefallen ist (Modus {@code structure})
      */
     void show(State current, List<Passage> passages, boolean structural) {
-        mode.setText(current == State.CURRENT && structural ? STRUCTURAL : " ");
-        state.setText(TermsTab.stateText(switch (current) {
-            case CURRENT -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.CURRENT;
-            case STALE -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.STALE;
-            case FAILED -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.FAILED;
-            case MISSING -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.MISSING;
-        }));
+        mode = current == State.CURRENT && structural ? STRUCTURAL : " ";
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
             case STALE -> Comic.ORANGE;
             case FAILED -> Comic.RED;
             case MISSING -> Comic.MUTED;
         };
-        state.setForeground(tone);
-        state.setBackground(Comic.SURFACE);
-        state.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
-                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        head.status(TermsTab.stateText(switch (current) {
+            case CURRENT -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.CURRENT;
+            case STALE -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.STALE;
+            case FAILED -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.FAILED;
+            case MISSING -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.MISSING;
+        }), tone);
         list.removeAll();
         titles.clear();
         shown.clear();
@@ -148,7 +156,9 @@ final class PassagesTab extends JPanel {
             shown.add(visible.get(i));
             titles.add(visible.get(i).title());
         }
-        hint.setText(hint(current, visible.size()));
+        // Ohne Absätze steht der Grund im Reiter; sonst nur in der Statuszeile (die Erläuterung zum Modus).
+        hint.setText(visible.isEmpty() ? hint(current, visible.size()) : " ");
+        onStatus.accept(mode);
         list.revalidate();
         list.repaint();
     }
@@ -159,13 +169,16 @@ final class PassagesTab extends JPanel {
         index.setForeground(Comic.INK);
         index.setPreferredSize(new Dimension(24, 24));
         index.setBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true));
-        JLabel title = Comic.text(passage.title());
+        // Umbrechend: Themenzeile und Anriss folgen der Breite des Reiters, nichts wird rechts abgeschnitten.
+        com.aresstack.spaceharvester.app.ui.controls.WrappedText title = Comic.wrapped(passage.title(), Comic.INK, 14f);
         title.setFont(Comic.semiBold(14f));
         JPanel lines = new JPanel(new BorderLayout(0, 4));
         lines.setOpaque(false);
         lines.add(title, BorderLayout.NORTH);
+        com.aresstack.spaceharvester.app.ui.controls.WrappedText preview = null;
         if (passage.preview() != null && !passage.preview().isBlank()) {
-            lines.add(Comic.muted(passage.preview()), BorderLayout.CENTER);
+            preview = Comic.wrapped(passage.preview(), Comic.MUTED, 13f);
+            lines.add(preview, BorderLayout.CENTER);
         }
         JPanel row = new JPanel(new BorderLayout(10, 0));
         row.setOpaque(false);
@@ -173,14 +186,20 @@ final class PassagesTab extends JPanel {
         row.add(index, BorderLayout.WEST);
         row.add(lines, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
-        row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        row.setToolTipText("Klick markiert den Absatz im Lesetext");
-        row.addMouseListener(new MouseAdapter() {
+        MouseAdapter click = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 onJump.accept(List.of(new TermsTab.Span(passage.start(), passage.end())));
             }
-        });
+        };
+        // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
+        for (java.awt.Component part : preview == null ? List.of(row, title) : List.of(row, title, preview)) {
+            part.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            part.addMouseListener(click);
+            if (part instanceof javax.swing.JComponent component) {
+                component.setToolTipText("Klick markiert den Absatz im Lesetext");
+            }
+        }
         return row;
     }
 
@@ -231,11 +250,11 @@ final class PassagesTab extends JPanel {
     }
 
     String stateLabel() {
-        return state.getText();
+        return head.statusText();
     }
 
     String mode() {
-        return mode.getText();
+        return mode;
     }
 
     String hint() {

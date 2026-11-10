@@ -41,6 +41,49 @@ class OpenNlpGermanPreprocessorTest {
     }
 
     @Test
+    void aLineBreakIsAHardSentenceBoundary() {
+        // Ursache A (DATENH): ohne Grenze verschmilzt die Überschrift mit dem Folgesatz und wird zum Handelnden
+        String text = "Kurzbeschreibung\nDas Programm steht im Mittelpunkt.\n\nKomponenten\nMarktplatz: bildet die Schnittstelle.";
+        List<Sentence> sentences = PREPROCESSOR.analyze(text);
+
+        assertEquals(List.of("Kurzbeschreibung", "Das Programm steht im Mittelpunkt.", "Komponenten",
+                "Marktplatz: bildet die Schnittstelle."), sentences.stream().map(Sentence::text).toList());
+        for (Sentence sentence : sentences) {
+            assertEquals(sentence.text(), text.substring(sentence.start(), sentence.end()));
+            assertEquals(sentences.indexOf(sentence), sentence.index());
+            for (Token token : sentence.tokens()) {
+                assertTrue(token.start() >= sentence.start() && token.end() <= sentence.end(), "Spannen im Gesamttext");
+            }
+        }
+        assertEquals(List.of(), PREPROCESSOR.analyze(""));
+        assertEquals(1, PREPROCESSOR.analyze("Er schläft.\n").size());
+    }
+
+    @Test
+    void closedClassWordsAreNeverTaggedAsVerbs() {
+        // Ursachen B und G (DATENH): OpenNLP taggt „welchen“ und „hinweg“ hier als VERB
+        Sentence relative = PREPROCESSOR.analyze("Datenprodukt-API: Erlaubt den Abruf von Datenprodukten, welchen das "
+                + "Interaktionsmuster API zugewiesen ist, über eine Rest-API.").get(0);
+        assertEquals("PRON", word(relative, "welchen").upos());
+        Sentence postposition = PREPROCESSOR.analyze(
+                "Über die einzelnen Vorhaben hinweg ist das Datenhaus die zentrale Plattform.").get(0);
+        assertEquals("ADP", word(postposition, "hinweg").upos());
+        assertEquals("AUX", word(postposition, "ist").upos());
+    }
+
+    @Test
+    void separableZuInfinitivesGetTheirInfinitiveAsLemma() {
+        // Ursache K (DATENH): der Lemmatisierer lässt „bereitzustellen“ unverändert
+        Sentence sentence = PREPROCESSOR.analyze("Das Vorhaben hat sich die Vision gesetzt, die Daten der "
+                + "Haushaltsabteilung zentral bereitzustellen.").get(0);
+        assertEquals("bereitstellen", word(sentence, "bereitzustellen").lemma());
+    }
+
+    private static Token word(Sentence sentence, String form) {
+        return sentence.tokens().stream().filter(t -> t.form().equals(form)).findFirst().orElseThrow();
+    }
+
+    @Test
     void namesItsModelsWithChecksums() {
         assertEquals(List.of("sentences", "tokens", "upos", "lemma"),
                 PREPROCESSOR.components().stream().map(c -> c.layer()).toList());

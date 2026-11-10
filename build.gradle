@@ -10,3 +10,7 @@ allprojects {
     // Gemeinsame Release-Version aller Module (Workflow Release: -PreleaseVersion=0.1.0-beta.3); sonst SNAPSHOT
     version = providers.gradleProperty('releaseVersion').getOrElse('0.1.0-SNAPSHOT')
 }
+
+// Die Bibliotheksliste von Einstellungen › Bibliotheken (oss-licenses.json in den Ressourcen der Desktop-App).
+ext.ossLicenseTargetProjectPath = ':space-harvester-app'
+apply from: "$rootDir/gradle/oss-licenses.gradle"

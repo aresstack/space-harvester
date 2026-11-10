@@ -444,6 +444,11 @@ public final class Workspace {
         return harvester.imageAnalysis().read(page.snapshot());
     }
 
+    /** Ob die Quelle für das Vision-Modell freigegeben ist; siehe {@code PageImageAnalysis#released}. */
+    public boolean imagesReleased(String sourceId) {
+        return harvester.imageAnalysis().released(sourceId);
+    }
+
     /**
      * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
      * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
@@ -452,6 +457,18 @@ public final class Workspace {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
         PageImages images = harvester.imageAnalysis().describe(page.snapshot());
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /**
+     * Wie {@link #describeImages}, aber nur für diese eine Seite einer nicht freigegebenen Quelle, weil der Benutzer
+     * es ausdrücklich erlaubt hat („Nur diese Seite einmalig beschreiben“); speichert keine Freigabe.
+     */
+    public PageImages describeImagesOnce(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = harvester.imageAnalysis().describeOnce(page.snapshot());
         harvester.enrichments().flush();
         return images;
     }
