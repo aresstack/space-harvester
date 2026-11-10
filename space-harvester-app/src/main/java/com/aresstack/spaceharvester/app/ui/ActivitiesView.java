@@ -48,9 +48,10 @@ import java.util.function.Consumer;
 /**
  * Aufträge: Abgleiche und Downloads dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Oben die
  * Auftragsliste über die volle Breite, je Zeile rechtsbündig die Symbolaktionen ({@link RowActions}): Exportieren als
- * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, Löschen. Darunter links die
- * Kachel „Auftrag“, rechts „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Der Fortschritt
- * steht im globalen Balken über der Statusleiste ({@link #actions()}), mittig „Abbrechen“, danach der Endzustand. Ein
+ * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, Anhalten bzw. Fortsetzen,
+ * Erneut versuchen, Löschen. Darunter links die Kachel „Auftrag“, rechts „Ergebnis“ und „Exportieren“ (Ausgabeordner,
+ * erzeugte Dateien, Hinweise). Der Fortschritt steht im globalen Balken über der Statusleiste ({@link #actions()}),
+ * mittig „Anhalten“ und „Abbrechen“, danach „Fortsetzen“ oder der Endzustand. Ein
  * Lauf heißt nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte,
  * erscheint als Warnung mit Grund.
  */
@@ -117,7 +118,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 4, this::rowActions);
+        RowActions.install(table, JobsModel.ACTIONS, FORMATS.size() + 5, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
@@ -237,6 +238,19 @@ public final class ActivitiesView implements View {
     /** Bricht den Auftrag ab, dessen Stand die Statuszeile zeigt (nach Rückfrage). */
     void cancelShownJob() {
         cancelSelected();
+    }
+
+    /** Hält den Auftrag an, dessen Stand die Statuszeile zeigt, bzw. setzt ihn fort (Knöpfe in der Statuszeile). */
+    void pauseOrResumeShownJob() {
+        JobStatus status = barJob;
+        if (status == null || pauseResumeBlocked(status) != null) {
+            return;
+        }
+        if (status.state().terminal()) {
+            resume(status);
+        } else {
+            pause(status);
+        }
     }
 
     @Override
@@ -396,10 +410,11 @@ public final class ActivitiesView implements View {
             case COMPLETED -> JobProgressEvent.Outcome.COMPLETED;
             case CANCELLED -> JobProgressEvent.Outcome.CANCELLED;
             case FAILED -> JobProgressEvent.Outcome.FAILED;
+            case PAUSED -> JobProgressEvent.Outcome.PAUSED;
             default -> running ? JobProgressEvent.Outcome.RUNNING : JobProgressEvent.Outcome.NONE;
         };
         context.events().publish(new JobProgressEvent(status.id(), text, done, total, running && total == 0, outcome,
-                status.cancelRequested()));
+                status.cancelRequested(), pauseResumeBlocked(status) == null));
     }
 
     private void select(String id) {
@@ -578,6 +593,7 @@ public final class ActivitiesView implements View {
                 }
             }
             case CANCELLED -> feedback.warning("Abgebrochen", "Teilergebnisse bleiben unbestätigt.");
+            case PAUSED -> feedback.info("Angehalten", "Geladenes bleibt; „Fortsetzen“ holt nur, was noch fehlt.");
             case FAILED -> feedback.warning("Fehlgeschlagen", status.error() == null ? null
                     : status.error().code() + ": " + status.error().message());
             default -> feedback.working(Texts.state(status.state()));
@@ -846,8 +862,15 @@ public final class ActivitiesView implements View {
 
     private static final javax.swing.Icon RETRY = ComposerIcons.refresh();
     static final String RETRY_TIP = "Erneut versuchen";
+    private static final javax.swing.Icon PAUSE = ComposerIcons.pause();
+    private static final javax.swing.Icon RESUME = ComposerIcons.play();
+    static final String PAUSE_TIP = "Anhalten";
+    static final String RESUME_TIP = "Fortsetzen";
 
-    /** Die neun Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Erneut versuchen, Löschen. */
+    /**
+     * Die zehn Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Anhalten bzw. Fortsetzen, Erneut
+     * versuchen, Löschen.
+     */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
             return List.of();
@@ -866,12 +889,69 @@ public final class ActivitiesView implements View {
         boolean space = job.sourceId() != null && job.partitionKey() != null;
         actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
+        String pauseBlocked = pauseResumeBlocked(job);
+        actions.add(new RowActions.Action(running ? PAUSE : RESUME, pauseResumeTip(job), pauseBlocked == null,
+                () -> { if (running) { pause(job); } else { resume(job); } }));
         String retryBlocked = retryBlocked(job);
         actions.add(new RowActions.Action(RETRY, retryTip(job, datasets.get(job.id())), retryBlocked == null,
                 () -> retry(job)));
         actions.add(new RowActions.Action(Glyph.TRASH, running ? "Auftrag löschen · läuft noch, erst abbrechen"
                 : "Auftrag löschen", !running, () -> deleteJob(job)));
         return actions;
+    }
+
+    /**
+     * Warum dieser Auftrag gerade weder angehalten noch fortgesetzt werden kann, oder {@code null}: nur Downloads und
+     * Abgleiche (ADR 0025), nicht nach „Fertig“, nicht bei angefordertem Abbruch.
+     */
+    static String pauseResumeBlocked(JobStatus job) {
+        if (job.type() != JobType.EXPORT && job.type() != JobType.SYNC) {
+            return "nur für Downloads und Abgleiche";
+        }
+        if (job.state() == JobState.COMPLETED) {
+            return "schon fertig";
+        }
+        if (!job.state().terminal() && job.cancelRequested()) {
+            return "Abbruch angefordert";
+        }
+        return null;
+    }
+
+    /** Der Tooltip von Pause bzw. Play in der Zeile: läuft der Auftrag „Anhalten“, sonst „Fortsetzen“. */
+    static String pauseResumeTip(JobStatus job) {
+        boolean running = !job.state().terminal();
+        String blocked = pauseResumeBlocked(job);
+        if (blocked != null) {
+            return (running ? PAUSE_TIP : RESUME_TIP) + " · " + blocked;
+        }
+        return running ? PAUSE_TIP + " · Geladenes bleibt, später fortsetzen"
+                : RESUME_TIP + " · holt nur, was noch fehlt";
+    }
+
+    /** Hält den Auftrag an (Pause in der Zeile oder Statuszeile): er beendet seinen Schritt, Geladenes bleibt. */
+    void pause(JobStatus job) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || job.state().terminal() || pauseResumeBlocked(job) != null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().pauseJob(job.id()), s -> poll(), feedback::problem);
+    }
+
+    /**
+     * Setzt den Auftrag fort (Play in der Zeile oder Statuszeile): im selben Eintrag, wenn der Kern ihn noch kennt;
+     * sonst (etwa nach einem Neustart) wie „Erneut versuchen“ mit denselben Angaben, was ebenfalls nur den Rest holt.
+     */
+    void resume(JobStatus job) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || !job.state().terminal() || pauseResumeBlocked(job) != null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().canResume(job.id()) ? runtime.workspace().resumeJob(job.id())
+                        : job.type() == JobType.SYNC
+                                ? runtime.workspace().startSync(job.sourceId(), job.partitionKey())
+                                : runtime.workspace().startExport(job.sourceId(), job.partitionKey(), job.rootPageId(),
+                                        List.of(Downloads.FORMAT)),
+                started -> show(started.id()), feedback::problem);
     }
 
     /** Warum dieser Auftrag gerade nicht erneut gestartet werden kann, oder {@code null}. */

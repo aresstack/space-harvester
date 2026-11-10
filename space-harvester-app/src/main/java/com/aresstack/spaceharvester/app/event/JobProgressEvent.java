@@ -9,23 +9,24 @@ package com.aresstack.spaceharvester.app.event;
  * @param total         Gesamtzahl; 0, wenn unbekannt
  * @param indeterminate läuft ohne bekannten Fortschritt
  * @param outcome       laufend oder der Endzustand
+ * @param pausable      der Auftrag lässt sich anhalten (läuft) bzw. fortsetzen (angehalten, ADR 0025)
  */
 public record JobProgressEvent(String jobId, String text, long done, long total, boolean indeterminate,
-                               Outcome outcome, boolean cancelRequested)
+                               Outcome outcome, boolean cancelRequested, boolean pausable)
         implements ApplicationEvent<JobProgressEvent> {
 
     /** Laufend oder wie der Auftrag endete. */
     public enum Outcome {
-        NONE, RUNNING, COMPLETED, FAILED, CANCELLED;
+        NONE, RUNNING, COMPLETED, FAILED, CANCELLED, PAUSED;
 
         public boolean terminal() {
-            return this == COMPLETED || this == FAILED || this == CANCELLED;
+            return this == COMPLETED || this == FAILED || this == CANCELLED || this == PAUSED;
         }
     }
 
     /** Kein Auftrag. */
     public static JobProgressEvent none() {
-        return new JobProgressEvent(null, "Kein Auftrag läuft", 0, 0, false, Outcome.NONE, false);
+        return new JobProgressEvent(null, "Kein Auftrag läuft", 0, 0, false, Outcome.NONE, false, false);
     }
 
     @Override
