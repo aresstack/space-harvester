@@ -207,6 +207,27 @@ class TermRelationsViewTest {
         await("Synonym neu angelegt", () -> synonyms[0].getRowCount() == 3 && synonyms[0].getSelectedRow() >= 0
                 && "Schnittstelle".equals(synonyms[0].getValueAt(synonyms[0].getSelectedRow(), 0)));
 
+        // #336 „Synonyme vorschlagen“: Knopf oben rechts in der Reiterzeile, nur im Reiter Synonyme sichtbar; der Lauf
+        // zeigt den Wartekreis, endet ohne Chat-Modell nach der Regelstufe und meldet das in der Statuszeile.
+        java.util.List<String> notices = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.events().subscribe(com.aresstack.spaceharvester.app.event.StatusMessageEvent.class,
+                event -> notices.add(event.getPayload().getText()));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].proposeSynonymsButton().isVisible()).isFalse();
+            view[0].tabs().select(TermsView.SYNONYMS);
+            assertThat(view[0].proposeSynonymsButton().isVisible()).isTrue();
+            assertThat(view[0].proposeSynonymsButton().isEnabled()).isTrue();
+            view[0].startSynonymRun(new com.aresstack.spaceharvester.application.terms.SynonymDiscovery.Request(
+                    com.aresstack.spaceharvester.application.terms.SynonymScope.ALL, null));
+            assertThat(view[0].synonymOverlay().isBusy()).isTrue();
+            assertThat(view[0].proposeSynonymsButton().isEnabled()).isFalse();
+        });
+        await("Synonymlauf gemeldet", () -> notices.stream().anyMatch(text ->
+                text.startsWith("Synonymerkennung abgeschlossen") && text.contains(TermsView.RULES_ONLY)));
+        await("Wartekreis weg", () -> !view[0].synonymOverlay().isBusy()
+                && view[0].proposeSynonymsButton().isEnabled());
+        assertThat(synonyms[0].getRowCount()).isEqualTo(3);
+
         // Graph: API in der Mitte, Tiefe 2 bringt auch REST; die abgelehnte Beziehung fehlt.
         SwingUtilities.invokeAndWait(() -> {
             view[0].tabs().select(TermsView.GRAPH);
