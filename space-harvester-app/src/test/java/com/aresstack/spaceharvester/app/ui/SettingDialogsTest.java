@@ -82,7 +82,9 @@ class SettingDialogsTest {
                 saved[0] = id;
                 done.countDown();
             });
-            find(shell[0].body(), JComboBox.class).get(0).setSelectedItem("Personal Access Token");
+            assertThat(combo(shell[0].body(), AiSettingsPanel.KEEPASS).getSelectedItem())
+                    .as("ohne KeePass-Eintrag in der Datei: Manuell").isEqualTo(AiSettingsPanel.MANUAL);
+            combo(shell[0].body(), "Personal Access Token").setSelectedItem("Personal Access Token");
             // Ohne Token wird nichts gespeichert; der Grund steht im Dialog.
             shell[0].save();
             assertThat(shell[0].feedback.text()).contains("Das Token fehlt");
@@ -95,6 +97,60 @@ class SettingDialogsTest {
                 .doesNotContain("mein-token");
         assertThat(vault.has("wiki")).isTrue();
         assertThat(context.secrets().has("wiki")).isTrue();
+    }
+
+    @Test
+    void loginFromKeePassWritesOnlyTheEntryNameAndKeepsTheTokenInTheSession() throws Exception {
+        FakeKeePass keePass = new FakeKeePass();
+        keePass.entries.put("PAT_Confluence", new String[] {"https://wiki.example.invalid", "pat-aus-keepass"});
+        keePass.entries.put("Anderer", new String[] {"", "x"});
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        List<JComboBox<?>> combos = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.auth(null, context, editable(), id -> done.countDown());
+            JComboBox<?> origin = combo(shell[0].body(), AiSettingsPanel.KEEPASS);
+            JComboBox<?> auth = combo(shell[0].body(), "Personal Access Token");
+            // Reihenfolge wie im Assistenten: Zugangsdaten, Eintrag, Anmeldung.
+            List<JComboBox> all = find(shell[0].body(), JComboBox.class);
+            assertThat(all.indexOf(origin)).isLessThan(all.indexOf(auth));
+            origin.setSelectedItem(AiSettingsPanel.KEEPASS);
+            combos.add(origin);
+            combos.add(auth);
+        });
+        await(() -> combo(shell[0].body(), "PAT_Confluence") != null);
+        SwingUtilities.invokeAndWait(() -> combo(shell[0].body(), "PAT_Confluence").setSelectedItem("PAT_Confluence"));
+        // Ohne Benutzer im Eintrag: Token vorbelegt, der Wert steht maskiert und schreibgeschützt im Feld.
+        await(() -> find(shell[0].body(), JPasswordField.class).get(0).getPassword().length > 0);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(combos.get(1).getSelectedItem()).isEqualTo("Personal Access Token");
+            JPasswordField token = find(shell[0].body(), JPasswordField.class).get(0);
+            assertThat(new String(token.getPassword())).isEqualTo("pat-aus-keepass");
+            assertThat(token.isEditable()).isFalse();
+            shell[0].save();
+        });
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("type: pat", "PAT_Confluence")
+                .doesNotContain("pat-aus-keepass");
+        assertThat(vault.has("wiki")).as("aus KeePass gelesen: nie im Tresor").isFalse();
+        assertThat(context.secrets().has("wiki")).isTrue();
+        assertThat(context.settings().keePassEntry("wiki")).isEqualTo("PAT_Confluence");
+
+        // Zurück auf „Manuell“ mit eingetipptem Token: Der Eintragsname verschwindet aus der Datei.
+        SettingDialogs.Shell[] again = new SettingDialogs.Shell[1];
+        CountDownLatch manual = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            again[0] = SettingDialogs.auth(null, context, editable(), id -> manual.countDown());
+            JComboBox<?> origin = combo(again[0].body(), AiSettingsPanel.KEEPASS);
+            assertThat(origin.getSelectedItem()).isEqualTo(AiSettingsPanel.KEEPASS);
+            origin.setSelectedItem(AiSettingsPanel.MANUAL);
+            find(again[0].body(), JPasswordField.class).get(0).setText("getippt");
+            again[0].save();
+        });
+        assertThat(manual.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).doesNotContain("PAT_Confluence", "getippt");
+        assertThat(vault.has("wiki")).isTrue();
     }
 
     @Test
@@ -558,6 +614,18 @@ class SettingDialogsTest {
         find(container, javax.swing.JLabel.class).forEach(label -> texts.add(label.getText()));
         find(container, javax.swing.JTextArea.class).forEach(area -> texts.add(area.getText()));
         return texts;
+    }
+
+    /** Die Auswahl, die {@code item} anbietet, oder {@code null}. */
+    private static JComboBox<?> combo(Container container, Object item) {
+        for (JComboBox<?> combo : find(container, JComboBox.class)) {
+            for (int i = 0; i < combo.getItemCount(); i++) {
+                if (item.equals(combo.getItemAt(i))) {
+                    return combo;
+                }
+            }
+        }
+        return null;
     }
 
     private static <T> List<T> find(Container container, Class<T> type) {
