@@ -34,6 +34,7 @@ import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.spaceharvester.application.signin.SignInFailures;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
@@ -1182,7 +1183,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             try {
                 return next(challenge.submit(code));
             } catch (KnowledgeSourceException e) {
-                throw accessFailure(e);
+                throw sendFailure(e);
             }
         }
 
@@ -1191,8 +1192,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             try {
                 return next(challenge.resend());
             } catch (KnowledgeSourceException e) {
-                throw accessFailure(e);
+                throw sendFailure(e);
             }
+        }
+
+        /**
+         * Wie {@link #accessFailure}, die Meldung des Adapters (etwa „Einmalcode nicht gesendet (HttpRetryException:
+         * …)“) aber bereinigt um Query-Teile und Geheimnisse ({@link SignInFailures#sanitize}); die Ursachenkette
+         * bleibt, damit {@link SignInFailures#describe} die Art des Fehlers erkennt (#571). Ohne Ursache (Meldungen,
+         * die Pfade nennen) bleibt es bei der bloßen Art.
+         */
+        private SourceAccessException sendFailure(KnowledgeSourceException e) {
+            SourceAccessException failure = accessFailure(e);
+            if (failure instanceof SignInRequiredException || failure.getCause() == null) {
+                return failure;
+            }
+            return new SourceAccessException(id, failure.reason(), SignInFailures.sanitize(failure.getMessage()), e);
         }
 
         private SignInChallenge next(OneTimeCodeChallenge again) {

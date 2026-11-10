@@ -238,7 +238,8 @@ public class SignInRequests {
 
     /**
      * Sendet den Code an die Quelle und überschreibt {@code code} danach. Blockiert (Netz), nicht auf dem EDT
-     * aufrufen. Gleichzeitige Versuche für dieselbe Anforderung laufen nacheinander.
+     * aufrufen. Gleichzeitige Versuche für dieselbe Anforderung laufen nacheinander. Bei
+     * {@link SignInRequest.Answer#FAILED} nennt {@link SignInRequest#failure()} der Anforderung die Ursache (#571).
      */
     public SignInRequest.Answer submit(String requestId, char[] code) {
         Objects.requireNonNull(code, "code");
@@ -263,11 +264,11 @@ public class SignInRequests {
                 try {
                     next = challenge.submit(code);
                 } catch (SourceAccessException e) {
-                    LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} nicht gesendet ({1})",
-                            pending.sourceId, e.reason());
+                    failed(pending, challenge, e, code, "Einmalcode");
                     return SignInRequest.Answer.FAILED;
                 }
                 synchronized (this) {
+                    pending.failure = "";
                     if (next == null) {
                         pending.state = State.UNLOCKED;
                         unlockedAt.put(pending.sourceId, clock.instant());
@@ -290,7 +291,8 @@ public class SignInRequests {
     }
 
     /**
-     * Fordert bei der Quelle einen neuen Code an. Blockiert (Netz).
+     * Fordert bei der Quelle einen neuen Code an. Blockiert (Netz). Scheitert es, nennt
+     * {@link SignInRequest#failure()} danach die Ursache.
      *
      * @return die Anforderung danach; leer, wenn es sie nicht mehr gibt
      * @throws SourceAccessException wenn das Anfordern scheitert
@@ -311,8 +313,15 @@ public class SignInRequests {
                 }
                 challenge = pending.challenge;
             }
-            SignInChallenge next = challenge.resend();
+            SignInChallenge next;
+            try {
+                next = challenge.resend();
+            } catch (SourceAccessException e) {
+                failed(pending, challenge, e, null, "Neuer Einmalcode");
+                throw e;
+            }
             synchronized (this) {
+                pending.failure = "";
                 if (next != null) {
                     pending.challenge = next;
                 }
@@ -320,6 +329,23 @@ public class SignInRequests {
         }
         changed();
         return request(requestId);
+    }
+
+    /**
+     * Merkt sich die bereinigte Ursache an der Anforderung und protokolliert Quelle, Art und Typ der innersten
+     * Ursache, nie Meldungstexte oder den Code.
+     *
+     * @param code der gesendete Code oder {@code null}; taucht er im Text auf, wird er entfernt
+     */
+    private void failed(Pending pending, SignInChallenge challenge, SourceAccessException e, char[] code,
+                        String what) {
+        String failure = SignInFailures.without(SignInFailures.describe(e, challenge.service()), code);
+        LOG.log(System.Logger.Level.WARNING, "{0} für Quelle {1} nicht gesendet ({2}, {3})", what, pending.sourceId,
+                e.reason(), SignInFailures.rootType(e));
+        synchronized (this) {
+            pending.failure = failure;
+        }
+        changed();
     }
 
     /** Lehnt ab: die wartenden Aufträge laden ohne diese Dateien weiter, sie fehlen mit Grund. */
@@ -393,6 +419,8 @@ public class SignInRequests {
         final Object sending = new Object();
         SignInChallenge challenge;
         State state = State.OPEN;
+        /** Ursache des letzten gescheiterten Sendens oder Anforderns, sonst leer ({@link SignInRequest#failure()}). */
+        String failure = "";
 
         Pending(String id, String sourceId, SignInChallenge challenge, Instant since) {
             this.id = id;
@@ -403,7 +431,7 @@ public class SignInRequests {
 
         SignInRequest view() {
             return new SignInRequest(id, sourceId, challenge.service(), challenge.title(), challenge.message(),
-                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since);
+                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure);
         }
     }
 }
