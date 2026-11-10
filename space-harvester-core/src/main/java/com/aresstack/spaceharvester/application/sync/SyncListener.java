@@ -29,4 +29,13 @@ public interface SyncListener {
      */
     default void checkpoint() {
     }
+
+    /**
+     * Die Quelle war beim Inhaltsabruf {@link PlanApplier#CONNECTION_LOST_AFTER} Mal nacheinander nicht erreichbar oder
+     * drosselt. Ein Auftrag hält sich hier an ({@link com.aresstack.spaceharvester.application.jobs.JobContext#pause}),
+     * statt die übrigen Seiten als Fehler zu zählen; eine Ausnahme beendet den Lauf wie {@link #checkpoint()}.
+     * Standardmäßig läuft er weiter.
+     */
+    default void connectionLost() {
+    }
 }

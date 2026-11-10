@@ -74,7 +74,7 @@ public abstract class JobStoreContract {
         JobStatus status = new JobStatus("a", JobType.EXPORT, "confluence", "DEV", "TECHNICAL_CLIENT:etl",
                 JobState.COMPLETED, new JobProgress(2, 2, 1, 1), null, false, T0, T0.plusSeconds(1),
                 T0.plusSeconds(2), "100", "Seite 100", java.util.Map.of("depth", "0", "formats", "json,md"), true,
-                false);
+                false, null);
 
         store.save(status);
 
@@ -83,6 +83,19 @@ public abstract class JobStoreContract {
         store.save(queued("b"));
         assertThat(store.find("b")).get().extracting(JobStatus::parameters, JobStatus::incomplete)
                 .containsExactly(java.util.Map.of(), false);
+    }
+
+    @Test
+    void whyAJobPausedItselfComesBack() {
+        JobStore store = newStore();
+        JobStatus status = new JobStatus("a", JobType.ASSETS, "confluence", "DEV", "TECHNICAL_CLIENT:etl",
+                JobState.PAUSED, new JobProgress(2, 1, 1, 0), null, false, T0, T0.plusSeconds(1), T0.plusSeconds(2),
+                null, null, java.util.Map.of("exportId", "e1"), false, false, PauseReason.SIGN_IN_REQUIRED);
+
+        store.save(status);
+
+        assertThat(store.find("a")).contains(status);
+        assertThat(store.find("a")).get().extracting(JobStatus::pauseReason).isEqualTo(PauseReason.SIGN_IN_REQUIRED);
     }
 
     @Test

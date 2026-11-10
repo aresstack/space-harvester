@@ -34,14 +34,22 @@ import java.util.TreeMap;
  *                        unvollständig, etwa ein Export mit fehlenden Seiten oder Bilder ohne vollständiges Manifest
  * @param pauseRequested  mit {@code cancelRequested}: der Benutzer hält an, statt abzubrechen; nur solange der Auftrag
  *                        noch läuft, nie abgelegt
+ * @param pauseReason     nur bei {@link JobState#PAUSED}: warum angehalten, sonst {@code null}; ältere abgelegte
+ *                        Aufträge lesen sich mit {@link PauseReason#USER}
  */
 public record JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
                         Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle,
-                        Map<String, String> parameters, boolean incomplete, boolean pauseRequested) {
+                        Map<String, String> parameters, boolean incomplete, boolean pauseRequested,
+                        PauseReason pauseReason) {
 
     public JobStatus {
         parameters = parameters == null ? Map.of() : java.util.Collections.unmodifiableMap(new TreeMap<>(parameters));
+        if (state != JobState.PAUSED) {
+            pauseReason = null;
+        } else if (pauseReason == null) {
+            pauseReason = PauseReason.USER;
+        }
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
@@ -61,7 +69,7 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
                      JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
                      Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle) {
         this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
-                finishedAt, rootPageId, rootTitle, Map.of(), false, false);
+                finishedAt, rootPageId, rootTitle, Map.of(), false, false, null);
     }
 
     /** Ein Auftrag ohne Startseite: ganzer Space oder ganze Quelle. */
@@ -85,6 +93,6 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
     /** Derselbe Zustand mit anderem Endzustand und Ende; für Aufträge, die ein Neustart unterbrochen hat. */
     JobStatus interrupted(JobError failure, Instant at) {
         return new JobStatus(id, type, sourceId, partitionKey, owner, JobState.FAILED, progress, failure,
-                cancelRequested, createdAt, startedAt, at, rootPageId, rootTitle, parameters, false, false);
+                cancelRequested, createdAt, startedAt, at, rootPageId, rootTitle, parameters, false, false, null);
     }
 }

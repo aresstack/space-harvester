@@ -17,7 +17,7 @@ class ExportRestartParametersTest {
     private static JobStatus stored(String rootPageId, Map<String, String> parameters) {
         return new JobStatus("e1", JobType.EXPORT, "confluence", "DEV", "client-a", JobState.PAUSED,
                 JobProgress.NONE, null, false, Instant.parse("2026-11-10T15:00:00Z"), null, null, rootPageId, null,
-                parameters, false, false);
+                parameters, false, false, null);
     }
 
     @Test

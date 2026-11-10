@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -244,7 +245,7 @@ class ExportMediaSignInTest {
 
     @Test
     @Timeout(value = 20, unit = TimeUnit.SECONDS)
-    void declinedTheJobFinishesWithoutTheFilesAndAsksOnlyOnce() throws Exception {
+    void declinedTheJobPausesInsteadOfCountingTheFilesAsFailedAndAsksOnlyOnce() throws Exception {
         Source source = new Source(true);
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(5), Clock.systemUTC());
         Setup setup = setup(source, signIns);
@@ -257,17 +258,23 @@ class ExportMediaSignInTest {
         worker.join(10_000);
 
         assertThat(signIns.pending()).isEmpty();
+        // Ohne Anmeldung hält der Auftrag an; die übrigen Dateien zählen nicht als Fehler.
+        JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(collection.state()).isEqualTo(JobState.PAUSED);
+        assertThat(collection.pauseReason()).isEqualTo(PauseReason.SIGN_IN_REQUIRED);
+        assertThat(collection.lifecycle().key()).isEqualTo("PAUSED_SIGN_IN_REQUIRED");
+        assertThat(collection.progress().failed()).isZero();
         ExportAssetManifest manifest = setup.writer.assets(setup.export.id()).orElseThrow();
         assertThat(manifest.complete()).isFalse();
-        assertThat(manifest.assets()).filteredOn(e -> e.status() == ExportAssetManifest.Status.SIGN_IN_REQUIRED)
-                .hasSizeGreaterThanOrEqualTo(2);
         assertThat(signIns.submit(request.id(), "1".toCharArray())).isEqualTo(SignInRequest.Answer.GONE);
 
-        // Später nachholen: ein neuer Auftrag für denselben Export.
+        // Nach der Anmeldung im selben Eintrag fortsetzen.
         source.locked = false;
-        assertThat(setup.conversions.collectImages(setup.export.id(), "client-a")).isPresent();
+        assertThat(setup.conversions.resumeImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
         drain();
+        assertThat(jobs.status(collection.id()).state()).isEqualTo(JobState.COMPLETED);
         assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
     }
 
     @Test
@@ -335,8 +342,12 @@ class ExportMediaSignInTest {
         assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
 
         source.listingDown = true;
-        assertThat(setup.conversions.collectImages(setup.export.id(), "client-a")).isPresent();
+        JobStatus again = setup.conversions.collectImages(setup.export.id(), "client-a").orElseThrow();
         drain();
+
+        // Nicht erreichbar: der Auftrag hält an, statt die übrigen Dateien als Fehler zu zählen.
+        assertThat(jobs.status(again.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(jobs.status(again.id()).pauseReason()).isEqualTo(PauseReason.CONNECTION_LOST);
 
         ExportAssetManifest manifest = setup.writer.assets(setup.export.id()).orElseThrow();
         assertThat(manifest.complete()).isFalse();
