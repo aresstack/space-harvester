@@ -1297,7 +1297,8 @@ public final class ActivitiesView implements View {
                 if (workspace.jobState(id).allows(JobAction.CANCEL)) {
                     workspace.performJobAction(id, JobAction.CANCEL);
                 }
-            } catch (RuntimeException e) {
+            } catch (com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException
+                     | com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
                 // Inzwischen beendet oder gelöscht: entscheidet die Schleife unten.
             }
         }
@@ -1314,8 +1315,10 @@ public final class ActivitiesView implements View {
                 } catch (com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
                     deleted++;
                     it.remove();
-                } catch (RuntimeException e) {
-                    // Zustand hat sich zwischen Prüfen und Löschen geändert: nächste Runde.
+                } catch (com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException
+                         | com.aresstack.spaceharvester.application.jobs.JobStillRunningException e) {
+                    // Zustand hat sich zwischen Prüfen und Löschen geändert: nächste Runde. Alles andere, etwa ein
+                    // Speicherfehler, geht an die Statuszeile.
                 }
             }
             if (open.isEmpty() || System.nanoTime() >= until) {
