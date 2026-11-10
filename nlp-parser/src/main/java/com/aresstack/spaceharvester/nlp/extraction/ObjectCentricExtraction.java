@@ -18,7 +18,7 @@ public final class ObjectCentricExtraction {
      * {@code GermanTagCorrections}). Steigt mit jeder Änderung, die andere Sätze, Erwähnungen, Aussagen, Rollen oder
      * Hinweise liefert; gespeicherte Aussagenanalysen der Desktop-App (#499) gelten dann als veraltet.
      */
-    public static final String RULES_VERSION = "3";
+    public static final String RULES_VERSION = "5";
 
     private final ExtractionSettings settings;
 

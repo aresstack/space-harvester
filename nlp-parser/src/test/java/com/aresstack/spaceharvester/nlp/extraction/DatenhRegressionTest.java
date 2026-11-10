@@ -2,7 +2,6 @@ package com.aresstack.spaceharvester.nlp.extraction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.aresstack.spaceharvester.nlp.syntax.ParsedDocument;
@@ -72,7 +71,7 @@ class DatenhRegressionTest {
         // Zwischenstand: der Zeilenumbruch nach „Kurzbeschreibung“ und „Komponenten“ ist eine harte Satzgrenze
         assertEquals("Kurzbeschreibung", sentence("Kurzbeschreibung").text());
         assertEquals("Komponenten", sentence("Komponenten").text());
-        assertEquals(12, DOCUMENT.sentences().size(), "12 Zeilen, 12 Sätze");
+        assertEquals(13, DOCUMENT.sentences().size(), "13 Zeilen, 13 Sätze");
 
         // Endergebnis: die Überschrift ist kein Beteiligter, der eigentliche Handelnde kommt zurück
         List<String> relations = relations();
@@ -122,19 +121,20 @@ class DatenhRegressionTest {
         assertEquals("bereitzustellen", statement("bereitstellen", "Das Vorhaben Datenhaus hat sich").predicate().text());
     }
 
-    // ---- D: „Daten“ als Zeitangabe (OpenNLP-Grundform + Lexikonregel) ----------------------------------------------
+    // ---- D: „Daten“ als Zeitangabe (OpenNLP-Grundform + Lexikonregel, behoben in der Zeitregel) ----------------------
 
     @Test
-    void causeD_dataReadAsDate_isALemmaErrorThatTheTimeRuleAmplifies() {
+    void causeD_dataIsNoTimeEvenWithTheLemmaDatum() {
         Sentence sentence = sentence("Das Datenhaus ermöglicht");
         Token daten = token(sentence, "Daten");
-        assertEquals("datum", daten.lemma(), "Zwischenstand: OpenNLP führt „Daten“ auf „Datum“ zurück");
+        assertEquals("datum", daten.lemma(), "Zwischenstand: OpenNLP führt „Daten“ weiter auf „Datum“ zurück");
         assertEquals("obl", daten.deprel(), "die Kante selbst ist brauchbar");
 
-        // IST (Regelfehler auf falscher Grundform): die Zeitregel liest das Lemma „datum“ als Zeitwort
-        Argument time = statement("ermöglichen", "Das Datenhaus ermöglicht").withRole(Role.TIME).get(0);
-        assertEquals("den Daten", text(time));
-        assertEquals(Basis.LEXICON, time.basis());
+        // Endergebnis: keine Zeitangabe „den Daten“ (Regelfehler behoben), „mit“ macht sie zum Mittel
+        Statement statement = statement("ermöglichen", "Das Datenhaus ermöglicht");
+        assertTrue(statement.withRole(Role.TIME).isEmpty(), "verboten: TIME den Daten");
+        assertTrue(relations().stream().noneMatch(r -> r.contains(" TIME ") && r.contains("Daten")));
+        assertEquals("den Daten", text(statement.withRole(Role.INSTRUMENT).get(0)));
     }
 
     // ---- E: Passiv im gereihten Relativsatz (MaltParser + Stimmenregel) ---------------------------------------------
@@ -161,47 +161,103 @@ class DatenhRegressionTest {
         assertFalse(active.has(Finding.UNRESOLVED_PRONOUN), "IST: offenes Pronomen nicht erkannt");
     }
 
-    // ---- F: Reflexivpronomen als Objekt (MaltParser + Objektregel) --------------------------------------------------
+    // ---- E: Hilfsverb jenseits der Teilsatzgrenze und Übernahme in den Relativsatz (behoben in der Extraktion) ------
 
     @Test
-    void causeF_reflexivePronounAsObject_isAModelErrorThatTheObjectRuleAccepts() {
-        Sentence sentence = sentence("Das Vorhaben Datenhaus hat sich");
-        assertEquals("obj", token(sentence, "sich").deprel(), "Zwischenstand: „sich“ als Akkusativobjekt");
-        assertEquals("nsubj", token(sentence, "Vision").deprel(), "und das eigentliche Objekt als zweites Subjekt");
+    void causeE_passiveInARelativeClauseNeitherMakesTheMainClausePassiveNorInheritsItsSubject() {
+        Sentence sentence = sentence("Das Vorhaben Datenhaus stellt");
+        Token stellt = token(sentence, "stellt");
+        Token werden = token(sentence, "werden");
+        Token ausgewertet = token(sentence, "ausgewertet");
+        assertEquals(stellt.id(), werden.head(), "Zwischenstand: MaltParser hängt „werden“ an das Hauptverb");
+        assertEquals("aux:pass", werden.deprel());
+        assertEquals(stellt.id(), ausgewertet.head(), "und „ausgewertet“ als gereihtes Verb des Hauptsatzes");
+        assertEquals("conj", ausgewertet.deprel());
 
-        // IST (Regelfehler): Kernrelation „Das Vorhaben → setzen → sich“
-        Statement statement = statement("setzen", "Das Vorhaben Datenhaus hat sich");
-        assertEquals("sich", text(statement.core(Role.AFFECTED_OBJECT)));
-        assertTrue(SalienceProjection.project(ANALYSIS).core().stream()
-                .anyMatch(core -> "sich".equals(core.objectText())));
-        assertTrue(statement.withRole(Role.AFFECTED_OBJECT).stream().noneMatch(a -> text(a).contains("Vision")));
+        // Endergebnis: Hauptsatz aktiv mit seinem Handelnden, „ausgewertet werden“ passiv ohne geerbten Handelnden
+        Statement main = statement("bereitstellen", "Das Vorhaben Datenhaus stellt");
+        assertEquals(Statement.Voice.ACTIVE, main.voice());
+        assertEquals("Das Vorhaben", text(main.core(Role.ACTOR)));
+        assertEquals("stellt … bereit", main.predicate().text(), "ohne das fremde „werden“");
+        assertTrue(main.has(Finding.AUXILIARY_OUTSIDE_CLAUSE));
+        Statement passive = statement("auswerten", "Das Vorhaben Datenhaus stellt");
+        assertEquals(Statement.Voice.PASSIVE, passive.voice());
+        assertEquals("ausgewertet werden", passive.predicate().text());
+        assertTrue(passive.arguments().stream().noneMatch(a -> text(a).contains("Vorhaben")),
+                "verboten: auswerten mit dem Vorhaben als Beteiligtem");
+        assertTrue(passive.has(Finding.COORDINATION_ACROSS_CLAUSE));
     }
 
-    // ---- H: Verbzusatz als prädikatives Adjektiv (MaltParser) -------------------------------------------------------
+    // ---- F: Reflexivpronomen als Objekt (MaltParser + Objektregel, behoben in der Objektregel) -----------------------
 
     @Test
-    void causeH_adjectivalParticleAsXcomp_losesTheObject() {
+    void causeF_reflexivePronounIsNoParticipant() {
+        Sentence sentence = sentence("Das Vorhaben Datenhaus hat sich");
+        assertEquals("obj", token(sentence, "sich").deprel(), "Zwischenstand: „sich“ weiter als Akkusativobjekt");
+        assertEquals("nsubj", token(sentence, "Vision").deprel(), "und das eigentliche Objekt als zweites Subjekt");
+
+        // Endergebnis: „sich“ ist kein Beteiligter; „die Vision“ ist unsicheres Objekt aus einer Heuristik
+        Statement statement = statement("setzen", "Das Vorhaben Datenhaus hat sich");
+        assertTrue(relations().stream().noneMatch(r -> r.endsWith(" sich")), "verboten: sich als Beteiligter");
+        assertTrue(SalienceProjection.project(ANALYSIS).core().stream()
+                .noneMatch(core -> "sich".equals(core.objectText())), "verboten: Kern … → setzen → sich");
+        assertTrue(statement.has(Finding.REFLEXIVE));
+        Argument vision = statement.core(Role.AFFECTED_OBJECT);
+        assertEquals("die Vision", text(vision));
+        assertEquals(Basis.HEURISTIC, vision.basis());
+        assertFalse(vision.certain());
+    }
+
+    // ---- H: Verbzusatz als prädikatives Adjektiv (MaltParser, behoben in der Prädikatsregel) -------------------------
+
+    @Test
+    void causeH_predicativeParticleJoinsThePredicate() {
         Sentence sentence = sentence("Berechtigungsmanagement:");
         Token sicher = token(sentence, "sicher");
-        assertEquals("xcomp", sicher.deprel(), "Zwischenstand: „sicher“ (sicherstellen) als xcomp, nicht als Partikel");
+        assertEquals("xcomp", sicher.deprel(), "Zwischenstand: „sicher“ (sicherstellen) weiter als xcomp");
         assertEquals("nsubj", token(sentence, "Einhaltung").deprel(), "das Objekt hängt als Subjekt an „sicher“");
 
-        // IST: „stellt“ ohne Verbzusatz und ohne Objekt
-        Statement statement = statement("stellen", "Berechtigungsmanagement:");
-        assertEquals("stellt", statement.predicate().text());
-        assertNull(statement.core(Role.AFFECTED_OBJECT));
+        // Endergebnis: „stellt … sicher (sicherstellen)“ mit unsicherem Objekt aus der Heuristik
+        Statement statement = statement("sicherstellen", "Berechtigungsmanagement:");
+        assertEquals("stellt … sicher", statement.predicate().text());
+        assertTrue(statement.has(Finding.PREDICATIVE_PARTICLE));
+        Argument object = statement.core(Role.AFFECTED_OBJECT);
+        assertEquals("die Einhaltung", text(object));
+        assertEquals(Basis.HEURISTIC, object.basis());
+        assertFalse(object.certain());
+        assertTrue(ANALYSIS.statements().stream().noneMatch(s -> s.predicate().lemma().equals("stellen")),
+                "verboten: „stellen“ ohne Verbzusatz");
     }
 
     // ---- I: Listenkennung als Subjekt (Struktur + MaltParser) -------------------------------------------------------
 
     @Test
-    void causeI_listLabelAsSubject_pushesTheRealSubjectIntoTheObject() {
+    void causeI_listLabelWithParserEdgeIsEvidenceImplicitLabelOnlyAHeuristic() {
         Sentence sentence = sentence("Register:");
         assertEquals("nsubj", sentence.token(1).deprel(), "Zwischenstand: Kennung „Register:“ als Subjekt");
-        assertEquals("obj", sentence.token(3).deprel(), "das eigentliche Subjekt „Register“ als Objekt");
+        assertEquals("obj", sentence.token(3).deprel(), "die Wiederholung „Register“ als Objekt");
 
-        // IST: Kernrelation „Register → erweitern → Register“
-        assertTrue(relations().contains("erweitern AFFECTED_OBJECT Register"));
+        // Endergebnis: die Wiederholung ist kein Objekt mehr; Register → erweitern → Datenprodukte aus Parserkanten
+        assertFalse(relations().contains("erweitern AFFECTED_OBJECT Register"), "verboten: Register → erweitern → Register");
+        Statement extend = statement("erweitern", "Register:");
+        assertTrue(extend.has(Finding.LABEL_REPEATED));
+        assertEquals("Datenprodukte", text(extend.core(Role.AFFECTED_OBJECT)));
+
+        // Kennung mit Subjektkante des Parsers bleibt Parserevidenz (Entscheidung zum Nachtrag ADR 0024)
+        for (String prefix : List.of("Berechtigungsmanagement:", "Marktplatz:", "Register:")) {
+            Statement first = ANALYSIS.statements().stream()
+                    .filter(s -> s.sentence() == sentence(prefix).index()).findFirst().orElseThrow();
+            assertEquals(Basis.PARSER, first.core(Role.ACTOR).basis(), prefix);
+            assertTrue(first.core(Role.ACTOR).certain(), prefix);
+            assertFalse(first.has(Finding.SUBJECT_FROM_LABEL), prefix);
+        }
+        // Listeneintrag ohne Subjektkante: Kennung als impliziter, unsicherer Handelnder
+        Statement catalog = statement("bereitstellen", "Datenkatalog:");
+        assertEquals("Datenkatalog", text(catalog.core(Role.ACTOR)));
+        assertEquals(Basis.HEURISTIC, catalog.core(Role.ACTOR).basis());
+        assertFalse(catalog.core(Role.ACTOR).certain());
+        assertTrue(catalog.has(Finding.SUBJECT_FROM_LABEL));
+        assertEquals("Metadaten", text(catalog.core(Role.AFFECTED_OBJECT)));
     }
 
     // ---- Hilfen -----------------------------------------------------------------------------------------------------

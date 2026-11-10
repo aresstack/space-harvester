@@ -155,12 +155,12 @@ class TermRelationsTest {
     @Test
     void rejectedProposalStaysBlockedAcrossRuns() {
         RelationScope scope = RelationScope.GLOBAL;
-        TermRelations.ProposalRun first = relations.propose("rule:acronyms", RelationOrigin.RULE, scope, "g1",
+        TermRelations.ProposalRun first = relations.propose("rule:acronyms", RelationOrigin.RULE, scope, Set.of(RelationType.ABBREVIATION), "g1",
                 List.of(proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1"))));
         TermRelation proposed = all(EDITOR, ReviewStatus.PROPOSED).get(0);
         relations.reject(EDITOR, proposed.id(), proposed.revision());
 
-        TermRelations.ProposalRun second = relations.propose("rule:acronyms", RelationOrigin.RULE, scope, "g2",
+        TermRelations.ProposalRun second = relations.propose("rule:acronyms", RelationOrigin.RULE, scope, Set.of(RelationType.ABBREVIATION), "g2",
                 List.of(proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1"))));
 
         assertThat(first.added()).isEqualTo(1);
@@ -177,19 +177,81 @@ class TermRelationsTest {
     }
 
     @Test
+    void searchExpansionsFollowTheScopeAndOnlyConfirmedExpandingRelations() {
+        // #336, Teil 4: global überall, Quelle in der Quelle und ihren Spaces, Space nur in genau diesem Space.
+        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldeschlüssel", RelationType.ABBREVIATION,
+                RelationScope.GLOBAL, null, List.of()));
+        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldecode", RelationType.SYNONYM,
+                new RelationScope("wiki-a", null), null, List.of()));
+        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Antwortschlüssel", RelationType.VARIANT,
+                new RelationScope("wiki-a", "DEV"), null, List.of()));
+        relations.add(EDITOR, new TermRelations.NewRelation("RSL", "Rückmeldung", RelationType.RELATED,
+                RelationScope.GLOBAL, null, List.of()));
+        relations.propose("ai:synonyms", RelationOrigin.AI, RelationScope.GLOBAL, Set.of(RelationType.SYNONYM),
+                "s1", List.of(new TermRelations.Proposal("RSL", "Rückmeldekennung", RelationType.SYNONYM,
+                        List.of(evidence("wiki-a", "1")))));
+
+        assertThat(relations.expansions(EDITOR, "rsl", null, null)).containsExactly("Rückmeldeschlüssel");
+        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", null)).containsExactly("Rückmeldeschlüssel",
+                "Rückmeldecode");
+        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", "DEV")).containsExactly("Rückmeldeschlüssel",
+                "Rückmeldecode", "Antwortschlüssel");
+        assertThat(relations.expansions(EDITOR, "RSL", "wiki-a", "OPS")).containsExactly("Rückmeldeschlüssel",
+                "Rückmeldecode");
+        assertThat(relations.expansions(EDITOR, "RSL", "wiki-b", "DEV")).containsExactly("Rückmeldeschlüssel");
+        assertThat(relations.expansions(EDITOR, "Rückmeldeschlüssel", "wiki-b", null)).containsExactly("RSL");
+        // Der Vorschlag wirkt nicht, nach dem Bestätigen schon; abgelehnt nie.
+        TermRelation proposed = all(EDITOR, ReviewStatus.PROPOSED).get(0);
+        relations.confirm(EDITOR, proposed.id(), null);
+        assertThat(relations.expansions(EDITOR, "rsl", null, null)).contains("Rückmeldekennung");
+        relations.reject(EDITOR, proposed.id(), null);
+        assertThat(relations.expansions(EDITOR, "rsl", null, null)).doesNotContain("Rückmeldekennung");
+    }
+
+    @Test
+    void aRunWithdrawsOnlyProposalsOfItsOwnRelationTypes() {
+        // #336: KI-Akronymvorschläge und KI-Synonymvorschläge teilen Herkunft und Umfang, gehören aber verschiedenen
+        // Erzeugern; ein Synonymlauf darf die Akronymvorschläge nicht zurückziehen und umgekehrt.
+        relations.propose("ai:acronyms", RelationOrigin.AI, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION),
+                "a1", List.of(proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1"))));
+        Set<RelationType> synonyms = Set.of(RelationType.SYNONYM, RelationType.VARIANT, RelationType.RELATED);
+        relations.propose("ai:synonyms", RelationOrigin.AI, RelationScope.GLOBAL, synonyms, "s1", List.of(
+                new TermRelations.Proposal("E-Mail", "Email", RelationType.VARIANT, List.of(evidence("wiki-a", "1"))),
+                new TermRelations.Proposal("Beleg", "Nachweis", RelationType.SYNONYM, List.of(evidence("wiki-a", "1")))));
+
+        TermRelations.ProposalRun synonymRun = relations.propose("ai:synonyms", RelationOrigin.AI,
+                RelationScope.GLOBAL, synonyms, "s2", List.of(new TermRelations.Proposal("E-Mail", "Email",
+                        RelationType.VARIANT, List.of(evidence("wiki-a", "1")))));
+
+        assertThat(synonymRun).isEqualTo(new TermRelations.ProposalRun(0, 0, 1, 0, 0));
+        assertThat(all(EDITOR, null)).extracting(TermRelation::fromTerm).containsExactlyInAnyOrder("RSL", "E-Mail");
+
+        TermRelations.ProposalRun acronymRun = relations.propose("ai:acronyms", RelationOrigin.AI,
+                RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "a2", List.of());
+
+        assertThat(acronymRun.withdrawn()).isEqualTo(1);
+        assertThat(all(EDITOR, null)).extracting(TermRelation::fromTerm).containsExactly("E-Mail");
+        assertThatThrownBy(() -> relations.propose("ai:synonyms", RelationOrigin.AI, RelationScope.GLOBAL, synonyms,
+                "s3", List.of(proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> relations.propose("ai:synonyms", RelationOrigin.AI, RelationScope.GLOBAL, Set.of(),
+                "s3", List.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void runReplacesOnlyItsOwnUnconfirmedProposals() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
                 proposal("KPI", "Kennzahl", evidence("wiki-a", "1"))));
         TermRelation kpi = all(EDITOR, null).stream().filter(r -> r.fromTerm().equals("KPI")).findFirst()
                 .orElseThrow();
         relations.confirm(EDITOR, kpi.id(), null);
-        relations.propose("ai", RelationOrigin.AI, RelationScope.GLOBAL, "a1",
+        relations.propose("ai", RelationOrigin.AI, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "a1",
                 List.of(proposal("ABC", "Alpha Beta Gamma", evidence("wiki-a", "1"))));
         TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
                 RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of()));
 
-        TermRelations.ProposalRun run = relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g2",
+        TermRelations.ProposalRun run = relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g2",
                 List.of(proposal("ZV", "Zahlungsverkehr", evidence("wiki-a", "1")),
                         proposal("NEU", "Neuer Eintrag Uhr", evidence("wiki-b", "1"))));
 
@@ -200,13 +262,13 @@ class TermRelationsTest {
         assertThat(confirmed.status()).isEqualTo(ReviewStatus.CONFIRMED);
         assertThat(confirmed.evidenceStale()).isTrue();
         assertThat(relations.relation(EDITOR, manual.id()).origin()).isEqualTo(RelationOrigin.MANUAL);
-        assertThatThrownBy(() -> relations.propose("x", RelationOrigin.MANUAL, RelationScope.GLOBAL, "m",
+        assertThatThrownBy(() -> relations.propose("x", RelationOrigin.MANUAL, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "m",
                 List.of())).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void removingAutomaticRelationRejectsItAndManualOneDisappears() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1",
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1",
                 List.of(proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1"))));
         TermRelation proposed = all(EDITOR, null).get(0);
         TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
@@ -223,10 +285,10 @@ class TermRelationsTest {
 
     @Test
     void purgingASourceRemovesItsRelationsAndEvidenceButKeepsOthersAndManualOnes() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
                 proposal("KPI", "Kennzahl", evidence("wiki-a", "1"), evidence("wiki-b", "1"))));
-        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), "g1",
+        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), Set.of(RelationType.ABBREVIATION), "g1",
                 List.of(proposal("ABC", "Alpha Beta Gamma", evidence("wiki-a", "1"))));
         TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
                 RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of(evidence("wiki-a", "1"))));
@@ -247,10 +309,10 @@ class TermRelationsTest {
 
     @Test
     void relationsAndEvidenceOfADisabledSourceAreHiddenUntilItIsBack() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
                 proposal("KPI", "Kennzahl", evidence("wiki-a", "1"), evidence("wiki-b", "1"))));
-        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), "g1",
+        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-a", null), Set.of(RelationType.ABBREVIATION), "g1",
                 List.of(proposal("ABC", "Alpha Beta Gamma", evidence("wiki-a", "1"))));
         TermRelation manual = relations.add(EDITOR, new TermRelations.NewRelation("ZV", "Zahlungsverkehr",
                 RelationType.ABBREVIATION, RelationScope.GLOBAL, null, List.of(evidence("wiki-a", "1"))));
@@ -281,7 +343,7 @@ class TermRelationsTest {
 
     @Test
     void automaticRelationsAreHiddenWhenNoEvidenceIsReadable() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1"), evidence("wiki-b", "1")),
                 proposal("KPI", "Kennzahl", evidence("wiki-b", "1")),
                 proposal("XYZ", "Xaver Yps Zett", evidence("wiki-a", "404"))));
@@ -358,7 +420,7 @@ class TermRelationsTest {
 
     @Test
     void competingMeaningsAreSeparateAndRejectingOneKeepsTheOther() {
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g1", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g1", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
                 proposal("RSL", "Ressourcenstatusliste", evidence("wiki-b", "1"))));
         List<TermRelation> both = all(EDITOR, null);
@@ -367,13 +429,13 @@ class TermRelationsTest {
 
         relations.reject(EDITOR, both.stream().filter(r -> r.toTerm().equals("Ressourcenstatusliste")).findFirst()
                 .orElseThrow().id(), null);
-        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, "g2", List.of(
+        relations.propose("rule", RelationOrigin.RULE, RelationScope.GLOBAL, Set.of(RelationType.ABBREVIATION), "g2", List.of(
                 proposal("RSL", "Rückmeldeschlüssel", evidence("wiki-a", "1")),
                 proposal("RSL", "Ressourcenstatusliste", evidence("wiki-b", "1"))));
 
         assertThat(all(EDITOR, null)).extracting(TermRelation::toTerm).containsExactly("Rückmeldeschlüssel");
         // Eine Sperre im Geltungsbereich einer Quelle sperrt nicht dieselbe Beziehung global oder anderswo.
-        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-b", null), "g3",
+        relations.propose("rule", RelationOrigin.RULE, new RelationScope("wiki-b", null), Set.of(RelationType.ABBREVIATION), "g3",
                 List.of(proposal("RSL", "Ressourcenstatusliste", evidence("wiki-b", "1"))));
         assertThat(all(EDITOR, ReviewStatus.PROPOSED)).hasSize(2);
     }

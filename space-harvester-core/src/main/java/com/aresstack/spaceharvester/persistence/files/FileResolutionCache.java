@@ -104,6 +104,16 @@ public final class FileResolutionCache implements ResolutionCache {
         }
     }
 
+    /**
+     * Vergisst die Ergebnisse aller Schlüssel, auf die {@code keys} zutrifft, etwa Space- und globale Läufe, an
+     * denen eine bereinigte Quelle beteiligt war.
+     */
+    public synchronized void removeSources(java.util.function.Predicate<String> keys) {
+        if (bySource.keySet().removeIf(keys)) {
+            store();
+        }
+    }
+
     private void store() {
         ObjectNode root = JSON.createObjectNode().put("schema", SCHEMA);
         ObjectNode sources = root.putObject("sources");

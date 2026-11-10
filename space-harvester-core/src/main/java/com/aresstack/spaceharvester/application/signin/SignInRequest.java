@@ -18,9 +18,16 @@ import java.util.Objects;
  * @param resendAvailable ob „Code erneut senden“ möglich ist
  * @param jobIds          Aufträge, die an dieser Stelle warten („Wartet auf Anmeldung“)
  * @param since           seit wann die Anforderung offen ist
+ * @param failure         warum das letzte Senden oder Anfordern eines Codes gescheitert ist (#571), sonst leer;
+ *                        kurz und bereinigt aus {@link SignInFailures#describe}, etwa
+ *                        {@code Proxy verlangt Anmeldung (HTTP 407) – Ziel wiki.example}: Art des Fehlers (HTTP-Status,
+ *                        Proxy-407, abgelehnter Tunnel, TLS, Zeitüberschreitung, Verbindungsfehler) und Ziel-Host, nie
+ *                        Code, Cookies, Kopfzeilen oder Query. Anders als {@link #error()} stammt der Text nicht von
+ *                        der Seite der Quelle; ein Code, den die Quelle ablehnt, setzt {@link #error()}, nicht diesen
+ *                        Wert. Ein späteres gelungenes Senden oder Anfordern leert ihn.
  */
 public record SignInRequest(String id, String sourceId, String service, String title, String message, String error,
-                            boolean resendAvailable, List<String> jobIds, Instant since) {
+                            boolean resendAvailable, List<String> jobIds, Instant since, String failure) {
 
     public SignInRequest {
         Objects.requireNonNull(id, "id");
@@ -31,6 +38,13 @@ public record SignInRequest(String id, String sourceId, String service, String t
         error = error == null ? "" : error;
         jobIds = List.copyOf(jobIds);
         Objects.requireNonNull(since, "since");
+        failure = failure == null ? "" : failure;
+    }
+
+    /** Ohne gescheitertes Senden ({@link #failure()} leer); die Form vor #571. */
+    public SignInRequest(String id, String sourceId, String service, String title, String message, String error,
+                         boolean resendAvailable, List<String> jobIds, Instant since) {
+        this(id, sourceId, service, title, message, error, resendAvailable, jobIds, since, "");
     }
 
     /** Antwort auf {@link SignInRequests#submit}. */
@@ -39,7 +53,10 @@ public record SignInRequest(String id, String sourceId, String service, String t
         ACCEPTED,
         /** Nicht angenommen; die Anforderung bleibt offen, {@link #error()} nennt den Grund der Quelle. */
         REJECTED,
-        /** Senden gescheitert (Quelle nicht erreichbar); die Anforderung bleibt offen. */
+        /**
+         * Senden gescheitert (keine Verbindung, Proxy, TLS, HTTP-Fehler der Quelle …); die Anforderung bleibt offen,
+         * {@link #failure()} nennt die Ursache.
+         */
         FAILED,
         /** Keine offene Anforderung mit dieser Kennung (mehr): angenommen, abgelehnt oder abgelaufen. */
         GONE

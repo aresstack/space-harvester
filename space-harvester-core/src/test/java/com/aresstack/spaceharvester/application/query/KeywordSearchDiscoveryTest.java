@@ -96,6 +96,29 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void confirmedRelationsAddQueriesPerSourceAndInTheCache() {
+        // #336, Teil 4: „RSL“ fragt die Quelle auch nach „Rückmeldeschlüssel“; die Erweiterung sieht Quelle und Space.
+        List<String> scopes = Collections.synchronizedList(new ArrayList<>());
+        SearchExpansion expansion = new SearchExpansion((caller, term, sourceId, spaceKey) -> {
+            scopes.add(term + "@" + sourceId + "/" + spaceKey);
+            return "RSL".equals(term) ? List.of("Rückmeldeschlüssel") : List.of();
+        });
+        wiki.results("RSL", "1").results("Rückmeldeschlüssel", "2", "1");
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, FindingCatalog.NONE,
+                () -> true, KeywordSearch.BeforeSearch.NONE, expansion)
+                .search(APP, new KeywordSearch.Query("RSL", "wiki", Set.of(), Set.of("DEV"), Set.of()), null, 50);
+
+        assertThat(wiki.searches).containsExactlyInAnyOrder("RSL", "Rückmeldeschlüssel");
+        assertThat(scopes).contains("RSL@wiki/DEV");
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2");
+        // Im Cache wird die Erweiterung nur in dieser Quelle gesucht.
+        verify(texts).search(org.mockito.ArgumentMatchers.eq("Rückmeldeschlüssel"),
+                org.mockito.ArgumentMatchers.eq(Set.of("wiki")), any(), anyInt());
+    }
+
+    @Test
     void aConciseQueryGoesToTheSourceUnchanged() {
         wiki.results("Hashicorp Vault", "1");
 

@@ -126,6 +126,35 @@ class TermRelationsApiTest {
     }
 
     @Test
+    void synonymRunStartsWithoutModelAndChecksScopeAndRights() throws Exception {
+        // #336: Ohne Chat-Modell läuft nur die Regelstufe; der Lauf wird trotzdem angenommen.
+        HttpResponse<String> global = send("POST", "/api/v1/term-relations/refresh?sourceId=*",
+                "{\"kind\":\"synonyms\"}", null);
+        assertThat(global.statusCode()).as(global.body()).isEqualTo(202);
+        String jobId = json.readTree(global.body()).get("id").asString();
+        assertThat(global.headers().firstValue("Location")).contains("/api/v1/term-relations/refresh-jobs/" + jobId);
+        assertThat(json.readTree(global.body()).get("sourceId").asString()).isEqualTo("*");
+        assertThat(send("GET", "/api/v1/term-relations/refresh-jobs/" + jobId, null, null).statusCode())
+                .isEqualTo(200);
+
+        HttpResponse<String> space = send("POST", "/api/v1/term-relations/refresh?sourceId=wiki&spaceKey=DEV",
+                "{\"kind\":\"synonyms\",\"maxJudgedPairs\":0}", null);
+        assertThat(space.statusCode()).as(space.body()).isEqualTo(202);
+        assertThat(send("GET", "/api/v1/term-relations/refresh-jobs/"
+                + json.readTree(space.body()).get("id").asString(), null, null).statusCode()).isEqualTo(200);
+
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=*&spaceKey=DEV",
+                "{\"kind\":\"synonyms\"}", null), 400, "invalid-request");
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=*", "{\"kind\":\"synonyms\","
+                + "\"maxJudgedPairs\":-1}", null), 400, "invalid-request");
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=nix", "{\"kind\":\"synonyms\"}", null),
+                404, "source-not-found");
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=*", null, null), 404, "source-not-found");
+        assertThat(send("POST", "/api/v1/term-relations/refresh?sourceId=*", "{\"kind\":\"synonyms\"}", READER_TOKEN)
+                .statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void theRoutesAreDocumented() throws Exception {
         JsonNode paths = json.readTree(send("GET", "/v3/api-docs", null, null).body()).get("paths");
 

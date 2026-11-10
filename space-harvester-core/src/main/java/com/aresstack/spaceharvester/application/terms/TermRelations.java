@@ -205,6 +205,31 @@ public class TermRelations {
      * außer {@link RelationType#RELATED}, global oder für diese Quelle. Nie transitiv; Fundstellen der Ausweitung
      * prüft die Suche selbst.
      */
+    /**
+     * Für die Suche (#336, Teil 4): die bestätigten Gegenstücke eines Begriffs im Umfang der Suche. Global gilt
+     * überall; eine Beziehung der Quelle gilt in der Quelle und in jedem ihrer Spaces; eine Beziehung eines Space nur
+     * bei einer Suche in genau diesem Space. Nie Vorschläge, Abgelehntes oder „verwandt“; nicht transitiv.
+     *
+     * @param sourceId Quelle der Suche oder {@code null} für alle Quellen (dann nur globale Beziehungen)
+     * @param spaceKey Space der Suche oder {@code null} für die ganze Quelle
+     */
+    public List<String> expansions(AccessContext caller, String term, String sourceId, String spaceKey) {
+        String normalized = TermText.normalize(term);
+        Visibility visibility = new Visibility(caller);
+        Set<String> found = new LinkedHashSet<>();
+        for (TermRelation relation : store.all()) {
+            RelationScope scope = relation.scope();
+            boolean inScope = scope.global()
+                    || sourceId != null && scope.sourceId().equals(sourceId)
+                    && (scope.spaceKey() == null || scope.spaceKey().equals(spaceKey));
+            if (inScope && relation.status() == ReviewStatus.CONFIRMED && relation.type().expandsSearch()
+                    && relation.touches(normalized) && visibility.visible(relation).isPresent()) {
+                found.add(relation.other(normalized));
+            }
+        }
+        return List.copyOf(found);
+    }
+
     public List<String> expansions(AccessContext caller, String term, String sourceId) {
         String normalized = TermText.normalize(term);
         Visibility visibility = new Visibility(caller);
@@ -329,22 +354,37 @@ public class TermRelations {
     /**
      * Gleicht die Vorschläge eines Laufs ab (#122, #336), in einem Schritt: neue werden {@code PROPOSED}, bestehende
      * Vorschläge dieser Herkunft bekommen neue Belege, abgelehnte und manuell vorhandene Schlüssel bleiben unberührt,
-     * unbestätigte Vorschläge dieser Herkunft und dieses Geltungsbereichs, die der Lauf nicht mehr nennt, entfallen,
-     * bestätigte werden nur als {@code evidenceStale} markiert. Scheitert der Lauf vorher, ruft er dies nicht auf, und
-     * nichts ändert sich. Rechte und Freigaben prüft der Lauf, bevor er Inhalte liest.
+     * unbestätigte Vorschläge dieser Herkunft, dieses Geltungsbereichs und dieser Arten, die der Lauf nicht mehr
+     * nennt, entfallen, bestätigte werden nur als {@code evidenceStale} markiert. Scheitert der Lauf vorher, ruft er
+     * dies nicht auf, und nichts ändert sich. Rechte und Freigaben prüft der Lauf, bevor er Inhalte liest.
+     *
+     * <p>Die Arten trennen unabhängige Erzeuger: Die Akronymläufe (#122) erzeugen nur {@code ABBREVIATION}, der
+     * Synonymlauf (#336) nur {@code SYNONYM}, {@code VARIANT} und {@code RELATED}. So zieht ein Synonymlauf derselben
+     * Herkunft im selben Geltungsbereich nie Akronymvorschläge zurück und umgekehrt.
      *
      * @param actor      Kennung des Laufs für Protokoll und {@code createdBy}
      * @param origin     {@link RelationOrigin#RULE} oder {@link RelationOrigin#AI}
+     * @param types      die Arten, die dieser Lauf erzeugt; nur Vorschläge dieser Arten gleicht er ab
      * @param generation Kennung dieses Laufs
-     * @throws IllegalArgumentException für {@link RelationOrigin#MANUAL}
+     * @throws IllegalArgumentException für {@link RelationOrigin#MANUAL}, ohne Arten oder bei einem Vorschlag einer
+     *                                  anderen Art
      */
     public synchronized ProposalRun propose(String actor, RelationOrigin origin, RelationScope scope,
-                                            String generation, List<Proposal> proposals) {
+                                            Set<RelationType> types, String generation, List<Proposal> proposals) {
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(generation, "generation");
         if (origin == RelationOrigin.MANUAL) {
             throw new IllegalArgumentException("Vorschläge sind nie manuell");
+        }
+        if (types == null || types.isEmpty()) {
+            throw new IllegalArgumentException("Ein Lauf nennt die Arten, die er erzeugt");
+        }
+        for (Proposal proposal : proposals) {
+            if (proposal.type() != null && !types.contains(proposal.type())) {
+                throw new IllegalArgumentException("Vorschlag der Art " + proposal.type().id()
+                        + " in einem Lauf für " + types);
+            }
         }
         Map<String, TermRelation> existing = new HashMap<>();
         store.all().forEach(relation -> existing.put(relation.id(), relation));
@@ -393,7 +433,8 @@ public class TermRelations {
             }
         }
         for (TermRelation relation : existing.values()) {
-            if (relation.origin() != origin || !relation.scope().equals(scope) || named.contains(relation.id())) {
+            if (relation.origin() != origin || !relation.scope().equals(scope) || !types.contains(relation.type())
+                    || named.contains(relation.id())) {
                 continue;
             }
             if (relation.status() == ReviewStatus.PROPOSED) {
@@ -451,6 +492,11 @@ public class TermRelations {
             store.write(put, removed, audit);
         }
         return removed.size();
+    }
+
+    /** Alle Beziehungen, auch abgelehnte, ohne Rechteprüfung; nur für Vorschlagsläufe (#336, Stufe A). */
+    List<TermRelation> stored() {
+        return List.copyOf(store.all());
     }
 
     /** Die Beziehungen einer Herkunft in genau diesem Geltungsbereich, ohne Rechteprüfung; nur für Vorschlagsläufe. */

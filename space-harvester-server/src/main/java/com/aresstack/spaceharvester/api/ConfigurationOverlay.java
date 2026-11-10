@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
+import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -42,7 +43,8 @@ public final class ConfigurationOverlay {
             SyncSettings.INVENTORY_INTERVAL, SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM,
             StorageSettings.DATA_DIRECTORY, LocalFileSettings.ALLOW_ALL, LocalFileSettings.ROOTS,
             ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
-            ExportSettings.ATTACHMENTS_MAX_SIZE);
+            ExportSettings.ATTACHMENTS_MAX_SIZE, TermSettings.SYNONYMS_MAX_TERMS,
+            TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
@@ -111,6 +113,9 @@ public final class ConfigurationOverlay {
             put(properties, ExportSettings.ATTACHMENTS_MEDIA_TYPES, String.join(",", export.mediaTypes()));
         }
         put(properties, ExportSettings.ATTACHMENTS_MAX_SIZE, export.maxSize());
+        put(properties, TermSettings.SYNONYMS_MAX_TERMS, configuration.terms().synonyms().maxTerms());
+        put(properties, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, configuration.terms().synonyms().maxEmbeddedTerms());
+        put(properties, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, configuration.terms().synonyms().maxJudgedPairs());
         return properties;
     }
 

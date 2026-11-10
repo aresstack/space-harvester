@@ -14,10 +14,18 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import javax.swing.SwingUtilities;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.RelationType;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.terms.SynonymScope;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.app.event.Severity;
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
@@ -32,8 +40,9 @@ import java.util.function.Consumer;
  * Suchfeld. Akronyme und Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des
  * EDT abgefragt, sobald der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld, ebenso die Beziehungen (#120);
  * Synonyme sind die Beziehungen der Arten Synonym und Schreibvariante ({@link RelationTab}). Der Graph zeigt einen
- * Begriff mit seinen Nachbarn ({@link TermGraphView}). Für das Fachglossar gibt es noch keinen Unterbau. Nur auf dem
- * EDT.
+ * Begriff mit seinen Nachbarn ({@link TermGraphView}). Das Fachglossar verwaltet die dauerhaft gepflegten
+ * Glossareinträge ({@link GlossaryTab}); seine Knöpfe „Fachbegriffe ermitteln“ und „Fachbegriff hinzufügen …“ stehen
+ * oben rechts in der Reiterzeile und sind nur auf diesem Reiter zu sehen. Nur auf dem EDT.
  */
 public final class TermsView implements View {
 
@@ -55,6 +64,14 @@ public final class TermsView implements View {
     static final int RELATION_LIMIT = TermRelations.MAX_LIMIT;
     static final String MORE_RELATIONS = "Es gibt weitere Beziehungen; gezeigt werden die ersten " + RELATION_LIMIT
             + " je Status. Ein Suchbegriff grenzt die Liste ein.";
+    /** „Synonyme vorschlagen“ (#336): nur auf Klick, Umfang und Budget im Dialog, Lauf mit Fortschritt und Abbrechen. */
+    static final String PROPOSE_SYNONYMS = "Synonyme vorschlagen";
+    static final String PROPOSING = "Synonyme werden vorgeschlagen …";
+    /** Meldungen in der Statuszeile des Hauptfensters; kein Meldungsband unter dem Reiter. */
+    static final String RULES_ONLY = "Ohne Embedding-Modell nur Regelvorschläge";
+    static final String CANCELLED = "Synonymerkennung abgebrochen; bisherige Vorschläge bleiben";
+    private static final int NOTICE_MS = 8000;
+    private static final int POLL_MS = 400;
 
     private final JPanel root = new JPanel(new BorderLayout());
     private final PillTabs tabs = new PillTabs();
@@ -63,11 +80,19 @@ public final class TermsView implements View {
     private final Directory identifiers = new Directory("Globales Bezeichnerverzeichnis",
             new String[]{"Bezeichner", "Fundstellen"});
     static final String SHOW_OCCURRENCES = "Fundstellen zeigen";
+    private final ComposerButton proposeSynonyms = Comic.button(PROPOSE_SYNONYMS, "Schreibvarianten und "
+            + "Formulierungen im Text als Regelvorschläge; mit Chat-Modell werden Kandidatenpaare anhand kurzer "
+            + "Fundstellen aus freigegebenen Quellen geprüft. Nur Vorschläge, nichts wird bestätigt");
+    private BusyOverlay synonymOverlay;
+    private javax.swing.Timer synonymPoll;
+    private String synonymJob;
+    private boolean synonymRulesOnly;
     private final ComposerButton occurrences = Comic.button("Fundstellen …", SHOW_OCCURRENCES
             + " (auch per Doppelklick auf eine Zeile)");
     private final RelationTab relationTab;
     private final RelationTab synonymTab;
     private final TermGraphView graph;
+    private final GlossaryTab glossaryTab;
     static final String CONFIRM = "Bestätigen";
     static final String REJECT = "Ablehnen";
     static final String REMOVE = "Entfernen";
@@ -96,15 +121,20 @@ public final class TermsView implements View {
                         Relation.statusText(r.status())),
                 SYNONYM_TYPES, RelationType.SYNONYM, NO_SYNONYMS);
         graph = new TermGraphView(context);
-        JLabel glossary = Comic.muted(NOT_AVAILABLE);
-        glossary.setHorizontalAlignment(SwingConstants.CENTER);
-        glossary.setFont(Comic.regular(14f));
+        glossaryTab = new GlossaryTab(context, () -> context == null || context.runtime() == null
+                ? java.util.Optional.empty() : context.runtime().workspace().glossary());
         tabs.tab(ACRONYMS, acronyms)
                 .tab(IDENTIFIERS, identifiers)
                 .tab(RELATIONS, relationTab.directory())
-                .tab(SYNONYMS, synonymTab.directory())
-                .tab(GLOSSARY, glossary)
-                .tab(GRAPH, graph.component());
+                .tab(SYNONYMS, createSynonymOverlay())
+                .tab(GLOSSARY, glossaryTab.component())
+                .tab(GRAPH, graph.component())
+                .actions(proposeSynonyms, glossaryTab.addButton(), glossaryTab.detectButton());
+        proposeSynonyms.setVisible(false);
+        proposeSynonyms.setEnabled(context != null);
+        proposeSynonyms.addActionListener(e -> askSynonymRun());
+        glossaryTab.addButton().setVisible(false);
+        glossaryTab.detectButton().setVisible(false);
         root.add(Comic.plate("Begriffe", Comic.PETROL, tabs), BorderLayout.CENTER);
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
@@ -141,6 +171,7 @@ public final class TermsView implements View {
             relationTab.shown();
             synonymTab.shown();
             graph.shown();
+            glossaryTab.shown();
         }
     }
 
@@ -151,15 +182,156 @@ public final class TermsView implements View {
     private void tabSelected(String name) {
         relationTab.forgetRemoved();
         synonymTab.forgetRemoved();
+        // Die Knöpfe der Reiterzeile gelten nur auf ihrem Reiter; auf den anderen bleibt die Reiterzeile frei.
+        proposeSynonyms.setVisible(SYNONYMS.equals(name));
+        glossaryTab.addButton().setVisible(GLOSSARY.equals(name));
+        glossaryTab.detectButton().setVisible(GLOSSARY.equals(name));
         if (context == null) {
             return;
         }
         switch (name) {
             case RELATIONS -> relationTab.load(null);
             case SYNONYMS -> synonymTab.load(null);
+            case GLOSSARY -> glossaryTab.load();
             case GRAPH -> graph.shown();
             default -> { }
         }
+    }
+
+    /** Der Synonym-Reiter unter dem Wartekreis des Laufs (eine Größe überall, Abbrechen in der Mitte, Esc). */
+    private BusyOverlay createSynonymOverlay() {
+        synonymOverlay = new BusyOverlay(synonymTab.directory());
+        synonymOverlay.setHighlight(Comic.BLUE);
+        synonymOverlay.setVeilColor(Comic.SURFACE);
+        synonymOverlay.onCancel(this::cancelSynonymRun);
+        return synonymOverlay;
+    }
+
+    /** Dialog „Synonyme vorschlagen“: Umfang, Budget, was der Lauf kann; „Starten“ reiht den Auftrag ein. */
+    private void askSynonymRun() {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null) {
+            synonymTab.directory().message(NO_RUNTIME);
+            return;
+        }
+        Workspace workspace = runtime.workspace();
+        SynonymRunForm form;
+        try {
+            form = new SynonymRunForm(workspace.sources(), workspace::spaces, workspace::synonymAvailability,
+                    workspace.synonymAvailability(SynonymScope.ALL).budget().maxJudgedPairs());
+        } catch (RuntimeException e) {
+            synonymTab.directory().message("Nicht möglich: " + e.getMessage());
+            return;
+        }
+        javax.swing.JDialog dialog = Dialogs.dialog(root, PROPOSE_SYNONYMS);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        ComposerButton start = Comic.primary("Starten", "Den Lauf im Hintergrund einreihen; der Kreis zeigt den "
+                + "Fortschritt, Abbrechen lässt bisherige Vorschläge stehen");
+        cancel.addActionListener(e -> dialog.dispose());
+        start.addActionListener(e -> {
+            SynonymDiscovery.Request request = form.request();
+            dialog.dispose();
+            startSynonymRun(request);
+        });
+        Dialogs.show(dialog, PROPOSE_SYNONYMS, form, cancel, start);
+    }
+
+    /** Startet den Lauf und zeigt ihn über dem Reiter; der Stand kommt alle {@link #POLL_MS} aus dem Core. */
+    void startSynonymRun(SynonymDiscovery.Request request) {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null || synonymJob != null) {
+            return;
+        }
+        Workspace workspace = runtime.workspace();
+        synonymOverlay.setText(PROPOSING);
+        synonymOverlay.setBusy(true);
+        proposeSynonyms.setEnabled(false);
+        Background.run(() -> {
+            synonymRulesOnly = !workspace.synonymAvailability(request.scope()).embeddingModel();
+            return workspace.startSynonymDiscovery(request.scope(), request.maxJudgedPairs());
+        }, status -> {
+            synonymJob = status.id();
+            synonymPoll = new javax.swing.Timer(POLL_MS, e -> pollSynonymRun(workspace));
+            synonymPoll.start();
+        }, failure -> {
+            synonymOverlay.setBusy(false);
+            proposeSynonyms.setEnabled(true);
+            notice("Synonymerkennung nicht gestartet: " + failure.getMessage(), Severity.WARN);
+        });
+    }
+
+    private void pollSynonymRun(Workspace workspace) {
+        String jobId = synonymJob;
+        if (jobId == null) {
+            return;
+        }
+        Background.run(() -> workspace.synonymJob(jobId), status -> {
+            if (!jobId.equals(synonymJob)) {
+                return;
+            }
+            synonymOverlay.setText(progressText(status));
+            if (status.state().terminal()) {
+                finishSynonymRun(status);
+            }
+        }, failure -> finishSynonymRun(null));
+    }
+
+    static String progressText(JobStatus status) {
+        if (status.progress().discovered() == 0) {
+            return PROPOSING;
+        }
+        return PROPOSING + " " + status.progress().processed() + " von " + status.progress().discovered()
+                + " Paaren geprüft";
+    }
+
+    private void finishSynonymRun(JobStatus status) {
+        if (synonymPoll != null) {
+            synonymPoll.stop();
+            synonymPoll = null;
+        }
+        synonymJob = null;
+        synonymOverlay.setBusy(false);
+        proposeSynonyms.setEnabled(true);
+        if (status != null) {
+            String text = outcomeText(status, synonymRulesOnly);
+            notice(text, status.state() == JobState.FAILED ? Severity.WARN : Severity.INFO);
+        }
+        synonymTab.load(null);
+    }
+
+    /** Die Statuszeile nach dem Lauf: Zahl der neuen oder geänderten Vorschläge, Fehler oder Abbruch. */
+    static String outcomeText(JobStatus status, boolean rulesOnly) {
+        return switch (status.state()) {
+            case COMPLETED -> "Synonymerkennung abgeschlossen: " + Texts.count(status.progress().written(),
+                    "Vorschlag", "Vorschläge") + " neu oder geändert" + (rulesOnly ? "; " + RULES_ONLY : "");
+            case CANCELLED -> CANCELLED;
+            case FAILED -> "Synonymerkennung gescheitert: " + (status.error() == null ? "unbekannter Fehler"
+                    : status.error().message()) + "; bisherige Vorschläge bleiben";
+            default -> PROPOSING;
+        };
+    }
+
+    private void cancelSynonymRun() {
+        String jobId = synonymJob;
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (jobId == null || runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().cancelSynonymJob(jobId), ignored -> { }, failure -> { });
+    }
+
+    private void notice(String text, Severity severity) {
+        if (context != null) {
+            context.events().publish(new StatusMessageEvent(text, NOTICE_MS, severity));
+        }
+    }
+
+    ComposerButton proposeSynonymsButton() {
+        return proposeSynonyms;
+    }
+
+    BusyOverlay synonymOverlay() {
+        return synonymOverlay;
     }
 
     /** Die Arten des Reiters „Synonyme“. */
@@ -486,6 +658,10 @@ public final class TermsView implements View {
 
     TermGraphView graph() {
         return graph;
+    }
+
+    GlossaryTab glossary() {
+        return glossaryTab;
     }
 
     /**

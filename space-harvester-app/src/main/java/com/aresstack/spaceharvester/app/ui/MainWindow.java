@@ -91,6 +91,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel viewStatus = new JPanel(viewStatusCards);
     /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
     private StatusLine statusLine;
+    /** „Confluence verlangt einen Einmalcode“ ganz links in der Statuszeile, solange eine Anforderung offen ist. */
+    private SignInNotice signInNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     private AppContext.Section current = AppContext.Section.SEARCH;
@@ -281,7 +283,13 @@ public final class MainWindow implements AppContext.Navigator {
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
         jobStatus = new JobStatusLine(context.events(), activities::cancelShownJob);
-        statusLine = new StatusLine(jobStatus.model(), viewStatus, status, jobStatus, new CopyrightLink());
+        // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
+        signInNotice = new SignInNotice(context, request -> {
+            show(AppContext.Section.ACTIVITIES);
+            activities.showSignIn(request);
+        });
+        statusLine = new StatusLine(jobStatus.model(), signInNotice, viewStatus, status, jobStatus,
+                new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -566,6 +574,11 @@ public final class MainWindow implements AppContext.Navigator {
 
     StatusLine statusLine() {
         return statusLine;
+    }
+
+    /** Für Tests: der Einmalcode-Hinweis der Statuszeile. */
+    SignInNotice signInNotice() {
+        return signInNotice;
     }
 
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */

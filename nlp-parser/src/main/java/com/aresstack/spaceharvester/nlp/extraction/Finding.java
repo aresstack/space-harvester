@@ -26,5 +26,27 @@ public enum Finding {
      * Eine Zeitangabe mit Präposition hing laut Parser am Dativempfänger ({@code dem Vorgesetzten am Montag}) und
      * ist als Zeitkontext der Aussage übernommen; der nominale Bezug bleibt daneben erhalten.
      */
-    TIME_FROM_NOMINAL
+    TIME_FROM_NOMINAL,
+    /** Ein Reflexivpronomen ({@code sich}) am Prädikat; es ist kein eigener Beteiligter. */
+    REFLEXIVE,
+    /**
+     * Ein Hilfsverb, das der Parser über eine Teilsatzgrenze an dieses Prädikat gehängt hat, zählt nicht
+     * ({@code stellt … bereit, die … ausgewertet werden}).
+     */
+    AUXILIARY_OUTSIDE_CLAUSE,
+    /** Kein Subjekt übernommen: zwischen den gereihten Prädikaten beginnt ein Teilsatz mit eigenem Subjekt. */
+    COORDINATION_ACROSS_CLAUSE,
+    /**
+     * Impliziter Handelnder aus der Kennung eines Listeneintrags ohne Subjektkante („Datenkatalog: organisiert und
+     * stellt … bereit“); immer {@link Basis#HEURISTIC} und unsicher. Hängt der Parser die Kennung selbst als Subjekt
+     * an, ist das Parserevidenz und kein solcher Fall.
+     */
+    SUBJECT_FROM_LABEL,
+    /** Die Wiederholung der Kennung im Vorfeld („Register: Register erweitern …“) ist dasselbe Subjekt, kein Objekt. */
+    LABEL_REPEATED,
+    /**
+     * Verbzusatz, den der Parser als prädikatives Adjektiv anhängt („stellt … sicher“), ist ins Prädikat übernommen;
+     * ein daran hängendes Subjekt gilt als unsicheres Objekt.
+     */
+    PREDICATIVE_PARTICLE
 }

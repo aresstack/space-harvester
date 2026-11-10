@@ -34,6 +34,24 @@ class GermanTagCorrectionsTest {
         assertEquals("zuordnen", GermanTagCorrections.lemma("zuzuordnen", "VERB", "zuzuordnen"));
         assertEquals("zusammenführen", GermanTagCorrections.lemma("zusammenzuführen", "VERB", "zusammenzuführen"));
         assertEquals("sicherstellen", GermanTagCorrections.lemma("sicherzustellen", "VERB", "sicherzustellen"));
+        assertEquals("hinzufügen", GermanTagCorrections.lemma("hinzuzufügen", "VERB", "hinzuzufügen"));
+        assertEquals("abändern", GermanTagCorrections.lemma("abzuändern", "VERB", "abzuändern"));
+        assertEquals("hinweisen", GermanTagCorrections.lemma("hinzuweisen", "VERB", "hinzuweisen"),
+                "„darauf hinzuweisen“ ist der zu-Infinitiv von hinweisen");
+        assertEquals("hinwirken", GermanTagCorrections.lemma("hinzuwirken", "VERB", null));
+        assertEquals("hinsetzen", GermanTagCorrections.lemma("hinzusetzen", "VERB", "hinzusetzen"));
+        assertEquals("hinzucken", GermanTagCorrections.lemma("hinzuzucken", "VERB", "hinzuzucken"));
+    }
+
+    @Test
+    void ordinaryInfinitivesContainingParticleAndZuStayUnchanged() {
+        assertEquals("hinzufügen", GermanTagCorrections.lemma("hinzufügen", "VERB", "hinzufügen"),
+                "Verbzusatz hinzu-, kein zu-Infinitiv");
+        assertEquals("hinzuziehen", GermanTagCorrections.lemma("hinzuziehen", "VERB", "hinzuziehen"));
+        assertEquals("hinzuaddieren", GermanTagCorrections.lemma("hinzuaddieren", "VERB", "hinzuaddieren"));
+        assertEquals("anzupfen", GermanTagCorrections.lemma("anzupfen", "VERB", "anzupfen"), "„pf“ ist kein Stamm");
+        assertEquals("aufzucken", GermanTagCorrections.lemma("aufzucken", "VERB", "aufzucken"), "„ck“ ist kein Stamm");
+        assertNull(GermanTagCorrections.lemma("abzupfen", "VERB", null), "ohne Grundform bleibt es ohne");
     }
 
     @Test

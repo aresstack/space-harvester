@@ -9,5 +9,10 @@ public enum Basis {
     /** Aus Kasusmerkmalen oder Artikelformen geschlossen ({@link CaseFallback}). */
     CASE_HEURISTIC,
     /** Aus einer festen Wortliste (Zeitangaben, Präpositionen für Mittel). */
-    LEXICON
+    LEXICON,
+    /**
+     * Aus einer strukturellen Heuristik gegen eine erkennbar fehlerhafte Parserkante (etwa zweites Subjekt als Objekt);
+     * immer unsicher.
+     */
+    HEURISTIC
 }
