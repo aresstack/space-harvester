@@ -32,6 +32,13 @@ public final class SignInFailures {
     /** Proxy verlangt Anmeldung; das JDK meldet die 407 je nach Weg unterschiedlich. */
     static final String PROXY_AUTHENTICATION = "Proxy verlangt Anmeldung (HTTP 407)";
 
+    /**
+     * Anfang der Meldung, wenn Confluence einen Einmalcode bei Anmeldung mit Personal Access Token mit einem Serverfehler
+     * beantwortet (#571): Ein Token hat keine Web-Sitzung, an die die Zwei-Faktor-Anmeldung den Code binden könnte.
+     */
+    static final String TOKEN_LOGIN_REJECTED = "Confluence nimmt den Einmalcode bei Anmeldung mit Personal Access Token "
+            + "nicht an";
+
     /** {@code Unable to tunnel through proxy. Proxy returns "HTTP/1.1 502 Bad Gateway"} des JDK. */
     private static final Pattern TUNNEL = Pattern.compile("tunnel through proxy.*?HTTP/\\d(?:\\.\\d)? (\\d{3})",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
@@ -67,6 +74,17 @@ public final class SignInFailures {
         String kind = kind(failure);
         String target = host(host);
         return target.isEmpty() ? kind : kind + " – Ziel " + target;
+    }
+
+    /**
+     * Klare Meldung statt „Quelle antwortet mit HTTP 500“, wenn Confluence den Einmalcode einer Quelle mit Personal Access
+     * Token nicht annimmt (#571); {@link #describe} gibt sie unverändert als Art aus.
+     *
+     * @param status HTTP-Status der Antwort auf das Senden
+     */
+    public static String tokenLoginRejected(int status) {
+        return TOKEN_LOGIN_REJECTED + " (HTTP " + status + "). Bilder und Anhänge hinter der Zwei-Faktor-Anmeldung "
+                + "brauchen bei dieser Quelle die Anmeldung mit Benutzer und Passwort";
     }
 
     /** Typ der innersten Ursache (einfacher Klassenname) fürs Protokoll; ohne Meldung. */
@@ -153,6 +171,9 @@ public final class SignInFailures {
             }
             if (current instanceof ConnectException) {
                 return "Verbindung abgelehnt (ConnectException)";
+            }
+            if (current.getMessage() != null && current.getMessage().startsWith(TOKEN_LOGIN_REJECTED)) {
+                return current.getMessage();
             }
             if (current.getMessage() != null) {
                 messages.append(current.getMessage()).append('\n');

@@ -109,6 +109,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
     private static final int TITLE_SCAN_BATCH = 500;
 
+    /** „Einmalcode gesendet, Confluence antwortet mit HTTP 500“ des Adapters: der Code ging hin, der Server scheiterte. */
+    private static final Pattern SERVER_ERROR_AFTER_SENDING = Pattern.compile(
+            "^Einmalcode gesendet\\b.*\\bHTTP (5\\d\\d)\\b");
+
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
 
     private final String id;
@@ -116,6 +120,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final String title;
     private final KnowledgeSourcePort port;
     private final InFlightLimit inFlight;
+    /**
+     * Ob die Quelle sich mit Personal Access Token ({@code Authorization: Bearer}) anmeldet. Dann hat sie keine
+     * Web-Sitzung, an die die Zwei-Faktor-Anmeldung einen Einmalcode binden könnte (#571).
+     */
+    private final boolean tokenLogin;
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
     /**
@@ -145,7 +154,17 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope) {
+        this(id, type, title, port, inFlight, scope, false);
+    }
+
+    /**
+     * @param tokenLogin ob die Quelle sich mit Personal Access Token anmeldet; dann meldet ein Serverfehler nach dem
+     *                   Senden des Einmalcodes klar, dass die Zwei-Faktor-Anmeldung den Code so nicht annimmt (#571)
+     */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight, SourceScope scope, boolean tokenLogin) {
         this.id = id;
+        this.tokenLogin = tokenLogin;
         this.type = type;
         this.title = title;
         this.port = port;
@@ -1221,6 +1240,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          * die Pfade nennen) bleibt es bei der bloßen Art.
          */
         private SourceAccessException sendFailure(KnowledgeSourceException e) {
+            Matcher rejected = SERVER_ERROR_AFTER_SENDING.matcher(String.valueOf(e.getMessage()));
+            if (tokenLogin && e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED && rejected.find()) {
+                // Mit Token gibt es keine Web-Sitzung, an die die Zwei-Faktor-Anmeldung den Code bindet; Confluence
+                // antwortet dann mit einem Serverfehler. Statt der bloßen 500 eine klare Meldung (#571).
+                return new SourceAccessException(id, SourceAccessException.Reason.ACCESS_DENIED,
+                        SignInFailures.tokenLoginRejected(Integer.parseInt(rejected.group(1))), e);
+            }
             SourceAccessException failure = accessFailure(e);
             if (failure instanceof SignInRequiredException || failure.getCause() == null) {
                 return failure;
