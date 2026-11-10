@@ -101,8 +101,8 @@ public final class ActivitiesView implements View {
     private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
     /** Downloads, deren Konvertierung gerade läuft; ihre Format-Symbole bleiben gesperrt. */
     private final Set<String> converting = new HashSet<>();
-    final ComposerButton deleteFinished = Comic.button("Abgeschlossene Aufträge löschen …",
-            "Alle beendeten Aufträge samt Diagnose löschen; laufende bleiben");
+    /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
+    final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
@@ -137,7 +137,7 @@ public final class ActivitiesView implements View {
         JPanel listHead = new JPanel(new BorderLayout(8, 0));
         listHead.setOpaque(false);
         listHead.add(Comic.row(Comic.caption("Aufträge dieser App"), hint), BorderLayout.WEST);
-        listHead.add(Comic.row(deleteFinished), BorderLayout.EAST);
+        listHead.add(Comic.row(deleteAll), BorderLayout.EAST);
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
 
@@ -175,7 +175,7 @@ public final class ActivitiesView implements View {
         produced.add(noticeList, BorderLayout.SOUTH);
         card.add(produced, BorderLayout.CENTER);
         card.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
-        deleteFinished.addActionListener(e -> deleteFinished());
+        deleteAll.addActionListener(e -> deleteAll());
 
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -345,7 +345,7 @@ public final class ActivitiesView implements View {
             datasets.putAll(found);
             datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
             model.set(jobs);
-            deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
+            deleteAll.setEnabled(!jobs.isEmpty());
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
@@ -1109,23 +1109,7 @@ public final class ActivitiesView implements View {
                 + "dauerhaft gelöscht. " + KEPT)) {
             return;
         }
-        Background.run(() -> {
-            var workspace = runtime.workspace();
-            JobStatus current = workspace.job(job.id());
-            if (current.lifecycle().allows(JobAction.CANCEL)) {
-                current = workspace.performJobAction(job.id(), JobAction.CANCEL);
-            }
-            long until = System.nanoTime() + DELETE_WAIT.toNanos();
-            while (!current.lifecycle().allows(JobAction.DELETE) && System.nanoTime() < until) {
-                Thread.sleep(250);
-                current = workspace.job(job.id());
-            }
-            if (!current.lifecycle().allows(JobAction.DELETE)) {
-                return false;
-            }
-            workspace.performJobAction(job.id(), JobAction.DELETE);
-            return true;
-        }, deleted -> {
+        Background.run(() -> stopAndDelete(runtime.workspace(), List.of(job.id())) == 1, deleted -> {
             if (deleted) {
                 if (job.id().equals(selectedId)) {
                     selectedId = null;
@@ -1269,32 +1253,77 @@ public final class ActivitiesView implements View {
     static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
             + "des Downloads verschwindet mit dem Auftrag.";
 
-    private void deleteFinished() {
+    /**
+     * Löscht alle Aufträge der Liste nach „Wirklich alle Aufträge löschen?“: laufende und wartende werden vorher
+     * abgebrochen ({@link #stopAndDelete}).
+     */
+    void deleteAll() {
         AppRuntime runtime = context.runtime();
-        // Genau die Aufträge, die der Dialog nennt; was danach erst endet, bleibt stehen.
-        List<String> confirmed = model.rows.stream().filter(j -> j.state().terminal()).map(JobStatus::id).toList();
-        long finished = confirmed.size();
-        if (runtime == null || finished == 0) {
+        List<String> ids = model.rows.stream().map(JobStatus::id).toList();
+        if (runtime == null || ids.isEmpty()) {
             return;
         }
-        long running = model.rows.size() - finished;
-        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(finished, "beendeten Auftrag",
-                "beendete Aufträge") + " wirklich löschen? Sie (abgeschlossen, gescheitert, abgebrochen) und ihre "
-                + "Diagnoseereignisse werden dauerhaft gelöscht." + (running == 0 ? "" : " " + Texts.count(running, "laufender Auftrag bleibt",
-                "laufende Aufträge bleiben") + ".") + " " + KEPT)) {
+        if (!Dialogs.confirm(root, "Alle Aufträge löschen?", "Wirklich alle Aufträge löschen? "
+                + Texts.count(ids.size(), "Auftrag", "Aufträge") + " samt Diagnoseereignissen werden dauerhaft "
+                + "gelöscht; laufende werden vorher abgebrochen. " + KEPT)) {
             return;
         }
-        boolean selectedFinished = currentStatus().map(s -> s.state().terminal()).orElse(false);
-        Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
-            if (selectedFinished) {
-                selectedId = null;
-                detail = null;
-                table.clearSelection();
-                render();
+        Background.run(() -> stopAndDelete(runtime.workspace(), ids), deleted -> {
+            selectedId = null;
+            detail = null;
+            table.clearSelection();
+            render();
+            if (deleted == ids.size()) {
+                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            } else {
+                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht",
+                        Texts.count(ids.size() - deleted, "Auftrag bricht", "Aufträge brechen")
+                                + " noch ab; gelöscht werden sie, sobald sie abgebrochen sind.");
             }
-            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
             poll();
         }, feedback::problem);
+    }
+
+    /**
+     * Bricht ab, was der Zustand abbrechen lässt, wartet bis {@link #DELETE_WAIT}, bis der Core das Löschen erlaubt,
+     * und löscht dann. Schon gelöschte zählen mit. @return Anzahl gelöschter Aufträge
+     */
+    static int stopAndDelete(com.aresstack.spaceharvester.app.runtime.Workspace workspace, List<String> ids)
+            throws InterruptedException {
+        java.util.Set<String> open = new java.util.LinkedHashSet<>(ids);
+        int deleted = 0;
+        for (String id : ids) {
+            try {
+                if (workspace.jobState(id).allows(JobAction.CANCEL)) {
+                    workspace.performJobAction(id, JobAction.CANCEL);
+                }
+            } catch (RuntimeException e) {
+                // Inzwischen beendet oder gelöscht: entscheidet die Schleife unten.
+            }
+        }
+        long until = System.nanoTime() + DELETE_WAIT.toNanos();
+        while (!open.isEmpty()) {
+            for (java.util.Iterator<String> it = open.iterator(); it.hasNext(); ) {
+                String id = it.next();
+                try {
+                    if (workspace.jobState(id).allows(JobAction.DELETE)) {
+                        workspace.performJobAction(id, JobAction.DELETE);
+                        deleted++;
+                        it.remove();
+                    }
+                } catch (com.aresstack.spaceharvester.application.jobs.UnknownJobException e) {
+                    deleted++;
+                    it.remove();
+                } catch (RuntimeException e) {
+                    // Zustand hat sich zwischen Prüfen und Löschen geändert: nächste Runde.
+                }
+            }
+            if (open.isEmpty() || System.nanoTime() >= until) {
+                break;
+            }
+            Thread.sleep(250);
+        }
+        return deleted;
     }
 
     private void restart() {
