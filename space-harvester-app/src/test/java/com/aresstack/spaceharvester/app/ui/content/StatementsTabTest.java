@@ -142,6 +142,27 @@ class StatementsTabTest {
         assertThat(tab.progressText()).startsWith("Abgebrochen");
     }
 
+    /** Angelo (Screenshot 09.11.): Belegtexte waren rechts abgeschnitten, dazu ein waagerechter Balken. */
+    @Test
+    void longEvidenceWrapsInsteadOfWideningTheContent() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            tab.page(page("1"), text());
+            runner.runAll();
+            tab.render(analysed(), List.of());
+            // Schmaler als der Belegsatz: der Text muss umbrechen.
+            tab.setSize(360, 400);
+            tab.addNotify();
+            tab.validate();
+            tab.validate();
+            javax.swing.JScrollPane scroll = (javax.swing.JScrollPane) java.util.Arrays.stream(tab.getComponents())
+                    .filter(javax.swing.JScrollPane.class::isInstance).findFirst().orElseThrow();
+            assertThat(scroll.getViewport().getView().getWidth())
+                    .as("der Inhalt folgt der Breite des Sichtfensters")
+                    .isEqualTo(scroll.getViewport().getWidth());
+            assertThat(scroll.getHorizontalScrollBar().isVisible()).isFalse();
+        });
+    }
+
     /** Codex zu #566: Beim Seitenwechsel kopierte der Knopf noch die Aussagen der vorigen Seite. */
     @Test
     void leavingThePageEmptiesTheClipboardText() {
