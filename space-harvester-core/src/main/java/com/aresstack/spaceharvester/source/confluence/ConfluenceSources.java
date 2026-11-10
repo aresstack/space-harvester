@@ -56,18 +56,36 @@ public final class ConfluenceSources {
     public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
                                                    X509TrustManager trust, String thumbprint,
                                                    AsyncSnapshotTransports async) {
-        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+        return provider(secrets, routes, userAgent, trust, thumbprint, async, false);
+    }
+
+    /**
+     * Wie oben; {@code java8Tls}: der synchrone Transport (Dateien, Einmalcode) verbindet sich wie der Enterprise AI
+     * Client unter Java 8 nur mit TLS 1.2 ({@link Java8Tls}, #571).
+     */
+    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                                   X509TrustManager trust, String thumbprint,
+                                                   AsyncSnapshotTransports async, boolean java8Tls) {
+        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint,
+                java8Tls);
         return async == null ? provider : async.attach(provider, trust, thumbprint);
     }
 
     private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
                                                                String userAgent, X509TrustManager trust,
                                                                String thumbprint) {
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, false);
+    }
+
+    private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                               String userAgent, X509TrustManager trust,
+                                                               String thumbprint, boolean java8Tls) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
-        return new ConfluenceSourceProvider(secrets, routes, trustOnly(trust), userAgent,
-                new ConfiguredClientCertificates(secrets, trust, thumbprint));
+        SSLSocketFactory trustOnly = trustOnly(trust);
+        return new ConfluenceSourceProvider(secrets, routes, java8Tls ? Java8Tls.of(trustOnly) : trustOnly, userAgent,
+                new ConfiguredClientCertificates(secrets, trust, thumbprint, java8Tls));
     }
 
     /**
