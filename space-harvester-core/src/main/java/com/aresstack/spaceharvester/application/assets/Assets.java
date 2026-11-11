@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
@@ -367,7 +368,9 @@ public class Assets {
      * Wie {@link #content(PageAttachmentList, String, boolean, String)}, aber ein abgelegter Anhang kommt als Strom
      * aus der Ablage, ohne ganz im Speicher zu liegen. Eine große Datei hält ihren Platz an der Schranke
      * ({@link LargeFileGate}), bis der Aufrufer den Strom schließt, auch aus einem anderen Thread. Ein nicht
-     * abgelegter Anhang wird wie bisher geladen und aus dem Speicher geliefert.
+     * abgelegter Anhang wird geladen, ohne ganz im Speicher zu liegen (Dateien beliebiger Größe, Angelo 11.11.2026):
+     * mit {@code mayStore} in die Ablage und von dort geliefert, sonst aus seiner Zwischendatei, die mit dem Strom
+     * verschwindet; bis {@link #IN_MEMORY_BYTES} aus dem Speicher wie bisher.
      *
      * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
      */
@@ -379,17 +382,57 @@ public class Assets {
         PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
-            Asset asset = stored.get();
-            LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
-            try {
-                return new AssetStream(asset, store.open(asset), permit);
-            } catch (RuntimeException e) {
-                permit.close();
-                throw e;
+            return open(stored.get());
+        }
+        HarvestSource source = source(list.sourceId());
+        String pageId = list.attachments().pageId();
+        if (mayStore) {
+            Downloaded downloaded = download(source, pageId, attachment, true, false);
+            return downloaded.content() != null ? downloaded.stream() : open(downloaded.asset());
+        }
+        Path staging = staging(source.id(), attachment);
+        boolean handedOver = false;
+        try {
+            Downloaded downloaded = download(source, pageId, attachment, false, false, staging);
+            if (downloaded.content() != null) {
+                return downloaded.stream();
+            }
+            AssetStream delivered = handOver(downloaded.asset(), staging);
+            handedOver = true;
+            return delivered;
+        } finally {
+            if (!handedOver) {
+                delete(source.id(), staging);
             }
         }
-        AssetContent content = download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
-        return new AssetStream(content.asset(), new ByteArrayInputStream(content.content()), null);
+    }
+
+    /** Ein abgelegter Inhalt als Strom; eine große Datei hält ihren Platz an der Schranke bis zum Schließen. */
+    private AssetStream open(Asset asset) {
+        LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+        try {
+            return new AssetStream(asset, store.open(asset), permit);
+        } catch (RuntimeException e) {
+            permit.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Die Zwischendatei eines nicht abgelegten Anhangs als Strom, wie {@link #open(Asset)} mit Platz an der Schranke;
+     * die Datei verschwindet beim Schließen. Ihr Hash entstand beim Schreiben, sie ist nur diesem Strom bekannt.
+     */
+    private AssetStream handOver(Asset asset, Path staging) {
+        LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+        try {
+            return new AssetStream(asset, Files.newInputStream(staging, StandardOpenOption.DELETE_ON_CLOSE), permit);
+        } catch (IOException e) {
+            permit.close();
+            throw new AssetStoreException("Asset nicht lesbar", e);
+        } catch (RuntimeException e) {
+            permit.close();
+            throw e;
+        }
     }
 
     /**
@@ -818,10 +861,16 @@ public class Assets {
         if (existing.isPresent()) {
             asset = stored.get();
             text = existing.get();
+        } else if (stored.isPresent() && stored.get().size() > IN_MEMORY_BYTES) {
+            // Über der Grenze der Textextraktion bleibt die Datei ungelesen (Dateien beliebiger Größe, Angelo
+            // 11.11.2026); sie hat wie bisher keinen Text.
+            throw tooLarge();
         } else {
             try (LargeFileGate.Permit permit = gate.enter(list.sourceId(),
                     stored.map(Asset::size).orElse(attachment.fileSize()))) {
-                AssetContent content = content(list, attachmentId, mayStore);
+                // Auch frisch geladen kommt eine Datei über dieser Grenze nicht in den Speicher.
+                Downloaded content = stored.isPresent() ? new Downloaded(stored.get(), read(stored.get()).content())
+                        : download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore, false);
                 asset = content.asset();
                 existing = storedText(extraction, asset);
                 text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
@@ -843,6 +892,20 @@ public class Assets {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
         return store.text(asset.sha256(), extraction.id(), extraction.version());
+    }
+
+    /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
+    private AssetText extract(DocumentText extraction, Downloaded content, boolean keep) {
+        if (content.content() == null) {
+            throw tooLarge();
+        }
+        return extract(extraction, new AssetContent(content.asset(), content.content()), keep);
+    }
+
+    /** Eine Datei über {@link #IN_MEMORY_BYTES}: zu groß für die Textextraktion, wie in {@code TikaDocumentText}. */
+    private static DocumentTextException tooLarge() {
+        return new DocumentTextException(DocumentTextException.Reason.TOO_LARGE,
+                "Datei größer als " + IN_MEMORY_BYTES + " Bytes", null);
     }
 
     private AssetText extract(DocumentText extraction, AssetContent content, boolean keep) {
@@ -1039,6 +1102,11 @@ public class Assets {
             backfilled.clear();
         }
         if (!backfilled.add(asset.sha256())) {
+            return;
+        }
+        if (asset.size() > IN_MEMORY_BYTES) {
+            // Wie beim Ablegen: Über der Grenze der Textextraktion bleibt die Datei ungelesen und ohne Text.
+            harvestText(new Downloaded(asset, null));
             return;
         }
         try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
@@ -1544,27 +1612,44 @@ public class Assets {
      */
     private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
                                 boolean bytes) {
-        if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+        Path staging = staging(source.id(), attachment);
+        try {
+            return download(source, pageId, attachment, keep, bytes, staging);
+        } finally {
+            delete(source.id(), staging);
         }
+    }
+
+    /**
+     * Wie {@link #download(HarvestSource, String, PageAttachment, boolean, boolean)}, aber in die Zwischendatei des
+     * Aufrufers, der sie auch löscht.
+     */
+    private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
+                                boolean bytes, Path staging) {
         // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
         try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
-            Path staging;
-            try {
-                staging = store.stagingFile();
-            } catch (IOException e) {
-                throw new AssetStoreException("Asset nicht ablegbar", e);
-            }
-            try {
-                return downloadGated(source, pageId, attachment, keep, bytes, staging);
-            } finally {
-                try {
-                    Files.deleteIfExists(staging);
-                } catch (IOException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Zwischendatei nicht gelöscht: source={0} ({1})", source.id(),
-                            e.getClass().getName());
-                }
-            }
+            return downloadGated(source, pageId, attachment, keep, bytes, staging);
+        }
+    }
+
+    /** Eine leere Zwischendatei der Ablage für den Anhang; ist er laut Quelle zu groß, scheitert schon das. */
+    private Path staging(String sourceId, PageAttachment attachment) {
+        if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
+            throw new AssetTooLargeException(sourceId, maxBytes);
+        }
+        try {
+            return store.stagingFile();
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
+        }
+    }
+
+    private static void delete(String sourceId, Path staging) {
+        try {
+            Files.deleteIfExists(staging);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Zwischendatei nicht gelöscht: source={0} ({1})", sourceId,
+                    e.getClass().getName());
         }
     }
 
@@ -1660,6 +1745,11 @@ public class Assets {
      * {@code null}. Bleibt in dieser Klasse.
      */
     private record Downloaded(Asset asset, byte[] content) {
+
+        /** Die Bytes aus dem Speicher als Strom; ohne Platz an der Schranke, wie bisher. */
+        AssetStream stream() {
+            return new AssetStream(asset, new ByteArrayInputStream(content), null);
+        }
 
         @Override
         public String toString() {
