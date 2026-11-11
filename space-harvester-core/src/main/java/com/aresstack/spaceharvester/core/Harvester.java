@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
@@ -59,6 +60,7 @@ import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
@@ -710,6 +712,11 @@ public final class Harvester implements AutoCloseable {
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
             assets.downloadLimit(jobs.parallelDownloads());
+            // Restzeit (Angelo 11.11.2026): Dauer je geladener Datei, über Neustarts im Anwendungszustand.
+            DownloadDurations durations = new DownloadDurations(
+                    builder.dataDirectory.resolve("download-durations.properties"), clock);
+            assets.durations(durations);
+            opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
@@ -1463,6 +1470,21 @@ public final class Harvester implements AutoCloseable {
         jobs.parallelDownloads(value);
         // Laufende Downloads laufen zu Ende: ihre Plätze bleiben, bis sie fertig sind.
         assets.downloadLimit(Math.max(value, jobs.downloadingNow()));
+    }
+
+    /**
+     * Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, über alle Exporte und Neustarts, für die
+     * Restzeit eines Bilder- ({@link JobType#ASSETS}) oder Anhängeauftrags ({@link JobType#ATTACHMENTS}); vor der
+     * ersten Datei ein Startwert. Ein Transfer, ohne Parallelität und ohne Treffer aus dem Speicher.
+     *
+     * @throws IllegalArgumentException für andere Auftragsarten
+     */
+    public java.time.Duration averageDownload(JobType type) {
+        return switch (type) {
+            case ASSETS -> assets.durations().average(DownloadDurations.Kind.IMAGE);
+            case ATTACHMENTS -> assets.durations().average(DownloadDurations.Kind.DOCUMENT);
+            default -> throw new IllegalArgumentException("keine Downloads: " + type);
+        };
     }
 
     public Jobs jobs() {

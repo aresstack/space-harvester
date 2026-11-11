@@ -151,6 +151,13 @@ class ExportAssetCollectionTest {
             assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.MISSING);
             assertThat(entry.stored()).isFalse();
         });
+        // Restzeit: jede tatsächlich geladene Datei fließt in die Dauer ihrer Art ein, Speichertreffer nie.
+        var durations = assets.durations();
+        assertThat(durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.DOCUMENT))
+                .isEqualTo(1);
+        assertThat(durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.IMAGE)
+                + durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.DOCUMENT))
+                .isEqualTo(source.downloads);
         // Die Bytes kommen aus dem Speicher, nie wieder von der Quelle.
         int downloads = source.downloads;
         ExportAssets stored = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
