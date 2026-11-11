@@ -235,7 +235,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param dataDirectory   Datenverzeichnis; darunter liegt der Cache in {@code cache/}
      * @param exportDirectory Exportartefakte
      * @param assetDirectory  abgelegte Anhänge
-     * @param maxAssetBytes   größter Anhang, der geladen wird
+     * @param maxAssetBytes   größter Anhang, der geladen wird; {@code 0} ohne Grenze (Standard)
      * @param largeAssetBytes ab dieser Größe gilt ein Anhang als groß ({@code assets.large-file-threshold})
      * @param maxLargeAssets  so viele große Anhänge höchstens gleichzeitig ({@code assets.max-concurrent-large-files})
      * @param searchTimeout   Zeitgrenze einer Suche

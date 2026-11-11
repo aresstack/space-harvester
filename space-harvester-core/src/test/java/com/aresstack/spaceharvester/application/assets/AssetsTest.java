@@ -925,6 +925,27 @@ class AssetsTest {
     }
 
     @Test
+    void aStoredDiagramAboveTheMemoryLimitIsNotReadForDrawing() {
+        Assets assets = assets(100_000);
+        source.file("att-d", "2", "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                + "</root></mxGraphModel></diagram></mxfile>");
+        PageAttachment drawio = attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "2");
+        source.listed.add(drawio);
+        assets.keep(list(drawio), "att-d", false);
+        assets.maxInMemoryBytes(10);
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png?version=2", "Ablauf", null,
+                "image/png", null);
+
+        // Ohne Grenze für Downloads abgelegt, zum Zeichnen aber zu groß für den Speicher: es bleibt das Bild selbst.
+        assertThatThrownBy(() -> assets.viewDiagram("wiki", "101", "7", preview))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThatThrownBy(() -> assets.viewDiagramSvg("wiki", "101", "7", preview))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(source.downloads).as("nur beim Ablegen").isEqualTo(1);
+    }
+
+    @Test
     void anUndrawableDiagramLeavesThePreview() {
         Assets assets = assets(100_000);
         source.file("att-d", "1", "kein xml");

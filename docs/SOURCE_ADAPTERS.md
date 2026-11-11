@@ -306,7 +306,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `DocumentSourceFileTextExtractor`, Composition Root): Jeder Anhang ist ein eigenes Dokument mit der Seite als Eltern
   im `LucenePageTextIndex` (Schema `page-text-index/v2`; ein v1-Index wird leer neu angelegt und füllt sich wieder),
   Dateiname als Titel, Text aus `DocumentText` bzw. bei Bildern eine vorhandene Beschreibung; ohne lesbaren Text steht
-  nur der Dateiname darin (EAC: `# Titel`). Grenzen wie oben und `space-harvester.assets.max-size`. In den Index kommt
+  nur der Dateiname darin (EAC: `# Titel`). Text gibt es bis 20 MiB (Grenze der Extraktion), auch ohne Grenze für
+  Anhänge (`space-harvester.assets.max-size`, Standard `0`). In den Index kommt
   nur Abgelegtes, also beim Ablegen (`harvest`, auch für schon abgelegte Anhänge) und auf Abruf mit `sync`
   (`…/text`, `POST …/description`); was die vollständige Anhangsliste nicht mehr nennt, fällt bei der nächsten Ernte
   heraus, mit der Seite alle ihre Anhänge. Die Schlagwortsuche liefert je Seite ihr bestes Dokument: ein Treffer im

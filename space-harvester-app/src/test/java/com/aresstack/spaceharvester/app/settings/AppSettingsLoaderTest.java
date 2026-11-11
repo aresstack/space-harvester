@@ -123,8 +123,8 @@ class AppSettingsLoaderTest {
 
         assertThat(settings.sources()).isEmpty();
         assertThat(settings.problems()).isEmpty();
-        // Anhänge wie im Core und im Enterprise AI Client (#423): bis 100 MiB, ab 20 MiB höchstens zwei zugleich.
-        assertThat(settings.storage().maxAssetBytes()).isEqualTo(100L * 1024 * 1024);
+        // Anhänge wie im Core: ohne Grenze (Angelo 11.11.2026), ab 20 MiB höchstens zwei zugleich.
+        assertThat(settings.storage().maxAssetBytes()).isZero();
         assertThat(settings.storage().largeAssetBytes()).isEqualTo(20L * 1024 * 1024);
         assertThat(settings.storage().maxLargeAssets()).isEqualTo(2);
     }

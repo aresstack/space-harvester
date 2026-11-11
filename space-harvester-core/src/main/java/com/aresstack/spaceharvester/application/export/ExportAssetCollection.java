@@ -1389,7 +1389,7 @@ public class ExportAssetCollection {
         String excluded = null;
         if (!run.settings.permits(attachment.mediaType())) {
             excluded = "media-type-excluded";
-        } else if (attachment.fileSize() != null && attachment.fileSize() > run.settings.maxSize()) {
+        } else if (attachment.fileSize() != null && run.settings.tooLarge(attachment.fileSize())) {
             excluded = "too-large";
         }
         if (excluded != null) {
@@ -1405,7 +1405,7 @@ public class ExportAssetCollection {
         if (!entry.stored()) {
             return entry;
         }
-        if (entry.size() > run.settings.maxSize()) {
+        if (run.settings.tooLarge(entry.size())) {
             // Die Quelle nannte keine oder eine falsche Größe: abgelegt ist es, exportiert wird es nicht.
             return new ExportAssetManifest.Entry(pageId, reference, entry.attachmentId(), entry.version(),
                     entry.title(), entry.mediaType(), entry.size(), null, ExportAssetManifest.Status.EXCLUDED,

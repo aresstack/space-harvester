@@ -47,3 +47,9 @@ Wunsch je Quelle (`includeAttachments`, Standard aus) als eigene Ressourcen.
 - Ein Export wird größer; die Einstellung begrenzt Typen und Größe.
 - Absätze und Fakten lesen Anhangstexte vorerst nicht; das wäre eine eigene Entscheidung.
 - Gewollte Abweichung vom Enterprise AI Client (SH+), in PARITY.md durch Strang S nachzutragen.
+
+## Nachtrag 11.11.2026: Ohne Größengrenze (#571)
+
+Angelo will kein Größenlimit. `…max-size` hat jetzt den Standard `0`, ohne Grenze, wie
+`space-harvester.assets.max-size`. Anhänge fließen als Strom in die Ablage und ins JSON-Paket, nie ganz in den
+Speicher; Text gibt es weiter nur bis 20 MiB, die Grenze der Textextraktion. Eine gesetzte Größe gilt wie bisher.

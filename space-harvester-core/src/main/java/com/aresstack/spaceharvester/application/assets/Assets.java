@@ -145,6 +145,14 @@ public class Assets {
         this.maxBytes = maxBytes;
     }
 
+    /**
+     * Die Grenze für Downloads aus der Konfiguration ({@code space-harvester.assets.max-size}): {@code 0} heißt ohne
+     * Grenze ({@link #UNLIMITED}), der Standard; jede andere Zahl bleibt, wie sie ist.
+     */
+    public static long maxBytes(long configured) {
+        return configured == 0 ? UNLIMITED : configured;
+    }
+
     /** Gleichzeitige Downloads von Anhängen, und wie lange ein weiterer auf einen freien Platz wartet. */
     static final int MAX_CONCURRENT_DOWNLOADS = 4;
     /** Obergrenze der gemerkten Nachhol-Versuche, danach beginnt die Liste neu. */
@@ -159,8 +167,10 @@ public class Assets {
      * Downloads: so groß wie bisher die Standardgrenze für Anhänge ({@code READER_MAX_BYTES} im Enterprise AI Client).
      * Größere Dateien gibt es nur als Strom ({@link #stream}, {@link #openStored}), damit keine den Speicher füllt.
      */
-    static final long MAX_IN_MEMORY_BYTES = 100L * 1024 * 1024;
+    public static final long MAX_IN_MEMORY_BYTES = 100L * 1024 * 1024;
     private volatile long maxInMemoryBytes = MAX_IN_MEMORY_BYTES;
+    /** Ohne Grenze für Downloads: Dateien beliebiger Größe fließen in die Ablage (Angelo 11.11.2026). */
+    public static final long UNLIMITED = Long.MAX_VALUE;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
     private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
@@ -353,6 +363,14 @@ public class Assets {
         }
     }
 
+    /**
+     * Die Grenze für Bilder der Lese-Ansicht und Vorschauen: sie kommen nur als Bytes, also höchstens so groß wie
+     * Dateien im Speicher, auch ohne Grenze für Downloads.
+     */
+    private long inMemoryLimit() {
+        return Math.min(maxBytes, maxInMemoryBytes);
+    }
+
     /** Nur für Tests: eine kleinere Grenze für Dateien im Speicher als {@link #MAX_IN_MEMORY_BYTES}. */
     void maxInMemoryBytes(long maxInMemoryBytes) {
         this.maxInMemoryBytes = maxInMemoryBytes;
@@ -538,17 +556,17 @@ public class Assets {
             }
             try {
                 long started = System.nanoTime();
-                byte[] loaded = source.viewImage(image, maxBytes);
+                byte[] loaded = source.viewImage(image, inMemoryLimit());
                 durations.record(DownloadDurations.Kind.IMAGE, Duration.ofNanos(System.nanoTime() - started));
                 return loaded;
             } catch (AttachmentTooLargeException e) {
-                throw new AssetTooLargeException(sourceId, maxBytes);
+                throw new AssetTooLargeException(sourceId, inMemoryLimit());
             } finally {
                 downloads.release();
             }
         });
-        if (content.length > maxBytes) {
-            throw new AssetTooLargeException(sourceId, maxBytes);
+        if (content.length > inMemoryLimit()) {
+            throw new AssetTooLargeException(sourceId, inMemoryLimit());
         }
         // Die Größe eines Bildes der Lese-Ansicht steht erst nach dem Download fest; Typerkennung und Ablegen laufen
         // dann unter der Schranke.
@@ -608,7 +626,7 @@ public class Assets {
         }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = storedDiagram.map(store::read)
+            byte[] mxfile = storedDiagram.map(this::storedSource)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
         }
@@ -667,7 +685,7 @@ public class Assets {
         }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = storedDiagram.map(store::read)
+            byte[] mxfile = storedDiagram.map(this::storedSource)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_RENDITION, mxfile);
         }
@@ -675,6 +693,19 @@ public class Assets {
             return Optional.empty();
         }
         return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Die abgelegten Quelldaten eines Diagramms als Bytes, höchstens {@link #MAX_IN_MEMORY_BYTES} wie {@link #read}:
+     * Ohne Grenze für Downloads kann ein abgelegtes Diagramm beliebig groß sein. Die Schranke hält schon der Aufrufer.
+     *
+     * @throws AssetTooLargeException darüber; dann gilt das Bild selbst
+     */
+    private byte[] storedSource(Asset asset) {
+        if (asset.size() > maxInMemoryBytes) {
+            throw new AssetTooLargeException(asset.sourceId(), maxInMemoryBytes);
+        }
+        return store.read(asset);
     }
 
     /**
@@ -1358,14 +1389,14 @@ public class Assets {
         }
         byte[] content;
         try {
-            content = source.attachmentPreview(attachment, kind, maxBytes);
+            content = source.attachmentPreview(attachment, kind, inMemoryLimit());
         } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+            throw new AssetTooLargeException(source.id(), inMemoryLimit());
         } finally {
             downloads.release();
         }
-        if (content.length > maxBytes) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+        if (content.length > inMemoryLimit()) {
+            throw new AssetTooLargeException(source.id(), inMemoryLimit());
         }
         return content;
     }

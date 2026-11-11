@@ -8,12 +8,13 @@ import java.util.Objects;
 /**
  * Dateianhänge im Export (ADR 0023) unter {@code space-harvester.export.attachments}: Der Auftrag „Bilder beschaffen“
  * legt zusätzlich die Dokument-Anhänge der exportierten Seiten ab, wenn {@link #attachments()} an ist, ihr Medientyp
- * zu {@link #mediaTypes()} passt und sie höchstens {@link #maxSize()} Bytes groß sind. Andere stehen nur mit Status
- * und Grund im Manifest. Gilt ohne Neustart für den nächsten Auftrag.
+ * zu {@link #mediaTypes()} passt und sie nicht über {@link #maxSize()} liegen ({@link #tooLarge}). Andere stehen nur
+ * mit Status und Grund im Manifest. Gilt ohne Neustart für den nächsten Auftrag.
  *
  * @param attachments ob Dokument-Anhänge beschafft werden (Standard an)
  * @param mediaTypes  zulässige Medientypen, klein geschrieben; ein Eintrag {@code typ/*} passt auf alle Untertypen
- * @param maxSize     größte Datei in Bytes (Standard 20 MiB, die Grenze der Textextraktion)
+ * @param maxSize     größte Datei in Bytes; {@code 0} ohne Grenze (Standard, Angelo 11.11.2026). Text gibt es
+ *                    unabhängig davon nur bis zur Grenze der Textextraktion (20 MiB).
  */
 public record ExportSettings(boolean attachments, List<String> mediaTypes, long maxSize) {
 
@@ -21,11 +22,11 @@ public record ExportSettings(boolean attachments, List<String> mediaTypes, long 
     public static final String ATTACHMENTS_ENABLED = "export.attachments.enabled";
     /** {@code export.attachments.media-types}: Liste, durch Kommas getrennt oder als {@code key[0]}, …. */
     public static final String ATTACHMENTS_MEDIA_TYPES = "export.attachments.media-types";
-    /** {@code export.attachments.max-size}: Bytes oder mit Einheit wie {@code 20MB}, {@code 512KB}. */
+    /** {@code export.attachments.max-size}: Bytes oder mit Einheit wie {@code 20MB}; {@code 0} ohne Grenze. */
     public static final String ATTACHMENTS_MAX_SIZE = "export.attachments.max-size";
 
-    /** 20 MiB, die Grenze von {@code TikaDocumentText}. */
-    public static final long DEFAULT_MAX_SIZE = 20L * 1024 * 1024;
+    /** Ohne Grenze: Dateien beliebiger Größe gehen als Strom in den Export. */
+    public static final long DEFAULT_MAX_SIZE = 0;
 
     /** PDF, Office (OOXML und alt), OpenDocument, RTF, Mails und Klartext. */
     public static final List<String> DEFAULT_MEDIA_TYPES = List.of(
@@ -55,6 +56,11 @@ public record ExportSettings(boolean attachments, List<String> mediaTypes, long 
             }
         }
         mediaTypes = List.copyOf(unique);
+    }
+
+    /** Ob eine Datei dieser Größe über {@link #maxSize()} liegt; ohne Grenze ({@code 0}) nie. */
+    public boolean tooLarge(long size) {
+        return maxSize > 0 && size > maxSize;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.output.export;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.Sha256CheckedInputStream;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
@@ -359,7 +360,8 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
             if (path == null || sha256 == null || zip.getEntry(path) == null) {
                 return Optional.empty();
             }
-            byte[] bytes = read(path, maxAssetBytes);
+            // Als Bytes höchstens so groß wie Dateien im Speicher, auch ohne Grenze der Ablage; größere als Strom.
+            byte[] bytes = read(path, Math.min(maxAssetBytes, Assets.MAX_IN_MEMORY_BYTES));
             return sha256(bytes).equals(sha256) ? Optional.of(bytes) : Optional.empty();
         }
 
