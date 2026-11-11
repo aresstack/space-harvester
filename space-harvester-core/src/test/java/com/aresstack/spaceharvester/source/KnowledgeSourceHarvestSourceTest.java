@@ -929,6 +929,37 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
     }
 
+    /**
+     * #571, Angelo 11.11.2026: Lehnt Confluence Benutzer und Passwort der Web-Anmeldung ab (HTTP 401), sagt das
+     * Codefeld genau das statt „Quelle antwortet mit HTTP 401“ und fragt weiter Benutzer und Passwort ab.
+     */
+    @Test
+    void aRejectedWebLoginSaysThatUserOrPasswordWereRefused() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                new WebFiles(secrets, seen, "token-port", 1, null), null, null, true,
+                () -> new WebFiles(secrets, seen, "web-port", 0, "wrongPassword"));
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "anna", required.challenge());
+
+        assertThat(signIns.submit(request.id(), "000000".toCharArray(), "anna", "falsch".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.FAILED);
+
+        com.aresstack.spaceharvester.application.signin.SignInRequest after = signIns.request(request.id())
+                .orElseThrow();
+        assertThat(after.failure()).startsWith("Confluence lehnt Benutzername oder Passwort ab (HTTP 401)")
+                .doesNotContain("falsch");
+        assertThat(after.asksForLogin()).isTrue();
+        assertThat(seen).containsExactly("token-port image -:pat-value", "web-port image anna:falsch");
+    }
+
     /** Quelle mit Token, schon mit Benutzer und Passwort in der eigenen Web-Sitzung angemeldet (#571). */
     private static KnowledgeSourceHarvestSource signedInWebSession(WebFiles tokenPort, WebFiles webPort) {
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
@@ -1021,6 +1052,10 @@ class KnowledgeSourceHarvestSourceTest {
         @Override
         public byte[] loadViewImage(String src) throws KnowledgeSourceException {
             seen.add(name + " image " + principalAndSecret(secrets));
+            if ("wrongPassword".equals(mode)) {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
+                        "Bild nicht geladen: Confluence antwortet mit HTTP 401");
+            }
             if (locked > 0) {
                 locked--;
                 throw new OneTimeCodeRequiredException("Einmalcode verlangt", page("rejectFirst".equals(mode)), null);

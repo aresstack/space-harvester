@@ -1538,6 +1538,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 LOG.info("Quelle {}: Dateiabruf mit Benutzeranmeldung gescheitert ({}, {})", id,
                         e.getClass().getSimpleName(), e.kind());
                 Arrays.fill(login.password(), '\0');
+                if (e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED && SignInFailures.answeredWith(e, 401)) {
+                    // Confluence lehnt Benutzer und Passwort ab (Angelo 11.11.2026): klar sagen statt bloßer 401.
+                    throw new SourceAccessException(id, SourceAccessException.Reason.ACCESS_DENIED,
+                            SignInFailures.loginRejected(401), e);
+                }
                 throw sendFailure(e, false);
             }
             web = login;
