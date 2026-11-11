@@ -238,6 +238,30 @@ public interface HarvestSource {
     }
 
     /**
+     * Wie {@link #attachmentFile}, aber die Originalbytes fließen nach {@code sink} statt ganz in den Speicher (Angelo
+     * 11.11.2026). Eine Quelle ohne eigenen Strom lädt wie {@link #attachmentFile} mit der Grenze von {@code sink} und
+     * schreibt danach.
+     *
+     * @throws AttachmentTooLargeException über {@link AttachmentSink#maxBytes()} oder der Grenze der Quelle
+     * @throws SourceAccessException       wie {@link #attachmentFile}; {@code UNAVAILABLE}, wenn {@code sink} nicht
+     *                                     schreibbar ist
+     */
+    default StreamedAttachment streamAttachment(PageAttachment attachment, AttachmentSink sink) {
+        AttachmentFile file = attachmentFile(attachment, sink.maxBytes());
+        try {
+            sink.restart();
+            sink.write(file.content());
+        } catch (java.io.IOException e) {
+            if (sink.exceeded()) {
+                throw new AttachmentTooLargeException(id(), sink.maxBytes());
+            }
+            throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE,
+                    "Anhang nicht geschrieben (" + e.getClass().getSimpleName() + ")", e);
+        }
+        return new StreamedAttachment(file.attachment(), file.retrievedAt());
+    }
+
+    /**
      * Eine Vorschau, die die Quelle selbst aus einem Anhang aus {@link #attachments(String)} erzeugt (#183), über die
      * Anmeldung und den Netzweg der Quelle; bei Confluence die Dokumentkonvertierung, etwa ein Office-Dokument als PDF.
      * Nur PDF oder Bild, nie gekürzt. Nur mit {@link SourceCapability#ATTACHMENT_PREVIEWS}.

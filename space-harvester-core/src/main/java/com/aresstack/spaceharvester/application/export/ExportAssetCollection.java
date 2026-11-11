@@ -1037,7 +1037,7 @@ public class ExportAssetCollection {
         boolean reload = run.fresh("attachment:" + attachment.attachmentId());
         ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
                 attachment.version(), attachment.title(), attachment.mediaType(),
-                () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
+                () -> assets.keep(list, attachment.attachmentId(), reload));
         if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
             entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
                     .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
@@ -1236,7 +1236,7 @@ public class ExportAssetCollection {
         boolean reload = run.fresh("attachment:" + attachment.attachmentId());
         ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
                 attachment.version(), attachment.title(), attachment.mediaType(),
-                () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
+                () -> assets.keep(list, attachment.attachmentId(), reload));
         if (!entry.stored()) {
             return entry;
         }
