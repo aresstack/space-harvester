@@ -92,7 +92,7 @@ class JobsDownloadSlotsTest {
 
         runInBackground();
         await(first.id(), status -> status.stage() == JobStage.PREPARED);
-        assertThat(jobs.status(second.id()).stage()).isEqualTo(JobStage.PREPARING);
+        await(second.id(), status -> status.stage() == JobStage.PREPARING);
     }
 
     @Test
