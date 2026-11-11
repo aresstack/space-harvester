@@ -118,4 +118,31 @@ class ImageViewerTest {
         assertThat(ImageViewer.fileName(picture(1, 1, "a/b: c?"))).isEqualTo("a_b_ c_.png");
         assertThat(ImageViewer.fileName(picture(1, 1, "foto.jpg"))).isEqualTo("foto.jpg");
     }
+
+    @Test
+    void zoomNeverReversesDirectionForExtremeImages() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            ImageViewer tall = new ImageViewer(List.of(picture(100, 20000, "lang")), 0);
+            tall.layoutForTest(800, 600);
+            int fitted = tall.zoomPercent();
+            tall.zoomOut();
+            assertThat(tall.zoomPercent()).isLessThanOrEqualTo(fitted);
+
+            ImageViewer tiny = new ImageViewer(List.of(picture(2, 2, "klein")), 0);
+            tiny.layoutForTest(800, 600);
+            int big = tiny.zoomPercent();
+            tiny.zoomIn();
+            assertThat(tiny.zoomPercent()).isGreaterThanOrEqualTo(big);
+        });
+    }
+
+    @Test
+    void transparentPicturesCanBeSavedAsBmp() throws Exception {
+        File target = folder.resolve("bild.bmp").toFile();
+        String[] message = new String[1];
+        SwingUtilities.invokeAndWait(() -> message[0] = new ImageViewer(List.of(picture(10, 10, "x")), 0)
+                .saveTo(target));
+        assertThat(message[0]).isEqualTo(ImageViewer.SAVED_PREFIX + "bild.bmp");
+        assertThat(ImageIO.read(target).getWidth()).isEqualTo(10);
+    }
 }

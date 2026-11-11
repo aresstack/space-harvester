@@ -192,7 +192,7 @@ public final class ImageViewer extends JPanel {
         File file = format == null ? new File(target.getPath() + ".png") : target;
         BufferedImage image = pictures.get(index).image();
         try {
-            if ("jpg".equals(format) && image.getColorModel().hasAlpha()) {
+            if (("jpg".equals(format) || "bmp".equals(format)) && image.getColorModel().hasAlpha()) {
                 image = opaque(image);
             }
             if (!ImageIO.write(image, format == null ? "png" : format, file)) {
@@ -357,6 +357,8 @@ public final class ImageViewer extends JPanel {
         bind("PAGE_DOWN", "nextPage", this::next);
         bind("PLUS", "zoomIn", this::zoomIn);
         bind("EQUALS", "zoomIn2", this::zoomIn);
+        bind("shift EQUALS", "zoomIn4", this::zoomIn); // „+“ auf US-Tastaturen
+        bind("typed +", "zoomIn5", this::zoomIn);
         bind("ADD", "zoomIn3", this::zoomIn);
         bind("MINUS", "zoomOut", this::zoomOut);
         bind("SUBTRACT", "zoomOut2", this::zoomOut);
@@ -420,6 +422,8 @@ public final class ImageViewer extends JPanel {
     private static final class Canvas extends JPanel {
         private BufferedImage image;
         private double zoom = 1.0;
+        /** Zoom des eingepassten Bildes; die Grenzen schließen ihn immer ein, damit ± nie die Richtung umkehrt. */
+        private double fitZoom = 1.0;
         double offsetX;
         double offsetY;
         Point dragStart;
@@ -455,6 +459,7 @@ public final class ImageViewer extends JPanel {
                 zoom = Math.min(getWidth() / (double) image.getWidth(), getHeight() / (double) image.getHeight());
                 offsetX = (getWidth() - image.getWidth() * zoom) / 2.0;
                 offsetY = (getHeight() - image.getHeight() * zoom) / 2.0;
+                fitZoom = zoom;
                 fitted = true;
                 pending = false;
             }
@@ -466,7 +471,7 @@ public final class ImageViewer extends JPanel {
                 return;
             }
             double oldZoom = zoom;
-            zoom = Math.max(0.05, Math.min(zoom * factor, 20.0));
+            zoom = Math.max(Math.min(0.05, fitZoom), Math.min(zoom * factor, Math.max(20.0, fitZoom)));
             double px = pivot != null ? pivot.x : getWidth() / 2.0;
             double py = pivot != null ? pivot.y : getHeight() / 2.0;
             offsetX = px - (px - offsetX) * (zoom / oldZoom);
