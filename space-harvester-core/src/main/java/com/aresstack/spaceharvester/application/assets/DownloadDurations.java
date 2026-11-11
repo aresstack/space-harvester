@@ -51,7 +51,9 @@ public final class DownloadDurations implements AutoCloseable {
     private final Map<Kind, Double> averageMillis = new EnumMap<>(Kind.class);
     private final Map<Kind, Long> counts = new EnumMap<>(Kind.class);
     private Instant savedAt = Instant.MIN;
-    private boolean dirty;
+    /** Zählt jede Messung; {@link #savedVersion} ist der zuletzt erfolgreich geschriebene Stand. */
+    private long version;
+    private long savedVersion;
 
     /** Nur im Speicher, etwa im Dienst oder in Tests. */
     public DownloadDurations() {
@@ -90,7 +92,7 @@ public final class DownloadDurations implements AutoCloseable {
             double average = averageMillis.get(kind);
             averageMillis.put(kind, average + (took.toMillis() - average) / Math.min(n, WINDOW));
             counts.put(kind, n);
-            dirty = true;
+            version++;
             Instant now = clock.instant();
             save = file != null && !now.isBefore(savedAt.plus(SAVE_EVERY));
             if (save) {
@@ -140,16 +142,17 @@ public final class DownloadDurations implements AutoCloseable {
             return;
         }
         Properties properties = new Properties();
+        long writing;
         synchronized (this) {
-            if (!dirty) {
+            if (version == savedVersion) {
                 return;
             }
+            writing = version;
             for (Kind kind : Kind.values()) {
                 String prefix = kind.name().toLowerCase(java.util.Locale.ROOT);
                 properties.setProperty(prefix + ".average-ms", Double.toString(averageMillis.get(kind)));
                 properties.setProperty(prefix + ".count", Long.toString(counts.get(kind)));
             }
-            dirty = false;
         }
         try {
             Files.createDirectories(file.toAbsolutePath().getParent());
@@ -158,6 +161,10 @@ public final class DownloadDurations implements AutoCloseable {
                 properties.store(out, "Space Harvester: durchschnittliche Download-Dauer je Datei");
             }
             Files.move(part, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            // Erst nach dem Schreiben gilt der Stand als gesichert; Messungen währenddessen bleiben offen.
+            synchronized (this) {
+                savedVersion = Math.max(savedVersion, writing);
+            }
         } catch (IOException | RuntimeException e) {
             System.getLogger(DownloadDurations.class.getName()).log(System.Logger.Level.INFO,
                     "Download-Dauern nicht geschrieben ({0})", e.getClass().getName());
