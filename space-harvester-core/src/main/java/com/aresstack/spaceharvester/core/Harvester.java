@@ -52,6 +52,7 @@ import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
+import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
@@ -141,6 +142,7 @@ import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -309,6 +311,7 @@ public final class Harvester implements AutoCloseable {
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
     private final SourceManagement sourceManagement;
+    private final ExportPackageImport packageImport;
     private final TrustBundles trustBundles;
     private final String userAgent;
     /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
@@ -677,10 +680,12 @@ public final class Harvester implements AutoCloseable {
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
-            this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
-                            // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                            List.of(acronymRelationRule::refresh))), retentionRule(builder));
+            LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
+            EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
+                    // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
+                    List.of(acronymRelationRule::refresh));
+            this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock, List.of(afterSync),
+                    retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -712,6 +717,11 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
+            // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen.
+            this.packageImport = new ExportPackageImport(jobs, new ZipExportPackageReader(
+                    LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, builder.maxAssetBytes), baselineStore,
+                    sourceId -> catalog.config(sourceId).isPresent(), assetStore, assets::adoptText,
+                    new ReadingViewStore(enrichmentStore), List.of(afterSync), clock);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
             // Gesamtbudget der Verbindungen aller ladenden Aufträge (jobs.download-connections, Angelo 11.11.2026).
             this.connections = new ConnectionBudget(builder.jobLimits.downloadConnections());
@@ -1096,6 +1106,14 @@ public final class Harvester implements AutoCloseable {
      */
     public SourceManagement sourceManagement() {
         return sourceManagement;
+    }
+
+    /**
+     * Import eines JSON-Pakets ({@code export.zip} ab {@code json-package/3}) in den Cache einer eingerichteten Quelle,
+     * ohne die Quelle zu fragen. Prüft keine {@code AccessPolicy}, wie {@link #sourceManagement()}.
+     */
+    public ExportPackageImport packageImport() {
+        return packageImport;
     }
 
     /** Quellen, Partitionen (Spaces), Live-Metadaten und Anhangslisten direkt bei der Quelle. */

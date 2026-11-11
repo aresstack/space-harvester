@@ -1379,6 +1379,20 @@ public class Assets {
     }
 
     /**
+     * Legt einen mitgebrachten Text eines Dokument-Anhangs ab (Import eines JSON-Pakets), unter der eingestellten
+     * Extraktion, als hätte sie ihn gelesen; so findet {@link #storedText} ihn ohne erneutes Lesen.
+     *
+     * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
+     */
+    public boolean adoptText(String sha256, String text) {
+        if (documents == null || sha256 == null || text == null || text.isBlank()) {
+            return false;
+        }
+        store.putText(new AssetText(sha256, documents.id(), documents.version(), text, false, clock.instant()));
+        return true;
+    }
+
+    /**
      * Die vorhandene Beschreibung genau dieser Bildbytes durch das eingestellte Modell; erzeugt nichts und fragt die
      * Quelle nicht.
      */

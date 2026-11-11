@@ -44,7 +44,12 @@ public enum JobType {
      * Wunsch; eigener Eintrag in der Auftragsliste. Eingeplant wie ein Folgeauftrag ({@link #followUp()}): er wartet
      * auf Abgleiche und Exporte und belegt nie alle Plätze.
      */
-    GLOSSARY;
+    GLOSSARY,
+    /**
+     * Import eines JSON-Pakets ({@code export.zip} ab {@code json-package/3}) in den Cache einer Quelle; bestätigt eine
+     * Generation wie ein Abgleich, ohne die Quelle zu fragen.
+     */
+    IMPORT;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie

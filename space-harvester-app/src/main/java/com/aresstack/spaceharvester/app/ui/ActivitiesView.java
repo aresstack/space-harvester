@@ -1431,6 +1431,7 @@ public final class ActivitiesView implements View {
                         "Fehlgeschlagen");
                 case GLOSSARY -> new Counters("Begriffe für das Modell", "Beurteilt", "Einträge vorgeschlagen",
                         "Fehlgeschlagen");
+                case IMPORT -> new Counters("Seiten im Paket", "Bearbeitet", "Übernommen", "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
