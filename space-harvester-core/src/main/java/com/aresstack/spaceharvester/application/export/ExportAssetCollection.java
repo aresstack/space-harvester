@@ -947,8 +947,15 @@ public class ExportAssetCollection {
                     // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
                     // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen
                     // nachweislich im Space.
-                    String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
-                    if (!dataset.spaceKey().equals(current)) {
+                    try {
+                        String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
+                        if (!dataset.spaceKey().equals(current)) {
+                            return new Loaded(false, discovered);
+                        }
+                    } catch (SourceAccessException e) {
+                        // Wie zuvor in der Vorbereitung: nicht erreichbar hält an, sonst bleibt die Seite ungeprüft;
+                        // ohne bekannten Space keine Lese-Ansicht.
+                        unreachable(e);
                         return new Loaded(false, discovered);
                     }
                 }

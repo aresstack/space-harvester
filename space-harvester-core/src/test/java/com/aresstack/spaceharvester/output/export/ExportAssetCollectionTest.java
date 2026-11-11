@@ -244,6 +244,41 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void aFailedSpaceCheckLeavesThePageUncheckedOrPausesWithoutLosingTheOtherPages() {
+        source.searchable = true;
+        source.moved = Set.of("100");
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.NOT_FOUND);
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Gelöscht oder nicht lesbar: die Seite bleibt ungeprüft, die übrigen stehen im Manifest.
+        JobStatus done = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isTrue();
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        assertThat(manifest.complete()).isFalse();
+        assertThat(manifest.forPage("100")).isEmpty();
+        assertThat(manifest.forPage("101")).isNotEmpty();
+        assertThat(writer().dataset(export.id()).orElseThrow().readingView("100")).isEmpty();
+
+        // Nicht erreichbar: der Auftrag hält an, statt zu scheitern.
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.UNAVAILABLE);
+        JobStatus again = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        assertThat(jobs.list("client-a", JobType.ASSETS).stream()
+                .filter(job -> again.id().equals(job.parameters().get(ExportAssetCollection.EXPORT_ID)))
+                .map(JobStatus::state)).containsExactly(JobState.PAUSED);
+    }
+
+    @Test
     void pausedImagesResumeInTheSameEntryWithoutAskingTheSourceForCheckedPagesAgain() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {
@@ -614,6 +649,8 @@ class ExportAssetCollectionTest {
         final List<List<String>> searched = new ArrayList<>();
         /** Seiten, die inzwischen in einem anderen Space liegen: die Suche mit Space-Filter findet ihre Anhänge nicht. */
         Set<String> moved = Set.of();
+        /** Seiten, deren Seitendaten mit diesem Grund scheitern. */
+        Map<String, SourceAccessException.Reason> metadataFails = Map.of();
         /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
         final List<String> listed = new ArrayList<>();
         /** Seiten, deren Lese-Ansicht abgefragt wurde, in Reihenfolge. */
@@ -651,6 +688,9 @@ class ExportAssetCollectionTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             metadataCalls++;
+            if (metadataFails.containsKey(pageId)) {
+                throw new SourceAccessException(id(), metadataFails.get(pageId), "Seitendaten", null);
+            }
             return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId,
                     moved.contains(pageId) ? "OPS" : "DEV", null, "3",
                     null, null, PageMetadata.sorted(Map.of()));
