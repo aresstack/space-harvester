@@ -34,6 +34,8 @@ import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.net.URI;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
@@ -609,6 +611,21 @@ public class ExportAssetCollection {
                 // Dokumente und Bilder liegen gleich: je Anhang, Version und SHA-256.
                 try {
                     return assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256());
+                } catch (AssetStoreException e) {
+                    return Optional.empty();
+                }
+            }
+
+            @Override
+            public Optional<InputStream> open(ExportAssetManifest.Entry entry) {
+                if (entry.stored() && entry.reference().kind() == ExportAssetManifest.Kind.MERMAID) {
+                    return content(entry).map(ByteArrayInputStream::new);
+                }
+                if (!entry.stored() || entry.attachmentId() == null) {
+                    return Optional.empty();
+                }
+                try {
+                    return assets.openStored(sourceId, entry.attachmentId(), entry.version(), entry.sha256());
                 } catch (AssetStoreException e) {
                     return Optional.empty();
                 }

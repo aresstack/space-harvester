@@ -85,6 +85,7 @@ class ExportAssetCollectionAttachmentsTest {
     private ExportConversions conversions;
     /** Läuft nach dem Export, bevor Bilder und Anhänge beschafft werden. */
     private Runnable beforeCollecting;
+    private Runnable beforeConverting;
 
     @TempDir
     Path data;
@@ -155,6 +156,28 @@ class ExportAssetCollectionAttachmentsTest {
         assertThat(pdf.path("textPath").isNull()).isTrue();
         assertThat(result.files).containsKey(pdf.path("path").asString());
         assertThat(result.files.keySet()).noneMatch(name -> name.startsWith("attachments/100/handbuch.pdf.txt"));
+    }
+
+    @Test
+    void aDamagedStoredDocumentIsReportedAsAStoreErrorWithoutAFile() throws Exception {
+        // Das Original wird als Strom gegen seine Prüfsumme gelesen, nicht im Speicher.
+        beforeConverting = () -> {
+            String hex = Assets.sha256(PDF).substring("sha256:".length());
+            try {
+                Files.writeString(data.resolve("assets").resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                        "verändert");
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
+        Result result = export(ExportSettings.DEFAULT);
+
+        JsonNode pdf = find(result.json("attachments.json"), "handbuch.pdf");
+        assertThat(pdf.path("reason").asString()).isEqualTo("asset-store-error");
+        assertThat(pdf.path("path").isNull()).isTrue();
+        assertThat(pdf.path("sha256").isNull()).isTrue();
+        assertThat(result.files.keySet()).noneMatch(name -> name.startsWith("attachments/100/handbuch.pdf"));
+        assertThat(find(result.json("attachments.json"), "notiz.txt").path("path").asString()).isNotEmpty();
     }
 
     @Test
@@ -323,6 +346,9 @@ class ExportAssetCollectionAttachmentsTest {
         }
         while (!queued.isEmpty()) {
             queued.poll().run();
+        }
+        if (beforeConverting != null) {
+            beforeConverting.run();
         }
         ExportConversions.ConvertedFile zip = conversions.convert(export.id(), "client-a", JsonPackageConverter.FORMAT,
                 data.resolve("out"));
