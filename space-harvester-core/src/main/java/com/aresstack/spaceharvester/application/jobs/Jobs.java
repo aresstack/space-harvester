@@ -197,18 +197,72 @@ public class Jobs implements AutoCloseable {
         return status;
     }
 
+    /**
+     * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)}, aber der Auftrag wartet, bis
+     * {@link #releaseAwaiting} ihn freigibt, etwa Bilder und Anhänge, bis der Text ihres Exports veröffentlicht ist
+     * (Angelo 11.11.2026). Bis dahin belegt er keinen Platz und zeigt {@link JobStage#AWAITING}. Wird der Auftrag
+     * {@code awaited} gelöscht, verschwindet er mit.
+     *
+     * @param awaited der Auftrag, dem er folgt
+     */
+    public JobStatus submitAwaiting(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                    String owner, Map<String, String> parameters, JobTask task, String awaited) {
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(parameters, "parameters");
+        Objects.requireNonNull(awaited, "awaited");
+        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
+                Map.copyOf(parameters), task, clock.instant());
+        job.awaiting = awaited;
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            // Ohne Platzprüfung: belegt bis zur Freigabe nichts und ist durch die Zahl der Vorgänger begrenzt.
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                    "Auftrag angenommen; startet, wenn sein Vorgänger fertig ist", null, null, null, null);
+            open.put(job.id, job);
+            queued.addLast(job);
+            JobStatus status = job.snapshot();
+            store.save(status);
+            return status;
+        }
+    }
+
+    /**
+     * Gibt einen wartenden Auftrag aus {@link #submitAwaiting} frei; er reiht sich dann wie jeder andere ein.
+     *
+     * @return ob es den Auftrag noch wartend gab; {@code false}, wenn er gelöscht, abgebrochen oder schon frei ist
+     */
+    public boolean releaseAwaiting(String jobId) {
+        synchronized (lock) {
+            Job job = open.get(jobId);
+            if (job == null || job.awaiting == null || job.state != JobState.QUEUED) {
+                return false;
+            }
+            job.awaiting = null;
+            store.save(job.snapshot());
+        }
+        dispatch();
+        return true;
+    }
+
     /** Unter dem Sperrobjekt: ob noch ein Auftrag dieser Art für diesen Eigentümer Platz hat. */
     private void requireCapacity(JobType type, String owner) {
         int capacity = limits.maxConcurrent() + limits.maxQueued();
         // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
         // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
         // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
-        if (open.values().stream().filter(other -> other.type.followUp() == type.followUp()).count() >= capacity) {
+        // Wer auf seinen Vorgänger wartet (submitAwaiting), belegt nichts: höchstens zwei je angenommenem Export.
+        if (open.values().stream().filter(other -> other.awaiting == null
+                && other.type.followUp() == type.followUp()).count() >= capacity) {
             throw new JobCapacityExceededException(capacity);
         }
         int perOwner = type.followUp() ? 2 * limits.maxOpenPerOwner() : limits.maxOpenPerOwner();
         if (owner != null && open.values().stream()
-                .filter(other -> other.type.followUp() == type.followUp() && owner.equals(other.owner))
+                .filter(other -> other.awaiting == null && other.type.followUp() == type.followUp()
+                        && owner.equals(other.owner))
                 .count() >= perOwner) {
             throw JobCapacityExceededException.perOwner(perOwner);
         }
@@ -585,6 +639,14 @@ public class Jobs implements AutoCloseable {
                 JobStatus status = requireOwner(open != null ? open.snapshot()
                         : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
                 freed = stop(jobId);
+                // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit.
+                for (Job follower : List.copyOf(this.open.values())) {
+                    if (jobId.equals(follower.awaiting)) {
+                        stop(follower.id);
+                        events.delete(follower.id);
+                        store.delete(follower.id);
+                    }
+                }
                 stopped.remove(status.id());
                 reconnects.remove(status.id());
                 reconnectAttempts.remove(status.id());
@@ -989,6 +1051,9 @@ public class Jobs implements AutoCloseable {
         boolean preparations = preparing < parallelPreparations;
         Job pick = null;
         for (Job job : queued) {
+            if (job.awaiting != null) {
+                continue;
+            }
             if (job.type.download() ? preparations : general && !job.type.followUp()) {
                 pick = job;
                 break;
@@ -1450,6 +1515,8 @@ public class Jobs implements AutoCloseable {
         volatile boolean retryFailedRequested;
         /** Abschnitt eines laufenden Downloads ({@link JobType#download()}), sonst {@code null}. */
         volatile JobStage stage;
+        /** Der Auftrag, auf den dieser wartet ({@link Jobs#submitAwaiting}), bis {@link Jobs#releaseAwaiting}. */
+        volatile String awaiting;
         /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */
         CompletableFuture<Void> slot = new CompletableFuture<>();
         volatile Instant startedAt;
@@ -1504,7 +1571,8 @@ public class Jobs implements AutoCloseable {
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
                     cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt, rootPageId,
                     rootPageId == null ? null : rootTitle, parameters, incomplete && state == JobState.COMPLETED,
-                    pauseRequested && cancelRequested && !state.terminal(), pauseReason, stage);
+                    pauseRequested && cancelRequested && !state.terminal(), pauseReason,
+                    state == JobState.QUEUED && awaiting != null ? JobStage.AWAITING : stage);
         }
 
         @Override

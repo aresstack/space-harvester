@@ -190,8 +190,43 @@ public class Exports {
         List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
-        return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
-                request.owner(), parameters(request), new ExportTask(request, selected));
+        java.util.function.Consumer<JobStatus> announce = submitted;
+        Map<String, String> parameters = parameters(request);
+        if (announce != null) {
+            parameters.put(FOLLOW_UPS, ANNOUNCED);
+        }
+        JobStatus status = jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
+                request.owner(), parameters, new ExportTask(request, selected));
+        if (announce != null) {
+            try {
+                announce.accept(status);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Folgeaufträge für Export {0} nicht angelegt ({1})", status.id(),
+                        e.getClass().getSimpleName());
+            }
+        }
+        return status;
+    }
+
+    /**
+     * Angabe am Export: seine Folgeaufträge (Bilder, Anhänge) wurden schon beim Start angelegt ({@link #onSubmitted});
+     * fehlen sie beim Veröffentlichen, hat der Benutzer sie gelöscht und will nur den Text.
+     */
+    public static final String FOLLOW_UPS = "follow-ups";
+    /** Wert von {@link #FOLLOW_UPS}. */
+    public static final String ANNOUNCED = "announced";
+
+    private volatile java.util.function.Consumer<JobStatus> submitted;
+
+    /**
+     * Folgeaufträge schon beim Start eines Exports anlegen, etwa Bilder und Anhänge im Zustand „Wartet auf Text“
+     * (Angelo 11.11.2026); sie starten, sobald der Datenbestand veröffentlicht ist ({@link #onPublished}). Ein Fehler
+     * darin lässt den Export nie scheitern.
+     *
+     * @param listener bekommt den eben angenommenen Export
+     */
+    public void onSubmitted(java.util.function.Consumer<JobStatus> listener) {
+        this.submitted = Objects.requireNonNull(listener, "listener");
     }
 
     /** Wiederanlauf-Angabe: Ebenen unter der Startseite ({@link ExportRequest#depth()}). */

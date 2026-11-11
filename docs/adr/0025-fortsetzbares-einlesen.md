@@ -155,6 +155,15 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     werden Aufträge angenommen und vorbereitet, laden aber nichts; das Einlesen der Seitentexte läuft weiter. Beide Werte
     gelten sofort (`Workspace#setParallelPreparations`, `#setParallelDownloads`) und stehen unter `jobs` in der
     gemeinsamen YAML (`ConfigFileEditor#withParallel`). Zustandsschlüssel: `PREPARING`, `PREPARED`.
+19. **Bilder und Anhänge entstehen mit dem Export** (Angelo 11.11.2026: „Dann hat der User nämlich die Möglichkeit,
+    den Auftrag zu löschen“). `Exports#onSubmitted` → `ExportAssetCollection#announce` legt „Bilder beschaffen“ und
+    „Anhänge beschaffen“ beim Start des Exports an (`Jobs#submitAwaiting`). Sie warten im Zustand `AWAITING_EXPORT`
+    („Wartet auf Text“, `JobStage#AWAITING`, einzige Aktion Löschen), belegen keinen Platz und zählen nicht gegen die
+    Grenzen. Ist der Text veröffentlicht, gibt `ExportAssetCollection#start` sie frei (`Jobs#releaseAwaiting`).
+    Gelöschte bleiben still weg: Der Export trägt `follow-ups=announced`, es entsteht nur der Text, ohne Fehler. Scheitert,
+    endet oder hält der Text an, warten sie weiter, bis „Fortsetzen“ ihn veröffentlicht. Wird der Export gelöscht,
+    verschwinden sie mit. Nach einem Neustart gelten sie wie jeder wartende Auftrag als unterbrochen und laufen beim
+    nächsten Veröffentlichen im selben Eintrag. Die Verknüpfung zum Export steht in `exportId`.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

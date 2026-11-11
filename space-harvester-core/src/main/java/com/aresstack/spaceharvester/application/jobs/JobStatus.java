@@ -34,8 +34,9 @@ import java.util.TreeMap;
  *                        unvollständig, etwa ein Export mit fehlenden Seiten oder Bilder ohne vollständiges Manifest
  * @param pauseRequested  mit {@code cancelRequested}: der Benutzer hält an, statt abzubrechen; nur solange der Auftrag
  *                        noch läuft, nie abgelegt
- * @param stage           nur bei {@link JobState#RUNNING} eines Downloads ({@link JobType#download()}): Vorbereitung,
- *                        vorbereitet oder Download, sonst {@code null}; wird nicht abgelegt
+ * @param stage           bei {@link JobState#RUNNING} eines Downloads ({@link JobType#download()}): Vorbereitung,
+ *                        vorbereitet oder Download; bei {@link JobState#QUEUED} nur {@link JobStage#AWAITING}, solange
+ *                        der Auftrag auf seinen Vorgänger wartet; sonst {@code null}; wird nicht abgelegt
  * @param pauseReason     nur bei {@link JobState#PAUSED}: warum angehalten, sonst {@code null}; ältere abgelegte
  *                        Aufträge lesen sich mit {@link PauseReason#USER}
  */
@@ -57,7 +58,8 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
 
     public JobStatus {
         parameters = parameters == null ? Map.of() : java.util.Collections.unmodifiableMap(new TreeMap<>(parameters));
-        if (state != JobState.RUNNING) {
+        if (state == JobState.QUEUED ? stage != JobStage.AWAITING
+                : state != JobState.RUNNING || stage == JobStage.AWAITING) {
             stage = null;
         }
         if (state != JobState.PAUSED) {

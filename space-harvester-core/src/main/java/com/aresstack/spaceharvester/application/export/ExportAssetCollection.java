@@ -182,6 +182,47 @@ public class ExportAssetCollection {
     }
 
     /**
+     * Legt Bilder und, bei eingeschalteten Anhängen, „Anhänge beschaffen“ schon beim Start eines Exports an; für
+     * {@link Exports#onSubmitted}. Sie warten ({@link com.aresstack.spaceharvester.application.jobs.JobStage#AWAITING}),
+     * ohne einen Platz zu belegen, bis {@link #start} sie beim Veröffentlichen freigibt (Angelo 11.11.2026). Löscht der
+     * Benutzer sie vorher, entsteht still nur der Text. Scheitert, endet oder hält der Text an, warten sie weiter, bis
+     * er veröffentlicht ist; wird der Export gelöscht, verschwinden sie mit.
+     */
+    public void announce(JobStatus export) {
+        String exportId = export.id();
+        ExportSettings current = settings.get();
+        boolean attachments = current != null && current.attachments();
+        CompletableFuture<Boolean> together = new CompletableFuture<>();
+        try {
+            if (!hold(Scope.MEDIA, export, new AssetTask(exportId, Scope.MEDIA, together))) {
+                // Nimmt die Auftragsverwaltung nichts an: beim Veröffentlichen wie früher neu einplanen.
+                unannounced.add(exportId);
+                return;
+            }
+            boolean separate = !attachments || hold(Scope.DOCUMENTS, export, new AssetTask(exportId,
+                    Scope.DOCUMENTS));
+            together.complete(!separate);
+        } finally {
+            together.complete(false);
+        }
+    }
+
+    /** Exporte, deren Folgeaufträge beim Start nicht angelegt werden konnten. */
+    private final Set<String> unannounced = ConcurrentHashMap.newKeySet();
+
+    private boolean hold(Scope scope, JobStatus export, AssetTask task) {
+        try {
+            jobs.submitAwaiting(scope.type, export.sourceId(), export.partitionKey(), null, export.owner(),
+                    Map.of(EXPORT_ID, export.id()), task, export.id());
+            return true;
+        } catch (JobCapacityExceededException | IllegalStateException e) {
+            LOG.log(System.Logger.Level.INFO, "{0} für Export {1} nicht vorab angelegt ({2})", scope.label,
+                    export.id(), e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /**
      * Plant das Beschaffen der Bilder für einen veröffentlichten Export ein, bei eingeschalteten Anhängen
      * ({@link ExportSettings#attachments()}) daneben einen eigenen Auftrag „Anhänge beschaffen“; für
      * {@link Exports#onPublished}. Nimmt die Auftragsverwaltung nichts mehr an, bleibt der Export ohne Bilder
@@ -193,6 +234,24 @@ public class ExportAssetCollection {
         Optional<ConversionInput> dataset = writer.dataset(exportId);
         if (dataset.isEmpty()) {
             return Optional.empty();
+        }
+        if (announced(exportId, owner)) {
+            // Beim Start angelegt: freigeben, was noch da ist; was der Benutzer gelöscht hat, bleibt weg.
+            Optional<JobStatus> media = Optional.empty();
+            for (Scope scope : Scope.values()) {
+                Optional<JobStatus> earlier = jobs.list(owner, scope.type).stream()
+                        .filter(job -> exportId.equals(job.parameter(EXPORT_ID))).findFirst();
+                if (earlier.isEmpty()) {
+                    continue;
+                }
+                Optional<JobStatus> started = submit(scope, dataset.get(), exportId, owner, new AssetTask(exportId,
+                        scope, CompletableFuture.completedFuture(scope == Scope.MEDIA
+                        && documentsWithImages(exportId, owner))));
+                if (scope == Scope.MEDIA) {
+                    media = started;
+                }
+            }
+            return media;
         }
         ExportSettings current = settings.get();
         boolean attachments = current != null && current.attachments();
@@ -221,6 +280,10 @@ public class ExportAssetCollection {
             Optional<JobStatus> earlier = jobs.list(owner, scope.type).stream()
                     .filter(job -> exportId.equals(job.parameter(EXPORT_ID))).findFirst();
             if (earlier.isPresent() && !earlier.get().state().terminal()) {
+                if (jobs.releaseAwaiting(earlier.get().id())) {
+                    running.put(scope.key(exportId), earlier.get().id());
+                    return Optional.of(jobs.status(earlier.get().id(), owner));
+                }
                 return earlier;
             }
             JobStatus status = earlier.isPresent() ? jobs.rerun(earlier.get().id(), owner, task)
@@ -232,6 +295,18 @@ public class ExportAssetCollection {
             LOG.log(System.Logger.Level.INFO, "{0} für Export {1} nicht eingeplant ({2})", scope.label, exportId,
                     e.getClass().getSimpleName());
             return Optional.empty();
+        }
+    }
+
+    /** Ob die Folgeaufträge dieses Exports schon beim Start angelegt wurden ({@link #announce}). */
+    private boolean announced(String exportId, String owner) {
+        if (unannounced.remove(exportId)) {
+            return false;
+        }
+        try {
+            return Exports.ANNOUNCED.equals(jobs.status(exportId, owner).parameter(Exports.FOLLOW_UPS));
+        } catch (UnknownJobException e) {
+            return false;
         }
     }
 

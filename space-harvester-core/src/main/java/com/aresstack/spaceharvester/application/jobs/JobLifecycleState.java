@@ -49,7 +49,8 @@ public sealed interface JobLifecycleState {
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
         boolean failures = forceable && status.progress().failed() > 0;
         return switch (status.state()) {
-            case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
+            case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested())
+                    : status.stage() == JobStage.AWAITING ? new AwaitingExport() : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested())
                     : status.stage() == JobStage.PREPARING ? new Preparing(failures)
                     : status.stage() == JobStage.PREPARED ? new Prepared()
@@ -75,6 +76,22 @@ public sealed interface JobLifecycleState {
         @Override
         public List<JobAction> actions() {
             return List.of(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
+        }
+    }
+
+    /**
+     * Bilder oder Anhänge sind schon mit dem Export angelegt und warten, bis sein Text veröffentlicht ist (Angelo
+     * 11.11.2026). Löschen heißt: nur den Text, still und ohne Fehler.
+     */
+    record AwaitingExport() implements JobLifecycleState {
+        @Override
+        public String key() {
+            return "AWAITING_EXPORT";
+        }
+
+        @Override
+        public List<JobAction> actions() {
+            return List.of(JobAction.DELETE);
         }
     }
 
