@@ -303,8 +303,9 @@ public class SignInRequests {
     }
 
     /**
-     * Erster Schritt bei einem Token ({@link SignInRequest#asksForLogin()}): meldet die neue Web-Sitzung nur mit
-     * Benutzer und Passwort an, ohne Code. Danach fragt die Anforderung den Code dieser Sitzung ab
+     * Erster Schritt bei einem Token ({@link SignInRequest#asksForLogin()}), oder Neuanmeldung, wenn die Web-Sitzung
+     * abgelaufen ist ({@link SignInRequest#canRestartLogin()}): meldet eine neue Web-Sitzung nur mit Benutzer und
+     * Passwort an, ohne Code. Danach fragt die Anforderung den Code dieser Sitzung ab
      * ({@link SignInRequest.Answer#NEXT_STEP}). Überschreibt {@code password}.
      */
     public SignInRequest.Answer beginWebLogin(String requestId, String username, char[] password) {
@@ -552,7 +553,7 @@ public class SignInRequests {
         SignInRequest view() {
             return new SignInRequest(id, sourceId, challenge.service(), challenge.title(), challenge.message(),
                     challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure,
-                    challenge.asksForLogin());
+                    challenge.asksForLogin(), challenge.canRestartLogin());
         }
     }
 }

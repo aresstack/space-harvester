@@ -867,6 +867,41 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * Neu anmelden (Angelo 11.11.2026): Ist die Web-Sitzung abgelaufen, lässt sich aus dem Codefeld zurück auf
+     * Benutzer und Passwort wechseln; das öffnet eine neue Web-Sitzung wie beim ersten Mal, deren Code dann gilt.
+     */
+    @Test
+    void anExpiredWebSessionCanBeReplacedByLoggingInAgain() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        java.util.Deque<WebFiles> webPorts = new java.util.ArrayDeque<>(List.of(
+                new WebFiles(secrets, seen, "web-1", 1, null), new WebFiles(secrets, seen, "web-2", 1, null)));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPorts.size() > 1 ? webPorts.poll() : webPorts.peek());
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        var signIns = new com.aresstack.spaceharvester.application.signin.SignInRequests(
+                java.time.Duration.ofMinutes(15), java.time.Clock.systemUTC());
+        var request = signIns.open("wiki", "user", required.challenge());
+        assertThat(signIns.beginWebLogin(request.id(), "anna", "pw-value".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        var codeStep = signIns.request(request.id()).orElseThrow();
+        assertThat(codeStep.asksForLogin()).isFalse();
+        assertThat(codeStep.canRestartLogin()).as("zurück auf Benutzer und Passwort möglich").isTrue();
+
+        assertThat(signIns.beginWebLogin(request.id(), "anna", "pw-new".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        assertThat(signIns.submit(request.id(), "222222".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+        assertThat(seen).last().as("der Code geht an die neue Sitzung").isEqualTo("web-2 code anna:pw-new");
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /**
      * #571: Scheitert das erste Absenden in der neuen Web-Sitzung (Netz), bleibt deren Code-Seite die Abfrage; der
      * nächste Versuch geht wieder an diese Sitzung, ohne eine weitere zu öffnen.
      */
@@ -894,6 +929,73 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
     }
 
+    /** Quelle mit Token, schon mit Benutzer und Passwort in der eigenen Web-Sitzung angemeldet (#571). */
+    private static KnowledgeSourceHarvestSource signedInWebSession(WebFiles tokenPort, WebFiles webPort) {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        assertThat(required.challenge().submit("000000".toCharArray(), "anna", "pw-value".toCharArray())).isNull();
+        return source;
+    }
+
+    private static final HarvestSource.ViewImage IMAGE = new HarvestSource.ViewImage("/download/attachments/1/a.png",
+            "a", null, null, null);
+
+    /**
+     * #571, Angelo 11.11.2026: Confluence beendet die Web-Sitzung, ein Bild bringt eine neue Code-Seite; bis zum
+     * Absenden ist der Benutzer über den Browser wieder freigeschaltet, die Seite antwortet mit HTTP 500. Dann lädt das
+     * Bild einmal neu, kommt ohne Code, und die Anmeldung gilt als erledigt, statt bei der 500 stehen zu bleiben.
+     */
+    @Test
+    void aServerErrorOnSubmitReloadsOnceAndAcceptsWhenTheFileNowLoads() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 1;
+        webPort.serverErrorNext = true;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        assertThat(required.challenge().asksForLogin()).isFalse();
+        seen.clear();
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("web-port code anna:pw-value", "web-port image anna:pw-value");
+        assertThat(source.viewImage(IMAGE, 1000)).containsExactly(1, 2, 3);
+    }
+
+    /**
+     * #571: Bringt das Neuladen nach HTTP 500 eine neue Code-Seite (neue Mail), gilt sie: das Codefeld nennt den Grund
+     * und fragt nur den neuen Code ab, der dann an dieselbe Web-Sitzung geht.
+     */
+    @Test
+    void aServerErrorOnSubmitThatReloadsToANewCodePageAsksForTheNewCode() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 2;
+        webPort.serverErrorNext = true;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit("000000".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.RELOADED_NOTE);
+        assertThat(again.error()).isEmpty();
+        assertThat(again.submit("111111".toCharArray())).isNull();
+        assertThat(seen).last().isEqualTo("web-port code anna:pw-value");
+    }
+
     /**
      * Bild-Port wie Confluence mit Zwei-Faktor-Anmeldung: die ersten {@code locked} Bildabrufe liefern die Code-Seite,
      * danach das Bild. Merkt sich je Abruf und je Absenden, mit welcher Anmeldung der Adapter es täte.
@@ -905,6 +1007,8 @@ class KnowledgeSourceHarvestSourceTest {
         private final String name;
         private final String mode;
         private int locked;
+        /** Das nächste Absenden endet wie bei Angelo am 11.11.2026 mit HTTP 500 (Seite nimmt keinen Code mehr an). */
+        private boolean serverErrorNext;
 
         WebFiles(ConfiguredSecrets secrets, List<String> seen, String name, int locked, String mode) {
             this.secrets = secrets;
@@ -956,6 +1060,11 @@ class KnowledgeSourceHarvestSourceTest {
                 @Override
                 public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
                     seen.add(name + " code " + principalAndSecret(secrets));
+                    if (serverErrorNext) {
+                        serverErrorNext = false;
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
+                                "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
+                    }
                     if ("token-port".equals(name)) {
                         throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
                                 "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
