@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
+import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.export.ExportPackageException;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
@@ -143,6 +144,30 @@ class ExportPackageImportTest {
         assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION))
                 .contains(SVG);
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
+    }
+
+    @Test
+    void remembersTheImageEntriesOfEachPageForAnExportWithoutTheSource() throws Exception {
+        EnrichmentImportedAssets remembered = new EnrichmentImportedAssets(new InMemoryEnrichmentStore(), clock);
+        ExportPackageImport withMemory = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, assets,
+                null, null, remembered, List.of(committed::add), clock);
+        PackageAssets media = new PackageAssets();
+
+        JobStatus job = withMemory.start(pkg(pages("100", "101"), media), "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).as(String.valueOf(jobs.status(job.id())))
+                .isEqualTo(JobState.COMPLETED);
+        String version = store.confirmed("laptop", "DEV").orElseThrow().pages().get("100").version();
+        assertThat(remembered.find(new PageKey("laptop", "100"), version)).hasValueSatisfying(manifest -> {
+            assertThat(manifest.forPage("100")).containsExactly(media.image, media.drawio);
+            assertThat(manifest.documents()).containsExactly(media.pdf);
+        });
+        // Auch eine Seite ohne Bilder ist gemerkt, damit der Export sie ohne Quelle als vollständig kennt.
+        String other = store.confirmed("laptop", "DEV").orElseThrow().pages().get("101").version();
+        assertThat(remembered.find(new PageKey("laptop", "101"), other))
+                .hasValueSatisfying(manifest -> assertThat(manifest.assets()).isEmpty());
+        assertThat(remembered.find(new PageKey("laptop", "100"), "anders")).isEmpty();
     }
 
     @Test

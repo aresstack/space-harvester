@@ -48,6 +48,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -98,6 +99,7 @@ public final class ExportPackageImport {
     private final AssetStore assets;
     private final BiPredicate<String, String> texts;
     private final ReadingViewStore views;
+    private final ImportedAssets imported;
     private final List<SyncCommitted> committed;
     private final Clock clock;
     /** Dateien, die Aufträgen gehören ({@code consume}), nach Auftrags-ID; auch für Aufträge, die nie starten. */
@@ -114,6 +116,17 @@ public final class ExportPackageImport {
     public ExportPackageImport(Jobs jobs, ExportPackage.Reader reader, SyncBaselineStore store,
                                Predicate<String> configured, AssetStore assets, BiPredicate<String, String> texts,
                                ReadingViewStore views, List<SyncCommitted> committed, Clock clock) {
+        this(jobs, reader, store, configured, assets, texts, views, null, committed, clock);
+    }
+
+    /**
+     * Wie oben; {@code imported} merkt sich je Seite die mitgebrachten Bilder und Anhänge, damit ein Export sie ohne
+     * Quelle mitnimmt ({@link ImportedAssets}), {@code null} ohne.
+     */
+    public ExportPackageImport(Jobs jobs, ExportPackage.Reader reader, SyncBaselineStore store,
+                               Predicate<String> configured, AssetStore assets, BiPredicate<String, String> texts,
+                               ReadingViewStore views, ImportedAssets imported, List<SyncCommitted> committed,
+                               Clock clock) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.reader = Objects.requireNonNull(reader, "reader");
         this.store = Objects.requireNonNull(store, "store");
@@ -121,6 +134,7 @@ public final class ExportPackageImport {
         this.assets = assets;
         this.texts = texts;
         this.views = views;
+        this.imported = imported;
         this.committed = List.copyOf(committed);
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -259,7 +273,7 @@ public final class ExportPackageImport {
             SpaceSync.SyncRun run = pages(pkg, target, spaceKey, baseline, cached, context);
             try {
                 context.phase(COMPONENT, "Bilder und Anhänge übernehmen");
-                assets(pkg, target, context);
+                assets(pkg, target, run.confirmed(), context);
                 context.phase(COMPONENT, "Lese-Ansichten übernehmen");
                 views(pkg, target, run.confirmed());
             } finally {
@@ -358,7 +372,7 @@ public final class ExportPackageImport {
      * Bilder, Anhänge und Diagrammgrafiken in die Asset-Ablage, unter denselben Kennungen wie beim Beschaffen
      * (Anhang, Version), damit ein späterer Export sie nicht neu lädt; Texte unter der eingestellten Extraktion.
      */
-    private void assets(ExportPackage pkg, String target, JobContext context) {
+    private void assets(ExportPackage pkg, String target, SyncBaseline confirmed, JobContext context) {
         if (assets == null) {
             return;
         }
@@ -370,6 +384,8 @@ public final class ExportPackageImport {
         int stored = 0;
         int missing = 0;
         Instant now = clock.instant();
+        // Einträge, deren Datei hier nicht abgelegt werden konnte: im gemerkten Manifest als nicht verfügbar.
+        Set<ExportAssetManifest.Entry> lost = new HashSet<>();
         List<ExportAssetManifest.Entry> entries = new ArrayList<>(manifest.get().assets());
         entries.sort(Comparator.comparing(ExportAssetManifest.Entry::pageId));
         for (ExportAssetManifest.Entry entry : entries) {
@@ -384,6 +400,7 @@ public final class ExportPackageImport {
                 if (!mermaid && entry.attachmentId() != null) {
                     if (!putFile(files, entry, target, now)) {
                         missing++;
+                        lost.add(entry);
                         continue;
                     }
                     stored++;
@@ -396,6 +413,7 @@ public final class ExportPackageImport {
                     Optional<byte[]> rendition = files.rendition(entry);
                     if (rendition.isEmpty()) {
                         missing++;
+                        lost.add(entry);
                         continue;
                     }
                     assets.put(new Asset(target, entry.pageId(), Assets.renditionId(entry.sha256()),
@@ -406,6 +424,7 @@ public final class ExportPackageImport {
                 }
             } catch (AssetStoreException | IllegalArgumentException | IOException e) {
                 missing++;
+                lost.add(entry);
                 LOG.log(System.Logger.Level.WARNING, "Datei aus dem Paket für {0} nicht abgelegt ({1})", target,
                         e.getClass().getName());
             }
@@ -415,6 +434,35 @@ public final class ExportPackageImport {
                     missing + " Dateien aus dem Paket nicht abgelegt"));
         }
         context.record(JobEvent.Draft.info(COMPONENT, stored + " Dateien übernommen"));
+        remember(manifest.get(), lost, target, confirmed, pkg.pages());
+    }
+
+    /**
+     * Merkt sich je übernommener Seite ihre Einträge des Bildmanifests zur bestätigten Version ({@link ImportedAssets}),
+     * auch eine leere Liste: Ein Export ohne erreichbare Quelle nimmt Bilder und Anhänge dann daraus.
+     */
+    private void remember(ExportAssetManifest manifest, Set<ExportAssetManifest.Entry> lost, String target,
+                          SyncBaseline confirmed, List<ExportPackage.Page> pages) {
+        if (imported == null || confirmed == null) {
+            return;
+        }
+        Map<String, List<ExportAssetManifest.Entry>> byPage = new HashMap<>();
+        for (ExportAssetManifest.Entry entry : manifest.assets()) {
+            byPage.computeIfAbsent(entry.pageId(), id -> new ArrayList<>()).add(lost.contains(entry)
+                    ? new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), entry.attachmentId(),
+                    entry.version(), entry.title(), entry.mediaType(), 0, null,
+                    ExportAssetManifest.Status.UNAVAILABLE, "import-missing") : entry);
+        }
+        for (ExportPackage.Page page : pages) {
+            // Nur Seiten, die mit der Version aus dem Paket bestätigt sind.
+            BaselineEntry entry = confirmed.pages().get(page.pageId());
+            if (entry == null || !Objects.equals(entry.version(), page.metadata().version())) {
+                continue;
+            }
+            imported.save(new PageKey(target, page.pageId()), entry.version(), new ExportAssetManifest(
+                    manifest.imagesComplete(), manifest.documentsComplete(),
+                    byPage.getOrDefault(page.pageId(), List.of())));
+        }
     }
 
     /**

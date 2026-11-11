@@ -142,6 +142,7 @@ import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
@@ -718,11 +719,13 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, assetStore, maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
-            // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen.
+            // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
+            // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
+            EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
             this.packageImport = new ExportPackageImport(jobs, new ZipExportPackageReader(
                     LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, maxAssetBytes), baselineStore,
                     sourceId -> catalog.config(sourceId).isPresent(), assetStore, assets::adoptText,
-                    new ReadingViewStore(enrichmentStore), List.of(afterSync), clock);
+                    new ReadingViewStore(enrichmentStore), importedAssets, List.of(afterSync), clock);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
             // Gesamtbudget der Verbindungen aller ladenden Aufträge (jobs.download-connections, Angelo 11.11.2026).
             this.connections = new ConnectionBudget(builder.jobLimits.downloadConnections());
@@ -780,6 +783,7 @@ public final class Harvester implements AutoCloseable {
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
             images.connections(connections);
+            images.imported(importedAssets, new ReadingViewStore(enrichmentStore));
             // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);

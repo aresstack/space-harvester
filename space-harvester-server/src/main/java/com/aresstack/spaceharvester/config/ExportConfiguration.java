@@ -22,6 +22,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobRecovery;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
@@ -32,7 +33,9 @@ import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
+import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -133,7 +136,8 @@ class ExportConfiguration {
     ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
                                                 Assets assets, Exports exports, AccessGuard access,
                                                 SignInRequests signIns, ConfigurationManager configuration,
-                                                ObjectProvider<JobsProperties> jobLimits) {
+                                                ObjectProvider<JobsProperties> jobLimits,
+                                                ObjectProvider<LuceneEnrichmentStore> enrichments) {
         // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
         // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
@@ -146,6 +150,11 @@ class ExportConfiguration {
         JobsProperties limits = jobLimits.getIfAvailable();
         images.connections(new ConnectionBudget(limits == null ? JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS
                 : limits.downloadConnections()));
+        // Nach einem Import ohne erreichbare Quelle: Bilder und Anhänge aus dem Paket (ImportConfiguration).
+        LuceneEnrichmentStore store = enrichments.getIfAvailable();
+        if (store != null) {
+            images.imported(new EnrichmentImportedAssets(store, Clock.systemUTC()), new ReadingViewStore(store));
+        }
         // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
         exports.onSubmitted(images::announce);
         exports.onPublished(images::start);

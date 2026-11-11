@@ -25,8 +25,11 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ForeignContent;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.StoredReadingView;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -127,6 +130,8 @@ public class ExportAssetCollection {
     private final Supplier<ExportSettings> settings;
     /** Laufende Aufträge je Art und Export; nach einem Neustart entscheidet allein das Manifest. */
     private final Map<String, String> running = new ConcurrentHashMap<>();
+    private volatile ImportedAssets imported;
+    private volatile ReadingViewStore importedViews;
     /** Je Export ein Schloss: beide Aufträge lesen, mischen und schreiben dasselbe Manifest. */
     private final Map<String, Object> manifests = new ConcurrentHashMap<>();
 
@@ -196,6 +201,16 @@ public class ExportAssetCollection {
      */
     public void connections(ConnectionBudget budget) {
         this.connections = budget;
+    }
+
+    /**
+     * Was ein Import mitgebracht hat ({@link ExportPackageImport}): Ist die Quelle nicht erreichbar und hat jede Seite
+     * des Exports zu ihrer Version mitgebrachte Bilder und Anhänge, schreibt der Lauf das Manifest daraus, statt
+     * anzuhalten (Angelo 11.11.2026); Lese-Ansichten kommen dann aus {@code views}. {@code null} ohne.
+     */
+    public void imported(ImportedAssets imported, ReadingViewStore views) {
+        this.imported = imported;
+        this.importedViews = views;
     }
 
     /**
@@ -683,39 +698,45 @@ public class ExportAssetCollection {
             try {
                 catalog = catalog(context, dataset, done.keySet());
             } catch (SourceUnreachable e) {
+                if (offline(current, exportId, dataset)) {
+                    return;
+                }
                 LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
                         exportId, e.reason);
                 context.pause(PauseReason.CONNECTION_LOST);
             }
             Map<String, PageAttachmentList> searched = catalog;
-            dataset.forEachPage(page -> {
-                context.checkpoint();
-                String pageId = page.snapshot().key().pageId();
-                CheckedPage earlier = done.get(pageId);
-                if (earlier != null) {
-                    entries.addAll(earlier.entries());
-                    context.discovered(earlier.discovered());
-                    context.processed(earlier.processed());
-                    context.written(earlier.written());
-                    context.failed(earlier.failed());
-                    checked.add(pageId);
-                    return;
-                }
-                try {
+            try {
+                dataset.forEachPage(page -> {
+                    context.checkpoint();
+                    String pageId = page.snapshot().key().pageId();
+                    CheckedPage earlier = done.get(pageId);
+                    if (earlier != null) {
+                        entries.addAll(earlier.entries());
+                        context.discovered(earlier.discovered());
+                        context.processed(earlier.processed());
+                        context.written(earlier.written());
+                        context.failed(earlier.failed());
+                        checked.add(pageId);
+                        return;
+                    }
                     PagePlan plan = plan(current, exportId, dataset, page.snapshot(), searched.get(pageId));
                     if (plan == null) {
                         complete[0] = false;
                     } else {
                         plans.put(pageId, plan);
                     }
-                } catch (SourceUnreachable e) {
-                    // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler
-                    // zählen; der Auftrag hält an, ▶ macht später weiter.
-                    LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
-                            exportId, e.reason);
-                    context.pause(PauseReason.CONNECTION_LOST);
+                });
+            } catch (SourceUnreachable e) {
+                // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler zählen;
+                // der Auftrag hält an, ▶ macht später weiter. Nach einem Import geht es ohne Quelle weiter.
+                if (offline(current, exportId, dataset)) {
+                    return;
                 }
-            });
+                LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
+                        exportId, e.reason);
+                context.pause(PauseReason.CONNECTION_LOST);
+            }
             // Vorbereitet: wartet auf einen Download-Platz (jobs.parallel-downloads), dann wird geladen.
             context.awaitDownloadSlot();
             context.phase(COMPONENT, scope.phase);
@@ -963,6 +984,102 @@ public class ExportAssetCollection {
         ExportAssetManifest.Reference reference = entry.reference();
         return entry.pageId() + "\u0000" + reference.kind() + "\u0000" + reference.attachmentId() + "\u0000"
                 + reference.src() + "\u0000" + reference.index();
+    }
+
+    /** Eine Seite des Exports mit ihren mitgebrachten Bildern und Anhängen. */
+    private record ImportedPage(String pageId, String version, boolean view, ExportAssetManifest assets) {
+    }
+
+    /**
+     * Ohne erreichbare Quelle nach einem Import (Angelo 11.11.2026): Hat jede Seite des Exports zu ihrer Version
+     * mitgebrachte Bilder und Anhänge ({@link ImportedAssets}), schreibt der Lauf das Manifest daraus, statt anzuhalten;
+     * die Dateien liegen schon in der Ablage, Lese-Ansichten kommen aus ihrer Ablage. Rechte wie beim Laden: Wer nicht
+     * die ganze Quelle lesen darf, bekommt Fremdes nicht ({@code RESTRICTED}, {@code FORBIDDEN}).
+     *
+     * @return {@code false}, wenn nicht jede Seite etwas mitgebracht hat; dann hält der Lauf an wie bisher
+     */
+    private boolean offline(Run run, String exportId, ConversionInput dataset) {
+        ImportedAssets source = imported;
+        if (source == null) {
+            return false;
+        }
+        String sourceId = dataset.sourceId();
+        List<ImportedPage> pages = new ArrayList<>();
+        boolean[] covered = {true};
+        dataset.forEachPage(page -> {
+            if (!covered[0]) {
+                return;
+            }
+            PageSnapshot snapshot = page.snapshot();
+            Optional<ExportAssetManifest> assets = source.find(snapshot.key(), snapshot.metadata().version());
+            if (assets.isEmpty()) {
+                covered[0] = false;
+                return;
+            }
+            pages.add(new ImportedPage(snapshot.key().pageId(), snapshot.metadata().version(),
+                    needsReadingView(snapshot), assets.get()));
+        });
+        if (!covered[0] || pages.isEmpty()) {
+            return false;
+        }
+        JobContext context = run.context;
+        boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
+        boolean complete = true;
+        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
+        Set<String> checked = new HashSet<>();
+        for (ImportedPage page : pages) {
+            context.checkpoint();
+            complete &= (!run.share.images() || page.assets().imagesComplete())
+                    && (!run.share.documents() || page.assets().documentsComplete());
+            if (run.share.images() && page.view()) {
+                putView(exportId, importedView(sourceId, page, mayShowForeign));
+            }
+            for (ExportAssetManifest.Entry entry : page.assets().assets()) {
+                if (!run.share.owns(entry) || entry.document() && !run.settings.attachments()) {
+                    continue;
+                }
+                ExportAssetManifest.Entry own = !mayShowForeign
+                        && entry.reference().kind() == ExportAssetManifest.Kind.VIEW_IMAGE
+                        ? new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), null, null, entry.title(),
+                        entry.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content")
+                        : entry;
+                entries.add(own);
+                context.discovered(1);
+                context.processed(1);
+                if (own.present()) {
+                    context.written(1);
+                } else {
+                    context.failed(1);
+                }
+            }
+            checked.add(page.pageId());
+        }
+        List<ExportAssetManifest.Entry> own = write(run.share, exportId, entries, checked, complete, run.settings);
+        if (!(complete && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
+            context.incomplete();
+        }
+        context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info(COMPONENT,
+                "Quelle nicht erreichbar: " + own.size() + " Einträge aus dem Import übernommen"));
+        LOG.log(System.Logger.Level.INFO, "{0} für Export {1} ohne Quelle aus dem Import: {2} Referenzen",
+                run.scope.label, exportId, own.size());
+        return true;
+    }
+
+    /** Die abgelegte Lese-Ansicht zur exportierten Version, sonst als nicht verfügbar. */
+    private ExportReadingView importedView(String sourceId, ImportedPage page, boolean mayShowForeign) {
+        if (!mayShowForeign) {
+            return ExportReadingView.without(page.pageId(), page.version(), ExportReadingView.Status.RESTRICTED,
+                    "foreign-content");
+        }
+        ReadingViewStore views = importedViews;
+        Optional<StoredReadingView> stored = views == null ? Optional.empty()
+                : views.find(new PageKey(sourceId, page.pageId()));
+        if (stored.isPresent() && Objects.equals(stored.get().version(), page.version())) {
+            return ExportReadingView.available(page.pageId(), page.version(), stored.get().html(),
+                    stored.get().baseUri(), stored.get().text());
+        }
+        return ExportReadingView.without(page.pageId(), page.version(), ExportReadingView.Status.UNAVAILABLE,
+                "source-unavailable");
     }
 
     /**
