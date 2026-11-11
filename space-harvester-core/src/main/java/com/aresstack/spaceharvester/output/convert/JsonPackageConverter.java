@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.document.DrawioDiagramRenderer;
 import com.aresstack.spaceharvester.document.DrawioGraph;
 import java.io.FilterOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
@@ -27,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -139,16 +141,20 @@ public final class JsonPackageConverter implements ExportConverter {
             if (entry.reference().src() != null) {
                 generator.writeStringProperty("src", entry.reference().src());
             }
-            Optional<byte[]> content = entry.stored() ? assets.content(entry) : Optional.empty();
-            if (content.isPresent()) {
+            OptionalLong size = entry.stored() ? checked(assets, entry) : OptionalLong.empty();
+            if (size.isPresent()) {
                 String path = unique(base + name, used);
                 generator.writeStringProperty("path", path);
-                generator.writeNumberProperty("size", content.get().length);
+                generator.writeNumberProperty("size", size.getAsLong());
                 generator.writeStringProperty("sha256", entry.sha256());
-                files.add(() -> file(zip, path, assets.content(entry)));
+                files.add(() -> copy(zip, path, assets.open(entry)));
                 if (entry.reference().kind() == Kind.ATTACHMENT
                         && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename())) {
-                    graph(generator, files, zip, content.get(), unique(base + stem(name) + ".graph.json", used));
+                    // draw.io-Daten sind klein und werden ohnehin ganz gelesen.
+                    Optional<byte[]> mxfile = assets.content(entry);
+                    if (mxfile.isPresent()) {
+                        graph(generator, files, zip, mxfile.get(), unique(base + stem(name) + ".graph.json", used));
+                    }
                 }
             } else {
                 generator.writeNullProperty("path");
@@ -305,17 +311,17 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeName("attachments");
         generator.writeStartArray();
         for (Entry entry : documents) {
-            Optional<byte[]> content = entry.stored() ? assets.content(entry) : Optional.empty();
+            OptionalLong size = entry.stored() ? checked(assets, entry) : OptionalLong.empty();
             // Leerer Text gilt als nicht lesbar: keine leere .txt-Datei.
-            boolean text = content.isPresent() && assets.text(entry).filter(t -> !t.isBlank()).isPresent();
+            boolean text = size.isPresent() && assets.text(entry).filter(t -> !t.isBlank()).isPresent();
             String path = null;
             String textPath = null;
             String reason = entry.reason();
-            if (content.isPresent()) {
+            if (size.isPresent()) {
                 String base = "attachments/" + safeAttachment(entry.pageId()) + "/";
                 path = unique(base + attachmentName(entry), used);
                 String original = path;
-                files.add(() -> file(zip, original, assets.content(entry)));
+                files.add(() -> copy(zip, original, assets.open(entry)));
                 if (text) {
                     textPath = unique(path + ".txt", used);
                     String target = textPath;
@@ -333,8 +339,8 @@ public final class JsonPackageConverter implements ExportConverter {
             generator.writeStringProperty("attachmentId", entry.attachmentId());
             generator.writeStringProperty("title", entry.title());
             generator.writeStringProperty("mediaType", entry.mediaType());
-            generator.writeNumberProperty("size", content.map(bytes -> (long) bytes.length).orElse(entry.size()));
-            generator.writeStringProperty("sha256", content.isPresent() ? entry.sha256() : null);
+            generator.writeNumberProperty("size", size.isPresent() ? size.getAsLong() : entry.size());
+            generator.writeStringProperty("sha256", size.isPresent() ? entry.sha256() : null);
             generator.writeStringProperty("status", entry.status().name());
             generator.writeStringProperty("reason", reason);
             generator.writeStringProperty("path", path);
@@ -419,6 +425,40 @@ public final class JsonPackageConverter implements ExportConverter {
         ZipEntry entry = new ZipEntry(path);
         entry.setTimeLocal(ZIP_TIME);
         zip.putNextEntry(entry);
+    }
+
+    /**
+     * Liest einen abgelegten Eintrag einmal als Strom gegen seine Prüfsumme und zählt dabei seine Größe, ohne ihn zu
+     * halten (Originale beliebiger Größe, Angelo 11.11.2026); beim Schreiben wird er erneut gelesen.
+     *
+     * @return leer, wenn er fehlt, nicht lesbar ist oder nicht zur Prüfsumme passt
+     */
+    private static OptionalLong checked(ExportAssets assets, Entry entry) {
+        Optional<InputStream> opened = assets.open(entry);
+        if (opened.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        try (InputStream in = opened.get()) {
+            return OptionalLong.of(in.transferTo(OutputStream.nullOutputStream()));
+        } catch (IOException e) {
+            return OptionalLong.empty();
+        }
+    }
+
+    /** Wie {@link #file}, aber aus einem Strom: Das Original kommt nie ganz in den Speicher. */
+    private static void copy(ZipOutputStream zip, String path, Optional<InputStream> content) {
+        try {
+            if (content.isEmpty()) {
+                throw new IOException("Datei verschwand während des Exports: " + path);
+            }
+            try (InputStream in = content.get()) {
+                entry(zip, path);
+                in.transferTo(zip);
+                zip.closeEntry();
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private static void file(ZipOutputStream zip, String path, Optional<byte[]> bytes) {

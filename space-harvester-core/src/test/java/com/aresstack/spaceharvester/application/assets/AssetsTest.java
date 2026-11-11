@@ -404,6 +404,26 @@ class AssetsTest {
     }
 
     @Test
+    void aStoredFileOpensAsAStreamCheckedAgainstItsHash() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        Asset stored = assets.keep(list(attachment("att1", "a.txt", "text/plain", "1")), "att1", false);
+
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThat(in.readAllBytes()).isEqualTo("Bericht".getBytes(StandardCharsets.UTF_8));
+        }
+        assertThat(assets.openStored("wiki", "att1", "1", Assets.sha256("anders".getBytes(StandardCharsets.UTF_8))))
+                .as("nichts mit diesem Hash abgelegt").isEmpty();
+
+        String hex = stored.sha256().substring("sha256:".length());
+        java.nio.file.Files.writeString(directory.resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                "Bericht?");
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThatThrownBy(in::readAllBytes).as("verändert").isInstanceOf(java.io.IOException.class);
+        }
+    }
+
+    @Test
     void keepStoresTheAttachmentOnceAndLoadsAgainOnlyWhenForced() {
         Assets assets = assets(1000);
         source.file("att1", "1", "Bericht");

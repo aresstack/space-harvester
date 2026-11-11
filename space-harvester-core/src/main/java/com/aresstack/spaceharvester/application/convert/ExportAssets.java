@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.convert;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
 
@@ -38,6 +40,17 @@ public interface ExportAssets {
      * @return leer, wenn er nicht abgelegt ist oder die Ablage ihn nicht (mehr) hat
      */
     Optional<byte[]> content(ExportAssetManifest.Entry entry);
+
+    /**
+     * Wie {@link #content}, aber als Strom, ohne den Eintrag ganz in den Speicher zu lesen: für Originale beliebiger
+     * Größe (Angelo 11.11.2026). Eine Abweichung von der {@code sha256} meldet der Strom spätestens am Ende als
+     * {@link java.io.IOException}. Der Aufrufer schließt ihn.
+     *
+     * @return leer, wenn er nicht abgelegt ist oder die Ablage ihn nicht (mehr) hat
+     */
+    default Optional<InputStream> open(ExportAssetManifest.Entry entry) {
+        return content(entry).map(ByteArrayInputStream::new);
+    }
 
     /**
      * Die beim Beschaffen gezeichnete Grafik eines Diagramms ({@link ExportAssetManifest.Entry#rendition()}), gegen

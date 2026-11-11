@@ -775,6 +775,27 @@ public class Assets {
         return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
     }
 
+    /**
+     * Wie {@link #stored}, aber als Strom, ohne die Datei ganz in den Speicher zu lesen (Dateien beliebiger Größe,
+     * Angelo 11.11.2026): Eine Abweichung von {@code sha256} meldet der Strom am Ende als {@link IOException}, bevor
+     * er das Ende anzeigt. Der Aufrufer schließt ihn.
+     *
+     * @return leer, wenn nichts abgelegt ist
+     */
+    public Optional<InputStream> openStored(String sourceId, String attachmentId, String version, String sha256) {
+        if (sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256))
+                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
+                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        try {
+            return Optional.of(store.open(asset));
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
