@@ -60,7 +60,9 @@ class ExportAssetCollectionTest {
             + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
     private static final String STORAGE = "{\"body\":{\"storage\":{\"value\":\"<p>Bild</p>"
             + "<ac:structured-macro ac:name=\\\"mermaid-cloud\\\"><ac:plain-text-body><![CDATA[graph TD; A-->B]]>"
-            + "</ac:plain-text-body></ac:structured-macro>\"}}}";
+            + "</ac:plain-text-body></ac:structured-macro><ac:structured-macro ac:name=\\\"include\\\">"
+            + "<ac:parameter ac:name=\\\"\\\"><ac:link><ri:page ri:content-title=\\\"Eingebunden\\\"/></ac:link>"
+            + "</ac:parameter></ac:structured-macro>\"}}}";
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-18T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
@@ -184,11 +186,9 @@ class ExportAssetCollectionTest {
             assertThat(reading.html()).contains("Eingebunden");
             assertThat(reading.text()).isEqualTo("Bild Eingebunden");
         });
-        assertThat(dataset.readingView("101")).hasValueSatisfying(reading -> {
-            assertThat(reading.status()).isEqualTo(ExportReadingView.Status.UNAVAILABLE);
-            assertThat(reading.reason()).isEqualTo("page-changed");
-            assertThat(reading.text()).isEmpty();
-        });
+        // 101 hat keine berechneten Makros: keine Lese-Ansicht, kein Abruf.
+        assertThat(dataset.readingView("101")).isEmpty();
+        assertThat(source.read).containsExactly("100");
         assertThat(dataset.readingView("999")).isEmpty();
     }
 
@@ -244,6 +244,41 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void aFailedSpaceCheckLeavesThePageUncheckedOrPausesWithoutLosingTheOtherPages() {
+        source.searchable = true;
+        source.moved = Set.of("100");
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.NOT_FOUND);
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Gelöscht oder nicht lesbar: die Seite bleibt ungeprüft, die übrigen stehen im Manifest.
+        JobStatus done = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isTrue();
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        assertThat(manifest.complete()).isFalse();
+        assertThat(manifest.forPage("100")).isEmpty();
+        assertThat(manifest.forPage("101")).isNotEmpty();
+        assertThat(writer().dataset(export.id()).orElseThrow().readingView("100")).isEmpty();
+
+        // Nicht erreichbar: der Auftrag hält an, statt zu scheitern.
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.UNAVAILABLE);
+        JobStatus again = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        assertThat(jobs.list("client-a", JobType.ASSETS).stream()
+                .filter(job -> again.id().equals(job.parameters().get(ExportAssetCollection.EXPORT_ID)))
+                .map(JobStatus::state)).containsExactly(JobState.PAUSED);
+    }
+
+    @Test
     void pausedImagesResumeInTheSameEntryWithoutAskingTheSourceForCheckedPagesAgain() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {
@@ -268,9 +303,11 @@ class ExportAssetCollectionTest {
                 page("confluence", "DEV", "101", "100")));
         // Während Seite 100 lädt, hält der Benutzer an; sie wird noch fertig, 101 nicht mehr.
         long[] discoveredAtFirstDownload = {-1};
+        List<String> readAtFirstDownload = new ArrayList<>();
         source.onDownload = src -> {
             if (discoveredAtFirstDownload[0] < 0) {
                 discoveredAtFirstDownload[0] = jobs.list("client-a", JobType.ASSETS).get(0).progress().discovered();
+                readAtFirstDownload.addAll(source.read);
             }
             if (src.contains("mermaid")) {
                 jobs.list("client-a", JobType.ASSETS).stream()
@@ -283,8 +320,10 @@ class ExportAssetCollectionTest {
         drain();
 
         JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
-        // Die Vorbereitung hat alle Verweise beider Seiten gezählt, bevor die erste Datei geladen wurde.
+        // Die Vorbereitung hat die Anhänge beider Seiten gezählt, bevor die erste Datei geladen wurde; die Lese-Ansicht
+        // holt erst der Ladedurchgang, Seite für Seite (Angelo 11.11.2026): bis zur ersten Datei nur die von Seite 100.
         assertThat(discoveredAtFirstDownload[0]).isEqualTo(4);
+        assertThat(readAtFirstDownload).containsExactly("100");
         assertThat(paused.state()).isEqualTo(JobState.PAUSED);
         assertThat(paused.parameters()).containsEntry(ExportAssetCollection.EXPORT_ID, export.id());
         assertThat(paused.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
@@ -610,8 +649,12 @@ class ExportAssetCollectionTest {
         final List<List<String>> searched = new ArrayList<>();
         /** Seiten, die inzwischen in einem anderen Space liegen: die Suche mit Space-Filter findet ihre Anhänge nicht. */
         Set<String> moved = Set.of();
+        /** Seiten, deren Seitendaten mit diesem Grund scheitern. */
+        Map<String, SourceAccessException.Reason> metadataFails = Map.of();
         /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
         final List<String> listed = new ArrayList<>();
+        /** Seiten, deren Lese-Ansicht abgefragt wurde, in Reihenfolge. */
+        final List<String> read = new ArrayList<>();
         /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
         java.util.function.Consumer<String> onListing = pageId -> { };
         /** Beim Laden eines Bildes der Lese-Ansicht, mit seiner Adresse. */
@@ -645,6 +688,9 @@ class ExportAssetCollectionTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             metadataCalls++;
+            if (metadataFails.containsKey(pageId)) {
+                throw new SourceAccessException(id(), metadataFails.get(pageId), "Seitendaten", null);
+            }
             return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId,
                     moved.contains(pageId) ? "OPS" : "DEV", null, "3",
                     null, null, PageMetadata.sorted(Map.of()));
@@ -717,6 +763,7 @@ class ExportAssetCollectionTest {
         /** 100: Ansicht mit eingebundenem Inhalt; 101 hat sich seit dem Export geändert. */
         @Override
         public ReadingPage readingPage(String pageId) {
+            read.add(pageId);
             return switch (pageId) {
                 case "100" -> new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
                         "Bild Eingebunden", viewImages(pageId));
