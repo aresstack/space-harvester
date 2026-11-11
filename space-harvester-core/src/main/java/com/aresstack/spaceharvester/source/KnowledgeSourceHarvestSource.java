@@ -38,6 +38,7 @@ import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.signin.SignInFailures;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
+import com.aresstack.spaceharvester.application.sources.AttachmentSink;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.ChangeEvent;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -54,6 +55,7 @@ import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceSearchMatch;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import com.aresstack.spaceharvester.application.sources.StreamedAttachment;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceWebhooks;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.nio.charset.StandardCharsets;
@@ -110,6 +112,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     static final int TITLE_SEARCH_DEPTH = 1000;
     /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
     private static final int TITLE_SCAN_BATCH = 500;
+    /**
+     * So viel liest das Neuladen nach einem Code von einem gestreamten Anhang höchstens ({@link #probe}): genug für
+     * jede Anmelde- oder Code-Seite, wenig genug, dass das Bestätigen nicht auf eine große Datei wartet.
+     */
+    static final int PROBE_BYTES = 4 * 1024 * 1024;
 
     /** „Einmalcode gesendet, Confluence antwortet mit HTTP 500“ des Adapters: der Code ging hin, der Server scheiterte. */
     private static final Pattern SERVER_ERROR_AFTER_SENDING = Pattern.compile(
@@ -933,16 +940,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (!(port instanceof PageViewSource files)) {
             return HarvestSource.super.attachmentFile(attachment, maxBytes);
         }
-        KnowledgeResourceId resourceId;
-        try {
-            resourceId = KnowledgeResourceId.of(attachment.resourceId());
-        } catch (IllegalArgumentException e) {
-            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Keine Ressourcen-ID", null);
-        }
-        if (!files.isAttachment(resourceId)) {
-            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Kein Anhang der Quelle",
-                    null);
-        }
+        KnowledgeResourceId resourceId = attachmentResource(attachment, files);
         SourceFile file;
         try {
             // Die Grenze gilt schon beim Lesen im Transport, nicht erst nach dem vollständigen Download.
@@ -959,6 +957,68 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     "Download gehört zu einem anderen Anhang", null);
         }
         return new AttachmentFile(described, file.content(), Instant.now());
+    }
+
+    /**
+     * Wie {@link #attachmentFile}, aber die Datei liegt nie ganz im Speicher: {@link
+     * PageViewSource#streamAttachmentFile} schreibt die Originalbytes nach {@code sink} (Angelo 11.11.2026). Jeder
+     * Versuch beginnt die Datei von vorn. Verlangt die Quelle einen Code, lädt danach nicht dieser Abruf neu (sein
+     * {@code sink} ist dann verworfen), sondern {@link #probe}.
+     */
+    @Override
+    public StreamedAttachment streamAttachment(PageAttachment attachment, AttachmentSink sink) {
+        if (!(port instanceof PageViewSource files)) {
+            return HarvestSource.super.streamAttachment(attachment, sink);
+        }
+        KnowledgeResourceId resourceId = attachmentResource(attachment, files);
+        KnowledgeResource resource;
+        try {
+            resource = fetch(p -> {
+                try {
+                    sink.restart();
+                } catch (java.io.IOException e) {
+                    throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                            "Anhang nicht von vorn begonnen (" + e.getClass().getSimpleName() + ")", e);
+                }
+                return ((PageViewSource) p).streamAttachmentFile(resourceId, sink);
+            }, probe(resourceId));
+        } catch (ResponseTooLargeException e) {
+            throw new AttachmentTooLargeException(id, e.maxBytes());
+        } catch (KnowledgeSourceException e) {
+            if (sink.exceeded()) {
+                throw new AttachmentTooLargeException(id, sink.maxBytes());
+            }
+            throw accessFailure(e);
+        }
+        PageAttachment described = attachment(resource);
+        if (!described.attachmentId().equals(attachment.attachmentId())) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Download gehört zu einem anderen Anhang", null);
+        }
+        return new StreamedAttachment(described, Instant.now());
+    }
+
+    /**
+     * Was nach einem Code statt eines gestreamten Anhangs neu geladen wird: derselbe Anhang, aber nur bis {@link
+     * #PROBE_BYTES} im Speicher. Mehr braucht es nicht, um die Code-Seite zu erkennen; eine größere Antwort ist die
+     * Datei selbst, die Anmeldung gilt dann ({@link Challenge#answeredWithTooMuch}).
+     */
+    private static FileFetch<SourceFile> probe(KnowledgeResourceId resourceId) {
+        return p -> ((PageViewSource) p).loadAttachmentFile(resourceId, PROBE_BYTES);
+    }
+
+    private KnowledgeResourceId attachmentResource(PageAttachment attachment, PageViewSource files) {
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(attachment.resourceId());
+        } catch (IllegalArgumentException e) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Keine Ressourcen-ID", null);
+        }
+        if (!files.isAttachment(resourceId)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Kein Anhang der Quelle",
+                    null);
+        }
+        return resourceId;
     }
 
     /**
@@ -1342,13 +1402,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      * er sich nach der Angabe von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt.
      */
     private <T> T fetch(FileFetch<T> fetch) throws KnowledgeSourceException {
+        return fetch(fetch, fetch);
+    }
+
+    /** @param retry was nach dem Code einmal neu geladen wird, wenn es nicht {@code fetch} selbst sein kann */
+    private <T> T fetch(FileFetch<T> fetch, FileFetch<?> retry) throws KnowledgeSourceException {
         WebLogin login = web;
         try {
             return login == null ? fetch.from(port) : withWebLogin(login, () -> fetch.from(login.port()));
         } catch (OneTimeCodeRequiredException required) {
             if (webPorts != null) {
-                retries.put(required.challenge(), fetch);
-                lastRetry = fetch;
+                retries.put(required.challenge(), retry);
+                lastRetry = retry;
                 // Die Zwei-Faktor-Anmeldung fordert gerade den Code an: jetzt die zweite Web-Sitzung bereitstellen,
                 // damit das Absenden nichts mehr öffnen muss. Scheitert das, versucht es das Absenden noch einmal.
                 try {
@@ -1520,6 +1585,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 LOG.info("Quelle {}: neue Code-Seite {} beim Neuladen", id, instance(required.challenge()));
                 return new Challenge(required.challenge(), bound, RELOADED_NOTE, true);
             } catch (KnowledgeSourceException failed) {
+                if (answeredWithTooMuch(failed)) {
+                    LOG.info("Quelle {}: Dateiabruf ohne Code geladen (größer als die Probe), Anmeldung gilt", id);
+                    return null;
+                }
                 LOG.info("Quelle {}: Neuladen nach dem Absenden gescheitert ({}, {})", id,
                         failed.getClass().getSimpleName(), failed.kind());
                 return this;
@@ -1618,6 +1687,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             } catch (OneTimeCodeRequiredException required) {
                 fresh = required.challenge();
             } catch (KnowledgeSourceException e) {
+                if (answeredWithTooMuch(e)) {
+                    // Statt der Code-Seite kam die Datei, nur größer als die Probe: die neue Sitzung lädt ohne Code.
+                    web = login;
+                    LOG.info("Quelle {}: Dateiabruf mit Benutzeranmeldung ohne neue Abfrage geladen (größer als die "
+                            + "Probe)", id);
+                    return null;
+                }
                 LOG.info("Quelle {}: Dateiabruf mit Benutzeranmeldung gescheitert ({}, {})", id,
                         e.getClass().getSimpleName(), e.kind());
                 Arrays.fill(login.password(), '\0');
