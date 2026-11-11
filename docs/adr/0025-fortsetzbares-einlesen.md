@@ -149,9 +149,11 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
 18. **Vorbereiten und Laden in eigenen Pools** (Angelo 11.11.2026). Bilder- und Anhängeaufträge (`JobType#download`)
     belegen nicht die allgemeinen Plätze, sondern zwei eigene: höchstens `jobs.parallel-preparations` (Standard 2, 1 bis
     16) bereiten gleichzeitig vor, höchstens `jobs.parallel-downloads` (Standard 4, 0 bis 64) laden gleichzeitig. Die
-    Vorbereitung nimmt für alle Seiten die Anhangsliste und zählt die Anhänge; die Leseansicht (Bilder aus Makros wie
-    draw.io, eingebundene Seiten) holt erst der Ladedurchgang Seite für Seite (Angelo 11.11.2026: „die Vorbereitung
-    sollte gar keine Leseansicht holen“), ihre Bilder kommen dort zur Gesamtzahl hinzu. Dann wartet der Auftrag im Zustand `PREPARED` („Vorbereitet“) auf
+    Vorbereitung nimmt für alle Seiten die Anhangsliste und zählt die Anhänge; die Leseansicht holt sie nie (Angelo 11.11.2026: „die
+    Vorbereitung sollte gar keine Leseansicht holen“). Erst der Ladedurchgang holt sie, und nur für Seiten mit
+    berechneten oder fremden Inhalten (`ForeignContent`: include, excerpt-include, multiexcerpt-include, children,
+    Jira …) oder Erwähnungen von Personen, deren Inhalt allein die gerenderte Ansicht zeigt; ihre Bilder kommen dort zur Gesamtzahl hinzu. Alle
+    übrigen Bilder kommen aus dem Anhangskatalog (Punkt 21), draw.io und Mermaid aus der Quelle. Dann wartet der Auftrag im Zustand `PREPARED` („Vorbereitet“) auf
     einen Ladeplatz (`JobContext#awaitDownloadSlot`; „Jetzt starten“ zieht ihn vor) und lädt im Zustand `RUNNING`. Bei 0 Downloads
     werden Aufträge angenommen und vorbereitet, laden aber nichts; das Einlesen der Seitentexte läuft weiter. Beide Werte
     gelten sofort (`Workspace#setParallelPreparations`, `#setParallelDownloads`) und stehen unter `jobs` in der

@@ -60,7 +60,9 @@ class ExportAssetCollectionTest {
             + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
     private static final String STORAGE = "{\"body\":{\"storage\":{\"value\":\"<p>Bild</p>"
             + "<ac:structured-macro ac:name=\\\"mermaid-cloud\\\"><ac:plain-text-body><![CDATA[graph TD; A-->B]]>"
-            + "</ac:plain-text-body></ac:structured-macro>\"}}}";
+            + "</ac:plain-text-body></ac:structured-macro><ac:structured-macro ac:name=\\\"include\\\">"
+            + "<ac:parameter ac:name=\\\"\\\"><ac:link><ri:page ri:content-title=\\\"Eingebunden\\\"/></ac:link>"
+            + "</ac:parameter></ac:structured-macro>\"}}}";
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-18T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
@@ -184,11 +186,9 @@ class ExportAssetCollectionTest {
             assertThat(reading.html()).contains("Eingebunden");
             assertThat(reading.text()).isEqualTo("Bild Eingebunden");
         });
-        assertThat(dataset.readingView("101")).hasValueSatisfying(reading -> {
-            assertThat(reading.status()).isEqualTo(ExportReadingView.Status.UNAVAILABLE);
-            assertThat(reading.reason()).isEqualTo("page-changed");
-            assertThat(reading.text()).isEmpty();
-        });
+        // 101 hat keine berechneten Makros: keine Lese-Ansicht, kein Abruf.
+        assertThat(dataset.readingView("101")).isEmpty();
+        assertThat(source.read).containsExactly("100");
         assertThat(dataset.readingView("999")).isEmpty();
     }
 

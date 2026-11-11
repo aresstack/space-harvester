@@ -942,7 +942,7 @@ public class ExportAssetCollection {
         List<ExportAssetManifest.Entry> views = new ArrayList<>();
         try {
             List<Step> steps = new ArrayList<>(plan.steps());
-            if (run.share.images()) {
+            if (run.share.images() && needsReadingView(snapshot)) {
                 if (plan.catalog() && list != null && list.attachments().attachments().isEmpty()) {
                     // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
                     // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen
@@ -965,21 +965,15 @@ public class ExportAssetCollection {
                         imageIds.add(step.attachment().attachmentId());
                     }
                 }
-                Set<String> own = new HashSet<>();
-                if (list != null) {
-                    list.attachments().attachments().forEach(attachment -> own.add(attachment.attachmentId()));
-                }
-                boolean foreign = ForeignContent.of(snapshot).present();
                 boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
                 try {
                     long found = 0;
                     for (HarvestSource.ViewImage image : readingView(exportId, sourceId, snapshot,
-                            foreign && !mayShowForeign)) {
+                            !mayShowForeign)) {
                         if (image.attachmentId() != null && imageIds.contains(image.attachmentId())) {
                             continue;
                         }
-                        boolean otherPage = image.attachmentId() != null && !own.contains(image.attachmentId());
-                        steps.add(new Step(null, false, image, (foreign || otherPage) && !mayShowForeign));
+                        steps.add(new Step(null, false, image, !mayShowForeign));
                         found++;
                     }
                     context.discovered(found);
@@ -1116,6 +1110,20 @@ public class ExportAssetCollection {
         }
         putView(exportId, view);
         return live.images();
+    }
+
+    /**
+     * Ob die Seite die Lese-Ansicht braucht: nur bei berechneten oder fremden Inhalten ({@link ForeignContent}:
+     * include, excerpt-include, multiexcerpt-include, children, Jira …) und bei Erwähnungen von Personen, deren Namen
+     * erst die gerenderte Ansicht nennt ({@code StorageParser}). Bilder der Seite selbst kommen aus dem
+     * Anhangskatalog, draw.io und Mermaid aus der Quelle; für alle anderen Seiten kein Abruf (Angelo 11.11.2026).
+     */
+    static boolean needsReadingView(PageSnapshot snapshot) {
+        if (ForeignContent.of(snapshot).present()) {
+            return true;
+        }
+        String storage = ForeignContent.storage(snapshot);
+        return storage != null && storage.contains("<ri:user");
     }
 
     /** Ablegen darf die Bilder nie verhindern; ohne Ansicht melden die Converter den eingebundenen Inhalt fehlend. */
