@@ -187,8 +187,9 @@ public final class AppSettingsLoader {
         data = data == null ? home.resolve("data") : data;
         Path exports = path(get(map(get(root, "export")), "directory"), problems);
         Path assets = path(get(map(get(root, "assets")), "directory"), problems);
-        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 100L * 1024 * 1024,
-                "space-harvester.assets.max-size", problems);
+        // 0: ohne Grenze, wie AssetConfiguration des Dienstes (Angelo 11.11.2026).
+        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 0, "space-harvester.assets.max-size",
+                problems);
         // Wie AssetConfiguration des Dienstes; die Wartezeit (large-file-wait) ist in der Bibliothek fest 30 s.
         long largeAsset = size(get(map(get(root, "assets")), "large-file-threshold"), 20L * 1024 * 1024,
                 "space-harvester.assets.large-file-threshold", problems);

@@ -33,11 +33,12 @@ class ImportConfiguration {
                                             ObjectProvider<Assets> assets,
                                             ObjectProvider<LuceneEnrichmentStore> enrichments,
                                             ObjectProvider<SyncCommitted> afterCommit,
-                                            @Value("${space-harvester.assets.max-size:100MB}") DataSize maxAsset) {
+                                            @Value("${space-harvester.assets.max-size:0}") DataSize maxAsset) {
         Assets found = assets.getIfAvailable();
         LuceneEnrichmentStore views = enrichments.getIfAvailable();
+        // Dieselbe Grenze wie AssetConfiguration: 0 heißt ohne Grenze, die Dateien gehen als Strom in die Ablage.
         return new ExportPackageImport(jobs, new ZipExportPackageReader(cache.maxPayloadSize().toBytes(),
-                maxAsset.toBytes()), store, sourceId -> catalog.config(sourceId).isPresent(),
+                Assets.maxBytes(maxAsset.toBytes())), store, sourceId -> catalog.config(sourceId).isPresent(),
                 assetStore.getIfAvailable(), found == null ? null : found::adoptText,
                 views == null ? null : new ReadingViewStore(views), afterCommit.orderedStream().toList(),
                 Clock.systemUTC());

@@ -714,12 +714,13 @@ public final class Harvester implements AutoCloseable {
             // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche; beim Lesen auf
             // Abruf legt Assets die Anforderung ohne Warten an.
             this.signIns = new SignInRequests(builder.signInWait, clock);
-            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
+            long maxAssetBytes = Assets.maxBytes(builder.maxAssetBytes);
+            this.assets = new Assets(catalog, assetStore, maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen.
             this.packageImport = new ExportPackageImport(jobs, new ZipExportPackageReader(
-                    LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, builder.maxAssetBytes), baselineStore,
+                    LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES, maxAssetBytes), baselineStore,
                     sourceId -> catalog.config(sourceId).isPresent(), assetStore, assets::adoptText,
                     new ReadingViewStore(enrichmentStore), List.of(afterSync), clock);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
@@ -1914,7 +1915,7 @@ public final class Harvester implements AutoCloseable {
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
-        private long maxAssetBytes = 100L * 1024 * 1024;
+        private long maxAssetBytes;
         private long largeAssetThresholdBytes = LargeFileGate.DEFAULT_THRESHOLD_BYTES;
         private int maxConcurrentLargeAssets = LargeFileGate.DEFAULT_MAX_CONCURRENT;
         private Duration signInWait = Duration.ZERO;
@@ -2119,10 +2120,13 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
-         * Größte einzelne Datei, die als Asset abgelegt wird; Standard 100 MiB wie im Server und wie
-         * {@code READER_MAX_BYTES} im Enterprise AI Client.
+         * Größte einzelne Datei, die als Asset abgelegt wird; Standard {@code 0}, ohne Grenze wie im Server (Angelo
+         * 11.11.2026). Dateien über {@link Assets#MAX_IN_MEMORY_BYTES} gibt es nur als Strom.
          */
         public Builder maxAssetBytes(long maxAssetBytes) {
+            if (maxAssetBytes < 0) {
+                throw new IllegalArgumentException("maxAssetBytes darf nicht negativ sein");
+            }
             this.maxAssetBytes = maxAssetBytes;
             return this;
         }

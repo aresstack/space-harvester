@@ -341,9 +341,10 @@ final class ExportChapters {
 
     private static String src(Entry entry) {
         return switch (entry.reference().kind()) {
-            case ATTACHMENT, DOCUMENT -> entry.reference().filename() == null ? null : "attachment:" + entry.reference().filename();
+            case ATTACHMENT -> entry.reference().filename() == null ? null : "attachment:" + entry.reference().filename();
             case VIEW_IMAGE -> entry.reference().src();
-            case MERMAID -> null;
+            // Ein Dokument (ADR 0023) ist nie Bild einer Seite; seine Bytes, ohne Grenze beliebig groß, liest kein Writer.
+            case DOCUMENT, MERMAID -> null;
         };
     }
 

@@ -820,9 +820,10 @@ dieselbe Anmeldung, dieselben Zertifikate und denselben Proxy wie die Seiten; fr
 abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Space der Seite; ein Anhang, der nicht zur
 Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
 (Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
-Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
-(Standard 100 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
-dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
+Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Eine Größengrenze gibt es standardmäßig nicht:
+Anhänge fließen als Strom in die Ablage, nie ganz in den Speicher (`space-harvester.assets.max-size` = `0`, #571). Mit
+einer Größe werden größere Dateien weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon beim
+Lesen an dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
 darüber `asset-store-full` (507), ohne etwas zu verdrängen. Leitet die Quelle einen Download auf einen anderen Host um,
 wird dem nie gefolgt, der Anhang gilt dann als fehlgeschlagen; `options.foreignFileRedirects: true` ist ein
 Konfigurationsfehler. Fehler je Anhang stehen mit festem Code im
