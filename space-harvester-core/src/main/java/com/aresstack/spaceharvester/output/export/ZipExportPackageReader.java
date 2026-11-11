@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.output.export;
 
+import com.aresstack.spaceharvester.application.assets.Sha256CheckedInputStream;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
@@ -15,7 +16,9 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.output.convert.ExportFileJson;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
 import com.aresstack.spaceharvester.output.convert.PageJson;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -47,7 +50,7 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>Das Paket bleibt eine ZIP-Datei; gelesen wird je Eintrag über seinen Namen, nie entpackt, daher kann kein Eintrag
  * außerhalb landen. Jede Datei ist begrenzt (Payload wie der Cache, Bilder und Anhänge wie die Asset-Ablage) und wird
  * gegen ihre Prüfsumme aus dem Paket geprüft. {@code pages.json} wird als Strom gelesen, nur die Kopfdaten bleiben im
- * Speicher.
+ * Speicher; Bilder und Anhänge gibt es auch als Strom ({@link ExportAssets#open}).
  */
 public final class ZipExportPackageReader implements ExportPackage.Reader {
 
@@ -325,6 +328,14 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                 }
 
                 @Override
+                public Optional<InputStream> open(ExportAssetManifest.Entry entry) {
+                    if (!entry.stored() || entry.reference().kind() == ExportAssetManifest.Kind.MERMAID) {
+                        return content(entry).map(ByteArrayInputStream::new);
+                    }
+                    return stream(files.get(entry.sha256()), entry.sha256());
+                }
+
+                @Override
                 public Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
                     if (entry.rendition() == null || !entry.rendition().drawn()) {
                         return Optional.empty();
@@ -350,6 +361,31 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
             }
             byte[] bytes = read(path, maxAssetBytes);
             return sha256(bytes).equals(sha256) ? Optional.of(bytes) : Optional.empty();
+        }
+
+        /**
+         * Wie {@link #checked}, aber als Strom, ohne die Datei ganz in den Speicher zu lesen (Angelo 11.11.2026): die
+         * Prüfsumme prüft der Strom am Ende, die Grenze der Asset-Ablage gilt schon beim Lesen.
+         */
+        private Optional<InputStream> stream(String path, String sha256) {
+            if (path == null || sha256 == null) {
+                return Optional.empty();
+            }
+            ZipEntry entry = zip.getEntry(path);
+            if (entry == null || entry.isDirectory()) {
+                return Optional.empty();
+            }
+            if (entry.getSize() > maxAssetBytes) {
+                throw tooLarge(path, maxAssetBytes);
+            }
+            InputStream in;
+            try {
+                in = zip.getInputStream(entry);
+            } catch (IOException e) {
+                throw new ExportPackageException(ExportPackageException.DAMAGED, path + " ist nicht lesbar", e);
+            }
+            return Optional.of(new Sha256CheckedInputStream(new Limited(in, path, maxAssetBytes), sha256,
+                    path + " passt nicht zu seiner Prüfsumme"));
         }
 
         private JsonNode tree(String path, long limit) {
@@ -384,6 +420,45 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                 return out.toByteArray();
             } catch (IOException e) {
                 throw new ExportPackageException(ExportPackageException.DAMAGED, path + " ist nicht lesbar", e);
+            }
+        }
+    }
+
+    /** Ein Eintrag als Strom, der über {@code limit} Bytes mit {@code TOO_LARGE} abbricht, nie gekürzt. */
+    private static final class Limited extends FilterInputStream {
+
+        private final String path;
+        private final long limit;
+        private long total;
+
+        Limited(InputStream in, String path, long limit) {
+            super(in);
+            this.path = path;
+            this.limit = limit;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b >= 0) {
+                count(1);
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] bytes, int off, int len) throws IOException {
+            int n = super.read(bytes, off, len);
+            if (n > 0) {
+                count(n);
+            }
+            return n;
+        }
+
+        private void count(int n) {
+            total += n;
+            if (total > limit) {
+                throw tooLarge(path, limit);
             }
         }
     }
