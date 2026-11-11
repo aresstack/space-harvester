@@ -508,11 +508,24 @@ final class ConfluenceRestClient {
      * Anhänge hinten einsortiert werden und keinen noch nicht gelesenen verdrängen.
      */
     static String attachmentsOfPagesCql(List<String> pageIds) {
+        return attachmentsOfPagesCql(pageIds, null);
+    }
+
+    /**
+     * Wie {@link #attachmentsOfPagesCql(List)}, mit {@code spaceKey} nur Anhänge, die derzeit in diesem Space liegen:
+     * eine inzwischen verschobene Seite liefert keine Treffer. Der Schlüssel ist vorher geprüft
+     * ({@link ConfluenceIds#isSpaceKey}).
+     */
+    static String attachmentsOfPagesCql(List<String> pageIds, String spaceKey) {
         StringBuilder cql = new StringBuilder("type=attachment AND container in (");
         for (int i = 0; i < pageIds.size(); i++) {
             cql.append(i == 0 ? "" : ",").append(pageIds.get(i));
         }
-        return cql.append(") ORDER BY created").toString();
+        cql.append(')');
+        if (spaceKey != null) {
+            cql.append(" AND space=\"").append(spaceKey).append('"');
+        }
+        return cql.append(" ORDER BY created").toString();
     }
 
     /** CQL aller Anhänge eines Space, sortiert wie {@link #attachmentsOfPagesCql}. */

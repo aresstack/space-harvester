@@ -897,6 +897,24 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
     @Override
     public Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds)
             throws KnowledgeSourceException {
+        return attachmentsOfPages(localIds, null);
+    }
+
+    /**
+     * Wie {@link #storedAttachmentsOf(Collection)}, zusätzlich mit {@code space="KEY"} in derselben Suche: eine Seite,
+     * die inzwischen in einem anderen Space liegt, bekommt eine leere Liste, ohne Extra-Abruf je Seite.
+     */
+    @Override
+    public Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds, String partitionKey)
+            throws KnowledgeSourceException {
+        if (!ConfluenceIds.isSpaceKey(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Kein Space-Schlüssel dieser Quelle");
+        }
+        return attachmentsOfPages(localIds, partitionKey);
+    }
+
+    private Map<String, StoredAttachmentList> attachmentsOfPages(Collection<String> localIds, final String spaceKey)
+            throws KnowledgeSourceException {
         if (localIds == null) {
             throw new IllegalArgumentException("localIds are required");
         }
@@ -919,7 +937,7 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
                         @Override
                         public ConfluenceRestClient.AttachmentSearch run(Session session)
                                 throws KnowledgeSourceException {
-                            return client.attachmentSearch(session, ConfluenceRestClient.attachmentsOfPagesCql(chunk),
+                            return client.attachmentSearch(session, ConfluenceRestClient.attachmentsOfPagesCql(chunk, spaceKey),
                                     alreadyRead, AttachmentSearchSource.MAX_TOTAL_ATTACHMENTS);
                         }
                     });

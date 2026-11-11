@@ -30,7 +30,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     private static final String ID_CQL = "type=page AND id in (";
     /** Anhänge einiger Seiten ({@code ConfluenceRestClient#attachmentsOfPagesCql}). */
     private static final java.util.regex.Pattern ATTACHMENTS_OF_PAGES_CQL = java.util.regex.Pattern.compile(
-            "type=attachment AND container in \\(([0-9,]+)\\) ORDER BY created");
+            "type=attachment AND container in \\(([0-9,]+)\\)(?: AND space=\"([^\"]+)\")? ORDER BY created");
     /** Alle Anhänge eines Space ({@code ConfluenceRestClient#attachmentsInSpaceCql}). */
     private static final java.util.regex.Pattern ATTACHMENTS_IN_SPACE_CQL = java.util.regex.Pattern.compile(
             "space=\"([^\"]+)\" AND type=attachment ORDER BY created");
@@ -391,13 +391,15 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             Collections.addAll(containers, ofPages.group(1).split(","));
         }
         String spaceKey = inSpace.matches() ? inSpace.group(1) : null;
+        String containerSpace = ofPages.matches() ? ofPages.group(2) : null;
         List<String> found = new ArrayList<String>();
         for (FakeAttachment attachment : attachments.values()) {
             FakePage page = pages.get(attachment.pageId);
             if (restricted.contains(page.id) || trashed.contains(page.id)) {
                 continue;
             }
-            if (spaceKey != null ? page.spaceKey.equals(spaceKey) : containers.contains(page.id)) {
+            if (spaceKey != null ? page.spaceKey.equals(spaceKey) : containers.contains(page.id)
+                    && (containerSpace == null || page.spaceKey.equals(containerSpace))) {
                 found.add(attachment.id);
             }
         }

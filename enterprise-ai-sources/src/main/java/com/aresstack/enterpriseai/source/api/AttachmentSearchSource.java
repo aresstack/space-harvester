@@ -45,6 +45,21 @@ public interface AttachmentSearchSource {
     Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds) throws KnowledgeSourceException;
 
     /**
+     * Like {@link #storedAttachmentsOf(Collection)}, but only attachments of resources that currently lie in the given
+     * partition count: a resource moved to another partition gets an empty list, just like one without attachments.
+     * Callers that authorize by partition thus never see attachments of a resource that has left it, without asking
+     * for each resource's partition separately.
+     *
+     * @param localIds     local IDs in the source, as {@link StoredContentSource#localId} returns them
+     * @param partitionKey the key of the partition, as {@link SourcePartition#key()} returns it
+     * @return unmodifiable map from local ID to its list
+     * @throws KnowledgeSourceException as {@link #storedAttachmentsOf(Collection)}; also {@code UNSUPPORTED} before any
+     *                                  request if the partition key has no form this source knows
+     */
+    Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds, String partitionKey)
+            throws KnowledgeSourceException;
+
+    /**
      * The attachment lists of all resources of one partition that have at least one attachment the account can see,
      * keyed by the local ID of the resource, in the order the resources first appear in the search. Resources without
      * attachments do not appear, nor do attachments of anything that is not a resource of this source (e.g. a blog

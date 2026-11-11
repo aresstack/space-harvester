@@ -65,6 +65,31 @@ public class ConfluenceAttachmentSearchTest {
     }
 
     @Test
+    public void withASpaceOnlyPagesStillInThatSpaceKeepTheirAttachments() throws Exception {
+        confluence.move("102", "OPS");
+
+        Map<String, StoredAttachmentList> lists = source.storedAttachmentsOf(Arrays.asList("101", "102"), "DEV");
+
+        assertEquals("type=attachment AND container in (101,102) AND space=\"DEV\" ORDER BY created",
+                confluence.lastCql);
+        assertEquals(Arrays.asList("att1", "att2", "att3"), localIds(lists.get("101").attachments()));
+        // Verschoben: leer wie eine Seite ohne Anhänge, ohne eigenen Abruf.
+        assertTrue(lists.get("102").attachments().isEmpty());
+        assertEquals(0, confluence.requestCount("/child/attachment"));
+    }
+
+    @Test
+    public void aSpaceKeyWithoutAValidFormIsRejectedBeforeAnyRequest() {
+        try {
+            source.storedAttachmentsOf(Collections.singletonList("101"), "DEV\" OR type=page");
+            fail("expected UNSUPPORTED");
+        } catch (KnowledgeSourceException e) {
+            assertEquals(Kind.UNSUPPORTED, e.kind());
+        }
+        assertEquals(0, confluence.requestCount(SEARCH));
+    }
+
+    @Test
     public void listsTheSameAttachmentsAsThePerPageListWithFewerCalls() throws Exception {
         Map<String, StoredAttachmentList> lists = source.storedAttachmentsOf(Arrays.asList("101", "100", "102", "101"));
 
