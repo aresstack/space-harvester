@@ -132,6 +132,16 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     aus dem Speicher. `FORCE_REFRESH` (⟲) gilt auch für Bilder und Anhänge: derselbe Eintrag holt jede Datei neu von
     der Quelle, am Speicher vorbei; der Speicher legt Inhalte nach Prüfsumme ab, der alte Stand bleibt also lesbar,
     bis der neue da ist.
+17. **Wiederanlauf nach Verbindungsabbruch, ↻ in jedem Zustand** (Angelo 11.11.2026: WLAN; „der Button soll immer
+    verfügbar sein“). Hält sich ein Auftrag wegen fehlender Verbindung an (`PAUSED_CONNECTION_LOST`), läuft er nach
+    `jobs.retry.resume-initial-delay` (10 s) von selbst wieder an; jeder weitere vergebliche Anlauf verdoppelt die
+    Wartezeit bis `jobs.retry.resume-max-delay` (10 min), aufgegeben wird nie. Hielt ein Lauf mindestens
+    `Jobs#RECONNECT_RESET_AFTER` (2 min), beginnt die Wartezeit wieder von vorn. Der Anlauf geht über
+    `JobActions#perform(RESUME)` (`Jobs#recovery`), also denselben Weg wie ein Klick; hat der Benutzer inzwischen selbst
+    gehandelt, entfällt er. `Jobs#reconnectAt` nennt den nächsten Anlauf. Auch nach einem Neustart laufen so angehaltene
+    Aufträge nach der ersten Wartezeit wieder an. `RETRY_FAILED` bietet jeder Zustand an, sobald etwas gescheitert ist:
+    laufend folgt es direkt nach dem Durchgang im selben Eintrag (`Jobs#requestRetryFailed`), angehalten oder
+    abgebrochen setzt es fort, und Fortsetzen holt das Gescheiterte mit.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

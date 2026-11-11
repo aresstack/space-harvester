@@ -49,6 +49,11 @@ import java.util.function.UnaryOperator;
  * {@link JobContext#checkpoint()}, etwa weil ein Abruf der Quelle hängt, gilt er als abgebrochen bzw. angehalten und
  * gibt seinen Platz frei; die hängende Arbeit wird abgekoppelt: sie meldet nichts mehr, ändert den Eintrag nicht mehr
  * und endet an ihrem nächsten Prüfpunkt.
+ *
+ * <p>Hält sich ein Auftrag wegen fehlender Verbindung an ({@link PauseReason#CONNECTION_LOST}), läuft er nach
+ * {@link RetrySettings#resumeDelay(int)} von selbst wieder an, nie endgültig aufgebend; ebenso läuft ein während des
+ * Laufs angefordertes „Nur Fehler neu versuchen“ direkt nach dem Durchgang ({@link #recovery(JobRecovery)},
+ * ADR 0025 Punkt 17).
  */
 public class Jobs implements AutoCloseable {
 
@@ -83,6 +88,22 @@ public class Jobs implements AutoCloseable {
      */
     private final Set<String> lingering = new HashSet<>();
     private int running;
+    /** Hielt ein Lauf mindestens so lange, beginnt die Wartezeit des Wiederanlaufs wieder von vorn. */
+    static final Duration RECONNECT_RESET_AFTER = Duration.ofMinutes(2);
+    /** Wer Wiederanlauf und nachgeholtes „Nur Fehler“ ausführt; {@code null}, bis die Anwendung es verbindet. */
+    private volatile JobRecovery recovery;
+    /** Wie oft ein nach dem Durchgang abgelehntes „Nur Fehler neu versuchen“ höchstens versucht wird. */
+    static final int RETRY_AFTER_PASS_ATTEMPTS = 48;
+    private JobTimer timer;
+    private java.util.concurrent.ScheduledExecutorService ownTimer;
+    /** Geplante Wiederanläufe je Auftrag; nur der zuletzt geplante zählt ({@link Reconnect#token}). */
+    private final Map<String, Reconnect> reconnects = new HashMap<>();
+    /** Nummer des nächsten Wiederanlaufs je Auftrag, ab 0. */
+    private final Map<String, Integer> reconnectAttempts = new HashMap<>();
+
+    private record Reconnect(Object token, Instant at) {
+    }
+
     /** Laufende Folgeaufträge ({@link JobType#followUp()}). */
     private int runningFollowUps;
     private boolean closed;
@@ -554,6 +575,8 @@ public class Jobs implements AutoCloseable {
                         : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
                 freed = stop(jobId);
                 stopped.remove(status.id());
+                reconnects.remove(status.id());
+                reconnectAttempts.remove(status.id());
                 // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
                 events.delete(status.id());
                 store.delete(status.id());
@@ -821,6 +844,10 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 store.save(job.snapshot());
             }
+            reconnects.clear();
+            if (ownTimer != null) {
+                ownTimer.shutdownNow();
+            }
         }
     }
 
@@ -971,6 +998,9 @@ public class Jobs implements AutoCloseable {
     private void complete(Job job, Throwable failure) {
         Throwable cause = unwrap(failure);
         JobStatus finished;
+        int reconnectAttempt;
+        boolean retryFailed;
+        JobTimer later;
         synchronized (lock) {
             if (job.state.terminal()) {
                 if (job.detached && lingering.remove(job.id)) {
@@ -997,8 +1027,229 @@ public class Jobs implements AutoCloseable {
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);
             store.save(finished);
+            reconnectAttempt = followUp(job, finished);
+            retryFailed = job.retryFailedRequested && hasFailures(finished) && recovery != null;
+            if (retryFailed || finished.state() != JobState.PAUSED) {
+                job.retryFailedRequested = false;
+            }
+            later = retryFailed ? timer() : null;
         }
         dispatch();
+        if (reconnectAttempt >= 0) {
+            scheduleReconnect(job.id, reconnectAttempt);
+        }
+        if (retryFailed) {
+            JobStatus ended = finished;
+            later.schedule(Duration.ZERO, () -> retryAfterPass(ended, 0));
+        }
+    }
+
+    /**
+     * Das während des Laufs angeforderte „Nur Fehler neu versuchen“. Lehnt der Anwendungsfall es gerade ab, etwa weil
+     * Bilder oder Anhänge des Exports noch laufen, versucht es der Auftrag mit wachsender Wartezeit erneut, solange er
+     * unverändert so beendet ist, höchstens {@link #RETRY_AFTER_PASS_ATTEMPTS} Mal.
+     */
+    private void retryAfterPass(JobStatus ended, int attempt) {
+        JobStatus now;
+        try {
+            now = status(ended.id());
+        } catch (UnknownJobException e) {
+            return;
+        }
+        if (now.state() != ended.state() || !Objects.equals(now.finishedAt(), ended.finishedAt())) {
+            // Inzwischen fortgesetzt, neu gestartet oder gelöscht: dann entscheidet der Benutzer.
+            return;
+        }
+        if (perform(ended, JobAction.RETRY_FAILED)) {
+            return;
+        }
+        if (attempt + 1 >= RETRY_AFTER_PASS_ATTEMPTS) {
+            LOG.log(System.Logger.Level.INFO, "Nur Fehler neu versuchen für Auftrag {0} aufgegeben", ended.id());
+            return;
+        }
+        Duration delay;
+        JobTimer current;
+        synchronized (lock) {
+            if (closed || recovery == null) {
+                return;
+            }
+            delay = limits.retry().resumeDelay(attempt);
+            current = timer();
+        }
+        current.schedule(delay, () -> retryAfterPass(ended, attempt + 1));
+    }
+
+    /**
+     * Unter dem Sperrobjekt: die Nummer des nächsten Wiederanlaufs, wenn sich der Auftrag wegen fehlender Verbindung
+     * angehalten hat, sonst -1. Hielt der Lauf {@link #RECONNECT_RESET_AFTER}, war die Verbindung wieder da, und die
+     * Wartezeit beginnt von vorn.
+     */
+    private int followUp(Job job, JobStatus finished) {
+        if (finished.state() != JobState.PAUSED || finished.pauseReason() != PauseReason.CONNECTION_LOST
+                || recovery == null || closed) {
+            reconnectAttempts.remove(job.id);
+            reconnects.remove(job.id);
+            return -1;
+        }
+        boolean held = finished.startedAt() != null && finished.finishedAt() != null
+                && !Duration.between(finished.startedAt(), finished.finishedAt()).minus(RECONNECT_RESET_AFTER)
+                .isNegative();
+        return held ? 0 : reconnectAttempts.getOrDefault(job.id, 0);
+    }
+
+    private static boolean hasFailures(JobStatus status) {
+        return (status.state() == JobState.COMPLETED || status.state() == JobState.FAILED)
+                && (status.progress().failed() > 0 || status.incomplete()
+                || status.state() == JobState.FAILED);
+    }
+
+    /**
+     * Verbindet Wiederanlauf und nachgeholtes „Nur Fehler neu versuchen“ mit den Anwendungsfällen (ADR 0025 Punkt 17).
+     * Aufträge, die beim letzten Ende des Dienstes wegen fehlender Verbindung angehalten waren, laufen nach der ersten
+     * Wartezeit wieder an.
+     */
+    public void recovery(JobRecovery recovery) {
+        recovery(recovery, null);
+    }
+
+    /** Wie {@link #recovery(JobRecovery)}, mit eigener Zeitsteuerung, etwa in Tests; {@code null} für die eigene. */
+    public void recovery(JobRecovery recovery, JobTimer timer) {
+        Objects.requireNonNull(recovery, "recovery");
+        synchronized (lock) {
+            this.recovery = recovery;
+            this.timer = timer;
+        }
+        for (JobStatus status : store.all()) {
+            if (status.state() == JobState.PAUSED && status.pauseReason() == PauseReason.CONNECTION_LOST) {
+                scheduleReconnect(status.id(), 0);
+            }
+        }
+    }
+
+    /** Wann ein wegen fehlender Verbindung angehaltener Auftrag das nächste Mal von selbst anläuft, sonst leer. */
+    public Optional<Instant> reconnectAt(String jobId) {
+        synchronized (lock) {
+            Reconnect pending = reconnects.get(jobId);
+            return pending == null ? Optional.empty() : Optional.of(pending.at());
+        }
+    }
+
+    private void scheduleReconnect(String jobId, int attempt) {
+        Duration delay;
+        Reconnect pending;
+        JobTimer current;
+        synchronized (lock) {
+            if (closed || recovery == null) {
+                return;
+            }
+            delay = limits.retry().resumeDelay(attempt);
+            pending = new Reconnect(new Object(), clock.instant().plus(delay));
+            reconnects.put(jobId, pending);
+            reconnectAttempts.put(jobId, attempt + 1);
+            current = timer();
+        }
+        current.schedule(delay, () -> reconnect(jobId, pending.token()));
+    }
+
+    /** Ein geplanter Wiederanlauf; nur, wenn er noch gilt und der Auftrag noch so angehalten ist. */
+    private void reconnect(String jobId, Object token) {
+        synchronized (lock) {
+            Reconnect pending = reconnects.get(jobId);
+            if (closed || pending == null || pending.token() != token) {
+                return;
+            }
+            reconnects.remove(jobId);
+        }
+        JobStatus status;
+        try {
+            status = status(jobId);
+        } catch (UnknownJobException e) {
+            forgetReconnect(jobId);
+            return;
+        }
+        if (status.state() != JobState.PAUSED || status.pauseReason() != PauseReason.CONNECTION_LOST) {
+            // Inzwischen fortgesetzt, angehalten oder beendet: dann entscheidet der Benutzer.
+            return;
+        }
+        if (!perform(status, JobAction.RESUME)) {
+            int attempt;
+            synchronized (lock) {
+                attempt = reconnectAttempts.getOrDefault(jobId, 0);
+            }
+            scheduleReconnect(jobId, attempt);
+        }
+    }
+
+    private void forgetReconnect(String jobId) {
+        synchronized (lock) {
+            reconnects.remove(jobId);
+            reconnectAttempts.remove(jobId);
+        }
+    }
+
+    /** @return ob die Aktion ausgeführt wurde */
+    private boolean perform(JobStatus status, JobAction action) {
+        JobRecovery current = recovery;
+        if (current == null) {
+            return false;
+        }
+        try {
+            current.perform(status, action);
+            return true;
+        } catch (UnknownJobException e) {
+            forgetReconnect(status.id());
+            return true;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "{0} für Auftrag {1} nicht ausgeführt ({2})", action, status.id(),
+                    e.getClass().getName());
+            return false;
+        }
+    }
+
+    /** Unter dem Sperrobjekt: die Zeitsteuerung, ohne eigene ein Daemon-Thread. */
+    private JobTimer timer() {
+        if (timer != null) {
+            return timer;
+        }
+        if (ownTimer == null) {
+            ownTimer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "harvester-job-reconnect");
+                thread.setDaemon(true);
+                return thread;
+            });
+        }
+        java.util.concurrent.ScheduledExecutorService scheduler = ownTimer;
+        return (delay, task) -> {
+            try {
+                scheduler.schedule(task, delay.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (RejectedExecutionException e) {
+                // Der Dienst wird beendet.
+            }
+        };
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ für einen eigenen laufenden Auftrag (Angelo 11.11.2026: ↻ jederzeit): läuft direkt
+     * nach dem Durchgang im selben Eintrag, wenn er dann gescheiterte Teile hat.
+     *
+     * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobNotResumableException wenn der Auftrag nicht mehr läuft
+     */
+    public JobStatus requestRetryFailed(String jobId, String owner) {
+        requireOwner(status(jobId), owner);
+        synchronized (lock) {
+            Job job = open.get(jobId);
+            if (job == null) {
+                throw new JobNotResumableException(jobId, "der Auftrag läuft nicht mehr");
+            }
+            if (!job.retryFailedRequested) {
+                job.retryFailedRequested = true;
+                job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                        "Nur Fehler neu versuchen angefordert: läuft direkt nach diesem Durchgang", null, null, null,
+                        null);
+            }
+            return job.snapshot();
+        }
     }
 
     /** Unter dem Sperrobjekt: hält einen beendeten Auftrag zum Fortsetzen bereit, wenn Art und Zustand es erlauben. */
@@ -1105,6 +1356,8 @@ public class Jobs implements AutoCloseable {
         volatile boolean detached;
         /** Warum angehalten wird; {@code null} heißt durch den Benutzer. */
         volatile PauseReason pauseReason;
+        /** „Nur Fehler neu versuchen“ ist während des Laufs angefordert und folgt nach dem Durchgang. */
+        volatile boolean retryFailedRequested;
         volatile Instant startedAt;
         volatile Instant deadline;
         Instant finishedAt;

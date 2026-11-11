@@ -738,8 +738,12 @@ public final class AppSettingsLoader {
                 prefix + RetrySettings.MAX_DELAY, problems);
         int pauseAfter = integer(get(retry, RetrySettings.PAUSE_AFTER_FAILURES), fallback.pauseAfterFailures(),
                 prefix + RetrySettings.PAUSE_AFTER_FAILURES, problems);
+        Duration resumeInitial = duration(get(retry, RetrySettings.RESUME_INITIAL_DELAY),
+                fallback.resumeInitialDelay(), prefix + RetrySettings.RESUME_INITIAL_DELAY, problems);
+        Duration resumeMax = duration(get(retry, RetrySettings.RESUME_MAX_DELAY), fallback.resumeMaxDelay(),
+                prefix + RetrySettings.RESUME_MAX_DELAY, problems);
         try {
-            return new RetrySettings(attempts, initial, max, pauseAfter);
+            return new RetrySettings(attempts, initial, max, pauseAfter, resumeInitial, resumeMax);
         } catch (IllegalArgumentException e) {
             problems.add(prefix + "*: " + e.getMessage() + "; es gelten die Standards");
             return fallback;

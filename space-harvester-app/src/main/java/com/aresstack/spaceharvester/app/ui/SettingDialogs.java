@@ -745,7 +745,9 @@ final class SettingDialogs {
                 return null;
             }
             try {
-                return new RetrySettings((Integer) attempts.getValue(), first, longest, (Integer) pause.getValue());
+                // Die Wartezeiten des Wiederanlaufs bleiben, wie sie sind.
+                return new RetrySettings((Integer) attempts.getValue(), first, longest, (Integer) pause.getValue(),
+                        current.resumeInitialDelay(), current.resumeMaxDelay());
             } catch (IllegalArgumentException e) {
                 return null;
             }

@@ -11,7 +11,9 @@ import java.util.Objects;
  *
  * <p>Regeln: Anhalten und Fortsetzen erscheinen nie gleichzeitig; vor dem Start steht „Jetzt starten“; nur Aufträge,
  * deren Art es kennt ({@link JobType#resumable()}), lassen sich anhalten und fortsetzen; Löschen gibt es in jedem
- * Zustand, als letzte Aktion (wartende und laufende bricht {@link Jobs#delete} vorher ab).
+ * Zustand, als letzte Aktion (wartende und laufende bricht {@link Jobs#delete} vorher ab); „Nur Fehler neu versuchen“
+ * gibt es in jedem Zustand, sobald etwas gescheitert ist, als erste Aktion (Angelo 11.11.2026): während des Laufs
+ * folgt es direkt nach dem Durchgang, angehalten oder abgebrochen holt Fortsetzen das Gescheiterte mit.
  */
 public sealed interface JobLifecycleState {
 
@@ -44,16 +46,20 @@ public sealed interface JobLifecycleState {
         // Bilder und Anhänge holen beim erneuten Lauf nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
         boolean files = status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS;
         boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
+        // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
+        boolean failures = forceable && status.progress().failed() > 0;
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
-            case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Running(resumable);
-            case PAUSED -> new Paused(status.pauseReason());
+            case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested())
+                    : new Running(resumable, failures);
+            case PAUSED -> new Paused(status.pauseReason(), failures);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
                     ? new CompletedWithErrors(download || files, download || files) : new Completed(forceable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
-                    ? new CompletedWithErrors(true, true) : new Stopped(status.state(), resumable, forceable);
-            case CANCELLED -> new Stopped(status.state(), resumable, forceable);
+                    ? new CompletedWithErrors(true, true)
+                    : new Stopped(status.state(), resumable, forceable, failures && resumable);
+            case CANCELLED -> new Stopped(status.state(), resumable, forceable, failures && resumable);
         };
     }
 
@@ -70,8 +76,18 @@ public sealed interface JobLifecycleState {
         }
     }
 
-    /** Läuft. */
-    record Running(boolean resumable) implements JobLifecycleState {
+    /**
+     * Läuft.
+     *
+     * @param retryable ob schon etwas gescheitert ist und die Art es gezielt nachladen kann; „Nur Fehler neu versuchen“
+     *                  folgt dann direkt nach dem Durchgang ({@link Jobs#requestRetryFailed})
+     */
+    record Running(boolean resumable, boolean retryable) implements JobLifecycleState {
+
+        public Running(boolean resumable) {
+            this(resumable, false);
+        }
+
         @Override
         public String key() {
             return "RUNNING";
@@ -79,8 +95,16 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return resumable ? List.of(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE)
-                    : List.of(JobAction.CANCEL, JobAction.DELETE);
+            List<JobAction> actions = new java.util.ArrayList<>(4);
+            if (retryable) {
+                actions.add(JobAction.RETRY_FAILED);
+            }
+            if (resumable) {
+                actions.add(JobAction.PAUSE);
+            }
+            actions.add(JobAction.CANCEL);
+            actions.add(JobAction.DELETE);
+            return List.copyOf(actions);
         }
     }
 
@@ -103,8 +127,16 @@ public sealed interface JobLifecycleState {
     /**
      * Angehalten; Geladenes bleibt. Hat sich der Auftrag selbst angehalten ({@link PauseReason#SIGN_IN_REQUIRED},
      * {@link PauseReason#CONNECTION_LOST}), nennt der Schlüssel den Grund, damit die Oberfläche ihn zeigt.
+     *
+     * @param retryable ob etwas gescheitert ist; „Nur Fehler neu versuchen“ setzt dann fort, wie Fortsetzen, das das
+     *                  Gescheiterte mitholt
      */
-    record Paused(PauseReason reason) implements JobLifecycleState {
+    record Paused(PauseReason reason, boolean retryable) implements JobLifecycleState {
+
+        public Paused(PauseReason reason) {
+            this(reason, false);
+        }
+
         @Override
         public String key() {
             return reason == null || reason == PauseReason.USER ? "PAUSED" : "PAUSED_" + reason.name();
@@ -112,7 +144,8 @@ public sealed interface JobLifecycleState {
 
         @Override
         public List<JobAction> actions() {
-            return List.of(JobAction.RESUME, JobAction.DELETE);
+            return retryable ? List.of(JobAction.RETRY_FAILED, JobAction.RESUME, JobAction.DELETE)
+                    : List.of(JobAction.RESUME, JobAction.DELETE);
         }
     }
 
@@ -179,11 +212,17 @@ public sealed interface JobLifecycleState {
      * Gescheitert oder abgebrochen. Downloads und Abgleiche bieten neben Fortsetzen auch „Neu erzwingen“ an.
      *
      * @param forceable ob die Art einen neuen Stand erzwingen kann
+     * @param retryable ob etwas gescheitert ist; „Nur Fehler neu versuchen“ setzt dann fort und holt es mit
      */
-    record Stopped(JobState state, boolean resumable, boolean forceable) implements JobLifecycleState {
+    record Stopped(JobState state, boolean resumable, boolean forceable, boolean retryable)
+            implements JobLifecycleState {
 
         public Stopped(JobState state, boolean resumable) {
-            this(state, resumable, false);
+            this(state, resumable, false, false);
+        }
+
+        public Stopped(JobState state, boolean resumable, boolean forceable) {
+            this(state, resumable, forceable, false);
         }
 
         public Stopped {
@@ -202,8 +241,16 @@ public sealed interface JobLifecycleState {
             if (!resumable) {
                 return List.of(JobAction.DELETE);
             }
-            return forceable ? List.of(JobAction.RESUME, JobAction.FORCE_REFRESH, JobAction.DELETE)
-                    : List.of(JobAction.RESUME, JobAction.DELETE);
+            List<JobAction> actions = new java.util.ArrayList<>(4);
+            if (retryable) {
+                actions.add(JobAction.RETRY_FAILED);
+            }
+            actions.add(JobAction.RESUME);
+            if (forceable) {
+                actions.add(JobAction.FORCE_REFRESH);
+            }
+            actions.add(JobAction.DELETE);
+            return List.copyOf(actions);
         }
     }
 }

@@ -534,13 +534,14 @@ class ConfigFileEditorTest {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
         var retry = new com.aresstack.spaceharvester.application.jobs.RetrySettings(4, Duration.ofMillis(500),
-                Duration.ofSeconds(20), 7);
+                Duration.ofSeconds(20), 7, Duration.ofSeconds(15), Duration.ofMinutes(20));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
         editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
 
         String text = Files.readString(file);
         assertThat(text).contains("max-concurrent: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
-                "      initial-delay: 500ms\n", "      max-delay: 20s\n", "      pause-after-failures: 7\n");
+                "      initial-delay: 500ms\n", "      max-delay: 20s\n", "      pause-after-failures: 7\n",
+                "      resume-initial-delay: 15s\n", "      resume-max-delay: 20m\n");
         assertThat(text.indexOf("retry:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("retry:"));
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();

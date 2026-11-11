@@ -54,6 +54,7 @@ import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -207,6 +208,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Space Harvester als Bibliothek: Quellen, Abgleich in den eingebetteten Lucene-Cache, Seiten, Baum, Suche und Export
@@ -756,6 +758,10 @@ public final class Harvester implements AutoCloseable {
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions);
+            // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
+            // mit derselben Lese- und Exportprüfung wie beim Start.
+            jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
+                    exportAccess()));
             // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
             FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
             KnowledgeGraph graph = this.knowledgeGraph;
@@ -1608,10 +1614,33 @@ public final class Harvester implements AutoCloseable {
     public JobStatus export(String sourceId, String spaceKey, List<String> formats, boolean refresh) {
         requireExport(sourceId, spaceKey);
         requireActive(sourceId);
-        return exports.start(ExportRequest.of(sourceId, spaceKey, OWNER, formats).withRefresh(refresh)
+        return exports.start(exportAccess().apply(ExportRequest.of(sourceId, spaceKey, OWNER, formats)
+                .withRefresh(refresh)));
+    }
+
+    /**
+     * Lese- und Exportprüfung eines Exports dieser App: jede Seite nur, wenn die Richtlinie sie dem Aufrufer zeigt, und
+     * der ganze Lauf nur, solange {@code EXPORT} und {@code CONTENT} für den Space freigegeben sind. Gilt beim Start und
+     * ebenso beim Fortsetzen, Nachladen und Wiederanlauf, auch nach einem Neustart aus den abgelegten Angaben.
+     */
+    private UnaryOperator<ExportRequest> exportAccess() {
+        return request -> request
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))
-                .withAuthorized(() -> exportPermitted(sourceId, spaceKey)));
+                .withAuthorized(() -> exportPermitted(request.sourceId(), request.spaceKey()));
+    }
+
+    /**
+     * Führt eine Aktion auf einem Auftrag dieser App aus ({@link JobActions#perform}); Exporte prüfen dabei Lesbarkeit
+     * und Exportrecht wie beim Start ({@link #exportAccess()}).
+     */
+    public JobStatus performJobAction(String jobId, JobAction action) {
+        return jobActions.perform(jobId, OWNER, action, exportAccess());
+    }
+
+    /** Setzt einen Export dieser App im selben Eintrag fort, mit Lese- und Exportprüfung wie beim Start. */
+    public JobStatus resumeExport(String exportId) {
+        return exports.resume(exportId, OWNER, exportAccess());
     }
 
     private boolean exportPermitted(String sourceId, String spaceKey) {
