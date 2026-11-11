@@ -167,6 +167,31 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
+        // Die Hauptreiter sind quadratische Symbolknöpfe für die Werkzeugleiste unten; ihr Name steht im Tooltip,
+        // die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
+        assertThat(onEdt(() -> {
+            List<String> tips = new java.util.ArrayList<>();
+            for (java.awt.Component c : ((java.awt.Container) detail.tabIcons()).getComponents()) {
+                javax.swing.AbstractButton button = (javax.swing.AbstractButton) c;
+                assertThat(button.getText()).isNullOrEmpty();
+                assertThat(button.getIcon()).isNotNull();
+                assertThat(button.getPreferredSize().width).isEqualTo(button.getPreferredSize().height);
+                tips.add(button.getToolTipText());
+            }
+            return tips;
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+        assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
+        assertThat(onEdt(() -> view.tools())).isSameAs(detail.tabIcons());
+        onEdt(() -> {
+            detail.tabs().button("Text").doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
+        assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
+        onEdt(() -> {
+            detail.tabs().select("Leseansicht");
+            return null;
+        });
 
         // „Aussagen“ zeigt den eingebauten Reiter der Aussagenanalyse; statementsTab ersetzt ihn, null zeigt den Hinweis.
         assertThat(onEdt(() -> detail.statements().getComponent(0))).isInstanceOf(StatementsTab.class);

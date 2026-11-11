@@ -26,4 +26,12 @@ public interface View {
     default JComponent statusInfo() {
         return null;
     }
+
+    /**
+     * Umschalter des Bereichs mittig in der Werkzeugleiste unten (etwa die Seitenreiter der Leseansicht als
+     * Symbolknöpfe); die Lupe links klappt über sie auf. {@code null}, wenn der Bereich keine hat.
+     */
+    default JComponent tools() {
+        return null;
+    }
 }

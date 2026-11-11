@@ -179,6 +179,11 @@ public final class ContentView implements View {
         return statusInfo;
     }
 
+    @Override
+    public JComponent tools() {
+        return detail.tabIcons();
+    }
+
     PageDetailPanel detail() {
         return detail;
     }
