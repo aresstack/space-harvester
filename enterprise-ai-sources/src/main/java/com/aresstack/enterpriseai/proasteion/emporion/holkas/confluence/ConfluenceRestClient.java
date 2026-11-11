@@ -12,6 +12,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -683,6 +684,53 @@ final class ConfluenceRestClient {
     }
 
     /**
+     * Wie {@link #readAttachment}, aber der Inhalt fließt ohne Größengrenze nach {@code sink}, nie ganz in den
+     * Speicher. Kommt statt der Datei HTML (Anmelde- oder Einmalcode-Seite), wird es wie dort untersucht; dann ist
+     * nichts nach {@code sink} geschrieben. Ein HTML-Anhang selbst wird höchstens bis {@code maxResponseBytes} gelesen.
+     *
+     * @return die Anzahl geschriebener Bytes
+     */
+    long streamAttachment(Session session, final Attachment attachment, final OutputStream sink)
+            throws KnowledgeSourceException {
+        if (attachment.downloadPath == null || !attachment.downloadPath.startsWith("/")
+                || attachment.downloadPath.startsWith("//")) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
+                    "Anhang " + attachment.id + " ohne gültigen Download-Pfad");
+        }
+        final boolean htmlFile = baseMediaType(attachment.mediaType).contains("html");
+        final long[] written = {0};
+        byte[] inline = withWebSession(session, ANY_ACCEPT, "Anhang", new Attempt() {
+            @Override
+            public byte[] run(Map<String, String> headers) throws KnowledgeSourceException {
+                ConfluenceHttpResponse response = fetch(headers, attachment.downloadPath, "Anhang",
+                        config.maxResponseBytes(), sink);
+                if (response.isStreamed()) {
+                    written[0] = response.streamedBytes();
+                    return new byte[0];
+                }
+                if (!htmlFile) {
+                    URI at = fileUri(attachment.downloadPath, response);
+                    HtmlResponseDiagnosis page = diagnoseHtml("Anhang", at, response, headers);
+                    throw htmlFailure(at, response, page, fileFailure("Anhang", attachment.downloadPath, response,
+                            new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Anhang: erwartet "
+                                    + attachment.mediaType + ", erhalten " + baseMediaType(response.contentType())
+                                    + " (vermutlich eine Anmeldeseite)" + pageSuffix(page))));
+                }
+                return response.body();
+            }
+        });
+        if (inline.length > 0) {
+            try {
+                sink.write(inline);
+            } catch (IOException e) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Anhang nicht geschrieben (" + cause(e) + ")", e);
+            }
+            return inline.length;
+        }
+        return written[0];
+    }
+
+    /**
      * Eine Vorschau der Dokumentkonvertierung ({@link #conversionPath}); nur PDF oder Bild gilt, alles andere (etwa
      * die Anmeldeseite) wird abgelehnt, mit Sitzungs-Cookie-Neuversuch wie beim Bild. 202 heißt: Confluence erzeugt
      * sie noch.
@@ -718,6 +766,15 @@ final class ConfluenceRestClient {
     /** GET mit {@link #ANY_ACCEPT}; Fehlerstatus werden mit Logzeile (ohne Query und Header) zur Ausnahme. */
     private ConfluenceHttpResponse fetch(Map<String, String> initial, String path, String what, int maxBytes)
             throws KnowledgeSourceException {
+        return fetch(initial, path, what, maxBytes, null);
+    }
+
+    /**
+     * @param sink {@code null} oder Ziel eines strombaren Körpers ({@link ConfluenceHttpTransport#download}); dann gilt
+     *             {@code maxBytes} nur für HTML, Fehler und Weiterleitungen
+     */
+    private ConfluenceHttpResponse fetch(Map<String, String> initial, String path, String what, int maxBytes,
+                                         OutputStream sink) throws KnowledgeSourceException {
         URI uri;
         try {
             uri = URI.create(config.baseUrl() + path);
@@ -728,8 +785,13 @@ final class ConfluenceRestClient {
         ConfluenceHttpResponse response;
         for (int hop = 0; ; hop++) {
             try {
-                response = hop == 0 ? transport.get(uri, headers, maxBytes)
-                        : transport.getAnonymous(uri, headers, maxBytes);
+                if (sink != null) {
+                    response = hop == 0 ? transport.download(uri, headers, sink, maxBytes)
+                            : transport.downloadAnonymous(uri, headers, sink, maxBytes);
+                } else {
+                    response = hop == 0 ? transport.get(uri, headers, maxBytes)
+                            : transport.getAnonymous(uri, headers, maxBytes);
+                }
             } catch (ConfluenceResponseTooLargeException e) {
                 throw fileFailure(what, uri.getRawPath(), null, new ResponseTooLargeException(
                         what + " größer als " + maxBytes + " Bytes", maxBytes));

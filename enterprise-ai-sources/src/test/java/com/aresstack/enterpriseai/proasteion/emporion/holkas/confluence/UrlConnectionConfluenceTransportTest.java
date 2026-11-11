@@ -51,6 +51,10 @@ public class UrlConnectionConfluenceTransportTest {
         });
         server.createContext("/missing", exchange -> respond(exchange, 404, "application/json", "{\"statusCode\":404}"));
         server.createContext("/big", exchange -> respond(exchange, 200, "text/plain", new String(new char[20000]).replace('\0', 'x')));
+        server.createContext("/file", exchange -> respond(exchange, 200, "application/pdf",
+                new String(new char[50000]).replace('\0', 'p')));
+        server.createContext("/page", exchange -> respond(exchange, 200, "text/html;charset=UTF-8",
+                new String(new char[20000]).replace('\0', 'h')));
         server.createContext("/hop1", exchange -> {
             exchange.getResponseHeaders().add("Set-Cookie", "A=1; Path=/");
             exchange.getResponseHeaders().add("Set-Cookie", "B=2; HttpOnly");
@@ -103,6 +107,34 @@ public class UrlConnectionConfluenceTransportTest {
         } catch (IOException expected) {
             assertTrue(expected.getMessage().contains("1000"));
         }
+    }
+
+    @Test
+    public void aDownloadStreamsAFileOfAnySizeIntoTheSinkWithoutTheLimit() throws IOException {
+        java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+
+        ConfluenceHttpResponse response = transport.download(base.resolve("/file"), headers(), sink, 1000);
+
+        assertTrue(response.isStreamed());
+        assertEquals(50000, response.streamedBytes());
+        assertEquals(0, response.length());
+        assertEquals(50000, sink.size());
+    }
+
+    @Test
+    public void aDownloadKeepsHtmlInMemoryUnderThePageLimit() throws IOException {
+        java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+        ConfluenceHttpResponse page = transport.download(base.resolve("/page"), headers(), sink, 30000);
+        assertFalse(page.isStreamed());
+        assertEquals(20000, page.length());
+        assertEquals(0, sink.size());
+        try {
+            transport.download(base.resolve("/page"), headers(), sink, 1000);
+            fail();
+        } catch (ConfluenceResponseTooLargeException expected) {
+            assertEquals(1000, expected.maxBytes());
+        }
+        assertEquals(0, sink.size());
     }
 
     @Test(expected = IOException.class)
