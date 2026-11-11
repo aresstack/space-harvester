@@ -135,6 +135,18 @@ public final class ActivitiesView implements View {
                 ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
         table.getColumnModel().getColumn(2).setCellRenderer(new StateRenderer());
+        table.getColumnModel().getColumn(0).setCellRenderer(new TypeRenderer());
+        // Ein Klick auf die Art eines Exports klappt seine Bilder und Anhänge auf oder zu (Angelo 11.11.2026).
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                int row = table.rowAtPoint(event.getPoint());
+                if (row >= 0 && table.columnAtPoint(event.getPoint()) == table.convertColumnIndexToView(0)
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    toggleGroup(row);
+                }
+            }
+        });
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && table.getSelectedRow() >= 0) {
                 select(model.rows.get(table.getSelectedRow()).id());
@@ -468,6 +480,15 @@ public final class ActivitiesView implements View {
             feedback.clear();
             poll();
         }
+    }
+
+    /** Klappt die Gruppe in der Zeile {@code row} auf oder zu; die Auswahl bleibt beim selben Auftrag. */
+    void toggleGroup(int row) {
+        if (row < 0 || row >= model.rows.size() || !model.group(model.rows.get(row))) {
+            return;
+        }
+        model.toggle(model.rows.get(row));
+        reselect();
     }
 
     private void reselect() {
@@ -1388,14 +1409,94 @@ public final class ActivitiesView implements View {
     private record ExportDetail(JobStatus status, ExportArtifact artifact, ExportDatasetInfo dataset) {
     }
 
+    /**
+     * Die Aufträge in Anzeigereihenfolge (Angelo 11.11.2026): „Bilder beschaffen“ und „Anhänge beschaffen“ stehen als
+     * Unterzeilen direkt unter ihrem Export (Verknüpfung {@link ExportAssetCollection#EXPORT_ID}), Bilder vor Anhängen.
+     * Eine Gruppe ist aufgeklappt, bis sie in {@code collapsed} steht; dann zeigt sie nur den Export. Folgeaufträge,
+     * deren Export nicht mehr in der Liste steht, bleiben eigenständige Zeilen.
+     */
+    static List<JobStatus> grouped(List<JobStatus> jobs, Set<String> collapsed) {
+        Map<String, List<JobStatus>> children = children(jobs);
+        List<JobStatus> result = new ArrayList<>(jobs.size());
+        for (JobStatus job : jobs) {
+            if (parentOf(job, children) != null) {
+                continue;
+            }
+            result.add(job);
+            if (!collapsed.contains(job.id())) {
+                result.addAll(children.getOrDefault(job.id(), List.of()));
+            }
+        }
+        return result;
+    }
+
+    /** Folgeaufträge je Export-ID, nur für Exporte, die selbst in {@code jobs} stehen. */
+    static Map<String, List<JobStatus>> children(List<JobStatus> jobs) {
+        Set<String> exports = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (job.type() == JobType.EXPORT) {
+                exports.add(job.id());
+            }
+        }
+        Map<String, List<JobStatus>> children = new HashMap<>();
+        for (JobStatus job : jobs) {
+            String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
+            if (exportId != null && exports.contains(exportId)) {
+                children.computeIfAbsent(exportId, id -> new ArrayList<>()).add(job);
+            }
+        }
+        for (List<JobStatus> list : children.values()) {
+            list.sort(Comparator.comparing((JobStatus job) -> job.type() == JobType.ATTACHMENTS));
+        }
+        return children;
+    }
+
+    private static String parentOf(JobStatus job, Map<String, List<JobStatus>> children) {
+        String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
+        return exportId != null && children.containsKey(exportId) ? exportId : null;
+    }
+
     private static final class JobsModel extends AbstractTableModel {
 
         static final int ACTIONS = 5;
         private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
         private List<JobStatus> rows = new ArrayList<>();
+        private List<JobStatus> all = List.of();
+        private Map<String, List<JobStatus>> children = Map.of();
+        /** Zugeklappte Exporte; neue Gruppen sind aufgeklappt. */
+        private final Set<String> collapsed = new HashSet<>();
 
         void set(List<JobStatus> jobs) {
-            rows = new ArrayList<>(jobs);
+            all = List.copyOf(jobs);
+            children = children(all);
+            collapsed.retainAll(children.keySet());
+            rows = grouped(all, collapsed);
+            fireTableDataChanged();
+        }
+
+        /** Ob der Export Unterzeilen hat. */
+        boolean group(JobStatus job) {
+            return children.containsKey(job.id());
+        }
+
+        /** Ob die Zeile eine Unterzeile eines Exports ist. */
+        boolean child(JobStatus job) {
+            return parentOf(job, children) != null;
+        }
+
+        boolean collapsed(JobStatus job) {
+            return collapsed.contains(job.id());
+        }
+
+        /** Klappt die Gruppe des Exports auf oder zu. */
+        void toggle(JobStatus job) {
+            if (!group(job)) {
+                return;
+            }
+            if (!collapsed.remove(job.id())) {
+                collapsed.add(job.id());
+            }
+            rows = grouped(all, collapsed);
             fireTableDataChanged();
         }
 
@@ -1432,6 +1533,25 @@ public final class ActivitiesView implements View {
      * Zustand je Zeile nach dem Zustandsobjekt des Core ({@link Texts#state(JobStatus)}); ein Auftrag, der auf einen
      * Einmalcode wartet, sagt es statt „Läuft“.
      */
+    private final class TypeRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
+                                                       int row, int column) {
+            JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
+            String text = String.valueOf(value);
+            if (job != null && model.group(job)) {
+                text = (model.collapsed(job) ? "▸ " : "▾ ") + text;
+            } else if (job != null && model.child(job)) {
+                text = "└ " + text;
+            }
+            super.getTableCellRendererComponent(table, text, selected, focus, row, column);
+            setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
+            setToolTipText(job != null && model.group(job)
+                    ? (model.collapsed(job) ? "Bilder und Anhänge zeigen" : "Bilder und Anhänge ausblenden") : null);
+            return this;
+        }
+    }
+
     private final class StateRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
