@@ -485,7 +485,7 @@ public class Assets {
             }
         }
         if (diagram == null) {
-            return Optional.empty();
+            return foreignDrawio(sourceId, pageId, pageVersion, image);
         }
         PageAttachment found = diagram;
         Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
@@ -512,6 +512,42 @@ public class Assets {
             return Optional.empty();
         }
         return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Ein draw.io-Diagramm, das nicht an dieser Seite hängt (eingebunden über {@code multiexcerpt-include},
+     * {@code include} oder {@code inc-drawio}; die Adresse trägt {@code #drawio=…&page=<Eigentümerseite>}): Die Quelle
+     * zeichnet es selbst über die REST-Schnittstelle des Plugins und liefert SVG wie im Enterprise AI Client. Swing
+     * zeigt kein SVG, also wird es hier gerastert ({@link #SVG_PNG_RENDITION}, einmal je SVG abgelegt), wie der
+     * EAC-Leser es mit Batik tut. Liefert die Quelle ein Rasterbild (Vorschau als Rückfall), bleibt es beim Bild selbst.
+     */
+    private Optional<AssetContent> foreignDrawio(String sourceId, String pageId, String pageVersion,
+                                                 HarvestSource.ViewImage image) {
+        String src = image.src() == null ? "" : image.src();
+        if (!src.contains("#drawio=")) {
+            return Optional.empty();
+        }
+        AssetContent loaded = viewImage(sourceId, pageId, pageVersion, image);
+        // Am Inhalt erkannt, nicht am Typ: Confluence nennt am Vorschaubild image/png, die Quelle liefert aber die
+        // gezeichnete SVG-Fassung (auch aus der Ablage).
+        if (loaded.asset().kind() != AssetKind.VECTOR && !isSvg(loaded.content())) {
+            return Optional.empty();
+        }
+        Rendered rendered = rendition(sourceId, pageId, SVG_PNG_RENDITION, loaded.content());
+        if (rendered.asset() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /** SVG-Text am Anfang der Bytes (nach einer XML-Deklaration oder einem Kommentar), gleich welcher Typ genannt ist. */
+    static boolean isSvg(byte[] content) {
+        if ("image/svg+xml".equals(sniff(content))) {
+            return true;
+        }
+        String head = new String(content, 0, Math.min(content.length, 1024), java.nio.charset.StandardCharsets.UTF_8)
+                .stripLeading().toLowerCase(Locale.ROOT);
+        return head.startsWith("<") && head.contains("<svg");
     }
 
     /**
@@ -600,6 +636,8 @@ public class Assets {
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
     public static final String DRAWIO_PNG_RENDITION = "drawio-png-1";
+    /** Version eines gerasterten SVG der Quelle (draw.io einer anderen Seite) als PNG für die Lese-Ansicht. */
+    public static final String SVG_PNG_RENDITION = "svg-png-1";
     /** Version der Mermaid-Grafik im Speicher. */
     public static final String MERMAID_RENDITION = "mermaid-png-1";
 
@@ -622,6 +660,7 @@ public class Assets {
         Diagrams.Rendering rendering = switch (renderer) {
             case DRAWIO_RENDITION -> Diagrams.drawio(source);
             case DRAWIO_PNG_RENDITION -> Diagrams.drawioPng(source);
+            case SVG_PNG_RENDITION -> Diagrams.svgPng(source);
             case MERMAID_RENDITION -> Diagrams.mermaid(new String(source, java.nio.charset.StandardCharsets.UTF_8));
             default -> throw new IllegalArgumentException("Unbekannter Renderer " + renderer);
         };

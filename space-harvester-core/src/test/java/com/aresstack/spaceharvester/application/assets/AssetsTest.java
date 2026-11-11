@@ -623,6 +623,54 @@ class AssetsTest {
     }
 
     @Test
+    void aDrawioDiagramOfAnotherPageBecomesAPngFromTheSvgOfTheSource() {
+        Assets assets = assets(100_000);
+        // Eingebunden über multiexcerpt-include: das Diagramm hängt an Seite 202, nicht an der gezeigten Seite 101.
+        // Die Quelle zeichnet es selbst (REST des Plugins) und liefert SVG wie im Enterprise AI Client.
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        source.views.put(src, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+                + "<rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>");
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", null, null, null);
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(png.asset().mediaType()).isEqualTo("image/png");
+        assertThat(png.asset().version()).isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Das SVG liegt danach in der Ablage: kein zweiter Abruf von der Quelle.
+        assertThat(assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow().asset().sha256())
+                .isEqualTo(png.asset().sha256());
+        assertThat(source.viewLoads).isEqualTo(1);
+        // Ein gewöhnliches Bild ohne draw.io-Angaben bleibt beim Bildweg der App.
+        assertThat(assets.viewDiagram("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/202/foto.png", "Foto", null, "image/png", null)))
+                .isEmpty();
+        assertThat(source.viewLoads).isEqualTo(1);
+    }
+
+    @Test
+    void aForeignDrawioDiagramDeclaredAsPngIsStillRasterizedFromItsSvg() {
+        Assets assets = assets(100_000);
+        // export_view nennt am Vorschaubild image/png; geliefert wird trotzdem die gezeichnete SVG-Fassung.
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        source.views.put(src, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>"
+                + "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+                + "<rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>");
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", "att-p", "image/png", "3");
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(png.asset().version()).isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Aus der Ablage ebenso gerastert, ohne neuen Abruf.
+        assertThat(assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow().asset().version())
+                .isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(source.viewLoads).isEqualTo(1);
+    }
+
+    @Test
     void anUndrawableDiagramLeavesThePreview() {
         Assets assets = assets(100_000);
         source.file("att-d", "1", "kein xml");
@@ -648,6 +696,18 @@ class AssetsTest {
         int downloads;
         final List<Long> limits = new ArrayList<>();
         final List<PageAttachment> listed = new ArrayList<>();
+        final Map<String, String> views = new HashMap<>();
+        int viewLoads;
+
+        @Override
+        public byte[] viewImage(ViewImage image, long maxBytes) {
+            viewLoads++;
+            String content = views.get(image.src());
+            if (content == null) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.NOT_FOUND, "x", null);
+            }
+            return content.getBytes(StandardCharsets.UTF_8);
+        }
 
         @Override
         public PageAttachments attachments(String pageId) {
