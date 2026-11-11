@@ -64,7 +64,7 @@ Dazu kommen:
 - `tree.json`: `roots`, je Knoten `id`, `url`, `children` in der Geschwister-Reihenfolge des Baums.
 - `manifest.json` (`space-harvester/export-package/v1`): `converter`, `pageSnapshotSchema`, `sourceId`, `spaceKey`,
   `spaceName`, `rootPageId`, `pageCount`, je Seite in Baumreihenfolge `pageId`, `resourceId`, `depth`, `revision`,
-  `metadataHash`, `attributesHash`, `retrievedAt`, `mediaType`, `nativeFormat`, `rawSha256`, `size`, `raw`, `view`
+  `metadataHash` und `attributesHash` (der Kopfdaten aus `pages.json`, zum Prüfen), `retrievedAt`, `mediaType`, `nativeFormat`, `rawSha256`, `size`, `raw`, `view`
   (Pfad oder `null`) und unter `assets` das vollständige Bildmanifest des Datenbestands
   (`space-harvester/export-assets/v1`, `null` ohne Beschaffung). Die Dateien dazu findet ein Import über `sha256` in
   `assets.json` und `attachments.json`.

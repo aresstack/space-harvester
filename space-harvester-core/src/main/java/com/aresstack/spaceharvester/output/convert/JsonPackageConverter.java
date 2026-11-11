@@ -49,7 +49,8 @@ import tools.jackson.databind.json.JsonMapper;
  * raw/&lt;Seiten-ID&gt;.json            die Payload jeder Seite Byte für Byte (json-package/3)
  * views/&lt;Seiten-ID&gt;.json          die Lese-Ansicht einer Seite mit dem Inhalt ausgeführter Makros, sofern abgelegt
  * tree.json                        der Seitenbaum mit Geschwister-Reihenfolge, nur Verweise über IDs
- * manifest.json                    Paketmanifest (export-package/v1): Space, je Seite Snapshot-Angaben und Pfade,
+ * manifest.json                    Paketmanifest (export-package/v1): Space, je Seite Kopfdaten-Hashes wie in
+ *                                  pages.json, Abruf, Medientyp, rawSha256 und Pfade,
  *                                  dazu das vollständige Bildmanifest des Datenbestands
  * </pre>
  *
@@ -202,8 +203,9 @@ public final class JsonPackageConverter implements ExportConverter {
                 }).orElse(null);
                 URI url = page.header().metadata().url();
                 urls.put(page.pageId(), url == null ? null : url.toString());
-                written.add(new PackagePage(page.pageId(), snapshot.metadata().resourceId(), page.depth(),
-                        snapshot.revision(), snapshot.metadataHash(), snapshot.attributesHash(),
+                // Kopfdaten wie in pages.json (aktueller Stand), damit ein Import sie dagegen prüfen kann.
+                written.add(new PackagePage(page.pageId(), page.header().metadata().resourceId(), page.depth(),
+                        snapshot.revision(), page.header().metadataHash(), page.header().attributesHash(),
                         snapshot.retrievedAt(), payload.mediaType(), payload.nativeFormat(), payload.rawSha256(),
                         payload.length(), raw, view));
             });
