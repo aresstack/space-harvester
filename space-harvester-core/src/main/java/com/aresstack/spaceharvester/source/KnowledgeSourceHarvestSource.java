@@ -1014,8 +1014,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return images(view);
     }
 
+    /**
+     * Die Bilder der Ansicht ohne die, deren Adresse keine Datei nennt: Der Adapter löst ein leeres {@code src} zur
+     * Basis auf, also zur Startseite der Quelle (Angelo 11.11.2026, 21:28); das ist kein Bild.
+     */
     private static List<ViewImage> images(PageView view) {
-        return view.images().stream().map(image -> {
+        return view.images().stream().filter(image -> !withoutFile(image.src())).map(image -> {
             KnowledgeResource resource = image.resource();
             String version = resource == null ? null : resource.revision().version();
             return new ViewImage(image.src(), image.title(), resource == null ? null : lastSegment(resource.id()),
@@ -1153,6 +1157,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (!(port instanceof PageViewSource views)) {
             return HarvestSource.super.viewImage(image, maxBytes);
         }
+        if (withoutFile(image.src())) {
+            // Leeres src oder die Wurzel der Quelle ist keine Datei (Angelo 11.11.2026, 21:28): Confluence liefert dafür
+            // das Dashboard, der Adapter versucht es dann mit dem Cookie einer frischen REST-Anmeldung, und diese neue
+            // Sitzung landet auf der Code-Seite. Das ergab eine Code-Abfrage samt Mail mitten im Lauf, deren Code an die
+            // freigeschaltete Sitzung ging und mit HTTP 500 scheiterte. Darum gar nicht erst abrufen.
+            throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Bild ohne Dateipfad", null);
+        }
         byte[] bytes;
         try {
             bytes = fetch(p -> ((PageViewSource) p).loadViewImage(image.src()));
@@ -1165,6 +1176,28 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw new AttachmentTooLargeException(id, maxBytes);
         }
         return bytes;
+    }
+
+    /** Ob {@code src} keinen Dateipfad hat: leer, nur Host, oder ein Pfad, der auf „/“ endet (Query und Anker zählen nicht). */
+    static boolean withoutFile(String src) {
+        if (src == null || src.isBlank()) {
+            return true;
+        }
+        String path = src.trim();
+        int end = path.length();
+        for (char c : new char[] {'?', '#'}) {
+            int at = path.indexOf(c);
+            if (at >= 0 && at < end) {
+                end = at;
+            }
+        }
+        path = path.substring(0, end);
+        int scheme = path.indexOf("://");
+        if (scheme >= 0) {
+            int slash = path.indexOf('/', scheme + 3);
+            path = slash < 0 ? "" : path.substring(slash);
+        }
+        return path.isEmpty() || path.endsWith("/");
     }
 
     private static PageAttachment attachment(KnowledgeResource resource) {

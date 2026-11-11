@@ -22,6 +22,29 @@ public interface AssetStore {
      */
     void put(Asset asset, byte[] content);
 
+    /** Eine leere Datei für einen Download, der danach mit {@link #putFile} abgelegt wird (Streaming, ohne Grenze). */
+    default java.nio.file.Path stagingFile() throws java.io.IOException {
+        return java.nio.file.Files.createTempFile("asset-", ".part");
+    }
+
+    /**
+     * Legt den Inhalt aus {@code file} ab; Hash und Größe müssen passen wie bei {@link #put}. Die Datei gehört danach
+     * der Ablage (verschoben oder gelöscht). Der Standard liest sie in den Speicher.
+     */
+    default void putFile(Asset asset, java.nio.file.Path file) {
+        try {
+            put(asset, java.nio.file.Files.readAllBytes(file));
+        } catch (java.io.IOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
+        } finally {
+            try {
+                java.nio.file.Files.deleteIfExists(file);
+            } catch (java.io.IOException e) {
+                // nichts weiter: eine temporäre Datei
+            }
+        }
+    }
+
     /**
      * Die Bytes eines abgelegten Anhangs, geprüft gegen {@link Asset#sha256()}.
      *

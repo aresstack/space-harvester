@@ -1028,6 +1028,34 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * #571, Angelo 11.11.2026, 21:28: Ein Bild mit der Wurzel der Quelle als Adresse brachte das Dashboard, der
+     * Neuversuch mit frischem REST-Cookie die Code-Seite einer neuen Sitzung (Mail, Code-Abfrage mitten im Lauf). Ein
+     * Bild ohne Dateipfad geht darum nie ans Netz.
+     */
+    @Test
+    void anImageWithoutAFilePathIsNeverFetched() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                new WebFiles(secrets, seen, "web-port", 0, null));
+        seen.clear();
+
+        for (String src : List.of("/", "https://wiki.example.org", "https://wiki.example.org/?x=1",
+                "https://wiki.example.org/confluence/")) {
+            SourceAccessException failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                    () -> source.viewImage(new HarvestSource.ViewImage(src, "", null, null, null), 1000),
+                    SourceAccessException.class);
+            assertThat(failure.reason()).as(src).isEqualTo(SourceAccessException.Reason.NOT_FOUND);
+        }
+
+        assertThat(seen).isEmpty();
+        assertThat(KnowledgeSourceHarvestSource.withoutFile("/download/attachments/1/a.png?version=2")).isFalse();
+        assertThat(KnowledgeSourceHarvestSource.withoutFile("https://wiki.example.org/download/thumbnails/1/a.png"))
+                .isFalse();
+    }
+
+    /**
      * #571, Angelo 11.11.2026: Der Proxy lehnte den Tunnel beim Absenden nach 20 s mit HTTP 503 ab; Confluence sah den
      * Code nie, derselbe Code galt zwei Minuten später. Darum geht er nach einer solchen Ablehnung gleich noch einmal.
      */
