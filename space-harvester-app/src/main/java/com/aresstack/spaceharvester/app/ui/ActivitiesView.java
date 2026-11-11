@@ -492,10 +492,14 @@ public final class ActivitiesView implements View {
     /** Was der Detailbereich zuletzt gezeigt hat ({@link #drawnState}). */
     private Object drawn;
 
-    /** Alles, wovon {@link #draw()} abhängt; die Dauer eines laufenden Auftrags zählt mit. */
+    /**
+     * Alles, wovon {@link #draw()} abhängt: auch die Dauer eines laufenden Auftrags und der Ausgabeordner, den die
+     * Karte nennt (änderbar in den Einstellungen ohne Neustart).
+     */
     private Object drawnState() {
         Optional<JobStatus> current = currentStatus();
-        return java.util.Arrays.asList(selectedId, detail, phase, outputFiles, model.rows.isEmpty(),
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        return java.util.Arrays.asList(selectedId, detail, phase, outputFiles, directory, model.rows.isEmpty(),
                 current.map(s -> waitingForSignIn(s.id())).orElse(false),
                 current.map(s -> Texts.duration(s.startedAt(), s.finishedAt())).orElse(null));
     }
