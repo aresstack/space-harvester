@@ -93,4 +93,42 @@ public final class PillTabs extends JPanel {
     public ComposerToggleButton button(String name) {
         return buttons.get(name);
     }
+
+    /**
+     * Macht aus den Reitern quadratische Symbolknöpfe (der Name bleibt Tooltip und zugänglicher Name) und gibt ihre
+     * Leiste zum Einbau an anderer Stelle zurück, etwa mittig in der Werkzeugleiste unten. Umschalten, Auswahl und
+     * die dunkle Füllung des aktiven Knopfs bleiben wie bei den Pillen; die Reiterzeile oben entfällt, solange sie
+     * keine Aktionen trägt. Reiter ohne Symbol in {@code icons} behalten ihre Pille.
+     */
+    public JComponent iconBar(Map<String, javax.swing.Icon> icons) {
+        JPanel strip = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
+        strip.setOpaque(false);
+        String selected = selected();
+        for (Map.Entry<String, ComposerToggleButton> entry : new LinkedHashMap<>(buttons).entrySet()) {
+            javax.swing.Icon icon = icons.get(entry.getKey());
+            if (icon == null) {
+                continue;
+            }
+            String name = entry.getKey();
+            ComposerToggleButton old = entry.getValue();
+            group.remove(old);
+            bar.remove(old);
+            ComposerToggleButton button = new ComposerToggleButton(icon, null, name);
+            button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+            button.getAccessibleContext().setAccessibleName(name);
+            java.awt.Dimension natural = button.getPreferredSize();
+            int side = Math.max(natural.width, natural.height);
+            button.setPreferredSize(new java.awt.Dimension(side, side));
+            button.addActionListener(e -> select(name));
+            group.add(button);
+            buttons.put(name, button);
+            strip.add(button);
+            button.setSelected(name.equals(selected));
+        }
+        if (bar.getComponentCount() == 0 && actions.getComponentCount() == 0) {
+            remove(row);
+        }
+        revalidate();
+        return strip;
+    }
 }

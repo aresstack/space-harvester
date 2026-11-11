@@ -386,6 +386,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (button != null) {
             button.setSelected(true);
         }
+        findBar.tools(view.tools());
         view.shown();
         if (changed) {
             findBar.areaChanged();

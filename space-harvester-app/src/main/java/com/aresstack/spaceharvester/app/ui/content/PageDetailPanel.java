@@ -150,6 +150,8 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
+    /** Die Hauptreiter als quadratische Symbolknöpfe für die Werkzeugleiste unten ({@link #tabIcons()}). */
+    private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
     /** Inhalt des Unterreiters „Aussagen“; bis {@link #statementsTab(JComponent)} ein Hinweis. */
@@ -311,6 +313,16 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced);
+        // Die Hauptreiter wandern als Symbolknöpfe mittig in die Werkzeugleiste unten (wie die Kopfzeile in AskAI);
+        // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
+        java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
+        icons.put(READING, PageTabIcons.reading());
+        icons.put(READ, PageTabIcons.text());
+        icons.put(PROPERTIES, PageTabIcons.properties());
+        icons.put(ATTACHMENTS, PageTabIcons.attachments());
+        icons.put(ANALYSES, PageTabIcons.analyses());
+        icons.put(ADVANCED, PageTabIcons.advanced());
+        tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
             loadVisible();
@@ -445,6 +457,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.clear();
         setActionsEnabled(false);
         cards.show(deck, EMPTY);
+        tabIcons.setVisible(false);
     }
 
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
@@ -503,6 +516,7 @@ public final class PageDetailPanel extends JPanel {
         references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
+        tabIcons.setVisible(true);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
@@ -1753,6 +1767,14 @@ public final class PageDetailPanel extends JPanel {
 
     TermsTab terms() {
         return terms;
+    }
+
+    /**
+     * Die Hauptreiter (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als quadratische Symbolknöpfe;
+     * das Hauptfenster setzt sie mittig in die Werkzeugleiste unten. Sichtbar nur, solange eine Seite gezeigt wird.
+     */
+    public JComponent tabIcons() {
+        return tabIcons;
     }
 
     PillTabs tabs() {
