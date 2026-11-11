@@ -708,6 +708,8 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
+            // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
+            assets.downloadLimit(jobs.parallelDownloads());
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
@@ -1436,6 +1438,31 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Alle Aufträge dieses Harvesters. */
+    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        return jobs.parallelPreparations();
+    }
+
+    /** Ändert {@link #parallelPreparations()} sofort (1 bis {@value JobLimits#MAX_PARALLEL_PREPARATIONS}). */
+    public void parallelPreparations(int value) {
+        jobs.parallelPreparations(value);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig laden ({@code jobs.parallel-downloads}). */
+    public int parallelDownloads() {
+        return jobs.parallelDownloads();
+    }
+
+    /**
+     * Ändert {@link #parallelDownloads()} sofort (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); bei 0 bereiten
+     * Bilder- und Anhängeaufträge nur vor und warten dann, bis wieder geladen werden darf.
+     */
+    public void parallelDownloads(int value) {
+        jobs.parallelDownloads(value);
+        // Laufende Downloads laufen zu Ende: ihre Plätze bleiben, bis sie fertig sind.
+        assets.downloadLimit(Math.max(value, jobs.downloadingNow()));
+    }
+
     public Jobs jobs() {
         return jobs;
     }

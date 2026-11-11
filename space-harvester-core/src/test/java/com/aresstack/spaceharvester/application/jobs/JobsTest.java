@@ -339,16 +339,20 @@ class JobsTest {
     void followUpJobsNeverTakeTheLastSlotAndWaitBehindExports() {
         Jobs jobs = jobs(2, 10);
         JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus first = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }));
         JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
                 JobTask.blocking(context -> { }));
         JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
-        // Ein Platz für die Bilder, der letzte bleibt dem Export; die Anreicherung wartet.
-        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.RUNNING);
+        // Bilder haben eigene Plätze; eine Anreicherung bekommt einen Platz, der letzte bleibt dem Export.
+        assertThat(jobs.status(images.id()).stage()).isEqualTo(JobStage.PREPARING);
+        assertThat(jobs.status(first.id()).state()).isEqualTo(JobState.RUNNING);
         assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
         assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.QUEUED);
         JobStatus sync = jobs.submit(JobType.SYNC, "confluence", "C", "client-a", JobTask.blocking(context -> { }));
 
+        executor.runNext();
         executor.runNext();
         executor.runNext();
 

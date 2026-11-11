@@ -64,6 +64,17 @@ public interface JobContext {
     }
 
     /**
+     * Beendet die Vorbereitung eines Downloads ({@link JobType#download()}): gibt den Platz für Vorbereitungen frei,
+     * steht als „Vorbereitet“ und wartet, bis ein Download-Platz frei ist ({@link Jobs#parallelDownloads()}; bei 0
+     * beliebig lange). Danach gilt die Laufzeitgrenze ab jetzt. Ohne Wirkung außerhalb eines Downloads und beim zweiten
+     * Aufruf.
+     *
+     * @throws JobCancelledException wenn währenddessen Abbruch oder Anhalten angefordert wird
+     */
+    default void awaitDownloadSlot() {
+    }
+
+    /**
      * Hält den eigenen Auftrag an, statt die übrigen Seiten oder Dateien als Fehler zu zählen, etwa wenn die Anmeldung
      * fehlt oder die Quelle nicht erreichbar ist. Der Auftrag endet als {@link JobState#PAUSED} mit {@code reason};
      * was er geladen hat, bleibt, und Fortsetzen macht dort weiter.

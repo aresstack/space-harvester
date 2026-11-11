@@ -22,7 +22,7 @@ class JobsConfigurationTest {
     @Test
     void defaults() {
         context.run(app -> assertThat(app.getBean(JobsProperties.class))
-                .isEqualTo(new JobsProperties(2, 20, Duration.ofHours(6), Duration.ofDays(7), 4, null)));
+                .isEqualTo(new JobsProperties(2, 20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null)));
     }
 
     @Test
@@ -30,7 +30,7 @@ class JobsConfigurationTest {
         context.withPropertyValues("space-harvester.jobs.max-concurrent=1", "space-harvester.jobs.max-queued=0",
                         "space-harvester.jobs.max-run-time=30m", "space-harvester.jobs.retention=1d")
                 .run(app -> assertThat(app.getBean(JobsProperties.class))
-                        .isEqualTo(new JobsProperties(1, 0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null)));
+                        .isEqualTo(new JobsProperties(1, 0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null)));
     }
 
     @Test
@@ -45,6 +45,22 @@ class JobsConfigurationTest {
                             new RetrySettings(5, Duration.ofMillis(500), Duration.ofSeconds(10), 8));
                     assertThat(app.getBean(Jobs.class)).isNotNull();
                 });
+    }
+
+    @Test
+    void downloadPoolsDefaultToTwoPreparationsAndFourDownloadsAndAcceptZeroDownloads() {
+        context.run(app -> {
+            assertThat(app.getBean(JobsProperties.class).toLimits().parallelPreparations()).isEqualTo(2);
+            assertThat(app.getBean(Jobs.class).parallelDownloads()).isEqualTo(4);
+        });
+        context.withPropertyValues("space-harvester.jobs.parallel-preparations=3",
+                        "space-harvester.jobs.parallel-downloads=0")
+                .run(app -> {
+                    assertThat(app.getBean(Jobs.class).parallelPreparations()).isEqualTo(3);
+                    assertThat(app.getBean(Jobs.class).parallelDownloads()).isZero();
+                });
+        context.withPropertyValues("space-harvester.jobs.parallel-downloads=-1")
+                .run(app -> assertThat(app).hasFailed());
     }
 
     @Test

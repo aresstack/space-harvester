@@ -550,6 +550,33 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void downloadLimitsGoUnderJobsAndZeroDownloadsIsAllowed() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
+        editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("max-concurrent: 3   # bleibt", "    parallel-preparations: 3\n",
+                "    parallel-downloads: 0\n");
+        assertThat(text.indexOf("parallel-downloads")).isEqualTo(text.lastIndexOf("parallel-downloads"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.jobLimits().parallelPreparations()).isEqualTo(3);
+        assertThat(settings.jobLimits().parallelDownloads()).isZero();
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 0, 4))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 2, -1))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    parallel-downloads: 99\n");
+        AppSettings outside = loader.load(file);
+        assertThat(outside.problems()).anyMatch(problem -> problem.contains("parallel-downloads"));
+        assertThat(outside.jobLimits().parallelDownloads()).isEqualTo(4);
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"

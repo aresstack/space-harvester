@@ -57,6 +57,8 @@ class ConfigurationParityTest {
                 mode: sync-cache
                 catch-up-on-start: true
               jobs:
+                parallel-preparations: 3
+                parallel-downloads: 0
                 retry:
                   max-attempts: 4
                   initial-delay: 500ms
@@ -116,6 +118,11 @@ class ConfigurationParityTest {
         assertThat(app.jobLimits().retry()).isEqualTo(jobs.retry().toSettings())
                 .isEqualTo(new RetrySettings(4, java.time.Duration.ofMillis(500), java.time.Duration.ofSeconds(20), 7,
                         java.time.Duration.ofSeconds(5), java.time.Duration.ofMinutes(2)));
+
+        // Grenzen für Bilder- und Anhängeaufträge (ADR 0025 Punkt 18), 0 Downloads bereitet nur vor.
+        assertThat(app.jobLimits().parallelPreparations()).isEqualTo(jobs.toLimits().parallelPreparations())
+                .isEqualTo(3);
+        assertThat(app.jobLimits().parallelDownloads()).isEqualTo(jobs.toLimits().parallelDownloads()).isZero();
 
         // #336: Budget der Synonymerkennung geht beim Dienst über withSyncRules in die HarvesterConfiguration.
         HarvesterConfiguration service2 = ConfigurationManagerConfiguration.withSyncRules(

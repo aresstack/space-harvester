@@ -51,6 +51,8 @@ public sealed interface JobLifecycleState {
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested()) : new Waiting(resumable);
             case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested())
+                    : status.stage() == JobStage.PREPARING ? new Preparing(failures)
+                    : status.stage() == JobStage.PREPARED ? new Prepared()
                     : new Running(resumable, failures);
             case PAUSED -> new Paused(status.pauseReason(), failures);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
@@ -105,6 +107,40 @@ public sealed interface JobLifecycleState {
             actions.add(JobAction.CANCEL);
             actions.add(JobAction.DELETE);
             return List.copyOf(actions);
+        }
+    }
+
+    /**
+     * Ein Download ({@link JobType#download()}) bereitet vor: zählt die Verweise, lädt noch nichts (Angelo 11.11.2026).
+     * Lässt sich wie ein laufender anhalten.
+     *
+     * @param retryable wie bei {@link Running}
+     */
+    record Preparing(boolean retryable) implements JobLifecycleState {
+        @Override
+        public String key() {
+            return "PREPARING";
+        }
+
+        @Override
+        public List<JobAction> actions() {
+            return new Running(true, retryable).actions();
+        }
+    }
+
+    /**
+     * Ein Download ist vorbereitet und wartet auf einen Download-Platz ({@link Jobs#parallelDownloads()}); „Jetzt
+     * starten“ gibt ihm den nächsten freien.
+     */
+    record Prepared() implements JobLifecycleState {
+        @Override
+        public String key() {
+            return "PREPARED";
+        }
+
+        @Override
+        public List<JobAction> actions() {
+            return List.of(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
         }
     }
 

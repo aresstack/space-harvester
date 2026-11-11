@@ -146,7 +146,37 @@ public class Assets {
     /** Obergrenze der gemerkten Nachhol-Versuche, danach beginnt die Liste neu. */
     static final int MAX_BACKFILLED = 10_000;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
-    private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
+    private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
+    private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
+
+    /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
+    private static final class Downloads extends Semaphore {
+        Downloads(int permits) {
+            super(permits);
+        }
+
+        void shrink(int by) {
+            reducePermits(by);
+        }
+    }
+
+    /**
+     * Wie viele Dateien höchstens gleichzeitig von den Quellen geladen werden: mindestens
+     * {@value #MAX_CONCURRENT_DOWNLOADS}, und so viele, dass jeder Download-Platz der Aufträge
+     * ({@code jobs.parallel-downloads}) und daneben die Lese-Ansicht einen hat; sonst warteten Aufträge auf diese Schranke
+     * und zählten das als Drosselung.
+     *
+     * @param jobDownloads gleichzeitig ladende Aufträge
+     */
+    public synchronized void downloadLimit(int jobDownloads) {
+        int wanted = Math.max(MAX_CONCURRENT_DOWNLOADS, jobDownloads + 2);
+        if (wanted > downloadLimit) {
+            downloads.release(wanted - downloadLimit);
+        } else if (wanted < downloadLimit) {
+            downloads.shrink(downloadLimit - wanted);
+        }
+        downloadLimit = wanted;
+    }
     /** Abgelegte Dokumente, deren Text beim Ernten schon einmal nachgeholt wurde (je Laufzeit, nach SHA-256). */
     private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
