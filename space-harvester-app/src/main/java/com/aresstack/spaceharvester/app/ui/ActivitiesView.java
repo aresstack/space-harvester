@@ -109,6 +109,9 @@ public final class ActivitiesView implements View {
     private final Set<String> converting = new HashSet<>();
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
+    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Bilder und Anhänge aufklappen");
+    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Bilder und Anhänge zuklappen");
     /**
      * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
      * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
@@ -178,7 +181,10 @@ public final class ActivitiesView implements View {
         }
         downloadsLabel.setLabelFor(downloads.box());
         preparationsLabel.setLabelFor(preparations.box());
-        listHead.add(Comic.row(preparationsLabel, preparations.box(), downloadsLabel, downloads.box(), deleteAll),
+        expandAll.addActionListener(e -> setAllGroups(false));
+        collapseAll.addActionListener(e -> setAllGroups(true));
+        listHead.add(Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
+                downloads.box(), deleteAll),
                 BorderLayout.EAST);
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
@@ -499,6 +505,12 @@ public final class ActivitiesView implements View {
             feedback.clear();
             poll();
         }
+    }
+
+    /** Klappt alle Gruppen zu ({@code collapse}) oder auf; die Auswahl bleibt beim selben Auftrag, sofern sichtbar. */
+    void setAllGroups(boolean collapse) {
+        model.setAll(collapse);
+        reselect();
     }
 
     /** Klappt die Gruppe in der Zeile {@code row} auf oder zu; die Auswahl bleibt beim selben Auftrag. */
@@ -1542,7 +1554,7 @@ public final class ActivitiesView implements View {
         return exportId != null && children.containsKey(exportId) ? exportId : null;
     }
 
-    private static final class JobsModel extends AbstractTableModel {
+    static final class JobsModel extends AbstractTableModel {
 
         static final int ACTIONS = 5;
         private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
@@ -1572,6 +1584,21 @@ public final class ActivitiesView implements View {
 
         boolean collapsed(JobStatus job) {
             return collapsed.contains(job.id());
+        }
+
+        /** Klappt alle Gruppen zu oder auf. */
+        void setAll(boolean collapse) {
+            collapsed.clear();
+            if (collapse) {
+                collapsed.addAll(children.keySet());
+            }
+            rows = grouped(all, collapsed);
+            fireTableDataChanged();
+        }
+
+        /** Für Tests: die sichtbaren Zeilen. */
+        List<JobStatus> visible() {
+            return rows;
         }
 
         /** Klappt die Gruppe des Exports auf oder zu. */

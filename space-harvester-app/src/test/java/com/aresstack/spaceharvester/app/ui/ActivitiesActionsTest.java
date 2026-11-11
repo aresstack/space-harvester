@@ -288,6 +288,19 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.groupIcon(false, false, false)).isNull();
     }
 
+    /** Alle auf- und alle zuklappen (Angelo 11.11.2026): Knöpfe links neben den Auswahlen. */
+    @Test
+    void allGroupsCanBeExpandedAndCollapsedAtOnce() {
+        ActivitiesView.JobsModel model = new ActivitiesView.JobsModel();
+        model.set(List.of(linked("e1", JobType.EXPORT, null), linked("b1", JobType.ASSETS, "e1"),
+                linked("e2", JobType.EXPORT, null), linked("a2", JobType.ATTACHMENTS, "e2")));
+
+        model.setAll(true);
+        assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "e2");
+        model.setAll(false);
+        assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "b1", "e2", "a2");
+    }
+
     private static JobStatus linked(String id, JobType type, String exportId) {
         return new JobStatus(id, type, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0), null,
                 false, Instant.EPOCH, null, null, null, null,
