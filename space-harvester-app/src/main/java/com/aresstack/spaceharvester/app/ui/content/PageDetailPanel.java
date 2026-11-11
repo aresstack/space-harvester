@@ -694,6 +694,8 @@ public final class PageDetailPanel extends JPanel {
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
         readerPage.contentChanged();
+        // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
+        readingPane.setNavigation(readerPage.sky().navigation(), reader.getText());
         acronymHint.setText(document.hint(live));
         recomputeReader.setVisible(recomputeOffered(document, live));
     }
@@ -1843,7 +1845,7 @@ public final class PageDetailPanel extends JPanel {
         Navigation shownNavigation = navigation == null || navigation.isEmpty() ? null : navigation;
         readerPage.setNavigation(shownNavigation);
         // Dieselben Inhaltswolken auch über der Leseansicht, als Übersicht beim Lesen.
-        readingPane.setNavigation(shownNavigation);
+        readingPane.setNavigation(shownNavigation, reader.getText());
     }
 
     /** Für Tests: der Navigationsbanner über dem Lesetext. */

@@ -143,8 +143,8 @@ final class ReadingPane extends JPanel {
      * Die Inhaltswolken über der Ansicht (dieselbe Dokumentnavigation wie unter „Text“, mit Unterwolken des gewählten
      * Kapitels); {@code null} blendet sie aus. Die Abschnitte findet die Ansicht über ihren Anker im Text.
      */
-    void setNavigation(Navigation navigation) {
-        page.setNavigation(navigation);
+    void setNavigation(Navigation navigation, String plainText) {
+        page.setNavigation(navigation, plainText == null ? "" : plainText);
     }
 
     /** Für Tests: die Ansicht mit dem Wolkenbanner. */
@@ -154,8 +154,17 @@ final class ReadingPane extends JPanel {
 
     /** Rollt zum Anker {@code fragment} der gezeigten Ansicht; ohne passenden Anker nichts. */
     void scrollToAnchor(String fragment) {
-        if (fragment != null && !fragment.isBlank()) {
-            pane.scrollToReference(fragment);
+        if (fragment == null || fragment.isBlank() || !(pane.getDocument() instanceof HTMLDocument document)) {
+            return;
+        }
+        // Wie scrollToReference, aber das Ziel steht unter den Inhaltswolken statt dahinter.
+        HTMLDocument.Iterator anchors = document.getIterator(HTML.Tag.A);
+        for (; anchors.isValid(); anchors.next()) {
+            Object name = anchors.getAttributes().getAttribute(HTML.Attribute.NAME);
+            if (fragment.equals(name)) {
+                page.scrollToOffset(anchors.getStartOffset());
+                return;
+            }
         }
     }
 

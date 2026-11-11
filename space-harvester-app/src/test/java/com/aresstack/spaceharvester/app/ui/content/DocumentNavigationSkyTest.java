@@ -354,6 +354,13 @@ class DocumentNavigationSkyTest {
         });
     }
 
+    @Test
+    void aRepeatedHeadingCountsLikeInThePlainText() {
+        String plain = "Details\nerster Teil\nWeiter\nDetails\nzweiter Teil";
+        assertEquals(0, NavigableDocumentPage.occurrence(plain, "details", 0));
+        assertEquals(1, NavigableDocumentPage.occurrence(plain, "details", plain.lastIndexOf("Details")));
+    }
+
     private static Doc manySteps() {
         Doc doc = new Doc().title("Handbuch");
         doc.heading(1, "Einleitung").paragraph(LONG);
