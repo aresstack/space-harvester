@@ -6,6 +6,10 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entr
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.document.DrawioDiagramRenderer;
 import com.aresstack.spaceharvester.document.DrawioGraph;
@@ -13,11 +17,15 @@ import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.URI;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -38,7 +46,16 @@ import tools.jackson.databind.json.JsonMapper;
  * attachments.json                 Dokument-Anhänge (ADR 0023): Seite, Anhang, Typ, Prüfsumme, Status, Pfade
  * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;  das Original des Anhangs
  * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;.txt  sein beim Beschaffen gelesener Text
+ * raw/&lt;Seiten-ID&gt;.json            die Payload jeder Seite Byte für Byte (json-package/3)
+ * views/&lt;Seiten-ID&gt;.json          die Lese-Ansicht einer Seite mit dem Inhalt ausgeführter Makros, sofern abgelegt
+ * tree.json                        der Seitenbaum mit Geschwister-Reihenfolge, nur Verweise über IDs
+ * manifest.json                    Paketmanifest (export-package/v1): Space, je Seite Snapshot-Angaben und Pfade,
+ *                                  dazu das vollständige Bildmanifest des Datenbestands
  * </pre>
+ *
+ * <p>Mit {@code raw/}, {@code views/}, {@code tree.json} und {@code manifest.json} enthält das Paket den
+ * Datenbestand verlustfrei: {@code rawSha256} jeder Seite passt zu ihrer Datei unter {@code raw/}, auch für
+ * Antworten, die kein JSON sind (in {@code pages.json} dann {@code content: null}).
  *
  * Keine Base64-Einbettung; Pfade sind relativ zum Paket. Was nicht abgelegt ist, steht nur mit Status und Grund in
  * {@code assets.json} ({@code REDUNDANT}: draw.io-Vorschau, bewusst weggelassen). Deterministisch: feste Zeitstempel,
@@ -47,7 +64,9 @@ import tools.jackson.databind.json.JsonMapper;
 public final class JsonPackageConverter implements ExportConverter {
 
     public static final String FORMAT = "json-package";
-    public static final String VERSION = "json-package/2";
+    public static final String VERSION = "json-package/3";
+    /** Format von {@code manifest.json}: alles, was ein Import braucht, um den Datenbestand wiederherzustellen. */
+    public static final String PACKAGE_FORMAT = "space-harvester/export-package/v1";
     public static final String ASSETS_FORMAT = "space-harvester/export-package-assets/v1";
     /** Format von {@code attachments.json} (ADR 0023). */
     public static final String ATTACHMENTS_FORMAT = "attachments/v1";
@@ -157,8 +176,117 @@ public final class JsonPackageConverter implements ExportConverter {
         } catch (UncheckedIOException e) {
             throw e.getCause();
         }
+        snapshots(zip, input, manifest.orElse(null));
         zip.finish();
         zip.flush();
+    }
+
+    /**
+     * json-package/3: Rohdaten, Lese-Ansichten, Baum und Paketmanifest. Die Seiten werden dafür ein zweites Mal
+     * einzeln aus dem Datenbestand gelesen; im Speicher bleiben nur die Angaben je Seite für das Manifest.
+     */
+    private void snapshots(ZipOutputStream zip, ConversionInput input, ExportAssetManifest assets)
+            throws IOException {
+        List<PackagePage> written = new ArrayList<>();
+        Map<String, String> urls = new HashMap<>();
+        try {
+            input.forEachPage(page -> {
+                PageSnapshot snapshot = page.snapshot();
+                NativePayload payload = snapshot.payload();
+                String raw = "raw/" + ExportFileJson.rawFileName(page.pageId(), payload.mediaType());
+                file(zip, raw, Optional.of(payload.bytes()));
+                String view = input.readingView(page.pageId()).map(reading -> {
+                    String path = "views/" + ExportFileJson.rawFileName(page.pageId(), "application/json");
+                    file(zip, path, Optional.of(readingViewJson(reading)));
+                    return path;
+                }).orElse(null);
+                URI url = page.header().metadata().url();
+                urls.put(page.pageId(), url == null ? null : url.toString());
+                written.add(new PackagePage(page.pageId(), snapshot.metadata().resourceId(), page.depth(),
+                        snapshot.revision(), snapshot.metadataHash(), snapshot.attributesHash(),
+                        snapshot.retrievedAt(), payload.mediaType(), payload.nativeFormat(), payload.rawSha256(),
+                        payload.length(), raw, view));
+            });
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+
+        entry(zip, "tree.json");
+        try (JsonGenerator generator = json.createGenerator(new Unclosed(zip))) {
+            generator.writeStartObject();
+            generator.writeName("roots");
+            nodes(generator, input.tree().roots(), urls);
+            generator.writeEndObject();
+        }
+        zip.closeEntry();
+
+        entry(zip, "manifest.json");
+        try (JsonGenerator generator = json.createGenerator(new Unclosed(zip))) {
+            generator.writeStartObject();
+            generator.writeStringProperty("format", PACKAGE_FORMAT);
+            generator.writeStringProperty("converter", VERSION);
+            generator.writeStringProperty("pageSnapshotSchema", PageSnapshot.SCHEMA);
+            generator.writeStringProperty("sourceId", input.sourceId());
+            generator.writeStringProperty("spaceKey", input.spaceKey());
+            generator.writeStringProperty("spaceName", input.spaceName());
+            generator.writeStringProperty("rootPageId", input.rootPageId());
+            generator.writeNumberProperty("pageCount", written.size());
+            generator.writeName("pages");
+            generator.writeStartArray();
+            for (PackagePage page : written) {
+                generator.writeStartObject();
+                generator.writeStringProperty("pageId", page.pageId());
+                generator.writeStringProperty("resourceId", page.resourceId());
+                generator.writeNumberProperty("depth", page.depth());
+                generator.writeStringProperty("revision", page.revision());
+                generator.writeStringProperty("metadataHash", page.metadataHash());
+                generator.writeStringProperty("attributesHash", page.attributesHash());
+                generator.writeStringProperty("retrievedAt", PageJson.text(page.retrievedAt()));
+                generator.writeStringProperty("mediaType", page.mediaType());
+                generator.writeStringProperty("nativeFormat", page.nativeFormat());
+                generator.writeStringProperty("rawSha256", page.rawSha256());
+                generator.writeNumberProperty("size", page.size());
+                generator.writeStringProperty("raw", page.raw());
+                generator.writeStringProperty("view", page.view());
+                generator.writeEndObject();
+            }
+            generator.writeEndArray();
+            generator.writeName("assets");
+            if (assets == null) {
+                generator.writeNull();
+            } else {
+                ExportFileJson.writeAssets(generator, assets);
+            }
+            generator.writeEndObject();
+        }
+        zip.closeEntry();
+    }
+
+    private static void nodes(JsonGenerator generator, List<PageTree.Node> nodes, Map<String, String> urls) {
+        generator.writeStartArray();
+        for (PageTree.Node node : nodes) {
+            generator.writeStartObject();
+            generator.writeStringProperty("id", node.pageId());
+            generator.writeStringProperty("url", urls.get(node.pageId()));
+            generator.writeName("children");
+            nodes(generator, node.children(), urls);
+            generator.writeEndObject();
+        }
+        generator.writeEndArray();
+    }
+
+    private byte[] readingViewJson(ExportReadingView view) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try (JsonGenerator generator = json.createGenerator(out)) {
+            ExportFileJson.writeReadingView(generator, view);
+        }
+        return out.toByteArray();
+    }
+
+    /** Angaben einer Seite für {@code manifest.json}; ohne Payload. */
+    private record PackagePage(String pageId, String resourceId, int depth, String revision, String metadataHash,
+                               String attributesHash, Instant retrievedAt, String mediaType, String nativeFormat,
+                               String rawSha256, int size, String raw, String view) {
     }
 
     /**

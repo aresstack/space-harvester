@@ -12,7 +12,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `format` | Datei | Inhalt |
 |---|---|---|
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
-| `json-package` | `export.zip` | `pages.json` wie `json`, dazu `assets.json` (Zuordnung Seite → Datei, Medientyp, `sha256`, Status, relativer Pfad) und `assets/<Seiten-ID>/` mit Bildern, draw.io-Originalen, gezeichneten Grafiken und `*.graph.json` (Knoten und Verbindungen); dazu `attachments.json` (Format `attachments/v1`: je Dokument-Anhang `pageId`, `attachmentId`, `title`, `mediaType`, `size`, `sha256`, `status`, `reason`, `path`, `textPath`) und `attachments/<Seiten-ID>/` mit dem Original und seinem Text als `<Datei>.txt` (ohne lesbaren Text `textPath: null`, Grund `text-unavailable`; ausgeschlossene Anhänge ohne Dateien, Einstellung `export.attachments.*`); keine Base64-Einbettung ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md), [ADR 0023](adr/0023-dateianhaenge-im-export.md)); Version `json-package/2` |
+| `json-package` | `export.zip` | `pages.json` wie `json`, dazu `assets.json` (Zuordnung Seite → Datei, Medientyp, `sha256`, Status, relativer Pfad) und `assets/<Seiten-ID>/` mit Bildern, draw.io-Originalen, gezeichneten Grafiken und `*.graph.json` (Knoten und Verbindungen); dazu `attachments.json` (Format `attachments/v1`: je Dokument-Anhang `pageId`, `attachmentId`, `title`, `mediaType`, `size`, `sha256`, `status`, `reason`, `path`, `textPath`) und `attachments/<Seiten-ID>/` mit dem Original und seinem Text als `<Datei>.txt` (ohne lesbaren Text `textPath: null`, Grund `text-unavailable`; ausgeschlossene Anhänge ohne Dateien, Einstellung `export.attachments.*`); seit `json-package/3` außerdem `raw/` (Payload jeder Seite Byte für Byte), `views/` (Lese-Ansicht mit Makro-Inhalten, sofern abgelegt), `tree.json` (Baum mit Geschwister-Reihenfolge) und `manifest.json` (Abschnitt „JSON-Paket als Datenbestand“); keine Base64-Einbettung ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md), [ADR 0023](adr/0023-dateianhaenge-im-export.md)); Version `json-package/3` |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
 | `markdown-package` | `export-markdown.zip` | `pages.md` wie `markdown`, die Abbildungen aber als Dateien `assets/<sha256>.png` relativ verlinkt statt als `data:`-URI; jede Abbildung einmal ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)) |
 | `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
@@ -49,6 +49,28 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   (`missing-image=2, missing-diagram=1`).
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
+
+## JSON-Paket als Datenbestand
+
+`export.zip` (`json-package/3`) enthält den Datenbestand eines Exports verlustfrei, damit ein anderes Programm oder
+eine andere Space-Harvester-Installation ihn ohne Quelle wieder einlesen kann. `pages.json` bleibt unverändert die
+lesbare Fassung (Inhalt inhaltlich gleich, nicht bytegleich; Antworten, die kein JSON sind, dort `content: null`).
+Dazu kommen:
+
+- `raw/<Seiten-ID>.json` (sonst `.bin`): die Payload jeder Seite Byte für Byte; ihr SHA-256 ist `rawSha256` aus
+  `pages.json`. Unsichere Seiten-IDs heißen `id-<Hash>`.
+- `views/<Seiten-ID>.json`: die beim Herunterladen abgelegte Lese-Ansicht zur exportierten Version
+  (`space-harvester/export-reading-view/v1`, wie im Exportverzeichnis), sonst fehlt die Datei.
+- `tree.json`: `roots`, je Knoten `id`, `url`, `children` in der Geschwister-Reihenfolge des Baums.
+- `manifest.json` (`space-harvester/export-package/v1`): `converter`, `pageSnapshotSchema`, `sourceId`, `spaceKey`,
+  `spaceName`, `rootPageId`, `pageCount`, je Seite in Baumreihenfolge `pageId`, `resourceId`, `depth`, `revision`,
+  `metadataHash`, `attributesHash`, `retrievedAt`, `mediaType`, `nativeFormat`, `rawSha256`, `size`, `raw`, `view`
+  (Pfad oder `null`) und unter `assets` das vollständige Bildmanifest des Datenbestands
+  (`space-harvester/export-assets/v1`, `null` ohne Beschaffung). Die Dateien dazu findet ein Import über `sha256` in
+  `assets.json` und `attachments.json`.
+
+Nicht im Paket: ältere Revisionen, Abgleichstand, Analysen und Fakten (Analyse-Export), Glossar,
+Begriffsbeziehungen, Suchindex und Embeddings; ein Import rechnet sie neu oder beginnt ohne sie.
 
 ## Analyse-Export (#359)
 

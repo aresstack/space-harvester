@@ -14,13 +14,13 @@ import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import com.aresstack.spaceharvester.output.convert.ExportFileJson;
 import com.aresstack.spaceharvester.output.convert.PageJson;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -95,7 +95,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     private static final Pattern SAFE_FILE = Pattern.compile(
             "(pages\\.ndjson|tree\\.json|manifest\\.json|assets\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin)"
                     + "|" + CONVERTED_NAME + ")");
-    private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
     /** Standardgrenze aller Artefakte zusammen. */
     public static final long DEFAULT_MAX_TOTAL_BYTES = 20L * 1024 * 1024 * 1024;
@@ -284,7 +283,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         Path part = dir.resolve(ASSETS + ".part");
         try {
             try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
-                writeAssets(generator, manifest);
+                ExportFileJson.writeAssets(generator, manifest);
             }
             try {
                 Files.move(part, dir.resolve(ASSETS), StandardCopyOption.ATOMIC_MOVE,
@@ -309,16 +308,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         try {
             Files.createDirectories(file.getParent());
             try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
-                generator.writeStartObject();
-                generator.writeStringProperty("format", ExportReadingView.FORMAT);
-                generator.writeStringProperty("pageId", view.pageId());
-                generator.writeStringProperty("version", view.version());
-                generator.writeStringProperty("status", view.status().name());
-                generator.writeStringProperty("reason", view.reason());
-                generator.writeStringProperty("html", view.html());
-                generator.writeStringProperty("baseUri", view.baseUri());
-                generator.writeStringProperty("text", view.text());
-                generator.writeEndObject();
+                ExportFileJson.writeReadingView(generator, view);
             }
             try {
                 Files.move(part, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -337,14 +327,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             return Optional.empty();
         }
         try {
-            JsonNode node = json.readTree(file.toFile());
-            if (!ExportReadingView.FORMAT.equals(node.path("format").asString())
-                    || !pageId.equals(node.path("pageId").asString())) {
-                return Optional.empty();
-            }
-            return Optional.of(new ExportReadingView(pageId, optional(node, "version"),
-                    ExportReadingView.Status.valueOf(node.path("status").asString()), optional(node, "reason"),
-                    node.path("html").asString(), node.path("baseUri").asString(), node.path("text").asString()));
+            return ExportFileJson.readReadingView(json.readTree(file.toFile()), pageId);
         } catch (RuntimeException e) {
             return Optional.empty();
         }
@@ -359,97 +342,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         if (!Files.isRegularFile(file)) {
             return Optional.empty();
         }
-        JsonNode node = json.readTree(file.toFile());
-        if (!ExportAssetManifest.FORMAT.equals(node.path("format").asString())) {
-            return Optional.empty();
-        }
-        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
-        for (JsonNode entry : node.path("assets")) {
-            JsonNode ref = entry.path("reference");
-            ExportAssetManifest.Reference reference = new ExportAssetManifest.Reference(
-                    ExportAssetManifest.Kind.ofJson(ref.path("kind").asString()), optional(ref, "attachmentId"),
-                    optional(ref, "filename"), optional(ref, "src"),
-                    ref.hasNonNull("index") ? ref.path("index").asInt() : null, optional(ref, "source"));
-            entries.add(new ExportAssetManifest.Entry(entry.path("pageId").asString(), reference,
-                    optional(entry, "attachmentId"), optional(entry, "version"), optional(entry, "title"),
-                    optional(entry, "mediaType"), entry.path("size").asLong(), optional(entry, "sha256"),
-                    ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason"),
-                    rendition(entry.path("rendition"))));
-        }
-        boolean complete = node.path("complete").asBoolean(false);
-        // Vor der Trennung in Bilder und Anhänge gab es nur „complete“; es galt für beide.
-        return Optional.of(new ExportAssetManifest(node.path("imagesComplete").asBoolean(complete),
-                node.path("documentsComplete").asBoolean(complete), entries));
-    }
-
-    private static ExportAssetManifest.Rendition rendition(JsonNode node) {
-        if (!node.isObject()) {
-            return null;
-        }
-        return node.hasNonNull("sha256") ? ExportAssetManifest.Rendition.drawn(node.path("mediaType").asString(),
-                node.path("size").asLong(), node.path("sha256").asString())
-                : ExportAssetManifest.Rendition.notDrawn(node.path("problem").asString());
-    }
-
-    private static String optional(JsonNode node, String name) {
-        return node.hasNonNull(name) ? node.path(name).asString() : null;
-    }
-
-    private static void writeAssets(JsonGenerator generator, ExportAssetManifest manifest) {
-        generator.writeStartObject();
-        generator.writeStringProperty("format", ExportAssetManifest.FORMAT);
-        generator.writeBooleanProperty("complete", manifest.complete());
-        generator.writeBooleanProperty("imagesComplete", manifest.imagesComplete());
-        generator.writeBooleanProperty("documentsComplete", manifest.documentsComplete());
-        generator.writeName("assets");
-        generator.writeStartArray();
-        for (ExportAssetManifest.Entry entry : manifest.assets()) {
-            ExportAssetManifest.Reference ref = entry.reference();
-            generator.writeStartObject();
-            generator.writeStringProperty("pageId", entry.pageId());
-            generator.writeName("reference");
-            generator.writeStartObject();
-            generator.writeStringProperty("kind", ref.kind().json());
-            if (ref.attachmentId() != null) {
-                generator.writeStringProperty("attachmentId", ref.attachmentId());
-            }
-            if (ref.filename() != null) {
-                generator.writeStringProperty("filename", ref.filename());
-            }
-            if (ref.src() != null) {
-                generator.writeStringProperty("src", ref.src());
-            }
-            if (ref.index() != null) {
-                generator.writeNumberProperty("index", ref.index());
-            }
-            if (ref.source() != null) {
-                generator.writeStringProperty("source", ref.source());
-            }
-            generator.writeEndObject();
-            generator.writeStringProperty("attachmentId", entry.attachmentId());
-            generator.writeStringProperty("version", entry.version());
-            generator.writeStringProperty("title", entry.title());
-            generator.writeStringProperty("mediaType", entry.mediaType());
-            generator.writeNumberProperty("size", entry.size());
-            generator.writeStringProperty("sha256", entry.sha256());
-            generator.writeStringProperty("status", entry.status().name());
-            generator.writeStringProperty("reason", entry.reason());
-            if (entry.rendition() != null) {
-                generator.writeName("rendition");
-                generator.writeStartObject();
-                if (entry.rendition().drawn()) {
-                    generator.writeStringProperty("mediaType", entry.rendition().mediaType());
-                    generator.writeNumberProperty("size", entry.rendition().size());
-                    generator.writeStringProperty("sha256", entry.rendition().sha256());
-                } else {
-                    generator.writeStringProperty("problem", entry.rendition().problem());
-                }
-                generator.writeEndObject();
-            }
-            generator.writeEndObject();
-        }
-        generator.writeEndArray();
-        generator.writeEndObject();
+        return ExportFileJson.readAssets(json.readTree(file.toFile()));
     }
 
     @Override
@@ -500,10 +393,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     /** Dateiname der Payload einer Seite innerhalb von {@code raw/}; eindeutig je Seiten-ID. */
     static String rawFileName(String pageId, String mediaType) {
-        String base = SAFE_PAGE_ID.matcher(pageId).matches()
-                ? pageId
-                : "id-" + sha256Hex(pageId.getBytes(StandardCharsets.UTF_8)).substring(0, 40);
-        return base + ("application/json".equals(mediaType) ? ".json" : ".bin");
+        return ExportFileJson.rawFileName(pageId, mediaType);
     }
 
     /** Datei der Lese-Ansicht einer Seite innerhalb von {@code views/}; eindeutig je Seiten-ID. */
@@ -677,7 +567,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 List<ExportAssetManifest.Entry> kept = assets.get().assets().stream()
                         .filter(entry -> pageIds.contains(entry.pageId())).toList();
                 try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(work.resolve(ASSETS)))) {
-                    writeAssets(generator, new ExportAssetManifest(false, false, kept));
+                    ExportFileJson.writeAssets(generator, new ExportAssetManifest(false, false, kept));
                 }
             }
             Path backup = root.resolve(REPLACED).resolve(exportId);
@@ -884,10 +774,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 nicht verfügbar", e);
         }
-    }
-
-    private static String sha256Hex(byte[] bytes) {
-        return HexFormat.of().formatHex(sha256().digest(bytes));
     }
 
     @FunctionalInterface
