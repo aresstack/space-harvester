@@ -1110,14 +1110,14 @@ public final class ActivitiesView implements View {
         return open <= 0 ? null : average.multipliedBy(open);
     }
 
-    /** Kurz genug für die Mitte des Balkens: „< 1 min“, „ca. 12 min“, „ca. 5 h 3 min“ (ohne Sonderzeichen). */
+    /** Kurz genug für die Mitte des Balkens: „< 1 min“, „≈ 12 min“, „≈ 5 h 3 min“. */
     static String remainingText(java.time.Duration remaining) {
         long seconds = remaining.getSeconds();
         if (seconds < 60) {
             return "< 1 min";
         }
         long minutes = (seconds + 59) / 60;
-        return minutes < 60 ? "ca. " + minutes + " min" : "ca. " + minutes / 60 + " h " + minutes % 60 + " min";
+        return minutes < 60 ? "≈ " + minutes + " min" : "≈ " + minutes / 60 + " h " + minutes % 60 + " min";
     }
 
     /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
@@ -1133,7 +1133,7 @@ public final class ActivitiesView implements View {
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
                         + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "")
-                        + (eta == null ? "" : " · noch " + eta.replace("ca. ", "etwa ").replace("< 1 min", "unter einer Minute"));
+                        + (eta == null ? "" : " · noch " + eta.replace("≈ ", "etwa ").replace("< 1 min", "unter einer Minute"));
         List<RowActions.Action> slots = new ArrayList<>();
         slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
                 p.processed(), p.failed(), eta), tip, true, () -> { }));
