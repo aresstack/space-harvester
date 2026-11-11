@@ -756,6 +756,8 @@ public final class Harvester implements AutoCloseable {
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions);
+            // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick.
+            jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action));
             // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
             FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
             KnowledgeGraph graph = this.knowledgeGraph;

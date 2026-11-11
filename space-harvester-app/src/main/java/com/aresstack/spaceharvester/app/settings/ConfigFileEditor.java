@@ -387,7 +387,9 @@ public final class ConfigFileEditor {
                     + inner + RetrySettings.MAX_ATTEMPTS + ": " + retry.maxAttempts() + "\n"
                     + inner + RetrySettings.INITIAL_DELAY + ": " + delay(retry.initialDelay()) + "\n"
                     + inner + RetrySettings.MAX_DELAY + ": " + delay(retry.maxDelay()) + "\n"
-                    + inner + RetrySettings.PAUSE_AFTER_FAILURES + ": " + retry.pauseAfterFailures() + "\n";
+                    + inner + RetrySettings.PAUSE_AFTER_FAILURES + ": " + retry.pauseAfterFailures() + "\n"
+                    + inner + RetrySettings.RESUME_INITIAL_DELAY + ": " + delay(retry.resumeInitialDelay()) + "\n"
+                    + inner + RetrySettings.RESUME_MAX_DELAY + ": " + delay(retry.resumeMaxDelay()) + "\n";
         });
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();

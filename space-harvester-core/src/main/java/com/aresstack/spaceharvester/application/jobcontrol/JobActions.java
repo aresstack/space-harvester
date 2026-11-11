@@ -77,6 +77,14 @@ public class JobActions {
             case CANCEL -> sync ? syncs.cancel(jobId, owner).status() : jobs.cancel(jobId, owner);
             case RESUME -> resume(current, owner, access);
             case RETRY_FAILED -> {
+                if (state instanceof JobLifecycleState.Running) {
+                    // Während des Laufs: direkt nach dem Durchgang im selben Eintrag (Angelo 11.11.2026).
+                    yield jobs.requestRetryFailed(jobId, owner);
+                }
+                if (state instanceof JobLifecycleState.Paused || state instanceof JobLifecycleState.Stopped) {
+                    // Angehalten oder abgebrochen: Fortsetzen holt nur, was fehlt, das Gescheiterte eingeschlossen.
+                    yield resume(current, owner, access);
+                }
                 if (sync) {
                     yield syncs.retryFailed(jobId, owner).status();
                 }

@@ -25,7 +25,7 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
         maxRunTime = maxRunTime == null ? Duration.ofHours(6) : maxRunTime;
         retention = retention == null ? JobLimits.DEFAULT_RETENTION : retention;
         maxOpenPerOwner = maxOpenPerOwner == null ? 4 : maxOpenPerOwner;
-        retry = retry == null ? new Retry(null, null, null, null) : retry;
+        retry = retry == null ? new Retry(null, null, null, null, null, null) : retry;
     }
 
     /**
@@ -35,8 +35,11 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
      * @param initialDelay       erste Wartezeit (Standard 1 s)
      * @param maxDelay           längste Wartezeit (Standard 30 s)
      * @param pauseAfterFailures Netzfehler nacheinander bis zum Selbst-Anhalten (Standard 5)
+     * @param resumeInitialDelay erste Wartezeit bis zum selbsttätigen Wiederanlauf (Standard 10 s)
+     * @param resumeMaxDelay     längste Wartezeit bis zum Wiederanlauf (Standard 10 min)
      */
-    public record Retry(Integer maxAttempts, Duration initialDelay, Duration maxDelay, Integer pauseAfterFailures) {
+    public record Retry(Integer maxAttempts, Duration initialDelay, Duration maxDelay, Integer pauseAfterFailures,
+            Duration resumeInitialDelay, Duration resumeMaxDelay) {
 
         /** @throws IllegalArgumentException bei Werten außerhalb der Grenzen von {@link RetrySettings} */
         public RetrySettings toSettings() {
@@ -44,7 +47,9 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
             return new RetrySettings(maxAttempts == null ? fallback.maxAttempts() : maxAttempts,
                     initialDelay == null ? fallback.initialDelay() : initialDelay,
                     maxDelay == null ? fallback.maxDelay() : maxDelay,
-                    pauseAfterFailures == null ? fallback.pauseAfterFailures() : pauseAfterFailures);
+                    pauseAfterFailures == null ? fallback.pauseAfterFailures() : pauseAfterFailures,
+                    resumeInitialDelay == null ? fallback.resumeInitialDelay() : resumeInitialDelay,
+                    resumeMaxDelay == null ? fallback.resumeMaxDelay() : resumeMaxDelay);
         }
     }
 }

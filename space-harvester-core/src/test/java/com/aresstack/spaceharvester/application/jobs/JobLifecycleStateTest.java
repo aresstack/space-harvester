@@ -89,16 +89,41 @@ class JobLifecycleStateTest {
     }
 
     @Test
-    void everyStateOffersDeleteAsItsLastActionAndNeverMoreThanThree() {
+    void everyStateOffersDeleteAsItsLastActionAndNeverMoreThanFour() {
         for (JobType type : JobType.values()) {
             for (JobState state : JobState.values()) {
                 for (boolean cancel : new boolean[] {false, true}) {
-                    List<JobAction> actions = status(type, state, 0, false, cancel, false).lifecycle().actions();
-                    assertThat(actions).last().isEqualTo(JobAction.DELETE);
-                    assertThat(actions).hasSizeLessThanOrEqualTo(3);
+                    for (long failed : new long[] {0, 2}) {
+                        List<JobAction> actions = status(type, state, failed, false, cancel, false).lifecycle()
+                                .actions();
+                        assertThat(actions).last().isEqualTo(JobAction.DELETE);
+                        assertThat(actions).hasSizeLessThanOrEqualTo(4);
+                        assertThat(actions).doesNotHaveDuplicates();
+                    }
                 }
             }
         }
+    }
+
+    @Test
+    void retryingFailuresIsOfferedInEveryStateOnceSomethingFailed() {
+        for (JobType type : List.of(JobType.EXPORT, JobType.ASSETS, JobType.ATTACHMENTS, JobType.SYNC)) {
+            assertThat(status(type, JobState.RUNNING, 2, false, false, false).lifecycle().actions())
+                    .containsExactly(JobAction.RETRY_FAILED, JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
+            assertThat(status(type, JobState.PAUSED, 2, false, false, false).lifecycle().actions())
+                    .containsExactly(JobAction.RETRY_FAILED, JobAction.RESUME, JobAction.DELETE);
+            assertThat(status(type, JobState.CANCELLED, 2, false, false, false).lifecycle().actions())
+                    .containsExactly(JobAction.RETRY_FAILED, JobAction.RESUME, JobAction.FORCE_REFRESH,
+                            JobAction.DELETE);
+            // Ohne Gescheitertes bleibt es, wie es war.
+            assertThat(status(type, JobState.RUNNING, 0, false, false, false).lifecycle().actions())
+                    .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
+            assertThat(status(type, JobState.PAUSED, 0, false, false, false).lifecycle().actions())
+                    .containsExactly(JobAction.RESUME, JobAction.DELETE);
+        }
+        // Wer nichts nachladen kann, bekommt auch nichts angeboten.
+        assertThat(status(JobType.ENRICHMENT, JobState.RUNNING, 2, false, false, false).lifecycle()
+                .allows(JobAction.RETRY_FAILED)).isFalse();
     }
 
     @Test

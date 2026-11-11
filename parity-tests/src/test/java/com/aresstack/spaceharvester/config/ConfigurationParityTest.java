@@ -62,6 +62,8 @@ class ConfigurationParityTest {
                   initial-delay: 500ms
                   max-delay: 20s
                   pause-after-failures: 7
+                  resume-initial-delay: 5s
+                  resume-max-delay: 2m
               terms:
                 synonyms:
                   max-terms: 300
@@ -112,7 +114,8 @@ class ConfigurationParityTest {
         // ADR 0025: Wiederholungen unter jobs.retry, beim Dienst in JobsProperties, in der App in den Auftragsgrenzen.
         JobsProperties jobs = binder.bind("space-harvester.jobs", JobsProperties.class).get();
         assertThat(app.jobLimits().retry()).isEqualTo(jobs.retry().toSettings())
-                .isEqualTo(new RetrySettings(4, java.time.Duration.ofMillis(500), java.time.Duration.ofSeconds(20), 7));
+                .isEqualTo(new RetrySettings(4, java.time.Duration.ofMillis(500), java.time.Duration.ofSeconds(20), 7,
+                        java.time.Duration.ofSeconds(5), java.time.Duration.ofMinutes(2)));
 
         // #336: Budget der Synonymerkennung geht beim Dienst über withSyncRules in die HarvesterConfiguration.
         HarvesterConfiguration service2 = ConfigurationManagerConfiguration.withSyncRules(

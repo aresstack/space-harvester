@@ -18,8 +18,13 @@ import java.util.Objects;
  * @param maxDelay           längste Wartezeit, mindestens {@code initialDelay}, höchstens 300 s
  * @param pauseAfterFailures nach so vielen Inhaltsabrufen nacheinander ohne Verbindung hält sich ein Auftrag an;
  *                           1 bis {@value #PAUSE_AFTER_LIMIT}
+ * @param resumeInitialDelay ein so angehaltener Auftrag läuft nach dieser Wartezeit von selbst wieder an
+ *                           (Angelo 11.11.2026: WLAN); jeder weitere vergebliche Anlauf verdoppelt sie; 1 s bis 10 min
+ * @param resumeMaxDelay     längste Wartezeit bis zum nächsten Anlauf, mindestens {@code resumeInitialDelay},
+ *                           höchstens 1 h; es wird nie ganz aufgegeben
  */
-public record RetrySettings(int maxAttempts, Duration initialDelay, Duration maxDelay, int pauseAfterFailures) {
+public record RetrySettings(int maxAttempts, Duration initialDelay, Duration maxDelay, int pauseAfterFailures,
+        Duration resumeInitialDelay, Duration resumeMaxDelay) {
 
     /** Präfix der Schlüssel unter {@code space-harvester}. */
     public static final String PREFIX = "jobs.retry.";
@@ -27,22 +32,64 @@ public record RetrySettings(int maxAttempts, Duration initialDelay, Duration max
     public static final String INITIAL_DELAY = "initial-delay";
     public static final String MAX_DELAY = "max-delay";
     public static final String PAUSE_AFTER_FAILURES = "pause-after-failures";
+    public static final String RESUME_INITIAL_DELAY = "resume-initial-delay";
+    public static final String RESUME_MAX_DELAY = "resume-max-delay";
+    /** Standard für {@link #resumeInitialDelay()}. */
+    public static final Duration DEFAULT_RESUME_INITIAL_DELAY = Duration.ofSeconds(10);
+    /** Standard für {@link #resumeMaxDelay()}. */
+    public static final Duration DEFAULT_RESUME_MAX_DELAY = Duration.ofMinutes(10);
 
     /** Grenze des REST-Clients der Quelle. */
     public static final int MAX_ATTEMPTS_LIMIT = 10;
     public static final int PAUSE_AFTER_LIMIT = 1000;
     private static final Duration MAX_INITIAL_DELAY = Duration.ofSeconds(60);
     private static final Duration MAX_MAX_DELAY = Duration.ofSeconds(300);
+    private static final Duration MIN_RESUME_DELAY = Duration.ofSeconds(1);
+    private static final Duration MAX_RESUME_INITIAL_DELAY = Duration.ofMinutes(10);
+    private static final Duration MAX_RESUME_MAX_DELAY = Duration.ofHours(1);
 
     /**
      * Zwei weitere Versuche nach etwa 1 und 2 Sekunden (höchstens 30 s), wie bisher im Dienst und im Enterprise AI
-     * Client; nach fünf Netzfehlern nacheinander anhalten.
+     * Client; nach fünf Netzfehlern nacheinander anhalten und nach 10 s, 20 s, 40 s … höchstens 10 min wieder anlaufen.
      */
     public static final RetrySettings DEFAULT = new RetrySettings(2, Duration.ofSeconds(1), Duration.ofSeconds(30), 5);
+
+    /** Mit den Standard-Wartezeiten des Wiederanlaufs ({@link #DEFAULT_RESUME_INITIAL_DELAY}). */
+    public RetrySettings(int maxAttempts, Duration initialDelay, Duration maxDelay, int pauseAfterFailures) {
+        this(maxAttempts, initialDelay, maxDelay, pauseAfterFailures, DEFAULT_RESUME_INITIAL_DELAY,
+                DEFAULT_RESUME_MAX_DELAY);
+    }
+
+    /** Dieselben Wiederholungen mit anderen Wartezeiten des Wiederanlaufs. */
+    public RetrySettings withResume(Duration initial, Duration max) {
+        return new RetrySettings(maxAttempts, initialDelay, maxDelay, pauseAfterFailures, initial, max);
+    }
+
+    /**
+     * Die Wartezeit vor dem Anlauf Nummer {@code attempt} (ab 0) nach einem Selbst-Anhalten wegen fehlender
+     * Verbindung: {@link #resumeInitialDelay()} verdoppelt je Anlauf, höchstens {@link #resumeMaxDelay()}.
+     */
+    public Duration resumeDelay(int attempt) {
+        Duration delay = resumeInitialDelay;
+        for (int i = 0; i < attempt && delay.compareTo(resumeMaxDelay) < 0; i++) {
+            delay = delay.multipliedBy(2);
+        }
+        return delay.compareTo(resumeMaxDelay) > 0 ? resumeMaxDelay : delay;
+    }
 
     public RetrySettings {
         Objects.requireNonNull(initialDelay, "initialDelay");
         Objects.requireNonNull(maxDelay, "maxDelay");
+        resumeInitialDelay = resumeInitialDelay == null ? DEFAULT_RESUME_INITIAL_DELAY : resumeInitialDelay;
+        resumeMaxDelay = resumeMaxDelay == null ? DEFAULT_RESUME_MAX_DELAY : resumeMaxDelay;
+        if (resumeInitialDelay.compareTo(MIN_RESUME_DELAY) < 0
+                || resumeInitialDelay.compareTo(MAX_RESUME_INITIAL_DELAY) > 0) {
+            throw new IllegalArgumentException(RESUME_INITIAL_DELAY + " muss zwischen 1 Sekunde und 10 Minuten liegen");
+        }
+        if (resumeMaxDelay.compareTo(resumeInitialDelay) < 0 || resumeMaxDelay.compareTo(MAX_RESUME_MAX_DELAY) > 0) {
+            throw new IllegalArgumentException(RESUME_MAX_DELAY + " muss zwischen " + RESUME_INITIAL_DELAY
+                    + " und 1 Stunde liegen");
+        }
         if (maxAttempts < 0 || maxAttempts > MAX_ATTEMPTS_LIMIT) {
             throw new IllegalArgumentException(MAX_ATTEMPTS + " muss zwischen 0 und " + MAX_ATTEMPTS_LIMIT
                     + " liegen");
