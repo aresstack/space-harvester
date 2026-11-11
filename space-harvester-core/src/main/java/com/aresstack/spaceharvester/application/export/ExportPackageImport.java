@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.StoredReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -48,6 +49,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
@@ -57,7 +59,7 @@ import java.util.function.Predicate;
  *
  * <p>Der Import läuft wie ein Abgleich, nur mit dem Paket statt der Quelle: Die Seiten des Pakets sind die Inventur,
  * ihre Rohdaten der Abruf. Er bestätigt eine neue Generation des Space ({@link SyncBaselineStore}), sodass Lesen,
- * Suche und Export danach ohne Quelle gehen, und meldet sie wie ein Abgleich an die Folgeschritte
+ * Suche und Export der Seiten danach ohne Quelle gehen, und meldet sie wie ein Abgleich an die Folgeschritte
  * ({@link SyncCommitted}: Volltext und Anreicherungen rechnen neu). {@code changesSince} der Generation ist der früheste
  * Abruf im Paket: Der nächste Abgleich mit der Quelle holt alles nach, was sich seitdem geändert hat.
  *
@@ -69,7 +71,8 @@ import java.util.function.Predicate;
  *
  * <p>Danach legt der Import die mitgebrachten Bilder, Anhänge und Diagrammgrafiken in der Asset-Ablage ab (gegen ihre
  * Prüfsumme), die Texte der Anhänge unter der eingestellten Extraktion und die Lese-Ansichten. Die Quelle wird nie
- * gefragt. Rechte prüft der Aufrufer, wie bei {@code SourceDataPurge}.
+ * gefragt. Ein neuer Export mit Bildern fragt die Quelle weiterhin nach den Anhängen der Seiten; die abgelegten Dateien
+ * lädt er dann nicht noch einmal. Rechte prüft der Aufrufer, wie bei {@code SourceDataPurge}.
  */
 public final class ExportPackageImport {
 
@@ -93,6 +96,8 @@ public final class ExportPackageImport {
     private final ReadingViewStore views;
     private final List<SyncCommitted> committed;
     private final Clock clock;
+    /** Dateien, die Aufträgen gehören ({@code consume}), nach Auftrags-ID; auch für Aufträge, die nie starten. */
+    private final Map<String, Path> owned = new ConcurrentHashMap<>();
 
     /**
      * @param configured ob eine Quelle eingerichtet ist
@@ -128,6 +133,7 @@ public final class ExportPackageImport {
      * @throws UnknownSourceException ohne eingerichtete Zielquelle
      */
     public Preview preview(Path file, String targetSourceId) {
+        sweep();
         requireConfigured(targetSourceId);
         try (ExportPackage pkg = reader.open(file)) {
             int files = pkg.assets().manifest().map(m -> (int) m.assets().stream()
@@ -152,11 +158,14 @@ public final class ExportPackageImport {
     }
 
     /**
-     * Wie {@link #start(Path, String, boolean, String)}; mit {@code consume} gehört die Datei dem Import und wird
-     * gelöscht, sobald der Auftrag endet oder nicht startet, etwa ein hochgeladenes Paket.
+     * Wie {@link #start(Path, String, boolean, String)}; mit {@code consume} gehört die Datei dem Import, etwa ein
+     * hochgeladenes Paket. Sie wird gelöscht, sobald der Auftrag endet oder nicht startet. Endet er, ohne je zu laufen
+     * (abgebrochen oder gelöscht, solange er wartete), räumt der nächste Import oder spätestens das Ende des Prozesses
+     * sie weg.
      */
     public JobStatus start(Path file, String targetSourceId, boolean replace, String owner, boolean consume) {
         Objects.requireNonNull(file, "file");
+        sweep();
         boolean submitted = false;
         try {
             requireConfigured(targetSourceId);
@@ -174,10 +183,29 @@ public final class ExportPackageImport {
                 }
             }));
             submitted = true;
+            if (consume) {
+                owned.put(job.id(), file);
+                file.toFile().deleteOnExit();
+            }
             return job;
         } finally {
             if (consume && !submitted) {
                 delete(file);
+            }
+        }
+    }
+
+    /** Löscht die Dateien beendeter oder verschwundener Aufträge; die laufender löscht ihr Auftrag selbst. */
+    private void sweep() {
+        for (Map.Entry<String, Path> entry : List.copyOf(owned.entrySet())) {
+            boolean ended;
+            try {
+                ended = jobs.status(entry.getKey()).state().terminal();
+            } catch (UnknownJobException e) {
+                ended = true;
+            }
+            if (ended && owned.remove(entry.getKey(), entry.getValue())) {
+                delete(entry.getValue());
             }
         }
     }
@@ -199,16 +227,23 @@ public final class ExportPackageImport {
     }
 
     private boolean hasData(String sourceId, String spaceKey) {
-        Optional<SyncBaseline> baseline = store.confirmed(sourceId, spaceKey);
-        return baseline.map(b -> !b.pages().isEmpty() || !b.missingPageIds().isEmpty()).orElse(false)
-                || !store.knownPages(sourceId, spaceKey).isEmpty();
+        return hasData(store.confirmed(sourceId, spaceKey).orElse(null), store.knownPages(sourceId, spaceKey));
+    }
+
+    private static boolean hasData(SyncBaseline baseline, Map<String, BaselineEntry> cached) {
+        return baseline != null && (!baseline.pages().isEmpty() || !baseline.missingPageIds().isEmpty())
+                || !cached.isEmpty();
     }
 
     private void run(Path file, String target, boolean replace, String owner, JobContext context) {
         try (ExportPackage pkg = reader.open(file)) {
             String spaceKey = pkg.spaceKey();
             context.phase(COMPONENT, "Paket prüfen");
-            boolean filled = hasData(target, spaceKey);
+            // Entscheidung und Plan auf demselben Stand: bestätigt ein anderer Lauf dazwischen eine Generation,
+            // scheitert das Bestätigen an ihr (import-conflict), statt dessen Seiten ungefragt zu ersetzen.
+            SyncBaseline baseline = store.confirmed(target, spaceKey).orElse(null);
+            Map<String, BaselineEntry> cached = store.knownPages(target, spaceKey);
+            boolean filled = hasData(baseline, cached);
             if (filled && pkg.rootPageId() != null) {
                 throw new JobFailedException(SUBTREE_INTO_FILLED_SPACE, "Der Space " + spaceKey + " hat schon Daten;"
                         + " ein Teilbaum-Paket lässt sich nur in einen leeren Space importieren");
@@ -217,28 +252,37 @@ public final class ExportPackageImport {
                 throw new JobFailedException(SPACE_NOT_EMPTY, "Der Space " + spaceKey + " hat schon Daten;"
                         + " der Import ersetzt sie nur auf ausdrücklichen Wunsch");
             }
-            SpaceSync.SyncRun run = pages(pkg, target, spaceKey, context);
-            context.phase(COMPONENT, "Bilder und Anhänge übernehmen");
-            assets(pkg, target, context);
-            context.phase(COMPONENT, "Lese-Ansichten übernehmen");
-            views(pkg, target, run.confirmed());
-            context.phase(COMPONENT, "Folgeschritte einplanen");
-            for (SyncCommitted next : committed) {
-                try {
-                    next.committed(run, owner);
-                } catch (RuntimeException e) {
-                    // Der Import steht; Volltext und Anreicherungen holt der nächste Abgleich nach.
-                    LOG.log(System.Logger.Level.WARNING, "Folgeschritt nach dem Import von {0}/{1} gescheitert ({2})",
-                            target, spaceKey, e.getClass().getName());
-                }
+            SpaceSync.SyncRun run = pages(pkg, target, spaceKey, baseline, cached, context);
+            try {
+                context.phase(COMPONENT, "Bilder und Anhänge übernehmen");
+                assets(pkg, target, context);
+                context.phase(COMPONENT, "Lese-Ansichten übernehmen");
+                views(pkg, target, run.confirmed());
+            } finally {
+                // Die Generation steht: Volltext und Anreicherungen erfahren davon auch, wenn danach etwas scheitert
+                // oder der Auftrag abgebrochen wird, sonst blieben entfernte Seiten im Index.
+                committed(run, owner, target, spaceKey);
             }
         } catch (ExportPackageException e) {
             throw new JobFailedException(e.code(), e.getMessage(), e);
         }
     }
 
+    private void committed(SpaceSync.SyncRun run, String owner, String target, String spaceKey) {
+        for (SyncCommitted next : committed) {
+            try {
+                next.committed(run, owner);
+            } catch (RuntimeException e) {
+                // Der Import steht; Volltext und Anreicherungen holt der nächste Abgleich nach.
+                LOG.log(System.Logger.Level.WARNING, "Folgeschritt nach dem Import von {0}/{1} gescheitert ({2})",
+                        target, spaceKey, e.getClass().getName());
+            }
+        }
+    }
+
     /** Seiten wie ein Abgleich: Inventur aus dem Paket, Abruf aus {@code raw/}, eine neue Generation. */
-    private SpaceSync.SyncRun pages(ExportPackage pkg, String target, String spaceKey, JobContext context) {
+    private SpaceSync.SyncRun pages(ExportPackage pkg, String target, String spaceKey, SyncBaseline baseline,
+                                    Map<String, BaselineEntry> cached, JobContext context) {
         List<ExportPackage.Page> pages = pkg.pages();
         List<PageMetadataListing.Entry> listing = new ArrayList<>(pages.size());
         Instant earliest = null;
@@ -254,8 +298,6 @@ public final class ExportPackageImport {
         latest = latest == null ? earliest : latest;
         Inventory inventory = new Inventory(target, spaceKey, Inventory.Status.COMPLETE, null, listing, earliest,
                 latest);
-        SyncBaseline baseline = store.confirmed(target, spaceKey).orElse(null);
-        Map<String, BaselineEntry> cached = store.knownPages(target, spaceKey);
         // Das Paket gilt: auch Seiten gleicher Version kommen aus dem Paket, fehlende werden entfernt.
         SyncPlan plan = SyncPlanner.plan(baseline, inventory, cached, SyncMode.FULL)
                 .withContentReloaded(pageId -> true);
@@ -310,7 +352,7 @@ public final class ExportPackageImport {
 
     /**
      * Bilder, Anhänge und Diagrammgrafiken in die Asset-Ablage, unter denselben Kennungen wie beim Beschaffen
-     * (Anhang, Version), damit ein Export sie ohne Quelle findet; Texte unter der eingestellten Extraktion.
+     * (Anhang, Version), damit ein späterer Export sie nicht neu lädt; Texte unter der eingestellten Extraktion.
      */
     private void assets(ExportPackage pkg, String target, JobContext context) {
         if (assets == null) {

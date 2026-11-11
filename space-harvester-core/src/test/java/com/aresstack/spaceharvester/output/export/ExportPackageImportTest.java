@@ -26,6 +26,9 @@ import com.aresstack.spaceharvester.application.snapshot.InMemorySnapshotReposit
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.AttributesHash;
+import com.aresstack.spaceharvester.application.sources.MetadataHash;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.InMemorySyncStore;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
@@ -178,6 +181,68 @@ class ExportPackageImportTest {
     }
 
     @Test
+    void anUploadedPackageOfAnImportCancelledWhileWaitingGoesWithTheNextImport() throws Exception {
+        List<Runnable> pending = new ArrayList<>();
+        Jobs held = new Jobs(new InMemoryJobStore(), pending::add, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        ExportPackageImport waiting = new ExportPackageImport(held,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, null, null,
+                null, List.of(), clock);
+        waiting.start(pkg(pages("100"), ExportAssets.NONE), "laptop", false, "client-a", true);
+        Path queued = pkg(pages("100"), ExportAssets.NONE);
+        JobStatus second = waiting.start(queued, "laptop", false, "client-a", true);
+        assertThat(held.status(second.id()).state()).isEqualTo(JobState.QUEUED);
+
+        held.cancel(second.id());
+        assertThat(queued).exists();
+        waiting.preview(pkg(pages("100"), ExportAssets.NONE), "laptop");
+
+        assertThat(queued).doesNotExist();
+    }
+
+    @Test
+    void theNewGenerationReachesTheFollowUpStepsEvenIfAFileFails() throws Exception {
+        ExportPackageImport tight = new ExportPackageImport(jobs, new ZipExportPackageReader(1024 * 1024, 4), store,
+                Set.of("laptop")::contains, assets, null, null, List.of(committed::add), clock);
+
+        JobStatus job = tight.start(pkg(pages("100"), new PackageAssets()), "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.FAILED);
+        assertThat(jobs.status(job.id()).error().code()).isEqualTo(ExportPackageException.TOO_LARGE);
+        assertThat(store.confirmed("laptop", "DEV").orElseThrow().generation()).isEqualTo(1);
+        assertThat(committed).hasSize(1);
+    }
+
+    @Test
+    void aPayloadOlderThanItsHeaderComesInWithItsOwnVersion() throws Exception {
+        List<PageSnapshot> pages = pages("100", "101");
+        PageMetadata old = pages.get(1).metadata();
+        PageMetadata newer = new PageMetadata(old.pageId(), old.resourceId(), "Seite 101 neu", old.partitionKey(),
+                old.parentPageId(), "4", Instant.parse("2026-10-20T08:00:00Z"), old.url(), old.attributes());
+        PageHeader header = new PageHeader(pages.get(1).key(), newer, MetadataHash.of("confluence", newer),
+                AttributesHash.of("confluence", newer), Instant.parse("2026-10-21T00:00:00Z"));
+        Path pkg = file(new Input(pages, ExportAssets.NONE, Map.of(), Map.of("101", header)));
+
+        JobStatus job = imports.start(pkg, "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        // Bestätigt ist die Version der Bytes: Der nächste Abgleich sieht Version 4 als neu und lädt sie.
+        assertThat(store.confirmed("laptop", "DEV").orElseThrow().pages().get("101").version()).isEqualTo("3");
+        assertThat(repository.find(new PageKey("laptop", "101")).orElseThrow().revision()).isEqualTo("3");
+    }
+
+    @Test
+    void refusesPagesOutsideTheSpaceOfThePackage() throws Exception {
+        Path pkg = pkg(pages("100"), ExportAssets.NONE);
+        String manifest = new String(entry(pkg, "manifest.json"), StandardCharsets.UTF_8);
+        Path moved = rewrite(pkg, "manifest.json",
+                manifest.replace("\"spaceKey\":\"DEV\"", "\"spaceKey\":\"OPS\"").getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> imports.preview(moved, "laptop"))
+                .isInstanceOfSatisfying(ExportPackageException.class,
+                        e -> assertThat(e.code()).isEqualTo(ExportPackageException.DAMAGED));
+    }
+
+    @Test
     void readsTheReadingViewOfAPage() throws Exception {
         Path pkg = pkg(pages("100", "101"), ExportAssets.NONE, Map.of("101",
                 ExportReadingView.available("101", "3", "<p>Eingebunden</p>", "https://wiki.example.org/", "Text")));
@@ -212,11 +277,26 @@ class ExportPackageImportTest {
 
     private Path pkg(List<PageSnapshot> pages, ExportAssets media, Map<String, ExportReadingView> views)
             throws Exception {
+        return file(new Input(pages, media, views, Map.of()));
+    }
+
+    private Path file(Input input) throws Exception {
         Path file = Files.createTempFile(root, "export", ".zip");
         try (OutputStream out = Files.newOutputStream(file)) {
-            new JsonPackageConverter().convert(new Input(pages, media, views), out);
+            new JsonPackageConverter().convert(input, out);
         }
         return file;
+    }
+
+    private static byte[] entry(Path pkg, String name) throws Exception {
+        try (InputStream in = Files.newInputStream(pkg); ZipInputStream zip = new ZipInputStream(in)) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                if (entry.getName().equals(name)) {
+                    return zip.readAllBytes();
+                }
+            }
+        }
+        throw new AssertionError(name + " fehlt");
     }
 
     private Path rewrite(Path pkg, String name, byte[] replacement) throws Exception {
@@ -237,9 +317,9 @@ class ExportPackageImportTest {
         return file;
     }
 
-    /** Seiten in Baumreihenfolge, Tiefe aus der Elternseite. */
-    private record Input(List<PageSnapshot> pages, ExportAssets media, Map<String, ExportReadingView> views)
-            implements ConversionInput {
+    /** Seiten in Baumreihenfolge, Tiefe aus der Elternseite; {@code replaced} ersetzt Kopfdaten einzelner Seiten. */
+    private record Input(List<PageSnapshot> pages, ExportAssets media, Map<String, ExportReadingView> views,
+                         Map<String, PageHeader> replaced) implements ConversionInput {
 
         @Override
         public String sourceId() {
@@ -270,7 +350,11 @@ class ExportPackageImportTest {
 
         @Override
         public List<PageHeader> headers() {
-            return pages.stream().map(PageSnapshot::header).toList();
+            return pages.stream().map(this::header).toList();
+        }
+
+        private PageHeader header(PageSnapshot page) {
+            return replaced.getOrDefault(page.key().pageId(), page.header());
         }
 
         @Override
@@ -279,7 +363,7 @@ class ExportPackageImportTest {
             for (PageSnapshot page : pages) {
                 int d = page.parentPageId() == null ? 0 : depth.getOrDefault(page.parentPageId(), 0) + 1;
                 depth.put(page.key().pageId(), d);
-                action.accept(new ConvertiblePage(page.header(), page, d));
+                action.accept(new ConvertiblePage(header(page), page, d));
             }
         }
 

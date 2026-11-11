@@ -78,19 +78,26 @@ Begriffsbeziehungen, Suchindex und Embeddings; ein Import rechnet sie neu oder b
 eingerichteten Quelle ein, auch auf einem Rechner ohne Zugang zur Quelle. Der Import läuft wie ein Abgleich mit dem
 Paket statt der Quelle: Die Seiten des Pakets sind die Inventur, `raw/` der Abruf; er bestätigt eine neue Generation
 des Space und meldet sie wie ein Abgleich an Volltext und Anreicherungen. `changesSince` der Generation ist der
-früheste Abruf im Paket, der nächste Abgleich mit der Quelle holt alles Neuere nach.
+früheste Abruf im Paket, der nächste Abgleich mit der Quelle holt alles Neuere nach. Ist die Payload einer Seite
+älter als ihre Kopfdaten (nach einem Abgleich nur der Kopfdaten), kommt die Seite mit der Version ihrer Payload in den
+Cache; der nächste Abgleich lädt sie dann neu.
 
 - **Prüfung.** Gelesen wird je ZIP-Eintrag über seinen Namen, nie entpackt. Kopfdaten müssen zu `metadataHash` und
   `attributesHash` passen, jede Payload zu `rawSha256`, jede Datei zu ihrem `sha256`; Payloads höchstens so groß wie
-  der Cache sie annimmt, Dateien wie die Asset-Ablage. Ein Paket vor `json-package/3` lehnt der Import ab
-  (`import-unsupported`), ein verändertes scheitert (`import-damaged`), ohne etwas zu übernehmen.
+  der Cache sie annimmt, Dateien wie die Asset-Ablage; jede Seite muss im Space des Pakets liegen. Ein Paket vor
+  `json-package/3` lehnt der Import ab (`import-unsupported`), ein verändertes scheitert (`import-damaged`), ohne
+  etwas zu übernehmen.
 - **Ziel.** Die Zielquelle wählt der Aufrufer (meist die Quelle des Pakets); die Hashes werden für sie neu berechnet.
   Ein leerer Space nimmt jedes Paket auf. Hat der Space schon Daten, ersetzt nur ein Paket des ganzen Space sie und
   nur auf ausdrücklichen Wunsch (`replace`): dann gilt das Paket auch bei gleicher Version, Seiten außerhalb werden
-  entfernt (`import-space-not-empty`, `import-subtree-into-filled-space`).
+  entfernt (`import-space-not-empty`, `import-subtree-into-filled-space`). Entschieden und geplant wird auf demselben
+  bestätigten Stand; bestätigt ein anderer Lauf währenddessen eine Generation, scheitert der Import
+  (`import-conflict`), ohne etwas zu übernehmen.
 - **Dateien.** Bilder, Anhänge und gezeichnete Diagramme kommen unter denselben Kennungen (Anhang, Version) in die
   Asset-Ablage wie beim Beschaffen, Texte der Anhänge unter der eingestellten Extraktion, Lese-Ansichten in ihre
-  Ablage (ohne Bildliste).
+  Ablage (ohne Bildliste). Ein neuer Export mit Bildern fragt die Quelle weiterhin nach den Anhängen der Seiten; die
+  abgelegten Dateien lädt er dann nicht noch einmal. Volltext und Anreicherungen erfahren von der neuen Generation
+  auch, wenn danach eine Datei scheitert oder der Auftrag abgebrochen wird.
 - `Preview` (`preview(file, sourceId)`) nennt vorab Quelle, Space, Seiten- und Dateizahl und ob der Space Daten hat.
 
 ## Analyse-Export (#359)

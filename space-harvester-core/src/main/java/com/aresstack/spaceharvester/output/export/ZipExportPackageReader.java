@@ -115,7 +115,7 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                         "Unbekanntes Paketformat in manifest.json");
             }
             this.sourceId = required(manifest, "sourceId");
-            required(manifest, "spaceKey");
+            String spaceKey = required(manifest, "spaceKey");
             Map<String, PageHeader> headers = headers();
             for (JsonNode node : manifest.path("pages")) {
                 String pageId = required(node, "pageId");
@@ -124,16 +124,28 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                     throw damaged("pages.json enthält Seite " + pageId + " nicht");
                 }
                 PageMetadata read = header.metadata();
-                PageMetadata metadata = new PageMetadata(pageId, required(node, "resourceId"), read.title(),
-                        read.partitionKey(), read.parentPageId(), read.version(), read.modifiedAt(), read.url(),
-                        read.attributes());
-                String metadataHash = required(node, "metadataHash");
-                String attributesHash = required(node, "attributesHash");
+                if (!spaceKey.equals(read.partitionKey())) {
+                    // Sonst landete die Seite in einem anderen Space, als das Paket und die Rückfrage nennen.
+                    throw damaged("Seite " + pageId + " liegt nicht im Space " + spaceKey);
+                }
+                String resourceId = required(node, "resourceId");
+                PageMetadata current = new PageMetadata(pageId, resourceId, read.title(), read.partitionKey(),
+                        read.parentPageId(), read.version(), read.modifiedAt(), read.url(), read.attributes());
                 // Dieselben Kopfdaten wie beim Export, sonst ist das Paket verändert.
-                if (!metadataHash.equals(MetadataHash.of(sourceId, metadata))
-                        || !attributesHash.equals(AttributesHash.of(sourceId, metadata))) {
+                if (!required(node, "metadataHash").equals(MetadataHash.of(sourceId, current))
+                        || !required(node, "attributesHash").equals(AttributesHash.of(sourceId, current))) {
                     throw damaged("Kopfdaten der Seite " + pageId + " passen nicht zu ihrem Hash");
                 }
+                // Nach einem Abgleich nur der Kopfdaten kann die Payload älter sein als die Kopfdaten. Die Seite kommt
+                // dann mit der Version ihrer Payload in den Cache, damit der nächste Abgleich den Inhalt neu lädt,
+                // statt alte Bytes als neue Version zu bestätigen.
+                String revision = node.has("revision")
+                        ? (node.hasNonNull("revision") ? node.path("revision").asString() : null) : read.version();
+                PageMetadata metadata = Objects.equals(revision, read.version()) ? current
+                        : new PageMetadata(pageId, resourceId, read.title(), read.partitionKey(), read.parentPageId(),
+                        revision, read.modifiedAt(), read.url(), read.attributes());
+                String metadataHash = MetadataHash.of(sourceId, metadata);
+                String attributesHash = AttributesHash.of(sourceId, metadata);
                 Instant retrievedAt = instant(node, "retrievedAt");
                 if (entries.put(pageId, new Entry(metadata, metadataHash, attributesHash, retrievedAt,
                         required(node, "mediaType"), required(node, "nativeFormat"), required(node, "rawSha256"),
