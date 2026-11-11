@@ -515,6 +515,65 @@ public class Assets {
     }
 
     /**
+     * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als SVG, damit die Oberfläche es als Vektorzeichnung
+     * zeigen und bei jeder Vergrößerung scharf zeichnen kann ({@link com.aresstack.spaceharvester.application.diagrams.VectorDiagram}),
+     * statt ein in fester Breite gerastertes PNG zu vergrößern. Hängt das Diagramm an dieser Seite, wird es aus seinen
+     * Quelldaten gezeichnet ({@link #DRAWIO_RENDITION}, einmal je Quelldaten abgelegt, wie {@link #viewDiagram}); ist es
+     * eingebunden ({@code #drawio=…&page=<andere Seite>}), gilt das SVG, das die Quelle über das Plugin zeichnet.
+     *
+     * @return leer, wenn das Bild kein draw.io-Diagramm ist oder sich nicht zeichnen lässt; dann gilt das Bild selbst
+     * @throws SourceAccessException  wie {@link #viewDiagram}
+     * @throws AssetTooLargeException wie {@link #viewDiagram}
+     */
+    public Optional<AssetContent> viewDiagramSvg(String sourceId, String pageId, String pageVersion,
+                                                 HarvestSource.ViewImage image) {
+        String filename = viewFileName(image);
+        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png")) {
+            return Optional.empty();
+        }
+        HarvestSource source = source(sourceId);
+        PageAttachment diagram = null;
+        for (PageAttachment attachment : source.attachments(pageId).attachments()) {
+            if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
+                    && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
+                diagram = attachment;
+                break;
+            }
+        }
+        if (diagram == null) {
+            String src = image.src() == null ? "" : image.src();
+            if (!src.contains("#drawio=")) {
+                return Optional.empty();
+            }
+            AssetContent loaded = viewImage(sourceId, pageId, pageVersion, image);
+            return loaded.asset().kind() == AssetKind.VECTOR || isSvg(loaded.content())
+                    ? Optional.of(loaded) : Optional.empty();
+        }
+        PageAttachment found = diagram;
+        Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
+        if (storedDiagram.isEmpty() && !deliveredSinceTwoFactorPage(sourceId)) {
+            // Wie viewDiagram (#571): der erste geschützte Abruf ist das Bild der Lese-Ansicht.
+            try {
+                viewImage(sourceId, pageId, pageVersion, image);
+            } catch (SignInRequiredException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Das Bild selbst lädt nicht: weiter mit den Quelldaten.
+            }
+        }
+        Rendered rendered;
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
+            byte[] mxfile = storedDiagram.map(store::read)
+                    .orElseGet(() -> download(source, pageId, found).content());
+            rendered = rendition(sourceId, pageId, DRAWIO_RENDITION, mxfile);
+        }
+        if (rendered.asset() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
      * Ein draw.io-Diagramm, das nicht an dieser Seite hängt (eingebunden über {@code multiexcerpt-include},
      * {@code include} oder {@code inc-drawio}; die Adresse trägt {@code #drawio=…&page=<Eigentümerseite>}): Die Quelle
      * zeichnet es selbst über die REST-Schnittstelle des Plugins und liefert SVG wie im Enterprise AI Client. Swing

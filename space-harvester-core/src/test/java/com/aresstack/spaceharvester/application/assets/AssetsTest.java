@@ -671,6 +671,53 @@ class AssetsTest {
     }
 
     @Test
+    void theDrawioDiagramOfTheReadingViewIsAvailableAsVectorSvg() {
+        Assets assets = assets(100_000);
+        String mxfile = "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+                + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+                + "</root></mxGraphModel></diagram></mxfile>";
+        source.file("att-d", "2", mxfile);
+        source.listed.add(attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "2"));
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png?version=2", "Ablauf", null,
+                "image/png", null);
+
+        Assets.AssetContent svg = assets.viewDiagramSvg("wiki", "101", "7", preview).orElseThrow();
+
+        assertThat(svg.asset().mediaType()).isEqualTo("image/svg+xml");
+        assertThat(svg.asset().version()).isEqualTo(Assets.DRAWIO_RENDITION);
+        assertThat(new String(svg.content(), StandardCharsets.UTF_8)).contains("<svg");
+        assertThat(com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content())).isPresent();
+        // Einmal gezeichnet: kein zweiter Download der Quelldaten.
+        assets.viewDiagramSvg("wiki", "101", "7", preview).orElseThrow();
+        assertThat(source.downloads).isEqualTo(1);
+        // Ein gewöhnliches Bild ist kein Diagramm.
+        assertThat(assets.viewDiagramSvg("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null)))
+                .isEmpty();
+    }
+
+    @Test
+    void aDrawioDiagramOfAnotherPageIsAvailableAsTheSvgOfTheSource() {
+        Assets assets = assets(100_000);
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        String drawn = "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"3288\" "
+                + "height=\"1492\"><rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>";
+        source.views.put(src, drawn);
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", "att-p", "image/png", "3");
+
+        Assets.AssetContent svg = assets.viewDiagramSvg("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(new String(svg.content(), StandardCharsets.UTF_8)).isEqualTo(drawn);
+        var vector = com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content()).orElseThrow();
+        assertThat(vector.width()).isEqualTo(3288.0);
+        // Gezeichnet wird in jeder Größe, ohne Obergrenze: doppelte Eigengröße für einen Ausschnitt.
+        assertThat(vector.raster(6576).getWidth()).isEqualTo(6576);
+    }
+
+    @Test
     void anUndrawableDiagramLeavesThePreview() {
         Assets assets = assets(100_000);
         source.file("att-d", "1", "kein xml");

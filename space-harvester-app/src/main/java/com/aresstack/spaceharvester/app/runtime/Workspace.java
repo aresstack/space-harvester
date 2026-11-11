@@ -383,6 +383,23 @@ public final class Workspace {
     }
 
     /**
+     * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als Vektorzeichnung ({@link Assets#viewDiagramSvg}):
+     * Leseansicht und Bildbetrachter zeichnen es bei jedem Maßstab scharf, statt ein Rasterbild zu vergrößern. Leer,
+     * wenn das Bild kein draw.io-Diagramm ist oder sich nicht zeichnen lässt; dann gilt {@link #viewDiagram} bzw. das Bild.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.diagrams.VectorDiagram> viewDiagramVector(
+            ReadingView view, HarvestSource.ViewImage image) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE || !view.images().contains(image)) {
+            throw new IllegalArgumentException("Das Bild gehört nicht zu dieser Lese-Ansicht");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        return harvester.assets().viewDiagramSvg(header.key().sourceId(), header.key().pageId(), view.version(), image)
+                .flatMap(svg -> com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content()));
+    }
+
+    /**
      * Das gezeichnete Mermaid-Diagramm einer Lese-Ansicht ({@link Assets#rendition}): einmal gezeichnet und abgelegt,
      * dieselben Quelldaten werden nie erneut gezeichnet (#190). Leer, wenn es sich nicht zeichnen lässt.
      */
