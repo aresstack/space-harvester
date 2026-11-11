@@ -6,9 +6,7 @@ import com.aresstack.spaceharvester.app.event.Severity;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.GlossaryAccess;
 import com.aresstack.spaceharvester.app.runtime.GlossaryAccess.Entry;
-import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
-import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
@@ -44,9 +42,11 @@ import java.util.function.Supplier;
  * Filter Vorgeschlagen · Bestätigt · Abgelehnt neben dem Suchfeld, Zeilenaktionen als Symbole in der Zeile
  * (Bestätigen, Ablehnen bzw. Ablehnung zurücknehmen, Erläuterung bearbeiten, Entfernen) wie im Reiter „Beziehungen“,
  * Belege mit Kontext als Fenster am Mausklick. „Fachbegriffe ermitteln“ und „Fachbegriff hinzufügen …“ stehen oben
- * rechts in der Reiterzeile ({@link TermsView}); der KI-Lauf ist ein Auftrag des Core mit Fortschritt im Schleier
- * ({@link BusyOverlay}) und Abbrechen per Esc, Rückmeldungen gehen in die Statuszeile des Hauptfensters. Die App
- * leitet nichts ab; der Core prüft Rechte, Revision und die Schutzregeln. Nur auf dem EDT.
+ * rechts in der Reiterzeile ({@link TermsView}). Der KI-Lauf ist ein eigener Auftrag des Core im Hintergrund: er steht
+ * unter „Aufträge“ mit Fortschrittsbalken in der Statusleiste und wird dort angehalten oder abgebrochen; das Fenster
+ * bleibt bedienbar. Das Glossar meldet jede Änderung ({@link GlossaryAccess#observe}), der Reiter lädt dann neu, so
+ * erscheinen die Vorschläge des Laufs, sobald es sie gibt. Rückmeldungen gehen in die Statuszeile des Hauptfensters.
+ * Die App leitet nichts ab; der Core prüft Rechte, Revision und die Schutzregeln. Nur auf dem EDT.
  */
 final class GlossaryTab {
 
@@ -61,7 +61,9 @@ final class GlossaryTab {
     static final String ALREADY_CONFIRMED = "Schon bestätigt";
     static final String ALREADY_REJECTED = "Schon abgelehnt";
     static final String NO_AI = "Kein KI-Dienst eingerichtet; Fachbegriffe lassen sich von Hand anlegen";
-    static final String RUNNING = "Ein Lauf läuft schon";
+    static final String RUNNING = "Ein Lauf läuft schon; Fortschritt unter Aufträge und in der Statusleiste";
+    static final String STARTED = DETECT + " läuft im Hintergrund; neue Vorschläge erscheinen hier sofort, "
+            + "Fortschritt unter Aufträge";
     static final String EMPTY = "Noch keine Fachbegriffe. „Fachbegriffe ermitteln“ lässt die KI die Bezeichner und "
             + "Akronyme der indexierten Seiten beurteilen; „Fachbegriff hinzufügen …“ legt einen von Hand an.";
     static final String NO_MATCH = "Kein Fachbegriff passt zu Suche und Filter.";
@@ -73,7 +75,9 @@ final class GlossaryTab {
     static final int SNIPPET_CHARS = 120;
     /** Höchstens so viele Belege zeigt das Fenster, mit Link zur Seite. */
     static final int EVIDENCE_SHOWN = 3;
-    static final int POLL_MS = 700;
+    static final int POLL_MS = 1000;
+    /** So lange sammelt der Reiter Änderungsmeldungen, bevor er einmal neu lädt. */
+    static final int REFRESH_MS = 400;
     static final int NOTICE_MS = 8000;
     static final String[] COLUMNS = {"Begriff", "Geltungsbereich", "Herkunft", "Status", "Belege", "Erläuterung", ""};
     static final int ACTIONS_COLUMN = COLUMNS.length - 1;
@@ -82,7 +86,6 @@ final class GlossaryTab {
     private final AppContext context;
     private final Supplier<Optional<GlossaryAccess>> access;
     private final TermsView.Directory directory = new TermsView.Directory("Fachglossar", COLUMNS);
-    private final BusyOverlay overlay = new BusyOverlay(directory);
     private final ComposerButton detect = Comic.primary(DETECT, "Die KI beurteilt die Bezeichner und Akronyme der "
             + "indexierten Seiten; nur ungeprüfte Vorschläge ändern sich");
     private final ComposerButton add = Comic.button(ADD, "Einen Fachbegriff von Hand anlegen; er gilt sofort als "
@@ -98,10 +101,20 @@ final class GlossaryTab {
     private String keepSelected;
     /** Die laufenden Aufträge „Fachbegriffe ermitteln“ (je Quelle einer) mit ihrem letzten Stand; leer ohne Lauf. */
     private final Map<String, JobStatus> jobs = new LinkedHashMap<>();
-    /** Der Lauf wird gerade gestartet (Aufträge noch ohne Kennung); Abbrechen in dieser Zeit wird vorgemerkt. */
+    /** Der Lauf wird gerade gestartet (Aufträge noch ohne Kennung). */
     private boolean starting;
-    private boolean cancelWhileStarting;
     private final Timer poll = new Timer(POLL_MS, e -> pollJob());
+    /** Fasst Änderungsmeldungen des Glossars zu einem Neuladen zusammen. */
+    private final Timer refresh = new Timer(REFRESH_MS, e -> refresh());
+    /** Das beobachtete Glossar und wie der Beobachter wieder abgemeldet wird. */
+    private GlossaryAccess observed;
+    private Runnable unobserve;
+    /** Beim Neuladen nach einer Änderungsmeldung so viele Einträge wieder laden, wie zu sehen waren. */
+    private int refill;
+    /** Bildlaufstand vor dem Neuladen nach einer Änderungsmeldung, sonst -1: die Liste springt nie selbst. */
+    private int position = -1;
+    /** Ob der Reiter zu sehen ist; nur dann lädt eine Änderungsmeldung sofort neu (Tests ersetzen es). */
+    java.util.function.BooleanSupplier showing = directory::isShowing;
 
     /**
      * @param context Laufzeit für Statuszeile, Quellenwahl und Navigation; {@code null} zeigt nur das Gerüst (Tests)
@@ -111,6 +124,7 @@ final class GlossaryTab {
         this.context = context;
         this.access = access;
         poll.setRepeats(false);
+        refresh.setRepeats(false);
         directory.show(List.of(), TermsView.NOT_AVAILABLE);
         directory.sortable();
         directory.middle(filterBar());
@@ -140,7 +154,6 @@ final class GlossaryTab {
         add.setEnabled(false);
         detect.addActionListener(e -> askDetect());
         add.addActionListener(e -> askNew());
-        overlay.onCancel(this::cancelJob);
         directory.onSearch(q -> load());
         directory.onScrolledToEnd(this::more);
     }
@@ -189,6 +202,7 @@ final class GlossaryTab {
             detect.setToolTipText(NO_AI);
             return;
         }
+        observe(glossary.get());
         int current = ++request;
         nextCursor = null;
         loading = true;
@@ -209,6 +223,7 @@ final class GlossaryTab {
             if (notice != null) {
                 directory.message(notice);
             }
+            refillMore();
         }, failure -> {
             if (current == request) {
                 loading = false;
@@ -239,12 +254,60 @@ final class GlossaryTab {
             directory.append(rows(page.entries()));
             nextCursor = page.nextCursor();
             directory.more(nextCursor != null);
+            refillMore();
         }, failure -> {
             if (current == request) {
                 loading = false;
                 directory.message("Fachglossar nicht lesbar: " + failure.getMessage());
             }
         });
+    }
+
+    /** Meldet sich beim Glossar an, sobald es eines gibt; ein neues Glossar (neue Laufzeit) ersetzt das alte. */
+    private void observe(GlossaryAccess glossary) {
+        if (glossary == observed) {
+            return;
+        }
+        if (unobserve != null) {
+            unobserve.run();
+        }
+        observed = glossary;
+        unobserve = glossary.observe(() -> javax.swing.SwingUtilities.invokeLater(refresh::restart));
+    }
+
+    /**
+     * Das Glossar hat sich geändert, etwa durch neue Vorschläge des laufenden Auftrags: neu laden, so viele Einträge
+     * wie zu sehen waren, an derselben Stelle. Ist der Reiter nicht zu sehen, lädt er beim nächsten Zeigen.
+     */
+    private void refresh() {
+        if (!showing.getAsBoolean() || access.get().isEmpty()) {
+            return;
+        }
+        javax.swing.JScrollBar bar = scrollBar();
+        position = bar == null ? -1 : bar.getValue();
+        refill = shown.size();
+        load();
+    }
+
+    /** Lädt nach einer Änderungsmeldung weitere Seiten, bis wieder so viele Einträge wie vorher zu sehen sind. */
+    private void refillMore() {
+        if (shown.size() < refill && nextCursor != null) {
+            more();
+            return;
+        }
+        refill = 0;
+        javax.swing.JScrollBar bar = scrollBar();
+        if (position >= 0 && bar != null) {
+            int keep = position;
+            javax.swing.SwingUtilities.invokeLater(() -> bar.setValue(keep));
+        }
+        position = -1;
+    }
+
+    private javax.swing.JScrollBar scrollBar() {
+        javax.swing.JScrollPane pane = (javax.swing.JScrollPane) javax.swing.SwingUtilities
+                .getAncestorOfClass(javax.swing.JScrollPane.class, directory.table());
+        return pane == null ? null : pane.getVerticalScrollBar();
     }
 
     private void updateDetect() {
@@ -472,7 +535,8 @@ final class GlossaryTab {
         form.add(Comic.caption("Space (leer: alle Spaces der Quelle)"));
         form.add(scope.spaceBox());
         ComposerButton cancel = Comic.button("Abbrechen", null);
-        ComposerButton ok = Comic.primary("Ermitteln", "Den KI-Lauf starten; Abbrechen jederzeit mit Esc");
+        ComposerButton ok = Comic.primary("Ermitteln", "Den KI-Lauf als Auftrag im Hintergrund starten; anhalten "
+                + "oder abbrechen unter Aufträge oder in der Statusleiste");
         cancel.addActionListener(e -> dialog.dispose());
         ok.addActionListener(e -> {
             dialog.dispose();
@@ -482,36 +546,35 @@ final class GlossaryTab {
         Dialogs.show(dialog, DETECT, form, cancel, ok);
     }
 
-    /** Startet den Lauf im Core (je Quelle ein Auftrag) und zeigt den Schleier mit Fortschritt, bis alle enden. */
+    /**
+     * Startet den Lauf im Core (je Quelle ein Auftrag im Hintergrund). Das Fenster bleibt bedienbar; Auftragsliste und
+     * Statusleiste folgen den Aufträgen, die Liste hier lädt bei jeder Änderung des Glossars neu. Der Reiter fragt nur
+     * noch ab, wann alle Aufträge enden, für die Rückmeldung und den Knopf.
+     */
     void detect(String sourceId, String spaceKey) {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty() || !jobs.isEmpty() || starting) {
             return;
         }
         starting = true;
-        cancelWhileStarting = false;
         updateDetect();
-        overlay.setText(DETECT + " · wird gestartet …");
-        overlay.setBusy(true);
+        notice(DETECT + " wird gestartet …", Severity.INFO);
         Background.run(() -> glossary.get().classify(sourceId, spaceKey), started -> {
             starting = false;
             if (started.isEmpty()) {
-                overlay.setBusy(false);
                 updateDetect();
                 return;
             }
             started.forEach(status -> jobs.put(status.id(), status));
             updateDetect();
-            started.forEach(this::track);
-            if (cancelWhileStarting) {
-                // Esc kam, bevor die Aufträge ihre Kennung hatten: jetzt nachholen.
-                cancelWhileStarting = false;
-                cancelJob();
+            notice(STARTED, Severity.INFO);
+            if (context != null && context.navigator() != null) {
+                context.navigator().followJobs();
             }
+            started.forEach(this::track);
         }, failure -> {
             starting = false;
             updateDetect();
-            overlay.setBusy(false);
             directory.message(notice(failure instanceof GlossaryAccess.AiUnavailableException ? NO_AI
                     : failure instanceof GlossaryAccess.NotAllowedException ? failure.getMessage()
                     : DETECT + " nicht möglich: " + failure.getMessage(), Severity.ERROR));
@@ -533,7 +596,7 @@ final class GlossaryTab {
         }, states -> states.forEach(this::track), failure -> finish(failure));
     }
 
-    /** Fortschritt aller Aufträge im Schleier; sind alle zu Ende, Rückmeldung in die Statuszeile und die Liste neu. */
+    /** Merkt sich den Stand eines Auftrags; sind alle zu Ende, Rückmeldung in die Statuszeile und die Liste neu. */
     void track(JobStatus status) {
         if (!jobs.containsKey(status.id())) {
             return;
@@ -543,7 +606,6 @@ final class GlossaryTab {
             finish(null);
             return;
         }
-        overlay.setText(progressText(List.copyOf(jobs.values())));
         poll.restart();
     }
 
@@ -551,7 +613,6 @@ final class GlossaryTab {
         poll.stop();
         List<JobStatus> ended = List.copyOf(jobs.values());
         jobs.clear();
-        overlay.setBusy(false);
         updateDetect();
         if (failure != null) {
             load(notice(DETECT + ": Stand nicht lesbar: " + failure.getMessage(), Severity.ERROR));
@@ -562,39 +623,9 @@ final class GlossaryTab {
             Severity severity = worst == JobState.FAILED ? Severity.ERROR
                     : worst == JobState.CANCELLED ? Severity.WARN : Severity.INFO;
             String text = notice(outcomeText(ended), severity);
+            refill = shown.size();
             load(severity == Severity.INFO ? null : text);
         }
-    }
-
-    /** Fortschritt über alle Aufträge: Summen je Zähler; abgebrochen wird gemeldet, sobald einer es ist. */
-    static String progressText(List<JobStatus> states) {
-        long discovered = 0;
-        long processed = 0;
-        long written = 0;
-        boolean cancelling = false;
-        for (JobStatus status : states) {
-            discovered += status.progress().discovered();
-            processed += status.progress().processed();
-            written += status.progress().written();
-            cancelling |= status.cancelRequested();
-        }
-        String text = progressText(new JobProgress(discovered, processed, written, 0), cancelling);
-        return states.size() > 1 ? text + " · " + states.size() + " Quellen" : text;
-    }
-
-    /** „Fachbegriffe ermitteln · 12 von 40 Begriffen · 3 Einträge“; ohne Zahlen „Begriffe werden gesammelt …“. */
-    static String progressText(JobProgress progress, boolean cancelRequested) {
-        StringBuilder text = new StringBuilder(DETECT);
-        if (progress.discovered() == 0) {
-            text.append(" · Begriffe werden gesammelt …");
-        } else {
-            text.append(" · ").append(progress.processed()).append(" von ").append(progress.discovered())
-                    .append(" Begriffen · ").append(Texts.count(progress.written(), "Eintrag", "Einträge"));
-        }
-        if (cancelRequested) {
-            text.append(" · wird abgebrochen …");
-        }
-        return text.toString();
     }
 
     /** Die Rückmeldung am Ende: fehlgeschlagen vor abgebrochen vor abgeschlossen, mit den Summen aller Aufträge. */
@@ -607,7 +638,7 @@ final class GlossaryTab {
             JobStatus status = failed.get();
             return DETECT + " fehlgeschlagen" + (ended.size() > 1 ? " (Quelle " + status.sourceId() + ")" : "")
                     + ": " + (status.error() == null ? "" : status.error().message())
-                    + " · Entscheidungen unverändert";
+                    + " · Vorgeschlagenes bleibt, Entscheidungen unverändert";
         }
         if (ended.stream().anyMatch(s -> s.state() == JobState.CANCELLED)) {
             return DETECT + " abgebrochen; " + written + " " + (writtenCount == 1 ? "bleibt" : "bleiben")
@@ -615,30 +646,6 @@ final class GlossaryTab {
         }
         return DETECT + " abgeschlossen: " + written + " aus "
                 + Texts.count(processed, "geprüften Begriff", "geprüften Begriffen");
-    }
-
-    private void cancelJob() {
-        Optional<GlossaryAccess> glossary = access.get();
-        if (starting) {
-            // Die Aufträge haben noch keine Kennung; der Abbruch folgt, sobald sie da ist. Der Schleier bleibt.
-            cancelWhileStarting = true;
-            overlay.setText(DETECT + " · wird abgebrochen …");
-            return;
-        }
-        List<String> open = jobs.values().stream().filter(s -> !s.state().terminal()).map(JobStatus::id).toList();
-        if (open.isEmpty() || glossary.isEmpty()) {
-            overlay.setBusy(false);
-            return;
-        }
-        Background.run(() -> {
-            List<JobStatus> states = new ArrayList<>();
-            for (String id : open) {
-                states.add(glossary.get().cancelClassification(id));
-            }
-            return states;
-        }, states -> states.forEach(this::track),
-                failure -> directory.message(notice("Abbrechen nicht möglich: " + failure.getMessage(),
-                        Severity.ERROR)));
     }
 
     // ---- Belege
@@ -773,7 +780,7 @@ final class GlossaryTab {
     }
 
     JComponent component() {
-        return overlay;
+        return directory;
     }
 
     ComposerButton detectButton() {
@@ -790,10 +797,6 @@ final class GlossaryTab {
         return directory;
     }
 
-    BusyOverlay overlay() {
-        return overlay;
-    }
-
     ComposerToggleButton filter(String label) {
         return filters.get(label);
     }
@@ -804,11 +807,6 @@ final class GlossaryTab {
 
     boolean starting() {
         return starting;
-    }
-
-    /** Was Esc im Schleier auslöst (für Tests). */
-    void cancelFromOverlay() {
-        cancelJob();
     }
 
     List<Entry> shownEntries() {

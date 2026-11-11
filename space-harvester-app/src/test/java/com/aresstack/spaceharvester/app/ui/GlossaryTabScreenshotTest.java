@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.app.runtime.GlossaryAccess.Entry;
-import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
@@ -63,11 +62,6 @@ class GlossaryTabScreenshotTest {
             surface[0].add(Comic.plate("Begriffe", Comic.PETROL, tabs[0]), java.awt.BorderLayout.CENTER);
             surface[0].setSize(1180, 520);
             Screenshots.write(surface[0], out.resolve("fachglossar.png"));
-            tab[0].overlay().setText(GlossaryTab.progressText(new JobProgress(40, 12, 3, 0), false));
-            tab[0].overlay().onCancel(() -> { });
-            tab[0].overlay().setBusy(true);
-            Screenshots.write(surface[0], out.resolve("fachglossar-lauf.png"));
-            tab[0].overlay().setBusy(false);
         });
     }
 

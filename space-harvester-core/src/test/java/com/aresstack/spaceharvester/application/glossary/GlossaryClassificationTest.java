@@ -305,6 +305,36 @@ class GlossaryClassificationTest {
     }
 
     @Test
+    void eachAnsweredRequestShowsItsProposalsAtOnceAndTheObserverHearsIt() {
+        classification = new GlossaryClassification(catalog, index, guard,
+                key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
+                key -> Optional.ofNullable(cache.get(key)).flatMap(PLAIN::project), glossary, model,
+                ResolutionCache.inMemory(), jobs, new TermProcessor().version(),
+                new GlossaryClassification.Budget(300, 3, 160, 1, 600_000), Clock.fixed(T0, ZoneOffset.UTC));
+        List<Integer> seen = new ArrayList<>();
+        Runnable unsubscribe = glossary.subscribe(() -> seen.add(store.all().size()));
+        BiFunction<String, String, String> choose = choosing(Set.of("Datenprodukt", "Haushaltsverfahren"));
+        int[] calls = {0};
+        answers = (instructions, input) -> {
+            if (++calls[0] == 2) {
+                // Die erste Antwort ist da: ihr Vorschlag steht schon im Glossar, bevor der Lauf endet.
+                assertThat(store.all()).hasSize(1);
+                throw new IllegalStateException("Dienst weg");
+            }
+            return choose.apply(instructions, input);
+        };
+
+        assertThatThrownBy(() -> classification.run(WIKI, null)).isInstanceOf(JobFailedException.class);
+
+        // Abbruch oder Fehler: was schon vorgeschlagen ist, bleibt.
+        assertThat(store.all()).hasSize(1);
+        assertThat(seen).containsExactly(1);
+        unsubscribe.run();
+        glossary.add(EDITOR, new Glossary.NewEntry("Fachwort", WIKI, null, List.of()));
+        assertThat(seen).containsExactly(1);
+    }
+
+    @Test
     void anUnreadableAnswerKeepsTheProposals() {
         answers = choosing(Set.of("Datenprodukt"));
         classification.run(WIKI, null);

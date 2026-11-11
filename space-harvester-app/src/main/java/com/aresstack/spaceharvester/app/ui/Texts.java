@@ -119,6 +119,7 @@ public final class Texts {
             case STATEMENT_ANALYSIS -> "Aussagenanalyse";
             case PURGE -> "Daten bereinigen";
             case KNOWLEDGE_GRAPH_EXPORT -> "Graph-Export";
+            case GLOSSARY -> "Fachbegriffe ermitteln";
         };
     }
 

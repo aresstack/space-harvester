@@ -311,6 +311,16 @@ public final class ActivitiesView implements View {
         timer.start();
     }
 
+    /**
+     * Fragt die Aufträge wieder ab, ohne die Auswahl zu ändern oder die Ansicht zu wechseln, etwa nach einem Start aus
+     * einem anderen Bereich („Fachbegriffe ermitteln“): ohne Auswahl folgt der Balken der Statusleiste dem jüngsten
+     * laufenden Auftrag.
+     */
+    public void follow() {
+        poll();
+        timer.start();
+    }
+
     /** Zeigt einen Auftrag (z. B. direkt nach dem Start). */
     public void show(String jobId) {
         toTop = toTop || !jobId.equals(selectedId);
@@ -1354,6 +1364,15 @@ public final class ActivitiesView implements View {
                 return new Step("Anhänge beschaffen · " + p.processed() + " von " + total + " Anhängen geprüft, "
                         + p.written() + " abgelegt", p.processed(), total);
             }
+            if (type == JobType.GLOSSARY) {
+                // Erst Fundstellen sammeln (ohne Ziel), dann Begriffe beim Modell beurteilen lassen.
+                String step = phase == null ? "Fachbegriffe ermitteln" : phase;
+                if (total == 0) {
+                    return new Step(step, 0, 0);
+                }
+                return new Step(step + " · " + p.processed() + " von " + total + " Begriffen beurteilt, "
+                        + Texts.count(p.written(), "Eintrag", "Einträge"), p.processed(), total);
+            }
             if (type == JobType.STATEMENT_ANALYSIS) {
                 long skipped = p.processed() - p.written() - p.failed();
                 return new Step((phase == null ? "Aussagenanalyse" : phase) + " · " + p.processed() + " von " + total
@@ -1401,6 +1420,8 @@ public final class ActivitiesView implements View {
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",
+                        "Fehlgeschlagen");
+                case GLOSSARY -> new Counters("Begriffe für das Modell", "Beurteilt", "Einträge vorgeschlagen",
                         "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };

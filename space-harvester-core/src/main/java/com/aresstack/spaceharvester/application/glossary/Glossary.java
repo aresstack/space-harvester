@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 /**
@@ -58,6 +59,8 @@ public class Glossary {
     private final AccessGuard access;
     private final Function<PageKey, Optional<PageHeader>> headers;
     private final Clock clock;
+    /** Beobachter jeder Änderung ({@link #subscribe}). */
+    private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     /** @param headers Kopfdaten einer Seite im Cache, für die Rechte an Belegen */
     public Glossary(SourceCatalog catalog, GlossaryStore store, AccessGuard access,
@@ -256,7 +259,7 @@ public class Glossary {
         if (current.origin() != RelationOrigin.MANUAL) {
             return Optional.of(review(caller, id, null, ReviewStatus.REJECTED, "reject"));
         }
-        store.write(List.of(), List.of(id), List.of(new GlossaryStore.AuditEntry(id, "remove", caller.jobOwner(),
+        write(List.of(), List.of(id), List.of(new GlossaryStore.AuditEntry(id, "remove", caller.jobOwner(),
                 clock.instant(), null, current.revision() + 1)));
         return Optional.empty();
     }
@@ -266,7 +269,7 @@ public class Glossary {
      * Begriffe werden {@code PROPOSED}, ungeprüfte KI-Vorschläge bekommen neue Belege, ungeprüfte, die der Lauf nicht
      * mehr nennt, entfallen. Abgelehnte und manuelle Einträge bleiben unberührt, bestätigte bekommen keine neuen
      * Belege und werden ohne Nennung nur als {@code evidenceStale} markiert. Ein abgebrochener oder gescheiterter Lauf
-     * ruft dies nicht auf, dann ändert sich nichts.
+     * ruft dies nicht auf: dann entfällt nichts, nur seine Teilergebnisse ({@link #proposeSome}) bleiben.
      *
      * @param actor      Kennung des Laufs für Protokoll und {@code createdBy}
      * @param generation Modell, Promptfassung und Zeitpunkt des Laufs
@@ -275,6 +278,45 @@ public class Glossary {
      */
     public synchronized ProposalRun propose(String actor, RelationScope scope, String generation,
                                             List<Proposal> proposals, Set<String> retained) {
+        return merge(actor, scope, generation, proposals, retained, true);
+    }
+
+    /**
+     * Teilergebnis eines laufenden KI-Laufs: legt neue Vorschläge sofort an und gibt ungeprüften neue Belege, nach
+     * denselben Schutzregeln wie {@link #propose}; entfernt und markiert aber nichts, das bleibt dem Abgleich am Ende
+     * des Laufs. Bricht der Lauf ab, bleibt, was schon vorgeschlagen ist.
+     */
+    public synchronized ProposalRun proposeSome(String actor, RelationScope scope, String generation,
+                                                List<Proposal> proposals) {
+        return merge(actor, scope, generation, proposals, Set.of(), false);
+    }
+
+    /**
+     * Meldet jede Änderung des Glossars (anlegen, prüfen, Teilergebnisse und Abgleich eines Laufs, Bereinigen), damit
+     * eine Ansicht neu lädt, sobald es Neues gibt. Der Beobachter läuft im schreibenden Thread und muss schnell sein.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    public Runnable subscribe(Runnable listener) {
+        Objects.requireNonNull(listener, "listener");
+        listeners.add(listener);
+        return () -> listeners.remove(listener);
+    }
+
+    private void write(java.util.Collection<GlossaryEntry> put, List<String> removed,
+                       List<GlossaryStore.AuditEntry> audit) {
+        store.write(put, removed, audit);
+        for (Runnable listener : listeners) {
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                // Ein fehlerhafter Beobachter hält das Glossar nicht auf.
+            }
+        }
+    }
+
+    private ProposalRun merge(String actor, RelationScope scope, String generation, List<Proposal> proposals,
+                              Set<String> retained, boolean reconcile) {
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(generation, "generation");
@@ -325,7 +367,7 @@ public class Glossary {
             }
         }
         Set<String> kept = retained == null ? Set.of() : retained;
-        for (GlossaryEntry entry : store.all()) {
+        for (GlossaryEntry entry : reconcile ? store.all() : List.<GlossaryEntry>of()) {
             if (entry.origin() != RelationOrigin.AI || !entry.scope().equals(scope) || named.contains(entry.id())
                     || kept.contains(entry.normalized())) {
                 continue;
@@ -344,7 +386,7 @@ public class Glossary {
             }
         }
         if (!put.isEmpty() || !removed.isEmpty()) {
-            store.write(put.values(), removed, audit);
+            write(put.values(), removed, audit);
         }
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
     }
@@ -379,7 +421,7 @@ public class Glossary {
             }
         }
         if (!put.isEmpty() || !removed.isEmpty()) {
-            store.write(put, removed, audit);
+            write(put, removed, audit);
         }
         return removed.size();
     }
@@ -417,7 +459,7 @@ public class Glossary {
     }
 
     private GlossaryEntry save(GlossaryEntry entry, String action, String actor) {
-        store.write(List.of(entry), List.of(), List.of(new GlossaryStore.AuditEntry(entry.id(), action, actor,
+        write(List.of(entry), List.of(), List.of(new GlossaryStore.AuditEntry(entry.id(), action, actor,
                 clock.instant(), entry.status(), entry.revision())));
         return entry;
     }
