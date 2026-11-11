@@ -1382,13 +1382,16 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Schreibt den Strom zuerst in {@code <Ziel>.part} und ersetzt das Ziel erst, wenn alles gelesen ist. Bricht der
-     * Strom ab (etwa ein Hashfehler am Ende), wird die halbe Datei gelöscht und ein vorhandenes Ziel bleibt, wie es war.
+     * Schreibt den Strom zuerst in eine eigene, neu angelegte Zwischendatei im Zielordner und ersetzt das Ziel erst,
+     * wenn alles gelesen ist. Bricht der Strom ab (etwa ein Hashfehler am Ende), wird nur diese Zwischendatei gelöscht
+     * und ein vorhandenes Ziel bleibt, wie es war; fremde Dateien im Ordner bleiben unberührt.
      *
      * @return die Zahl der geschriebenen Bytes
      */
     static long writeReplacing(java.io.InputStream content, java.nio.file.Path target) throws IOException {
-        java.nio.file.Path part = target.resolveSibling(target.getFileName() + ".part");
+        java.nio.file.Path absolute = target.toAbsolutePath();
+        java.nio.file.Path part = Files.createTempFile(absolute.getParent(), "." + absolute.getFileName() + "-",
+                ".part");
         try {
             long bytes = Files.copy(content, part, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             Files.move(part, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);

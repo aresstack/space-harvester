@@ -29,7 +29,19 @@ class SaveAssetTest {
 
         assertThat(bytes).isEqualTo(15);
         assertThat(Files.readString(target)).isEqualTo("Wartungsfenster");
-        assertThat(dir.resolve("anhang.txt.part")).doesNotExist();
+        assertThat(dir).isDirectoryNotContaining("glob:**.part");
+    }
+
+    @Test
+    void anExistingPartFileOfSomeoneElseStaysUntouched() throws IOException {
+        Path target = dir.resolve("anhang.txt");
+        Path foreign = dir.resolve("anhang.txt.part");
+        Files.writeString(foreign, "fremd");
+
+        PageDetailPanel.writeReplacing(new ByteArrayInputStream(new byte[] {1, 2, 3}), target);
+
+        assertThat(Files.readString(foreign)).isEqualTo("fremd");
+        assertThat(Files.size(target)).isEqualTo(3);
     }
 
     @Test
@@ -51,6 +63,6 @@ class SaveAssetTest {
         assertThatThrownBy(() -> PageDetailPanel.writeReplacing(broken, target)).isInstanceOf(IOException.class);
 
         assertThat(Files.readString(target)).isEqualTo("alt");
-        assertThat(dir.resolve("anhang.txt.part")).doesNotExist();
+        assertThat(dir).isDirectoryNotContaining("glob:**.part");
     }
 }
