@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
@@ -103,6 +104,19 @@ public final class ActivitiesView implements View {
     private final Set<String> converting = new HashSet<>();
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    /**
+     * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
+     * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
+     */
+    final ParallelChoice downloads = new ParallelChoice("Parallele Downloads: wie viele Bilder- und Anhängeaufträge "
+            + "gleichzeitig laden (0 bis " + JobLimits.MAX_PARALLEL_DOWNLOADS + "). Bei 0 wird nur vorbereitet, "
+            + "nichts heruntergeladen.", 0, JobLimits.MAX_PARALLEL_DOWNLOADS, List.of(0, 1, 2, 4, 8, 16, 32, 64),
+            JobLimits.DEFAULT_PARALLEL_DOWNLOADS, value -> parallel(), this::invalidParallel);
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    final ParallelChoice preparations = new ParallelChoice("Parallele Vorbereitungen: wie viele Bilder- und "
+            + "Anhängeaufträge gleichzeitig ihre Verweise zählen (1 bis " + JobLimits.MAX_PARALLEL_PREPARATIONS + ").",
+            1, JobLimits.MAX_PARALLEL_PREPARATIONS, List.of(1, 2, 4, 8, 16), JobLimits.DEFAULT_PARALLEL_PREPARATIONS,
+            value -> parallel(), this::invalidParallel);
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
@@ -137,7 +151,18 @@ public final class ActivitiesView implements View {
         JPanel listHead = new JPanel(new BorderLayout(8, 0));
         listHead.setOpaque(false);
         listHead.add(Comic.row(Comic.caption("Aufträge dieser App"), hint), BorderLayout.WEST);
-        listHead.add(Comic.row(deleteAll), BorderLayout.EAST);
+        JLabel downloadsLabel = new JLabel("Downloads");
+        downloadsLabel.setToolTipText(downloads.box().getToolTipText());
+        JLabel preparationsLabel = new JLabel("Vorbereitung");
+        preparationsLabel.setToolTipText(preparations.box().getToolTipText());
+        for (JLabel label : List.of(downloadsLabel, preparationsLabel)) {
+            label.setFont(Comic.regular(12f));
+            label.setForeground(Comic.INK);
+        }
+        downloadsLabel.setLabelFor(downloads.box());
+        preparationsLabel.setLabelFor(preparations.box());
+        listHead.add(Comic.row(preparationsLabel, preparations.box(), downloadsLabel, downloads.box(), deleteAll),
+                BorderLayout.EAST);
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
 
@@ -346,6 +371,8 @@ public final class ActivitiesView implements View {
             datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
             model.set(jobs);
             deleteAll.setEnabled(!jobs.isEmpty());
+            downloads.refresh(runtime.workspace().parallelDownloads());
+            preparations.refresh(runtime.workspace().parallelPreparations());
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
@@ -989,10 +1016,14 @@ public final class ActivitiesView implements View {
         }
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
-        for (String format : FORMATS) {
-            String blocked = exportBlocked(job, format);
-            actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
-                    : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+        if (showsProgress(job)) {
+            actions.addAll(progressSlots(job));
+        } else {
+            for (String format : FORMATS) {
+                String blocked = exportBlocked(job, format);
+                actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
+                        : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+            }
         }
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
@@ -1003,6 +1034,66 @@ public final class ActivitiesView implements View {
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
         actions.addAll(stateActions(job));
         return actions;
+    }
+
+    /**
+     * Bilder und Anhänge haben keine Formate (Angelo 11.11.2026): Statt fünf blasser Formatknöpfe steht auf diesen
+     * Plätzen ein Fortschrittsbalken.
+     */
+    static boolean showsProgress(JobStatus job) {
+        return job.type() == JobType.ASSETS || job.type() == JobType.ATTACHMENTS;
+    }
+
+    /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
+    static List<RowActions.Action> progressSlots(JobStatus job) {
+        JobProgress p = job.progress();
+        Counters counters = Counters.of(job.type());
+        String tip = p.discovered() == 0 ? "Noch nichts gefunden"
+                : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
+                        + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "");
+        List<RowActions.Action> slots = new ArrayList<>();
+        slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
+                p.processed(), p.failed()), tip, true, () -> { }));
+        for (int i = 1; i < FORMATS.size(); i++) {
+            slots.add(RowActions.EMPTY);
+        }
+        return slots;
+    }
+
+    /** Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende. */
+    record ProgressIcon(int width, long total, long done, long failed) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int h = getIconHeight();
+                g.setColor(Comic.LINE);
+                g.fillRoundRect(x, y, width, h, h, h);
+                if (total > 0) {
+                    int filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
+                    int bad = Math.min(filled, (int) Math.round(width * Math.min(1.0, (double) failed / total)));
+                    g.setColor(Comic.PETROL);
+                    g.fillRoundRect(x, y, filled, h, h, h);
+                    if (bad > 0) {
+                        g.setColor(Comic.RED);
+                        g.fillRoundRect(x + filled - bad, y, bad, h, h, h);
+                    }
+                }
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return width;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 8;
+        }
     }
 
     /** Die Zustandsplätze einer Zeile; für Tests ohne Tabelle. */
@@ -1234,6 +1325,29 @@ public final class ActivitiesView implements View {
     static final String SIGN_IN = ExportAssetCollection.SIGN_IN_PHASE;
     static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
             + "des Downloads verschwindet mit dem Auftrag.";
+
+    /**
+     * Übernimmt die beiden Grenzen im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
+     * überstehen; beides im Hintergrund ({@link AppContext#parallel}).
+     */
+    void parallel() {
+        if (context.runtime() == null) {
+            return;
+        }
+        int prepare = preparations.value();
+        int load = downloads.value();
+        context.parallel(prepare, load, () -> {
+            feedback.success(load == 0
+                    ? "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet"
+                    : "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + ", "
+                            + Texts.count(prepare, "Vorbereitung", "Vorbereitungen"));
+            poll();
+        }, feedback::problem);
+    }
+
+    private void invalidParallel(String message) {
+        feedback.warning("Nicht übernommen", message);
+    }
 
     /**
      * Löscht alle Aufträge nach „Wirklich alle Aufträge löschen?“, in jedem Zustand; laufende und wartende bricht der

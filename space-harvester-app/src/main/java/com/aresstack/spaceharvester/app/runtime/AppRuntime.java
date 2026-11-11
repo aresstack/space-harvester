@@ -297,9 +297,24 @@ public final class AppRuntime implements AutoCloseable {
                             + problem.message()).toList();
             return Reconfiguration.REJECTED;
         }
+        harvester.parallelPreparations(next.jobLimits().parallelPreparations());
+        harvester.parallelDownloads(next.jobLimits().parallelDownloads());
         settings = next;
         lastRejection = List.of();
         return Reconfiguration.APPLIED;
+    }
+
+    /**
+     * Ändert die Grenzen für Bilder- und Anhängeaufträge sofort im Core und im Stand dieser Laufzeit, damit ein späteres
+     * {@link #reconfigure} sie als schon übernommen erkennt. Kann Aufträge starten und damit die Auftragsablage
+     * schreiben; nicht im Swing-Thread rufen.
+     *
+     * @throws IllegalArgumentException außerhalb der Grenzen ({@code JobLimits})
+     */
+    public synchronized void parallel(int preparations, int downloads) {
+        workspace.setParallelPreparations(preparations);
+        workspace.setParallelDownloads(downloads);
+        settings = settings.withParallel(preparations, downloads);
     }
 
     /** Was der Core bei der letzten abgelehnten Änderung bemängelt hat; leer, wenn die letzte übernommen wurde. */

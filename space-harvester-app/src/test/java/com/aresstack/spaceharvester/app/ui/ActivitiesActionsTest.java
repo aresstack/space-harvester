@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobStage;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -114,6 +115,27 @@ class ActivitiesActionsTest {
         assertSlots(withFailures(), JobAction.RETRY_FAILED, null, JobAction.FORCE_REFRESH);
     }
 
+    /**
+     * Bilder und Anhänge zeigen statt der blassen Formatknöpfe einen Fortschrittsbalken über dieselben fünf Plätze
+     * (Angelo 11.11.2026); Exporte behalten ihre Formate. Die Platzzahl bleibt gleich, damit alles untereinander steht.
+     */
+    @Test
+    void imageAndAttachmentRowsShowAProgressBarInsteadOfFormats() {
+        for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
+            JobStatus job = new JobStatus("j1", type, "wiki", "OPS", "local", JobState.RUNNING,
+                    new JobProgress(630, 629, 600, 3), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null,
+                    Map.of(), false, false, null);
+            assertThat(ActivitiesView.showsProgress(job)).isTrue();
+            List<RowActions.Action> slots = ActivitiesView.progressSlots(job);
+            assertThat(slots).hasSize(ActivitiesView.FORMATS.size());
+            assertThat(RowActions.wide(slots.get(0))).isTrue();
+            assertThat(slots.subList(1, slots.size())).allMatch(RowActions.Action::empty);
+            assertThat(RowActions.covering(slots, 4)).as("Tooltip auch am rechten Ende").isSameAs(slots.get(0));
+            assertThat(slots.get(0).tooltip()).isEqualTo("629 von 630 geprüft · 3 fehlend");
+        }
+        assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+    }
+
     /** Bilder und Anhänge (#631): fertig → Neu erzwingen; unvollständig → Nur Fehler und Neu erzwingen. */
     @Test
     void imagesAndAttachments() {
@@ -184,6 +206,38 @@ class ActivitiesActionsTest {
                 .isEqualTo("Angehalten – Verbindung unterbrochen");
         assertThat(Texts.tone(paused(PauseReason.CONNECTION_LOST))).isEqualTo(Comic.Tone.WARNING);
         assertThat(Texts.state(paused(PauseReason.USER))).isEqualTo("Angehalten");
+    }
+
+    /** ↻ Nur Fehler steht in jedem Zustand bereit, sobald etwas gescheitert ist (Angelo 11.11.2026, Core #634). */
+    @Test
+    void retryFailedIsOfferedWhileRunningOrPausedOnceSomethingFailed() {
+        JobStatus running = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(9, 5, 3, 2), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null);
+        assertSlots(running, JobAction.RETRY_FAILED, JobAction.PAUSE, JobAction.CANCEL);
+        JobStatus paused = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.PAUSED,
+                new JobProgress(9, 5, 3, 2), null, false, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, null, null,
+                Map.of(), false, false, PauseReason.USER);
+        assertSlots(paused, JobAction.RETRY_FAILED, JobAction.RESUME, null);
+    }
+
+    /** Vorbereitung und Vorbereitet (#635) haben eigene Texte und Farben; Vorbereitet startet mit „Jetzt starten“. */
+    @Test
+    void preparingAndPreparedDownloads() {
+        JobStatus preparing = staged(JobStage.PREPARING);
+        assertThat(Texts.state(preparing)).isEqualTo("Vorbereitung");
+        assertThat(Texts.tone(preparing)).isEqualTo(Comic.Tone.RUNNING);
+        assertSlots(preparing, null, JobAction.PAUSE, JobAction.CANCEL);
+        JobStatus prepared = staged(JobStage.PREPARED);
+        assertThat(Texts.state(prepared)).isEqualTo("Vorbereitet");
+        assertThat(Texts.tone(prepared)).isEqualTo(Comic.Tone.NEUTRAL);
+        assertSlots(prepared, null, JobAction.START_NOW, JobAction.CANCEL);
+    }
+
+    private static JobStatus staged(JobStage stage) {
+        return new JobStatus("j1", JobType.ASSETS, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(9, 0, 0, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null, stage);
     }
 
     private static JobStatus withFailures() {
