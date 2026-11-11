@@ -154,6 +154,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     private final Map<OneTimeCodeChallenge, FileFetch<?>> retries =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /**
+     * Der zuletzt an einer Code-Seite gemerkte Dateiabruf; für eine Neuanmeldung aus einer Abfrage, die selbst keinen
+     * hat (etwa nach einem abgelehnten Code), damit auch sie eine neue Web-Sitzung öffnet (Angelo 11.11.2026).
+     */
+    private volatile FileFetch<?> lastRetry;
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
     /**
@@ -248,6 +253,17 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 webPort = created;
             }
             return webPort;
+        }
+    }
+
+    /**
+     * Ersetzt die Web-Sitzung durch eine neue (Neuanmeldung, Angelo 11.11.2026): Ist die bisherige abgelaufen, nimmt
+     * Confluence dort keinen Code mehr an; die neue meldet sich wie beim ersten Mal mit Benutzer und Passwort an.
+     */
+    KnowledgeSourcePort reopenWebPort() {
+        synchronized (webPortLock) {
+            webPort = null;
+            return openWebPort();
         }
     }
 
@@ -1293,6 +1309,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (OneTimeCodeRequiredException required) {
             if (webPorts != null) {
                 retries.put(required.challenge(), fetch);
+                lastRetry = fetch;
                 // Die Zwei-Faktor-Anmeldung fordert gerade den Code an: jetzt die zweite Web-Sitzung bereitstellen,
                 // damit das Absenden nichts mehr öffnen muss. Scheitert das, versucht es das Absenden noch einmal.
                 try {
@@ -1395,6 +1412,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             return tokenLogin && bound == null;
         }
 
+        /** Mit Token jederzeit: eine abgelaufene Web-Sitzung wird durch eine neue ersetzt (Angelo 11.11.2026). */
+        @Override
+        public boolean canRestartLogin() {
+            return tokenLogin;
+        }
+
         /**
          * Mit Personal Access Token: der Code geht für dieses eine Absenden mit Benutzer und Passwort an dieselbe
          * Web-Sitzung, weil der Adapter die Anmeldung dabei neu auflöst ({@link ConfiguredSecrets#withLogin}); danach
@@ -1402,18 +1425,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          */
         @Override
         public SignInChallenge submit(char[] code, String username, char[] password) {
-            if (!asksForLogin() || username == null || username.isBlank() || password == null
+            if (!canRestartLogin() || username == null || username.isBlank() || password == null
                     || password.length == 0) {
                 return submit(code);
             }
             FileFetch<?> retry = retries.get(challenge);
+            if (retry == null && bound != null) {
+                retry = lastRetry;
+            }
             LOG.info("Quelle {}: Einmalcode für Abfrage {} wird mit Benutzeranmeldung gesendet ({})", id,
                     instance(challenge), webPorts != null && retry != null ? "Dateiabruf in neuer Web-Sitzung"
                             : "dieselbe Web-Sitzung");
             if (webPorts != null && retry != null) {
                 KnowledgeSourcePort files;
                 try {
-                    files = openWebPort();
+                    // Aus einer bestehenden Web-Sitzung heraus heißt Anmelden: sie ist abgelaufen, also eine neue.
+                    files = bound != null ? reopenWebPort() : openWebPort();
                 } catch (RuntimeException e) {
                     LOG.info("Quelle {}: neue Web-Sitzung nicht geöffnet ({})", id, e.getClass().getSimpleName());
                     throw new SourceAccessException(id, SourceAccessException.Reason.UNAVAILABLE,

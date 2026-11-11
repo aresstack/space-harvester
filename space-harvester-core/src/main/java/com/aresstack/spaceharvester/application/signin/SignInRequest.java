@@ -27,10 +27,13 @@ import java.util.Objects;
  *                        Wert. Ein späteres gelungenes Senden oder Anfordern leert ihn.
  * @param asksForLogin    ob neben dem Code einmalig Benutzer und Passwort abgefragt werden (Quelle mit Personal Access
  *                        Token, #571); gesendet mit {@link SignInRequests#submit(String, char[], String, char[])}
+ * @param canRestartLogin ob die Oberfläche zurück auf Benutzer und Passwort wechseln darf, um eine abgelaufene
+ *                        Web-Sitzung durch eine neue zu ersetzen ({@link SignInRequests#beginWebLogin}); bei
+ *                        {@code asksForLogin} immer
  */
 public record SignInRequest(String id, String sourceId, String service, String title, String message, String error,
                             boolean resendAvailable, List<String> jobIds, Instant since, String failure,
-                            boolean asksForLogin) {
+                            boolean asksForLogin, boolean canRestartLogin) {
 
     public SignInRequest {
         Objects.requireNonNull(id, "id");
@@ -42,6 +45,15 @@ public record SignInRequest(String id, String sourceId, String service, String t
         jobIds = List.copyOf(jobIds);
         Objects.requireNonNull(since, "since");
         failure = failure == null ? "" : failure;
+        canRestartLogin = canRestartLogin || asksForLogin;
+    }
+
+    /** Ohne Neuanmeldung aus dem zweiten Schritt; die Form vor dem 11.11.2026. */
+    public SignInRequest(String id, String sourceId, String service, String title, String message, String error,
+                         boolean resendAvailable, List<String> jobIds, Instant since, String failure,
+                         boolean asksForLogin) {
+        this(id, sourceId, service, title, message, error, resendAvailable, jobIds, since, failure, asksForLogin,
+                asksForLogin);
     }
 
     /** Ohne Abfrage von Benutzer und Passwort; die Form vor #603. */
