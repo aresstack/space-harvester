@@ -341,6 +341,19 @@ class DocumentNavigationSkyTest {
         });
     }
 
+    @Test
+    void theReadingViewShowsTheSameCloudsWithSubCloudsOfTheChosenChapter() throws Exception {
+        Doc doc = handbook();
+        PageDetailPanel panel = panel(doc, 700, 400);
+        SwingUtilities.invokeAndWait(() -> {
+            DocumentNavigationSky reading = panel.readingPane().navigablePage().sky();
+            assertNotNull(reading.navigation(), "Wolken auch über der Leseansicht");
+            assertEquals(panel.navigationSky().navigation(), reading.navigation());
+            panel.showNavigation(null);
+            assertNull(reading.navigation(), "ohne Navigation keine Wolken");
+        });
+    }
+
     private static Doc manySteps() {
         Doc doc = new Doc().title("Handbuch");
         doc.heading(1, "Einleitung").paragraph(LONG);

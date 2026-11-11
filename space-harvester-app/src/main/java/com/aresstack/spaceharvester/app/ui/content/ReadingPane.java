@@ -79,8 +79,12 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    /** Oberer Innenabstand der Ansicht ohne Wolkenbanner. */
+    private static final int PADDING_TOP = 10;
+    /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
+    private final NavigableDocumentPage page = new NavigableDocumentPage(Comic.scroll(pane), pane, PADDING_TOP);
     /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
-    private final BusyOverlay overlay = new BusyOverlay(Comic.scroll(pane));
+    private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
     /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
@@ -93,7 +97,7 @@ final class ReadingPane extends JPanel {
         setOpaque(false);
         pane.setEditable(false);
         pane.setContentType("text/html");
-        pane.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        pane.setBorder(BorderFactory.createEmptyBorder(PADDING_TOP, 12, 10, 12));
         pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
         pane.setFont(Comic.regular(13.5f));
         pane.addHyperlinkListener(event -> {
@@ -133,6 +137,19 @@ final class ReadingPane extends JPanel {
      */
     void onLink(java.util.function.Consumer<URL> listener) {
         this.links = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Die Inhaltswolken über der Ansicht (dieselbe Dokumentnavigation wie unter „Text“, mit Unterwolken des gewählten
+     * Kapitels); {@code null} blendet sie aus. Die Abschnitte findet die Ansicht über ihren Anker im Text.
+     */
+    void setNavigation(Navigation navigation) {
+        page.setNavigation(navigation);
+    }
+
+    /** Für Tests: die Ansicht mit dem Wolkenbanner. */
+    NavigableDocumentPage navigablePage() {
+        return page;
     }
 
     /** Rollt zum Anker {@code fragment} der gezeigten Ansicht; ohne passenden Anker nichts. */
@@ -214,6 +231,7 @@ final class ReadingPane extends JPanel {
         }
         pane.setDocument(document);
         pane.setCaretPosition(0);
+        page.contentChanged();
     }
 
     /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */

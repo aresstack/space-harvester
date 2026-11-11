@@ -1840,12 +1840,20 @@ public final class PageDetailPanel extends JPanel {
      * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ab ({@link Navigation#of}). EDT.
      */
     void showNavigation(Navigation navigation) {
-        readerPage.setNavigation(navigation == null || navigation.isEmpty() ? null : navigation);
+        Navigation shownNavigation = navigation == null || navigation.isEmpty() ? null : navigation;
+        readerPage.setNavigation(shownNavigation);
+        // Dieselben Inhaltswolken auch über der Leseansicht, als Übersicht beim Lesen.
+        readingPane.setNavigation(shownNavigation);
     }
 
     /** Für Tests: der Navigationsbanner über dem Lesetext. */
     DocumentNavigationSky navigationSky() {
         return readerPage.sky();
+    }
+
+    /** Für Tests: die Leseansicht. */
+    ReadingPane readingPane() {
+        return readingPane;
     }
 
     /** Für Tests: der Lesetext mit dem Banner darüber. */
