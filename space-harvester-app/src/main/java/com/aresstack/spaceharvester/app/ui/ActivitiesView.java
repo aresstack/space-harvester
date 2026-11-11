@@ -471,12 +471,37 @@ public final class ActivitiesView implements View {
      */
     private void render() {
         boolean codeBefore = signIn.isVisible();
+        // Nur zeichnen, was sich geändert hat (Angelo 11.11.2026): Ein angehaltener Auftrag liefert jede Sekunde
+        // denselben Stand; neu gezeichnet zitterte der Bereich und die Bildlaufposition sprang.
+        Object shown = drawnState();
+        if (!toTop && shown.equals(drawn)) {
+            signIn.refresh();
+            if (codeBefore || !signIn.isVisible()) {
+                return;
+            }
+        }
+        drawn = shown;
         draw();
         if (toTop || (!codeBefore && signIn.isVisible())) {
             toTop = false;
             javax.swing.SwingUtilities.invokeLater(() ->
                     detailScroll.getViewport().setViewPosition(new java.awt.Point(0, 0)));
         }
+    }
+
+    /** Was der Detailbereich zuletzt gezeigt hat ({@link #drawnState}). */
+    private Object drawn;
+
+    /**
+     * Alles, wovon {@link #draw()} abhängt: auch die Dauer eines laufenden Auftrags und der Ausgabeordner, den die
+     * Karte nennt (änderbar in den Einstellungen ohne Neustart).
+     */
+    private Object drawnState() {
+        Optional<JobStatus> current = currentStatus();
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        return java.util.Arrays.asList(selectedId, detail, phase, outputFiles, directory, model.rows.isEmpty(),
+                current.map(s -> waitingForSignIn(s.id())).orElse(false),
+                current.map(s -> Texts.duration(s.startedAt(), s.finishedAt())).orElse(null));
     }
 
     private void draw() {
