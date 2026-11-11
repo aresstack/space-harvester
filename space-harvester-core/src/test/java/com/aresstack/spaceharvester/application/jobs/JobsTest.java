@@ -27,6 +27,24 @@ class JobsTest {
     }
 
     @Test
+    void waitingFollowUpsDisappearWithTheirExportAlsoAfterARestart() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "wiki", "DEV", null, "client-a", java.util.Map.of(),
+                JobTask.blocking(context -> { }), submitted -> jobs.submitAwaiting(JobType.ASSETS, "wiki", "DEV", null,
+                        "client-a", java.util.Map.of(), JobTask.blocking(context -> { }), submitted.id()));
+        JobStatus images = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(images.lifecycle().key()).isEqualTo("AWAITING_EXPORT");
+        assertThat(images.parameter(Jobs.AWAITS)).isEqualTo(export.id());
+        jobs.close();
+
+        Jobs restarted = jobs(1, 5);
+        assertThat(restarted.status(images.id()).state().terminal()).isTrue();
+        restarted.delete(export.id(), "client-a");
+
+        assertThat(restarted.list("client-a", JobType.ASSETS)).isEmpty();
+    }
+
+    @Test
     void submitReturnsQueuedJobAtOnceAndRunsItLater() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(3);

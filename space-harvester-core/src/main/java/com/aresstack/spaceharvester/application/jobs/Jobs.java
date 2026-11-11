@@ -198,6 +198,53 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)}; {@code prepare} läuft, bevor der
+     * Auftrag starten kann, etwa um seine Folgeaufträge anzulegen ({@link #submitAwaiting}). Ein Fehler darin hält den
+     * Auftrag nicht auf.
+     */
+    public JobStatus submit(JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
+                            Map<String, String> parameters, JobTask task,
+                            java.util.function.Consumer<JobStatus> prepare) {
+        Objects.requireNonNull(prepare, "prepare");
+        Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(parameters, "parameters");
+        purgeExpired();
+        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
+                Map.copyOf(parameters), task, clock.instant());
+        job.starting = true;
+        JobStatus status;
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            requireCapacity(type, owner);
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
+                    null, null);
+            open.put(job.id, job);
+            queued.addLast(job);
+            status = job.snapshot();
+            store.save(status);
+        }
+        try {
+            prepare.accept(status);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Vorbereitung von Auftrag {0} gescheitert ({1})", job.id,
+                    e.getClass().getName());
+        } finally {
+            synchronized (lock) {
+                job.starting = false;
+            }
+            dispatch();
+        }
+        return status;
+    }
+
+    /** Angabe eines wartenden Auftrags ({@link #submitAwaiting}): der Auftrag, dem er folgt. */
+    public static final String AWAITS = "awaits";
+
+    /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)}, aber der Auftrag wartet, bis
      * {@link #releaseAwaiting} ihn freigibt, etwa Bilder und Anhänge, bis der Text ihres Exports veröffentlicht ist
      * (Angelo 11.11.2026). Bis dahin belegt er keinen Platz und zeigt {@link JobStage#AWAITING}. Wird der Auftrag
@@ -212,8 +259,10 @@ public class Jobs implements AutoCloseable {
         Objects.requireNonNull(task, "task");
         Objects.requireNonNull(parameters, "parameters");
         Objects.requireNonNull(awaited, "awaited");
+        Map<String, String> withAwaited = new java.util.HashMap<>(parameters);
+        withAwaited.put(AWAITS, awaited);
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
-                Map.copyOf(parameters), task, clock.instant());
+                Map.copyOf(withAwaited), task, clock.instant());
         job.awaiting = awaited;
         synchronized (lock) {
             if (closed) {
@@ -639,12 +688,21 @@ public class Jobs implements AutoCloseable {
                 JobStatus status = requireOwner(open != null ? open.snapshot()
                         : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
                 freed = stop(jobId);
-                // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit.
+                // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit; auch, was nach
+                // einem Neustart als unterbrochen gilt, ohne je gestartet zu sein.
                 for (Job follower : List.copyOf(this.open.values())) {
                     if (jobId.equals(follower.awaiting)) {
                         stop(follower.id);
                         events.delete(follower.id);
                         store.delete(follower.id);
+                    }
+                }
+                for (JobStatus follower : store.all()) {
+                    if (jobId.equals(follower.parameter(AWAITS)) && follower.state().terminal()
+                            && follower.startedAt() == null && !this.open.containsKey(follower.id())) {
+                        stopped.remove(follower.id());
+                        events.delete(follower.id());
+                        store.delete(follower.id());
                     }
                 }
                 stopped.remove(status.id());
@@ -1051,7 +1109,7 @@ public class Jobs implements AutoCloseable {
         boolean preparations = preparing < parallelPreparations;
         Job pick = null;
         for (Job job : queued) {
-            if (job.awaiting != null) {
+            if (job.awaiting != null || job.starting) {
                 continue;
             }
             if (job.type.download() ? preparations : general && !job.type.followUp()) {
@@ -1517,6 +1575,8 @@ public class Jobs implements AutoCloseable {
         volatile JobStage stage;
         /** Der Auftrag, auf den dieser wartet ({@link Jobs#submitAwaiting}), bis {@link Jobs#releaseAwaiting}. */
         volatile String awaiting;
+        /** Noch nicht startbereit: die Vorbereitung beim Annehmen läuft noch. */
+        volatile boolean starting;
         /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */
         CompletableFuture<Void> slot = new CompletableFuture<>();
         volatile Instant startedAt;

@@ -244,9 +244,9 @@ public class ExportAssetCollection {
                 if (earlier.isEmpty()) {
                     continue;
                 }
+                // Ein fehlender Anhängeauftrag heißt hier gelöscht, nie „Bilder holen die Anhänge mit“.
                 Optional<JobStatus> started = submit(scope, dataset.get(), exportId, owner, new AssetTask(exportId,
-                        scope, CompletableFuture.completedFuture(scope == Scope.MEDIA
-                        && documentsWithImages(exportId, owner))));
+                        scope, CompletableFuture.completedFuture(false)));
                 if (scope == Scope.MEDIA) {
                     media = started;
                 }

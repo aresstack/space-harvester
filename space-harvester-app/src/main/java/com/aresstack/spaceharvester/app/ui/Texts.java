@@ -80,6 +80,9 @@ public final class Texts {
             case "COMPLETED_WITH_ERRORS" -> "Fertig, unvollständig";
             case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
             case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
+            case "AWAITING_EXPORT" -> "Wartet auf Text";
+            case "PREPARING" -> "Bereitet vor";
+            case "PREPARED" -> "Vorbereitet";
             default -> state(status.state());
         };
     }
