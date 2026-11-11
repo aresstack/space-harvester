@@ -105,6 +105,20 @@ public final class Diagrams {
         return png(image, "draw.io nicht rasterbar");
     }
 
+    /**
+     * Ein fertiges SVG als PNG, gerastert wie {@link #drawioPng}: etwa die draw.io-Zeichnung, die die Quelle für ein
+     * Diagramm einer anderen Seite schon als SVG liefert (Lese-Ansicht).
+     */
+    public static Rendering svgPng(byte[] svg) {
+        BufferedImage image;
+        try {
+            image = new SvgImageRenderer().render(new String(svg, StandardCharsets.UTF_8), DRAWIO_WIDTH);
+        } catch (RuntimeException | LinkageError e) {
+            return Rendering.notDrawn("SVG nicht rasterbar (" + e.getClass().getSimpleName() + ")");
+        }
+        return png(image, "SVG nicht rasterbar");
+    }
+
     /** Mermaid als PNG. */
     public static Rendering mermaid(String source) {
         BufferedImage image;
