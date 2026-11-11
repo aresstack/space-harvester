@@ -136,6 +136,30 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
     }
 
+    /**
+     * Restzeit mittig im Balken (Angelo 11.11.2026): globaler Durchschnitt je Datei mal offene Elemente; nichts bei 0
+     * parallelen Downloads, ohne Offenes oder nach dem Ende.
+     */
+    @Test
+    void theProgressBarShowsTheEstimatedRemainingTime() {
+        JobStatus job = new JobStatus("j1", JobType.ATTACHMENTS, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(630, 30, 30, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null,
+                Map.of(), false, false, null);
+        java.time.Duration average = java.time.Duration.ofSeconds(2);
+        java.time.Duration remaining = ActivitiesView.remaining(job, average, 4);
+        assertThat(remaining).isEqualTo(java.time.Duration.ofSeconds(1200));
+        assertThat(ActivitiesView.remainingText(remaining)).isEqualTo("≈ 20 min");
+        assertThat(ActivitiesView.remainingText(java.time.Duration.ofSeconds(30))).isEqualTo("< 1 min");
+        assertThat(ActivitiesView.remainingText(java.time.Duration.ofMinutes(303))).isEqualTo("≈ 5 h 3 min");
+        assertThat(ActivitiesView.remaining(job, average, 0)).as("Downloads abgeschaltet").isNull();
+        assertThat(ActivitiesView.remaining(job(JobType.ASSETS, JobState.COMPLETED, false), average, 4)).isNull();
+        assertThat(ActivitiesView.remaining(job(JobType.EXPORT, JobState.RUNNING, false), average, 4)).isNull();
+
+        List<RowActions.Action> slots = ActivitiesView.progressSlots(job, remaining);
+        assertThat(((ActivitiesView.ProgressIcon) slots.get(0).icon()).label()).isEqualTo("≈ 20 min");
+        assertThat(slots.get(0).tooltip()).isEqualTo("30 von 630 geprüft · noch etwa 20 min");
+    }
+
     /** Bilder und Anhänge (#631): fertig → Neu erzwingen; unvollständig → Nur Fehler und Neu erzwingen. */
     @Test
     void imagesAndAttachments() {
