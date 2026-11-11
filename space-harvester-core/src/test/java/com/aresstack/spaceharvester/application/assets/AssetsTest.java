@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentSink;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -14,6 +15,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.StreamedAttachment;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -282,6 +284,84 @@ class AssetsTest {
                 .isInstanceOf(AssetTooLargeException.class);
         assertThat(assets.overview(list(attachment("att1", "a", "text/plain", "1"))).entries().get(0).stored())
                 .isNull();
+    }
+
+    @Test
+    void aSourceThatStartsOverAfterABrokenAttemptStoresOnlyTheLastOne() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        source.brokenFirst.put("att1", "Ber");
+
+        Asset stored = assets.harvest(list(attachment("att1", "a.txt", "text/plain", "1"))).entries().get(0).asset();
+
+        byte[] expected = "Bericht".getBytes(StandardCharsets.UTF_8);
+        assertThat(stored.size()).isEqualTo(expected.length);
+        assertThat(stored.sha256()).isEqualTo(Assets.sha256(expected));
+        assertThat(assets.content(list(attachment("att1", "a.txt", "text/plain", "1")), "att1").content())
+                .isEqualTo(expected);
+        assertThat(java.nio.file.Files.list(directory.resolve("staging")))
+                .as("die Zwischendatei ist in die Ablage gewandert").isEmpty();
+    }
+
+    @Test
+    void aFileAboveTheTextLimitIsStoredWithoutTextAndNeverReadBackForTheHarvest() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        String big = "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES);
+        source.file("att1", "1", big);
+
+        AssetHarvest harvest = assets.harvest(list(attachment("att1", "gross.pdf", "application/octet-stream",
+                "1")));
+
+        Asset stored = harvest.entries().get(0).asset();
+        assertThat(harvest.entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
+        assertThat(stored.size()).isEqualTo(big.length());
+        assertThat(stored.mediaType()).as("die Signatur am Anfang reicht").isEqualTo("application/pdf");
+        assertThat(stored.sha256()).isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        assertThat(documents.extractions).as("zu groß für die Textextraktion").hasValue(0);
+    }
+
+    @Test
+    void aFailedDownloadLeavesNoFileBehind() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        source.brokenFirst.put("att1", "Ber");
+        source.failure("att1", SourceAccessException.Reason.UNAVAILABLE);
+
+        AssetHarvest harvest = assets.harvest(list(attachment("att1", "a.txt", "text/plain", "1")));
+
+        assertThat(harvest.entries().get(0).code()).isEqualTo("source-unavailable");
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).isEmpty();
+    }
+
+    @Test
+    void keepStoresTheAttachmentOnceAndLoadsAgainOnlyWhenForced() {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        PageAttachmentList list = list(attachment("att1", "a.txt", "text/plain", "1"));
+
+        Asset kept = assets.keep(list, "att1", false);
+        Asset again = assets.keep(list, "att1", false);
+        Asset forced = assets.keep(list, "att1", true);
+
+        assertThat(again).isEqualTo(kept);
+        assertThat(forced.sha256()).isEqualTo(kept.sha256());
+        assertThat(source.downloads).as("abgelegt heißt: nicht noch einmal laden, außer erzwungen").isEqualTo(2);
+        assertThat(assets.content(list, "att1").content()).isEqualTo("Bericht".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void keepDoesNotReportADamagedStoredFileAsStored() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        PageAttachmentList list = list(attachment("att1", "a.txt", "text/plain", "1"));
+        Asset kept = assets.keep(list, "att1", false);
+        String hex = kept.sha256().substring("sha256:".length());
+        java.nio.file.Files.writeString(directory.resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                "Bxricht");
+
+        assertThatThrownBy(() -> assets.keep(list, "att1", false)).isInstanceOf(AssetStoreException.class);
+        assertThat(source.downloads).isEqualTo(1);
     }
 
     @Test
@@ -769,6 +849,26 @@ class AssetsTest {
 
         void failure(String id, SourceAccessException.Reason reason) {
             files.put(id + "#failure", reason);
+        }
+
+        /** Erster, abgebrochener Versuch einer strömenden Quelle; der Neuversuch beginnt von vorn. */
+        final Map<String, String> brokenFirst = new HashMap<>();
+
+        @Override
+        public StreamedAttachment streamAttachment(PageAttachment attachment, AttachmentSink sink) {
+            String broken = brokenFirst.get(attachment.attachmentId());
+            if (broken == null) {
+                return HarvestSource.super.streamAttachment(attachment, sink);
+            }
+            try {
+                sink.write(broken.getBytes(StandardCharsets.UTF_8));
+                sink.restart();
+                AttachmentFile file = attachmentFile(attachment, sink.maxBytes());
+                sink.write(file.content());
+                return new StreamedAttachment(file.attachment(), file.retrievedAt());
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
         }
 
         @Override
