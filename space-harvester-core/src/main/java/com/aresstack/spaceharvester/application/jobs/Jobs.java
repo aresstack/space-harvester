@@ -102,8 +102,16 @@ public class Jobs implements AutoCloseable {
     private record Reconnect(Object token, Instant at) {
     }
 
-    /** Laufende Folgeaufträge ({@link JobType#followUp()}). */
+    /** Laufende Folgeaufträge ({@link JobType#followUp()}) außer Downloads. */
     private int runningFollowUps;
+    /** Downloads ({@link JobType#download()}) in {@link JobStage#PREPARING}. */
+    private int preparing;
+    /** Downloads in {@link JobStage#DOWNLOADING}. */
+    private int downloading;
+    /** Vorbereitete Downloads in der Reihenfolge, in der sie einen Download-Platz bekommen. */
+    private final Deque<Job> prepared = new ArrayDeque<>();
+    private int parallelPreparations;
+    private int parallelDownloads;
     private boolean closed;
 
     /**
@@ -126,6 +134,8 @@ public class Jobs implements AutoCloseable {
         this.executor = Objects.requireNonNull(executor, "executor");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.parallelPreparations = limits.parallelPreparations();
+        this.parallelDownloads = limits.parallelDownloads();
         markInterrupted();
         purgeExpired();
     }
@@ -244,10 +254,7 @@ public class Jobs implements AutoCloseable {
      */
     private void detach(Job job, JobState end, String why) {
         job.finish(end, null, clock.instant());
-        running--;
-        if (job.type.followUp()) {
-            runningFollowUps--;
-        }
+        release(job);
         open.remove(job.id);
         lock.notifyAll();
         JobStatus finished = job.snapshot();
@@ -354,10 +361,14 @@ public class Jobs implements AutoCloseable {
         JobStatus current = requireOwner(status(jobId), owner);
         synchronized (lock) {
             Job job = open.get(jobId);
-            if (job == null || job.state != JobState.QUEUED || !queued.remove(job)) {
+            if (job != null && job.stage == JobStage.PREPARED && prepared.remove(job)) {
+                // Vorbereitet: bekommt den nächsten freien Download-Platz.
+                prepared.addFirst(job);
+            } else if (job == null || job.state != JobState.QUEUED || !queued.remove(job)) {
                 return current;
+            } else {
+                queued.addFirst(job);
             }
-            queued.addFirst(job);
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag vorgezogen", null,
                     null, null, null);
         }
@@ -613,10 +624,7 @@ public class Jobs implements AutoCloseable {
             return false;
         }
         lingering.add(jobId);
-        running--;
-        if (job.type.followUp()) {
-            runningFollowUps--;
-        }
+        release(job);
         return true;
     }
 
@@ -934,14 +942,16 @@ public class Jobs implements AutoCloseable {
     private void dispatch() {
         List<Job> toStart = new ArrayList<>();
         synchronized (lock) {
-            while (running < limits.maxConcurrent() && !queued.isEmpty()) {
-                Job job = next();
-                if (job == null) {
-                    break;
-                }
-                running++;
-                if (job.type.followUp()) {
-                    runningFollowUps++;
+            Job job;
+            while ((job = next()) != null) {
+                if (job.type.download()) {
+                    preparing++;
+                    job.stage = JobStage.PREPARING;
+                } else {
+                    running++;
+                    if (job.type.followUp()) {
+                        runningFollowUps++;
+                    }
                 }
                 job.state = JobState.RUNNING;
                 job.startedAt = clock.instant();
@@ -949,6 +959,7 @@ public class Jobs implements AutoCloseable {
                 store.save(job.snapshot());
                 toStart.add(job);
             }
+            grantDownloads();
         }
         for (Job job : toStart) {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag gestartet", null, null,
@@ -963,21 +974,94 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
-     * Der nächste startbare Auftrag: Abgleiche und Exporte vor Folgeaufträgen, damit Anreicherung und Bilder nie einen
-     * Export aufhalten; Folgeaufträge belegen höchstens alle Plätze bis auf einen. Unter dem Sperrobjekt.
+     * Der nächste startbare Auftrag, aus der Warteschlange genommen: Downloads ({@link JobType#download()}) haben eigene
+     * Plätze für die Vorbereitung ({@link #parallelPreparations()}); sonst Abgleiche und Exporte vor Folgeaufträgen,
+     * damit die Anreicherung nie einen Export aufhält; Folgeaufträge belegen höchstens alle Plätze bis auf einen. Unter
+     * dem Sperrobjekt.
      */
     private Job next() {
-        for (java.util.Iterator<Job> it = queued.iterator(); it.hasNext(); ) {
-            Job job = it.next();
-            if (!job.type.followUp()) {
-                it.remove();
-                return job;
+        boolean general = running < limits.maxConcurrent();
+        boolean followUps = general && runningFollowUps < Math.max(1, limits.maxConcurrent() - 1);
+        boolean preparations = preparing < parallelPreparations;
+        Job pick = null;
+        for (Job job : queued) {
+            if (job.type.download() ? preparations : general && !job.type.followUp()) {
+                pick = job;
+                break;
+            }
+            if (pick == null && !job.type.download() && followUps) {
+                pick = job;
             }
         }
-        if (runningFollowUps >= Math.max(1, limits.maxConcurrent() - 1)) {
-            return null;
+        if (pick != null) {
+            queued.remove(pick);
         }
-        return queued.pollFirst();
+        return pick;
+    }
+
+    /** Unter dem Sperrobjekt: gibt den Platz eines beendeten Auftrags frei. */
+    private void release(Job job) {
+        if (!job.type.download()) {
+            running--;
+            if (job.type.followUp()) {
+                runningFollowUps--;
+            }
+            return;
+        }
+        JobStage stage = job.stage;
+        if (stage == JobStage.PREPARING) {
+            preparing--;
+        } else if (stage == JobStage.PREPARED) {
+            prepared.remove(job);
+        } else if (stage == JobStage.DOWNLOADING) {
+            downloading--;
+        }
+        job.stage = null;
+    }
+
+    /** Unter dem Sperrobjekt: vergibt freie Download-Plätze an vorbereitete Downloads, der Reihe nach. */
+    private void grantDownloads() {
+        while (downloading < parallelDownloads && !prepared.isEmpty()) {
+            Job job = prepared.pollFirst();
+            downloading++;
+            job.stage = JobStage.DOWNLOADING;
+            // Die Laufzeitgrenze gilt ab dem Download: Warten auf einen Platz zählt nicht.
+            job.deadline = clock.instant().plus(limits.maxRunTime());
+            store.save(job.snapshot());
+            job.slot.complete(null);
+        }
+    }
+
+    /** Höchstens gleichzeitig vorbereitende Downloads ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        synchronized (lock) {
+            return parallelPreparations;
+        }
+    }
+
+    /** Ändert {@link #parallelPreparations()} sofort; laufende Vorbereitungen laufen zu Ende. */
+    public void parallelPreparations(int value) {
+        JobLimits.requirePreparations(value);
+        synchronized (lock) {
+            parallelPreparations = value;
+        }
+        dispatch();
+    }
+
+    /** Höchstens gleichzeitig ladende Downloads ({@code jobs.parallel-downloads}); 0 bereitet nur vor. */
+    public int parallelDownloads() {
+        synchronized (lock) {
+            return parallelDownloads;
+        }
+    }
+
+    /** Ändert {@link #parallelDownloads()} sofort; laufende Downloads laufen zu Ende. */
+    public void parallelDownloads(int value) {
+        JobLimits.requireDownloads(value);
+        synchronized (lock) {
+            parallelDownloads = value;
+        }
+        dispatch();
     }
 
     private void run(Job job) {
@@ -1015,10 +1099,7 @@ public class Jobs implements AutoCloseable {
                 job.finish(JobState.FAILED, errorOf(cause), now);
             }
             keepResumable(job);
-            running--;
-            if (job.type.followUp()) {
-                runningFollowUps--;
-            }
+            release(job);
             open.remove(job.id);
             lock.notifyAll();
             finished = job.snapshot();
@@ -1321,6 +1402,10 @@ public class Jobs implements AutoCloseable {
         volatile PauseReason pauseReason;
         /** „Nur Fehler neu versuchen“ ist während des Laufs angefordert und folgt nach dem Durchgang. */
         volatile boolean retryFailedRequested;
+        /** Abschnitt eines laufenden Downloads ({@link JobType#download()}), sonst {@code null}. */
+        volatile JobStage stage;
+        /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */
+        CompletableFuture<Void> slot = new CompletableFuture<>();
         volatile Instant startedAt;
         volatile Instant deadline;
         Instant finishedAt;
@@ -1360,6 +1445,7 @@ public class Jobs implements AutoCloseable {
             pauseRequested = false;
             stopRequestedAt = null;
             pauseReason = null;
+            stage = null;
             incomplete = false;
             discovered.set(0);
             processed.set(0);
@@ -1372,7 +1458,46 @@ public class Jobs implements AutoCloseable {
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
                     cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt, rootPageId,
                     rootPageId == null ? null : rootTitle, parameters, incomplete && state == JobState.COMPLETED,
-                    pauseRequested && cancelRequested && !state.terminal(), pauseReason);
+                    pauseRequested && cancelRequested && !state.terminal(), pauseReason, stage);
+        }
+
+        @Override
+        public void awaitDownloadSlot() {
+            CompletableFuture<Void> granted;
+            synchronized (lock) {
+                if (stage != JobStage.PREPARING || detached) {
+                    return;
+                }
+                checkpoint();
+                preparing--;
+                stage = JobStage.PREPARED;
+                granted = new CompletableFuture<>();
+                slot = granted;
+                prepared.addLast(this);
+                lock.notifyAll();
+                store.save(snapshot());
+            }
+            emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, "Vorbereitet",
+                    "Vorbereitet: " + discovered.get() + " Verweise; wartet auf einen Download-Platz", null, null,
+                    null, null);
+            // Der Platz für Vorbereitungen ist frei; vielleicht gibt es auch schon einen Download-Platz.
+            dispatch();
+            while (true) {
+                if (cancelRequested) {
+                    throw new JobCancelledException(id);
+                }
+                try {
+                    granted.get(250, TimeUnit.MILLISECONDS);
+                    return;
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // weiter warten und auf Abbruch prüfen
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(id);
+                } catch (ExecutionException e) {
+                    throw new IllegalStateException(e.getCause());
+                }
+            }
         }
 
         @Override

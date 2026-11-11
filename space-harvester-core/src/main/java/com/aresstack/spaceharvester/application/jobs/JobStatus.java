@@ -34,6 +34,8 @@ import java.util.TreeMap;
  *                        unvollständig, etwa ein Export mit fehlenden Seiten oder Bilder ohne vollständiges Manifest
  * @param pauseRequested  mit {@code cancelRequested}: der Benutzer hält an, statt abzubrechen; nur solange der Auftrag
  *                        noch läuft, nie abgelegt
+ * @param stage           nur bei {@link JobState#RUNNING} eines Downloads ({@link JobType#download()}): Vorbereitung,
+ *                        vorbereitet oder Download, sonst {@code null}; wird nicht abgelegt
  * @param pauseReason     nur bei {@link JobState#PAUSED}: warum angehalten, sonst {@code null}; ältere abgelegte
  *                        Aufträge lesen sich mit {@link PauseReason#USER}
  */
@@ -41,10 +43,23 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
                         Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle,
                         Map<String, String> parameters, boolean incomplete, boolean pauseRequested,
-                        PauseReason pauseReason) {
+                        PauseReason pauseReason, JobStage stage) {
+
+    /** Ohne Abschnitt ({@link #stage()}). */
+    public JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
+                     JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
+                     Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle,
+                     Map<String, String> parameters, boolean incomplete, boolean pauseRequested,
+                     PauseReason pauseReason) {
+        this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
+                finishedAt, rootPageId, rootTitle, parameters, incomplete, pauseRequested, pauseReason, null);
+    }
 
     public JobStatus {
         parameters = parameters == null ? Map.of() : java.util.Collections.unmodifiableMap(new TreeMap<>(parameters));
+        if (state != JobState.RUNNING) {
+            stage = null;
+        }
         if (state != JobState.PAUSED) {
             pauseReason = null;
         } else if (pauseReason == null) {

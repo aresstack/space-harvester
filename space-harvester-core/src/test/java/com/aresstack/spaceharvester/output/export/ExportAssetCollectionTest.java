@@ -207,9 +207,13 @@ class ExportAssetCollectionTest {
         cache.publish("confluence", "DEV", confirmed("g1"), List.of(
                 page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
                 page("confluence", "DEV", "101", "100")));
-        // Während Seite 100 hält der Benutzer an; sie wird noch fertig, 101 nicht mehr.
-        source.onListing = pageId -> {
-            if (pageId.equals("100")) {
+        // Während Seite 100 lädt, hält der Benutzer an; sie wird noch fertig, 101 nicht mehr.
+        long[] discoveredAtFirstDownload = {-1};
+        source.onDownload = src -> {
+            if (discoveredAtFirstDownload[0] < 0) {
+                discoveredAtFirstDownload[0] = jobs.list("client-a", JobType.ASSETS).get(0).progress().discovered();
+            }
+            if (src.contains("mermaid")) {
                 jobs.list("client-a", JobType.ASSETS).stream()
                         .filter(job -> job.state() == JobState.RUNNING)
                         .forEach(job -> jobs.pause(job.id(), "client-a"));
@@ -220,6 +224,8 @@ class ExportAssetCollectionTest {
         drain();
 
         JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
+        // Die Vorbereitung hat alle Verweise beider Seiten gezählt, bevor die erste Datei geladen wurde.
+        assertThat(discoveredAtFirstDownload[0]).isEqualTo(4);
         assertThat(paused.state()).isEqualTo(JobState.PAUSED);
         assertThat(paused.parameters()).containsEntry(ExportAssetCollection.EXPORT_ID, export.id());
         assertThat(paused.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
@@ -230,7 +236,7 @@ class ExportAssetCollectionTest {
         assertThat(partial.forPage("101")).isEmpty();
         int downloads = source.downloads;
         List<String> listedBefore = List.copyOf(source.listed);
-        source.onListing = pageId -> { };
+        source.onDownload = src -> { };
 
         assertThat(conversions.resumeImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
         drain();
@@ -360,6 +366,8 @@ class ExportAssetCollectionTest {
         final List<String> listed = new ArrayList<>();
         /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
         java.util.function.Consumer<String> onListing = pageId -> { };
+        /** Beim Laden eines Bildes der Lese-Ansicht, mit seiner Adresse. */
+        java.util.function.Consumer<String> onDownload = src -> { };
 
         @Override
         public String id() {
@@ -449,6 +457,7 @@ class ExportAssetCollectionTest {
 
         @Override
         public byte[] viewImage(ViewImage image, long maxBytes) {
+            onDownload.accept(image.src());
             downloads++;
             return PNG;
         }

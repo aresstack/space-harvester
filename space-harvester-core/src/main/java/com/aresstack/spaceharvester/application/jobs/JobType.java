@@ -44,6 +44,14 @@ public enum JobType {
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
+    /**
+     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
+     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS;
+    }
+
     public boolean followUp() {
         return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS;
     }

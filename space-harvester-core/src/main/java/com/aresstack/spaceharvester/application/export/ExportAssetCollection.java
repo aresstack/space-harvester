@@ -99,6 +99,8 @@ public class ExportAssetCollection {
     static final String DOCUMENTS_PHASE = "Anhänge beschaffen";
     /** Phase, solange der Auftrag auf den Einmalcode wartet; die Oberfläche zeigt „Wartet auf Anmeldung“. */
     public static final String SIGN_IN_PHASE = "Wartet auf Anmeldung";
+    /** Phase der Vorbereitung: Verweise zählen, noch nichts laden. */
+    public static final String PREPARE_PHASE = "Verweise zählen";
     /** Mermaid-Makros: {@code mermaid}, {@code mermaid-cloud}, {@code mermaid-macro} usw. */
     private static final Pattern MERMAID = Pattern.compile(
             "<ac:structured-macro\\b[^>]*\\bac:name=\"[^\"]*mermaid[^\"]*\"[^>]*>(.*?)</ac:structured-macro>",
@@ -433,6 +435,11 @@ public class ExportAssetCollection {
         }
 
         @Override
+        public void awaitDownloadSlot() {
+            context.awaitDownloadSlot();
+        }
+
+        @Override
         public void pause(PauseReason reason) {
             context.pause(reason);
         }
@@ -530,12 +537,15 @@ public class ExportAssetCollection {
             run = new Run(context, scope, share, dataset.sourceId(), settings.get(), fresh);
             Run current = run;
             boolean[] complete = {true};
+            // Erst vorbereiten: alle Verweise aller Seiten zählen, ohne zu laden; danach steht die Gesamtzahl fest
+            // (Angelo 11.11.2026). Vor dem Anhalten schon vollständig geladene Seiten zählen ohne Abruf mit.
+            context.phase(COMPONENT, PREPARE_PHASE);
+            List<PagePlan> plans = new ArrayList<>();
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 String pageId = page.snapshot().key().pageId();
                 CheckedPage earlier = done.get(pageId);
                 if (earlier != null) {
-                    // Vor dem Anhalten schon vollständig geprüft: ohne Abruf übernehmen.
                     entries.addAll(earlier.entries());
                     context.discovered(earlier.discovered());
                     context.processed(earlier.processed());
@@ -544,19 +554,12 @@ public class ExportAssetCollection {
                     checked.add(pageId);
                     return;
                 }
-                int first = entries.size();
-                long discovered = context.discovered;
-                long processed = context.processed;
-                long written = context.written;
-                long failed = context.failed;
                 try {
-                    if (collectPage(current, exportId, dataset, page.snapshot(), entries)) {
-                        checked.add(pageId);
-                        done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
-                                context.discovered - discovered, context.processed - processed,
-                                context.written - written, context.failed - failed));
-                    } else {
+                    PagePlan plan = plan(current, exportId, dataset, page.snapshot());
+                    if (plan == null) {
                         complete[0] = false;
+                    } else {
+                        plans.add(plan);
                     }
                 } catch (SourceUnreachable e) {
                     // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler
@@ -566,6 +569,31 @@ public class ExportAssetCollection {
                     context.pause(PauseReason.CONNECTION_LOST);
                 }
             });
+            // Vorbereitet: wartet auf einen Download-Platz (jobs.parallel-downloads), dann wird geladen.
+            context.awaitDownloadSlot();
+            context.phase(COMPONENT, scope.phase);
+            for (PagePlan plan : plans) {
+                context.checkpoint();
+                String pageId = plan.snapshot().key().pageId();
+                int first = entries.size();
+                long processed = context.processed;
+                long written = context.written;
+                long failed = context.failed;
+                try {
+                    if (load(current, dataset, plan, entries)) {
+                        checked.add(pageId);
+                        done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
+                                plan.discovered(), context.processed - processed, context.written - written,
+                                context.failed - failed));
+                    } else {
+                        complete[0] = false;
+                    }
+                } catch (SourceUnreachable e) {
+                    LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
+                            exportId, e.reason);
+                    context.pause(PauseReason.CONNECTION_LOST);
+                }
+            }
             List<ExportAssetManifest.Entry> own = write(share, exportId, entries, checked, complete[0], run.settings);
             if (!(complete[0] && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
                 context.incomplete();
@@ -656,21 +684,44 @@ public class ExportAssetCollection {
                 + reference.src() + "\u0000" + reference.index();
     }
 
-    /** @return ob die Seite vollständig geprüft werden konnte */
-    private boolean collectPage(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot,
-                                List<ExportAssetManifest.Entry> entries) {
+    /**
+     * Was auf einer Seite zu laden ist, aus der Vorbereitung (Angelo 11.11.2026): Anhangsliste und Lese-Ansicht sind
+     * abgefragt und gezählt, geladen ist noch nichts.
+     *
+     * @param list      die Anhangsliste oder {@code null}, wenn sie nicht abrufbar war
+     * @param steps     die Verweise in Ladereihenfolge (Quelldaten von Diagrammen vor Bildern)
+     * @param order     Anhangs-IDs in der Reihenfolge der Quelle, für das Manifest
+     * @param checked   ob die Seite vollständig geprüft werden konnte
+     */
+    private record PagePlan(PageSnapshot snapshot, PageAttachmentList list, List<Step> steps, List<String> order,
+                            boolean checked, long discovered) {
+    }
+
+    /** Ein Verweis einer Seite: ein Bild- oder Dokument-Anhang, oder ein Bild der Lese-Ansicht. */
+    private record Step(PageAttachment attachment, boolean document, HarvestSource.ViewImage image,
+                        boolean forbidden) {
+    }
+
+    /**
+     * Vorbereitung einer Seite: fragt Anhangsliste und Lese-Ansicht ab, legt die Lese-Ansicht ab und zählt jeden
+     * Verweis ({@link JobContext#discovered}); lädt keine Datei.
+     */
+    private PagePlan plan(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot) {
         JobContext context = run.context;
         String sourceId = dataset.sourceId();
         String pageId = snapshot.key().pageId();
         boolean checked = true;
+        long discovered = 0;
+        List<Step> steps = new ArrayList<>();
+        List<String> order = new ArrayList<>();
         Set<String> attachmentIds = new HashSet<>();
         Set<String> ownAttachments = new HashSet<>();
-        Set<String> drawn = new HashSet<>();
+        PageAttachmentList list = null;
         try {
-            PageAttachmentList list = sources.attachments(sourceId, pageId);
+            list = sources.attachments(sourceId, pageId);
             if (!dataset.spaceKey().equals(list.spaceKey())) {
                 // Inzwischen in einem anderen Space: die Seite bleibt, wie sie exportiert wurde, ohne Bilder.
-                return false;
+                return null;
             }
             if (!list.attachments().complete()) {
                 // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.
@@ -680,100 +731,96 @@ public class ExportAssetCollection {
             // bleibt die Reihenfolge der Quelle.
             List<PageAttachment> ordered = list.attachments().attachments().stream()
                     .sorted(Comparator.comparing(a -> !Diagrams.isDrawio(a.mediaType(), a.title()))).toList();
-            Map<String, ExportAssetManifest.Entry> byId = new HashMap<>();
-            try {
-                for (PageAttachment attachment : ordered) {
-                    ownAttachments.add(attachment.attachmentId());
-                    AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
-                    if (kind == AssetKind.OTHER) {
-                        if (run.share.documents() && run.settings.attachments()) {
-                            byId.put(attachment.attachmentId(), document(run, list, pageId, attachment));
-                        }
-                        continue;
+            for (PageAttachment attachment : list.attachments().attachments()) {
+                order.add(attachment.attachmentId());
+            }
+            for (PageAttachment attachment : ordered) {
+                ownAttachments.add(attachment.attachmentId());
+                AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
+                if (kind == AssetKind.OTHER) {
+                    if (run.share.documents() && run.settings.attachments()) {
+                        steps.add(new Step(attachment, true, null, false));
+                        discovered++;
                     }
-                    if (!run.share.images()) {
-                        continue;
-                    }
-                    attachmentIds.add(attachment.attachmentId());
-                    context.discovered(1);
-                    ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.attachment(
-                            attachment.attachmentId(), attachment.title());
-                    if (preview(attachment.title(), drawn)) {
-                        // Das Backup-PNG eines gezeichneten Diagramms: nicht laden, die Quelldaten tragen den Inhalt.
-                        context.processed(1);
-                        byId.put(attachment.attachmentId(), new ExportAssetManifest.Entry(pageId, reference,
-                                attachment.attachmentId(), attachment.version(), attachment.title(),
-                                attachment.mediaType(), 0, null, ExportAssetManifest.Status.REDUNDANT,
-                                "drawio-preview"));
-                        continue;
-                    }
-                    boolean reload = run.fresh("attachment:" + attachment.attachmentId());
-                    ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
-                            attachment.version(), attachment.title(), attachment.mediaType(),
-                            () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
-                    if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
-                        entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
-                                .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
-                                .map(entry::withRendition).orElse(entry);
-                        if (entry.rendition() != null && entry.rendition().drawn()) {
-                            drawn.add(Diagrams.drawioName(attachment.title()));
-                        }
-                    }
-                    byId.put(attachment.attachmentId(), entry);
+                    continue;
                 }
-            } finally {
-                for (PageAttachment attachment : list.attachments().attachments()) {
-                    ExportAssetManifest.Entry entry = byId.get(attachment.attachmentId());
-                    if (entry != null) {
-                        entries.add(entry);
-                    }
+                if (!run.share.images()) {
+                    continue;
                 }
+                attachmentIds.add(attachment.attachmentId());
+                steps.add(new Step(attachment, false, null, false));
+                discovered++;
             }
         } catch (SourceAccessException e) {
             unreachable(e);
             if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
                 checked = false;
             }
+        }
+        if (run.share.images()) {
+            // Lese-Ansicht und Mermaid gehören zu den Bildern.
+            boolean foreign = ForeignContent.of(snapshot).present();
+            boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
+            try {
+                for (HarvestSource.ViewImage image : readingView(exportId, sourceId, snapshot,
+                        foreign && !mayShowForeign)) {
+                    if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
+                        continue;
+                    }
+                    boolean otherPage = image.attachmentId() != null && !ownAttachments.contains(image.attachmentId());
+                    steps.add(new Step(null, false, image, (foreign || otherPage) && !mayShowForeign));
+                    discovered++;
+                }
+            } catch (SourceAccessException e) {
+                unreachable(e);
+                if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                    checked = false;
+                }
+            }
+        }
+        context.discovered(discovered);
+        return new PagePlan(snapshot, list, steps, order, checked, discovered);
+    }
+
+    /**
+     * Lädt, was die Vorbereitung für eine Seite gefunden hat, und schreibt die Einträge in {@code entries}: Anhänge in
+     * der Reihenfolge der Quelle, dann Bilder der Lese-Ansicht, dann Mermaid.
+     *
+     * @return ob die Seite vollständig geprüft werden konnte
+     */
+    private boolean load(Run run, ConversionInput dataset, PagePlan plan, List<ExportAssetManifest.Entry> entries) {
+        JobContext context = run.context;
+        String sourceId = dataset.sourceId();
+        PageSnapshot snapshot = plan.snapshot();
+        String pageId = snapshot.key().pageId();
+        PageAttachmentList list = plan.list();
+        Set<String> drawn = new HashSet<>();
+        Map<String, ExportAssetManifest.Entry> byId = new HashMap<>();
+        List<ExportAssetManifest.Entry> views = new ArrayList<>();
+        try {
+            for (Step step : plan.steps()) {
+                if (step.document()) {
+                    byId.put(step.attachment().attachmentId(), document(run, list, pageId, step.attachment()));
+                } else if (step.attachment() != null) {
+                    byId.put(step.attachment().attachmentId(), image(run, list, pageId, step.attachment(), drawn));
+                } else {
+                    ExportAssetManifest.Entry entry = view(run, sourceId, snapshot, step, drawn);
+                    if (entry != null) {
+                        views.add(entry);
+                    }
+                }
+            }
+        } finally {
+            for (String attachmentId : plan.order()) {
+                ExportAssetManifest.Entry entry = byId.get(attachmentId);
+                if (entry != null) {
+                    entries.add(entry);
+                }
+            }
+            entries.addAll(views);
         }
         if (!run.share.images()) {
-            // Lese-Ansicht und Mermaid gehören zu den Bildern.
-            return checked;
-        }
-        boolean foreign = ForeignContent.of(snapshot).present();
-        boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
-        try {
-            List<HarvestSource.ViewImage> viewImages = readingView(exportId, sourceId, snapshot,
-                    foreign && !mayShowForeign);
-            for (HarvestSource.ViewImage image : viewImages) {
-                if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
-                    continue;
-                }
-                if (image.attachmentId() == null && preview(Assets.viewFileName(image), drawn)) {
-                    // Die Vorschau eines gezeichneten Diagramms, wie die Ansicht sie zeigt: ebenso überflüssig.
-                    continue;
-                }
-                context.discovered(1);
-                ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.viewImage(withoutUserInfo(
-                        image.src()));
-                boolean otherPage = image.attachmentId() != null && !ownAttachments.contains(image.attachmentId());
-                if ((foreign || otherPage) && !mayShowForeign) {
-                    // Gerendert mit den Zugangsdaten der Quelle: nicht laden, nur als nicht freigegeben melden.
-                    context.processed(1);
-                    context.failed(1);
-                    entries.add(new ExportAssetManifest.Entry(pageId, reference, null, null, image.title(),
-                            image.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content"));
-                    continue;
-                }
-                boolean reload = run.fresh(image.attachmentId() != null ? "attachment:" + image.attachmentId()
-                        : "view:" + image.src());
-                entries.add(store(run, pageId, reference, null, null, image.title(), image.mediaType(),
-                        () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image, reload).asset()));
-            }
-        } catch (SourceAccessException e) {
-            unreachable(e);
-            if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
-                checked = false;
-            }
+            return plan.checked();
         }
         List<String> diagrams = mermaid(snapshot);
         for (int i = 0; i < diagrams.size(); i++) {
@@ -784,7 +831,63 @@ public class ExportAssetCollection {
                     Assets.sha256(text), ExportAssetManifest.Status.STORED, null,
                     rendered(sourceId, pageId, Assets.MERMAID_RENDITION, text)));
         }
-        return checked;
+        return plan.checked();
+    }
+
+    /** Ein Bild-Anhang; das Backup-PNG eines schon gezeichneten Diagramms wird nicht geladen. */
+    private ExportAssetManifest.Entry image(Run run, PageAttachmentList list, String pageId,
+                                            PageAttachment attachment, Set<String> drawn) {
+        String sourceId = list.sourceId();
+        ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.attachment(attachment.attachmentId(),
+                attachment.title());
+        if (preview(attachment.title(), drawn)) {
+            // Das Backup-PNG eines gezeichneten Diagramms: nicht laden, die Quelldaten tragen den Inhalt.
+            run.context.processed(1);
+            return new ExportAssetManifest.Entry(pageId, reference, attachment.attachmentId(), attachment.version(),
+                    attachment.title(), attachment.mediaType(), 0, null, ExportAssetManifest.Status.REDUNDANT,
+                    "drawio-preview");
+        }
+        boolean reload = run.fresh("attachment:" + attachment.attachmentId());
+        ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
+                attachment.version(), attachment.title(), attachment.mediaType(),
+                () -> assets.content(list, attachment.attachmentId(), true, reload).asset());
+        if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
+            entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
+                    .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
+                    .map(entry::withRendition).orElse(entry);
+            if (entry.rendition() != null && entry.rendition().drawn()) {
+                drawn.add(Diagrams.drawioName(attachment.title()));
+            }
+        }
+        return entry;
+    }
+
+    /**
+     * Ein Bild der Lese-Ansicht; {@code null} für die Vorschau eines gezeichneten Diagramms, wie die Ansicht sie zeigt
+     * (gezählt, aber ohne Eintrag).
+     */
+    private ExportAssetManifest.Entry view(Run run, String sourceId, PageSnapshot snapshot, Step step,
+                                           Set<String> drawn) {
+        JobContext context = run.context;
+        String pageId = snapshot.key().pageId();
+        HarvestSource.ViewImage image = step.image();
+        if (image.attachmentId() == null && preview(Assets.viewFileName(image), drawn)) {
+            context.processed(1);
+            return null;
+        }
+        ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.viewImage(withoutUserInfo(
+                image.src()));
+        if (step.forbidden()) {
+            // Gerendert mit den Zugangsdaten der Quelle: nicht laden, nur als nicht freigegeben melden.
+            context.processed(1);
+            context.failed(1);
+            return new ExportAssetManifest.Entry(pageId, reference, null, null, image.title(), image.mediaType(), 0,
+                    null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content");
+        }
+        boolean reload = run.fresh(image.attachmentId() != null ? "attachment:" + image.attachmentId()
+                : "view:" + image.src());
+        return store(run, pageId, reference, null, null, image.title(), image.mediaType(),
+                () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image, reload).asset());
     }
 
     /**
@@ -915,7 +1018,6 @@ public class ExportAssetCollection {
     private ExportAssetManifest.Entry document(Run run, PageAttachmentList list, String pageId,
                                                PageAttachment attachment) {
         JobContext context = run.context;
-        context.discovered(1);
         ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.document(attachment.attachmentId(),
                 attachment.title());
         String excluded = null;
