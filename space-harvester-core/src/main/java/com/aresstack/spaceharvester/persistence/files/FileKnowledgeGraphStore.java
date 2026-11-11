@@ -227,6 +227,11 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
             }
             ArrayNode findings = entry.putArray("findings");
             statement.findings().stream().sorted().forEach(findings::add);
+            entry.put("paragraph", statement.paragraph());
+            entry.put("quality", statement.quality().name());
+            ArrayNode reasons = entry.putArray("qualityReasons");
+            statement.qualityReasons().forEach(reasons::add);
+            entry.put("review", statement.review().name());
         }
         ArrayNode attachments = node.putArray("attachments");
         for (ParsedStatements.Attachment attachment : result.attachments()) {
@@ -275,12 +280,27 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
             }
             Set<String> findings = new HashSet<>();
             entry.path("findings").forEach(value -> findings.add(value.asString()));
-            statements.add(new ParsedStatements.Statement(entry.path("id").asString(),
+            // Jedes neue Feld einzeln, mit Rückfall: ältere Dateien ohne Bewertung bleiben UNCERTAIN/NOT_ASSESSED
+            // (und sind über die Regelversion ohnehin veraltet), unbekannte Werte brechen das Laden nicht ab.
+            List<String> reasons = new ArrayList<>();
+            entry.path("qualityReasons").forEach(value -> reasons.add(value.asString()));
+            ParsedStatements.Quality quality = enumOr(ParsedStatements.Quality.class, entry, "quality", null);
+            if (quality == null) {
+                quality = ParsedStatements.Quality.UNCERTAIN;
+                reasons.clear();
+                reasons.add(ParsedStatements.Statement.NOT_ASSESSED);
+            }
+            JsonNode paragraph = entry.path("paragraph");
+            ParsedStatements.Statement statement = new ParsedStatements.Statement(entry.path("id").asString(),
                     entry.path("sentence").asInt(), entry.path("start").asInt(), entry.path("end").asInt(),
                     entry.path("predicateText").asString(), text(entry, "predicateLemma"),
                     ParsedStatements.Voice.valueOf(entry.path("voice").asString()),
                     ParsedStatements.Clause.valueOf(entry.path("clause").asString()), entry.path("core").asBoolean(),
-                    arguments, findings));
+                    arguments, findings,
+                    paragraph.isInt() ? paragraph.asInt() : ParsedStatements.Statement.UNKNOWN_PARAGRAPH, quality,
+                    reasons, enumOr(ParsedStatements.Review.class, entry, "review",
+                    ParsedStatements.Review.UNREVIEWED));
+            statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
         for (JsonNode entry : node.path("attachments")) {
@@ -298,6 +318,19 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 root.path("pageId").asString()), text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
                 root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result);
+    }
+
+    /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */
+    private static <E extends Enum<E>> E enumOr(Class<E> type, JsonNode entry, String field, E fallback) {
+        JsonNode value = entry.path(field);
+        if (!value.isString()) {
+            return fallback;
+        }
+        try {
+            return Enum.valueOf(type, value.asString());
+        } catch (IllegalArgumentException unknown) {
+            return fallback;
+        }
     }
 
     private static String text(JsonNode node, String field) {

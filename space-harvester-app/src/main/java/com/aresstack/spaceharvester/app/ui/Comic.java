@@ -142,6 +142,9 @@ public final class Comic {
         scroll.getVerticalScrollBar().setUnitIncrement(16);
         scroll.getViewport().setBackground(view instanceof JTable ? Color.WHITE : SURFACE);
         scroll.setBorder(BorderFactory.createEmptyBorder());
+        // Liegt die Fläche in einer Seite, die selbst scrollt (Einstellungen), reicht sie das Rad weiter, sobald
+        // sie nichts mehr zu scrollen hat; sonst verschluckt eine Tabelle das Rad.
+        com.aresstack.spaceharvester.app.ui.controls.WheelForwarding.install(scroll);
         return scroll;
     }
 
@@ -227,6 +230,7 @@ public final class Comic {
         JTextArea area = new JTextArea(text);
         area.setEditable(false);
         area.setFocusable(false);
+        noAutoScroll(area);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
         area.setOpaque(false);
@@ -234,6 +238,16 @@ public final class Comic {
         area.setForeground(TEXT);
         area.setBorder(BorderFactory.createEmptyBorder());
         return area;
+    }
+
+    /**
+     * Ein neuer Text setzt die Schreibmarke nicht ans Ende: Sonst zöge jedes {@code setText} beim Aktualisieren die
+     * umgebende Bildlaufansicht zu diesem Text (Aufträge sprangen alle 1,5 s nach unten, Angelo 10.11.2026).
+     */
+    public static void noAutoScroll(javax.swing.text.JTextComponent text) {
+        if (text.getCaret() instanceof javax.swing.text.DefaultCaret caret) {
+            caret.setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
+        }
     }
 
     /** Kontrollkästchen im Comic-Stil: runde Box, blau mit Haken, wenn gewählt. */

@@ -98,7 +98,7 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeStartObject();
         generator.writeStringProperty("format", ASSETS_FORMAT);
         generator.writeBooleanProperty("collected", manifest.isPresent());
-        generator.writeBooleanProperty("complete", manifest.map(ExportAssetManifest::complete).orElse(false));
+        generator.writeBooleanProperty("complete", manifest.map(ExportAssetManifest::imagesComplete).orElse(false));
         generator.writeName("assets");
         generator.writeStartArray();
         for (Entry entry : entries) {

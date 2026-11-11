@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -189,8 +190,228 @@ public class Exports {
         List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
+        java.util.function.Consumer<JobStatus> announce = submitted;
+        Map<String, String> parameters = parameters(request);
+        if (announce == null) {
+            return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
+                    request.owner(), parameters, new ExportTask(request, selected));
+        }
+        parameters.put(FOLLOW_UPS, ANNOUNCED);
+        // Die Folgeaufträge entstehen, bevor der Export starten kann: sonst könnte ein schneller Export schon
+        // veröffentlichen, ehe es sie gibt.
         return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
-                request.owner(), JobTask.blocking(context -> export(context, request, selected)));
+                request.owner(), parameters, new ExportTask(request, selected), announce);
+    }
+
+    /**
+     * Angabe am Export: seine Folgeaufträge (Bilder, Anhänge) wurden schon beim Start angelegt ({@link #onSubmitted});
+     * fehlen sie beim Veröffentlichen, hat der Benutzer sie gelöscht und will nur den Text.
+     */
+    public static final String FOLLOW_UPS = "follow-ups";
+    /** Wert von {@link #FOLLOW_UPS}. */
+    public static final String ANNOUNCED = "announced";
+
+    private volatile java.util.function.Consumer<JobStatus> submitted;
+
+    /**
+     * Folgeaufträge schon beim Start eines Exports anlegen, etwa Bilder und Anhänge im Zustand „Wartet auf Text“
+     * (Angelo 11.11.2026); sie starten, sobald der Datenbestand veröffentlicht ist ({@link #onPublished}). Ein Fehler
+     * darin lässt den Export nie scheitern.
+     *
+     * @param listener bekommt den eben angenommenen Export
+     */
+    public void onSubmitted(java.util.function.Consumer<JobStatus> listener) {
+        this.submitted = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Wiederanlauf-Angabe: Ebenen unter der Startseite ({@link ExportRequest#depth()}). */
+    static final String DEPTH = "depth";
+    /** Wiederanlauf-Angabe: vorher gegen die Quelle abgleichen ({@link ExportRequest#refresh()}). */
+    static final String REFRESH = "refresh";
+    /** Wiederanlauf-Angabe: abgeleitete Formate, durch Komma getrennt ({@link ExportRequest#formats()}). */
+    static final String FORMATS = "formats";
+
+    /** Was ein Wiederanlauf braucht, um denselben Umfang zu bearbeiten ({@link JobStatus#parameters()}). */
+    static Map<String, String> parameters(ExportRequest request) {
+        Map<String, String> parameters = new java.util.TreeMap<>();
+        if (request.depth() != null) {
+            parameters.put(DEPTH, request.depth().toString());
+        }
+        if (request.refresh()) {
+            parameters.put(REFRESH, "true");
+        }
+        if (!request.formats().isEmpty()) {
+            parameters.put(FORMATS, String.join(",", request.formats()));
+        }
+        return parameters;
+    }
+
+    /**
+     * Derselbe Auftrag wie beim Start, aus den abgelegten Angaben; Lese- und Exportprüfung wie bei
+     * {@link ExportRequest#of}, bis {@code access} sie erneuert.
+     */
+    static ExportRequest request(JobStatus status) {
+        String formats = status.parameter(FORMATS);
+        String depth = status.parameter(DEPTH);
+        return ExportRequest.of(status.sourceId(), status.partitionKey(), status.owner(),
+                        formats == null || formats.isBlank() ? List.of() : List.of(formats.split(",")))
+                .withRefresh(Boolean.parseBoolean(status.parameter(REFRESH)))
+                .withRoot(status.rootPageId())
+                .withDepth(status.rootPageId() == null || depth == null ? null : Integer.valueOf(depth));
+    }
+
+    /** Die Arbeit eines Exports; trägt ihren Auftrag, damit Fortsetzen den Zugang des Aufrufers erneuern kann. */
+    private final class ExportTask implements JobTask {
+
+        private final ExportRequest request;
+        private final List<ExportConverter> selected;
+        /** Nur „Nur Fehler neu versuchen“: die Seiten, die nachzuladen sind; sonst {@code null}. */
+        private final Set<String> retry;
+        /** Nur „Neu erzwingen“: auch unveränderte Seiten neu laden. */
+        private final boolean reloadAll;
+
+        ExportTask(ExportRequest request, List<ExportConverter> selected) {
+            this(request, selected, null, false);
+        }
+
+        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll) {
+            this.request = request;
+            this.selected = selected;
+            this.retry = retry == null ? null : Set.copyOf(retry);
+            this.reloadAll = reloadAll;
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
+            return JobTask.blocking(running -> export(running, request, selected, retry, reloadAll)).start(context);
+        }
+    }
+
+    /**
+     * „Neu erzwingen“ für den eigenen beendeten Export im selben Eintrag (ADR 0025): liest den ganzen Umfang neu von
+     * der Quelle, auch unveränderte Seiten, in eine neue Generation, die den bisherigen Stand erst nach dem Lauf
+     * ersetzt; jede Seite behält ihren bisherigen Stand, bis ihre neue Fassung da ist. Danach ersetzt das neue
+     * Artefakt das bisherige; scheitert oder endet der Lauf vorher, bleibt alles Bisherige.
+     *
+     * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws JobNotResumableException wenn der Export noch wartet oder läuft oder seine Bilder oder Anhänge noch
+     *                                  beschafft werden
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus forceRefresh(String exportId, String owner,
+                                  java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new UnknownJobException(exportId);
+        }
+        if (!status.state().terminal()) {
+            throw new JobNotResumableException(exportId, "der Export wartet oder läuft noch");
+        }
+        requireNoFollowUp(exportId, owner);
+        purgeQuietly();
+        writer.requireCapacity();
+        ExportRequest request = access.apply(request(status)).withRefresh(true);
+        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), null,
+                true));
+    }
+
+    private void requireNoFollowUp(String exportId, String owner) {
+        if (followUpRunning(exportId, owner)) {
+            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
+            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
+                    + "erst anhalten oder abwarten");
+        }
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ für den eigenen Export im selben Eintrag (ADR 0025): lädt nur die Seiten nach, die
+     * beim letzten Lauf scheiterten ({@link ExportArtifactWriter#retryPages}), ohne neue Inventur, und ersetzt danach
+     * das Artefakt; scheitert der Lauf, bleibt das bisherige. Lesbarkeit und Umfang werden für jede Seite an ihren
+     * frischen Kopfdaten neu geprüft. Ohne bestätigte Generation liest der Lauf wie beim Fortsetzen ein.
+     *
+     * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws JobNotResumableException wenn der Export noch läuft, nicht fertig ist oder seine Bilder oder Anhänge noch
+     *                                  beschafft werden
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus retryFailed(String exportId, String owner,
+                                 java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new UnknownJobException(exportId);
+        }
+        if (status.state() != com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED) {
+            throw new JobNotResumableException(exportId, status.state().terminal()
+                    ? "der Export ist nicht fertig geworden; Fortsetzen holt den Rest"
+                    : "der Export wartet oder läuft noch");
+        }
+        requireNoFollowUp(exportId, owner);
+        purgeQuietly();
+        writer.requireCapacity();
+        Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
+        ExportRequest request = access.apply(request(status));
+        return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds,
+                false));
+    }
+
+    /** Ob für diesen Export ein Bilder- oder Anhängeauftrag wartet oder läuft. */
+    private boolean followUpRunning(String exportId, String owner) {
+        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
+            for (JobStatus job : jobs.list(owner, type)) {
+                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Export im selben Auftrag fort
+     * ({@link Jobs#resume}, ADR 0025): das Einlesen holt nur, was noch fehlt, und das Artefakt entsteht neu. Nach einem
+     * Neustart läuft derselbe Eintrag mit denselben Angaben (Startseite, Tiefe, Formate, Aktualität) neu
+     * ({@link Jobs#rerun}).
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
+     *                                                                               dieser ID gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wie {@link Jobs#resume}
+     * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
+     */
+    public JobStatus resume(String exportId, String owner) {
+        return resume(exportId, owner, java.util.function.UnaryOperator.identity());
+    }
+
+    /**
+     * Wie {@link #resume(String, String)}; {@code access} erneuert vorher Lese- und Exportprüfung des Auftrags mit dem
+     * aktuellen Zugang des Aufrufers (etwa einem neuen Token), statt den vom Start weiterzuverwenden.
+     */
+    public JobStatus resume(String exportId, String owner, java.util.function.UnaryOperator<ExportRequest> access) {
+        Objects.requireNonNull(access, "access");
+        JobStatus status = jobs.status(exportId, owner);
+        if (status.type() != JobType.EXPORT) {
+            throw new com.aresstack.spaceharvester.application.jobs.UnknownJobException(exportId);
+        }
+        purgeQuietly();
+        writer.requireCapacity();
+        if (!jobs.resumable(exportId, owner)) {
+            if (!Jobs.resumableState(status.state())) {
+                throw new JobNotResumableException(exportId, status.state().terminal() ? "der Export ist fertig"
+                        : "der Export wartet oder läuft noch");
+            }
+            // Nach einem Neustart: derselbe Eintrag mit derselben Arbeit aus den abgelegten Angaben.
+            ExportRequest request = access.apply(request(status));
+            return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats())));
+        }
+        // Ein angehaltenes Nachladen oder Neu-Erzwingen setzt als solches fort, nicht als gewöhnlicher Lauf.
+        return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
+                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll)
+                : task);
     }
 
     /**
@@ -288,10 +509,12 @@ public class Exports {
         }
     }
 
-    private void export(JobContext context, ExportRequest request, List<ExportConverter> selected) {
+    private void export(JobContext context, ExportRequest request, List<ExportConverter> selected,
+                        Set<String> retry, boolean reloadAll) {
         try {
             requireAuthorized(request);
-            Prepared prepared = prepare(context, request);
+            Prepared prepared = retry != null ? prepareRetry(context, request, retry)
+                    : prepare(context, request, reloadAll);
             exportGeneration(context, request, prepared, selected);
         } catch (UnknownSourceException e) {
             throw new JobFailedException("UNKNOWN_SOURCE", "Die Quelle " + request.sourceId()
@@ -325,9 +548,45 @@ public class Exports {
      *
      * @param unrefreshed Seiten, deren Abruf beim Einlesen scheiterte; nur intern, nach außen zählen nur lesbare
      */
-    /** @param counted ob das Einlesen die lesbaren Seiten schon als gefunden und beschafft gezählt hat */
+    /**
+     * @param counted   ob das Einlesen die lesbaren Seiten schon als gefunden und beschafft gezählt hat
+     * @param unchecked nur beim Nachladen: zuvor gescheiterte Seiten, deren Kopfdaten die Quelle nicht lieferte; sie
+     *                  waren für den Auftraggeber schon lesbar und zählen weiter als gescheitert
+     */
     private record Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed,
-                            List<String> warnings, boolean counted) {
+                            List<String> warnings, boolean counted, Set<String> unchecked, Set<String> dropped) {
+
+        Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed, List<String> warnings,
+                 boolean counted) {
+            this(startedAt, generation, unrefreshed, warnings, counted, Set.of(), Set.of());
+        }
+    }
+
+    /**
+     * Bestand für „Nur Fehler neu versuchen“: lädt nur die Seiten nach, ohne Inventur, auf der bestätigten Generation
+     * ({@link SpaceProvisioning#retry}); geht das nicht (kein Einlesen angebunden, keine bestätigte Generation), wie
+     * {@link #prepare}.
+     */
+    private Prepared prepareRetry(JobContext context, ExportRequest request, Set<String> pageIds) {
+        if (!provisioning.available() || cache.currentGeneration(request.sourceId(), request.spaceKey()).isEmpty()) {
+            return prepare(context, request);
+        }
+        Instant startedAt = clock.instant();
+        context.phase(COMPONENT, "Fehlgeschlagene Seiten nachladen");
+        // Nur Seiten, die der Auftraggeber im letzten Ergebnis schon als gescheitert sah: die Zahl verrät nichts Neues.
+        context.record(JobEvent.Draft.info(COMPONENT, pageIds.size() + " gescheiterte Seiten werden gezielt "
+                + "nachgeladen, ohne neue Inventur"));
+        SpaceProvisioning.Retried retried = provisioning.retry(new ProvisioningContext(context), request.sourceId(),
+                request.spaceKey(), pageIds, request.visible());
+        context.checkpoint();
+        if (!retried.done()) {
+            return prepare(context, request);
+        }
+        CacheGeneration generation = cache.currentGeneration(request.sourceId(), request.spaceKey())
+                .orElseThrow(() -> new JobFailedException("SYNC_INCOMPLETE", "Nach dem Nachladen liegt für Space "
+                        + request.spaceKey() + " der Quelle " + request.sourceId() + " keine Generation vor"));
+        return new Prepared(startedAt, generation, retried.failedPages(), List.of(), false, retried.unchecked(),
+                retried.dropped());
     }
 
     /**
@@ -336,11 +595,18 @@ public class Exports {
      * einen (unvollständigen) Export aus dem bisherigen Bestand, wenn keine Aktualität verlangt war.
      */
     private Prepared prepare(JobContext context, ExportRequest request) {
+        return prepare(context, request, false);
+    }
+
+    /** @param reloadAll „Neu erzwingen“: auch unveränderte Seiten neu laden */
+    private Prepared prepare(JobContext context, ExportRequest request, boolean reloadAll) {
         context.phase(COMPONENT, "Bestand prüfen");
         Instant startedAt = clock.instant();
         String sourceId = request.sourceId();
         String spaceKey = request.spaceKey();
         Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
+        // Fehlen der Generation Inhalte (nur katalogisiert oder veraltet, etwa nach einem Teilbaum-Export), ist sie
+        // nicht CONFIRMED, und der Export liest neu ein; geladene Seiten bleiben dabei liegen (ADR 0025).
         boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
         if (reusable && !request.refresh()) {
             context.record(JobEvent.Draft.info(COMPONENT, "Bestätigte Generation " + current.get().id()
@@ -355,12 +621,15 @@ public class Exports {
         }
         List<String> warnings = new ArrayList<>();
         context.phase(COMPONENT, "Einlesen");
-        context.record(JobEvent.Draft.info(COMPONENT, current.isEmpty() ? "Kein Bestand im Cache; der Space wird von "
-                + "der Quelle eingelesen" : request.refresh() ? "Aktueller Stand verlangt; der Space wird von der Quelle "
-                + "eingelesen" : "Bestand nicht bestätigt (" + current.get().state() + "); der Space wird von der "
-                + "Quelle eingelesen"));
-        SpaceProvisioning.Provisioned provisioned = provisioning.provision(
-                new ProvisioningContext(context), sourceId, spaceKey, request.visible());
+        String what = request.rootPageId() == null ? "der Space wird" : "der Teilbaum wird";
+        context.record(JobEvent.Draft.info(COMPONENT, (current.isEmpty() ? "Kein Bestand im Cache; "
+                : reloadAll ? "Neu erzwingen; "
+                : request.refresh() ? "Aktueller Stand verlangt; "
+                : "Bestand nicht bestätigt (" + current.get().state() + "); ") + what + " von der Quelle eingelesen"));
+        // Mit Startseite lädt das Einlesen nur deren Teilbaum; der übrige Space kommt nur mit Kopfdaten in den Katalog.
+        SpaceProvisioning.Provisioned provisioned = provisioning.provisionScoped(
+                new ProvisioningContext(context), sourceId, spaceKey, headers -> counted(request, headers),
+                request.rootPageId() == null ? null : headers -> inSubtree(request, headers), reloadAll);
         context.checkpoint();
         if (!provisioned.confirmed()) {
             if (current.isEmpty() || request.refresh()) {
@@ -400,9 +669,16 @@ public class Exports {
                 .filter(request.visible()).toList();
         Set<String> failedIds = new HashSet<>();
         failedVisible.forEach(header -> failedIds.add(header.key().pageId()));
-        int unrefreshed = failedVisible.size();
+        // Zuvor gescheitert und jetzt nicht nachprüfbar: bleiben „nicht abgerufen“ wie Seiten, deren Abruf scheiterte.
+        Set<String> unfetched = new java.util.TreeSet<>(failedIds);
+        unfetched.addAll(prepared.unchecked());
+        failedIds.addAll(prepared.unchecked());
+        int unrefreshed = unfetched.size();
         context.phase(COMPONENT, "Seiten exportieren");
-        try (ExportArtifactWriter.Session session = writer.begin(context.jobId(), scope)) {
+        // Ein schon veröffentlichtes Artefakt (Nachladen) bleibt sichtbar, bis das neue fertig ist.
+        boolean replacing = writer.find(context.jobId()).isPresent();
+        try (ExportArtifactWriter.Session session = replacing ? writer.replace(context.jobId(), scope)
+                : writer.begin(context.jobId(), scope)) {
             String after = null;
             List<ListedPage> batch;
             do {
@@ -417,6 +693,12 @@ public class Exports {
                     after = listed.pageId();
                     if (subtree != null && !subtree.contains(listed.pageId())) {
                         // Außerhalb des Teilbaums: gehört nicht zu diesem Export.
+                        continue;
+                    }
+                    if (prepared.dropped().contains(listed.pageId())) {
+                        // Beim Nachladen nicht mehr in der Quelle, nicht mehr lesbar oder verschoben: der alte Stand
+                        // im Cache gehört nicht mehr ins Ergebnis, wird aber weder genannt noch gezählt.
+                        hidden.add(listed.pageId());
                         continue;
                     }
                     if (!request.visible().test(listed.header())) {
@@ -448,7 +730,9 @@ public class Exports {
             } while (batch.size() == BATCH_SIZE);
             // Lesbar, aber ohne Stand im Cache: fehlt im Export und zählt als gescheitert.
             if (!prepared.counted()) {
+                // Versucht, aber nicht abgelegt (Nachladen): gefunden und bearbeitet, als gescheitert gezählt.
                 context.discovered(failedIds.size());
+                context.processed(failedIds.size());
             }
             context.failed(failedIds.size());
             context.checkpoint();
@@ -470,7 +754,7 @@ public class Exports {
                     case CYCLE -> "Zyklus in der Elternbeziehung aufgebrochen";
                 });
             }
-            if (generation.state() != CacheState.CONFIRMED) {
+            if (!covers(request, generation, subtree)) {
                 warnings.add("Cache-Generation " + generation.id() + " ist " + generation.state()
                         + "; das Artefakt ist kein bestätigter vollständiger Stand");
             }
@@ -492,9 +776,12 @@ public class Exports {
                                 + failures.get(0).message()));
             }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
-            boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
+            boolean complete = covers(request, generation, subtree) && failures.isEmpty() && unrefreshed == 0;
+            if (!complete) {
+                context.incomplete();
+            }
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
-                    entries.size(), failures, warnings, complete));
+                    entries.size(), failures, warnings, complete, List.copyOf(unfetched)));
             afterPublish(context);
         }
     }
@@ -508,6 +795,64 @@ public class Exports {
      * @throws JobFailedException {@code ROOT_NOT_FOUND}, wenn die Startseite im Space fehlt oder nicht lesbar ist;
      *                            beides mit derselben Meldung, die keine Seiten-ID nennt
      */
+    /**
+     * Ob die Generation alles Nötige für diesen Export mit aktuellem Inhalt führt: bestätigt, oder bei einer Startseite
+     * nur außerhalb ihres Teilbaums mit Lücken. Ein Teilbaum-Export lädt nur seinen Teilbaum und lässt den übrigen
+     * Space nur katalogisiert; das macht ihn nicht unvollständig.
+     */
+    private boolean covers(ExportRequest request, CacheGeneration generation, Set<String> subtree) {
+        if (generation.state() == CacheState.CONFIRMED) {
+            return true;
+        }
+        if (subtree == null) {
+            return false;
+        }
+        // Ohne bestätigte Generation gibt es keine Lückenliste; dann bleibt es unvollständig.
+        Set<String> gaps = provisioning.unloaded(request.sourceId(), request.spaceKey());
+        return !gaps.isEmpty() && java.util.Collections.disjoint(subtree, gaps);
+    }
+
+    /**
+     * Was beim Einlesen zählt: lesbare Seiten, mit Startseite nur ihr Teilbaum laut Inventur. Sonst stünde bei einem
+     * Teilbaum-Export der ganze Space als „Seiten (Inventur)“ da, und „Exportiert“ sähe unvollständig aus, obwohl
+     * nichts fehlt.
+     */
+    private static java.util.function.Predicate<PageHeader> counted(ExportRequest request, List<PageHeader> headers) {
+        if (request.rootPageId() == null) {
+            return request.visible();
+        }
+        return inSubtree(request, headers).and(request.visible());
+    }
+
+    /** Die Startseite und ihre Unterseiten bis zur Tiefe des Auftrags laut Inventur, lesbar oder nicht. */
+    private static java.util.function.Predicate<PageHeader> inSubtree(ExportRequest request, List<PageHeader> headers) {
+        Map<String, String> parents = new HashMap<>();
+        headers.forEach(header -> parents.put(header.key().pageId(), header.metadata().parentPageId()));
+        Set<String> subtree = subtreeOf(parents, request.rootPageId(), request.depth());
+        return header -> subtree.contains(header.key().pageId());
+    }
+
+    /** Die Startseite und ihre Unterseiten bis {@code depth} (ohne: alle) nach den Elternverweisen. */
+    private static Set<String> subtreeOf(Map<String, String> parents, String rootPageId, Integer depth) {
+        List<TreeEntry> entries = new ArrayList<>(parents.size());
+        // Die Startseite wird Wurzel, damit ein Zyklus über ihr den Teilbaum nicht zerschneidet.
+        parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId,
+                pageId.equals(rootPageId) ? null : parent)));
+        PageTree tree = PageTreeBuilder.build(entries);
+        Set<String> subtree = new HashSet<>();
+        for (PageTree.Node node : tree.roots()) {
+            if (node.pageId().equals(rootPageId)) {
+                // Ebene 0 ist die Startseite; mit Tiefe kommen nur die Ebenen bis dahin mit (0: Einzelseite).
+                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, level) -> {
+                    if (depth == null || level <= depth) {
+                        subtree.add(pageId);
+                    }
+                });
+            }
+        }
+        return subtree;
+    }
+
     private Set<String> subtree(JobContext context, ExportRequest request, Prepared prepared) {
         context.phase(COMPONENT, "Teilbaum bestimmen");
         String rootPageId = request.rootPageId();
@@ -535,23 +880,7 @@ public class Exports {
         for (PageHeader failed : prepared.unrefreshed()) {
             parents.putIfAbsent(failed.key().pageId(), failed.metadata().parentPageId());
         }
-        List<TreeEntry> entries = new ArrayList<>(parents.size());
-        // Die Startseite wird Wurzel, damit ein Zyklus über ihr den Teilbaum nicht zerschneidet.
-        parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId,
-                pageId.equals(rootPageId) ? null : parent)));
-        PageTree tree = PageTreeBuilder.build(entries);
-        Set<String> subtree = new HashSet<>();
-        for (PageTree.Node node : tree.roots()) {
-            if (node.pageId().equals(rootPageId)) {
-                // Ebene 0 ist die Startseite; mit Tiefe kommen nur die Ebenen bis dahin mit (0: Einzelseite).
-                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, depth) -> {
-                    if (request.depth() == null || depth <= request.depth()) {
-                        subtree.add(pageId);
-                    }
-                });
-            }
-        }
-        return subtree;
+        return subtreeOf(parents, rootPageId, request.depth());
     }
 
     /**
@@ -829,6 +1158,11 @@ public class Exports {
         @Override
         public void phase(String component, String phase) {
             context.phase(component, phase);
+        }
+
+        @Override
+        public void pause(com.aresstack.spaceharvester.application.jobs.PauseReason reason) {
+            context.pause(reason);
         }
     }
 

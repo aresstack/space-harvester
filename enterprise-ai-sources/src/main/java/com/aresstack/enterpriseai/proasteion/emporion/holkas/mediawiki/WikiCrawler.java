@@ -18,6 +18,9 @@ import java.util.logging.Logger;
  * dem Zählen über {@code prop=info} aufgelöst (Normalisierung, Weiterleitungen, fehlende Seiten), damit
  * {@code A_b}, {@code A b} und eine Weiterleitung auf dieselbe Seite nur einmal zählen; jede Seite merkt
  * sich, von welcher Seite sie zuerst erreicht wurde.
+ *
+ * <p>Logs nennen keine Seitentitel (Titel sind Inhalt der Quelle): fehlende Seiten nur als Zahl je Crawl,
+ * Linkfehler je Seite mit Fehlerart und Exception-Klasse und am Ende als Zahl.
  */
 final class WikiCrawler {
 
@@ -32,6 +35,8 @@ final class WikiCrawler {
     List<CrawledPage> crawl(List<String> startTitles, int maxDepth, int maxPages) throws KnowledgeSourceException {
         Map<String, CrawledPage> visited = new LinkedHashMap<String, CrawledPage>();
         Map<String, String> level = new LinkedHashMap<String, String>();
+        int missing = 0;
+        int linkFailures = 0;
         for (String title : startTitles) {
             level.put(title, null);
         }
@@ -44,7 +49,7 @@ final class WikiCrawler {
                 String key = WikiResourceIds.canonicalTitle(info.title());
                 if (info.missing() || visited.containsKey(key)) {
                     if (info.missing()) {
-                        LOG.fine("[MediaWiki] skipping missing page " + info.title());
+                        missing++;
                     }
                     continue;
                 }
@@ -55,7 +60,12 @@ final class WikiCrawler {
             Map<String, String> next = new LinkedHashMap<String, String>();
             if (depth < maxDepth && visited.size() < maxPages) {
                 for (CrawledPage page : added) {
-                    for (String link : linksOf(page.info().title())) {
+                    List<String> links = linksOf(page.info().title());
+                    if (links == null) {
+                        linkFailures++;
+                        continue;
+                    }
+                    for (String link : links) {
                         String key = WikiResourceIds.canonicalTitle(link);
                         if (!visited.containsKey(key) && !next.containsKey(link)) {
                             next.put(link, page.info().title());
@@ -65,9 +75,16 @@ final class WikiCrawler {
             }
             level = next;
         }
+        if (missing > 0) {
+            LOG.fine("[MediaWiki] skipped " + missing + " missing pages");
+        }
+        if (linkFailures > 0) {
+            LOG.fine("[MediaWiki] links of " + linkFailures + " pages could not be loaded");
+        }
         return new ArrayList<CrawledPage>(visited.values());
     }
 
+    /** Links der Seite; {@code null}, wenn sie sich nicht laden lassen und der Crawl weiterlaufen kann. */
     private List<String> linksOf(String title) throws KnowledgeSourceException {
         try {
             return client.outgoingLinks(title);
@@ -76,9 +93,16 @@ final class WikiCrawler {
             if (e.kind() == Kind.ACCESS_DENIED || e.kind() == Kind.UNAVAILABLE) {
                 throw e;
             }
-            LOG.log(Level.WARNING, "[MediaWiki] failed to load links of " + title + ": " + e.getMessage());
-            return new ArrayList<String>();
+            // Ohne Titel und ohne Meldungstext: beide können Seitentitel enthalten.
+            LOG.log(Level.WARNING, "[MediaWiki] failed to load links of a page (" + e.kind() + ", "
+                    + exceptionName(e) + ")");
+            return null;
         }
+    }
+
+    /** Klasse der Ursache, sonst der Ausnahme selbst. */
+    private static String exceptionName(Exception e) {
+        return (e.getCause() != null ? e.getCause() : e).getClass().getSimpleName();
     }
 
     static final class CrawledPage {

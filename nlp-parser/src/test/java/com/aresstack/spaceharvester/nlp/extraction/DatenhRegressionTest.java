@@ -260,6 +260,44 @@ class DatenhRegressionTest {
         assertEquals("Metadaten", text(catalog.core(Role.AFFECTED_OBJECT)));
     }
 
+    // ---- Qualitätsstufe: nur gestützte Relationen sind PLAUSIBLE ------------------------------------------------------
+
+    @Test
+    void onlyWellSupportedRelationsArePlausible() {
+        List<String> plausible = new java.util.ArrayList<>();
+        for (Statement statement : ANALYSIS.statements()) {
+            StatementQuality.Assessment assessment = StatementQuality.assess(ANALYSIS, statement);
+            if (assessment.level() == StatementQuality.Level.PLAUSIBLE) {
+                assertTrue(assessment.reasons().isEmpty());
+                plausible.add(statement.predicate().lemma() + ": " + statement.arguments().stream()
+                        .filter(a -> a.priority() == Priority.CORE).map(a -> a.role() + " " + text(a)).toList());
+            } else {
+                assertFalse(assessment.reasons().isEmpty(), "jede Abstufung nennt ihre Gründe");
+            }
+        }
+        assertEquals(List.of(
+                "stehen: [ACTOR Das Programm]",
+                "zusammenführen: [ACTOR Das Vorhaben, AFFECTED_OBJECT Daten]",
+                "ermöglichen: [ACTOR Das Datenhaus, AFFECTED_OBJECT eine übergreifende Auswertung]",
+                "umsetzen: [ACTOR Berechtigungsmanagement, AFFECTED_OBJECT datenproduktspezifische Freigaben]",
+                "bilden: [ACTOR Marktplatz, AFFECTED_OBJECT die zentrale Anwenderschnittstelle]",
+                "ermöglichen: [ACTOR Marktplatz, AFFECTED_OBJECT den selbstständigen Zugriff]",
+                "erweitern: [ACTOR Register, AFFECTED_OBJECT Datenprodukte]",
+                "verleihen: [ACTOR Register, AFFECTED_OBJECT die Fähigkeit]"), plausible);
+
+        // Aussagen ohne Beteiligte sind keine Relation, Heuristiken und offene Pronomen nur Kandidaten
+        assertEquals(StatementQuality.Level.INVALID, level("verwalten", "Das Vorhaben Datenhaus führt"));
+        assertEquals(StatementQuality.Level.UNCERTAIN, level("setzen", "Das Vorhaben Datenhaus hat sich"));
+        assertEquals(StatementQuality.Level.UNCERTAIN, level("sicherstellen", "Berechtigungsmanagement:"));
+        assertEquals(StatementQuality.Level.UNCERTAIN, level("bereitstellen", "Datenkatalog:"));
+        assertEquals(StatementQuality.Level.UNCERTAIN, level("zuweisen", "Datenprodukt-API:"));
+        assertEquals(StatementQuality.Level.UNCERTAIN, level("isolieren", "Das Vorhaben Datenhaus führt"));
+    }
+
+    private static StatementQuality.Level level(String lemma, String sentencePrefix) {
+        return StatementQuality.assess(ANALYSIS, statement(lemma, sentencePrefix)).level();
+    }
+
     // ---- Hilfen -----------------------------------------------------------------------------------------------------
 
     /** Alle Beteiligungen als {@code "<Prädikatlemma> <Rolle> <Wortlaut>"}. */

@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
@@ -62,6 +64,37 @@ public final class Texts {
             case COMPLETED -> "Fertig";
             case FAILED -> "Fehlgeschlagen";
             case CANCELLED -> "Abgebrochen";
+            case PAUSED -> "Angehalten";
+        };
+    }
+
+    /**
+     * Zustand nach dem Zustandsobjekt des Core ({@link JobLifecycleState#key()}): unterscheidet „Fertig“ von „Fertig,
+     * aber unvollständig“, angefordertes Anhalten von angefordertem Abbruch und nennt, warum sich ein Auftrag selbst
+     * angehalten hat (fehlende Anmeldung, Verbindung). Unbekannte Schlüssel fallen auf {@link #state(JobState)}.
+     */
+    public static String state(JobStatus status) {
+        return switch (status.lifecycle().key()) {
+            case "PAUSE_REQUESTED" -> "Anhalten angefordert";
+            case "CANCEL_REQUESTED" -> "Abbruch angefordert";
+            case "COMPLETED_WITH_ERRORS" -> "Fertig, unvollständig";
+            case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
+            case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
+            case "PREPARING" -> "Vorbereitung";
+            case "PREPARED" -> "Vorbereitet";
+            case "AWAITING_EXPORT" -> "Wartet auf Text";
+            default -> state(status.state());
+        };
+    }
+
+    /** Farbe zum Zustandsobjekt ({@link #state(JobStatus)}): unvollständig und selbst angehalten als Warnung. */
+    public static Comic.Tone tone(JobStatus status) {
+        return switch (status.lifecycle().key()) {
+            case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST" -> Comic.Tone.WARNING;
+            case "PREPARING" -> Comic.Tone.RUNNING;
+            // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
+            case "PREPARED", "AWAITING_EXPORT" -> Comic.Tone.NEUTRAL;
+            default -> tone(status.state());
         };
     }
 
@@ -71,6 +104,7 @@ public final class Texts {
             case COMPLETED -> Comic.Tone.GOOD;
             case FAILED -> Comic.Tone.PROBLEM;
             case CANCELLED -> Comic.Tone.WARNING;
+            case PAUSED -> Comic.Tone.NEUTRAL;
         };
     }
 
@@ -81,6 +115,7 @@ public final class Texts {
             case EXPORT -> "Export";
             case ENRICHMENT -> "Anreicherung";
             case ASSETS -> "Bilder beschaffen";
+            case ATTACHMENTS -> "Anhänge beschaffen";
             case STATEMENT_ANALYSIS -> "Aussagenanalyse";
             case PURGE -> "Daten bereinigen";
             case KNOWLEDGE_GRAPH_EXPORT -> "Graph-Export";

@@ -23,6 +23,8 @@ public final class InMemorySyncStore implements SyncBaselineStore {
     private final Map<String, SyncBaseline> baselines = new HashMap<>();
     /** Lässt den nächsten Commit mit einem Konflikt scheitern, als hätte ein paralleler Lauf gewonnen. */
     boolean failNextCommit;
+    /** Wie der Lucene-Cache neue Seiten sofort ablegen (ADR 0025); aus, damit ältere Tests das Vormerken prüfen. */
+    public boolean keepsLoaded;
 
     public InMemorySyncStore() {
         this(new InMemorySnapshotRepository());
@@ -69,6 +71,28 @@ public final class InMemorySyncStore implements SyncBaselineStore {
     public int catalogedPages(String sourceId, String spaceKey) {
         return repository instanceof InMemorySnapshotRepository memory
                 ? memory.countHeaders(sourceId, spaceKey) : knownPages(sourceId, spaceKey).size();
+    }
+
+    @Override
+    public boolean keepsLoadedPages() {
+        return keepsLoaded;
+    }
+
+    @Override
+    public synchronized String loadState(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return repository.find(key).map(PageSnapshot::revision).orElse(null);
+    }
+
+    @Override
+    public synchronized Kept keepLoaded(PageSnapshot snapshot, String expectedState) {
+        if (!keepsLoaded) {
+            return Kept.DEFERRED;
+        }
+        if (!java.util.Objects.equals(loadState(snapshot.key()), expectedState)) {
+            return Kept.SUPERSEDED;
+        }
+        repository.save(snapshot);
+        return Kept.STORED;
     }
 
     @Override

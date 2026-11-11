@@ -530,6 +530,67 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void retriesGoUnderJobsRetryAndKeepTheOtherJobLimits() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        var retry = new com.aresstack.spaceharvester.application.jobs.RetrySettings(4, Duration.ofMillis(500),
+                Duration.ofSeconds(20), 7, Duration.ofSeconds(15), Duration.ofMinutes(20));
+        editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
+        editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null), retry));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("max-concurrent: 3   # bleibt", "    retry:\n      max-attempts: 4\n",
+                "      initial-delay: 500ms\n", "      max-delay: 20s\n", "      pause-after-failures: 7\n",
+                "      resume-initial-delay: 15s\n", "      resume-max-delay: 20m\n");
+        assertThat(text.indexOf("retry:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("retry:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.jobLimits().retry()).isEqualTo(retry);
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+    }
+
+    @Test
+    void downloadLimitsGoUnderJobsAndZeroDownloadsIsAllowed() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
+        editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
+        editor.save(file, editor.withParallel(file, new ConfigFileEditor.Draft(Files.readString(file), null), 3, 0));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("max-concurrent: 3   # bleibt", "    parallel-preparations: 3\n",
+                "    parallel-downloads: 0\n");
+        assertThat(text.indexOf("parallel-downloads")).isEqualTo(text.lastIndexOf("parallel-downloads"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.jobLimits().parallelPreparations()).isEqualTo(3);
+        assertThat(settings.jobLimits().parallelDownloads()).isZero();
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+        assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 0, 4))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> editor.withParallel(file, new ConfigFileEditor.Draft(text, null), 2, -1))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    parallel-downloads: 99\n");
+        AppSettings outside = loader.load(file);
+        assertThat(outside.problems()).anyMatch(problem -> problem.contains("parallel-downloads"));
+        assertThat(outside.jobLimits().parallelDownloads()).isEqualTo(4);
+    }
+
+    @Test
+    void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"
+                + "      initial-delay: 2s\n");
+        editor.save(file, editor.withRetry(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.application.jobs.RetrySettings.DEFAULT));
+
+        String text = Files.readString(file);
+        assertThat(text).doesNotContain("max-attempts: 5", "initial-delay: 2s").contains("max-attempts: 2");
+        assertThat(text.indexOf("max-attempts")).isEqualTo(text.lastIndexOf("max-attempts"));
+        assertThat(loader.load(file).problems()).isEmpty();
+    }
+
+    @Test
     void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");

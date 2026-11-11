@@ -122,11 +122,15 @@ class SetupWizardTest {
     @Test
     void theSecurityTabNamesWhereSecretsLiveButNeverTheirValues() throws Exception {
         SettingsView[] view = new SettingsView[1];
-        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
-        assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
-                "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
-        // Ohne lokal gespeicherte Zugangsdaten gibt es nichts zu löschen.
-        assertThat(view[0].deleteButtons).isEmpty();
+        // Gelesen wird auf dem EDT: Meldet die Laufzeit inzwischen einen neuen Stand (etwa eine pausierte Quelle),
+        // baut SettingsView die Seite dort neu auf; von einem anderen Thread aus sähe der Test sie halb leer.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
+                    "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
+            // Ohne lokal gespeicherte Zugangsdaten gibt es nichts zu löschen.
+            assertThat(view[0].deleteButtons).isEmpty();
+        });
     }
 
     @Test
@@ -156,15 +160,19 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> context.reload(reloaded::countDown));
         assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
         SettingsView[] view = new SettingsView[1];
-        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
-        java.util.List<String> texts = texts(view[0].security);
-        assertThat(texts).contains("Zugang Firmenwiki", "API-Key des KI-Dienstes")
-                .noneMatch(text -> text.equals("fehlt") || text.equals("gespeichert"));
-        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Wiki-Zugang“"))).hasSize(1);
-        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Enterprise AI API“"))).hasSize(1);
-        assertThat(view[0].deleteButtons).as("aus KeePass: nichts Lokales zu löschen").isEmpty();
-        assertThat(tooltips(view[0].security)).anyMatch(tip -> tip != null && tip.contains("nur in KeePass")
-                && tip.contains("Entkoppeln"));
+        // Auf dem EDT gelesen, wie im Test oben: ein Neuaufbau der Seite läuft dort und nie mitten in die Prüfung.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            java.util.List<String> texts = texts(view[0].security);
+            assertThat(texts).contains("Zugang Firmenwiki", "API-Key des KI-Dienstes")
+                    .noneMatch(text -> text.equals("fehlt") || text.equals("gespeichert"));
+            assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Wiki-Zugang“"))).hasSize(1);
+            assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Enterprise AI API“")))
+                    .hasSize(1);
+            assertThat(view[0].deleteButtons).as("aus KeePass: nichts Lokales zu löschen").isEmpty();
+            assertThat(tooltips(view[0].security)).anyMatch(tip -> tip != null && tip.contains("nur in KeePass")
+                    && tip.contains("Entkoppeln"));
+        });
     }
 
     @Test

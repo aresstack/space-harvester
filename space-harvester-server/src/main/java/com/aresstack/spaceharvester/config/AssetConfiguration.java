@@ -50,11 +50,18 @@ class AssetConfiguration {
                   @Value("${space-harvester.assets.large-file-threshold:20MB}") DataSize largeFileThreshold,
                   @Value("${space-harvester.assets.max-concurrent-large-files:"
                           + LargeFileGate.DEFAULT_MAX_CONCURRENT + "}") int maxConcurrentLargeFiles,
-                  @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait) {
+                  @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait,
+                  ObjectProvider<JobsProperties> jobs) {
         LargeFileGate gate = new LargeFileGate(largeFileThreshold.toBytes(), maxConcurrentLargeFiles, largeFileWait);
         // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
-        return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
+        Assets assets = new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
                 TikaDocumentText.shared(), texts.getIfAvailable(), gate,
                 signIns.getIfAvailable());
+        // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
+        JobsProperties limits = jobs.getIfAvailable();
+        if (limits != null) {
+            assets.downloadLimit(limits.parallelDownloads());
+        }
+        return assets;
     }
 }

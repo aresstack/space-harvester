@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,6 +69,12 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
     /** Optional; Aufträge aus der Zeit vor Teilbaum-Exporten haben das Feld nicht und lesen sich mit {@code null}. */
     private static final String ROOT_PAGE_ID = "rootPageId";
     private static final String ROOT_TITLE = "rootTitle";
+    /** Ergebnis unvollständig ({@link JobStatus#incomplete()}); ältere Einträge haben das Feld nicht. */
+    private static final String INCOMPLETE = "incomplete";
+    /** Präfix je Wiederanlauf-Angabe ({@link JobStatus#parameters()}). */
+    private static final String PARAMETER = "parameter.";
+    /** Warum angehalten ({@link JobStatus#pauseReason()}); ältere Einträge haben das Feld nicht. */
+    private static final String PAUSE_REASON = "pauseReason";
 
     private final Path path;
     private final Directory directory;
@@ -230,6 +237,9 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         storeIfPresent(doc, FINISHED_AT, status.finishedAt() == null ? null : status.finishedAt().toString());
         storeIfPresent(doc, ROOT_PAGE_ID, status.rootPageId());
         storeIfPresent(doc, ROOT_TITLE, status.rootTitle());
+        doc.add(new StoredField(INCOMPLETE, status.incomplete() ? 1 : 0));
+        storeIfPresent(doc, PAUSE_REASON, status.pauseReason() == null ? null : status.pauseReason().name());
+        status.parameters().forEach((key, value) -> doc.add(new StoredField(PARAMETER + key, value)));
         return doc;
     }
 
@@ -241,7 +251,29 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         return new JobStatus(doc.get(ID), JobType.valueOf(doc.get(TYPE)), doc.get(SOURCE_ID), doc.get(PARTITION_KEY),
                 doc.get(OWNER), JobState.valueOf(doc.get(STATE)), progress, error, number(doc, CANCEL_REQUESTED) == 1,
                 Instant.parse(doc.get(CREATED_AT)), instant(doc.get(STARTED_AT)), instant(doc.get(FINISHED_AT)),
-                doc.get(ROOT_PAGE_ID), doc.get(ROOT_PAGE_ID) == null ? null : doc.get(ROOT_TITLE));
+                doc.get(ROOT_PAGE_ID), doc.get(ROOT_PAGE_ID) == null ? null : doc.get(ROOT_TITLE), parameters(doc),
+                doc.getField(INCOMPLETE) != null && number(doc, INCOMPLETE) == 1, false, pauseReason(doc.get(PAUSE_REASON)));
+    }
+
+    private static PauseReason pauseReason(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return PauseReason.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return PauseReason.USER;
+        }
+    }
+
+    private static Map<String, String> parameters(Document doc) {
+        Map<String, String> parameters = new java.util.TreeMap<>();
+        for (org.apache.lucene.index.IndexableField field : doc.getFields()) {
+            if (field.name().startsWith(PARAMETER) && field.stringValue() != null) {
+                parameters.put(field.name().substring(PARAMETER.length()), field.stringValue());
+            }
+        }
+        return parameters;
     }
 
     private static void storeIfPresent(Document doc, String field, String value) {

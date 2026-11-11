@@ -100,9 +100,9 @@ final class KeePassPairingPanel {
 
     /** Hebt die Kopplung nach Rückfrage auf; danach fragt der nächste Zugriff auf KeePass neu nach dem Code. */
     void unpair() {
-        if (!Dialogs.confirm(root, "KeePass entkoppeln?", "Die lokale Datei pairing.key wird gelöscht. Der KI-Dienst "
+        if (!Dialogs.confirm(root, "KeePass entkoppeln?", "KeePass wirklich entkoppeln? Die lokale Datei pairing.key wird gelöscht. Der KI-Dienst "
                 + "und Quellen, die ihre Zugangsdaten über KeePass beziehen, brauchen danach eine neue Kopplung; der "
-                + "Eintrag in KeePass bleibt.", UNPAIR)) {
+                + "Eintrag in KeePass bleibt.")) {
             return;
         }
         unpairWithoutAsking();

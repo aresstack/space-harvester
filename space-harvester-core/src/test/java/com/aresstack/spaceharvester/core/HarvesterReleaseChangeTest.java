@@ -144,8 +144,14 @@ class HarvesterReleaseChangeTest {
             // Anreicherungen und im Lauf des Freigabewechsels (Prozessoren, die dort nicht im Hintergrund rechnen); jede
             // hängt ab ihrem ersten Aufruf am Tor. Welche Seiten das sind, hängt an der Reihenfolge der Threads, nicht
             // am Ablauf.
-            assertThat(calledPages).hasSize(calls.get()).isNotEmpty().allSatisfy(page -> assertThat(page).isIn(PAGES));
-            assertThat(Set.copyOf(calledPages)).as("Seiten mit Modellaufruf").hasSizeLessThanOrEqualTo(2);
+            List<String> pages;
+            int counted;
+            synchronized (calledPages) {
+                pages = List.copyOf(calledPages);
+                counted = calls.get();
+            }
+            assertThat(pages).hasSize(counted).isNotEmpty().allSatisfy(page -> assertThat(page).isIn(PAGES));
+            assertThat(Set.copyOf(pages)).as("Seiten mit Modellaufruf").hasSizeLessThanOrEqualTo(2);
         }
     }
 
@@ -272,10 +278,13 @@ class HarvesterReleaseChangeTest {
     }
 
     private void embed(HttpExchange exchange) throws IOException {
-        calls.incrementAndGet();
         JsonNode request = JSON.readTree(exchange.getRequestBody().readAllBytes());
         String texts = request.path("input").toString();
-        calledPages.add(PAGES.stream().filter(texts::contains).findFirst().orElse("?"));
+        // Zähler und Seite gemeinsam, damit ein gerade eintreffender Aufruf nie nur halb gezählt erscheint.
+        synchronized (calledPages) {
+            calls.incrementAndGet();
+            calledPages.add(PAGES.stream().filter(texts::contains).findFirst().orElse("?"));
+        }
         CountDownLatch held = gate;
         if (held != null) {
             try {

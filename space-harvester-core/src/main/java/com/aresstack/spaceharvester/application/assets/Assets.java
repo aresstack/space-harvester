@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeExcept
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -24,6 +25,7 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -145,7 +147,49 @@ public class Assets {
     /** Obergrenze der gemerkten Nachhol-Versuche, danach beginnt die Liste neu. */
     static final int MAX_BACKFILLED = 10_000;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
-    private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
+    private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
+    private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
+
+    /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
+    private static final class Downloads extends Semaphore {
+        Downloads(int permits) {
+            super(permits);
+        }
+
+        void shrink(int by) {
+            reducePermits(by);
+        }
+    }
+
+    /**
+     * Wie viele Dateien höchstens gleichzeitig von den Quellen geladen werden: mindestens
+     * {@value #MAX_CONCURRENT_DOWNLOADS}, und so viele, dass jeder Download-Platz der Aufträge
+     * ({@code jobs.parallel-downloads}) und daneben die Lese-Ansicht einen hat; sonst warteten Aufträge auf diese Schranke
+     * und zählten das als Drosselung.
+     *
+     * @param jobDownloads gleichzeitig ladende Aufträge
+     */
+    private volatile DownloadDurations durations = new DownloadDurations();
+
+    /** Misst ab jetzt in {@code durations}, etwa mit einem über Neustarts gespeicherten Stand. */
+    public void durations(DownloadDurations durations) {
+        this.durations = java.util.Objects.requireNonNull(durations, "durations");
+    }
+
+    /** Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, getrennt für Bilder und Anhänge. */
+    public DownloadDurations durations() {
+        return durations;
+    }
+
+    public synchronized void downloadLimit(int jobDownloads) {
+        int wanted = Math.max(MAX_CONCURRENT_DOWNLOADS, jobDownloads + 2);
+        if (wanted > downloadLimit) {
+            downloads.release(wanted - downloadLimit);
+        } else if (wanted < downloadLimit) {
+            downloads.shrink(downloadLimit - wanted);
+        }
+        downloadLimit = wanted;
+    }
     /** Abgelegte Dokumente, deren Text beim Ernten schon einmal nachgeholt wurde (je Laufzeit, nach SHA-256). */
     private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
@@ -240,10 +284,21 @@ public class Assets {
      * vorbehalten, sonst füllte jeder Leser die Ablage.
      */
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore) {
+        return content(list, attachmentId, mayStore, false);
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean)}; mit {@code fresh} am Speicher vorbei von der Quelle
+     * („Neu erzwingen“, ADR 0025). Der abgelegte Stand gilt weiter, bis der neue Download ihn ersetzt; scheitert er,
+     * bleibt der alte.
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
-        if (stored.isPresent()) {
-            return read(stored.get());
+        if (!fresh) {
+            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            if (stored.isPresent()) {
+                return read(stored.get());
+            }
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
     }
@@ -320,7 +375,8 @@ public class Assets {
 
     /**
      * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
-     * ist, sonst die Anforderung angelegt. Code und Token sieht diese Stelle nie.
+     * ist, sonst die Anforderung angelegt. Ist sie schon offen, fragt der Lesezugriff die Quelle nicht noch einmal
+     * ({@link #fromSource}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
      */
     private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
         java.time.Instant started = clock.instant();
@@ -347,33 +403,46 @@ public class Assets {
      * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
      */
     public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image) {
+        return viewImage(sourceId, pageId, pageVersion, image, false);
+    }
+
+    /**
+     * Wie {@link #viewImage(String, String, String, HarvestSource.ViewImage)}; mit {@code fresh} am Speicher vorbei
+     * von der Quelle („Neu erzwingen“, ADR 0025); der abgelegte Stand gilt, bis der neue ihn ersetzt.
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image,
+                                  boolean fresh) {
         HarvestSource source = source(sourceId);
         String attachmentId = image.attachmentId() != null ? image.attachmentId()
                 : "view-" + sha256(image.src().getBytes(java.nio.charset.StandardCharsets.UTF_8))
                         .substring("sha256:".length(), "sha256:".length() + 32);
         String version = image.attachmentId() != null ? image.version() : pageVersion;
-        Optional<Asset> stored = store.find(sourceId, attachmentId, version);
+        Optional<Asset> stored = fresh ? Optional.empty() : store.find(sourceId, attachmentId, version);
         if (stored.isPresent()) {
             return read(stored.get());
         }
-        byte[] content;
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Bildern", null);
+        byte[] content = fromSource(sourceId, () -> {
+            try {
+                if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                            "Zu viele gleichzeitige Downloads von Bildern", null);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                        "Download abgebrochen", e);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
-                    e);
-        }
-        try {
-            content = source.viewImage(image, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(sourceId, maxBytes);
-        } finally {
-            downloads.release();
-        }
+            try {
+                long started = System.nanoTime();
+                byte[] loaded = source.viewImage(image, maxBytes);
+                durations.record(DownloadDurations.Kind.IMAGE, Duration.ofNanos(System.nanoTime() - started));
+                return loaded;
+            } catch (AttachmentTooLargeException e) {
+                throw new AssetTooLargeException(sourceId, maxBytes);
+            } finally {
+                downloads.release();
+            }
+        });
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
@@ -419,9 +488,23 @@ public class Assets {
             return Optional.empty();
         }
         PageAttachment found = diagram;
+        Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
+        if (storedDiagram.isEmpty() && !deliveredSinceTwoFactorPage(sourceId)) {
+            // Wie der Enterprise AI Client (#571): Der erste geschützte Abruf einer Quelle ist das Bild der Lese-Ansicht,
+            // nicht der rohe Diagramm-Anhang. Verlangt die Quelle einen Einmalcode, merkt sich das Zwei-Faktor-Plugin
+            // diese Adresse und leitet nach dem Code dorthin weiter; im EAC ist das immer ein Bild. Das Bild liegt
+            // danach in der Ablage, die Lese-Ansicht lädt es nicht noch einmal.
+            try {
+                viewImage(sourceId, pageId, pageVersion, image);
+            } catch (SignInRequiredException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Das Bild selbst lädt nicht (zu groß, nicht unterstützt …): weiter mit den Quelldaten.
+            }
+        }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+            byte[] mxfile = storedDiagram.map(store::read)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
         }
@@ -990,6 +1073,10 @@ public class Assets {
 
     /** Lädt eine Vorschau über die Quelle, mit derselben Begrenzung gleichzeitiger Downloads wie Anhänge. */
     private byte[] previewBytes(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
+        return fromSource(source.id(), () -> previewBytesNow(source, attachment, kind));
+    }
+
+    private byte[] previewBytesNow(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
         try {
             if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
                 throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
@@ -1291,25 +1378,31 @@ public class Assets {
     }
 
     private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
-        AttachmentFile file;
         // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Anhängen", null);
+        AttachmentFile file = fromSource(source.id(), () -> {
+            try {
+                if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
+                            "Zu viele gleichzeitige Downloads von Anhängen", null);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                        "Download abgebrochen", e);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
-                    "Download abgebrochen", e);
-        }
-        try {
-            file = source.attachmentFile(attachment, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
-        } finally {
-            downloads.release();
-        }
+            try {
+                // Nur der Transfer zählt, nicht das Warten auf einen Platz (Restzeit, Angelo 11.11.2026).
+                long started = System.nanoTime();
+                AttachmentFile loaded = source.attachmentFile(attachment, maxBytes);
+                durations.record(DownloadDurations.Kind.of(attachment.mediaType(), attachment.title()),
+                        Duration.ofNanos(System.nanoTime() - started));
+                return loaded;
+            } catch (AttachmentTooLargeException e) {
+                throw new AssetTooLargeException(source.id(), maxBytes);
+            } finally {
+                downloads.release();
+            }
+        });
         byte[] content = file.content();
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
@@ -1381,6 +1474,133 @@ public class Assets {
             return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /** Zustand der Dateiabrufe einer Quelle (#571), siehe {@link #fromSource}. */
+    private static final class SourceGate {
+        final java.util.concurrent.locks.ReentrantLock probe = new java.util.concurrent.locks.ReentrantLock(true);
+        /** Wann die Quelle zuletzt eine Datei ohne Einmalcode geliefert hat; {@code null} seit einer Code-Seite. */
+        volatile java.time.Instant delivered;
+        /** Die zuletzt gesehene Zwei-Faktor-Seite, solange keine Datei kam; {@code null} sonst. */
+        volatile Seen seen;
+    }
+
+    /**
+     * Eine Zwei-Faktor-Seite der Quelle: wann sie kam und wie viele Anforderungen der Quelle vor dem Abruf erledigt waren
+     * ({@link SignInRequests#settlements}).
+     */
+    private record Seen(SignInChallenge challenge, java.time.Instant at, long settlements) {
+    }
+
+    /** So lange nach einer gelieferten Datei gilt die Sitzung als freigeschaltet: Abrufe laufen dann parallel. */
+    private static final java.time.Duration FLOWING = java.time.Duration.ofMinutes(1);
+    /**
+     * So lange gilt eine gesehene Zwei-Faktor-Seite ohne Anforderung (etwa ohne Oberfläche); danach fragt ein Abruf die
+     * Quelle wieder und bringt eine frische Seite mit frischem Code.
+     */
+    private static final java.time.Duration SEEN = java.time.Duration.ofMinutes(5);
+
+    private final ConcurrentHashMap<String, SourceGate> gates = new ConcurrentHashMap<>();
+
+    /**
+     * Der eine Weg aller geschützten Dateiabrufe (Bild, Anhang, Vorschau) an die Quelle (#571), damit es wie im
+     * Enterprise AI Client je Quelle nur eine Zwei-Faktor-Sitzung, eine Mail und einen Code gibt:
+     * <ul>
+     *   <li>Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht kein Abruf ans
+     *       Netz; geworfen wird, was die Quelle geworfen hätte, mit der Seite der offenen Anforderung.</li>
+     *   <li>Hat ein Abruf die Zwei-Faktor-Seite bekommen, geht kein weiterer ans Netz, bis ein Code angenommen oder die
+     *       Anforderung abgelehnt ist ({@link SignInRequests#settlements}); jeder bekommt dieselbe Seite. Auch dann, wenn
+     *       noch niemand die Anforderung angelegt hat: die Lese-Ansicht versucht für ein draw.io-Bild zuerst die
+     *       Quelldaten ohne Anforderung und gleich danach die Vorschau; jede neue Abfrage hätte eine neue Seite mit
+     *       neuer Mail gebracht, und der Code der ersten passte nicht mehr (HTTP 500). Ohne Anforderung gilt die Seite
+     *       {@code SEEN} lang; ohne {@link SignInRequests} (nichts kann freischalten) gar nicht.</li>
+     *   <li>Ohne frisch gelieferte Datei (seit {@code FLOWING}) läuft je Quelle immer nur ein Abruf, auch wenn eine
+     *       freigeschaltete Sitzung inzwischen abgelaufen sein kann; erst nach einer gelieferten Datei wieder parallel,
+     *       auch die schon wartenden. Länger als {@code DOWNLOAD_WAIT} wartet niemand auf den Abruf vor ihm
+     *       ({@code RATE_LIMITED}).</li>
+     * </ul>
+     * Lesen auf Abruf schließt sich damit derselben Anforderung an ({@link #unlocking}), ein Auftrag wartet auf sie
+     * ({@link SignInRequests#await}). Abgelegte Dateien kommen weiter aus der Ablage. Code und Token sieht diese Stelle
+     * nie.
+     */
+    private <T> T fromSource(String sourceId, java.util.function.Supplier<T> call) {
+        SourceGate state = gates.computeIfAbsent(sourceId, id -> new SourceGate());
+        if (flowing(state)) {
+            holdWhileSignInOpen(sourceId);
+            return observed(sourceId, state, call);
+        }
+        try {
+            if (!state.probe.tryLock(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                        "Die Quelle antwortet noch auf einen anderen Download", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
+                    e);
+        }
+        boolean locked = true;
+        try {
+            holdWhileSignInOpen(sourceId);
+            Seen seen = state.seen;
+            if (seen != null && signIns != null && clock.instant().isBefore(seen.at().plus(SEEN))
+                    && settlements(sourceId) == seen.settlements()) {
+                throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen.challenge(),
+                        null);
+            }
+            if (flowing(state)) {
+                // Der vorige Abruf hat eine Datei geliefert: wieder parallel, wer noch wartet, kommt sofort dran.
+                state.probe.unlock();
+                locked = false;
+            }
+            return observed(sourceId, state, call);
+        } finally {
+            if (locked) {
+                state.probe.unlock();
+            }
+        }
+    }
+
+    /** Ob die Quelle seit dem Start und seit der letzten Zwei-Faktor-Seite eine Datei ohne Einmalcode geliefert hat. */
+    private boolean deliveredSinceTwoFactorPage(String sourceId) {
+        SourceGate state = gates.get(sourceId);
+        return state != null && state.delivered != null;
+    }
+
+    private boolean flowing(SourceGate state) {
+        java.time.Instant delivered = state.delivered;
+        return delivered != null && clock.instant().isBefore(delivered.plus(FLOWING));
+    }
+
+    private long settlements(String sourceId) {
+        return signIns == null ? 0 : signIns.settlements(sourceId);
+    }
+
+    private <T> T observed(String sourceId, SourceGate state, java.util.function.Supplier<T> call) {
+        // Vor dem Abruf gezählt: wird währenddessen ein Code angenommen, gilt die Seite, die der Abruf mitbringt, nicht.
+        long settledBefore = settlements(sourceId);
+        try {
+            T result = call.get();
+            state.seen = null;
+            state.delivered = clock.instant();
+            return result;
+        } catch (SignInRequiredException e) {
+            state.delivered = null;
+            state.seen = e.challenge() == null ? null : new Seen(e.challenge(), clock.instant(), settledBefore);
+            throw e;
+        }
+    }
+
+    /** Wirft statt eines Abrufs, solange die Anmeldung der Quelle offen ist ({@link #fromSource}). */
+    private void holdWhileSignInOpen(String sourceId) {
+        if (signIns == null) {
+            return;
+        }
+        Optional<SignInChallenge> open = signIns.pendingChallenge(sourceId);
+        if (open.isPresent()) {
+            throw new SignInRequiredException(sourceId, "Die Anmeldung der Quelle ist offen (Einmalcode)", open.get(),
+                    null);
         }
     }
 

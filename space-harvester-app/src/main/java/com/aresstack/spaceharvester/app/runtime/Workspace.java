@@ -15,7 +15,9 @@ import com.aresstack.spaceharvester.application.images.ImagePayload;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -839,6 +841,109 @@ public final class Workspace {
     }
 
     /**
+     * Hält einen Download oder Abgleich an (Pause, ADR 0025): er beendet seinen Schritt und steht dann auf
+     * „Angehalten“; was er geladen hat, bleibt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException bei anderen Auftragsarten
+     */
+    public JobStatus pauseJob(String jobId) {
+        JobStatus status = job(jobId);
+        return status.type() == JobType.SYNC ? harvester.syncs().pause(jobId, Harvester.OWNER).status()
+                : harvester.jobs().pause(jobId, Harvester.OWNER);
+    }
+
+    /**
+     * Setzt einen angehaltenen, gescheiterten oder abgebrochenen Download oder Abgleich im selben Eintrag fort (ADR
+     * 0025); er holt nur, was noch fehlt. Geht das nicht ({@link #canResume}), startet die App ihn mit denselben
+     * Angaben neu, was ebenfalls nur den Rest holt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht im selben
+     *                                                                               Eintrag fortsetzen lässt
+     */
+    public JobStatus resumeJob(String jobId) {
+        JobStatus status = job(jobId);
+        return switch (status.type()) {
+            case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
+            case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            default -> harvester.resumeExport(jobId);
+        };
+    }
+
+    /**
+     * Der wirksame Zustand eines Auftrags mit den Aktionen, die die Oberfläche jetzt anbietet, in Anzeigereihenfolge
+     * ({@link JobLifecycleState#actions()}).
+     */
+    public JobLifecycleState jobState(String jobId) {
+        return job(jobId).lifecycle();
+    }
+
+    /**
+     * Führt eine Aktion auf einem Auftrag dieser App aus, nachdem der Core sie am Zustand geprüft hat
+     * ({@link com.aresstack.spaceharvester.application.jobcontrol.JobActions}). Fortsetzen bleibt im selben Eintrag,
+     * auch nach einem Neustart der App; Löschen entfernt nur den Auftrag, nie die geladenen Daten.
+     *
+     * @return der Zustand danach; bei {@link JobAction#DELETE} der letzte vor dem Löschen
+     * @throws com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException wenn der Zustand die Aktion
+     *                                                                                   nicht anbietet
+     */
+    public JobStatus performJobAction(String jobId, JobAction action) {
+        job(jobId);
+        JobStatus status = harvester.performJobAction(jobId, action);
+        if (action == JobAction.DELETE) {
+            activities.forget(jobId);
+        }
+        return status;
+    }
+
+    /**
+     * Für die Restzeit im Fortschrittsbalken: durchschnittliche Dauer je tatsächlich geladener Datei, global über alle
+     * Exporte und Neustarts, getrennt für Bilder ({@link JobType#ASSETS}) und Anhänge ({@link JobType#ATTACHMENTS});
+     * vor der ersten Datei ein Startwert. Ein einzelner Transfer, ohne Parallelität; Treffer aus dem Speicher und
+     * Seitentexte zählen nicht.
+     *
+     * @throws IllegalArgumentException für andere Auftragsarten
+     */
+    public java.time.Duration averageDownload(JobType type) {
+        return harvester.averageDownload(type);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        return harvester.parallelPreparations();
+    }
+
+    /**
+     * Ändert {@link #parallelPreparations()} sofort, ohne die Konfigurationsdatei
+     * ({@link com.aresstack.spaceharvester.app.settings.ConfigFileEditor#withParallel}).
+     *
+     * @throws IllegalArgumentException außerhalb von 1 bis 16
+     */
+    public void setParallelPreparations(int value) {
+        harvester.parallelPreparations(value);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig laden ({@code jobs.parallel-downloads}); 0 lädt nichts. */
+    public int parallelDownloads() {
+        return harvester.parallelDownloads();
+    }
+
+    /**
+     * Ändert {@link #parallelDownloads()} sofort, ohne die Konfigurationsdatei. Bei 0 werden Bilder und Anhänge nur
+     * vorbereitet (Zustand „Vorbereitet“) und laden erst, wenn wieder ein Platz frei ist.
+     *
+     * @throws IllegalArgumentException außerhalb von 0 bis 64
+     */
+    public void setParallelDownloads(int value) {
+        harvester.parallelDownloads(value);
+    }
+
+    /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
+    public boolean canResume(String jobId) {
+        job(jobId);
+        return harvester.jobs().resumable(jobId, Harvester.OWNER);
+    }
+
+    /**
      * Alle Aufträge dieser App, die die Auftragsablage noch kennt, neueste zuerst. Abgelaufene oder fremde
      * Aufträge vergisst die Liste.
      */
@@ -856,6 +961,7 @@ public final class Workspace {
         // Anreicherungen und Bilder plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
         List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         for (JobStatus enrichment : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
                 try {
@@ -894,15 +1000,30 @@ public final class Workspace {
     }
 
     /**
-     * Löscht einen beendeten Auftrag samt Diagnoseereignissen und nimmt ihn aus der Liste. Exportdateien, die der
-     * Benutzer gespeichert hat, und der Seitenbestand bleiben.
-     *
-     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     * Löscht einen Auftrag in jedem Zustand samt Diagnoseereignissen und nimmt ihn aus der Liste; einen wartenden oder
+     * laufenden bricht das vorher ab. Exportdateien, die der Benutzer gespeichert hat, und der Seitenbestand bleiben.
      */
     public void deleteJob(String jobId) {
         job(jobId);
         harvester.deleteJob(jobId);
         activities.forget(jobId);
+    }
+
+    /**
+     * Löscht alle sichtbaren Aufträge in jedem Zustand („Alle Aufträge löschen“); wartende und laufende werden vorher
+     * abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs() {
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            try {
+                deleteJob(status.id());
+                deleted++;
+            } catch (UnknownJobException e) {
+                activities.forget(status.id());
+            }
+        }
+        return deleted;
     }
 
     /** Löscht alle sichtbaren beendeten Aufträge; wartende und laufende bleiben. @return Anzahl */

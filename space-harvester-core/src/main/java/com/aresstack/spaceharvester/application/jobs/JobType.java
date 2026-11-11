@@ -19,6 +19,12 @@ public enum JobType {
      */
     ASSETS,
     /**
+     * Dokument-Anhänge eines veröffentlichten Exports beschaffen (ADR 0023, „Anhänge beschaffen“), als eigener Auftrag
+     * neben {@link #ASSETS}, mit demselben Download, derselben Anmeldung und derselben Ablage; nur bei eingeschalteten
+     * Anhängen.
+     */
+    ATTACHMENTS,
+    /**
      * MaltParser-Aussagenanalyse einer Seite, eines Unterzweigs, Space oder einer Quelle, nur auf ausdrückliche
      * Anforderung in der Desktop-App (#499, ADR 0024); nie Folgeauftrag eines Abgleichs oder Exports.
      */
@@ -38,7 +44,25 @@ public enum JobType {
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
+    /**
+     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
+     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS;
+    }
+
     public boolean followUp() {
-        return this == ENRICHMENT || this == ASSETS;
+        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS;
+    }
+
+    /**
+     * Lässt sich anhalten und im selben Eintrag fortsetzen (ADR 0025): Einlesen und Download legen jede geladene neue
+     * Seite sofort ab, ein neuer Lauf holt nur, was fehlt. Bilder ({@link #ASSETS}) legen jede Datei sofort im
+     * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
+     * Anhänge ({@link #ATTACHMENTS}) ebenso.
+     */
+    public boolean resumable() {
+        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS;
     }
 }

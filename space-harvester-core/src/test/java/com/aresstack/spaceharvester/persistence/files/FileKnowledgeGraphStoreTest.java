@@ -89,6 +89,56 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void qualityParagraphAndReviewSurviveARestart() {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement statement = base.result().statements().get(0);
+        ParsedStatements.Statement plausible = assessed(statement, statement.id(), 2,
+                ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.CONFIRMED);
+        ParsedStatements.Statement invalid = assessed(statement, statement.id() + "x", 0,
+                ParsedStatements.Quality.INVALID, List.of("NO_PARTICIPANT", "UNRESOLVED_PRONOUN"),
+                ParsedStatements.Review.UNREVIEWED);
+        PageStatementAnalysis analysis = base.withResult(withStatements(base.result(), List.of(plausible, invalid)));
+        new FileKnowledgeGraphStore(directory).replace(analysis);
+
+        List<ParsedStatements.Statement> read = new FileKnowledgeGraphStore(directory).find(analysis.key())
+                .orElseThrow().result().statements();
+
+        assertThat(read).containsExactly(plausible, invalid);
+    }
+
+    @Test
+    void aFileWithoutOrWithUnknownQualityFieldsStillLoads() throws IOException {
+        new FileKnowledgeGraphStore(directory).replace(analysis("wiki", "1", "Beleg"));
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        String json = Files.readString(file, StandardCharsets.UTF_8);
+        // Stand vor der Qualitätsstufe: keine neuen Felder
+        String old = json.replaceAll(",\\s*\"paragraph\"\\s*:\\s*-?\\d+", "")
+                .replaceAll(",\\s*\"quality\"\\s*:\\s*\"[A-Z_]+\"", "")
+                .replaceAll(",\\s*\"qualityReasons\"\\s*:\\s*\\[[^\\]]*\\]", "")
+                .replaceAll(",\\s*\"review\"\\s*:\\s*\"[A-Z_]+\"", "");
+        assertThat(old).doesNotContain("quality", "review", "paragraph");
+        Files.writeString(file, old, StandardCharsets.UTF_8);
+
+        ParsedStatements.Statement legacy = new FileKnowledgeGraphStore(directory).find(new PageKey("wiki", "1"))
+                .orElseThrow().result().statements().get(0);
+        assertThat(legacy.quality()).isEqualTo(ParsedStatements.Quality.UNCERTAIN);
+        assertThat(legacy.qualityReasons()).containsExactly(ParsedStatements.Statement.NOT_ASSESSED);
+        assertThat(legacy.paragraph()).isEqualTo(ParsedStatements.Statement.UNKNOWN_PARAGRAPH);
+        assertThat(legacy.review()).isEqualTo(ParsedStatements.Review.UNREVIEWED);
+
+        Files.writeString(file, json.replaceFirst("\"quality\"\\s*:\\s*\"[A-Z_]+\"", "\"quality\":\"VIELLEICHT\"")
+                .replaceFirst("\"review\"\\s*:\\s*\"[A-Z_]+\"", "\"review\":\"SPAETER\""), StandardCharsets.UTF_8);
+        ParsedStatements.Statement unknown = new FileKnowledgeGraphStore(directory).find(new PageKey("wiki", "1"))
+                .orElseThrow().result().statements().get(0);
+        assertThat(unknown.quality()).isEqualTo(ParsedStatements.Quality.UNCERTAIN);
+        assertThat(unknown.qualityReasons()).containsExactly(ParsedStatements.Statement.NOT_ASSESSED);
+        assertThat(unknown.review()).isEqualTo(ParsedStatements.Review.UNREVIEWED);
+    }
+
+    @Test
     void removingDeletesTheFile() {
         FileKnowledgeGraphStore store = new FileKnowledgeGraphStore(directory);
         store.replace(analysis("wiki", "1", "Beleg"));
@@ -128,5 +178,19 @@ class FileKnowledgeGraphStoreTest {
         return new PageStatementAnalysis(new PageKey(sourceId, pageId), "DEV", "Seite " + pageId, "3",
                 "sha256:0123456789abcdef", "maltparser-de", "1|maltparser-de-gsd-v1.0.0|237885c2",
                 Instant.parse("2026-11-09T15:00:00Z"), result);
+    }
+
+    private static ParsedStatements.Statement assessed(ParsedStatements.Statement statement, String id, int paragraph,
+                                                       ParsedStatements.Quality quality, List<String> reasons,
+                                                       ParsedStatements.Review review) {
+        return new ParsedStatements.Statement(id, statement.sentence(), statement.start(), statement.end(),
+                statement.predicateText(), statement.predicateLemma(), statement.voice(), statement.clause(),
+                statement.core(), statement.arguments(), statement.findings(), paragraph, quality, reasons, review);
+    }
+
+    private static ParsedStatements withStatements(ParsedStatements result,
+                                                   List<ParsedStatements.Statement> statements) {
+        return new ParsedStatements(result.sentences(), result.mentions(), statements, result.attachments(),
+                result.components(), result.conllu());
     }
 }

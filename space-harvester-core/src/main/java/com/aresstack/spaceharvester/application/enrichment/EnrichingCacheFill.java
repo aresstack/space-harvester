@@ -37,9 +37,16 @@ public final class EnrichingCacheFill implements PageCacheFill {
 
     @Override
     public boolean store(PageSnapshot snapshot, String expectedState) {
-        if (!store.store(snapshot, expectedState)) {
-            return false;
-        }
+        return store.store(snapshot, expectedState) && enrich(snapshot);
+    }
+
+    @Override
+    public boolean storeWaiting(PageSnapshot snapshot, String expectedState) {
+        return store.storeWaiting(snapshot, expectedState) && enrich(snapshot);
+    }
+
+    /** Volltextindex und Anreicherungen der eben abgelegten Seite; meldet immer {@code true}. */
+    private boolean enrich(PageSnapshot snapshot) {
         if (texts != null && texts.index(snapshot)) {
             texts.flush();
         }

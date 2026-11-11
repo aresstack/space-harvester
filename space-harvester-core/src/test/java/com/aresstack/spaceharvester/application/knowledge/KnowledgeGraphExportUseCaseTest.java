@@ -88,6 +88,43 @@ class KnowledgeGraphExportUseCaseTest {
         assertThat(parser.calls.get()).isEqualTo(calls);
     }
 
+    @Test
+    void byDefaultOnlyPlausibleStatementsAreExportedWithQualityAndReview() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg. Den Antrag prüft er.");
+
+        run(new Scope.Page("wiki", "1"));
+        JsonNode doc = read();
+        List<JsonNode> statementNodes = nodes(doc, "Statement");
+        assertThat(statementNodes).singleElement().satisfies(node -> {
+            assertThat(node.path("predicate").asString()).isEqualTo("übermittelt");
+            assertThat(node.path("extractionQuality").asString()).isEqualTo("PLAUSIBLE");
+            assertThat(node.path("verificationStatus").asString()).isEqualTo("UNVERIFIED_PARSER_OUTPUT");
+            assertThat(node.has("paragraph")).isTrue();
+        });
+        assertThat(nodes(doc, "GraphExport").getFirst().path("exportedQuality").toString()).contains("PLAUSIBLE")
+                .doesNotContain("UNCERTAIN");
+        assertThat(doc.toString()).contains("Antrag").contains("analyzerVersion");
+
+        Files.list(out).forEach(path -> path.toFile().delete());
+        jobs.status(export.start(CALLER, new KnowledgeGraphExportUseCase.Request(new Scope.Page("wiki", "1"), false,
+                out, Set.of(ParsedStatements.Quality.PLAUSIBLE, ParsedStatements.Quality.UNCERTAIN))).id());
+        List<JsonNode> both = nodes(read(), "Statement");
+        assertThat(both).hasSize(2);
+        assertThat(both).filteredOn(node -> node.path("extractionQuality").asString().equals("UNCERTAIN"))
+                .singleElement().satisfies(node -> assertThat(node.path("qualityReason").toString())
+                        .contains("UNRESOLVED_PRONOUN"));
+    }
+
+    private static List<JsonNode> nodes(JsonNode doc, String type) {
+        List<JsonNode> result = new java.util.ArrayList<>();
+        doc.path("@graph").forEach(node -> {
+            if (type.equals(node.path("@type").asString())) {
+                result.add(node);
+            }
+        });
+        return result;
+    }
+
     private JobStatus run(Scope scope) {
         return jobs.status(export.start(CALLER, new KnowledgeGraphExportUseCase.Request(scope, false, out)).id());
     }

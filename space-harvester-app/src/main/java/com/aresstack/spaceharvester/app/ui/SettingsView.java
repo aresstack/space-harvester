@@ -22,8 +22,8 @@ import java.util.Locale;
  * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
  * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
  * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
- * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und
- * Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“
+ * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy,
+ * Serverzertifikate und Wiederholungen), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“
  * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
  * lokal gespeicherte Zugangsdaten lassen sich dort je Eintrag löschen. „Bibliotheken“ ({@link LibrariesView}) hängt
  * als letzte Zeile am Boden des Drawers über „Zurück“, getrennt von den Einstellungsbereichen darüber. Jede
@@ -50,6 +50,8 @@ public final class SettingsView implements View {
     private final Facts storage = new Facts();
     private final Facts network = new Facts();
     private final Facts cache = new Facts();
+    /** Bereich „Netzwerk“, Platte „Wiederholungen“ ({@code jobs.retry.*}, ADR 0025). */
+    final Facts retry = new Facts();
     /** Reiter „Sicherheit“: wo Geheimnisse liegen, je Eintrag nur „gespeichert“ oder „fehlt“, nie der Wert. */
     final Facts security = new Facts();
     /** Reiter „Sicherheit“, Abschnitt „KeePass“: die eine Kopplung der App. */
@@ -98,6 +100,8 @@ public final class SettingsView implements View {
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
     private final ComposerButton tls = Comic.button("Serverzertifikate …",
             "Festlegen, welchen Zertifizierungsstellen die App bei allen Quellen glaubt");
+    final ComposerButton editRetry = Comic.button(SettingDialogs.RETRY_TITLE + " …",
+            "Weitere Versuche bei Netzfehlern und wann sich ein Auftrag selbst anhält");
 
     public SettingsView(AppContext context) {
         this.context = context;
@@ -137,6 +141,8 @@ public final class SettingsView implements View {
                 () -> feedback.success("Proxy übernommen")).open());
         tls.addActionListener(e -> SettingDialogs.tls(root, context,
                 () -> feedback.success("Serverzertifikate übernommen")).open());
+        editRetry.addActionListener(e -> SettingDialogs.retry(root, context,
+                () -> feedback.success("Wiederholungen übernommen")).open());
         editCache.addActionListener(e -> SettingDialogs.cache(root, context,
                 () -> feedback.success("Cache-Einstellungen übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
@@ -169,7 +175,8 @@ public final class SettingsView implements View {
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
         page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
-                withButtons(network, proxy, tls))));
+                withButtons(network, proxy, tls)),
+                Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
         page(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
@@ -290,8 +297,8 @@ public final class SettingsView implements View {
         }), securityFeedback::problem);
         button.addActionListener(e -> {
             if (Dialogs.restartAllowed(root, context) && Dialogs.confirm(root, "Zugangsdaten löschen?", what
-                    + ": die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, damit der Wert "
-                    + "sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.", "Löschen")) {
+                    + " wirklich löschen? Die lokal gespeicherte Datei wird gelöscht und die Laufzeit neu gestartet, "
+                    + "damit der Wert sofort nirgends mehr gilt. Die App fragt beim nächsten Zugriff neu danach.")) {
                 run.run();
             }
         });
@@ -487,6 +494,15 @@ public final class SettingsView implements View {
             }
         }
         renderSecurity(settings);
+        retry.reset();
+        if (settings != null) {
+            var r = settings.jobLimits().retry();
+            retry.add(SettingDialogs.RETRY_ATTEMPTS, r.maxAttempts() == 0 ? "keine (aus)"
+                    : r.maxAttempts() + " · Wartezeit " + ConfigFileEditor.delay(r.initialDelay()) + " bis "
+                    + ConfigFileEditor.delay(r.maxDelay()));
+            retry.add(SettingDialogs.RETRY_PAUSE, Texts.count(r.pauseAfterFailures(), "Fehler", "Fehlern")
+                    + " nacheinander ohne Verbindung");
+        }
         cache.reset();
         if (settings != null) {
             AppSettings.Cache c = settings.cache();
@@ -529,7 +545,7 @@ public final class SettingsView implements View {
     }
 
     /** Wie logback.xml: {@code SPACE_HARVESTER_LOG_DIR} oder {@code <Benutzerordner>/.space-harvester/logs}. */
-    static Path logDirectory() {
+    public static Path logDirectory() {
         String configured = System.getenv("SPACE_HARVESTER_LOG_DIR");
         return configured == null || configured.isBlank()
                 ? Path.of(System.getProperty("user.home"), ".space-harvester", "logs") : Path.of(configured);

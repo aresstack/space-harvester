@@ -120,6 +120,46 @@ Jede Regeländerung erhöht `ObjectCentricExtraction.RULES_VERSION`; gespeichert
 `STALE ANALYZER_CHANGED` und erst auf Klick neu berechnet. Danach folgt eine deterministische Qualitätsstufe
 (PLAUSIBLE/UNCERTAIN/INVALID, ohne Prozentwerte) zwischen Extraktion und Graph-Projektion.
 
+### Qualitätsstufe der Aussagen (Nachtrag 10.11.2026)
+
+Zwischen Extraktion und Graph-Projektion bewertet `StatementQuality` jede Aussage deterministisch (Regelversion 6).
+Drei Felder bleiben getrennt und werden nie vermischt:
+
+1. **Extraktionsqualität** (`ParsedStatements.Quality`): wie gut die Aussage maschinell abgeleitet ist.
+   - `INVALID`: erkannte Fehlkonstruktion ohne verwendbare Relation (`NO_PARTICIPANT`, `SELF_RELATION`).
+   - `UNCERTAIN`: verwertbarer Kandidat mit offener Zuordnung, z. B. `HEURISTIC_PARTICIPANT`,
+     `SUBJECT_FROM_LABEL`, `PREDICATIVE_PARTICLE`, `CASE_CONFLICT`, `UNRESOLVED_PRONOUN`, `UNCERTAIN_PARTICIPANT`,
+     `DETERMINER_AS_PARTICIPANT`, `ROLE_CONFLICT`, `NO_ACTOR`.
+   - `PLAUSIBLE`: Kernbeteiligte aus sicheren Parserkanten, aus Koordination ohne Teilsatzgrenze oder aus der
+     Wortliste.
+
+   Die Gründe stehen als Liste (`qualityReasons`) an der Aussage; es gibt keine Prozentwerte.
+2. **Evidenz** (`Basis` je Beteiligtem: `PARSER`, `COORDINATION`, `CASE_HEURISTIC`, `LEXICON`, `HEURISTIC`) und der
+   Beleg (Satzspanne). Eine Listenkennung „X:“, die der Parser als `nsubj` anhängt, ist Parserevidenz und kann
+   `PLAUSIBLE` sein. Nur die implizite Kennung ohne Subjektkante ist `HEURISTIC` und höchstens `UNCERTAIN` (Fall I).
+   Berechtigungsmanagement → umsetzen → Freigaben, Marktplatz → bilden → Anwenderschnittstelle und Register →
+   erweitern → Datenprodukte bleiben deshalb in Standardansicht und Export.
+3. **Fachliche Prüfung** (`ParsedStatements.Review`: `UNREVIEWED`, `CONFIRMED`, `REJECTED`): vorerst nur im Modell,
+   ohne Bedienung; jede Analyse beginnt `UNREVIEWED`.
+
+Nichts wird gelöscht: jede Aussage bleibt mit Stufe und Gründen gespeichert. `PageGraph.of(analysis)` und der
+JSON-LD-Export zeigen standardmäßig nur `PLAUSIBLE`; andere Stufen sind über `PageGraph.of(analysis, qualities)`
+und `KnowledgeGraphExportUseCase.Request(…, qualities)` abrufbar. Der Export trägt je Aussage
+`sh:extractionQuality`, `sh:qualityReason`, `sh:verificationStatus` (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen
+Prüfung) und `sh:paragraph` (fehlt, wenn unbekannt); der Exportknoten nennt die exportierten Stufen
+(`sh:exportedQuality`). Auch die Begriffssuche über den Graphen nennt nur Beteiligungen an plausiblen Aussagen. Die Absatznummer (Blöcke der
+Textprojektion, gezählt ab 0) ist der Gruppierungsschlüssel neben dem Satz. Im Kernumfang (`core`) heißt eine Aussage
+„strukturell vollständig“, nicht „richtig“. Gespeicherte Analysen ohne Qualitätsfeld lesen sich als `UNCERTAIN` mit
+Grund `NOT_ASSESSED`, bis sie auf Klick neu berechnet werden; da die Standardansicht nur `PLAUSIBLE` zeigt, erscheinen
+für solche Seiten bis zur Neuanalyse keine Aussagen (über die Regelversion sind sie ohnehin `STALE`). Die fachliche
+Prüfung steht vorerst in der Analyse selbst; bevor eine Oberfläche sie setzt, braucht sie eine eigene Ablage, sonst
+verwirft die nächste Neuanalyse sie.
+
+Die Stufe bewertet nur die Kernbeteiligten (Handelnder, Betroffener). Hinweise zu ergänzenden Rollen wie Zeit aus einer
+Nominalgruppe oder unbestätigtem Dativ mindern sie nicht. `SELF_RELATION` gilt nur, wenn Handelnder und Betroffener
+dieselbe Erwähnung sind; gleiche Grundformen („Konnektor verbindet Konnektoren“) sind erlaubt. Ein aus der Reihung
+übernommenes Subjekt ist nur gestützt, wenn sein bekannter Kasus dem Nominativ nicht widerspricht.
+
 ## Alternativen
 
 | Option | Bewertung |

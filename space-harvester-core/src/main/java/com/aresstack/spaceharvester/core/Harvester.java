@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
@@ -53,10 +54,13 @@ import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
@@ -206,6 +210,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 /**
  * Space Harvester als Bibliothek: Quellen, Abgleich in den eingebetteten Lucene-Cache, Seiten, Baum, Suche und Export
@@ -290,6 +295,7 @@ public final class Harvester implements AutoCloseable {
     private final Reconciliation inventories;
     private final Exports exports;
     private final ExportConversions conversions;
+    private final JobActions jobActions;
     private final Assets assets;
     private final PageImageAnalysis imageAnalysis;
     private final StatementAnalysis statementAnalysis;
@@ -515,7 +521,7 @@ public final class Harvester implements AutoCloseable {
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
-                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
+                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.passages = new PassageQueries(pages, enrichments, projector);
@@ -673,6 +679,7 @@ public final class Harvester implements AutoCloseable {
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                             // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                             List.of(acronymRelationRule::refresh))), retentionRule(builder));
+            syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
@@ -703,6 +710,13 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
+            // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
+            assets.downloadLimit(jobs.parallelDownloads());
+            // Restzeit (Angelo 11.11.2026): Dauer je geladener Datei, über Neustarts im Anwendungszustand.
+            DownloadDurations durations = new DownloadDurations(
+                    builder.dataDirectory.resolve("download-durations.properties"), clock);
+            assets.durations(durations);
+            opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
@@ -750,8 +764,15 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns,
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
+            // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
+            exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
+            this.jobActions = new JobActions(jobs, exports, syncs, conversions);
+            // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
+            // mit derselben Lese- und Exportprüfung wie beim Start.
+            jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
+                    exportAccess()));
             // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
             FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
             KnowledgeGraph graph = this.knowledgeGraph;
@@ -1417,7 +1438,55 @@ public final class Harvester implements AutoCloseable {
         return conversions;
     }
 
+    /**
+     * Aktionen auf Aufträgen (Anhalten, Fortsetzen, Jetzt starten, Abbrechen, Löschen) mit Prüfung am Zustandsobjekt;
+     * Fortsetzen bleibt im selben Eintrag, auch nach einem Neustart.
+     */
+    public JobActions jobActions() {
+        return jobActions;
+    }
+
     /** Alle Aufträge dieses Harvesters. */
+    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        return jobs.parallelPreparations();
+    }
+
+    /** Ändert {@link #parallelPreparations()} sofort (1 bis {@value JobLimits#MAX_PARALLEL_PREPARATIONS}). */
+    public void parallelPreparations(int value) {
+        jobs.parallelPreparations(value);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge höchstens gleichzeitig laden ({@code jobs.parallel-downloads}). */
+    public int parallelDownloads() {
+        return jobs.parallelDownloads();
+    }
+
+    /**
+     * Ändert {@link #parallelDownloads()} sofort (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); bei 0 bereiten
+     * Bilder- und Anhängeaufträge nur vor und warten dann, bis wieder geladen werden darf.
+     */
+    public void parallelDownloads(int value) {
+        jobs.parallelDownloads(value);
+        // Laufende Downloads laufen zu Ende: ihre Plätze bleiben, bis sie fertig sind.
+        assets.downloadLimit(Math.max(value, jobs.downloadingNow()));
+    }
+
+    /**
+     * Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, über alle Exporte und Neustarts, für die
+     * Restzeit eines Bilder- ({@link JobType#ASSETS}) oder Anhängeauftrags ({@link JobType#ATTACHMENTS}); vor der
+     * ersten Datei ein Startwert. Ein Transfer, ohne Parallelität und ohne Treffer aus dem Speicher.
+     *
+     * @throws IllegalArgumentException für andere Auftragsarten
+     */
+    public java.time.Duration averageDownload(JobType type) {
+        return switch (type) {
+            case ASSETS -> assets.durations().average(DownloadDurations.Kind.IMAGE);
+            case ATTACHMENTS -> assets.durations().average(DownloadDurations.Kind.DOCUMENT);
+            default -> throw new IllegalArgumentException("keine Downloads: " + type);
+        };
+    }
+
     public Jobs jobs() {
         return jobs;
     }
@@ -1596,10 +1665,33 @@ public final class Harvester implements AutoCloseable {
     public JobStatus export(String sourceId, String spaceKey, List<String> formats, boolean refresh) {
         requireExport(sourceId, spaceKey);
         requireActive(sourceId);
-        return exports.start(ExportRequest.of(sourceId, spaceKey, OWNER, formats).withRefresh(refresh)
+        return exports.start(exportAccess().apply(ExportRequest.of(sourceId, spaceKey, OWNER, formats)
+                .withRefresh(refresh)));
+    }
+
+    /**
+     * Lese- und Exportprüfung eines Exports dieser App: jede Seite nur, wenn die Richtlinie sie dem Aufrufer zeigt, und
+     * der ganze Lauf nur, solange {@code EXPORT} und {@code CONTENT} für den Space freigegeben sind. Gilt beim Start und
+     * ebenso beim Fortsetzen, Nachladen und Wiederanlauf, auch nach einem Neustart aus den abgelegten Angaben.
+     */
+    private UnaryOperator<ExportRequest> exportAccess() {
+        return request -> request
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))
-                .withAuthorized(() -> exportPermitted(sourceId, spaceKey)));
+                .withAuthorized(() -> exportPermitted(request.sourceId(), request.spaceKey()));
+    }
+
+    /**
+     * Führt eine Aktion auf einem Auftrag dieser App aus ({@link JobActions#perform}); Exporte prüfen dabei Lesbarkeit
+     * und Exportrecht wie beim Start ({@link #exportAccess()}).
+     */
+    public JobStatus performJobAction(String jobId, JobAction action) {
+        return jobActions.perform(jobId, OWNER, action, exportAccess());
+    }
+
+    /** Setzt einen Export dieser App im selben Eintrag fort, mit Lese- und Exportprüfung wie beim Start. */
+    public JobStatus resumeExport(String exportId) {
+        return exports.resume(exportId, OWNER, exportAccess());
     }
 
     private boolean exportPermitted(String sourceId, String spaceKey) {
@@ -1645,13 +1737,11 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Löscht einen beendeten Auftrag samt seinen Diagnoseereignissen. Das Exportartefakt im Exportverzeichnis
-     * verschwindet mit dem Auftrag beim nächsten Aufräumen; anderswo gespeicherte Kopien bleiben.
+     * Löscht einen Auftrag in jedem Zustand samt seinen Diagnoseereignissen; einen wartenden oder laufenden bricht das
+     * vorher ab ({@link Jobs#delete}). Das Exportartefakt im Exportverzeichnis verschwindet mit dem Auftrag beim
+     * nächsten Aufräumen; anderswo gespeicherte Kopien bleiben.
      *
-     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es den Auftrag nicht gibt
-     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft;
-     *                                                                                vorher {@link #cancel} und das
-     *                                                                                Ende abwarten
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es den Auftrag nicht gibt
      */
     public void deleteJob(String jobId) {
         jobs.delete(jobId, OWNER);
@@ -1665,6 +1755,15 @@ public final class Harvester implements AutoCloseable {
      */
     public int deleteFinishedJobs() {
         return jobs.deleteFinished(OWNER, null);
+    }
+
+    /**
+     * Löscht alle Aufträge in jedem Zustand samt ihren Ereignissen; wartende und laufende werden vorher abgebrochen.
+     *
+     * @return Anzahl gelöschter Aufträge
+     */
+    public int deleteAllJobs() {
+        return jobs.deleteAll(OWNER, null);
     }
 
     /**

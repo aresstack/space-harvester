@@ -19,7 +19,7 @@ class RowActionsTest {
         SwingUtilities.invokeAndWait(() -> {
             JTable table = new JTable(new DefaultTableModel(1, 2));
             List<RowActions.Action> actions = new ArrayList<>();
-            for (int i = 0; i < 9; i++) {
+            for (int i = 0; i < 10; i++) {
                 actions.add(new RowActions.Action(Glyph.TRASH, "Aktion " + i, true, () -> { }));
             }
             RowActions.install(table, 1, actions.size(), row -> actions);

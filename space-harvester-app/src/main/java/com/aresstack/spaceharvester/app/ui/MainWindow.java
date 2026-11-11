@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
+import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowHoldCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
@@ -265,6 +266,9 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(workFoot, BorderLayout.SOUTH);
         split = new ComicSplitPane(side, work, 200, 520, Comic.PALETTE);
         split.setBackground(Comic.SURFACE);
+        // Ein Trenner für die ganze App: derselbe Renderer wie unter „Aufträge“ und im Graph (ComicDivider), damit
+        // alle Teilungen gleich aussehen; die Breitenregeln des ComicSplitPane bleiben.
+        ComicDivider.install(split, Comic.PALETTE);
         split.setContinuousLayout(true);
         split.setPreferredLeftWidth(SIDEBAR_WIDTH);
         // Einklappbar: Doppelklick auf den Teiler klappt den Drawer zu bzw. wieder auf.
@@ -282,7 +286,7 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        jobStatus = new JobStatusLine(context.events(), activities::cancelShownJob);
+        jobStatus = new JobStatusLine(context.events(), activities::cancelShownJob, activities::pauseOrResumeShownJob);
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -525,9 +529,9 @@ public final class MainWindow implements AppContext.Navigator {
         } catch (RuntimeException e) {
             running = 0;
         }
-        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", Texts.count(running, "Auftrag läuft",
-                "Aufträge laufen") + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.",
-                "Beenden");
+        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", "Space Harvester wirklich beenden? "
+                + Texts.count(running, "Auftrag läuft", "Aufträge laufen")
+                + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
     }
 
     private static Icon icon(AppContext.Section section) {

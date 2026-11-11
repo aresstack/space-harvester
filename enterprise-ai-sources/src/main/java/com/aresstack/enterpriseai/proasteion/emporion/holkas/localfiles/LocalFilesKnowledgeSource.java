@@ -45,9 +45,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -60,6 +62,10 @@ import java.util.function.Supplier;
  *       einzelne Dateien; Verzeichnisse werden bis {@code maxDepth} Ebenen tief gelesen ({@code 0} = nur die Dateien
  *       direkt darin). Versteckte Dateien, Office-Sperrdateien ({@code ~$…}) und Dateien über der Größengrenze
  *       werden übersprungen, ebenso Dateien, deren Endung keinen Dokumenttyp ergibt.</li>
+ *   <li>Bilder (wie source-git {@code GitFiles.Kind.ASSET}): PNG, JPEG, GIF, WebP und ICO werden als Ressource
+ *       mit ihrem Bildtyp gelistet, aber ohne Extraktor; {@link #load} liefert einen Platzhalter mit Name, Inhaltstyp
+ *       und Größe, die Originalbytes liefert {@link #storedContent}. SVG ist wie in source-git Text (XML-Quelltext
+ *       im Codeblock).</li>
  *   <li>Zugriff (#120): jede Datei muss nach Auflösen von Links in der Wurzel oder einem anderen freigegebenen Ordner
  *       der {@link LocalFileAccessPolicy} liegen; ein Link aus der Wurzel hinaus erweitert die Freigabe nicht.
  *       Include-/Exclude-Muster begrenzen, was gelesen wird.</li>
@@ -92,6 +98,22 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     private static final Set<ContentCategory> INDEXABLE = Collections.unmodifiableSet(EnumSet.of(
             ContentCategory.PLAIN_TEXT, ContentCategory.MARKDOWN, ContentCategory.HTML, ContentCategory.PDF,
             ContentCategory.OFFICE_DOCUMENT, ContentCategory.SOURCE_CODE, ContentCategory.STRUCTURED_DATA));
+    /** Bilder nach Endung: gelistet, aber nicht als Text gelesen (wie source-git). */
+    private static final Map<String, String> ASSETS;
+    /** SVG ist XML-Quelltext und wird wie in source-git als Codeblock gelesen. */
+    private static final String SVG = "svg";
+    private static final String SVG_TYPE = "image/svg+xml";
+
+    static {
+        Map<String, String> assets = new HashMap<String, String>();
+        assets.put("png", "image/png");
+        assets.put("jpg", "image/jpeg");
+        assets.put("jpeg", "image/jpeg");
+        assets.put("gif", "image/gif");
+        assets.put("webp", "image/webp");
+        assets.put("ico", "image/x-icon");
+        ASSETS = Collections.unmodifiableMap(assets);
+    }
 
     private final SourceAddress sourceId;
     private final Path root;
@@ -238,6 +260,11 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
             if (Files.size(file) > maxFileBytes) {
                 throw new KnowledgeSourceException(Kind.UNSUPPORTED, resourceId + " ist größer als " + maxFileBytes + " Bytes");
             }
+            String own = ownType(file);
+            if (own != null) {
+                // Bild oder SVG: ohne Extraktor, wie source-git.
+                return KnowledgeDocument.of(resource(file, typeByName(file), true), ownText(file, own));
+            }
             bytes = Files.readAllBytes(file);
         } catch (IOException e) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, resourceId + " nicht lesbar", e);
@@ -366,8 +393,8 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
         }
         String name = file.getFileName().toString();
-        String mediaType = detector.detect(name, null, Arrays.copyOf(bytes, Math.min(bytes.length, PREFIX_BYTES)))
-                .mimeType();
+        String mediaType = ownType(file) != null ? ownType(file)
+                : detector.detect(name, null, Arrays.copyOf(bytes, Math.min(bytes.length, PREFIX_BYTES))).mimeType();
         return new StoredContent(resource, bytes, mediaType == null || mediaType.isEmpty()
                 ? "application/octet-stream" : mediaType, STORED_FORMAT, Instant.now());
     }
@@ -431,11 +458,44 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         } catch (IOException e) {
             return false;
         }
-        return INDEXABLE.contains(typeByName(file).category());
+        return ownType(file) != null || INDEXABLE.contains(typeByName(file).category());
     }
 
     private DetectedContentType typeByName(Path file) {
+        String own = ownType(file);
+        if (own != null) {
+            return new DetectedContentType(own, SVG_TYPE.equals(own) ? ContentCategory.SOURCE_CODE
+                    : ContentCategory.BINARY, file.getFileName().toString());
+        }
         return detector.detect(file.getFileName().toString(), null, null);
+    }
+
+    /** Inhaltstyp eines Bilds oder einer SVG-Datei nach Endung; {@code null} für alle anderen Dateien. */
+    private static String ownType(Path file) {
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        int dot = name.lastIndexOf('.');
+        String extension = dot < 0 ? "" : name.substring(dot + 1);
+        return SVG.equals(extension) ? SVG_TYPE : ASSETS.get(extension);
+    }
+
+    /**
+     * Text eines Bilds (Platzhalter mit Name, Inhaltstyp und Größe) oder einer SVG-Datei (Quelltext im Codeblock),
+     * jeweils mit dem relativen Pfad als Herkunft wie in source-git.
+     */
+    private String ownText(Path file, String type) throws IOException {
+        String name = file.getFileName().toString();
+        String origin = "`" + relative(file) + "`";
+        if (!SVG_TYPE.equals(type)) {
+            return "# " + name + "\n\n" + origin + "\n\nBilddatei (" + type + ", " + Files.size(file) + " Bytes), als "
+                    + "Asset des Ordners auffindbar; der Bildinhalt wird nicht als Text gelesen.";
+        }
+        String code = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+        String fence = "```";
+        while (code.contains(fence)) {
+            fence += "`";
+        }
+        return "# " + name + "\n\n" + origin + " · " + SVG + "\n\n" + fence + SVG + "\n"
+                + (code.endsWith("\n") ? code : code + "\n") + fence;
     }
 
     /**

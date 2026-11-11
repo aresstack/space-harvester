@@ -90,6 +90,22 @@ class MutualTlsSourceTest {
                 .containsEntry("Authorization", "Bearer pat-token"));
     }
 
+    /**
+     * #571: Die zweite Web-Sitzung einer Quelle mit Token entsteht erst bei Bedarf und lädt das Client-Zertifikat dafür
+     * nicht noch einmal (unter Windows Windows-MY): selbst ohne die Datei öffnet sie mit dem schon geladenen.
+     */
+    @Test
+    void theSecondWebSessionReusesTheLoadedCertificate() throws Exception {
+        Path copy = Files.copy(certificates.client, dir.resolve("zweite-sitzung.p12"),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        KnowledgeSourceHarvestSource source = (KnowledgeSourceHarvestSource) source(mtlsServer,
+                pkcs12(copy, CLIENT_PASSWORD));
+        Files.delete(copy);
+
+        assertThat(source.webPort()).isNull();
+        assertThat(source.openWebPort()).isNotNull().isNotSameAs(source.port());
+    }
+
     @Test
     void withoutCertificateTheServerRefusesTheConnection() {
         HarvestSource source = source(mtlsServer, null);

@@ -21,9 +21,34 @@ import java.util.function.IntFunction;
  */
 final class RowActions extends JComponent implements TableCellRenderer {
 
-    /** Eine Aktion einer Zeile. */
+    /** Eine Aktion einer Zeile; {@link #EMPTY} hält nur den Platz frei, damit die Spalten untereinander stehen. */
     record Action(Icon icon, String tooltip, boolean enabled, Runnable run) {
+        boolean empty() {
+            return icon == null;
+        }
     }
+
+    /**
+     * Ein Symbol breiter als ein Platz (etwa ein Fortschrittsbalken über mehrere Plätze): steht linksbündig im ersten
+     * Platz, die folgenden Plätze sind {@link #EMPTY} und zeigen seinen Tooltip.
+     */
+    static boolean wide(Action action) {
+        return !action.empty() && action.icon().getIconWidth() > SLOT;
+    }
+
+    /** Die Aktion, deren Tooltip auf diesem Platz gilt: sie selbst oder ein breites Symbol links davon. */
+    static Action covering(List<Action> row, int slot) {
+        for (int i = slot; i >= 0; i--) {
+            Action action = row.get(i);
+            if (!action.empty()) {
+                return i == slot || wide(action) && (slot - i) * SLOT < action.icon().getIconWidth() ? action : null;
+            }
+        }
+        return null;
+    }
+
+    /** Ein freier Platz: nichts gezeichnet, kein Tooltip, kein Klick. */
+    static final Action EMPTY = new Action(null, null, false, () -> { });
 
     static final int SLOT = 28;
 
@@ -119,7 +144,11 @@ final class RowActions extends JComponent implements TableCellRenderer {
     public String getToolTipText(MouseEvent event) {
         int start = cellWidth - 4 - shown.size() * SLOT;
         int slot = Math.floorDiv(event.getX() - start, SLOT);
-        return event.getX() < start || slot >= shown.size() ? null : shown.get(slot).tooltip();
+        if (event.getX() < start || slot >= shown.size()) {
+            return null;
+        }
+        Action action = covering(shown, slot);
+        return action == null ? null : action.tooltip();
     }
 
     @Override
@@ -129,8 +158,11 @@ final class RowActions extends JComponent implements TableCellRenderer {
         int start = getWidth() - 4 - shown.size() * SLOT;
         for (int i = 0; i < shown.size(); i++) {
             Action action = shown.get(i);
+            if (action.empty()) {
+                continue;
+            }
             int x = start + i * SLOT;
-            if (action.enabled() && row == hoverRow && i == hoverSlot) {
+            if (action.enabled() && !wide(action) && row == hoverRow && i == hoverSlot) {
                 RoundHover.paint(graphics, x, 0, SLOT, getHeight(), false);
             }
             Graphics2D g = (Graphics2D) graphics.create();
@@ -140,7 +172,8 @@ final class RowActions extends JComponent implements TableCellRenderer {
                 }
                 g.setColor(Comic.INK);
                 Icon icon = action.icon();
-                icon.paintIcon(this, g, x + (SLOT - icon.getIconWidth()) / 2, (getHeight() - icon.getIconHeight()) / 2);
+                int left = wide(action) ? x + 4 : x + (SLOT - icon.getIconWidth()) / 2;
+                icon.paintIcon(this, g, left, (getHeight() - icon.getIconHeight()) / 2);
             } finally {
                 g.dispose();
             }

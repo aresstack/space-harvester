@@ -262,6 +262,38 @@ public final class AppContext {
     }
 
     /**
+     * Übernimmt die Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.parallel-preparations} und
+     * {@code parallel-downloads}) sofort im Core ({@link AppRuntime#parallel}) und speichert sie in der Datei, ohne
+     * Neustart der Laufzeit. Läuft im Hintergrund; schnell aufeinanderfolgende Änderungen schreiben immer die jüngste
+     * zuletzt.
+     */
+    public void parallel(int preparations, int downloads, Runnable done, Consumer<Throwable> failed) {
+        parallelWanted = new int[] {preparations, downloads};
+        Background.run(() -> {
+            synchronized (parallelLock) {
+                int[] wanted = parallelWanted;
+                AppRuntime current = runtime;
+                if (current != null) {
+                    current.parallel(wanted[0], wanted[1]);
+                }
+                writeParallel(wanted[0], wanted[1]);
+                return wanted;
+            }
+        }, saved -> done.run(), failed);
+    }
+
+    private final Object parallelLock = new Object();
+    private volatile int[] parallelWanted;
+
+    private void writeParallel(int preparations, int downloads) throws java.io.IOException {
+        ConfigFileEditor editor = new ConfigFileEditor(loader);
+        String text = Files.isRegularFile(configFile) ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+        ConfigFileEditor.Draft written = editor.withParallel(configFile, new ConfigFileEditor.Draft(text, null),
+                preparations, downloads);
+        editor.save(configFile, written, !editor.fileHasPlaintextSecret(configFile));
+    }
+
+    /**
      * Merkt in der Datei, dass der Einrichtungsassistent lief ({@code space-harvester-app.setup-completed}); ohne
      * Neustart der Laufzeit, denn nur die Oberfläche liest den Merker.
      */
@@ -592,7 +624,12 @@ public final class AppContext {
             char[] value = read.copyPassword();
             if (value != null && value.length > 0) {
                 secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
+            } else if (AppRuntime.SessionSecrets.withoutLogin(read.fields())) {
+                // Ohne Anmeldung braucht die Quelle kein Passwort; sie gilt trotzdem als bereit.
+                secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), new char[0]);
             }
+            // Zusatzfelder wie im Enterprise AI Client (MM_RequiresLogin), nie Benutzer oder Passwort (#571).
+            secrets.keePassFields(entry.id(), read.fields());
         } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException | RuntimeException e) {
             // Nur Quelle und Ausnahmeklasse, nie Eintrag oder Wert.
             LOG.warn("Zugangsdaten der Quelle {} ließen sich nicht aus KeePass lesen: {}", entry.id(),

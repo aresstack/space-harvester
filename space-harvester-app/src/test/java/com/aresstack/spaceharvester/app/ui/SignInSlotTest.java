@@ -33,6 +33,7 @@ class SignInSlotTest {
 
         await(() -> slot[0].isVisible());
         assertThat(slot[0].resendButton().isVisible()).isTrue();
+        assertThat(slot[0].loginFieldsVisible()).isFalse();
         assertThat(slot[0].shown().jobIds()).containsExactly("job-1");
 
         SwingUtilities.invokeAndWait(() -> {
@@ -118,6 +119,158 @@ class SignInSlotTest {
         });
         assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
         await(() -> !slot[0].isVisible());
+    }
+
+    /**
+     * Token-Quelle in zwei Schritten (Angelo 10.11.2026): erst nur Benutzername und Passwort (ohne Code, ohne „Code
+     * erneut senden“), dann nur der Code der neuen Sitzung; erst der zweite Code entsperrt.
+     */
+    @Test
+    void aPatChallengeAsksForTheLoginFirstAndThenOnlyForTheCodeOfTheNewSession() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        java.util.concurrent.atomic.AtomicInteger oldCodes = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<String> login = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> code = new java.util.concurrent.atomic.AtomicReference<>();
+        SignInChallenge newSession = new SignInChallenge() {
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            public String title() {
+                return "";
+            }
+
+            public String message() {
+                return "Neuer Code per E-Mail.";
+            }
+
+            public String error() {
+                return "";
+            }
+
+            public boolean resendAvailable() {
+                return true;
+            }
+
+            public SignInChallenge submit(char[] value) {
+                code.set(new String(value));
+                return null;
+            }
+
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        SignInChallenge pat = new SignInChallenge() {
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            public String title() {
+                return "";
+            }
+
+            public String message() {
+                return "Code der Token-Sitzung.";
+            }
+
+            public String error() {
+                return "";
+            }
+
+            public boolean resendAvailable() {
+                return true;
+            }
+
+            @Override
+            public boolean asksForLogin() {
+                return true;
+            }
+
+            public SignInChallenge submit(char[] value) {
+                oldCodes.incrementAndGet();
+                return null;
+            }
+
+            @Override
+            public SignInChallenge submit(char[] value, String username, char[] password) {
+                assertThat(value).as("im ersten Schritt kein Code").isEmpty();
+                login.set(username + ":" + new String(password));
+                return newSession;
+            }
+
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        CompletableFuture<SignInRequests.Outcome> waiting = CompletableFuture.supplyAsync(() ->
+                requests.await("wiki", "job-2", pat, Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].loginFieldsVisible()).isTrue();
+            assertThat(slot[0].usernameField().isVisible()).isTrue();
+            assertThat(slot[0].passwordField().isVisible()).isTrue();
+            assertThat(slot[0].codeField().isVisible()).isFalse();
+            assertThat(slot[0].resendButton().isVisible()).as("noch kein Codefeld").isFalse();
+            assertThat(slot[0].submitButton().getText()).isEqualTo(SignInSlot.LOGIN_TEXT);
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].errorText()).isEqualTo(SignInSlot.LOGIN_REQUIRED);
+            slot[0].usernameField().setText("maria");
+            slot[0].passwordField().setText("temporary-password");
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        });
+
+        // Zweiter Schritt: nur das Codefeld, kein Fehler, die Anforderung bleibt offen.
+        await(() -> slot[0].codeField().isVisible() && slot[0].submitButton().isEnabled());
+        assertThat(waiting).as("die Anmeldung allein entsperrt nicht").isNotDone();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].usernameField().getText()).as("Zugangsdaten nach Schritt 1 geleert").isEmpty();
+            assertThat(slot[0].loginFieldsVisible()).isFalse();
+            assertThat(slot[0].usernameField().isVisible()).isFalse();
+            assertThat(slot[0].resendButton().isVisible()).isTrue();
+            assertThat(slot[0].submitButton().getText()).isEqualTo(SignInSlot.SUBMIT_TEXT);
+            assertThat(slot[0].errorText()).isEmpty();
+            assertThat(slot[0].shown().message()).isEqualTo("Neuer Code per E-Mail.");
+            slot[0].codeField().setText("123456");
+            slot[0].submitButton().doClick();
+            assertThat(slot[0].codeField().getPassword()).isEmpty();
+        });
+        assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .isEqualTo(SignInRequests.Outcome.UNLOCKED);
+        assertThat(login).hasValue("maria:temporary-password");
+        assertThat(code).hasValue("123456");
+        assertThat(oldCodes).hasValue(0);
+        await(() -> !slot[0].isVisible());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].usernameField().getText()).isEmpty();
+            assertThat(slot[0].passwordField().getPassword()).isEmpty();
+        });
+    }
+
+    @Test
+    void theFieldsStandFlushUnderEachOtherAndAreEquallyWide() throws Exception {
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0] = new SignInSlot(() -> null, r -> java.util.Optional.empty());
+            // Alle drei sichtbar machen, um die Spalten zu messen.
+            slot[0].usernameField().setVisible(true);
+            slot[0].passwordField().setVisible(true);
+            slot[0].codeField().setVisible(true);
+            java.awt.Container form = slot[0].codeField().getParent();
+            form.setSize(form.getPreferredSize());
+            form.doLayout();
+            int x = slot[0].usernameField().getX();
+            int width = slot[0].usernameField().getWidth();
+            assertThat(slot[0].passwordField().getX()).isEqualTo(x);
+            assertThat(slot[0].codeField().getX()).isEqualTo(x);
+            assertThat(slot[0].passwordField().getWidth()).isEqualTo(width);
+            assertThat(slot[0].codeField().getWidth()).isEqualTo(width);
+            assertThat(slot[0].usernameField().getParent()).isSameAs(form);
+        });
     }
 
     /** Eine Abfrage der Quelle: „123456“ gilt, alles andere bringt „Code ungültig“. */

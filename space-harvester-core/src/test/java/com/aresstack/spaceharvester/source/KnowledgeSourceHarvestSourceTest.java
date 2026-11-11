@@ -592,4 +592,494 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(SignInFailures.describe(failure, required.challenge().service()))
                 .isEqualTo("Proxy verlangt Anmeldung (HTTP 407) – Ziel wiki.example.org");
     }
+
+    /**
+     * #571: Mit Personal Access Token nimmt die Zwei-Faktor-Anmeldung von Confluence den Einmalcode nicht an und
+     * antwortet mit HTTP 500. Die Quelle meldet das klar statt der bloßen 500.
+     */
+    @Test
+    void aServerErrorAfterSendingTheCodeWithATokenSaysTokensAreNotAccepted() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(serverErrorAfterSending()), null, null, true);
+
+        SourceAccessException failure = submitFails(source);
+
+        assertThat(failure.reason()).isEqualTo(SourceAccessException.Reason.ACCESS_DENIED);
+        assertThat(SignInFailures.describe(failure, "wiki.example.org"))
+                .isEqualTo(SignInFailures.tokenLoginRejected(500) + " – Ziel wiki.example.org")
+                .contains("Personal Access Token").contains("Benutzer und Passwort");
+    }
+
+    /** #571: Mit Benutzer und Passwort bleibt es bei der Art „Quelle antwortet mit HTTP 500“. */
+    @Test
+    void aServerErrorAfterSendingTheCodeWithAPasswordStaysAPlainHttpStatus() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(serverErrorAfterSending()), null, null, false);
+
+        SourceAccessException failure = submitFails(source);
+
+        assertThat(SignInFailures.describe(failure, "wiki.example.org"))
+                .isEqualTo("Quelle antwortet mit HTTP 500 – Ziel wiki.example.org");
+    }
+
+    /**
+     * #571: Bei einer Quelle mit Personal Access Token fragt die Abfrage neben dem Code Benutzer und Passwort ab. Für
+     * genau dieses Absenden löst der Adapter die Anmeldung als Benutzer und Passwort auf (Basic an dieselbe
+     * Web-Sitzung); davor und danach gilt das Token, das Passwort wird überschrieben.
+     */
+    @Test
+    void aTokenSourceSendsTheCodeOnceWithUserAndPassword() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(resolvingOnSubmit(secrets, seen)), null, null, true);
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "anna", required.challenge());
+        char[] password = "pw-value".toCharArray();
+
+        assertThat(request.asksForLogin()).isTrue();
+        assertThat(signIns.submit(request.id(), "000000".toCharArray(), "anna", password))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+
+        assertThat(seen).containsExactly("anna:pw-value");
+        assertThat(password).containsOnly('\0');
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /** #571: Mit Benutzer und Passwort konfiguriert fragt die Abfrage nichts zusätzlich ab und ersetzt nichts. */
+    @Test
+    void aPasswordSourceNeitherAsksForNorUsesAnExtraLogin() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", "anna", "configured");
+        List<String> seen = new java.util.ArrayList<>();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                lockedBy(resolvingOnSubmit(secrets, seen)), null, null, false);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+
+        assertThat(required.challenge().asksForLogin()).isFalse();
+        assertThat(required.challenge().submit("000000".toCharArray(), "other", "pw-value".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("anna:configured");
+    }
+
+    /** Wie der Confluence-Adapter: das Absenden löst die Anmeldung der Quelle neu auf. */
+    private static OneTimeCodeChallenge resolvingOnSubmit(ConfiguredSecrets secrets, List<String> seen) {
+        return new OneTimeCodeChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public OneTimeCodeChallenge submit(char[] code) {
+                seen.add(principalAndSecret(secrets));
+                return null;
+            }
+
+            @Override
+            public OneTimeCodeChallenge resend() throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "kein neuer Code");
+            }
+        };
+    }
+
+    private static String principalAndSecret(ConfiguredSecrets secrets) {
+        try {
+            com.aresstack.enterpriseai.adyton.SecretMaterial material =
+                    secrets.resolve(ConfiguredSecrets.refFor("wiki"));
+            return (material.hasPrincipal() ? material.principal() : "-") + ":" + new String(material.copySecret());
+        } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * #571: Die Web-Sitzung, die ein Bearer-Abruf eröffnet hat, nimmt keinen Code an (HTTP 500, auch mit Basic). Mit
+     * Benutzer und Passwort läuft der letzte Dateiabruf darum in einer neuen Adapter-Instanz mit Basic noch einmal; der
+     * Code beantwortet deren Code-Seite, danach kommen Dateien über diese Sitzung, wie bei Benutzer und Passwort.
+     */
+    @Test
+    void aTokenSourceAnswersTheCodeInANewWebSessionWithUserAndPassword() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        int[] opened = {0};
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> {
+                    opened[0]++;
+                    return webPort;
+                });
+        assertThat(opened[0]).isZero();
+        HarvestSource.ViewImage image =
+                new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
+                        null, null, null);
+        // Wie das Codefeld: Anforderung öffnen, dann Code mit Benutzer und Passwort über SignInRequests senden. In
+        // beta.364 hing genau dieses Absenden ohne Protokollzeile (#571); es muss sofort zurückkommen.
+        com.aresstack.spaceharvester.application.signin.SignInRequests signIns =
+                new com.aresstack.spaceharvester.application.signin.SignInRequests(java.time.Duration.ofMinutes(15),
+                        java.time.Clock.systemUTC());
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        // Die zweite Web-Sitzung entsteht, wenn Confluence den Code anfordert, nicht beim Start und nicht beim Absenden.
+        assertThat(opened[0]).isEqualTo(1);
+        assertThat(source.webPort()).isSameAs(webPort);
+        com.aresstack.spaceharvester.application.signin.SignInRequest request =
+                signIns.open("wiki", "anna", required.challenge());
+        assertThat(request.asksForLogin()).isTrue();
+        char[] password = "pw-value".toCharArray();
+
+        assertThat(org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10),
+                () -> signIns.submit(request.id(), "000000".toCharArray(), "anna", password)))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+
+        assertThat(password).containsOnly('\0');
+        assertThat(opened[0]).isEqualTo(1);
+        assertThat(seen).containsExactly("token-port image -:pat-value", "web-port image anna:pw-value",
+                "web-port code anna:pw-value");
+        assertThat(source.viewImage(image, 1000)).containsExactly(1, 2, 3);
+        assertThat(seen).last().isEqualTo("web-port image anna:pw-value");
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /**
+     * #571: Nimmt die neue Web-Sitzung den schon gesendeten Code nicht an, bleibt die Abfrage offen, nennt den neuen
+     * Code und fragt nur noch ihn ab; gesendet wird er wieder mit Benutzer und Passwort.
+     */
+    @Test
+    void aRejectedCodeInTheNewWebSessionAsksOnlyForTheNewCode() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "rejectFirst");
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image =
+                new HarvestSource.ViewImage("/download/attachments/1/a.png", "a",
+                        null, null, null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit("000000".toCharArray(), "anna", "pw-value".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.NEW_SESSION_NOTE);
+        assertThat(again.error()).as("ein Hinweis, kein Fehler").isEmpty();
+        assertThat(again.submit("111111".toCharArray())).isNull();
+        assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
+    }
+
+    /**
+     * Erster Schritt des Codefelds bei einem Token (Angelo 10.11.2026): nur Benutzer und Passwort, kein Code. Die neue
+     * Web-Sitzung meldet sich an, sendet keinen Code und fragt nur den Code ab, den Confluence ihr schickt.
+     */
+    @Test
+    void anEmptyCodeOnlySignsInAndAsksForTheCodeOfTheNewSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit(new char[0], "anna", "pw-value".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(again.error()).as("ein Hinweis, kein Fehler").isEmpty();
+        assertThat(seen).as("angemeldet, aber kein Code gesendet").endsWith("web-port image anna:pw-value")
+                .doesNotContain("web-port code anna:pw-value");
+        assertThat(again.submit("111111".toCharArray())).isNull();
+        assertThat(seen).last().isEqualTo("web-port code anna:pw-value");
+    }
+
+    /** Über die Anforderung: Anmelden meldet den nächsten Schritt, nicht „Code nicht angenommen“. */
+    @Test
+    void beginWebLoginSignsInWithoutACodeAndThenTakesTheCodeOfTheNewSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        var signIns = new com.aresstack.spaceharvester.application.signin.SignInRequests(
+                java.time.Duration.ofMinutes(15), java.time.Clock.systemUTC());
+        var request = signIns.open("wiki", "user", required.challenge());
+        char[] password = "pw-value".toCharArray();
+
+        assertThat(signIns.beginWebLogin(request.id(), "anna", password))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        assertThat(password).containsOnly('\0');
+        var second = signIns.request(request.id()).orElseThrow();
+        assertThat(second.asksForLogin()).isFalse();
+        assertThat(second.message()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(second.error()).isEmpty();
+        assertThat(seen).doesNotContain("web-port code anna:pw-value");
+
+        assertThat(signIns.submit(request.id(), "111111".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+        assertThat(seen).last().isEqualTo("web-port code anna:pw-value");
+        assertThat(source.viewImage(image, 1000)).containsExactly(1, 2, 3);
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /**
+     * #571: Scheitert das erste Absenden in der neuen Web-Sitzung (Netz), bleibt deren Code-Seite die Abfrage; der
+     * nächste Versuch geht wieder an diese Sitzung, ohne eine weitere zu öffnen.
+     */
+    @Test
+    void aFailedSendInTheNewWebSessionKeepsThatSessionsPage() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, "failFirst");
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPort);
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit("000000".toCharArray(), "anna", "pw-value".toCharArray());
+
+        assertThat(again).isNotNull();
+        assertThat(again.asksForLogin()).isFalse();
+        assertThat(again.error()).isEqualTo("Verbindung abgelehnt (ConnectException) – Ziel wiki.example.org");
+        assertThat(again.submit("000000".toCharArray())).isNull();
+        assertThat(seen).endsWith("web-port code anna:pw-value", "web-port code anna:pw-value");
+    }
+
+    /**
+     * Bild-Port wie Confluence mit Zwei-Faktor-Anmeldung: die ersten {@code locked} Bildabrufe liefern die Code-Seite,
+     * danach das Bild. Merkt sich je Abruf und je Absenden, mit welcher Anmeldung der Adapter es täte.
+     */
+    private static final class WebFiles implements KnowledgeSourcePort, PageViewSource {
+
+        private final ConfiguredSecrets secrets;
+        private final List<String> seen;
+        private final String name;
+        private final String mode;
+        private int locked;
+
+        WebFiles(ConfiguredSecrets secrets, List<String> seen, String name, int locked, String mode) {
+            this.secrets = secrets;
+            this.seen = seen;
+            this.name = name;
+            this.locked = locked;
+            this.mode = mode;
+        }
+
+        @Override
+        public byte[] loadViewImage(String src) throws KnowledgeSourceException {
+            seen.add(name + " image " + principalAndSecret(secrets));
+            if (locked > 0) {
+                locked--;
+                throw new OneTimeCodeRequiredException("Einmalcode verlangt", page("rejectFirst".equals(mode)), null);
+            }
+            return new byte[] {1, 2, 3};
+        }
+
+        private OneTimeCodeChallenge page(boolean rejectFirst) {
+            boolean[] rejected = {!rejectFirst};
+            boolean[] failed = {false};
+            return new OneTimeCodeChallenge() {
+                @Override
+                public String service() {
+                    return "wiki.example.org";
+                }
+
+                @Override
+                public String title() {
+                    return "";
+                }
+
+                @Override
+                public String message() {
+                    return "";
+                }
+
+                @Override
+                public String error() {
+                    return rejected[0] ? "Der Code wurde nicht angenommen." : "";
+                }
+
+                @Override
+                public boolean resendAvailable() {
+                    return true;
+                }
+
+                @Override
+                public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
+                    seen.add(name + " code " + principalAndSecret(secrets));
+                    if ("token-port".equals(name)) {
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
+                                "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
+                    }
+                    if ("failFirst".equals(mode) && !failed[0]) {
+                        failed[0] = true;
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                                "Einmalcode nicht gesendet (ConnectException)", new java.net.ConnectException("x"));
+                    }
+                    if (!rejected[0]) {
+                        rejected[0] = true;
+                        return this;
+                    }
+                    return null;
+                }
+
+                @Override
+                public OneTimeCodeChallenge resend() {
+                    return this;
+                }
+            };
+        }
+
+        @Override
+        public PageView pageView(KnowledgeResourceId page) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SourceAddress sourceId() {
+            return SourceAddress.of("confluence://wiki.example.org");
+        }
+
+        @Override
+        public List<KnowledgeResource> discover(SourceScope scope) {
+            return List.of();
+        }
+
+        @Override
+        public KnowledgeDocument load(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+            return List.of();
+        }
+    }
+
+    private static SourceAccessException submitFails(KnowledgeSourceHarvestSource source) {
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.searchPages("x", 5), SignInRequiredException.class);
+        return org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> required.challenge().submit("000000".toCharArray()), SourceAccessException.class);
+    }
+
+    /** Eine Abfrage, deren Senden Confluence wie bei HaVdB mit Token mit HTTP 500 beantwortet. */
+    private static OneTimeCodeChallenge serverErrorAfterSending() {
+        return new OneTimeCodeChallenge() {
+            @Override
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            @Override
+            public String title() {
+                return "";
+            }
+
+            @Override
+            public String message() {
+                return "";
+            }
+
+            @Override
+            public String error() {
+                return "";
+            }
+
+            @Override
+            public boolean resendAvailable() {
+                return false;
+            }
+
+            @Override
+            public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,
+                        "Einmalcode gesendet, Confluence antwortet mit HTTP 500");
+            }
+
+            @Override
+            public OneTimeCodeChallenge resend() throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "kein neuer Code");
+            }
+        };
+    }
+
+    /** Ein Port, dessen Suche die Abfrage verlangt. */
+    private static KnowledgeSourcePort lockedBy(OneTimeCodeChallenge challenge) {
+        return new SearchableKnowledgeSource() {
+            @Override
+            public List<SourceSearchHit> search(SourceQuery query) throws KnowledgeSourceException {
+                throw new OneTimeCodeRequiredException("Einmalcode verlangt", challenge, null);
+            }
+
+            @Override
+            public SourceAddress sourceId() {
+                return SourceAddress.of("confluence://wiki.example.org");
+            }
+
+            @Override
+            public List<com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource> discover(SourceScope scope) {
+                return List.of();
+            }
+
+            @Override
+            public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED, "nicht hier");
+            }
+
+            @Override
+            public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+                return List.of();
+            }
+        };
+    }
 }

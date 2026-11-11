@@ -177,6 +177,25 @@ public class SourceQueries {
         return new PageAttachmentList(source.id(), page.partitionKey(), attachments, clock.instant());
     }
 
+    /**
+     * Die Anhangslisten vieler Seiten eines Bereichs auf einmal über die Suche der Quelle
+     * ({@link HarvestSource#attachmentsOf}); eine Seite, die inzwischen in einem anderen Bereich liegt, bekommt eine
+     * leere Liste. Lädt keine Dateien.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SourceAccessException  {@code UNSUPPORTED}, wenn die Quelle nicht suchen kann; sonst wie
+     *                                {@link #attachments(String, String)}
+     */
+    public java.util.Map<String, PageAttachmentList> attachmentsOf(String sourceId, String spaceKey,
+                                                                   java.util.Collection<String> pageIds) {
+        HarvestSource source = source(sourceId);
+        java.time.Instant now = clock.instant();
+        java.util.Map<String, PageAttachmentList> lists = new java.util.LinkedHashMap<>();
+        source.attachmentsOf(pageIds, spaceKey).forEach((pageId, attachments) ->
+                lists.put(pageId, new PageAttachmentList(source.id(), spaceKey, attachments, now)));
+        return lists;
+    }
+
     private HarvestSource source(String sourceId) {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
     }

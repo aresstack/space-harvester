@@ -21,7 +21,8 @@ import java.util.Locale;
  * {@code credentialRef} (Pflicht), {@code startPoints} (Jobnamen-Filter, Standard {@code *}), {@code owner}
  * (leer = angemeldeter Benutzer), {@code status} ({@code OUTPUT}, {@code ALL}, {@code ACTIVE}, {@code INPUT};
  * Standard {@code OUTPUT}), {@code maxResources} (Standard 200), {@code encoding}; nur in der Datei:
- * {@code connectTimeoutMillis}, {@code readTimeoutMillis}.
+ * {@code connectTimeoutMillis}, {@code readTimeoutMillis}, {@code tls} und {@code trustBundle} (FTPS wie bei
+ * {@link FtpSourceProvider}).
  */
 public final class JesSourceProvider implements KnowledgeSourceProvider {
 

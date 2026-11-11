@@ -53,7 +53,7 @@ class BackgroundPlateTest {
     private static List<String> texts(BackgroundPlate plate) {
         List<String> texts = new ArrayList<>();
         for (Component c : plate.facts().getComponents()) {
-            if (c instanceof javax.swing.text.JTextComponent field) {
+            if (c.isVisible() && c instanceof javax.swing.text.JTextComponent field) {
                 texts.add(field.getText());
             }
         }

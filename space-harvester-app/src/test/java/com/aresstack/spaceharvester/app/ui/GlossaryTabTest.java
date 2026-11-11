@@ -141,7 +141,9 @@ class GlossaryTabTest {
         });
         await("Suche nach daten", () -> tab[0].directory().table().getRowCount() == 1
                 && "Datenprodukt".equals(tab[0].directory().table().getValueAt(0, 0)));
-        assertThat(glossary.searches).last().isEqualTo("status=null q=daten");
+        // Filter „Alle“ und Suchtext lösen zwei Abfragen nebeneinander aus; welche das Glossar zuletzt sieht, ist
+        // Zufall. Die Tabelle zeigt die neuere (Anforderungszähler), die Abfrage selbst muss nur angekommen sein.
+        assertThat(glossary.searches).contains("status=null q=daten");
         SwingUtilities.invokeAndWait(() -> {
             tab[0].directory().search().setText("");
             tab[0].create(new GlossaryAccess.NewEntry("Haushaltsverfahren", null, null, "Verfahren des Haushalts"));

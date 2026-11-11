@@ -12,9 +12,21 @@ import java.util.Objects;
  * @param retention     wie lange ein beendeter Auftrag ab seinem Ende abrufbar bleibt
  * @param maxOpenPerOwner höchstens offene (laufende und wartende) Aufträge je Auslöser, damit ein Client nicht alle
  *                      Plätze belegt; interne Aufträge ohne Auslöser zählen nicht
+ * @param retry         Wiederholungen bei vorübergehenden Fehlern und Selbst-Anhalten ({@code jobs.retry.*})
+ * @param parallelPreparations höchstens gleichzeitig vorbereitende Downloads ({@link JobType#download()},
+ *                      {@code jobs.parallel-preparations}); 1 bis {@value #MAX_PARALLEL_PREPARATIONS}
+ * @param parallelDownloads höchstens gleichzeitig ladende Downloads ({@code jobs.parallel-downloads}); 0 bereitet nur
+ *                      vor und lädt nichts; bis {@value #MAX_PARALLEL_DOWNLOADS}
  */
 public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention,
-        int maxOpenPerOwner) {
+        int maxOpenPerOwner, RetrySettings retry, int parallelPreparations, int parallelDownloads) {
+
+    public static final String PARALLEL_PREPARATIONS = "parallel-preparations";
+    public static final String PARALLEL_DOWNLOADS = "parallel-downloads";
+    public static final int DEFAULT_PARALLEL_PREPARATIONS = 2;
+    public static final int DEFAULT_PARALLEL_DOWNLOADS = 4;
+    public static final int MAX_PARALLEL_PREPARATIONS = 16;
+    public static final int MAX_PARALLEL_DOWNLOADS = 64;
 
     /** Standard für {@link #retention()}. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
@@ -28,7 +40,50 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
         this(maxConcurrent, maxQueued, maxRunTime, retention, maxConcurrent + maxQueued);
     }
 
+    /** Mit den Standard-Wiederholungen ({@link RetrySettings#DEFAULT}). */
+    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner) {
+        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, RetrySettings.DEFAULT);
+    }
+
+    /** Mit den Standardgrenzen für Downloads ({@link #DEFAULT_PARALLEL_DOWNLOADS}). */
+    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner,
+                     RetrySettings retry) {
+        this(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, DEFAULT_PARALLEL_PREPARATIONS,
+                DEFAULT_PARALLEL_DOWNLOADS);
+    }
+
+    /** Dieselben Grenzen mit anderen Wiederholungen. */
+    public JobLimits withRetry(RetrySettings value) {
+        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, value,
+                parallelPreparations, parallelDownloads);
+    }
+
+    /** Dieselben Grenzen mit anderen Grenzen für Downloads. */
+    public JobLimits withParallel(int preparations, int downloads) {
+        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, preparations,
+                downloads);
+    }
+
+    /** @throws IllegalArgumentException außerhalb von 1 bis {@value #MAX_PARALLEL_PREPARATIONS} */
+    public static int requirePreparations(int value) {
+        if (value < 1 || value > MAX_PARALLEL_PREPARATIONS) {
+            throw new IllegalArgumentException(PARALLEL_PREPARATIONS + " muss zwischen 1 und "
+                    + MAX_PARALLEL_PREPARATIONS + " liegen");
+        }
+        return value;
+    }
+
+    /** @throws IllegalArgumentException außerhalb von 0 bis {@value #MAX_PARALLEL_DOWNLOADS} */
+    public static int requireDownloads(int value) {
+        if (value < 0 || value > MAX_PARALLEL_DOWNLOADS) {
+            throw new IllegalArgumentException(PARALLEL_DOWNLOADS + " muss zwischen 0 und " + MAX_PARALLEL_DOWNLOADS
+                    + " liegen");
+        }
+        return value;
+    }
+
     public JobLimits {
+        retry = retry == null ? RetrySettings.DEFAULT : retry;
         if (maxConcurrent < 1) {
             throw new IllegalArgumentException("maxConcurrent muss mindestens 1 sein");
         }
@@ -46,5 +101,7 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
         if (maxOpenPerOwner < 1) {
             throw new IllegalArgumentException("maxOpenPerOwner muss mindestens 1 sein");
         }
+        requirePreparations(parallelPreparations);
+        requireDownloads(parallelDownloads);
     }
 }

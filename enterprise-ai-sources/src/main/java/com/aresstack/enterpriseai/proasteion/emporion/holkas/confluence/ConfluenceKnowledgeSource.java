@@ -12,6 +12,7 @@ import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
+import com.aresstack.enterpriseai.source.api.AttachmentSearchSource;
 import com.aresstack.enterpriseai.source.api.ChangeListingSource;
 import com.aresstack.enterpriseai.source.api.CrossReferences;
 import com.aresstack.enterpriseai.source.api.DownloadAccess;
@@ -63,6 +64,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -103,7 +105,7 @@ import java.util.regex.Pattern;
 public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
         AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ChangeListingSource,
         ResourceMetadataSource,
-        StoredContentSource, AttachmentListSource {
+        StoredContentSource, AttachmentListSource, AttachmentSearchSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -132,6 +134,12 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
             + sortedExpand(ConfluenceRestClient.SNAPSHOT_EXPAND);
     /** {@link StoredAttachmentList#nativeFormat()} der Anhangslisten, wie {@link #SNAPSHOT_FORMAT} gebildet. */
     static final String ATTACHMENT_LIST_FORMAT = "confluence-rest-attachment-list+json;expand="
+            + sortedExpand(ConfluenceRestClient.ATTACHMENT_LIST_EXPAND);
+    /**
+     * {@link StoredAttachmentList#nativeFormat()} der Listen aus der Anhangssuche ({@link AttachmentSearchSource}):
+     * Antworten von {@code /rest/api/content/search}, nicht vergleichbar mit {@link #ATTACHMENT_LIST_FORMAT}.
+     */
+    static final String ATTACHMENT_SEARCH_FORMAT = "confluence-rest-content-search+json;expand="
             + sortedExpand(ConfluenceRestClient.ATTACHMENT_LIST_EXPAND);
     private static final String PARTITION_CURSOR_PREFIX = "p1.";
     private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Za-z0-9_-]{1,400})\\.([0-9]{1,9})");
@@ -308,8 +316,8 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
                         attachment.webUi, EnumSet.allOf(PageView.Preview.class)));
             }
         } catch (KnowledgeSourceException e) {
-            LOG.warning("[Confluence] Anhänge der Seite " + pageId + " nicht gelesen (" + e.kind() + "): "
-                    + e.getMessage());
+            // Ohne Seiten-ID und Meldung: beide können Inhalt der Quelle nennen.
+            LOG.warning("[Confluence] Anhänge einer Seite nicht gelesen (" + e.kind() + ")");
         }
         return result;
     }
@@ -487,9 +495,8 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
             // Basis (etwa die Server-Basis-URL in export_view) sofort sichtbar ist.
             String text = "Bild liegt nicht unter der eingestellten Confluence-Adresse " + base
                     + " und wird nicht geladen: " + ConfluenceRestClient.withoutQuery(String.valueOf(src));
-            LOG.warning("[Confluence] Bild nicht geladen: url=" + ConfluenceRestClient.withoutQuery(String.valueOf(src))
-                    + " status=- contentType=- bytes=- fehler="
-                    + Kind.UNSUPPORTED + ": " + text);
+            LOG.warning("[Confluence] Bild nicht geladen: url=" + ConfluenceRestClient.logPath(String.valueOf(src))
+                    + " status=- contentType=- bytes=- fehler=" + Kind.UNSUPPORTED + ": fremde Adresse");
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, text);
         }
         final String path = src.substring(base.length());
@@ -880,6 +887,191 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
     }
 
     /**
+     * Die Anhangslisten mehrerer Seiten über die CQL-Suche {@code type=attachment AND container in (...)} statt eines
+     * {@code /child/attachment}-Abrufs je Seite, in Stapeln von {@value ConfluenceRestClient#ATTACHMENT_SEARCH_CHUNK}
+     * Seiten, mit demselben {@code expand} wie {@link #storedAttachments}. Jede angefragte Seite bekommt eine Liste;
+     * eine Seite ohne Anhänge, eine unbekannte und eine gesperrte sind gleichermaßen leer, weil die Suche nur Sichtbares
+     * liefert und das Dasein gesperrter Seiten nicht durchscheinen soll. Zu den Antworten je Liste siehe
+     * {@link #attachmentLists}.
+     */
+    @Override
+    public Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds)
+            throws KnowledgeSourceException {
+        return attachmentsOfPages(localIds, null);
+    }
+
+    /**
+     * Wie {@link #storedAttachmentsOf(Collection)}, zusätzlich mit {@code space="KEY"} in derselben Suche: eine Seite,
+     * die inzwischen in einem anderen Space liegt, bekommt eine leere Liste, ohne Extra-Abruf je Seite.
+     */
+    @Override
+    public Map<String, StoredAttachmentList> storedAttachmentsOf(Collection<String> localIds, String partitionKey)
+            throws KnowledgeSourceException {
+        if (!ConfluenceIds.isSpaceKey(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Kein Space-Schlüssel dieser Quelle");
+        }
+        return attachmentsOfPages(localIds, partitionKey);
+    }
+
+    private Map<String, StoredAttachmentList> attachmentsOfPages(Collection<String> localIds, final String spaceKey)
+            throws KnowledgeSourceException {
+        if (localIds == null) {
+            throw new IllegalArgumentException("localIds are required");
+        }
+        Set<String> distinct = new LinkedHashSet<String>();
+        for (String localId : localIds) {
+            if (!ConfluenceIds.isContentId(localId)) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
+            }
+            distinct.add(localId);
+        }
+        List<String> ids = new ArrayList<String>(distinct);
+        Map<String, StoredAttachmentList> lists = new LinkedHashMap<String, StoredAttachmentList>();
+        int read = 0;
+        for (int from = 0; from < ids.size(); from += ConfluenceRestClient.ATTACHMENT_SEARCH_CHUNK) {
+            final List<String> chunk = ids.subList(from,
+                    Math.min(ids.size(), from + ConfluenceRestClient.ATTACHMENT_SEARCH_CHUNK));
+            final int alreadyRead = read;
+            ConfluenceRestClient.AttachmentSearch search = withSession(
+                    new Operation<ConfluenceRestClient.AttachmentSearch>() {
+                        @Override
+                        public ConfluenceRestClient.AttachmentSearch run(Session session)
+                                throws KnowledgeSourceException {
+                            return client.attachmentSearch(session, ConfluenceRestClient.attachmentsOfPagesCql(chunk, spaceKey),
+                                    alreadyRead, AttachmentSearchSource.MAX_TOTAL_ATTACHMENTS);
+                        }
+                    });
+            read = search.read;
+            lists.putAll(attachmentLists(search, chunk));
+        }
+        return Collections.unmodifiableMap(lists);
+    }
+
+    /**
+     * Die Anhangslisten aller Seiten eines Space mit mindestens einem sichtbaren Anhang über die CQL-Suche
+     * {@code space="KEY" AND type=attachment}, nach Seite gruppiert. Anhänge von Blogeinträgen gehören zu keiner Seite
+     * und fehlen. Ein unbekannter Space ist {@code NOT_FOUND} wie bei {@link #resources}.
+     */
+    @Override
+    public Map<String, StoredAttachmentList> storedAttachmentsInPartition(final String partitionKey)
+            throws KnowledgeSourceException {
+        if (!ConfluenceIds.isSpaceKey(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Kein Space dieser Quelle: " + partitionKey);
+        }
+        ConfluenceRestClient.AttachmentSearch search = withSession(
+                new Operation<ConfluenceRestClient.AttachmentSearch>() {
+                    @Override
+                    public ConfluenceRestClient.AttachmentSearch run(Session session) throws KnowledgeSourceException {
+                        // Ein unbekannter Space liefert eine leere Suche; deshalb eigens nachfragen.
+                        if (client.space(session, partitionKey) == null) {
+                            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Space nicht gefunden: " + partitionKey);
+                        }
+                        return client.attachmentSearch(session, ConfluenceRestClient.attachmentsInSpaceCql(partitionKey),
+                                0, AttachmentSearchSource.MAX_TOTAL_ATTACHMENTS);
+                    }
+                });
+        return Collections.unmodifiableMap(attachmentLists(search, null));
+    }
+
+    /**
+     * Ordnet die Einträge einer Anhangssuche ihren Seiten zu, eine Liste je Seite. Eine Antwort teilen sich meist
+     * mehrere Seiten; jede Liste trägt in Anfragereihenfolge die Antworten, in denen mindestens einer ihrer Einträge
+     * steht (brauchbar oder nicht), und die Positionen ihrer Warnungen zählen in diesen Antworten. Die Listen eines
+     * Aufrufs halten die Antworten nur einmal im Speicher ({@link StoredAttachmentList.SharedPayloads}).
+     *
+     * @param requested die angefragten Seiten eines Stapels: jede bekommt eine Liste, eine ohne Eintrag alle Antworten
+     *                  des Stapels (sie zeigen zusammen, dass nichts gefunden wurde); ein Eintrag ohne zuordenbare
+     *                  Seite steht als Warnung in jeder Liste des Stapels, Einträge nicht angefragter Seiten fehlen.
+     *                  {@code null} für einen ganzen Space: dann zählen nur Seiten (keine Blogeinträge), und ein
+     *                  Eintrag ohne zuordenbare Seite ist {@code INVALID_RESPONSE}, weil ihn keine Liste melden könnte.
+     */
+    private Map<String, StoredAttachmentList> attachmentLists(ConfluenceRestClient.AttachmentSearch search,
+                                                              List<String> requested) throws KnowledgeSourceException {
+        Map<String, AttachmentGroup> groups = new LinkedHashMap<String, AttachmentGroup>();
+        if (requested != null) {
+            for (String id : requested) {
+                groups.put(id, new AttachmentGroup());
+            }
+        }
+        List<ConfluenceRestClient.SearchedAttachment> unassigned = new ArrayList<ConfluenceRestClient.SearchedAttachment>();
+        for (ConfluenceRestClient.SearchedAttachment entry : search.entries) {
+            if (entry.containerId == null) {
+                if (requested == null) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Anhangssuche: Antwortseite "
+                            + (entry.response + 1) + ", Eintrag " + entry.index + ": " + entry.problem
+                            + ", Liste wird nicht ohne ihn geliefert");
+                }
+                unassigned.add(entry);
+                continue;
+            }
+            AttachmentGroup group = groups.get(entry.containerId);
+            if (group == null) {
+                if (requested != null || entry.containerType != null && !"page".equals(entry.containerType)) {
+                    continue;
+                }
+                group = new AttachmentGroup();
+                groups.put(entry.containerId, group);
+            }
+            // Jeder Eintrag zählt zur Grenze der Seite, auch ein unbrauchbarer.
+            if (++group.entries > AttachmentListSource.MAX_ATTACHMENTS) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Anhangssuche: mehr als "
+                        + AttachmentListSource.MAX_ATTACHMENTS + " Einträge einer Seite, Liste wird nicht gekürzt");
+            }
+            group.responses.add(entry.response);
+            if (entry.attachment == null) {
+                group.problems.add(entry);
+            } else if (group.attachmentIds.add(entry.attachment.id)) {
+                group.attachments.add(attachmentResource(entry.attachment));
+            }
+        }
+        StoredAttachmentList.SharedPayloads shared = new StoredAttachmentList.SharedPayloads(search.payloads);
+        String mediaType = search.contentType == null ? "application/json" : mediaType(search.contentType);
+        Map<String, StoredAttachmentList> lists = new LinkedHashMap<String, StoredAttachmentList>();
+        for (Map.Entry<String, AttachmentGroup> item : groups.entrySet()) {
+            AttachmentGroup group = item.getValue();
+            if (group.responses.isEmpty()) {
+                for (int i = 0; i < search.payloads.size(); i++) {
+                    group.responses.add(i);
+                }
+            }
+            for (ConfluenceRestClient.SearchedAttachment entry : unassigned) {
+                group.responses.add(entry.response);
+            }
+            List<Integer> positions = new ArrayList<Integer>(group.responses);
+            List<String> warnings = new ArrayList<String>();
+            List<ConfluenceRestClient.SearchedAttachment> problems =
+                    new ArrayList<ConfluenceRestClient.SearchedAttachment>(group.problems);
+            problems.addAll(unassigned);
+            Collections.sort(problems, new java.util.Comparator<ConfluenceRestClient.SearchedAttachment>() {
+                @Override
+                public int compare(ConfluenceRestClient.SearchedAttachment a, ConfluenceRestClient.SearchedAttachment b) {
+                    return a.response != b.response ? Integer.compare(a.response, b.response)
+                            : Integer.compare(a.index, b.index);
+                }
+            });
+            for (ConfluenceRestClient.SearchedAttachment problem : problems) {
+                warnings.add("Listenseite " + (positions.indexOf(problem.response) + 1) + ", Eintrag " + problem.index
+                        + ": " + problem.problem + ", ausgelassen"
+                        + (problem.containerId == null ? " (kann zu jeder Seite dieses Stapels gehören)" : ""));
+            }
+            lists.put(item.getKey(), new StoredAttachmentList(group.attachments, shared, positions, mediaType,
+                    ATTACHMENT_SEARCH_FORMAT, search.retrievedAt, warnings));
+        }
+        return lists;
+    }
+
+    /** Einträge einer Seite in einer Anhangssuche, siehe {@link #attachmentLists}. */
+    private static final class AttachmentGroup {
+        final List<KnowledgeResource> attachments = new ArrayList<KnowledgeResource>();
+        final Set<String> attachmentIds = new java.util.HashSet<String>();
+        final List<ConfluenceRestClient.SearchedAttachment> problems =
+                new ArrayList<ConfluenceRestClient.SearchedAttachment>();
+        /** Positionen der Antworten mit Einträgen dieser Seite, aufsteigend. */
+        final Set<Integer> responses = new TreeSet<Integer>();
+        int entries;
+    }
+
+    /**
      * Asynchrone Fassung von {@link #storedContent} für {@link AsyncConfluenceKnowledgeSource}: dieselbe Anfrage,
      * Anmeldung und Abbildung, nur über {@link ConfluenceAsyncHttpTransport}. Zugangsdaten liest der Aufrufer-Thread
      * vor dem Start der Anfrage aus dem Tresor; die Header leben bis zur Antwort nur in der laufenden Anfrage.
@@ -1022,15 +1214,16 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
             // Gewählte Spaces liegen alle außerhalb der konfigurierten Suchspaces.
             return Collections.emptyList();
         }
-        final String cql = cql(query.text(), spaces, query.excludedPartitions());
+        final String cql = cql(query.text(), spaces, query.excludedPartitions(), query.titleOnly());
         return withSession(new Operation<List<SourceSearchHit>>() {
             @Override
             public List<SourceSearchHit> run(Session session) throws KnowledgeSourceException {
                 List<SourceSearchHit> hits = new ArrayList<SourceSearchHit>();
                 for (Page page : client.search(session, cql, query.limit()).pages) {
-                    // The search delivers version and URL (expand=content.version): unchanged hits are not loaded.
+                    // The search delivers version, URL and space (expand=content.version,content.space):
+                    // unchanged hits are not loaded, the space is the hit's partition.
                     hits.add(new SourceSearchHit(ConfluenceIds.page(locator, page.id), page.title, page.excerpt,
-                            KnowledgeRevision.of(page.modifiedAt, page.version), location(page.webUi)));
+                            KnowledgeRevision.of(page.modifiedAt, page.version), location(page.webUi), page.spaceKey));
                 }
                 return hits;
             }
@@ -1326,7 +1519,13 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
 
     /** Wie MainframeMate: abgehakte Spaces fallen über {@code space not in (...)} aus der Suche. */
     static String cql(String text, List<String> spaceKeys, Collection<String> excludedSpaces) {
-        StringBuilder cql = new StringBuilder("siteSearch ~ \"").append(escapeCql(text.trim()))
+        return cql(text, spaceKeys, excludedSpaces, false);
+    }
+
+    /** @param titleOnly {@code title ~} statt {@code siteSearch ~}: nur im Seitentitel ({@link SourceQuery#titleOnly}) */
+    static String cql(String text, List<String> spaceKeys, Collection<String> excludedSpaces, boolean titleOnly) {
+        StringBuilder cql = new StringBuilder(titleOnly ? "title ~ \"" : "siteSearch ~ \"")
+                .append(escapeCql(text.trim()))
                 .append("\" AND type=page");
         appendSpaces(cql, " AND space in (", spaceKeys);
         appendSpaces(cql, " AND space not in (", excludedSpaces);

@@ -41,6 +41,36 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         purges = Set.copyOf(new TreeSet<>(purges));
     }
 
+    /**
+     * Lädt Inhalte nur für Seiten, für die {@code inScope} gilt; alle übrigen behandelt der Lauf wie
+     * {@link SyncMode#CATALOG_ONLY}: nur Kopfdaten, unbekannte bleiben {@link PageChange.Kind#NOT_LOADED}, geänderte
+     * {@link PageChange.Kind#OUTDATED}. So liest ein Teilbaum-Export nur seinen Teilbaum ein und katalogisiert den Rest.
+     */
+    public SyncPlan withLoadingLimitedTo(java.util.function.Predicate<String> inScope) {
+        Objects.requireNonNull(inScope, "inScope");
+        List<PageChange> limited = changes.stream().map(change -> inScope.test(change.pageId()) ? change
+                : SyncPlanner.within(SyncMode.CATALOG_ONLY, change)).toList();
+        return new SyncPlan(inventory, baseline, limited, removals, purges);
+    }
+
+    /**
+     * „Neu erzwingen“ (ADR 0025): lädt auch unveränderte Seiten neu, für die {@code inScope} gilt. Bekannte Seiten
+     * mit gleicher Version, nur geänderten Kopfdaten oder Attributen werden {@link PageChange.Kind#CONTENT_CHANGED};
+     * über die {@link StagedGeneration} ersetzt jede erst mit der neuen Generation ihren bisherigen Stand, und
+     * scheitert ihr Abruf, bleibt der bisherige als veraltet.
+     */
+    public SyncPlan withContentReloaded(java.util.function.Predicate<String> inScope) {
+        Objects.requireNonNull(inScope, "inScope");
+        List<PageChange> reloaded = changes.stream().map(change -> switch (change.kind()) {
+            case UNCHANGED, METADATA_CHANGED, ATTRIBUTES_CHANGED -> change.previous() != null
+                    && change.current() != null && inScope.test(change.pageId())
+                    ? new PageChange(change.pageId(), PageChange.Kind.CONTENT_CHANGED, change.previous(),
+                    change.current()) : change;
+            default -> change;
+        }).toList();
+        return new SyncPlan(inventory, baseline, reloaded, removals, purges);
+    }
+
     public SyncPlan withRemovals(Map<String, RemovalCheck.Result> checked) {
         return new SyncPlan(inventory, baseline, changes, checked, purges);
     }

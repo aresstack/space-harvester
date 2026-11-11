@@ -1,14 +1,18 @@
 package com.aresstack.spaceharvester.application.sync;
 
 import com.aresstack.spaceharvester.application.export.SpaceProvisioning;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
+import com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -52,7 +56,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
 
     static final String INCOMPLETE = "SYNC_INCOMPLETE";
     static final String CONFLICT = "SYNC_CONFLICT";
-    static final String PARTIAL = "SYNC_PARTIAL";
+    static final String PARTIAL = JobLifecycleState.SYNC_PARTIAL;
 
     private static final System.Logger LOG = System.getLogger(SpaceSyncJobs.class.getName());
     private static final String COMPONENT = "SpaceSync";
@@ -62,11 +66,14 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private final SpaceSync sync;
     private final ChangeSync changeSync;
     private final EventSync eventSync;
+    private final FailedPageRetry retry;
     private final SyncBaselineStore store;
     private final PlanApplier applier;
     private final List<SyncCommitted> afterCommit;
     private final Map<String, String> activeBySpace = new ConcurrentHashMap<>();
     private final Map<String, SyncSummary> summaries = new ConcurrentHashMap<>();
+    /** Je Abgleich die Seiten, die sein letzter Lauf nicht laden oder prüfen konnte („Nur Fehler“, ADR 0025). */
+    private final Map<String, Set<String>> failures = new ConcurrentHashMap<>();
 
     /**
      * @param store   Cache-Speicher oder {@code null}, solange keiner angebunden ist
@@ -108,12 +115,23 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         this.store = store;
         this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock);
         this.eventSync = store == null || fetcher == null ? null : new EventSync(queries, store, clock);
+        this.retry = store == null || fetcher == null ? null : new FailedPageRetry(queries, store, clock);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 
     @Override
     public boolean available() {
         return sync != null;
+    }
+
+    /**
+     * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung sich Abgleich und Einlesen selbst anhalten
+     * ({@code jobs.retry.pause-after-failures}, ADR 0025); ohne Inhaltsabruf wirkungslos.
+     */
+    public void connectionLostAfter(int count) {
+        if (applier != null) {
+            applier.connectionLostAfter(count);
+        }
     }
 
     /**
@@ -136,6 +154,31 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public Provisioned provision(JobContext context, String sourceId, String spaceKey,
                                  Predicate<PageHeader> counted) {
         Objects.requireNonNull(counted, "counted");
+        return provisionScoped(context, sourceId, spaceKey, headers -> counted);
+    }
+
+    /** Wie oben; die Zählregel entsteht aus der Inventur, etwa nur der Teilbaum einer Startseite. */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting) {
+        return provisionScoped(context, sourceId, spaceKey, counting, null);
+    }
+
+    /** Wie oben; Inhalte nur für die Seiten, die {@code loading} aus der Inventur bestimmt, der Rest nur im Katalog. */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading) {
+        return provisionScoped(context, sourceId, spaceKey, counting, loading, false);
+    }
+
+    /** Wie oben; mit {@code reloadAll} auch unveränderte Seiten im Ladeumfang neu laden („Neu erzwingen“). */
+    @Override
+    public Provisioned provisionScoped(JobContext context, String sourceId, String spaceKey,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> counting,
+                                       java.util.function.Function<List<PageHeader>, Predicate<PageHeader>> loading,
+                                       boolean reloadAll) {
+        Objects.requireNonNull(counting, "counting");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -145,7 +188,14 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         SpaceSync.SyncRun run;
         try {
             context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counted));
+            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counting), SyncMode.FULL,
+                    loading == null ? null : inventory -> {
+                        List<PageHeader> listed = headers(inventory);
+                        Predicate<PageHeader> load = loading.apply(listed);
+                        Set<String> ids = new java.util.HashSet<>();
+                        listed.stream().filter(load).forEach(header -> ids.add(header.key().pageId()));
+                        return ids::contains;
+                    }, reloadAll);
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }
@@ -156,6 +206,52 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         }
         afterCommit(run, sourceId, spaceKey, context.owner());
         return new Provisioned(true, false, failedPages(run));
+    }
+
+    /**
+     * Lädt genau diese Seiten im laufenden Auftrag nach, ohne Inventur ({@link FailedPageRetry}), mit derselben
+     * Folgearbeit nach dem Bestätigen. Hat inzwischen ein anderer Lauf bestätigt, versucht es einmal auf dessen
+     * Generation; scheitert auch das, bleiben alle Seiten ungeprüft.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    @Override
+    public Retried retry(JobContext context, String sourceId, String spaceKey, Set<String> pageIds,
+                         Predicate<PageHeader> allowed) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        Objects.requireNonNull(allowed, "allowed");
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        context.phase(COMPONENT, "Fehlgeschlagene Seiten abrufen");
+        SyncListener listener = retryListener(context);
+        java.util.Optional<FailedPageRetry.Result> result;
+        try {
+            result = retryOnce(sourceId, spaceKey, pageIds, allowed, listener);
+        } catch (SyncConflictException first) {
+            try {
+                result = retryOnce(sourceId, spaceKey, pageIds, allowed, listener);
+            } catch (SyncConflictException again) {
+                return new Retried(true, List.of(), pageIds);
+            }
+        }
+        if (result.isEmpty()) {
+            return Retried.UNAVAILABLE;
+        }
+        if (result.get().run() != null) {
+            afterCommit(result.get().run(), sourceId, spaceKey, context.owner());
+        }
+        return new Retried(true, result.get().failedPages(), result.get().unchecked(), result.get().dropped());
+    }
+
+    private java.util.Optional<FailedPageRetry.Result> retryOnce(String sourceId, String spaceKey, Set<String> pageIds,
+                                                                 Predicate<PageHeader> allowed,
+                                                                 SyncListener listener) {
+        return retry.run(sourceId, spaceKey, pageIds, allowed, applier, listener);
     }
 
     /**
@@ -188,17 +284,60 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     public synchronized JobStatus start(String sourceId, String spaceKey, String owner, SyncMode mode) {
         Objects.requireNonNull(mode, "mode");
-        return submit(sourceId, spaceKey, owner, context -> {
+        return submit(sourceId, spaceKey, owner, Map.of(MODE, mode.name()), inventory(sourceId, spaceKey, mode));
+    }
+
+    /** Wiederanlauf-Angabe: Betriebsart ({@link SyncMode}). */
+    static final String MODE = JobLifecycleState.SYNC_MODE;
+    /** Wiederanlauf-Angabe: {@code changes} für Nachholen ({@link #catchUp}), sonst Inventur. */
+    static final String LISTING = "listing";
+    /**
+     * Wiederanlauf-Angabe: der Lauf ist „Nur Fehler neu versuchen“ ({@link #RETRY_FAILED}) oder „Neu erzwingen“
+     * ({@link #FORCE_REFRESH}); fehlt für einen gewöhnlichen Abgleich.
+     */
+    static final String RERUN = "rerun";
+    static final String RETRY_FAILED = "retry-failed";
+    static final String FORCE_REFRESH = "force-refresh";
+    /** Wiederanlauf-Angabe: Nachholen ab diesem Zeitpunkt (ISO-8601), fehlt für den Stand der letzten Generation. */
+    static final String SINCE = "since";
+
+    private Run inventory(String sourceId, String spaceKey, SyncMode mode) {
+        return context -> {
             context.phase(COMPONENT, "Inventur");
             return sync.run(sourceId, spaceKey, applier, listener(context), mode);
-        });
+        };
+    }
+
+    private Run changes(String sourceId, String spaceKey, Instant since, SyncMode mode) {
+        return context -> {
+            if (changeSync.supported(sourceId)) {
+                context.phase(COMPONENT, "Änderungssuche");
+                return changeSync.run(sourceId, spaceKey, since, applier, listener(context), mode);
+            }
+            context.phase(COMPONENT, "Inventur");
+            return sync.run(sourceId, spaceKey, applier, listener(context),
+                    mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
+        };
+    }
+
+    /** Dieselbe Arbeit wie beim Start, aus den abgelegten Angaben ({@link JobStatus#parameters()}). */
+    private Run work(JobStatus status) {
+        String mode = status.parameter(MODE);
+        SyncMode syncMode = mode == null ? SyncMode.SYNC_CACHE : SyncMode.valueOf(mode);
+        if ("changes".equals(status.parameter(LISTING))) {
+            String since = status.parameter(SINCE);
+            return changes(status.sourceId(), status.partitionKey(), since == null ? null : Instant.parse(since),
+                    syncMode);
+        }
+        return inventory(status.sourceId(), status.partitionKey(), syncMode);
     }
 
     private interface Run {
         SpaceSync.SyncRun run(JobContext context);
     }
 
-    private JobStatus submit(String sourceId, String spaceKey, String owner, Run work) {
+    private JobStatus submit(String sourceId, String spaceKey, String owner, Map<String, String> parameters,
+                             Run work) {
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -210,7 +349,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         if (running != null && !finished(running)) {
             throw new SyncAlreadyRunningException(running);
         }
-        JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, owner,
+        JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, null, owner, parameters,
                 JobTask.blocking(context -> run(context, sourceId, spaceKey, work)));
         activeBySpace.put(space, status.id());
         return status;
@@ -238,15 +377,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
                                           SyncMode mode) {
         Objects.requireNonNull(mode, "mode");
-        return submit(sourceId, spaceKey, owner, context -> {
-            if (changeSync.supported(sourceId)) {
-                context.phase(COMPONENT, "Änderungssuche");
-                return changeSync.run(sourceId, spaceKey, since, applier, listener(context), mode);
-            }
-            context.phase(COMPONENT, "Inventur");
-            return sync.run(sourceId, spaceKey, applier, listener(context),
-                    mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
-        });
+        Map<String, String> parameters = new java.util.TreeMap<>(Map.of(MODE, mode.name(), LISTING, "changes"));
+        if (since != null) {
+            parameters.put(SINCE, since.toString());
+        }
+        return submit(sourceId, spaceKey, owner, parameters, changes(sourceId, spaceKey, since, mode));
     }
 
     /**
@@ -399,6 +534,191 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /**
+     * Hält den eigenen Abgleich an ({@link Jobs#pause}, ADR 0025): er beendet seinen Schritt, geladene neue Seiten
+     * bleiben, und {@link #resume} holt nur, was noch fehlt.
+     *
+     * @throws UnknownJobException wie {@link #status}
+     */
+    public SyncJob pause(String jobId, String owner) {
+        view(jobs.status(jobId, owner));
+        return view(jobs.pause(jobId, owner));
+    }
+
+    /**
+     * Setzt den eigenen angehaltenen, gescheiterten oder abgebrochenen Abgleich im selben Auftrag fort
+     * ({@link Jobs#resume}, ADR 0025).
+     *
+     * @throws UnknownJobException                                              wie {@link #status}
+     * @throws SyncAlreadyRunningException                                      wenn für den Space inzwischen ein
+     *                                                                          anderer Abgleich wartet oder läuft
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wie {@link Jobs#resume}
+     */
+    public synchronized SyncJob resume(String jobId, String owner) {
+        JobStatus current = jobs.status(jobId, owner);
+        view(current);
+        String space = current.sourceId() + "/" + current.partitionKey();
+        String running = activeBySpace.get(space);
+        if (running != null && !running.equals(jobId) && !finished(running)) {
+            throw new SyncAlreadyRunningException(running);
+        }
+        JobStatus resumed;
+        if (jobs.resumable(jobId, owner) || !Jobs.resumableState(current.state())) {
+            resumed = jobs.resume(jobId, owner);
+        } else {
+            // Nach einem Neustart: derselbe Eintrag mit derselben Arbeit aus den abgelegten Angaben.
+            resumed = jobs.rerun(jobId, owner, JobTask.blocking(stored(current)::run));
+        }
+        activeBySpace.put(space, jobId);
+        return view(resumed);
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ (ADR 0025): Der eigene Abgleich, der seine Generation bestätigt, aber Seiten nicht
+     * geladen hat ({@link #PARTIAL}), lädt im selben Eintrag genau diese Seiten nach, ohne Inventur
+     * ({@link FailedPageRetry}). Welche Seiten das sind, weiß der letzte Lauf; nach einem Neustart sind es die
+     * veralteten Seiten der bestätigten Generation und, wenn der Abgleich unbekannte Seiten lädt, die fehlenden.
+     *
+     * @throws UnknownJobException                                              wie {@link #status}
+     * @throws JobActionNotAllowedException                                     wenn der Zustand es nicht anbietet
+     * @throws SyncUnavailableException                                         wenn Cache oder Inhaltsabruf fehlen
+     * @throws SyncAlreadyRunningException                                      wenn für den Space ein anderer
+     *                                                                          Abgleich wartet oder läuft
+     */
+    public synchronized SyncJob retryFailed(String jobId, String owner) {
+        JobStatus current = requireAction(jobId, owner, JobAction.RETRY_FAILED);
+        Set<String> pageIds = failures.getOrDefault(jobId, unloaded(current));
+        return rerun(current, owner, RETRY_FAILED, retryWork(current, pageIds));
+    }
+
+    /**
+     * „Neu erzwingen“ (ADR 0025): Der eigene beendete Abgleich inventarisiert im selben Eintrag neu und lädt dabei alle
+     * Seiten mit Stand im Cache neu, auch unveränderte ({@link SyncPlan#withContentReloaded}); ein vollständiger
+     * Abgleich auch die übrigen. Bis der Lauf bestätigt, bleibt die bisherige Generation gültig.
+     *
+     * @throws UnknownJobException                                              wie {@link #status}
+     * @throws JobActionNotAllowedException                                     wenn der Zustand es nicht anbietet
+     * @throws SyncUnavailableException                                         wenn Cache oder Inhaltsabruf fehlen
+     * @throws SyncAlreadyRunningException                                      wenn für den Space ein anderer
+     *                                                                          Abgleich wartet oder läuft
+     */
+    public synchronized SyncJob forceRefresh(String jobId, String owner) {
+        JobStatus current = requireAction(jobId, owner, JobAction.FORCE_REFRESH);
+        return rerun(current, owner, FORCE_REFRESH, forceWork(current));
+    }
+
+    private Work retryWork(JobStatus status, Set<String> pageIds) {
+        String sourceId = status.sourceId();
+        String spaceKey = status.partitionKey();
+        return context -> retry(context, sourceId, spaceKey, pageIds);
+    }
+
+    private Work forceWork(JobStatus status) {
+        SyncMode mode = inventoryMode(status);
+        String sourceId = status.sourceId();
+        String spaceKey = status.partitionKey();
+        return context -> {
+            context.phase(COMPONENT, "Inventur, alles neu laden");
+            SpaceSync.SyncRun run = sync.run(sourceId, spaceKey, applier, listener(context), mode, null, true);
+            finish(context, sourceId, spaceKey, run);
+        };
+    }
+
+    /** Die Arbeit aus den abgelegten Angaben, auch „Nur Fehler“ und „Neu erzwingen“ ({@link #RERUN}). */
+    private Work stored(JobStatus status) {
+        String rerun = status.parameter(RERUN);
+        if (RETRY_FAILED.equals(rerun)) {
+            return retryWork(status, unloaded(status));
+        }
+        if (FORCE_REFRESH.equals(rerun)) {
+            return forceWork(status);
+        }
+        Run work = work(status);
+        return context -> run(context, status.sourceId(), status.partitionKey(), work);
+    }
+
+    private JobStatus requireAction(String jobId, String owner, JobAction action) {
+        JobStatus current = jobs.status(jobId, owner);
+        view(current);
+        if (!current.lifecycle().allows(action)) {
+            throw new JobActionNotAllowedException(jobId, action, current.lifecycle());
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        String running = activeBySpace.get(current.sourceId() + "/" + current.partitionKey());
+        if (running != null && !running.equals(jobId) && !finished(running)) {
+            throw new SyncAlreadyRunningException(running);
+        }
+        return current;
+    }
+
+    private interface Work {
+        void run(JobContext context);
+    }
+
+    private SyncJob rerun(JobStatus current, String owner, String operation, Work work) {
+        Map<String, String> parameters = new java.util.HashMap<>(current.parameters());
+        parameters.put(RERUN, operation);
+        JobStatus rerun = jobs.rerun(current.id(), owner, parameters, JobTask.blocking(work::run));
+        activeBySpace.put(current.sourceId() + "/" + current.partitionKey(), current.id());
+        return view(rerun);
+    }
+
+    /** Die Betriebsart, in der dieser Abgleich inventarisiert, auch wenn er sonst nur Änderungen nachholt. */
+    private static SyncMode inventoryMode(JobStatus status) {
+        String mode = status.parameter(MODE);
+        SyncMode syncMode = mode == null ? SyncMode.SYNC_CACHE : SyncMode.valueOf(mode);
+        return "changes".equals(status.parameter(LISTING)) && syncMode == SyncMode.FULL ? SyncMode.SYNC_CACHE
+                : syncMode;
+    }
+
+    /**
+     * Nach einem Neustart: was die bestätigte Generation als nicht geladen führt, soweit der Abgleich es lädt; ein
+     * vollständiges Nachholen über die Änderungssuche lädt auch unbekannte Seiten.
+     */
+    private Set<String> unloaded(JobStatus status) {
+        String mode = status.parameter(MODE);
+        boolean loadsUnknown = (mode == null ? SyncMode.SYNC_CACHE : SyncMode.valueOf(mode)).loadsUnknown();
+        return store.confirmed(status.sourceId(), status.partitionKey()).map(baseline -> {
+            Set<String> ids = new java.util.TreeSet<>(baseline.stalePageIds());
+            if (loadsUnknown) {
+                ids.addAll(baseline.missingPageIds());
+            }
+            return Set.copyOf(ids);
+        }).orElse(Set.of());
+    }
+
+    /** Lädt im Abgleich {@code context} nur diese Seiten nach und zählt sie wie einen Abgleich. */
+    private void retry(JobContext context, String sourceId, String spaceKey, Set<String> pageIds) {
+        context.phase(COMPONENT, "Fehlgeschlagene Seiten abrufen");
+        context.discovered(pageIds.size());
+        java.util.Optional<FailedPageRetry.Result> result;
+        try {
+            result = retry.run(sourceId, spaceKey, pageIds, header -> true, applier, listener(context));
+        } catch (SyncConflictException e) {
+            throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
+        }
+        if (result.isEmpty()) {
+            throw new JobFailedException(INCOMPLETE, "Keine bestätigte Generation; ein neuer Abgleich lädt alles");
+        }
+        FailedPageRetry.Result retried = result.get();
+        // Nicht mehr geführte und nicht prüfbare Seiten sind abgearbeitet; nicht prüfbare zählen als gescheitert.
+        context.processed(retried.dropped().size() + retried.unchecked().size());
+        context.failed(retried.unchecked().size());
+        Set<String> left = new java.util.TreeSet<>(retried.unchecked());
+        retried.failedPages().forEach(header -> left.add(header.key().pageId()));
+        failures.put(context.jobId(), Set.copyOf(left));
+        if (retried.run() != null) {
+            summaries.put(context.jobId(), retried.run().summary());
+            afterCommit(retried.run(), sourceId, spaceKey, context.owner());
+        }
+        if (!left.isEmpty()) {
+            throw new JobFailedException(PARTIAL, left.size() + " Seiten konnten erneut nicht abgeglichen werden; "
+                    + "„Nur Fehler neu versuchen“ oder der nächste Lauf versucht es wieder");
+        }
+    }
+
+    /**
      * Löscht einen eigenen beendeten Abgleich samt Delta und Diagnoseereignissen.
      *
      * @throws UnknownJobException wie {@link #status}
@@ -408,6 +728,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         view(jobs.status(jobId, owner));
         jobs.delete(jobId, owner);
         summaries.remove(jobId);
+        failures.remove(jobId);
     }
 
     /**
@@ -418,6 +739,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public int deleteFinished(String owner) {
         int removed = jobs.deleteFinished(owner, JobType.SYNC);
         summaries.keySet().removeIf(this::expired);
+        failures.keySet().removeIf(this::expired);
         return removed;
     }
 
@@ -471,9 +793,15 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
         }
+        finish(context, sourceId, spaceKey, run);
+    }
+
+    private void finish(JobContext context, String sourceId, String spaceKey, SpaceSync.SyncRun run) {
         // Auch geplante Läufe, deren Status nie gelesen wird, sollen keine Deltas abgelaufener Aufträge halten.
         summaries.keySet().removeIf(this::expired);
+        failures.keySet().removeIf(this::expired);
         summaries.put(context.jobId(), run.summary());
+        failures.put(context.jobId(), run.failedPageIds());
         if (run.confirmed() == null) {
             // Der Grund kann Seiten-IDs oder Meldungen der Quelle enthalten: nur ins Log, nicht in den Auftrag.
             LOG.log(System.Logger.Level.INFO, "Abgleich {0}/{1}: keine Generation bestätigt ({2})", sourceId,
@@ -513,18 +841,37 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     /** Fortschritt des Einlesens im Export: nur lesbare Seiten, nur gefunden und abgeglichen. */
-    private static SyncListener provisionListener(JobContext context, Predicate<PageHeader> counted) {
+    /** Kopfdaten aller Seiten der Inventur, wie sie Zähl- und Laderegeln eines Exports sehen. */
+    private static List<PageHeader> headers(Inventory inventory) {
+        return inventory.pages().stream()
+                .map(entry -> new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()), entry.page(),
+                        entry.metadataHash(), entry.attributesHash(), inventory.finishedAt()))
+                .toList();
+    }
+
+    @Override
+    public Set<String> unloaded(String sourceId, String spaceKey) {
+        return store.confirmed(sourceId, spaceKey).map(baseline -> {
+            Set<String> ids = new java.util.HashSet<>(baseline.missingPageIds());
+            ids.addAll(baseline.stalePageIds());
+            return Set.copyOf(ids);
+        }).orElse(Set.of());
+    }
+
+    private static SyncListener provisionListener(JobContext context,
+                                                  java.util.function.Function<List<PageHeader>,
+                                                          Predicate<PageHeader>> counting) {
         Set<String> visible = ConcurrentHashMap.newKeySet();
         return new SyncListener() {
 
             @Override
             public void inventoried(Inventory inventory) {
                 context.phase(COMPONENT, "Seiten abrufen");
-                for (PageMetadataListing.Entry entry : inventory.pages()) {
-                    PageHeader header = new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()),
-                            entry.page(), entry.metadataHash(), entry.attributesHash(), inventory.finishedAt());
+                List<PageHeader> headers = headers(inventory);
+                Predicate<PageHeader> counted = counting.apply(headers);
+                for (PageHeader header : headers) {
                     if (counted.test(header)) {
-                        visible.add(entry.page().pageId());
+                        visible.add(header.key().pageId());
                     }
                 }
                 context.discovered(visible.size());
@@ -540,6 +887,27 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             @Override
             public void checkpoint() {
                 context.checkpoint();
+            }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
+            }
+        };
+    }
+
+    /** Nachladen im Export: nur Abbruch und Verbindungsverlust; zählen tut der Export selbst. */
+    private static SyncListener retryListener(JobContext context) {
+        return new SyncListener() {
+
+            @Override
+            public void checkpoint() {
+                context.checkpoint();
+            }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
             }
         };
     }
@@ -567,6 +935,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             @Override
             public void checkpoint() {
                 context.checkpoint();
+            }
+
+            @Override
+            public void connectionLost() {
+                context.pause(PauseReason.CONNECTION_LOST);
             }
         };
     }

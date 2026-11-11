@@ -8,10 +8,12 @@ Entscheidung und Alternativen: [ADR 0008](adr/0008-desktop-app.md).
 
 ## Starten unter Windows
 
-Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21).
+Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21). Ist `java` auf dem Rechner noch ein
+älteres Java (z. B. 1.8), die App mit dem vollen Pfad zur `java.exe` des JDK 21 starten:
+`"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar`.
 
 1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) die gewünschte Version öffnen
-   (Testversionen wie `v0.1.0-beta.1` sind als *Pre-release* markiert, `snapshot` ist der letzte Stand eines
+   (reguläre Releases wie `v0.1.0` sind als *Latest* markiert, Testversionen wie `v0.2.0-beta.1` als *Pre-release*, `snapshot` ist der letzte Stand eines
    Entwicklungs-Branches) und `space-harvester-app-<version>.jar`
    sowie `SHA256SUMS` herunterladen.
 2. Optional die Prüfsumme vergleichen: `certutil -hashfile space-harvester-app-<version>.jar SHA256` muss den Wert aus
@@ -387,6 +389,14 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
   Kanals je Push hoch. Für den nächsten Kanal `RELEASE_CHANNEL` auf `rc` setzen, für eine neue Version die Basis in
   `build.gradle` erhöhen; die Zählung beginnt dann wieder bei 1.
 - Ein reguläres Release (ohne Vorabkennung, als „Latest“ markiert) entsteht nur über einen Tag wie `v0.1.0` oder
-  *Run workflow* mit `tag`.
+  *Run workflow* mit `tag`. Es braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`; der Workflow
+  stellt sie vor die Dateiübersicht und bricht ohne sie ab.
+- Nach einem regulären Release `v<Basis>` zählen die automatischen Pre-Releases auf der nächsten Minor-Version weiter
+  (nach `v0.1.0`: `v0.2.0-beta.1`, `v0.2.0-beta.2`, …), damit keine Beta unter dem Release einsortiert wird; ein
+  reines Fehlerbehebungs-Release `v0.1.1` bleibt per Tag möglich. `build.gradle` muss dafür nicht angepasst werden.
+- **Nur im Browser** (ohne IDE): auf GitHub unter **Actions** › **Release** › **Run workflow** den Branch `main`
+  lassen, ins Feld `tag` z. B. `v0.1.0` eintragen und **Run workflow** klicken. Der Lauf baut, testet, legt Tag und
+  Release an. Nicht über **Releases** › **Draft a new release** gehen: das legt das Release selbst an, und der
+  Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
 - Versionierte Releases werden nie überschrieben. Nur `snapshot` wird ersetzt; zum Testen ein versioniertes Release
   nehmen. Releases bis `v0.1.0-beta.2` enthalten nur die Desktop-App.

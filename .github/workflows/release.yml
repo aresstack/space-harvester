@@ -10,7 +10,8 @@ name: Release
 #   Version aus build.gradle ohne -SNAPSHOT, Kanal steht unten in RELEASE_CHANNEL.
 # - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ wird durch diesen Stand ersetzt.
 # - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
-#   „tag“: Release genau mit dieser Version (ohne Vorabkennung = reguläres Release, „Latest“).
+#   „tag“: Release genau mit dieser Version (ohne Vorabkennung = reguläres Release, „Latest“, braucht
+#   docs/release-notes/<tag>.md). Danach zählen die main-Pre-Releases auf der nächsten Minor-Version weiter.
 # Versionierte Releases werden nie überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
@@ -26,10 +27,10 @@ on:
 permissions:
   contents: read
 
-# main und Tags laufen nacheinander (fortlaufende Nummern); alle anderen Branches teilen sich das Snapshot-Release.
+# main und Tags laufen nacheinander (fortlaufende Nummern); alle anderen Branches teilen sich das Snapshot-Release. Ein neuer Branch-Push bricht einen laufenden Snapshot-Lauf ab, main und Tags werden nie abgebrochen.
 concurrency:
   group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || 'versioned' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 env:
   # Vorabkanal für automatische main-Releases: alpha, beta oder rc
@@ -57,6 +58,12 @@ jobs:
           base=$(sed -n "s/.*gradleProperty('releaseVersion').getOrElse('\(.*\)').*/\1/p" build.gradle)
           base="${base%-SNAPSHOT}"
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Basisversion $base aus build.gradle unbrauchbar"; exit 1; }
+          # Ist die Basis schon regulär veröffentlicht (Tag v<Basis>), laufen Betas und Snapshots auf der nächsten
+          # Minor-Version weiter (nach v0.1.0: v0.2.0-beta.1 …), damit sie nie unter dem Release einsortiert werden
+          while git rev-parse -q --verify "refs/tags/v$base" >/dev/null; do
+            IFS=. read -r major minor _ <<< "$base"
+            base="$major.$((minor + 1)).0"
+          done
           tag=""
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             mode=tag; tag="$GITHUB_REF_NAME"
@@ -92,6 +99,9 @@ jobs:
             version="${tag#v}"
             prerelease=false
             [[ "$version" == *-* ]] && prerelease=true
+            if [ "$prerelease" = false ] && [ ! -s "docs/release-notes/$tag.md" ]; then
+              echo "::error::Reguläres Release $tag braucht docs/release-notes/$tag.md auf main"; exit 1
+            fi
             echo "args=-PreleaseVersion=$version" >> "$GITHUB_OUTPUT"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
@@ -200,9 +210,17 @@ jobs:
           2. Optional prüfen: \`certutil -hashfile $app SHA256\` muss \`$sum\` ergeben.
           3. \`java -jar $app\` starten; beim ersten Start führt der Einrichtungsassistent durch die erste Quelle (später **Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …**).
 
-          Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
+          Zeigt \`java -version\` eine ältere Java-Version (z. B. 1.8), die App mit dem vollen Pfad zur \`java.exe\` des JDK 21 starten, etwa \`"C:\\Program Files\\…\\jdk-21…\\bin\\java.exe" -jar $app\`.
+
+          Zugangsdaten nur über einen KeePass-Eintrag oder als Umgebungsvariable (\`\${VAR}\`), nie im Klartext in der Konfigurationsdatei.
           Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$ref/docs/DESKTOP_APP.md).
           NOTES
+          # Kuratierte Release-Notizen (Pflicht für reguläre Releases) stehen vor der Dateiübersicht
+          notes="$GITHUB_WORKSPACE/docs/release-notes/$TAG.md"
+          if [ "$MODE" != "snapshot" ] && [ -s "$notes" ]; then
+            { cat "$notes"; echo; echo '## Dateien'; echo; cat "$RUNNER_TEMP/RELEASE_NOTES.md"; } > "$RUNNER_TEMP/notes.tmp"
+            mv "$RUNNER_TEMP/notes.tmp" "$RUNNER_TEMP/RELEASE_NOTES.md"
+          fi
       - name: Snapshot ersetzen
         if: steps.version.outputs.mode == 'snapshot'
         working-directory: ${{ steps.dist.outputs.dir }}

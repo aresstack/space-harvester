@@ -208,29 +208,20 @@ class ConfluencePostThroughProxyTest {
     }
 
     /**
-     * Unkorrigierter Fall (Fehler in der Kopie {@code enterprise-ai-sources}, Patch
-     * {@code upstream-eac/10-otp-post-proxy.patch}): der erste POST über einen HTTP-Proxy ohne Tunnel scheitert an
-     * der 407, weil {@code setFixedLengthStreamingMode} die Wiederholung verhindert. Das JDK wirft intern
-     * {@link java.net.HttpRetryException} („cannot retry due to proxy authentication, in streaming mode“), doch
-     * {@code getResponseCode()} schluckt sie und liefert die 407 des Proxys; der Adapter meldet daraus „Einmalcode
-     * gesendet, Confluence antwortet mit HTTP 407“. Das Formular erreicht Confluence nie. Der Test hält das heutige
-     * Verhalten samt Diagnose fest und muss mit dem Patch auf „gelingt“ umgestellt werden.
+     * Früher der bekannte Fehler der Kopie {@code enterprise-ai-sources}: {@code setFixedLengthStreamingMode}
+     * verhinderte die Wiederholung nach der 407 des Proxys, das Formular erreichte Confluence nie. Seit Upstream-Patch
+     * 10 (enterprise-ai-client#217) wiederholt das JDK den ersten POST mit Proxy-Anmeldung, und das Formular kommt
+     * einmal vollständig an.
      */
     @Test
-    void knownDefectFirstHttpPostThroughThePlainProxyCannotRetryAfter407() throws Exception {
+    void firstHttpPostThroughThePlainProxyRetriesAfter407() throws Exception {
         URI target = target("http", http.getAddress().getPort());
 
         ConfluenceHttpResponse response = transport(null).postForm(target, HEADERS, FORM.clone(), 4096);
 
-        assertThat(response.status()).isEqualTo(407);
-        assertThat(received).isEmpty();
-        assertThat(proxy.requestLines()).containsExactly("POST " + target + " HTTP/1.1");
-        // So kommt der Fehler beim Benutzer an (Meldung des Adapters, eingepackt wie im Core).
-        Exception failure = new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
-                com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.ACCESS_DENIED,
-                "Einmalcode gesendet, Confluence antwortet mit HTTP " + response.status(), null);
-        assertThat(SignInFailures.describe(failure, target.getHost()))
-                .isEqualTo("Proxy verlangt Anmeldung (HTTP 407) – Ziel confluence.proxied.test");
+        assertThat(response.status()).isEqualTo(200);
+        assertThat(received).containsExactly("POST " + FORM.length);
+        assertThat(proxy.requestLines()).hasSize(2);
     }
 
     @Test

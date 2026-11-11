@@ -100,7 +100,7 @@ final class ConfluencePageView {
         int fromStorage = storageDrawioPreviews(doc, baseUri, storage, pageId);
         if (fromData + fromStorage > 0 || (storage != null && storage.contains("ac:name=\"drawio"))
                 || (storage != null && storage.contains("ac:name=\"inc-drawio"))) {
-            LOG.info("[Confluence] draw.io: Seite " + pageId + ": Bilder gekennzeichnet aus Diagrammdaten=" + fromData
+            LOG.info("[Confluence] draw.io: Bilder gekennzeichnet aus Diagrammdaten=" + fromData
                     + ", aus Makroparametern=" + fromStorage + ", Makros im Seitenquelltext="
                     + (storage == null ? "unbekannt" : String.valueOf(storageMacros(storage).size())));
         }

@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.jobs;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 /**
  * Momentaufnahme eines Auftrags.
@@ -24,12 +26,47 @@ import java.util.Objects;
  *                        nicht und lesen sich mit {@code null}
  * @param rootTitle       Titel der Startseite, sobald der Auftrag sie gelesen hat und der Auftraggeber sie lesen darf,
  *                        sonst {@code null}; für die Anzeige „Space &gt; Seite“
+ * @param parameters      Angaben, mit denen sich der Auftrag nach einem Neustart gleichwertig neu anlegen lässt (etwa
+ *                        Tiefe, Formate, Aktualität eines Exports oder der Export eines Bilderauftrags); die Schlüssel
+ *                        legt der jeweilige Anwendungsfall fest. Nie Geheimnisse, Seiteninhalte oder Suchtexte. Ältere
+ *                        abgelegte Aufträge lesen sich mit einer leeren Tabelle
+ * @param incomplete      der Auftrag ist technisch beendet ({@link JobState#COMPLETED}), sein Ergebnis aber
+ *                        unvollständig, etwa ein Export mit fehlenden Seiten oder Bilder ohne vollständiges Manifest
+ * @param pauseRequested  mit {@code cancelRequested}: der Benutzer hält an, statt abzubrechen; nur solange der Auftrag
+ *                        noch läuft, nie abgelegt
+ * @param stage           bei {@link JobState#RUNNING} eines Downloads ({@link JobType#download()}): Vorbereitung,
+ *                        vorbereitet oder Download; bei {@link JobState#QUEUED} nur {@link JobStage#AWAITING}, solange
+ *                        der Auftrag auf seinen Vorgänger wartet; sonst {@code null}; wird nicht abgelegt
+ * @param pauseReason     nur bei {@link JobState#PAUSED}: warum angehalten, sonst {@code null}; ältere abgelegte
+ *                        Aufträge lesen sich mit {@link PauseReason#USER}
  */
 public record JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
-                        Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle) {
+                        Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle,
+                        Map<String, String> parameters, boolean incomplete, boolean pauseRequested,
+                        PauseReason pauseReason, JobStage stage) {
+
+    /** Ohne Abschnitt ({@link #stage()}). */
+    public JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
+                     JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
+                     Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle,
+                     Map<String, String> parameters, boolean incomplete, boolean pauseRequested,
+                     PauseReason pauseReason) {
+        this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
+                finishedAt, rootPageId, rootTitle, parameters, incomplete, pauseRequested, pauseReason, null);
+    }
 
     public JobStatus {
+        parameters = parameters == null ? Map.of() : java.util.Collections.unmodifiableMap(new TreeMap<>(parameters));
+        if (state == JobState.QUEUED ? stage != JobStage.AWAITING
+                : state != JobState.RUNNING || stage == JobStage.AWAITING) {
+            stage = null;
+        }
+        if (state != JobState.PAUSED) {
+            pauseReason = null;
+        } else if (pauseReason == null) {
+            pauseReason = PauseReason.USER;
+        }
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
@@ -44,11 +81,35 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
         }
     }
 
+    /** Ein Auftrag ohne Wiederanlauf-Angaben und mit vollständigem Ergebnis, sobald er fertig ist. */
+    public JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
+                     JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
+                     Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle) {
+        this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
+                finishedAt, rootPageId, rootTitle, Map.of(), false, false, null);
+    }
+
     /** Ein Auftrag ohne Startseite: ganzer Space oder ganze Quelle. */
     public JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                      JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
                      Instant startedAt, Instant finishedAt) {
         this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
                 finishedAt, null, null);
+    }
+
+    /** Der wirksame Zustand mit den jetzt erlaubten Aktionen. */
+    public JobLifecycleState lifecycle() {
+        return JobLifecycleState.of(this);
+    }
+
+    /** Eine Wiederanlauf-Angabe ({@link #parameters()}) oder {@code null}. */
+    public String parameter(String key) {
+        return parameters.get(key);
+    }
+
+    /** Derselbe Zustand mit anderem Endzustand und Ende; für Aufträge, die ein Neustart unterbrochen hat. */
+    JobStatus interrupted(JobError failure, Instant at) {
+        return new JobStatus(id, type, sourceId, partitionKey, owner, JobState.FAILED, progress, failure,
+                cancelRequested, createdAt, startedAt, at, rootPageId, rootTitle, parameters, false, false, null);
     }
 }

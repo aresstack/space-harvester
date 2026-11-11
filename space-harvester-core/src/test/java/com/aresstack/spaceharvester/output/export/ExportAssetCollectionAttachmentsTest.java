@@ -12,8 +12,11 @@ import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
@@ -54,7 +57,10 @@ import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Dateianhänge im Export (ADR 0023): derselbe Auftrag, eigene {@code attachments.json} mit Original und Text. */
+/**
+ * Dateianhänge im Export (ADR 0023): eigener Auftrag „Anhänge beschaffen“ neben „Bilder beschaffen“, eigene
+ * {@code attachments.json} mit Original und Text.
+ */
 class ExportAssetCollectionAttachmentsTest {
 
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10, 1, 2, 3};
@@ -65,12 +71,20 @@ class ExportAssetCollectionAttachmentsTest {
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-11-09T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
-    private final Jobs jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 10, Duration.ofHours(1)),
+    private Jobs jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 10, Duration.ofHours(1)),
             clock);
     private final InMemoryPageCache cache = new InMemoryPageCache();
     private final ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter(),
             new JsonPackageConverter()), ExportConverters.DEFAULT_MAX_BYTES);
     private final Source source = new Source();
+    /** Was der zuletzt gebaute Export nutzt, für Nachläufe im Test. */
+    private ExportSettings current;
+    private ExportAssetCollection collection;
+    private FileSystemExportArtifactWriter writer;
+    private String exportId;
+    private ExportConversions conversions;
+    /** Läuft nach dem Export, bevor Bilder und Anhänge beschafft werden. */
+    private Runnable beforeCollecting;
 
     @TempDir
     Path data;
@@ -187,6 +201,88 @@ class ExportAssetCollectionAttachmentsTest {
         assertThat(paths).contains("attachments/100/Bericht_Ä_Ö.txt");
     }
 
+    @Test
+    void documentsAreTheirOwnJobAndAnImageRunLeavesThemAlone() throws Exception {
+        Result result = export(ExportSettings.DEFAULT);
+
+        List<JobStatus> images = jobs.list("client-a", JobType.ASSETS);
+        List<JobStatus> documents = jobs.list("client-a", JobType.ATTACHMENTS);
+        assertThat(images).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().discovered()).isEqualTo(1);
+            assertThat(job.parameter(ExportAssetCollection.EXPORT_ID)).isEqualTo(exportId);
+        });
+        assertThat(documents).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().discovered()).isEqualTo(4);
+            assertThat(job.progress().failed()).isZero();
+            assertThat(job.parameter(ExportAssetCollection.EXPORT_ID)).isEqualTo(exportId);
+        });
+        assertThat(result.manifest.imagesComplete()).isTrue();
+        assertThat(result.manifest.documentsComplete()).isTrue();
+        assertThat(result.manifest.documents()).hasSize(4);
+
+        // Ein neuer Bilderlauf ohne Anhänge schreibt nur seine Einträge: die Dokumente bleiben stehen.
+        current = new ExportSettings(false, ExportSettings.DEFAULT_MEDIA_TYPES, ExportSettings.DEFAULT_MAX_SIZE);
+        collection.start(exportId, "client-a");
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).hasSize(1);
+        ExportAssetManifest after = writer.assets(exportId).orElseThrow();
+        assertThat(after.documents()).containsExactlyElementsOf(result.manifest.documents());
+        assertThat(after.images()).hasSize(1);
+        assertThat(after.complete()).isTrue();
+    }
+
+    @Test
+    void withASingleSlotTheImageJobCollectsTheAttachmentsToo() throws Exception {
+        // Ein Platz, keine Warteschlange: ein zweiter Folgeauftrag wird abgelehnt; die Anhänge gehen nicht verloren.
+        jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(1, 0, Duration.ofHours(1)), clock);
+        Result result = export(ExportSettings.DEFAULT);
+
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(job -> {
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().discovered()).isEqualTo(5);
+        });
+        assertThat(result.manifest.documents()).hasSize(4);
+        assertThat(result.manifest.imagesComplete()).isTrue();
+        assertThat(result.manifest.documentsComplete()).isTrue();
+        assertThat(find(result.json("attachments.json"), "handbuch.pdf").path("status").asString())
+                .isEqualTo("STORED");
+    }
+
+    @Test
+    void theAttachmentJobPausesAndResumesInTheSameEntry() throws Exception {
+        beforeCollecting = () -> {
+            JobStatus documents = jobs.list("client-a", JobType.ATTACHMENTS).get(0);
+            jobs.pause(documents.id(), "client-a");
+        };
+        Result result = export(ExportSettings.DEFAULT);
+
+        JobStatus paused = jobs.list("client-a", JobType.ATTACHMENTS).get(0);
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
+        // Die Bilder sind unabhängig davon fertig; Dokumente fehlen noch.
+        assertThat(result.manifest.imagesComplete()).isTrue();
+        assertThat(result.manifest.documentsComplete()).isFalse();
+        assertThat(result.manifest.complete()).isFalse();
+
+        assertThat(conversions.resumeImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(job -> {
+            assertThat(job.id()).isEqualTo(paused.id());
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+        });
+        ExportAssetManifest after = writer.assets(exportId).orElseThrow();
+        assertThat(after.documents()).hasSize(4);
+        assertThat(after.images()).hasSize(1);
+        assertThat(after.complete()).isTrue();
+    }
+
     private static JsonNode find(JsonNode attachments, String title) {
         for (JsonNode node : attachments.path("attachments")) {
             if (node.path("title").asString().equals(title)) {
@@ -197,7 +293,8 @@ class ExportAssetCollectionAttachmentsTest {
     }
 
     private Result export(ExportSettings settings) throws Exception {
-        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        current = settings;
+        writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -211,14 +308,19 @@ class ExportAssetCollectionAttachmentsTest {
         };
         Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock, null,
                 new TikaDocumentText());
-        ExportAssetCollection collection = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+        collection = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
                 (owner, sourceId) -> true, com.aresstack.spaceharvester.application.signin.SignInRequests.none(),
-                () -> settings);
+                () -> current);
         Exports exports = new Exports(jobs, cache, writer, converters, clock);
         exports.onPublished(collection::start);
-        ExportConversions conversions = new ExportConversions(jobs, writer, converters, collection);
+        conversions = new ExportConversions(jobs, writer, converters, collection);
         cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null)));
         JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        exportId = export.id();
+        if (beforeCollecting != null) {
+            queued.poll().run();
+            beforeCollecting.run();
+        }
         while (!queued.isEmpty()) {
             queued.poll().run();
         }

@@ -598,6 +598,43 @@ class PageQueriesTest {
     }
 
     @Test
+    void theAcquisitionWaitsForTheCacheAndNeverCountsAnUnstoredPageAsLoaded() {
+        PageSnapshot fresh = page("wiki", "DEV", "p79", null);
+        when(live.pageMetadata("p79")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+        List<String> calls = new ArrayList<>();
+        // Die schnelle Ablage gibt bei laufendem Schreiblauf auf, die wartende kommt zum Zug.
+        PageQueries waiting = refreshing(ALLOW_ALL, PageCacheFill.of(k -> null, (snapshot, expected) -> {
+            calls.add("store");
+            return false;
+        }, (snapshot, expected) -> {
+            calls.add("storeWaiting");
+            cache.publish("wiki", "DEV", confirmed("g4"), List.of(snapshot));
+            return stored.add(snapshot);
+        }));
+
+        waiting.acquire(CALLER, new PageKey("wiki", "p79"), false);
+        assertThat(calls).containsExactly("storeWaiting");
+        assertThat(stored).containsExactly(fresh);
+
+        // Das Lesen einer Seite wartet nie.
+        PageSnapshot other = page("wiki", "DEV", "p80", null);
+        when(live.pageMetadata("p80")).thenReturn(other.metadata());
+        fetchAnswer = other;
+        calls.clear();
+        waiting.page(CALLER, "wiki", "p80", true);
+        assertThat(calls).containsExactly("store");
+
+        // Ließ sich nichts ablegen, gilt die Seite auch für die Suche nicht als geladen.
+        PageSnapshot unstored = page("wiki", "DEV", "p81", null);
+        when(live.pageMetadata("p81")).thenReturn(unstored.metadata());
+        fetchAnswer = unstored;
+        PageQueries busy = refreshing(ALLOW_ALL, PageCacheFill.of(k -> null, (snapshot, expected) -> false));
+        assertThatThrownBy(() -> busy.acquire(CALLER, new PageKey("wiki", "p81"), false))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void anUnreachableSourceIsReportedForAMissingPageNotHiddenAsAMiss() {
         when(live.pageMetadata("p77")).thenThrow(
                 new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "aus", null));

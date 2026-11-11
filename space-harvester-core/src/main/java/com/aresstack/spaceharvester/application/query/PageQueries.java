@@ -239,6 +239,12 @@ public class PageQueries {
      *                                     lesbar ist oder sie ohne angebundenen Inhaltsabruf nicht im Cache liegt
      */
     public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
+        return page(caller, sourceId, pageId, refresh, false);
+    }
+
+    /** @param acquiring Beschaffung: das Ablegen darf auf einen laufenden Schreiblauf warten */
+    private DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh,
+                               boolean acquiring) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         requireSource(sourceId);
         if (!freshness.available()) {
@@ -266,7 +272,7 @@ public class PageQueries {
             return DeliveredPage.cached(cached.get());
         }
         try {
-            return fromSource(caller, sourceId, pageId, cached);
+            return fromSource(caller, sourceId, pageId, cached, acquiring);
         } catch (SourceAccessException e) {
             boolean unreachable = e.reason() == SourceAccessException.Reason.UNAVAILABLE
                     || e.reason() == SourceAccessException.Reason.RATE_LIMITED;
@@ -293,15 +299,19 @@ public class PageQueries {
      * @throws IllegalStateException wenn im Hintergrund nichts Aktuelles abgelegt ist
      */
     public void acquire(AccessContext caller, PageKey key, boolean background) {
-        DeliveredPage delivered = page(caller, key.sourceId(), key.pageId(), background);
+        DeliveredPage delivered = page(caller, key.sourceId(), key.pageId(), background, true);
         if (background && (delivered.refresh() == null || delivered.live())) {
             throw new IllegalStateException("Seite nicht aktuell abgelegt");
+        }
+        if (delivered.refresh() == PageFreshness.Outcome.CONTENT_CHANGED && delivered.live()) {
+            // Neu geholt, aber nicht abgelegt: auch für die Suche nicht geladen, sonst fehlte der Treffer still.
+            throw new IllegalStateException("Seite nicht abgelegt");
         }
     }
 
     /** Prüft bzw. lädt die Seite bei der Quelle, legt einen neuen Inhalt ab und liefert ihn aus. */
     private DeliveredPage fromSource(AccessContext caller, String sourceId, String pageId,
-                                     Optional<CachedPage> cached) {
+                                     Optional<CachedPage> cached, boolean acquiring) {
         // Vor dem Abruf, damit eine inzwischen abgelegte neuere Fassung nicht überschrieben wird.
         String seen = stateQuietly(new PageKey(sourceId, pageId));
         PageFreshness.Refreshed checked;
@@ -331,7 +341,7 @@ public class PageQueries {
         }
         CacheGeneration generation = cached.map(CachedPage::generation).orElse(null);
         boolean live = checked.cacheStale();
-        if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot(), seen)) {
+        if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot(), seen, acquiring)) {
             // Jetzt im Cache: die Auslieferung ist der Cache-Stand, mit der Generation des Space.
             Optional<CachedPage> now = cachedQuietly(checked.header().key());
             if (now.isPresent() && now.get().snapshot().payload().rawSha256()
@@ -370,9 +380,9 @@ public class PageQueries {
      * Ablegen darf die Auslieferung nie verhindern; misslingt es, legt der nächste Abruf oder Abgleich ab. Abgelegt
      * wird nur über den vorher gesehenen Stand, damit ein langsamer Abruf keinen inzwischen neueren überschreibt.
      */
-    private boolean stored(PageSnapshot snapshot, String seenState) {
+    private boolean stored(PageSnapshot snapshot, String seenState, boolean acquiring) {
         try {
-            return fill.store(snapshot, seenState);
+            return acquiring ? fill.storeWaiting(snapshot, seenState) : fill.store(snapshot, seenState);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Nachgeladene Seite nicht abgelegt ({0})",
                     e.getClass().getName());

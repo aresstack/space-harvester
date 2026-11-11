@@ -49,6 +49,25 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
     }
 
     @Override
+    public boolean keepsLoadedPages() {
+        return true;
+    }
+
+    @Override
+    public String loadState(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+        return cache.state(key);
+    }
+
+    /** Wie die Beschaffung: wartet begrenzt auf die Schreibsperre und überschreibt nichts, was inzwischen neuer ist. */
+    @Override
+    public Kept keepLoaded(PageSnapshot snapshot, String expectedState) {
+        if (cache.saveWaiting(snapshot, expectedState)) {
+            return Kept.STORED;
+        }
+        return java.util.Objects.equals(cache.state(snapshot.key()), expectedState) ? Kept.DEFERRED : Kept.SUPERSEDED;
+    }
+
+    @Override
     public StagedGeneration begin(String sourceId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");

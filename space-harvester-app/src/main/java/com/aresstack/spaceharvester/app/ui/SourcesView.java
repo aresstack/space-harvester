@@ -555,8 +555,13 @@ public final class SourcesView implements View {
                 }
             });
             if (confluence) {
-                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart, Benutzer und Token bzw. Passwort ändern",
+                String keePassEntry = context.settings() == null ? null
+                        : context.settings().keePassEntry(entry.id());
+                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth())
+                                + (keePassEntry == null || config.auth().type() == SourceSettingsConfig.AuthType.NONE
+                                ? "" : " · aus KeePass „" + keePassEntry + "“"), Comic.INK,
+                        "Zugangsdaten (KeePass oder Manuell), KeePass-Eintrag, Anmeldeart, Benutzer und Token bzw. "
+                                + "Passwort ändern",
                         () -> setting(entry, SettingDialogs::auth)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
@@ -779,9 +784,9 @@ public final class SourcesView implements View {
      */
     private void enable(AppSettings.SourceEntry entry, boolean enabled) {
         String id = entry.id();
-        if (!enabled && !Dialogs.confirm(root, "Quelle abschalten", "Die Quelle " + id + " ruht danach: Sie wird "
+        if (!enabled && !Dialogs.confirm(root, "Quelle abschalten", "Quelle " + id + " wirklich abschalten? Sie ruht danach und wird "
                 + "nicht mehr durchsucht, gelesen oder abgeglichen, ihre laufenden Aufträge brechen ab. Einstellungen, "
-                + "Zugangsdaten und lokaler Bestand bleiben; „Einschalten“ holt sie zurück.", "Abschalten")) {
+                + "Zugangsdaten und lokaler Bestand bleiben; „Einschalten“ holt sie zurück.")) {
             return;
         }
         if (!Dialogs.restartAllowed(root, context)) {
@@ -800,8 +805,8 @@ public final class SourcesView implements View {
     private void purge(AppSettings.SourceEntry entry) {
         String id = entry.id();
         String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
-        if (!Dialogs.confirm(root, "Daten bereinigen", "Alle gespeicherten Daten der Quelle " + name + " löschen? "
-                + "Der Index muss danach neu aufgebaut werden, das kann lange dauern.", "Löschen")) {
+        if (!Dialogs.confirm(root, "Daten bereinigen", "Wirklich alle gespeicherten Daten der Quelle " + name + " löschen? "
+                + "Der Index muss danach neu aufgebaut werden, das kann lange dauern.")) {
             return;
         }
         AppRuntime runtime = context.runtime();
@@ -831,10 +836,9 @@ public final class SourcesView implements View {
                         + "angelegt "
                         + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
                 : "Die vorige Fassung bleibt als .bak erhalten.";
-        if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "
-                + "entfernt. " + backup + " Ihre offenen Aufträge werden abgebrochen, ihr lokaler Bestand (Seiten, "
-                + "Suchindex, Analysen, Bilder) wird gelöscht; fertige Exporte bleiben. Die Quellen starten danach neu.",
-                "Entfernen")
+        if (!Dialogs.confirm(root, "Quelle entfernen", "Quelle " + id + " wirklich entfernen? Sie wird aus der "
+                + "Konfigurationsdatei entfernt. " + backup + " Ihre offenen Aufträge werden abgebrochen, ihr lokaler Bestand (Seiten, "
+                + "Suchindex, Analysen, Bilder) wird gelöscht; fertige Exporte bleiben. Die Quellen starten danach neu.")
                 || !Dialogs.restartAllowed(root, context)) {
             return;
         }

@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
+import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -196,6 +197,12 @@ public final class AppRuntime implements AutoCloseable {
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
+                // Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
+                // HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus
+                // jobs.retry (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
+                .sourceAdapter(ConfluenceSourceAdapter.desktop(
+                        com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
+                        .withRetry(settings.jobLimits().retry()))
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())
@@ -290,9 +297,24 @@ public final class AppRuntime implements AutoCloseable {
                             + problem.message()).toList();
             return Reconfiguration.REJECTED;
         }
+        harvester.parallelPreparations(next.jobLimits().parallelPreparations());
+        harvester.parallelDownloads(next.jobLimits().parallelDownloads());
         settings = next;
         lastRejection = List.of();
         return Reconfiguration.APPLIED;
+    }
+
+    /**
+     * Ändert die Grenzen für Bilder- und Anhängeaufträge sofort im Core und im Stand dieser Laufzeit, damit ein späteres
+     * {@link #reconfigure} sie als schon übernommen erkennt. Kann Aufträge starten und damit die Auftragsablage
+     * schreiben; nicht im Swing-Thread rufen.
+     *
+     * @throws IllegalArgumentException außerhalb der Grenzen ({@code JobLimits})
+     */
+    public synchronized void parallel(int preparations, int downloads) {
+        workspace.setParallelPreparations(preparations);
+        workspace.setParallelDownloads(downloads);
+        settings = settings.withParallel(preparations, downloads);
     }
 
     /** Was der Core bei der letzten abgelehnten Änderung bemängelt hat; leer, wenn die letzte übernommen wurde. */
@@ -387,6 +409,8 @@ public final class AppRuntime implements AutoCloseable {
         }
 
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
+        /** Quellen, deren KeePass-Eintrag {@code MM_RequiresLogin=false} trägt (#571, wie der EAC). */
+        private final java.util.Set<String> withoutLogin = java.util.concurrent.ConcurrentHashMap.newKeySet();
         private volatile String aiKey;
         private volatile char[] proxyPassword;
 
@@ -401,6 +425,7 @@ public final class AppRuntime implements AutoCloseable {
                 hash = secrets.hashCode();
             }
             char[] proxy = proxyPassword;
+            hash = 31 * hash + withoutLogin.hashCode();
             return 31 * hash + (proxy == null ? 0 : java.util.Arrays.hashCode(proxy));
         }
 
@@ -423,6 +448,9 @@ public final class AppRuntime implements AutoCloseable {
 
         /** @param login {@link #login} der Anmeldung, für die der Wert gilt */
         public void put(String sourceId, String login, char[] secret) {
+            // Neue Zugangsdaten: Die Zusatzfelder eines KeePass-Eintrags gelten nur, wenn sie danach wieder gesetzt
+            // werden ({@link #keePassFields}), etwa nach einem Wechsel auf „Manuell“ nicht mehr.
+            withoutLogin.remove(sourceId);
             secrets.put(sourceId, new Value(login, new String(secret)));
             java.util.Arrays.fill(secret, '\0');
         }
@@ -445,11 +473,37 @@ public final class AppRuntime implements AutoCloseable {
 
         public void remove(String sourceId) {
             secrets.remove(sourceId);
+            withoutLogin.remove(sourceId);
+        }
+
+        /**
+         * Übernimmt die Zusatzfelder des KeePass-Eintrags einer Quelle wie der Enterprise AI Client
+         * ({@code VaultEntryOptions.sendsLogin}, #571): Mit {@code MM_RequiresLogin=false} geht die Quelle ohne
+         * Authorization-Header, nur mit dem Client-Zertifikat, wie in MainframeMate.
+         */
+        public void keePassFields(String sourceId, Map<String, String> fields) {
+            if (withoutLogin(fields)) {
+                withoutLogin.add(sourceId);
+            } else {
+                withoutLogin.remove(sourceId);
+            }
+        }
+
+        /** Ob die Felder eines KeePass-Eintrags {@code MM_RequiresLogin=false} tragen. */
+        public static boolean withoutLogin(Map<String, String> fields) {
+            String requiresLogin = fields == null ? null : fields.get("MM_RequiresLogin");
+            return requiresLogin != null && "false".equalsIgnoreCase(requiresLogin.strip());
+        }
+
+        /** Ob der KeePass-Eintrag der Quelle {@code MM_RequiresLogin=false} trägt ({@link #keePassFields}). */
+        public boolean withoutLogin(String sourceId) {
+            return withoutLogin.contains(sourceId);
         }
 
         SourceSettingsConfig apply(SourceSettingsConfig config) {
             String secret = secrets.get(config.id()).secret();
-            SourceSettingsConfig.Auth auth = config.auth();
+            SourceSettingsConfig.Auth auth = withoutLogin.contains(config.id())
+                    ? SourceSettingsConfig.Auth.anonymous() : config.auth();
             SourceSettingsConfig.Auth filled = switch (auth.type()) {
                 case NONE -> auth;
                 case BASIC -> new SourceSettingsConfig.Auth(auth.type(), auth.username(), secret, null);
