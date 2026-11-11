@@ -1050,6 +1050,31 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(seen).containsExactly("web-port code anna:pw-value", "web-port code anna:pw-value");
     }
 
+    /**
+     * #571: Scheiterte der Tunnel erst auf der Weiterleitung nach dem angenommenen Code, ist die Seite beim zweiten
+     * Senden verbraucht (HTTP 500). Dann lädt der Dateiabruf neu wie nach jeder 500, und die Anmeldung gilt.
+     */
+    @Test
+    void aCodeResentAfterATunnelFailureOnTheRedirectRecoversThroughTheFileFetch() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 1;
+        webPort.refusedTunnels = 1;
+        webPort.serverErrorNext = true;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        seen.clear();
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("web-port code anna:pw-value", "web-port code anna:pw-value",
+                "web-port image anna:pw-value");
+    }
+
     /** #571: Lehnt der Proxy auch den zweiten Tunnel ab, sagt das Codefeld, dass der Code noch gilt. */
     @Test
     void aTunnelTheProxyRefusesTwiceSaysTheCodeDidNotArriveAndKeepsThePage() {

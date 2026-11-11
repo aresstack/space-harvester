@@ -1423,7 +1423,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         /**
          * Sendet den Code; lehnt der Proxy den Tunnel mit einem Serverfehler ab (502/503/504), einmal erneut. Dann hat
          * Confluence den Code nie gesehen, er ist noch nicht verbraucht (Angelo 11.11.2026: HTTP 503 nach 20 s, derselbe
-         * Code wurde zwei Minuten später angenommen).
+         * Code wurde zwei Minuten später angenommen). Scheiterte der Tunnel erst auf der Weiterleitung nach dem
+         * angenommenen Code (der Fehler sagt nicht, welcher Schritt), ist die Seite beim zweiten Senden verbraucht; die
+         * Antwort darauf (HTTP 500 oder die Datei) führt über {@link #reloadAfterServerError} zum Dateiabruf.
          */
         private OneTimeCodeChallenge sendThroughProxy(char[] code) throws KnowledgeSourceException {
             try {
