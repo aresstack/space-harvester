@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.controls;
 
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
+import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
@@ -47,11 +48,28 @@ import java.util.Objects;
  */
 public final class ImageViewer extends JPanel {
 
-    /** Ein Bild mit seinem Titel (Alternativtext der Seite). */
-    public record Picture(BufferedImage image, String label) {
+    /**
+     * Ein Bild mit seinem Titel (Alternativtext der Seite). Ein draw.io-Diagramm bringt zusätzlich seine
+     * Vektorzeichnung mit ({@code vector}, sonst {@code null}): Dann zeichnet der Betrachter bei jedem Zoom direkt aus
+     * dem Vektor, statt das Rasterbild {@code image} zu vergrößern, und speichert als SVG.
+     */
+    public record Picture(BufferedImage image, String label, VectorDiagram vector) {
         public Picture {
             Objects.requireNonNull(image, "image");
             label = label == null || label.isBlank() ? "Bild" : label.strip();
+        }
+
+        public Picture(BufferedImage image, String label) {
+            this(image, label, null);
+        }
+
+        /** Eigenbreite in Pixeln (beim Vektor seine Breite bei 100 %). */
+        int width() {
+            return vector != null ? (int) Math.round(vector.width()) : image.getWidth();
+        }
+
+        int height() {
+            return vector != null ? (int) Math.round(vector.height()) : image.getHeight();
         }
     }
 
@@ -188,10 +206,29 @@ public final class ImageViewer extends JPanel {
      * @return die Meldung für den Benutzer, wie sie auch in der Infozeile steht
      */
     String saveTo(File target) {
+        Picture picture = pictures.get(index);
         String format = format(target.getName());
+        if (picture.vector() != null && (format == null || "svg".equals(format))) {
+            File file = format == null ? new File(target.getPath() + ".svg") : target;
+            try {
+                java.nio.file.Files.write(file.toPath(), picture.vector().svg());
+                message = SAVED_PREFIX + file.getName();
+            } catch (IOException | RuntimeException ex) {
+                message = SAVE_FAILED_PREFIX + ex.getClass().getSimpleName();
+            }
+            updateInfo();
+            return message;
+        }
+        if ("svg".equals(format)) {
+            message = SAVE_FAILED_PREFIX + "Dieses Bild ist keine Vektorgrafik; bitte als PNG speichern";
+            updateInfo();
+            return message;
+        }
         File file = format == null ? new File(target.getPath() + ".png") : target;
-        BufferedImage image = pictures.get(index).image();
         try {
+            // Ein Diagramm als Rasterbild in der Größe, in der es gerade zu sehen ist.
+            BufferedImage image = picture.vector() == null ? picture.image()
+                    : picture.vector().raster(Math.max(1, (int) Math.round(picture.vector().width() * canvas.zoom)));
             if (("jpg".equals(format) || "bmp".equals(format)) && image.getColorModel().hasAlpha()) {
                 image = opaque(image);
             }
@@ -202,18 +239,25 @@ public final class ImageViewer extends JPanel {
             }
         } catch (IOException | RuntimeException ex) {
             message = SAVE_FAILED_PREFIX + ex.getClass().getSimpleName();
+        } catch (OutOfMemoryError ex) {
+            message = SAVE_FAILED_PREFIX + "In dieser Zoomstufe zu groß für ein PNG; kleiner zoomen oder als SVG speichern";
         }
         updateInfo();
         return message;
     }
 
-    /** Vorgeschlagener Dateiname: der Titel ohne Zeichen, die Windows nicht erlaubt, mit {@code .png}. */
+    /** Vorgeschlagener Dateiname: der Titel ohne Zeichen, die Windows nicht erlaubt, mit {@code .png} (Diagramm {@code .svg}). */
     static String fileName(Picture picture) {
         String base = picture.label().replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").strip();
         if (base.length() > 80) {
             base = base.substring(0, 80).strip();
         }
-        return (format(base) != null ? base : (base.isEmpty() ? "bild" : base) + ".png");
+        String extension = picture.vector() != null ? ".svg" : ".png";
+        if (format(base) != null) {
+            int dot = base.lastIndexOf('.');
+            return picture.vector() != null ? base.substring(0, dot) + extension : base;
+        }
+        return (base.isEmpty() ? "bild" : base) + extension;
     }
 
     private static String format(String name) {
@@ -224,6 +268,7 @@ public final class ImageViewer extends JPanel {
             case "jpg", "jpeg" -> "jpg";
             case "gif" -> "gif";
             case "bmp" -> "bmp";
+            case "svg" -> "svg";
             default -> null;
         };
     }
@@ -244,7 +289,16 @@ public final class ImageViewer extends JPanel {
     private void saveWithChooser() {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Bild speichern");
-        chooser.setSelectedFile(new File(fileName(pictures.get(index))));
+        Picture picture = pictures.get(index);
+        if (picture.vector() != null) {
+            javax.swing.filechooser.FileNameExtensionFilter svg =
+                    new javax.swing.filechooser.FileNameExtensionFilter("SVG-Vektorgrafik (*.svg)", "svg");
+            chooser.addChoosableFileFilter(svg);
+            chooser.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                    "PNG in der aktuellen Zoomgröße (*.png)", "png"));
+            chooser.setFileFilter(svg);
+        }
+        chooser.setSelectedFile(new File(fileName(picture)));
         if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
             saveTo(chooser.getSelectedFile());
         }
@@ -253,7 +307,7 @@ public final class ImageViewer extends JPanel {
     private void show(int target) {
         index = target;
         message = null;
-        canvas.setImage(pictures.get(index).image());
+        canvas.setPicture(pictures.get(index));
         updateInfo();
         if (layers.getWidth() > 0) {
             hover(canvas.pointer);
@@ -269,7 +323,7 @@ public final class ImageViewer extends JPanel {
     private void updateInfo() {
         Picture picture = pictures.get(index);
         String line = (index + 1) + " / " + pictures.size() + "  —  " + picture.label() + "  ("
-                + picture.image().getWidth() + " × " + picture.image().getHeight() + ")  |  Zoom: "
+                + picture.width() + " × " + picture.height() + ")  |  Zoom: "
                 + canvas.zoomPercent() + " %";
         info.setText(message == null ? line : message);
     }
@@ -421,7 +475,10 @@ public final class ImageViewer extends JPanel {
     /** Dunkle Fläche (wie EAC und MainframeMate): einpassen, Zoom am Cursor, verschieben. */
     private static final class Canvas extends JPanel {
         private BufferedImage image;
-        private double zoom = 1.0;
+        private VectorDiagram vector;
+        private double imgW;
+        private double imgH;
+        double zoom = 1.0;
         /** Zoom des eingepassten Bildes; die Grenzen schließen ihn immer ein, damit ± nie die Richtung umkehrt. */
         private double fitZoom = 1.0;
         double offsetX;
@@ -445,8 +502,11 @@ public final class ImageViewer extends JPanel {
             });
         }
 
-        void setImage(BufferedImage next) {
-            image = next;
+        void setPicture(Picture next) {
+            image = next.image();
+            vector = next.vector();
+            imgW = vector != null ? vector.width() : image.getWidth();
+            imgH = vector != null ? vector.height() : image.getHeight();
             pending = true;
             resetView();
         }
@@ -455,10 +515,10 @@ public final class ImageViewer extends JPanel {
             zoom = 1.0;
             offsetX = 0;
             offsetY = 0;
-            if (image != null && getWidth() > 0 && getHeight() > 0) {
-                zoom = Math.min(getWidth() / (double) image.getWidth(), getHeight() / (double) image.getHeight());
-                offsetX = (getWidth() - image.getWidth() * zoom) / 2.0;
-                offsetY = (getHeight() - image.getHeight() * zoom) / 2.0;
+            if (image != null && imgW > 0 && imgH > 0 && getWidth() > 0 && getHeight() > 0) {
+                zoom = Math.min(getWidth() / imgW, getHeight() / imgH);
+                offsetX = (getWidth() - imgW * zoom) / 2.0;
+                offsetY = (getHeight() - imgH * zoom) / 2.0;
                 fitZoom = zoom;
                 fitted = true;
                 pending = false;
@@ -493,6 +553,16 @@ public final class ImageViewer extends JPanel {
             }
             Graphics2D g2 = (Graphics2D) g.create();
             try {
+                if (vector != null) {
+                    // Bei jedem Zoom neu aus dem Vektor gezeichnet: scharf in jeder Größe (Clip begrenzt die Arbeit).
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    g2.setColor(Color.WHITE);
+                    g2.fill(new java.awt.geom.Rectangle2D.Double(offsetX, offsetY, imgW * zoom, imgH * zoom));
+                    g2.translate(offsetX, offsetY);
+                    vector.paint(g2, zoom);
+                    return;
+                }
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, zoom < 1.0
                         ? RenderingHints.VALUE_INTERPOLATION_BILINEAR
                         : RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);

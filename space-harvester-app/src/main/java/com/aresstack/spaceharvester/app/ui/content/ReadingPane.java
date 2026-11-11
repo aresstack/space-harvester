@@ -6,9 +6,11 @@ import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -38,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import org.jsoup.Jsoup;
@@ -87,6 +90,8 @@ final class ReadingPane extends JPanel {
     private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
+    /** Vektorzeichnungen der draw.io-Diagramme je eigener Bildadresse; der Betrachter zeichnet sie bei jedem Zoom. */
+    private Map<String, VectorDiagram> vectors = Map.of();
     /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
     private String html = "";
     /** Was ein angeklickter Link auslöst; ohne Abnehmer öffnet er im Browser. */
@@ -172,6 +177,7 @@ final class ReadingPane extends JPanel {
     void clear(String text) {
         overlay.setBusy(false);
         originals = Map.of();
+        vectors = Map.of();
         html = "";
         details = "";
         pane.setText("");
@@ -207,6 +213,7 @@ final class ReadingPane extends JPanel {
     void show(Prepared prepared) {
         overlay.setBusy(false);
         originals = prepared.originals();
+        vectors = prepared.vectors();
         html = prepared.html();
         boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
         details = prepared.html().isEmpty() ? "" : prepared.note();
@@ -244,8 +251,8 @@ final class ReadingPane extends JPanel {
     }
 
     /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */
-    record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals, int images,
-                    int missing, String note) {
+    record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
+                    Map<String, VectorDiagram> vectors, int images, int missing, String note) {
     }
 
     /**
@@ -254,6 +261,17 @@ final class ReadingPane extends JPanel {
      */
     static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, byte[]> load,
                             Function<String, byte[]> mermaid) {
+        return prepare(view, image -> Optional.empty(), load, mermaid, screenScale());
+    }
+
+    /**
+     * Wie {@link #prepare(ReadingView, Function, Function)}, holt aber zuerst über {@code vector} die Vektorzeichnung
+     * eines draw.io-Diagramms. Gibt es sie, wird nur sie genutzt (kein zweiter Abruf über {@code load}): im Text
+     * gerastert in Anzeigebreite × {@code scale} (Bildschirmskalierung), im Betrachter bei jedem Zoom neu gezeichnet.
+     */
+    static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                            Function<HarvestSource.ViewImage, byte[]> load, Function<String, byte[]> mermaid,
+                            double scale) {
         switch (view.status()) {
             case RESTRICTED -> {
                 return note("Diese Seite bindet Inhalte ein, die du nicht nachweislich lesen darfst. Die Leseansicht "
@@ -269,6 +287,7 @@ final class ReadingPane extends JPanel {
         document.select(String.join(",", REMOVED)).remove();
         Map<String, Image> scaled = new LinkedHashMap<>();
         Map<String, BufferedImage> originals = new LinkedHashMap<>();
+        Map<String, VectorDiagram> vectors = new LinkedHashMap<>();
         int[] counts = new int[2];
         for (Element img : document.select("img")) {
             HarvestSource.ViewImage image = match(view, img);
@@ -280,8 +299,14 @@ final class ReadingPane extends JPanel {
             }
             BufferedImage decoded;
             try {
+                Optional<VectorDiagram> drawing = vectorOf(vector, image);
+                if (drawing.isPresent()) {
+                    placeVector(img, drawing.get(), label, scale, scaled, originals, vectors);
+                    counts[0]++;
+                    continue;
+                }
                 decoded = decode(load, image);
-            } catch (SignInPendingException e) {
+            } catch (SignInPendingException | SignInRequiredException e) {
                 // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
                 missing(img, SIGN_IN_PENDING + label);
                 counts[1]++;
@@ -326,12 +351,12 @@ final class ReadingPane extends JPanel {
                 + (counts[1] == 0 ? "" : " · " + counts[1] + " nicht darstellbar, im Text markiert")
                 + (view.stored() ? " · aus dem Bestand" : " · live aus der Quelle")
                 + (counts[0] == 0 ? "" : " · Klick auf ein Bild vergrößert es");
-        return new Prepared("<html><body>" + document.body().html() + "</body></html>", scaled, originals, counts[0],
-                counts[1], note);
+        return new Prepared("<html><body>" + document.body().html() + "</body></html>", scaled, originals, vectors,
+                counts[0], counts[1], note);
     }
 
     private static Prepared note(String text) {
-        return new Prepared("", Map.of(), Map.of(), 0, 0, text);
+        return new Prepared("", Map.of(), Map.of(), Map.of(), 0, 0, text);
     }
 
     /** Das Bild der Ansicht zu einem {@code <img>}: gleiche Adresse, roh oder gegen die Basis aufgelöst. */
@@ -392,6 +417,52 @@ final class ReadingPane extends JPanel {
             return ImageIO.read(new ByteArrayInputStream(content));
         } catch (IOException | RuntimeException e) {
             return null;
+        }
+    }
+
+    /** Die Vektorzeichnung zu einem Bild; eine fehlende Anmeldung geht weiter (Platzhalter), sonst leer. */
+    private static Optional<VectorDiagram> vectorOf(Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                                                    HarvestSource.ViewImage image) {
+        try {
+            Optional<VectorDiagram> drawing = vector.apply(image);
+            return drawing == null ? Optional.empty() : drawing;
+        } catch (SignInPendingException | SignInRequiredException e) {
+            // Kein zweiter Abruf über das Bild: jeder weitere Abruf kann eine neue Code-Mail auslösen (#571).
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Setzt ein draw.io-Diagramm ein: im Text höchstens {@link #MAX_WIDTH} breit, gerastert in dieser Breite mal der
+     * Bildschirmskalierung, damit es auch auf hochauflösenden Bildschirmen scharf ist.
+     */
+    private static void placeVector(Element img, VectorDiagram drawing, String label, double scale,
+                                    Map<String, Image> scaled, Map<String, BufferedImage> originals,
+                                    Map<String, VectorDiagram> vectors) {
+        String src = IMAGE_BASE + originals.size();
+        int width = Math.max(1, (int) Math.round(Math.min(MAX_WIDTH, drawing.width())));
+        int height = Math.max(1, (int) Math.round(drawing.height() * (width / drawing.width())));
+        BufferedImage shown = drawing.raster(Math.max(1, (int) Math.round(width * Math.max(1.0, scale))));
+        originals.put(src, shown);
+        vectors.put(src, drawing);
+        scaled.put(src, shown);
+        img.clearAttributes();
+        img.attr("src", src).attr("width", String.valueOf(width)).attr("height", String.valueOf(height))
+                .attr("alt", label).attr("title", label);
+    }
+
+    /** Skalierung des Bildschirms (Windows 150 % = 1,5); ohne Bildschirm 1. */
+    static double screenScale() {
+        try {
+            if (java.awt.GraphicsEnvironment.isHeadless()) {
+                return 1.0;
+            }
+            return java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
+                    .getDefaultConfiguration().getDefaultTransform().getScaleX();
+        } catch (RuntimeException e) {
+            return 1.0;
         }
     }
 
@@ -486,7 +557,8 @@ final class ReadingPane extends JPanel {
         }
         Map<String, String> labels = labels();
         List<ImageViewer.Picture> pictures = originals.entrySet().stream()
-                .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey())))
+                .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey()),
+                        vectors.get(entry.getKey())))
                 .toList();
         Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index), "reading.images", 0.8);
     }
