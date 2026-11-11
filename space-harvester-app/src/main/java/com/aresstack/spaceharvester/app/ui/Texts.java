@@ -28,6 +28,11 @@ public final class Texts {
         return instant == null ? "–" : TIME.format(instant);
     }
 
+    /** Eine Größengrenze: 0 (oder weniger) heißt „ohne Grenze“ (#571), sonst wie {@link #bytes}. */
+    public static String sizeLimit(long bytes) {
+        return bytes <= 0 ? "ohne Grenze" : bytes(bytes);
+    }
+
     public static String bytes(long bytes) {
         if (bytes < 1024) {
             return bytes + " B";
