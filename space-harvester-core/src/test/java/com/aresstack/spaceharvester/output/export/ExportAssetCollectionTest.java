@@ -259,6 +259,58 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void retryingFailuresOfPausedImagesVisitsPagesWithFailedFilesAgain() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100"), page("confluence", "DEV", "103", "100"),
+                page("confluence", "DEV", "104", "100")));
+        // 100 und 101 sind fertig geprüft (101 mit einer gescheiterten Datei), während 103 hält der Benutzer an.
+        source.onListing = pageId -> {
+            if (pageId.equals("103")) {
+                jobs.list("client-a", JobType.ASSETS).stream()
+                        .filter(job -> job.state() == JobState.RUNNING)
+                        .forEach(job -> jobs.pause(job.id(), "client-a"));
+            }
+        };
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.progress().failed()).isEqualTo(1);
+        assertThat(paused.lifecycle().actions()).first().isEqualTo(JobAction.RETRY_FAILED);
+        int listedBefore = source.listed.size();
+        source.onListing = pageId -> { };
+
+        assertThat(conversions.retryImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
+        drain();
+
+        // Seite 101 mit der gescheiterten Datei wird erneut gefragt, die fehlerfreie 100 nicht.
+        assertThat(source.listed.subList(listedBefore, source.listed.size())).contains("101").doesNotContain("100");
+        JobStatus done = jobs.status(paused.id());
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+    }
+
+    @Test
     void retryingTakesStoredFilesAndForcingLoadsEveryFileAgainInTheSameEntry() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {

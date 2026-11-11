@@ -16,6 +16,8 @@ import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
+import com.aresstack.spaceharvester.application.jobs.JobRecovery;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -155,5 +157,18 @@ class ExportConfiguration {
     ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters,
                                         ExportAssetCollection images) {
         return new ExportConversions(jobs, writer, converters, images);
+    }
+
+    /**
+     * ADR 0025 Punkt 17: Aufträge, die wegen fehlender Verbindung angehalten sind, laufen nach wachsender Wartezeit von
+     * selbst wieder an ({@code jobs.retry.resume-initial-delay} bis {@code resume-max-delay}).
+     */
+    @Bean
+    JobRecovery jobRecovery(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions) {
+        JobActions actions = new JobActions(jobs, exports, syncs, conversions);
+        JobRecovery recovery = new ServerJobRecovery(jobs,
+                (status, action) -> actions.perform(status.id(), status.owner(), action));
+        jobs.recovery(recovery);
+        return recovery;
     }
 }

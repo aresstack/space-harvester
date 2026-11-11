@@ -121,6 +121,14 @@ public class ExportConversions {
         return images.resume(jobId, owner);
     }
 
+    /** „Nur Fehler neu versuchen“ für einen eigenen Bilder- oder Anhängeauftrag ({@link ExportAssetCollection#retryFailed}). */
+    public JobStatus retryImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.retryFailed(jobId, owner);
+    }
+
     /** „Neu erzwingen“ für einen eigenen Bilder- oder Anhängeauftrag ({@link ExportAssetCollection#forceRefresh}). */
     public JobStatus forceImages(String jobId, String owner) {
         if (images == null) {

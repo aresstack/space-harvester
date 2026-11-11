@@ -189,4 +189,61 @@ class JobsRecoveryTest {
         assertThat(timed).isEmpty();
         assertThat(jobs.status(job.id()).lifecycle().key()).isEqualTo("COMPLETED");
     }
+
+    @Test
+    void aRetryRejectedAfterThePassIsTriedAgainLaterWhileTheJobStaysAsItEnded() {
+        AtomicInteger refusals = new AtomicInteger(2);
+        jobs.recovery((status, action) -> {
+            performed.add(action);
+            if (refusals.getAndDecrement() > 0) {
+                // Wie Exports.retryFailed, solange Bilder oder Anhänge des Exports noch laufen.
+                throw new JobNotResumableException(status.id(), "Bilder werden noch beschafft");
+            }
+            jobs.rerun(status.id(), status.owner(), JobTask.blocking(context -> context.processed(1)));
+        }, timer);
+        CompletableFuture<Void> pass = new CompletableFuture<>();
+        JobContext[] seen = new JobContext[1];
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> {
+            seen[0] = context;
+            return pass;
+        });
+        executor.runNext();
+        seen[0].failed(1);
+        jobs.requestRetryFailed(job.id(), "client-a");
+        pass.complete(null);
+
+        fireLast();
+        fireLast();
+        fireLast();
+
+        assertThat(delays).extracting(Duration::toSeconds).containsExactly(0L, 10L, 20L);
+        assertThat(performed).containsExactly(JobAction.RETRY_FAILED, JobAction.RETRY_FAILED,
+                JobAction.RETRY_FAILED);
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
+    void aRejectedRetryIsNotTriedAgainOnceTheUserActed() {
+        jobs.recovery((status, action) -> {
+            performed.add(action);
+            throw new JobNotResumableException(status.id(), "Bilder werden noch beschafft");
+        }, timer);
+        CompletableFuture<Void> pass = new CompletableFuture<>();
+        JobContext[] seen = new JobContext[1];
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> {
+            seen[0] = context;
+            return pass;
+        });
+        executor.runNext();
+        seen[0].failed(1);
+        jobs.requestRetryFailed(job.id(), "client-a");
+        pass.complete(null);
+        fireLast();
+        jobs.delete(job.id(), "client-a");
+
+        fireLast();
+
+        assertThat(performed).hasSize(1);
+        assertThat(timed).isEmpty();
+    }
 }

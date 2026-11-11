@@ -248,6 +248,22 @@ public class ExportAssetCollection {
      * @throws JobNotResumableException wie {@link Jobs#resume}, oder wenn ein alter Auftrag seinen Export nicht nennt
      */
     public JobStatus resume(String jobId, String owner) {
+        return resume(jobId, owner, false);
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ für den eigenen Bilder- oder Anhängeauftrag: wie {@link #resume}, aber Seiten mit
+     * gescheiterten Dateien gelten nicht mehr als fertig geprüft und werden erneut besucht; schon abgelegte Dateien
+     * kommen weiter aus dem Speicher.
+     *
+     * @throws UnknownJobException      wenn es keinen eigenen Bilder- oder Anhängeauftrag mit dieser ID gibt
+     * @throws JobNotResumableException wie {@link #resume}
+     */
+    public JobStatus retryFailed(String jobId, String owner) {
+        return resume(jobId, owner, true);
+    }
+
+    private JobStatus resume(String jobId, String owner, boolean failedAgain) {
         JobStatus status = jobs.status(jobId, owner);
         Scope scope = Scope.of(status.type());
         if (scope == null) {
@@ -256,7 +272,7 @@ public class ExportAssetCollection {
         String exportId = status.parameter(EXPORT_ID);
         JobStatus resumed;
         if (jobs.resumable(jobId, owner) || !status.state().terminal()) {
-            resumed = jobs.resume(jobId, owner);
+            resumed = jobs.resume(jobId, owner, failedAgain ? AssetTask::withoutFailedPages : null);
         } else if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         } else {
@@ -339,6 +355,14 @@ public class ExportAssetCollection {
             this.scope = scope;
             this.withDocuments = withDocuments;
             this.fresh = fresh;
+        }
+
+        /** Vergisst die geprüften Seiten, auf denen etwas scheiterte, damit der nächste Lauf sie erneut besucht. */
+        static JobTask withoutFailedPages(JobTask task) {
+            if (task instanceof AssetTask asset) {
+                asset.checked.values().removeIf(page -> page.failed() > 0);
+            }
+            return task;
         }
 
         @Override
