@@ -695,10 +695,11 @@ public class ExportAssetCollection {
                 long written = context.written;
                 long failed = context.failed;
                 try {
-                    if (load(current, dataset, plan, page.snapshot(), entries)) {
+                    Loaded loaded = load(current, exportId, dataset, plan, page.snapshot(), entries);
+                    if (loaded.checked()) {
                         checked.add(pageId);
                         done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
-                                plan.discovered(), context.processed - processed, context.written - written,
+                                loaded.discovered(), context.processed - processed, context.written - written,
                                 context.failed - failed));
                     } else {
                         complete[0] = false;
@@ -800,16 +801,18 @@ public class ExportAssetCollection {
     }
 
     /**
-     * Was auf einer Seite zu laden ist, aus der Vorbereitung (Angelo 11.11.2026): Anhangsliste und Lese-Ansicht sind
-     * abgefragt und gezählt, geladen ist noch nichts.
+     * Was auf einer Seite zu laden ist, aus der Vorbereitung (Angelo 11.11.2026): die Anhangsliste ist abgefragt und
+     * gezählt, geladen ist noch nichts. Die Lese-Ansicht holt erst der Ladedurchgang (Angelo 11.11.2026): die
+     * Vorbereitung ruft je Seite nichts ab.
      *
      * @param list      die Anhangsliste oder {@code null}, wenn sie nicht abrufbar war
+     * @param catalog   ob die Liste aus dem Anhangskatalog (der Suche) stammt
      * @param steps     die Verweise in Ladereihenfolge (Quelldaten von Diagrammen vor Bildern)
      * @param order     Anhangs-IDs in der Reihenfolge der Quelle, für das Manifest
      * @param checked   ob die Seite vollständig geprüft werden konnte
      */
-    private record PagePlan(String pageId, PageAttachmentList list, List<Step> steps, List<String> order,
-                            boolean checked, long discovered) {
+    private record PagePlan(String pageId, PageAttachmentList list, boolean catalog, List<Step> steps,
+                            List<String> order, boolean checked, long discovered) {
     }
 
     /** Seiten je Katalogabfrage; die Quelle teilt sie selbst weiter auf (Confluence: 50 Seiten je CQL). */
@@ -855,8 +858,8 @@ public class ExportAssetCollection {
     }
 
     /**
-     * Vorbereitung einer Seite: fragt Anhangsliste und Lese-Ansicht ab, legt die Lese-Ansicht ab und zählt jeden
-     * Verweis ({@link JobContext#discovered}); lädt keine Datei.
+     * Vorbereitung einer Seite: nimmt die Anhangsliste (aus dem Katalog oder einzeln) und zählt jeden Anhang
+     * ({@link JobContext#discovered}); lädt keine Datei und holt keine Lese-Ansicht.
      */
     private PagePlan plan(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot,
                           PageAttachmentList searched) {
@@ -867,8 +870,6 @@ public class ExportAssetCollection {
         long discovered = 0;
         List<Step> steps = new ArrayList<>();
         List<String> order = new ArrayList<>();
-        Set<String> attachmentIds = new HashSet<>();
-        Set<String> ownAttachments = new HashSet<>();
         PageAttachmentList list = null;
         try {
             // Aus dem Katalog schon auf den Space beschränkt; sonst einzeln mit dem aktuellen Space der Seite.
@@ -876,15 +877,6 @@ public class ExportAssetCollection {
             if (!dataset.spaceKey().equals(list.spaceKey())) {
                 // Inzwischen in einem anderen Space: die Seite bleibt, wie sie exportiert wurde, ohne Bilder.
                 return null;
-            }
-            if (searched != null && list.attachments().attachments().isEmpty() && run.share.images()) {
-                // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
-                // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen nachweislich im
-                // Space.
-                String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
-                if (!dataset.spaceKey().equals(current)) {
-                    return null;
-                }
             }
             if (!list.attachments().complete()) {
                 // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.
@@ -898,7 +890,6 @@ public class ExportAssetCollection {
                 order.add(attachment.attachmentId());
             }
             for (PageAttachment attachment : ordered) {
-                ownAttachments.add(attachment.attachmentId());
                 AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
                 if (kind == AssetKind.OTHER) {
                     if (run.share.documents() && run.settings.attachments()) {
@@ -910,7 +901,6 @@ public class ExportAssetCollection {
                 if (!run.share.images()) {
                     continue;
                 }
-                attachmentIds.add(attachment.attachmentId());
                 steps.add(new Step(attachment, false, null, false));
                 discovered++;
             }
@@ -920,48 +910,82 @@ public class ExportAssetCollection {
                 checked = false;
             }
         }
-        if (run.share.images()) {
-            // Lese-Ansicht und Mermaid gehören zu den Bildern.
-            boolean foreign = ForeignContent.of(snapshot).present();
-            boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
-            try {
-                for (HarvestSource.ViewImage image : readingView(exportId, sourceId, snapshot,
-                        foreign && !mayShowForeign)) {
-                    if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
-                        continue;
-                    }
-                    boolean otherPage = image.attachmentId() != null && !ownAttachments.contains(image.attachmentId());
-                    steps.add(new Step(null, false, image, (foreign || otherPage) && !mayShowForeign));
-                    discovered++;
-                }
-            } catch (SourceAccessException e) {
-                unreachable(e);
-                if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
-                    checked = false;
-                }
-            }
-        }
         context.discovered(discovered);
-        return new PagePlan(pageId, list, steps, order, checked, discovered);
+        return new PagePlan(pageId, list, searched != null, steps, order, checked, discovered);
+    }
+
+    /**
+     * Ergebnis des Ladens einer Seite.
+     *
+     * @param checked     ob die Seite vollständig geprüft werden konnte
+     * @param discovered  alle Verweise der Seite: die gezählten Anhänge und die Bilder der Lese-Ansicht
+     */
+    private record Loaded(boolean checked, long discovered) {
     }
 
     /**
      * Lädt, was die Vorbereitung für eine Seite gefunden hat, und schreibt die Einträge in {@code entries}: Anhänge in
-     * der Reihenfolge der Quelle, dann Bilder der Lese-Ansicht, dann Mermaid.
-     *
-     * @return ob die Seite vollständig geprüft werden konnte
+     * der Reihenfolge der Quelle, dann Bilder der Lese-Ansicht, dann Mermaid. Die Lese-Ansicht (Bilder aus Makros wie
+     * draw.io oder eingebundenen Seiten) holt erst dieser Durchgang, Seite für Seite wie vor #635; die
+     * Vorbereitung ruft je Seite nichts ab (Angelo 11.11.2026).
      */
-    private boolean load(Run run, ConversionInput dataset, PagePlan plan, PageSnapshot snapshot,
-                         List<ExportAssetManifest.Entry> entries) {
+    private Loaded load(Run run, String exportId, ConversionInput dataset, PagePlan plan, PageSnapshot snapshot,
+                        List<ExportAssetManifest.Entry> entries) {
         JobContext context = run.context;
         String sourceId = dataset.sourceId();
         String pageId = plan.pageId();
         PageAttachmentList list = plan.list();
+        boolean checked = plan.checked();
+        long discovered = plan.discovered();
         Set<String> drawn = new HashSet<>();
         Map<String, ExportAssetManifest.Entry> byId = new HashMap<>();
         List<ExportAssetManifest.Entry> views = new ArrayList<>();
         try {
-            for (Step step : plan.steps()) {
+            List<Step> steps = new ArrayList<>(plan.steps());
+            if (run.share.images() && needsReadingView(snapshot)) {
+                if (plan.catalog() && list != null && list.attachments().attachments().isEmpty()) {
+                    // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
+                    // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen
+                    // nachweislich im Space.
+                    try {
+                        String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
+                        if (!dataset.spaceKey().equals(current)) {
+                            return new Loaded(false, discovered);
+                        }
+                    } catch (SourceAccessException e) {
+                        // Wie zuvor in der Vorbereitung: nicht erreichbar hält an, sonst bleibt die Seite ungeprüft;
+                        // ohne bekannten Space keine Lese-Ansicht.
+                        unreachable(e);
+                        return new Loaded(false, discovered);
+                    }
+                }
+                Set<String> imageIds = new HashSet<>();
+                for (Step step : plan.steps()) {
+                    if (step.attachment() != null && !step.document()) {
+                        imageIds.add(step.attachment().attachmentId());
+                    }
+                }
+                boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
+                try {
+                    long found = 0;
+                    for (HarvestSource.ViewImage image : readingView(exportId, sourceId, snapshot,
+                            !mayShowForeign)) {
+                        if (image.attachmentId() != null && imageIds.contains(image.attachmentId())) {
+                            continue;
+                        }
+                        steps.add(new Step(null, false, image, !mayShowForeign));
+                        found++;
+                    }
+                    context.discovered(found);
+                    discovered += found;
+                } catch (SourceAccessException e) {
+                    unreachable(e);
+                    if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                        checked = false;
+                    }
+                }
+            }
+            for (Step step : steps) {
                 if (step.document()) {
                     byId.put(step.attachment().attachmentId(), document(run, list, pageId, step.attachment()));
                 } else if (step.attachment() != null) {
@@ -983,7 +1007,7 @@ public class ExportAssetCollection {
             entries.addAll(views);
         }
         if (!run.share.images()) {
-            return plan.checked();
+            return new Loaded(checked, discovered);
         }
         List<String> diagrams = mermaid(snapshot);
         for (int i = 0; i < diagrams.size(); i++) {
@@ -994,7 +1018,7 @@ public class ExportAssetCollection {
                     Assets.sha256(text), ExportAssetManifest.Status.STORED, null,
                     rendered(sourceId, pageId, Assets.MERMAID_RENDITION, text)));
         }
-        return plan.checked();
+        return new Loaded(checked, discovered);
     }
 
     /** Ein Bild-Anhang; das Backup-PNG eines schon gezeichneten Diagramms wird nicht geladen. */
@@ -1086,6 +1110,20 @@ public class ExportAssetCollection {
         }
         putView(exportId, view);
         return live.images();
+    }
+
+    /**
+     * Ob die Seite die Lese-Ansicht braucht: nur bei berechneten oder fremden Inhalten ({@link ForeignContent}:
+     * include, excerpt-include, multiexcerpt-include, children, Jira …) und bei Erwähnungen von Personen, deren Namen
+     * erst die gerenderte Ansicht nennt ({@code StorageParser}). Bilder der Seite selbst kommen aus dem
+     * Anhangskatalog, draw.io und Mermaid aus der Quelle; für alle anderen Seiten kein Abruf (Angelo 11.11.2026).
+     */
+    static boolean needsReadingView(PageSnapshot snapshot) {
+        if (ForeignContent.of(snapshot).present()) {
+            return true;
+        }
+        String storage = ForeignContent.storage(snapshot);
+        return storage != null && storage.contains("<ri:user");
     }
 
     /** Ablegen darf die Bilder nie verhindern; ohne Ansicht melden die Converter den eingebundenen Inhalt fehlend. */
