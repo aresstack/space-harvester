@@ -1400,20 +1400,47 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             LOG.info("Quelle {}: Einmalcode für Abfrage {} über Adapter-Instanz {} gesendet", id, instance(challenge),
                     instance(port));
             try {
-                OneTimeCodeChallenge again = bound == null ? challenge.submit(code)
-                        : withWebLogin(bound, () -> challenge.submit(code));
+                OneTimeCodeChallenge again = sendThroughProxy(code);
                 LOG.info("Quelle {}: Einmalcode für Abfrage {}: {}", id, instance(challenge),
                         again == null ? "angenommen" : "neue Abfrage " + instance(again));
                 return next(again);
             } catch (KnowledgeSourceException e) {
                 LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
                         e.getClass().getSimpleName(), e.kind());
+                int tunnel = SignInFailures.refusedTunnel(e);
+                if (tunnel > 0) {
+                    throw new SourceAccessException(id, SourceAccessException.Reason.UNAVAILABLE,
+                            SignInFailures.codeNotDelivered(tunnel), e);
+                }
                 SignInChallenge reloaded = reloadAfterServerError(e);
                 if (reloaded != this) {
                     return reloaded;
                 }
                 throw sendFailure(e, tokenLogin && bound == null);
             }
+        }
+
+        /**
+         * Sendet den Code; lehnt der Proxy den Tunnel mit einem Serverfehler ab (502/503/504), einmal erneut. Dann hat
+         * Confluence den Code nie gesehen, er ist noch nicht verbraucht (Angelo 11.11.2026: HTTP 503 nach 20 s, derselbe
+         * Code wurde zwei Minuten später angenommen).
+         */
+        private OneTimeCodeChallenge sendThroughProxy(char[] code) throws KnowledgeSourceException {
+            try {
+                return send(code);
+            } catch (KnowledgeSourceException e) {
+                int tunnel = SignInFailures.refusedTunnel(e);
+                if (tunnel < 0) {
+                    throw e;
+                }
+                LOG.info("Quelle {}: Proxy baute keinen Tunnel zu Confluence auf (HTTP {}), Einmalcode für Abfrage {} "
+                        + "wird einmal erneut gesendet", id, tunnel, instance(challenge));
+                return send(code);
+            }
+        }
+
+        private OneTimeCodeChallenge send(char[] code) throws KnowledgeSourceException {
+            return bound == null ? challenge.submit(code) : withWebLogin(bound, () -> challenge.submit(code));
         }
 
         /**
@@ -1424,6 +1451,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
          * es so nicht, die alte Seite ist ohnehin tot. Nicht bei der Sitzung des Token-Ports: dort ist die 500 die
          * bekannte Ablehnung des Codes bei Token-Anmeldung ({@link SignInFailures#tokenLoginRejected}).
          *
+         * <p>Ebenso, wenn die Antwort auf den Code zu groß war: Confluence hat den Code angenommen und auf die Datei
+         * weitergeleitet, die der Transport mitlas, bis die Grenze für Antworten griff (Angelo 11.11.2026, PDF mit 30 MB).
+         * Das ist kein abgelehnter Code; der Abruf lädt die Datei mit seiner eigenen Grenze und bestätigt die Anmeldung.
+         *
          * @return {@code this}, wenn nicht neu geladen wurde oder das Neuladen anders scheiterte
          */
         private SignInChallenge reloadAfterServerError(KnowledgeSourceException e) {
@@ -1431,13 +1462,16 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (retry == null) {
                 retry = lastRetry;
             }
-            if (retry == null || (tokenLogin && bound == null) || e.kind() != KnowledgeSourceException.Kind.ACCESS_DENIED
-                    || !SERVER_ERROR_AFTER_SENDING.matcher(String.valueOf(e.getMessage())).find()) {
+            boolean fileAnswered = answeredWithTooMuch(e);
+            boolean serverError = !(tokenLogin && bound == null) && e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED
+                    && SERVER_ERROR_AFTER_SENDING.matcher(String.valueOf(e.getMessage())).find();
+            if (retry == null || !(fileAnswered || serverError)) {
                 return this;
             }
             FileFetch<?> again = retry;
-            LOG.info("Quelle {}: Code-Seite {} antwortet mit Serverfehler, Dateiabruf wird einmal neu geladen", id,
-                    instance(challenge));
+            LOG.info("Quelle {}: Code-Seite {} antwortet {}, Dateiabruf wird einmal neu geladen", id,
+                    instance(challenge), fileAnswered ? "mit einer zu großen Antwort (Weiterleitung auf die Datei)"
+                            : "mit Serverfehler");
             try {
                 if (bound == null) {
                     again.from(port);
@@ -1448,13 +1482,27 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return null;
             } catch (OneTimeCodeRequiredException required) {
                 retries.put(required.challenge(), again);
-                LOG.info("Quelle {}: neue Code-Seite {} nach Serverfehler", id, instance(required.challenge()));
+                LOG.info("Quelle {}: neue Code-Seite {} beim Neuladen", id, instance(required.challenge()));
                 return new Challenge(required.challenge(), bound, RELOADED_NOTE, true);
             } catch (KnowledgeSourceException failed) {
-                LOG.info("Quelle {}: Neuladen nach Serverfehler gescheitert ({}, {})", id,
+                LOG.info("Quelle {}: Neuladen nach dem Absenden gescheitert ({}, {})", id,
                         failed.getClass().getSimpleName(), failed.kind());
                 return this;
             }
+        }
+
+        /** Ob die Antwort die Grenze für Antworten überschritt (Adapter-eigene oder API-Ausnahme, irgendwo in der Kette). */
+        private static boolean answeredWithTooMuch(Throwable failure) {
+            for (Throwable current = failure; current != null; current = current.getCause()) {
+                if (current instanceof ResponseTooLargeException
+                        || current.getClass().getSimpleName().endsWith("ResponseTooLargeException")) {
+                    return true;
+                }
+                if (current.getCause() == current) {
+                    break;
+                }
+            }
+            return false;
         }
 
         /** Nur eine Abfrage aus der Sitzung des Token-Ports fragt Benutzer und Passwort ab. */

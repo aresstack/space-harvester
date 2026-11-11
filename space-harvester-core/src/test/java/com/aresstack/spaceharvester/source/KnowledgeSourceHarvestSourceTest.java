@@ -1028,6 +1028,79 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * #571, Angelo 11.11.2026: Der Proxy lehnte den Tunnel beim Absenden nach 20 s mit HTTP 503 ab; Confluence sah den
+     * Code nie, derselbe Code galt zwei Minuten später. Darum geht er nach einer solchen Ablehnung gleich noch einmal.
+     */
+    @Test
+    void aTunnelTheProxyRefusesOnceSendsTheSameCodeAgain() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 1;
+        webPort.refusedTunnels = 1;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        seen.clear();
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("web-port code anna:pw-value", "web-port code anna:pw-value");
+    }
+
+    /** #571: Lehnt der Proxy auch den zweiten Tunnel ab, sagt das Codefeld, dass der Code noch gilt. */
+    @Test
+    void aTunnelTheProxyRefusesTwiceSaysTheCodeDidNotArriveAndKeepsThePage() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 1;
+        webPort.refusedTunnels = 2;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        seen.clear();
+
+        SourceAccessException failure = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> required.challenge().submit("000000".toCharArray()), SourceAccessException.class);
+
+        assertThat(failure.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE);
+        assertThat(com.aresstack.spaceharvester.application.signin.SignInFailures.describe(failure,
+                "wiki.example.org")).startsWith("Der Proxy hat keine Verbindung zu Confluence aufgebaut (HTTP 503, "
+                        + "auch im zweiten Versuch). Der Code hat Confluence nicht erreicht");
+        assertThat(seen).hasSize(2);
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+    }
+
+    /**
+     * #571, Angelo 11.11.2026: Confluence nahm den Code an und leitete auf ein PDF mit 30 MB weiter; der Transport las
+     * es bis zur Grenze für Antworten mit und meldete „zu groß“. Das ist kein abgelehnter Code: Der Abruf lädt die Datei
+     * neu, und die Anmeldung gilt.
+     */
+    @Test
+    void aTooLargeAnswerToTheCodeIsTheFileAndCountsAsAcceptedOnceItLoads() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        KnowledgeSourceHarvestSource source = signedInWebSession(new WebFiles(secrets, seen, "token-port", 1, null),
+                webPort);
+        webPort.locked = 1;
+        webPort.tooLargeNext = true;
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+        seen.clear();
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("web-port code anna:pw-value", "web-port image anna:pw-value");
+    }
+
+    /**
      * Bild-Port wie Confluence mit Zwei-Faktor-Anmeldung: die ersten {@code locked} Bildabrufe liefern die Code-Seite,
      * danach das Bild. Merkt sich je Abruf und je Absenden, mit welcher Anmeldung der Adapter es täte.
      */
@@ -1040,6 +1113,10 @@ class KnowledgeSourceHarvestSourceTest {
         private int locked;
         /** Das nächste Absenden endet wie bei Angelo am 11.11.2026 mit HTTP 500 (Seite nimmt keinen Code mehr an). */
         private boolean serverErrorNext;
+        /** So oft lehnt der Proxy den Tunnel beim Absenden noch mit HTTP 503 ab (Angelo 11.11.2026). */
+        private int refusedTunnels;
+        /** Das nächste Absenden nimmt den Code an, die Weiterleitung auf die Datei ist aber zu groß (Angelo 11.11.2026). */
+        private boolean tooLargeNext;
 
         WebFiles(ConfiguredSecrets secrets, List<String> seen, String name, int locked, String mode) {
             this.secrets = secrets;
@@ -1095,6 +1172,19 @@ class KnowledgeSourceHarvestSourceTest {
                 @Override
                 public OneTimeCodeChallenge submit(char[] code) throws KnowledgeSourceException {
                     seen.add(name + " code " + principalAndSecret(secrets));
+                    if (refusedTunnels > 0) {
+                        refusedTunnels--;
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                                "Einmalcode nicht gesendet (IOException)", new java.io.IOException("Unable to tunnel "
+                                        + "through proxy. Proxy returns \"HTTP/1.1 503 Service Unavailable\""));
+                    }
+                    if (tooLargeNext) {
+                        tooLargeNext = false;
+                        throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                                "Einmalcode nicht gesendet (ConfluenceResponseTooLargeException)",
+                                new com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence
+                                        .ConfluenceResponseTooLargeException(1000));
+                    }
                     if (serverErrorNext) {
                         serverErrorNext = false;
                         throw new KnowledgeSourceException(KnowledgeSourceException.Kind.ACCESS_DENIED,

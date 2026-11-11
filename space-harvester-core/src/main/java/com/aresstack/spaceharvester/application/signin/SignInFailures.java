@@ -46,6 +46,12 @@ public final class SignInFailures {
      */
     static final String LOGIN_REJECTED = "Confluence lehnt Benutzername oder Passwort ab";
 
+    /**
+     * Anfang der Meldung, wenn der Proxy beim Senden des Einmalcodes auch im zweiten Versuch keinen Tunnel zu Confluence
+     * aufbaute (HTTP 5xx auf {@code CONNECT}, #571): Der Code hat Confluence nicht erreicht.
+     */
+    static final String CODE_NOT_DELIVERED = "Der Proxy hat keine Verbindung zu Confluence aufgebaut";
+
     /** {@code Unable to tunnel through proxy. Proxy returns "HTTP/1.1 502 Bad Gateway"} des JDK. */
     private static final Pattern TUNNEL = Pattern.compile("tunnel through proxy.*?HTTP/\\d(?:\\.\\d)? (\\d{3})",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
@@ -101,6 +107,30 @@ public final class SignInFailures {
     public static String loginRejected(int status) {
         return LOGIN_REJECTED + " (HTTP " + status + "). Bitte Benutzername und Passwort prüfen (nicht den Access-Token); "
                 + "nach mehreren Fehlversuchen kann Confluence erst eine Anmeldung im Browser verlangen";
+    }
+
+    /**
+     * Klare Meldung, wenn der Proxy den Tunnel beim Senden des Codes zweimal mit einem Serverfehler ablehnte (#571);
+     * {@link #describe} gibt sie unverändert als Art aus.
+     */
+    public static String codeNotDelivered(int status) {
+        return CODE_NOT_DELIVERED + " (HTTP " + status + ", auch im zweiten Versuch). Der Code hat Confluence nicht "
+                + "erreicht und ist noch nicht verbraucht; bitte gleich noch einmal Bestätigen";
+    }
+
+    /**
+     * HTTP-Status, mit dem der Proxy den {@code CONNECT}-Tunnel mit einem Serverfehler (5xx) ablehnte, sonst -1. Dann
+     * kam die Anfrage nie beim Ziel an.
+     */
+    public static int refusedTunnel(Throwable failure) {
+        StringBuilder messages = new StringBuilder();
+        for (Throwable current : chain(failure)) {
+            if (current.getMessage() != null) {
+                messages.append(current.getMessage()).append('\n');
+            }
+        }
+        Matcher tunnel = TUNNEL.matcher(messages);
+        return tunnel.find() && tunnel.group(1).startsWith("5") ? Integer.parseInt(tunnel.group(1)) : -1;
     }
 
     /** Ob die Ursachenkette eine Antwort mit diesem HTTP-Status meldet („… HTTP 401 …“). */
@@ -202,7 +232,8 @@ public final class SignInFailures {
                 return "Verbindung abgelehnt (ConnectException)";
             }
             if (current.getMessage() != null && (current.getMessage().startsWith(TOKEN_LOGIN_REJECTED)
-                    || current.getMessage().startsWith(LOGIN_REJECTED))) {
+                    || current.getMessage().startsWith(LOGIN_REJECTED)
+                    || current.getMessage().startsWith(CODE_NOT_DELIVERED))) {
                 return current.getMessage();
             }
             if (current.getMessage() != null) {
