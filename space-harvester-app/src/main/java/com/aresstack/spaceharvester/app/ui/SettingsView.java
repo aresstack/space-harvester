@@ -452,7 +452,7 @@ public final class SettingsView implements View {
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
                     .add("Exporte", s.exportDirectory().toString())
                     .add("Anhänge", s.assetDirectory().toString())
-                    .add("Größter Anhang", Texts.bytes(s.maxAssetBytes()))
+                    .add("Größter Anhang", Texts.sizeLimit(s.maxAssetBytes()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))
                     .add("Größter Seitenbaum", s.maxTreeNodes() + " Seiten")
                     .add("PDF-Schrift", s.pdfFont() == null ? "eingebaut" : s.pdfFont().toString());
