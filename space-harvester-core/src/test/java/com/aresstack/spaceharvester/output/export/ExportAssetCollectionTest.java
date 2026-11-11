@@ -282,9 +282,9 @@ class ExportAssetCollectionTest {
                 page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
                 page("confluence", "DEV", "101", "100"), page("confluence", "DEV", "103", "100"),
                 page("confluence", "DEV", "104", "100")));
-        // 100 und 101 sind fertig geprüft (101 mit einer gescheiterten Datei), während 103 hält der Benutzer an.
-        source.onListing = pageId -> {
-            if (pageId.equals("103")) {
+        // Während die Datei von 101 scheitert, hält der Benutzer an: 100 und 101 sind fertig, 103 und 104 nicht.
+        source.onDownload = src -> {
+            if (src.equals("att9")) {
                 jobs.list("client-a", JobType.ASSETS).stream()
                         .filter(job -> job.state() == JobState.RUNNING)
                         .forEach(job -> jobs.pause(job.id(), "client-a"));
@@ -297,7 +297,7 @@ class ExportAssetCollectionTest {
         assertThat(paused.progress().failed()).isEqualTo(1);
         assertThat(paused.lifecycle().actions()).first().isEqualTo(JobAction.RETRY_FAILED);
         int listedBefore = source.listed.size();
-        source.onListing = pageId -> { };
+        source.onDownload = src -> { };
 
         assertThat(conversions.retryImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
         drain();
@@ -474,6 +474,7 @@ class ExportAssetCollectionTest {
 
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
+            onDownload.accept(attachment.attachmentId());
             if (attachment.attachmentId().equals("att9")) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND, "gelöscht", null);
             }
