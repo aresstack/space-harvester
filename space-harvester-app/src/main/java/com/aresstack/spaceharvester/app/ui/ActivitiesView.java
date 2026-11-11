@@ -127,6 +127,15 @@ public final class ActivitiesView implements View {
             + "gleichzeitig laden (0 bis " + JobLimits.MAX_PARALLEL_DOWNLOADS + "). Bei 0 wird nur vorbereitet, "
             + "nichts heruntergeladen.", 0, JobLimits.MAX_PARALLEL_DOWNLOADS, List.of(0, 1, 2, 4, 8, 16, 32, 64),
             JobLimits.DEFAULT_PARALLEL_DOWNLOADS, value -> parallel(), this::invalidParallel);
+    /**
+     * Rechts neben „Downloads“ (Angelo 11.11.2026): Verbindungen aller ladenden Bilder- und Anhängeaufträge zusammen
+     * ({@code jobs.download-connections}); Texte laden weiter über eine Verbindung, 0 lädt keine Bilder und Anhänge.
+     */
+    final ParallelChoice connections = new ParallelChoice("Verbindungen: wie viele Verbindungen alle Bilder- und "
+            + "Anhängedownloads zusammen nutzen (0 bis " + JobLimits.MAX_DOWNLOAD_CONNECTIONS + "). Texte laden "
+            + "weiter über eine Verbindung. Bei 0 werden keine Bilder und Anhänge geladen; die Aufträge warten.",
+            0, JobLimits.MAX_DOWNLOAD_CONNECTIONS, List.of(0, 1, 2, 4, 8, 16, 32, 64),
+            JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS, value -> parallel(), this::invalidParallel);
     /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
     final ParallelChoice preparations = new ParallelChoice("Parallele Vorbereitungen: wie viele Bilder- und "
             + "Anhängeaufträge gleichzeitig ihre Verweise zählen (1 bis " + JobLimits.MAX_PARALLEL_PREPARATIONS + ").",
@@ -216,7 +225,10 @@ public final class ActivitiesView implements View {
         downloadsLabel.setToolTipText(downloads.box().getToolTipText());
         JLabel preparationsLabel = new JLabel("Vorbereitung");
         preparationsLabel.setToolTipText(preparations.box().getToolTipText());
-        for (JLabel label : List.of(downloadsLabel, preparationsLabel)) {
+        JLabel connectionsLabel = new JLabel("Verbindungen");
+        connectionsLabel.setToolTipText(connections.box().getToolTipText());
+        connectionsLabel.setLabelFor(connections.box());
+        for (JLabel label : List.of(downloadsLabel, preparationsLabel, connectionsLabel)) {
             label.setFont(Comic.regular(12f));
             label.setForeground(Comic.INK);
         }
@@ -225,7 +237,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), deleteAll);
+                downloads.box(), connectionsLabel, connections.box(), deleteAll);
         // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
         pauseAll.addActionListener(e -> pauseOrResumeAll());
         cancelAll.addActionListener(e -> cancelAll());
@@ -457,6 +469,7 @@ public final class ActivitiesView implements View {
             deleteAll.setEnabled(!jobs.isEmpty());
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
+            connections.refresh(runtime.workspace().downloadConnections());
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
@@ -1443,7 +1456,7 @@ public final class ActivitiesView implements View {
             + "des Downloads verschwindet mit dem Auftrag.";
 
     /**
-     * Übernimmt die beiden Grenzen im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
+     * Übernimmt die drei Grenzen im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
      * überstehen; beides im Hintergrund ({@link AppContext#parallel}).
      */
     void parallel() {
@@ -1452,13 +1465,24 @@ public final class ActivitiesView implements View {
         }
         int prepare = preparations.value();
         int load = downloads.value();
-        context.parallel(prepare, load, () -> {
-            feedback.success(load == 0
-                    ? "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet"
-                    : "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + ", "
-                            + Texts.count(prepare, "Vorbereitung", "Vorbereitungen"));
+        int lines = connections.value();
+        context.parallel(prepare, load, lines, () -> {
+            feedback.success(parallelMessage(prepare, load, lines));
             poll();
         }, feedback::problem);
+    }
+
+    /** Die Rückmeldung nach dem Übernehmen der drei Grenzen. */
+    static String parallelMessage(int prepare, int load, int lines) {
+        if (load == 0) {
+            return "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet";
+        }
+        if (lines == 0) {
+            return "Keine Verbindungen: Bilder und Anhänge warten, Texte laden weiter";
+        }
+        return "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + " mit zusammen "
+                + Texts.count(lines, "Verbindung", "Verbindungen") + ", "
+                + Texts.count(prepare, "Vorbereitung", "Vorbereitungen");
     }
 
     private void invalidParallel(String message) {

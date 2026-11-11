@@ -312,10 +312,11 @@ public final class AppRuntime implements AutoCloseable {
      *
      * @throws IllegalArgumentException außerhalb der Grenzen ({@code JobLimits})
      */
-    public synchronized void parallel(int preparations, int downloads) {
+    public synchronized void parallel(int preparations, int downloads, int connections) {
         workspace.setParallelPreparations(preparations);
         workspace.setParallelDownloads(downloads);
-        settings = settings.withParallel(preparations, downloads);
+        workspace.setDownloadConnections(connections);
+        settings = settings.withParallel(preparations, downloads, connections);
     }
 
     /** Was der Core bei der letzten abgelehnten Änderung bemängelt hat; leer, wenn die letzte übernommen wurde. */

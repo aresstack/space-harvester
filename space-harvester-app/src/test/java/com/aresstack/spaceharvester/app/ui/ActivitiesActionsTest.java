@@ -291,6 +291,17 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.groupIcon(false, false, false)).isNull();
     }
 
+    /** Rückmeldung nach dem Ändern der Grenzen, mit Verbindungsbudget (Angelo 11.11.2026). */
+    @Test
+    void theFeedbackNamesTheConnectionBudget() {
+        assertThat(ActivitiesView.parallelMessage(2, 4, 8))
+                .isEqualTo("Gleichzeitig 4 Downloads mit zusammen 8 Verbindungen, 2 Vorbereitungen");
+        assertThat(ActivitiesView.parallelMessage(2, 4, 0))
+                .isEqualTo("Keine Verbindungen: Bilder und Anhänge warten, Texte laden weiter");
+        assertThat(ActivitiesView.parallelMessage(2, 0, 8))
+                .isEqualTo("Downloads angehalten: Bilder und Anhänge werden nur vorbereitet");
+    }
+
     /** Alle auf- und alle zuklappen (Angelo 11.11.2026): Knöpfe links neben den Auswahlen. */
     @Test
     void allGroupsCanBeExpandedAndCollapsedAtOnce() {
