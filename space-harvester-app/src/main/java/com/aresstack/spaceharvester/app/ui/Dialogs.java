@@ -211,11 +211,17 @@ public final class Dialogs {
 
     /** Packt, rundet die Ecken, zentriert über dem Besitzer und zeigt den Dialog modal. */
     static void present(JDialog dialog, Dimension minimum) {
+        present(dialog, minimum, null, size -> { });
+    }
+
+    /** Wie {@link #present(JDialog, Dimension)}, mit fester Wunschgröße statt der gepackten; {@code sized} erfährt die Größe beim Öffnen. */
+    static void present(JDialog dialog, Dimension minimum, Dimension preferred,
+                        java.util.function.Consumer<Dimension> sized) {
         dialog.pack();
         // Nie höher oder breiter als der nutzbare Bildschirm (ohne Taskleiste): Sonst ragt die Knopfleiste unten
         // heraus, und der Bildlauf im Inhalt glaubt, alles passe, bis eine Meldung Platz nimmt (Angelo, 10.11.).
         java.awt.Rectangle screen = usableScreen(dialog);
-        Dimension fitted = fit(dialog.getSize(), minimum, screen);
+        Dimension fitted = fit(preferred != null ? preferred : dialog.getSize(), minimum, screen);
         if (minimum != null) {
             dialog.setMinimumSize(fit(minimum, null, screen));
         }
@@ -229,6 +235,7 @@ public final class Dialogs {
             int y = Math.max(screen.y, Math.min(dialog.getY(), screen.y + screen.height - dialog.getHeight()));
             dialog.setLocation(x, y);
         }
+        sized.accept(dialog.getSize());
         dialog.setVisible(true);
     }
 
@@ -267,6 +274,34 @@ public final class Dialogs {
         JDialog dialog = dialog(parent, title);
         frame(dialog, title, body, dialog::dispose);
         present(dialog, new Dimension(320, 240));
+    }
+
+    /**
+     * Wie {@link #view}, aber das Fenster merkt sich unter {@code sizeKey} die Größe, die der Benutzer zuletzt gezogen
+     * hat; ohne gemerkte Größe ist es {@code share} des nutzbaren Bildschirms groß. Beim Öffnen wird die Größe immer
+     * auf den aktuellen Bildschirm begrenzt (sonst läge das ✕ nach einem Bildschirmwechsel außerhalb); gespeichert wird
+     * nur eine selbst gezogene Größe, nicht diese Begrenzung.
+     */
+    public static void viewSized(Component parent, String title, JComponent body, String sizeKey, double share) {
+        JDialog dialog = dialog(parent, title);
+        Dimension[] opened = new Dimension[1];
+        Runnable close = () -> {
+            if (opened[0] != null && !opened[0].equals(dialog.getSize())) {
+                WindowSizes.remember(sizeKey, dialog.getSize());
+            }
+            dialog.dispose();
+        };
+        frame(dialog, title, body, close);
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                close.run();
+            }
+        });
+        java.awt.Rectangle screen = usableScreen(dialog);
+        Dimension preferred = WindowSizes.recall(sizeKey).orElseGet(() -> screen == null ? new Dimension(900, 700)
+                : new Dimension((int) (screen.width * share), (int) (screen.height * share)));
+        present(dialog, new Dimension(320, 240), preferred, size -> opened[0] = size);
     }
 
     static void show(JDialog dialog, String title, JComponent body, ComposerButton... buttons) {
