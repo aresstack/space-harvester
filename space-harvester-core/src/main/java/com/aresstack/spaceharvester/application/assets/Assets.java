@@ -154,6 +154,13 @@ public class Assets {
      * Inhalt und Text; so groß wie die Grenze der Textextraktion ({@code TikaDocumentText.DEFAULT_MAX_BYTES}).
      */
     static final long IN_MEMORY_BYTES = 20L * 1024 * 1024;
+    /**
+     * Größte Datei, die {@link #content} und {@link #stored} mit ihren Bytes liefern, unabhängig von der Grenze für
+     * Downloads: so groß wie bisher die Standardgrenze für Anhänge ({@code READER_MAX_BYTES} im Enterprise AI Client).
+     * Größere Dateien gibt es nur als Strom ({@link #stream}, {@link #openStored}), damit keine den Speicher füllt.
+     */
+    static final long MAX_IN_MEMORY_BYTES = 100L * 1024 * 1024;
+    private volatile long maxInMemoryBytes = MAX_IN_MEMORY_BYTES;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
     private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
@@ -280,7 +287,8 @@ public class Assets {
      * heruntergeladen und abgelegt.
      *
      * @throws SourceAccessException  {@code NOT_FOUND}, wenn der Anhang nicht zur Seite gehört, sonst wie die Quelle
-     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
+     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet oder größer ist als {@link
+     *                                #MAX_IN_MEMORY_BYTES}; dann gibt es sie nur als Strom ({@link #stream})
      */
     public AssetContent content(PageAttachmentList list, String attachmentId) {
         return content(list, attachmentId, true);
@@ -345,8 +353,20 @@ public class Assets {
         }
     }
 
-    /** Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}). */
+    /** Nur für Tests: eine kleinere Grenze für Dateien im Speicher als {@link #MAX_IN_MEMORY_BYTES}. */
+    void maxInMemoryBytes(long maxInMemoryBytes) {
+        this.maxInMemoryBytes = maxInMemoryBytes;
+    }
+
+    /**
+     * Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}).
+     *
+     * @throws AssetTooLargeException über {@link #MAX_IN_MEMORY_BYTES}: dann nur als Strom
+     */
     private AssetContent read(Asset asset) {
+        if (asset.size() > maxInMemoryBytes) {
+            throw new AssetTooLargeException(asset.sourceId(), maxInMemoryBytes);
+        }
         try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
             return new AssetContent(asset, store.read(asset));
         }
@@ -756,20 +776,28 @@ public class Assets {
      * Die abgelegten Bytes zu {@code sha256}, dagegen geprüft; liest nie von der Quelle. Der Inhalt liegt nach seinem
      * Hash ab, daher auch ohne Version der Quelle und auch dann, wenn inzwischen eine neuere Version abgelegt ist.
      *
-     * @return leer, wenn nichts oder etwas anderes abgelegt ist
+     * @return leer, wenn nichts oder etwas anderes abgelegt ist, oder über {@link #MAX_IN_MEMORY_BYTES} (dann nur
+     *         als Strom, {@link #openStored})
      */
     public Optional<byte[]> stored(String sourceId, String attachmentId, String version, String sha256) {
         if (sha256 == null) {
             return Optional.empty();
         }
         Optional<Asset> found = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256));
+        if (found.isPresent() && found.get().size() > maxInMemoryBytes) {
+            return Optional.empty();
+        }
         Asset asset = found.orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId,
                 version, null, null, AssetKind.OTHER, 0, sha256, clock.instant()));
         byte[] content;
-        // Ohne Eintrag ist die Größe unbekannt und zählt als groß.
-        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null))) {
-            content = store.read(asset);
-        } catch (AssetStoreException e) {
+        // Ohne Eintrag ist die Größe unbekannt und zählt als groß; gelesen wird dann höchstens bis zur Grenze.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null));
+             InputStream in = store.open(asset)) {
+            content = in.readNBytes((int) Math.min(maxInMemoryBytes + 1, Integer.MAX_VALUE - 8));
+        } catch (AssetStoreException | IOException e) {
+            return Optional.empty();
+        }
+        if (content.length > maxInMemoryBytes) {
             return Optional.empty();
         }
         return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
@@ -1629,10 +1657,15 @@ public class Assets {
 
     /**
      * @param keep  ablegen, sonst nur liefern
-     * @param bytes die Bytes auch über {@link #IN_MEMORY_BYTES} in den Speicher lesen; sonst nur bis dahin
+     * @param bytes die Bytes auch über {@link #IN_MEMORY_BYTES} in den Speicher lesen, bis {@link
+     *              #MAX_IN_MEMORY_BYTES}; darüber {@link AssetTooLargeException}, nachdem er abgelegt ist
      */
     private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
                                 boolean bytes) {
+        if (bytes && !keep && attachment.fileSize() != null && attachment.fileSize() > maxInMemoryBytes) {
+            // Weder abzulegen noch ganz im Speicher zu halten: der Download wäre umsonst.
+            throw new AssetTooLargeException(source.id(), maxInMemoryBytes);
+        }
         Path staging = staging(source.id(), attachment);
         try {
             return download(source, pageId, attachment, keep, bytes, staging);
@@ -1734,7 +1767,7 @@ public class Assets {
                     "Anhang: leere Antwort, erwartet " + attachment.fileSize() + " Bytes", null);
         }
         byte[] content = null;
-        if (bytes || size <= IN_MEMORY_BYTES) {
+        if (size <= (bytes ? maxInMemoryBytes : Math.min(IN_MEMORY_BYTES, maxInMemoryBytes))) {
             try {
                 content = Files.readAllBytes(staging);
             } catch (IOException e) {
@@ -1757,6 +1790,10 @@ public class Assets {
                 size, sink.sha256(), file.retrievedAt());
         if (keep) {
             store.putFile(asset, staging);
+        }
+        if (bytes && content == null) {
+            // Abgelegt ist er dann schon; ganz in den Speicher kommt er nicht, nur als Strom.
+            throw new AssetTooLargeException(source.id(), maxInMemoryBytes);
         }
         return new Downloaded(asset, content);
     }

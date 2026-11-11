@@ -424,6 +424,44 @@ class AssetsTest {
     }
 
     @Test
+    void aFileAboveTheMemoryLimitIsStoredButOnlyHandedOutAsAStream() throws Exception {
+        Assets assets = assets(1000);
+        assets.maxInMemoryBytes(10);
+        byte[] content = "zwölf Bytes!".getBytes(StandardCharsets.UTF_8);
+        source.file("att1", "1", "zwölf Bytes!");
+        PageAttachmentList list = list(attachment("att1", "a.bin", "application/octet-stream", "1"));
+
+        assertThatThrownBy(() -> assets.content(list, "att1")).isInstanceOf(AssetTooLargeException.class);
+        Asset stored = assets.overview(list).entries().get(0).stored();
+        assertThat(stored).as("trotzdem abgelegt").isNotNull();
+        assertThatThrownBy(() -> assets.content(list, "att1")).as("auch aus der Ablage nicht ganz in den Speicher")
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(assets.stored("wiki", "att1", "1", stored.sha256())).isEmpty();
+        assertThat(assets.stored("wiki", "att1", "2", stored.sha256())).as("ohne Eintrag, Größe unbekannt").isEmpty();
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", true, null)) {
+            assertThat(stream.content().readAllBytes()).isEqualTo(content);
+        }
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThat(in.readAllBytes()).isEqualTo(content);
+        }
+        assertThat(source.downloads).isEqualTo(1);
+    }
+
+    @Test
+    void aFileAboveTheMemoryLimitThatMayNotBeStoredIsNotDownloadedForItsBytes() {
+        Assets assets = assets(1000);
+        assets.maxInMemoryBytes(10);
+        source.file("att1", "1", "zwölf Bytes!");
+        PageAttachment declared = new PageAttachment("att1", "test:wiki/attachment/att1", "a.bin",
+                "application/octet-stream", 13L, "1", null, null);
+
+        assertThatThrownBy(() -> assets.content(list(declared), "att1", false))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(source.downloads).as("weder abzulegen noch ganz im Speicher zu halten").isZero();
+    }
+
+    @Test
     void keepStoresTheAttachmentOnceAndLoadsAgainOnlyWhenForced() {
         Assets assets = assets(1000);
         source.file("att1", "1", "Bericht");
