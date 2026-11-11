@@ -60,9 +60,11 @@ import tools.jackson.databind.node.ObjectNode;
  * auswählt, welche Kandidaten im Kontext Fachbegriffe sind; es schreibt keine Erläuterungen. Jede Antwort wird gegen
  * die gefragten Kandidaten geprüft; Unbekanntes fällt weg.
  *
- * <p>Je Quelle ein Auftrag {@link JobType#ENRICHMENT}, Phase {@value #PHASE}; abgeglichen wird erst, wenn alle Anfragen
- * beantwortet sind ({@link Glossary#propose}), so bleibt nach Abbruch oder Fehler der vorige Stand samt allen
- * Benutzerentscheidungen. Schon entschiedene Begriffe (manuell, bestätigt, abgelehnt) gehen nicht an das Modell.
+ * <p>Je Quelle ein eigener Auftrag {@link JobType#GLOSSARY}, Phase {@value #PHASE}. Neue Vorschläge erscheinen
+ * sofort nach jeder beantworteten Anfrage ({@link Glossary#proposeSome}), damit das Fachglossar Teilergebnisse zeigt;
+ * entfernt oder als veraltet markiert wird erst im Abgleich, wenn alle Anfragen beantwortet sind
+ * ({@link Glossary#propose}). Nach Abbruch oder Fehler bleiben also die bisherigen Einträge und die schon
+ * vorgeschlagenen, alle Benutzerentscheidungen unverändert. Schon entschiedene Begriffe (manuell, bestätigt, abgelehnt) gehen nicht an das Modell.
  * Unveränderte Kandidaten beantwortet der Ergebnis-Cache ohne Anfrage. Text geht nur aus freigegebenen Quellen
  * ({@code external-processing-sources}) an das Modell, geprüft beim Start und vor jeder Anfrage. Ins Log kommen nur
  * Quelle und Anzahlen, nie Begriffe, Fundstellen oder Seiten.
@@ -213,7 +215,7 @@ public class GlossaryClassification {
         try {
             for (String id : sources) {
                 RelationScope scope = new RelationScope(id, space);
-                JobStatus status = jobs.submit(JobType.ENRICHMENT, id, space, caller.jobOwner(),
+                JobStatus status = jobs.submit(JobType.GLOSSARY, id, space, caller.jobOwner(),
                         JobTask.blocking(context -> {
                             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
                                 run(scope, context);
@@ -240,6 +242,7 @@ public class GlossaryClassification {
         String sourceId = scope.sourceId();
         phase(context, PHASE + ": Fundstellen");
         String version = model.version();
+        String generation = version + ";" + PROMPT_VERSION + "@" + clock.instant();
         Map<String, Candidate> candidates = collect(scope, context);
         Map<String, GlossaryEntry> decided = new HashMap<>();
         Map<String, GlossaryEntry> earlier = new HashMap<>();
@@ -296,6 +299,9 @@ public class GlossaryClassification {
         if (context != null) {
             context.discovered(asked.size());
         }
+        // Teilergebnisse sofort: schon bekannte Vorschläge (Cache, wieder gefunden) vor der ersten Anfrage.
+        Partial partial = new Partial(scope, generation, context);
+        partial.add(proposals);
         phase(context, PHASE + ": Modell");
         long spent = 0;
         int rejected = 0;
@@ -328,13 +334,16 @@ public class GlossaryClassification {
                 batch.forEach(candidate -> retained.add(candidate.normalized));
                 rejected++;
             } else {
+                List<Glossary.Proposal> chosenNow = new ArrayList<>();
                 for (Candidate candidate : batch) {
                     boolean chosen = technical.get().contains(candidate.normalized);
                     if (chosen) {
-                        proposals.add(candidate.proposal());
+                        chosenNow.add(candidate.proposal());
                     }
                     answered.put(candidate.fingerprint, chosen ? List.of("1") : List.of());
                 }
+                proposals.addAll(chosenNow);
+                partial.add(chosenNow);
             }
             if (context != null) {
                 context.processed(batch.size());
@@ -350,8 +359,10 @@ public class GlossaryClassification {
             context.checkpoint();
         }
         phase(context, PHASE + ": Abgleich");
-        Glossary.ProposalRun run = glossary.propose(ACTOR, scope, version + ";" + PROMPT_VERSION + "@"
-                + clock.instant(), proposals, retained);
+        Glossary.ProposalRun last = glossary.propose(ACTOR, scope, generation, proposals, retained);
+        // Was die Teilergebnisse schon angelegt haben, zählt der Abgleich nicht noch einmal.
+        Glossary.ProposalRun run = new Glossary.ProposalRun(partial.added + last.added(),
+                partial.updated + last.updated(), last.withdrawn(), last.suppressed(), last.stale());
         try {
             cache.replace(scope.sourceId() + '\u0000' + (scope.spaceKey() == null ? "" : scope.spaceKey()), answered);
         } catch (RuntimeException e) {
@@ -359,7 +370,7 @@ public class GlossaryClassification {
                     sourceId, e.getClass().getName());
         }
         if (context != null) {
-            context.written(run.added() + run.updated());
+            context.written(last.added() + last.updated());
         }
         LOG.log(System.Logger.Level.INFO, "Fachbegriffe ermitteln in {0}: {1} Kandidaten gefragt, {2} unverändert, "
                         + "{3} neu, {4} geändert, {5} entfallen, {6} unterdrückt, {7} veraltet, {8} Antworten verworfen",
@@ -496,6 +507,34 @@ public class GlossaryClassification {
                     .digest(input.toString().getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /** Die Teilergebnisse eines Laufs: jede beantwortete Anfrage legt ihre Vorschläge sofort an. */
+    private final class Partial {
+
+        private final RelationScope scope;
+        private final String generation;
+        private final JobContext context;
+        int added;
+        int updated;
+
+        Partial(RelationScope scope, String generation, JobContext context) {
+            this.scope = scope;
+            this.generation = generation;
+            this.context = context;
+        }
+
+        void add(List<Glossary.Proposal> proposals) {
+            if (proposals.isEmpty()) {
+                return;
+            }
+            Glossary.ProposalRun run = glossary.proposeSome(ACTOR, scope, generation, proposals);
+            added += run.added();
+            updated += run.updated();
+            if (context != null && run.added() + run.updated() > 0) {
+                context.written(run.added() + run.updated());
+            }
         }
     }
 

@@ -149,6 +149,11 @@ final class CoreGlossaryAccess implements GlossaryAccess {
         return jobs().cancel(jobId, caller.jobOwner());
     }
 
+    @Override
+    public Runnable observe(Runnable onChange) {
+        return harvester.glossary().subscribe(onChange);
+    }
+
     private Jobs jobs() {
         return harvester.jobs();
     }

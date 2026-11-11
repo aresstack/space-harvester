@@ -962,6 +962,7 @@ public final class Workspace {
         List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
         for (JobStatus enrichment : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
                 try {

@@ -38,7 +38,13 @@ public enum JobType {
      * Export des Knowledge Graph als JSON-LD 1.1 (#499, ADR 0024); liest nur vorhandene Analysen und stößt nie eine
      * Analyse an.
      */
-    KNOWLEDGE_GRAPH_EXPORT;
+    KNOWLEDGE_GRAPH_EXPORT,
+    /**
+     * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): der KI-Lauf des Fachglossars je Quelle, nur auf ausdrücklichen
+     * Wunsch; eigener Eintrag in der Auftragsliste. Eingeplant wie ein Folgeauftrag ({@link #followUp()}): er wartet
+     * auf Abgleiche und Exporte und belegt nie alle Plätze.
+     */
+    GLOSSARY;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
@@ -53,7 +59,7 @@ public enum JobType {
     }
 
     public boolean followUp() {
-        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS;
+        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY;
     }
 
     /**

@@ -149,6 +149,17 @@ public interface GlossaryAccess {
     /** Bricht den Lauf ab; was schon vorgeschlagen ist, bleibt, Benutzerentscheidungen ändert er nie. */
     JobStatus cancelClassification(String jobId);
 
+    /**
+     * Beobachter: meldet jede Änderung des Glossars, auch die Teilergebnisse eines laufenden „Fachbegriffe ermitteln“,
+     * aus beliebigem Thread.
+     *
+     * @return meldet den Beobachter wieder ab
+     */
+    default Runnable observe(Runnable onChange) {
+        return () -> {
+        };
+    }
+
     /** Kontext einer Belegstelle, leer wenn die Seite fehlt, nicht sichtbar oder inzwischen anders ist. */
     Optional<TermQueries.Snippet> snippet(RelationEvidence evidence, int chars);
 

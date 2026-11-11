@@ -425,6 +425,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void followJobs() {
+        activities.follow();
+    }
+
+    @Override
     public void showDiagnosis(String jobId) {
         show(AppContext.Section.STATUS);
         statusView.showJob(jobId);

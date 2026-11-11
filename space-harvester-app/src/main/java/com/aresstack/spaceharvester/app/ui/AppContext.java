@@ -81,6 +81,13 @@ public final class AppContext {
 
         void showJob(String jobId);
 
+        /**
+         * Ein Auftrag wurde außerhalb von „Aufträge“ gestartet und läuft im Hintergrund weiter: die Auftragsliste und
+         * der Balken der Statusleiste folgen ihm, ohne dass die Ansicht wechselt.
+         */
+        default void followJobs() {
+        }
+
         /** Status mit der Diagnose genau dieses Auftrags. */
         void showDiagnosis(String jobId);
 
