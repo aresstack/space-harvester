@@ -41,6 +41,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -89,6 +90,10 @@ public final class ActivitiesView implements View {
     private ExportDatasetInfo shownDataset;
     /** Datenbestand je fertigem Download, für die Format-Symbole in der Liste. */
     private final Map<String, ExportDatasetInfo> datasets = new HashMap<>();
+    /** Globaler Durchschnitt je geladener Datei für Bilder und Anhänge (Core), beim Abruf aufgefrischt. */
+    private final Map<JobType, java.time.Duration> averages = new java.util.EnumMap<>(JobType.class);
+    /** Zuletzt gelesene Zahl paralleler Downloads; bei 0 keine Restzeit. */
+    private int parallelNow = JobLimits.DEFAULT_PARALLEL_DOWNLOADS;
     /** Dateien des gewählten Downloads im Ausgabeordner (Name enthält die Export-ID). */
     private List<String> outputFiles = List.of();
     /** Format, das je Download gerade erzeugt wird. */
@@ -381,6 +386,10 @@ public final class ActivitiesView implements View {
             Map<String, ExportDatasetInfo> found = (Map<String, ExportDatasetInfo>) data[3];
             datasets.putAll(found);
             datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
+            for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
+                averages.put(type, runtime.workspace().averageDownload(type));
+            }
+            parallelNow = runtime.workspace().parallelDownloads();
             model.set(jobs);
             deleteAll.setEnabled(!jobs.isEmpty());
             downloads.refresh(runtime.workspace().parallelDownloads());
@@ -1038,7 +1047,7 @@ public final class ActivitiesView implements View {
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
         if (showsProgress(job)) {
-            actions.addAll(progressSlots(job));
+            actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow)));
         } else {
             for (String format : FORMATS) {
                 String blocked = exportBlocked(job, format);
@@ -1065,34 +1074,76 @@ public final class ActivitiesView implements View {
         return job.type() == JobType.ASSETS || job.type() == JobType.ATTACHMENTS;
     }
 
+    /**
+     * Geschätzte Restzeit eines Bilder- oder Anhängeauftrags (Angelo 11.11.2026): globaler Durchschnitt je tatsächlich
+     * geladener Datei (Core, getrennt für Bilder und Anhänge, mit Startwert, über Neustarts gemerkt) mal der noch
+     * offenen Elemente. Ein Auftrag lädt seine Dateien nacheinander; parallel laufen nur mehrere Aufträge. Keine
+     * Schätzung, wenn nichts offen ist, der Auftrag beendet ist oder Downloads abgeschaltet sind (0).
+     */
+    static java.time.Duration remaining(JobStatus job, java.time.Duration average, int parallelDownloads) {
+        if (average == null || parallelDownloads <= 0 || !showsProgress(job) || job.state().terminal()) {
+            return null;
+        }
+        long open = job.progress().discovered() - job.progress().processed();
+        return open <= 0 ? null : average.multipliedBy(open);
+    }
+
+    /** Kurz genug für die Mitte des Balkens: „< 1 min“, „≈ 12 min“, „≈ 5 h 3 min“. */
+    static String remainingText(java.time.Duration remaining) {
+        long seconds = remaining.getSeconds();
+        if (seconds < 60) {
+            return "< 1 min";
+        }
+        long minutes = (seconds + 59) / 60;
+        return minutes < 60 ? "≈ " + minutes + " min" : "≈ " + minutes / 60 + " h " + minutes % 60 + " min";
+    }
+
     /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
     static List<RowActions.Action> progressSlots(JobStatus job) {
+        return progressSlots(job, null);
+    }
+
+    /** Wie {@link #progressSlots(JobStatus)}, mit geschätzter Restzeit in der Mitte des Balkens, sofern bekannt. */
+    static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining) {
         JobProgress p = job.progress();
+        String eta = remaining == null ? null : remainingText(remaining);
         Counters counters = Counters.of(job.type());
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
-                        + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "");
+                        + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "")
+                        + (eta == null ? "" : " · noch " + eta.replace("≈ ", "etwa ").replace("< 1 min", "unter einer Minute"));
         List<RowActions.Action> slots = new ArrayList<>();
         slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
-                p.processed(), p.failed()), tip, true, () -> { }));
+                p.processed(), p.failed(), eta), tip, true, () -> { }));
         for (int i = 1; i < FORMATS.size(); i++) {
             slots.add(RowActions.EMPTY);
         }
         return slots;
     }
 
-    /** Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende. */
-    record ProgressIcon(int width, long total, long done, long failed) implements javax.swing.Icon {
+    /**
+     * Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende, in der Mitte die geschätzte
+     * Restzeit ({@code label}, sonst leer). Die Schrift ist auf der Füllung hell, auf der leeren Spur dunkel.
+     */
+    record ProgressIcon(int width, long total, long done, long failed, String label) implements javax.swing.Icon {
+
+        ProgressIcon(int width, long total, long done, long failed) {
+            this(width, total, done, failed, null);
+        }
+
         @Override
         public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
             java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
             try {
                 g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 int h = getIconHeight();
                 g.setColor(Comic.LINE);
                 g.fillRoundRect(x, y, width, h, h, h);
+                int filled = 0;
                 if (total > 0) {
-                    int filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
+                    filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
                     int bad = Math.min(filled, (int) Math.round(width * Math.min(1.0, (double) failed / total)));
                     g.setColor(Comic.PETROL);
                     g.fillRoundRect(x, y, filled, h, h, h);
@@ -1100,6 +1151,20 @@ public final class ActivitiesView implements View {
                         g.setColor(Comic.RED);
                         g.fillRoundRect(x + filled - bad, y, bad, h, h, h);
                     }
+                }
+                if (label != null) {
+                    g.setFont(Comic.semiBold(10f));
+                    java.awt.FontMetrics fm = g.getFontMetrics();
+                    int tx = x + (width - fm.stringWidth(label)) / 2;
+                    int ty = y + (h - fm.getHeight()) / 2 + fm.getAscent();
+                    java.awt.Shape clip = g.getClip();
+                    g.clipRect(x, y, filled, h);
+                    g.setColor(java.awt.Color.WHITE);
+                    g.drawString(label, tx, ty);
+                    g.setClip(clip);
+                    g.clipRect(x + filled, y, width - filled, h);
+                    g.setColor(Comic.INK);
+                    g.drawString(label, tx, ty);
                 }
             } finally {
                 g.dispose();
@@ -1113,7 +1178,7 @@ public final class ActivitiesView implements View {
 
         @Override
         public int getIconHeight() {
-            return 8;
+            return 14;
         }
     }
 
