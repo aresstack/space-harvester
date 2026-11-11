@@ -564,7 +564,8 @@ public class ExportAssetCollection {
             // Erst vorbereiten: alle Verweise aller Seiten zählen, ohne zu laden; danach steht die Gesamtzahl fest
             // (Angelo 11.11.2026). Vor dem Anhalten schon vollständig geladene Seiten zählen ohne Abruf mit.
             context.phase(COMPONENT, PREPARE_PHASE);
-            List<PagePlan> plans = new ArrayList<>();
+            // Nur Kennungen und Verweise je Seite, nie die Seiteninhalte: die liest der Ladedurchgang erneut einzeln.
+            Map<String, PagePlan> plans = new java.util.LinkedHashMap<>();
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 String pageId = page.snapshot().key().pageId();
@@ -583,7 +584,7 @@ public class ExportAssetCollection {
                     if (plan == null) {
                         complete[0] = false;
                     } else {
-                        plans.add(plan);
+                        plans.put(pageId, plan);
                     }
                 } catch (SourceUnreachable e) {
                     // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler
@@ -596,15 +597,19 @@ public class ExportAssetCollection {
             // Vorbereitet: wartet auf einen Download-Platz (jobs.parallel-downloads), dann wird geladen.
             context.awaitDownloadSlot();
             context.phase(COMPONENT, scope.phase);
-            for (PagePlan plan : plans) {
+            dataset.forEachPage(page -> {
+                String pageId = page.snapshot().key().pageId();
+                PagePlan plan = plans.get(pageId);
+                if (plan == null) {
+                    return;
+                }
                 context.checkpoint();
-                String pageId = plan.snapshot().key().pageId();
                 int first = entries.size();
                 long processed = context.processed;
                 long written = context.written;
                 long failed = context.failed;
                 try {
-                    if (load(current, dataset, plan, entries)) {
+                    if (load(current, dataset, plan, page.snapshot(), entries)) {
                         checked.add(pageId);
                         done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
                                 plan.discovered(), context.processed - processed, context.written - written,
@@ -617,7 +622,7 @@ public class ExportAssetCollection {
                             exportId, e.reason);
                     context.pause(PauseReason.CONNECTION_LOST);
                 }
-            }
+            });
             List<ExportAssetManifest.Entry> own = write(share, exportId, entries, checked, complete[0], run.settings);
             if (!(complete[0] && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
                 context.incomplete();
@@ -717,7 +722,7 @@ public class ExportAssetCollection {
      * @param order     Anhangs-IDs in der Reihenfolge der Quelle, für das Manifest
      * @param checked   ob die Seite vollständig geprüft werden konnte
      */
-    private record PagePlan(PageSnapshot snapshot, PageAttachmentList list, List<Step> steps, List<String> order,
+    private record PagePlan(String pageId, PageAttachmentList list, List<Step> steps, List<String> order,
                             boolean checked, long discovered) {
     }
 
@@ -803,7 +808,7 @@ public class ExportAssetCollection {
             }
         }
         context.discovered(discovered);
-        return new PagePlan(snapshot, list, steps, order, checked, discovered);
+        return new PagePlan(pageId, list, steps, order, checked, discovered);
     }
 
     /**
@@ -812,11 +817,11 @@ public class ExportAssetCollection {
      *
      * @return ob die Seite vollständig geprüft werden konnte
      */
-    private boolean load(Run run, ConversionInput dataset, PagePlan plan, List<ExportAssetManifest.Entry> entries) {
+    private boolean load(Run run, ConversionInput dataset, PagePlan plan, PageSnapshot snapshot,
+                         List<ExportAssetManifest.Entry> entries) {
         JobContext context = run.context;
         String sourceId = dataset.sourceId();
-        PageSnapshot snapshot = plan.snapshot();
-        String pageId = snapshot.key().pageId();
+        String pageId = plan.pageId();
         PageAttachmentList list = plan.list();
         Set<String> drawn = new HashSet<>();
         Map<String, ExportAssetManifest.Entry> byId = new HashMap<>();

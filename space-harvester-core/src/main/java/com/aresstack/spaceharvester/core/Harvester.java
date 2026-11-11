@@ -1459,7 +1459,8 @@ public final class Harvester implements AutoCloseable {
      */
     public void parallelDownloads(int value) {
         jobs.parallelDownloads(value);
-        assets.downloadLimit(value);
+        // Laufende Downloads laufen zu Ende: ihre Plätze bleiben, bis sie fertig sind.
+        assets.downloadLimit(Math.max(value, jobs.downloadingNow()));
     }
 
     public Jobs jobs() {

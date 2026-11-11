@@ -957,7 +957,9 @@ public class Jobs implements AutoCloseable {
                 }
                 job.state = JobState.RUNNING;
                 job.startedAt = clock.instant();
-                job.deadline = job.startedAt.plus(limits.maxRunTime());
+                // Bilder und Anhänge: die Laufzeitgrenze gilt erst ab dem Download-Platz (grantDownloads), nicht für
+                // Vorbereitung und Warten.
+                job.deadline = job.type.download() ? null : job.startedAt.plus(limits.maxRunTime());
                 store.save(job.snapshot());
                 toStart.add(job);
             }
@@ -1054,6 +1056,13 @@ public class Jobs implements AutoCloseable {
     public int parallelDownloads() {
         synchronized (lock) {
             return parallelDownloads;
+        }
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gerade laden (höchstens {@link #parallelDownloads()}, bis auf Restläufer). */
+    public int downloadingNow() {
+        synchronized (lock) {
+            return downloading;
         }
     }
 

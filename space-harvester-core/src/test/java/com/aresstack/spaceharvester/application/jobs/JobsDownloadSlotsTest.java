@@ -115,6 +115,22 @@ class JobsDownloadSlotsTest {
     }
 
     @Test
+    void preparingLongerThanTheRunTimeLimitDoesNotFailTheJob() throws InterruptedException {
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+            clock.advance(Duration.ofHours(2));
+            context.checkpoint();
+            context.awaitDownloadSlot();
+            context.checkpoint();
+        }));
+        runInBackground();
+        await(job.id(), status -> status.stage() == JobStage.PREPARED);
+
+        jobs.parallelDownloads(1);
+
+        await(job.id(), status -> status.state() == JobState.COMPLETED);
+    }
+
+    @Test
     void theSettingsAreChecked() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> jobs.parallelDownloads(-1))
                 .isInstanceOf(IllegalArgumentException.class);
