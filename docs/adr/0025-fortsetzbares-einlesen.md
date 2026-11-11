@@ -164,6 +164,13 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     endet oder hält der Text an, warten sie weiter, bis „Fortsetzen“ ihn veröffentlicht. Wird der Export gelöscht,
     verschwinden sie mit. Nach einem Neustart gelten sie wie jeder wartende Auftrag als unterbrochen und laufen beim
     nächsten Veröffentlichen im selben Eintrag. Die Verknüpfung zum Export steht in `exportId`.
+20. **Restzeit aus globalen Download-Dauern** (Angelo 11.11.2026). `DownloadDurations` misst je tatsächlich von der
+    Quelle geladener Datei die Dauer des Transfers, getrennt für Bilder und Dateianhänge (`Kind#of` wie die beiden
+    Aufträge), über alle Exporte. Treffer aus dem Speicher, Warten auf einen Platz und Seitentexte zählen nicht. Der
+    Durchschnitt beginnt mit einem Startwert (Bild 1 s, Anhang 3 s), den die erste Messung ersetzt, und mittelt danach
+    über etwa die letzten 50 Dateien. Er liegt als Anwendungszustand in `download-durations.properties` im
+    Datenverzeichnis, nicht in der YAML. Die App liest ihn über `Workspace#averageDownload(JobType)` und rechnet die
+    Restzeit: Durchschnitt × offene Verweise ÷ gleichzeitig ladende Aufträge.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

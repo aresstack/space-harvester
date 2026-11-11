@@ -895,6 +895,18 @@ public final class Workspace {
         return status;
     }
 
+    /**
+     * Für die Restzeit im Fortschrittsbalken: durchschnittliche Dauer je tatsächlich geladener Datei, global über alle
+     * Exporte und Neustarts, getrennt für Bilder ({@link JobType#ASSETS}) und Anhänge ({@link JobType#ATTACHMENTS});
+     * vor der ersten Datei ein Startwert. Ein einzelner Transfer, ohne Parallelität; Treffer aus dem Speicher und
+     * Seitentexte zählen nicht.
+     *
+     * @throws IllegalArgumentException für andere Auftragsarten
+     */
+    public java.time.Duration averageDownload(JobType type) {
+        return harvester.averageDownload(type);
+    }
+
     /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
     public int parallelPreparations() {
         return harvester.parallelPreparations();

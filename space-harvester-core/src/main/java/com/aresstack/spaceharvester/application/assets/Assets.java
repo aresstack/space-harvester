@@ -25,6 +25,7 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -168,6 +169,18 @@ public class Assets {
      *
      * @param jobDownloads gleichzeitig ladende Aufträge
      */
+    private volatile DownloadDurations durations = new DownloadDurations();
+
+    /** Misst ab jetzt in {@code durations}, etwa mit einem über Neustarts gespeicherten Stand. */
+    public void durations(DownloadDurations durations) {
+        this.durations = java.util.Objects.requireNonNull(durations, "durations");
+    }
+
+    /** Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, getrennt für Bilder und Anhänge. */
+    public DownloadDurations durations() {
+        return durations;
+    }
+
     public synchronized void downloadLimit(int jobDownloads) {
         int wanted = Math.max(MAX_CONCURRENT_DOWNLOADS, jobDownloads + 2);
         if (wanted > downloadLimit) {
@@ -420,7 +433,10 @@ public class Assets {
                         "Download abgebrochen", e);
             }
             try {
-                return source.viewImage(image, maxBytes);
+                long started = System.nanoTime();
+                byte[] loaded = source.viewImage(image, maxBytes);
+                durations.record(DownloadDurations.Kind.IMAGE, Duration.ofNanos(System.nanoTime() - started));
+                return loaded;
             } catch (AttachmentTooLargeException e) {
                 throw new AssetTooLargeException(sourceId, maxBytes);
             } finally {
@@ -1375,7 +1391,12 @@ public class Assets {
                         "Download abgebrochen", e);
             }
             try {
-                return source.attachmentFile(attachment, maxBytes);
+                // Nur der Transfer zählt, nicht das Warten auf einen Platz (Restzeit, Angelo 11.11.2026).
+                long started = System.nanoTime();
+                AttachmentFile loaded = source.attachmentFile(attachment, maxBytes);
+                durations.record(DownloadDurations.Kind.of(attachment.mediaType(), attachment.title()),
+                        Duration.ofNanos(System.nanoTime() - started));
+                return loaded;
             } catch (AttachmentTooLargeException e) {
                 throw new AssetTooLargeException(source.id(), maxBytes);
             } finally {
