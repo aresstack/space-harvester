@@ -149,8 +149,9 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
 18. **Vorbereiten und Laden in eigenen Pools** (Angelo 11.11.2026). Bilder- und Anhängeaufträge (`JobType#download`)
     belegen nicht die allgemeinen Plätze, sondern zwei eigene: höchstens `jobs.parallel-preparations` (Standard 2, 1 bis
     16) bereiten gleichzeitig vor, höchstens `jobs.parallel-downloads` (Standard 4, 0 bis 64) laden gleichzeitig. Die
-    Vorbereitung fragt für alle Seiten die Anhangsliste und die Leseansicht ab und zählt alle Verweise; erst danach steht
-    die Gesamtzahl fest und ändert sich nicht mehr. Dann wartet der Auftrag im Zustand `PREPARED` („Vorbereitet“) auf
+    Vorbereitung nimmt für alle Seiten die Anhangsliste und zählt die Anhänge; die Leseansicht (Bilder aus Makros wie
+    draw.io, eingebundene Seiten) holt erst der Ladedurchgang Seite für Seite (Angelo 11.11.2026: „die Vorbereitung
+    sollte gar keine Leseansicht holen“), ihre Bilder kommen dort zur Gesamtzahl hinzu. Dann wartet der Auftrag im Zustand `PREPARED` („Vorbereitet“) auf
     einen Ladeplatz (`JobContext#awaitDownloadSlot`; „Jetzt starten“ zieht ihn vor) und lädt im Zustand `RUNNING`. Bei 0 Downloads
     werden Aufträge angenommen und vorbereitet, laden aber nichts; das Einlesen der Seitentexte läuft weiter. Beide Werte
     gelten sofort (`Workspace#setParallelPreparations`, `#setParallelDownloads`) und stehen unter `jobs` in der
@@ -176,8 +177,8 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     (`HarvestSource#attachmentsOf`, bei Confluence `type=attachment AND container in (…) AND space="KEY"` in Stapeln zu
     50 Seiten, EAC `AttachmentSearchSource`, enterprise-ai-client#217) statt Seitendaten und Anhangsliste je Seite.
     Der Space-Filter ersetzt die frühere Space-Prüfung für Seiten mit Treffern: sie liegen nachweislich im Space. Eine
-    leere Liste heißt ohne Anhänge oder verschoben; vor der Lese-Ansicht (nur der Bilderauftrag) prüft die
-    Vorbereitung bei diesen Seiten den aktuellen Space einzeln. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
+    leere Liste heißt ohne Anhänge oder verschoben; vor der Lese-Ansicht (nur der Bilderauftrag, im Ladedurchgang)
+    prüft er bei diesen Seiten den aktuellen Space einzeln. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
     betroffenen Seiten einzeln wie bisher. Die Rohantworten der Suche werden nicht je Seite gehalten.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der

@@ -268,9 +268,11 @@ class ExportAssetCollectionTest {
                 page("confluence", "DEV", "101", "100")));
         // Während Seite 100 lädt, hält der Benutzer an; sie wird noch fertig, 101 nicht mehr.
         long[] discoveredAtFirstDownload = {-1};
+        List<String> readAtFirstDownload = new ArrayList<>();
         source.onDownload = src -> {
             if (discoveredAtFirstDownload[0] < 0) {
                 discoveredAtFirstDownload[0] = jobs.list("client-a", JobType.ASSETS).get(0).progress().discovered();
+                readAtFirstDownload.addAll(source.read);
             }
             if (src.contains("mermaid")) {
                 jobs.list("client-a", JobType.ASSETS).stream()
@@ -283,8 +285,10 @@ class ExportAssetCollectionTest {
         drain();
 
         JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
-        // Die Vorbereitung hat alle Verweise beider Seiten gezählt, bevor die erste Datei geladen wurde.
+        // Die Vorbereitung hat die Anhänge beider Seiten gezählt, bevor die erste Datei geladen wurde; die Lese-Ansicht
+        // holt erst der Ladedurchgang, Seite für Seite (Angelo 11.11.2026): bis zur ersten Datei nur die von Seite 100.
         assertThat(discoveredAtFirstDownload[0]).isEqualTo(4);
+        assertThat(readAtFirstDownload).containsExactly("100");
         assertThat(paused.state()).isEqualTo(JobState.PAUSED);
         assertThat(paused.parameters()).containsEntry(ExportAssetCollection.EXPORT_ID, export.id());
         assertThat(paused.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
@@ -612,6 +616,8 @@ class ExportAssetCollectionTest {
         Set<String> moved = Set.of();
         /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
         final List<String> listed = new ArrayList<>();
+        /** Seiten, deren Lese-Ansicht abgefragt wurde, in Reihenfolge. */
+        final List<String> read = new ArrayList<>();
         /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
         java.util.function.Consumer<String> onListing = pageId -> { };
         /** Beim Laden eines Bildes der Lese-Ansicht, mit seiner Adresse. */
@@ -717,6 +723,7 @@ class ExportAssetCollectionTest {
         /** 100: Ansicht mit eingebundenem Inhalt; 101 hat sich seit dem Export geändert. */
         @Override
         public ReadingPage readingPage(String pageId) {
+            read.add(pageId);
             return switch (pageId) {
                 case "100" -> new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
                         "Bild Eingebunden", viewImages(pageId));
