@@ -262,6 +262,23 @@ public final class AppContext {
     }
 
     /**
+     * Speichert die Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.parallel-preparations} und
+     * {@code parallel-downloads}) ohne Neustart der Laufzeit: Die Ansicht hat sie schon im Core gesetzt
+     * ({@code Workspace#setParallelDownloads}); die Datei sorgt nur dafür, dass sie einen Neustart überstehen.
+     */
+    public void parallel(int preparations, int downloads, Runnable done, Consumer<Throwable> failed) {
+        Background.run(() -> {
+            ConfigFileEditor editor = new ConfigFileEditor(loader);
+            String text = Files.isRegularFile(configFile)
+                    ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withParallel(configFile, new ConfigFileEditor.Draft(text, null),
+                    preparations, downloads);
+            editor.save(configFile, written, !editor.fileHasPlaintextSecret(configFile));
+            return written;
+        }, saved -> done.run(), failed);
+    }
+
+    /**
      * Merkt in der Datei, dass der Einrichtungsassistent lief ({@code space-harvester-app.setup-completed}); ohne
      * Neustart der Laufzeit, denn nur die Oberfläche liest den Merker.
      */
