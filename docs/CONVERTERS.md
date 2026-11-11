@@ -99,6 +99,10 @@ Cache; der nächste Abgleich lädt sie dann neu.
   abgelegten Dateien lädt er dann nicht noch einmal. Volltext und Anreicherungen erfahren von der neuen Generation
   auch, wenn danach eine Datei scheitert oder der Auftrag abgebrochen wird.
 - `Preview` (`preview(file, sourceId)`) nennt vorab Quelle, Space, Seiten- und Dateizahl und ob der Space Daten hat.
+- **Dienst.** `POST /api/v1/sources/{sourceId}/data/imports?replace=false` mit dem Paket als Body
+  (`application/zip`, höchstens 4 GiB) → 202, Stand unter `…/data/imports/{jobId}`; nur für Clients mit
+  `manage-configuration` wie „Daten bereinigen“. Ein Paket, das sich nicht öffnen lässt, beantwortet der Dienst sofort
+  mit 400 (`import-not-a-package`, `import-unsupported`, `import-damaged`), ein zu großes mit 413.
 
 ## Analyse-Export (#359)
 
