@@ -6,6 +6,11 @@ package com.aresstack.spaceharvester.application.jobs;
  * je eine eigene Grenze ({@link Jobs#parallelPreparations()}, {@link Jobs#parallelDownloads()}).
  */
 public enum JobStage {
+    /**
+     * Noch wartend ({@link JobState#QUEUED}): angelegt, aber erst startbereit, wenn der Auftrag fertig ist, dem er folgt,
+     * etwa Bilder und Anhänge, bis der Text ihres Exports veröffentlicht ist; belegt keinen Platz.
+     */
+    AWAITING,
     /** Zählt die Verweise; belegt einen Platz für Vorbereitungen. */
     PREPARING,
     /** Vorbereitet; wartet auf einen Download-Platz und belegt keinen Platz. */

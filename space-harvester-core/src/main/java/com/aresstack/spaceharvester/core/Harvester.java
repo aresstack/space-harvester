@@ -757,6 +757,8 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns,
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
+            // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
+            exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions);

@@ -139,6 +139,8 @@ class ExportConfiguration {
                         .isPresent(), signIns,
                 // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                 () -> configuration.current().configuration().export());
+        // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
+        exports.onSubmitted(images::announce);
         exports.onPublished(images::start);
         return images;
     }

@@ -311,6 +311,137 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void imagesAndAttachmentsAreCreatedWithTheExportAndWaitForItsText() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+
+        // Schon vor dem Text da, ohne einen Platz zu belegen.
+        JobStatus waiting = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(waiting.parameter(ExportAssetCollection.EXPORT_ID)).isEqualTo(export.id());
+        assertThat(waiting.lifecycle().key()).isEqualTo("AWAITING_EXPORT");
+        assertThat(waiting.lifecycle().actions()).containsExactly(JobAction.DELETE);
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.lifecycle().key()).isEqualTo("AWAITING_EXPORT"));
+        assertThat(jobs.status(export.id()).parameter(Exports.FOLLOW_UPS)).isEqualTo(Exports.ANNOUNCED);
+        drain();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(job -> {
+            assertThat(job.id()).isEqualTo(waiting.id());
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().written()).isEqualTo(3);
+        });
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
+    void anExportThatPublishesAtOnceStillFindsItsWaitingJobs() {
+        Jobs direct = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(direct, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(direct, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+
+        assertThat(direct.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(direct.list("client-a", JobType.ASSETS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+        assertThat(direct.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
+    void deletingTheWaitingJobsKeepsOnlyTheTextWithoutAnError() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        jobs.list("client-a", JobType.ASSETS).forEach(job -> jobs.delete(job.id(), "client-a"));
+        jobs.list("client-a", JobType.ATTACHMENTS).forEach(job -> jobs.delete(job.id(), "client-a"));
+
+        drain();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(export.id()).error()).isNull();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+        assertThat(source.downloads).isZero();
+    }
+
+    @Test
+    void deletingTheExportRemovesItsWaitingJobs() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+
+        jobs.delete(export.id(), "client-a");
+        drain();
+
+        assertThat(jobs.list("client-a", JobType.ASSETS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+    }
+
+    private FileSystemExportArtifactWriter writer;
+
+    private FileSystemExportArtifactWriter writer() {
+        if (writer == null) {
+            writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        }
+        return writer;
+    }
+
+    /** Mit eingeschalteten Anhängen, damit auch „Anhänge beschaffen“ entsteht. */
+    private ExportAssetCollection collection() {
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        return new ExportAssetCollection(jobs, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+    }
+
+    private void publishTwoPages() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+    }
+
+    @Test
     void retryingTakesStoredFilesAndForcingLoadsEveryFileAgainInTheSameEntry() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {

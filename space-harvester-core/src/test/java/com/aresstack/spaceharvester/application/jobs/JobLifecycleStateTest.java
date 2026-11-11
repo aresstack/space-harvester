@@ -24,6 +24,24 @@ class JobLifecycleStateTest {
     }
 
     @Test
+    void imagesWaitingForTheTextOfTheirExportOfferOnlyDelete() {
+        JobStatus waiting = new JobStatus("j", JobType.ASSETS, "confluence", "DEV", "client-a", JobState.QUEUED,
+                new JobProgress(0, 0, 0, 0), null, false, T0, null, null, null, null, Map.of(), false, false, null,
+                JobStage.AWAITING);
+        assertThat(waiting.lifecycle().key()).isEqualTo("AWAITING_EXPORT");
+        assertThat(waiting.lifecycle().actions()).containsExactly(JobAction.DELETE);
+        // Nur ein wartender Auftrag wartet auf seinen Vorgänger.
+        JobStatus running = new JobStatus("j", JobType.ASSETS, "confluence", "DEV", "client-a", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, false, T0, T0, null, null, null, Map.of(), false, false, null,
+                JobStage.AWAITING);
+        assertThat(running.stage()).isNull();
+        JobStatus done = new JobStatus("j", JobType.ASSETS, "confluence", "DEV", "client-a", JobState.COMPLETED,
+                new JobProgress(0, 0, 0, 0), null, false, T0, T0, T0, null, null, Map.of(), false, false, null,
+                JobStage.AWAITING);
+        assertThat(done.stage()).isNull();
+    }
+
+    @Test
     void playAndPauseNeverShowTogetherAndWaitingJobsStartNow() {
         assertThat(actions(JobType.EXPORT, JobState.QUEUED, 0, false))
                 .containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
