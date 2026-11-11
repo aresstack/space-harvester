@@ -175,8 +175,9 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     beschaffen“ und „Anhänge beschaffen“ holt die Anhangslisten aller Seiten am Anfang über die Suche der Quelle
     (`HarvestSource#attachmentsOf`, bei Confluence `type=attachment AND container in (…) AND space="KEY"` in Stapeln zu
     50 Seiten, EAC `AttachmentSearchSource`, enterprise-ai-client#217) statt Seitendaten und Anhangsliste je Seite.
-    Der Space-Filter ersetzt die frühere Space-Prüfung je Seite: eine verschobene Seite hat eine leere Liste und
-    bekommt keine Anhänge. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
+    Der Space-Filter ersetzt die frühere Space-Prüfung für Seiten mit Treffern: sie liegen nachweislich im Space. Eine
+    leere Liste heißt ohne Anhänge oder verschoben; vor der Lese-Ansicht (nur der Bilderauftrag) prüft die
+    Vorbereitung bei diesen Seiten den aktuellen Space einzeln. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
     betroffenen Seiten einzeln wie bisher. Die Rohantworten der Suche werden nicht je Seite gehalten.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der

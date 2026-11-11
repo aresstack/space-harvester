@@ -645,7 +645,7 @@ public class ExportAssetCollection {
             // Anhangskatalog über die Suche der Quelle statt zweier Abrufe je Seite (Angelo 11.11.2026).
             Map<String, PageAttachmentList> catalog = Map.of();
             try {
-                catalog = catalog(dataset, done.keySet());
+                catalog = catalog(context, dataset, done.keySet());
             } catch (SourceUnreachable e) {
                 LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
                         exportId, e.reason);
@@ -823,7 +823,7 @@ public class ExportAssetCollection {
      *
      * @throws SourceUnreachable wenn die Quelle nicht erreichbar ist oder drosselt
      */
-    private Map<String, PageAttachmentList> catalog(ConversionInput dataset, Set<String> done) {
+    private Map<String, PageAttachmentList> catalog(JobContext context, ConversionInput dataset, Set<String> done) {
         List<String> pageIds = new ArrayList<>();
         for (PageHeader header : dataset.headers()) {
             String pageId = header.key().pageId();
@@ -833,6 +833,7 @@ public class ExportAssetCollection {
         }
         Map<String, PageAttachmentList> catalog = new HashMap<>();
         for (int from = 0; from < pageIds.size(); from += CATALOG_PAGES) {
+            context.checkpoint();
             List<String> chunk = pageIds.subList(from, Math.min(pageIds.size(), from + CATALOG_PAGES));
             try {
                 catalog.putAll(sources.attachmentsOf(dataset.sourceId(), dataset.spaceKey(), chunk));
@@ -875,6 +876,15 @@ public class ExportAssetCollection {
             if (!dataset.spaceKey().equals(list.spaceKey())) {
                 // Inzwischen in einem anderen Space: die Seite bleibt, wie sie exportiert wurde, ohne Bilder.
                 return null;
+            }
+            if (searched != null && list.attachments().attachments().isEmpty() && run.share.images()) {
+                // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
+                // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen nachweislich im
+                // Space.
+                String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
+                if (!dataset.spaceKey().equals(current)) {
+                    return null;
+                }
             }
             if (!list.attachments().complete()) {
                 // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.

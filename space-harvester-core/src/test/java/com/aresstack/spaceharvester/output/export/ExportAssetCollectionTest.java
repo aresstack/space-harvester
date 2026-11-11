@@ -235,9 +235,12 @@ class ExportAssetCollectionTest {
         drain();
 
         ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
-        assertThat(manifest.forPage("100")).noneMatch(entry -> entry.attachmentId() != null
-                && entry.reference().kind() == ExportAssetManifest.Kind.ATTACHMENT);
+        // Weder Anhänge noch die Lese-Ansicht der verschobenen Seite: ihre leere Liste wird am Space geprüft.
+        assertThat(manifest.forPage("100")).isEmpty();
         assertThat(manifest.documents()).isEmpty();
+        assertThat(writer().dataset(export.id()).orElseThrow().readingView("100")).isEmpty();
+        // Nur der Bilderauftrag braucht die Lese-Ansicht und fragt dafür einmal den Space ab.
+        assertThat(source.metadataCalls).isEqualTo(1);
     }
 
     @Test
@@ -642,7 +645,8 @@ class ExportAssetCollectionTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             metadataCalls++;
-            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, "3",
+            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId,
+                    moved.contains(pageId) ? "OPS" : "DEV", null, "3",
                     null, null, PageMetadata.sorted(Map.of()));
         }
 
