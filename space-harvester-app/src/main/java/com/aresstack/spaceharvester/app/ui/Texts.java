@@ -80,6 +80,9 @@ public final class Texts {
             case "COMPLETED_WITH_ERRORS" -> "Fertig, unvollständig";
             case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
             case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
+            case "PREPARING" -> "Vorbereitung";
+            case "PREPARED" -> "Vorbereitet";
+            case "AWAITING_EXPORT" -> "Wartet auf Text";
             default -> state(status.state());
         };
     }
@@ -88,6 +91,9 @@ public final class Texts {
     public static Comic.Tone tone(JobStatus status) {
         return switch (status.lifecycle().key()) {
             case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST" -> Comic.Tone.WARNING;
+            case "PREPARING" -> Comic.Tone.RUNNING;
+            // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
+            case "PREPARED", "AWAITING_EXPORT" -> Comic.Tone.NEUTRAL;
             default -> tone(status.state());
         };
     }

@@ -151,12 +151,22 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 inactiveRoots, terms);
     }
 
+    /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
+    public AppSettings withParallel(int preparations, int downloads) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
+                cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms);
+    }
+
     /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
-     * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner, parallele Vorbereitungen und Downloads. Gleicht
+     * das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
-        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(other.jobLimits.parallelPreparations(), other.jobLimits.parallelDownloads()),
+                other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms);
     }

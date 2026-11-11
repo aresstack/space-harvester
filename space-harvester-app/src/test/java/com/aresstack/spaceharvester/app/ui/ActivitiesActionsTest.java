@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobStage;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -205,6 +206,38 @@ class ActivitiesActionsTest {
                 .isEqualTo("Angehalten – Verbindung unterbrochen");
         assertThat(Texts.tone(paused(PauseReason.CONNECTION_LOST))).isEqualTo(Comic.Tone.WARNING);
         assertThat(Texts.state(paused(PauseReason.USER))).isEqualTo("Angehalten");
+    }
+
+    /** ↻ Nur Fehler steht in jedem Zustand bereit, sobald etwas gescheitert ist (Angelo 11.11.2026, Core #634). */
+    @Test
+    void retryFailedIsOfferedWhileRunningOrPausedOnceSomethingFailed() {
+        JobStatus running = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(9, 5, 3, 2), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null);
+        assertSlots(running, JobAction.RETRY_FAILED, JobAction.PAUSE, JobAction.CANCEL);
+        JobStatus paused = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.PAUSED,
+                new JobProgress(9, 5, 3, 2), null, false, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, null, null,
+                Map.of(), false, false, PauseReason.USER);
+        assertSlots(paused, JobAction.RETRY_FAILED, JobAction.RESUME, null);
+    }
+
+    /** Vorbereitung und Vorbereitet (#635) haben eigene Texte und Farben; Vorbereitet startet mit „Jetzt starten“. */
+    @Test
+    void preparingAndPreparedDownloads() {
+        JobStatus preparing = staged(JobStage.PREPARING);
+        assertThat(Texts.state(preparing)).isEqualTo("Vorbereitung");
+        assertThat(Texts.tone(preparing)).isEqualTo(Comic.Tone.RUNNING);
+        assertSlots(preparing, null, JobAction.PAUSE, JobAction.CANCEL);
+        JobStatus prepared = staged(JobStage.PREPARED);
+        assertThat(Texts.state(prepared)).isEqualTo("Vorbereitet");
+        assertThat(Texts.tone(prepared)).isEqualTo(Comic.Tone.NEUTRAL);
+        assertSlots(prepared, null, JobAction.START_NOW, JobAction.CANCEL);
+    }
+
+    private static JobStatus staged(JobStage stage) {
+        return new JobStatus("j1", JobType.ASSETS, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(9, 0, 0, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null, stage);
     }
 
     private static JobStatus withFailures() {
