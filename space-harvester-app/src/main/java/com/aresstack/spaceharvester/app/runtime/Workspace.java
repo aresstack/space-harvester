@@ -954,6 +954,24 @@ public final class Workspace {
         harvester.parallelDownloads(value);
     }
 
+    /**
+     * Gleichzeitige Verbindungen je ladendem Bilder- oder Anhängeauftrag ({@code jobs.download-connections}, Angelo
+     * 11.11.2026).
+     */
+    public int downloadConnections() {
+        return harvester.downloadConnections();
+    }
+
+    /**
+     * Ändert {@link #downloadConnections()} sofort, ohne die Konfigurationsdatei; die Verteilung auf die ladenden
+     * Aufträge gilt sofort, ein laufender Ladedurchgang nutzt höchstens so viele Verbindungen wie bei seinem Start.
+     *
+     * @throws IllegalArgumentException außerhalb von 0 bis 64
+     */
+    public void setDownloadConnections(int value) {
+        harvester.downloadConnections(value);
+    }
+
     /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
     public boolean canResume(String jobId) {
         job(jobId);

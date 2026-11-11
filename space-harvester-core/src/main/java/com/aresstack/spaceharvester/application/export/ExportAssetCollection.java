@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
+import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
@@ -102,6 +104,8 @@ public class ExportAssetCollection {
     public static final String SIGN_IN_PHASE = "Wartet auf Anmeldung";
     /** Phase der Vorbereitung: Verweise zählen, noch nichts laden. */
     public static final String PREPARE_PHASE = "Verweise zählen";
+    /** Phase bei einem Verbindungsbudget von 0: wartet, bis wieder geladen werden darf. */
+    public static final String CONNECTIONS_PHASE = "Wartet auf Verbindungen";
     /** Mermaid-Makros: {@code mermaid}, {@code mermaid-cloud}, {@code mermaid-macro} usw. */
     private static final Pattern MERMAID = Pattern.compile(
             "<ac:structured-macro\\b[^>]*\\bac:name=\"[^\"]*mermaid[^\"]*\"[^>]*>(.*?)</ac:structured-macro>",
@@ -111,6 +115,8 @@ public class ExportAssetCollection {
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final Jobs jobs;
+    /** Gesamtbudget der Verbindungen aller ladenden Aufträge; {@code null} lädt eine Datei nach der anderen. */
+    private volatile ConnectionBudget connections;
     private final ExportArtifactWriter writer;
     private final SourceQueries sources;
     private final Assets assets;
@@ -180,6 +186,14 @@ public class ExportAssetCollection {
         this.writer = Objects.requireNonNull(writer, "writer");
         this.sources = Objects.requireNonNull(sources, "sources");
         this.assets = Objects.requireNonNull(assets, "assets");
+    }
+
+    /**
+     * Lädt ab dem nächsten Ladedurchgang mit mehreren Verbindungen aus diesem Gesamtbudget
+     * ({@code jobs.download-connections}, Angelo 11.11.2026); {@code null} lädt eine Datei nach der anderen.
+     */
+    public void connections(ConnectionBudget budget) {
+        this.connections = budget;
     }
 
     /**
@@ -475,6 +489,11 @@ public class ExportAssetCollection {
             this.context = context;
         }
 
+        /** Gefundene, noch nicht geprüfte Verweise. */
+        synchronized long open() {
+            return Math.max(0, discovered - processed);
+        }
+
         @Override
         public String jobId() {
             return context.jobId();
@@ -627,8 +646,8 @@ public class ExportAssetCollection {
     private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done,
                          boolean fresh) {
         Tally context = new Tally(job);
-        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
-        Set<String> checked = new HashSet<>();
+        List<ExportAssetManifest.Entry> entries = java.util.Collections.synchronizedList(new ArrayList<>());
+        Set<String> checked = ConcurrentHashMap.newKeySet();
         Run run = null;
         try {
             ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
@@ -683,33 +702,7 @@ public class ExportAssetCollection {
             // Vorbereitet: wartet auf einen Download-Platz (jobs.parallel-downloads), dann wird geladen.
             context.awaitDownloadSlot();
             context.phase(COMPONENT, scope.phase);
-            dataset.forEachPage(page -> {
-                String pageId = page.snapshot().key().pageId();
-                PagePlan plan = plans.get(pageId);
-                if (plan == null) {
-                    return;
-                }
-                context.checkpoint();
-                int first = entries.size();
-                long processed = context.processed;
-                long written = context.written;
-                long failed = context.failed;
-                try {
-                    Loaded loaded = load(current, exportId, dataset, plan, page.snapshot(), entries);
-                    if (loaded.checked()) {
-                        checked.add(pageId);
-                        done.put(pageId, new CheckedPage(List.copyOf(entries.subList(first, entries.size())),
-                                loaded.discovered(), context.processed - processed, context.written - written,
-                                context.failed - failed));
-                    } else {
-                        complete[0] = false;
-                    }
-                } catch (SourceUnreachable e) {
-                    LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
-                            exportId, e.reason);
-                    context.pause(PauseReason.CONNECTION_LOST);
-                }
-            });
+            loadAll(current, exportId, dataset, plans, entries, checked, done, complete);
             List<ExportAssetManifest.Entry> own = write(share, exportId, entries, checked, complete[0], run.settings);
             if (!(complete[0] && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
                 context.incomplete();
@@ -727,6 +720,161 @@ public class ExportAssetCollection {
             throw e;
         } finally {
             running.remove(scope.key(exportId));
+        }
+    }
+
+    /**
+     * Der Ladedurchgang: lädt die Seiten mit Plan. Mit einem Verbindungsbudget ({@link #connections}) laufen mehrere
+     * Seiten zugleich, und jede Datei belegt eine Verbindung aus dem Anteil dieses Auftrags (nach Restzeit verteilt,
+     * Angelo 11.11.2026); ohne Budget eine Seite nach der anderen. Die Einträge stehen am Ende in der Reihenfolge der
+     * Seiten in {@code entries}, auch wenn der Lauf angehalten wird.
+     */
+    private void loadAll(Run current, String exportId, ConversionInput dataset, Map<String, PagePlan> plans,
+                         List<ExportAssetManifest.Entry> entries, Set<String> checked, Map<String, CheckedPage> done,
+                         boolean[] complete) {
+        JobContext context = current.context;
+        ConnectionBudget budget = connections;
+        if (budget != null && budget.total() == 0) {
+            // Budget 0: keine Bilder und Anhänge laden, ohne Fehler warten, bis wieder Verbindungen da sind.
+            context.phase(COMPONENT, CONNECTIONS_PHASE);
+            try {
+                budget.awaitAvailable(context::checkpoint);
+            } finally {
+                context.phase(COMPONENT, current.scope.phase);
+            }
+        }
+        // Mit Budget laufen so viele Seiten zugleich, wie der Anteil dieses Auftrags gerade hergibt (mindestens eine);
+        // ändert sich das Budget oder die Verteilung, folgt die Zahl der Seiten bei der nächsten Seite.
+        java.util.concurrent.ExecutorService pool = budget == null ? null
+                : java.util.concurrent.Executors.newCachedThreadPool(runnable -> {
+                    Thread thread = new Thread(runnable, "assets-" + context.jobId());
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        int[] active = new int[1];
+        java.util.concurrent.atomic.AtomicReference<RuntimeException> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Map<String, List<ExportAssetManifest.Entry>> loaded = new ConcurrentHashMap<>();
+        List<String> order = new ArrayList<>();
+        try (ConnectionBudget.Lease lease = budget == null ? null
+                : budget.register(() -> remaining(current))) {
+            Run run = current.with(context, lease);
+            dataset.forEachPage(page -> {
+                String pageId = page.snapshot().key().pageId();
+                PagePlan plan = plans.get(pageId);
+                if (plan == null) {
+                    return;
+                }
+                rethrow(failure);
+                context.checkpoint();
+                while (!admit(active, lease)) {
+                    rethrow(failure);
+                    context.checkpoint();
+                }
+                order.add(pageId);
+                PageSnapshot snapshot = page.snapshot();
+                Runnable task = () -> {
+                    try {
+                        loadPage(run, exportId, dataset, plan, snapshot, loaded, checked, done, complete);
+                    } catch (RuntimeException e) {
+                        failure.compareAndSet(null, e);
+                    } finally {
+                        synchronized (active) {
+                            active[0]--;
+                            active.notifyAll();
+                        }
+                    }
+                };
+                if (pool == null) {
+                    task.run();
+                } else {
+                    pool.execute(task);
+                }
+            });
+            // Laufende Seiten zu Ende kommen lassen, auch beim Anhalten: sie stehen dann im Manifest.
+            synchronized (active) {
+                while (active[0] > 0) {
+                    try {
+                        active.wait(200);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new JobCancelledException("Ladedurchgang unterbrochen");
+                    }
+                }
+            }
+            rethrow(failure);
+        } finally {
+            if (pool != null) {
+                pool.shutdownNow();
+            }
+            for (String pageId : order) {
+                List<ExportAssetManifest.Entry> page = loaded.get(pageId);
+                if (page != null) {
+                    entries.addAll(page);
+                }
+            }
+        }
+    }
+
+    /** Eine Seite des Ladedurchgangs, mit eigenen Zählern für ihren Stand beim Fortsetzen. */
+    private void loadPage(Run run, String exportId, ConversionInput dataset, PagePlan plan, PageSnapshot snapshot,
+                          Map<String, List<ExportAssetManifest.Entry>> loaded, Set<String> checked,
+                          Map<String, CheckedPage> done, boolean[] complete) {
+        String pageId = plan.pageId();
+        Tally page = new Tally(run.context);
+        List<ExportAssetManifest.Entry> pageEntries = new ArrayList<>();
+        try {
+            Loaded result = load(run.with(page, run.lease), exportId, dataset, plan, snapshot, pageEntries);
+            if (result.checked()) {
+                checked.add(pageId);
+                done.put(pageId, new CheckedPage(List.copyOf(pageEntries), result.discovered(), page.processed,
+                        page.written, page.failed));
+            } else {
+                synchronized (complete) {
+                    complete[0] = false;
+                }
+            }
+        } catch (SourceUnreachable e) {
+            LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", run.scope.label,
+                    exportId, e.reason);
+            run.context.pause(PauseReason.CONNECTION_LOST);
+        } finally {
+            loaded.put(pageId, pageEntries);
+        }
+    }
+
+    /** Geschätzte Restzeit eines Laufs in Millisekunden: offene Verweise mal Durchschnittsdauer seiner Art. */
+    private long remaining(Run run) {
+        long open = run.context instanceof Tally tally ? tally.open() : 0;
+        DownloadDurations.Kind kind = run.scope == Scope.DOCUMENTS ? DownloadDurations.Kind.DOCUMENT
+                : DownloadDurations.Kind.IMAGE;
+        return open * Math.max(1, assets.durations().average(kind).toMillis());
+    }
+
+    /**
+     * Lässt eine weitere Seite laufen, wenn dieser Auftrag unter seinem Anteil am Budget ist (ohne Budget: eine Seite);
+     * sonst wartet es kurz und gibt {@code false} zurück, damit der Aufrufer Anhalten und Fehler prüft.
+     */
+    private static boolean admit(int[] active, ConnectionBudget.Lease lease) {
+        synchronized (active) {
+            if (active[0] < (lease == null ? 1 : Math.max(1, lease.share()))) {
+                active[0]++;
+                return true;
+            }
+            try {
+                active.wait(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new JobCancelledException("Ladedurchgang unterbrochen");
+            }
+            return false;
+        }
+    }
+
+    private static void rethrow(java.util.concurrent.atomic.AtomicReference<RuntimeException> failure) {
+        RuntimeException e = failure.get();
+        if (e != null) {
+            throw e;
         }
     }
 
@@ -1282,16 +1430,33 @@ public class ExportAssetCollection {
         final ExportSettings settings;
         /** „Neu erzwingen“: jede Datei einmal je Lauf am Speicher vorbei neu laden. */
         final boolean fresh;
-        private final Set<String> refreshed = new HashSet<>();
-        boolean declined;
+        /** Anteil am Verbindungsbudget im Ladedurchgang, sonst {@code null}. */
+        final ConnectionBudget.Lease lease;
+        private final Set<String> refreshed;
+        /** Anmeldung, von allen Verbindungen eines Laufs geteilt: höchstens eine wartet auf den Code. */
+        private final SignIn signIn;
 
         Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings, boolean fresh) {
+            this(context, scope, share, sourceId, settings == null ? ExportSettings.DEFAULT : settings, fresh, null,
+                    ConcurrentHashMap.newKeySet(), new SignIn());
+        }
+
+        private Run(JobContext context, Scope scope, Share share, String sourceId, ExportSettings settings,
+                    boolean fresh, ConnectionBudget.Lease lease, Set<String> refreshed, SignIn signIn) {
             this.context = context;
             this.scope = scope;
             this.share = share;
             this.sourceId = sourceId;
-            this.settings = settings == null ? ExportSettings.DEFAULT : settings;
+            this.settings = settings;
             this.fresh = fresh;
+            this.lease = lease;
+            this.refreshed = refreshed;
+            this.signIn = signIn;
+        }
+
+        /** Derselbe Lauf mit anderen Zählern und Verbindungsanteil; teilt „Neu erzwingen“ und die Anmeldung. */
+        Run with(JobContext counters, ConnectionBudget.Lease connections) {
+            return new Run(counters, scope, share, sourceId, settings, fresh, connections, refreshed, signIn);
         }
 
         /** Ob die Datei mit diesem Schlüssel in diesem Lauf neu geladen werden soll (nur beim ersten Mal). */
@@ -1302,35 +1467,75 @@ public class ExportAssetCollection {
         com.aresstack.spaceharvester.application.assets.Asset signedIn(Download download) {
             Instant started = Instant.now();
             try {
-                return download.run();
+                return connected(download);
             } catch (SignInRequiredException e) {
-                if (declined) {
-                    throw e;
+                synchronized (signIn) {
+                    if (signIn.declined) {
+                        throw e;
+                    }
+                    // Hat sich eine andere Verbindung inzwischen angemeldet, gleich dieselbe Datei noch einmal.
+                    if (signIn.unlockedAt == null || signIn.unlockedAt.isBefore(started)) {
+                        awaitSignIn(e, started);
+                        signIn.unlockedAt = Instant.now();
+                    }
                 }
-                context.phase(COMPONENT, SIGN_IN_PHASE);
-                SignInRequests.Outcome outcome;
+                // Dieselbe Datei noch einmal, jetzt mit der freigeschalteten Sitzung.
+                return connected(download);
+            }
+        }
+
+        /** Die Datei über eine Verbindung aus dem Anteil dieses Laufs, ohne Budget direkt. */
+        private com.aresstack.spaceharvester.application.assets.Asset connected(Download download) {
+            if (lease == null) {
+                return download.run();
+            }
+            ConnectionBudget budget = lease.budget();
+            if (budget.total() == 0) {
+                // Während des Laufs auf 0 gestellt: nichts mehr laden und ohne Fehler warten.
+                context.phase(COMPONENT, CONNECTIONS_PHASE);
                 try {
-                    outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
+                    budget.awaitAvailable(context::checkpoint);
                 } finally {
                     context.phase(COMPONENT, scope.phase);
                 }
-                if (outcome != SignInRequests.Outcome.UNLOCKED) {
-                    if (signIns.interactive()) {
-                        // Mit Oberfläche zählen die übrigen Dateien nicht als Fehler: der Auftrag hält an, das
-                        // Manifest behält das Abgelegte, und ▶ macht nach der Anmeldung weiter.
-                        LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} angehalten: Anmeldung fehlt",
-                                scope.label, sourceId);
-                        context.pause(PauseReason.SIGN_IN_REQUIRED);
-                    }
-                    declined = true;
-                    LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} ohne Anmeldung weiter", scope.label,
-                            sourceId);
-                    throw e;
-                }
-                // Dieselbe Datei noch einmal, jetzt mit der freigeschalteten Sitzung.
+            }
+            lease.acquire(context::checkpoint);
+            try {
                 return download.run();
+            } finally {
+                lease.release();
             }
         }
+
+        /** Wartet auf die Anmeldung; ohne sie endet der Lauf wie bisher. Unter {@link #signIn}. */
+        private void awaitSignIn(SignInRequiredException e, Instant started) {
+            context.phase(COMPONENT, SIGN_IN_PHASE);
+            SignInRequests.Outcome outcome;
+            try {
+                outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
+            } finally {
+                context.phase(COMPONENT, scope.phase);
+            }
+            if (outcome != SignInRequests.Outcome.UNLOCKED) {
+                if (signIns.interactive()) {
+                    // Mit Oberfläche zählen die übrigen Dateien nicht als Fehler: der Auftrag hält an, das
+                    // Manifest behält das Abgelegte, und ▶ macht nach der Anmeldung weiter.
+                    LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} angehalten: Anmeldung fehlt",
+                            scope.label, sourceId);
+                    context.pause(PauseReason.SIGN_IN_REQUIRED);
+                }
+                signIn.declined = true;
+                LOG.log(System.Logger.Level.INFO, "{0} der Quelle {1} ohne Anmeldung weiter", scope.label,
+                        sourceId);
+                throw e;
+            }
+        }
+    }
+
+    /** Stand der Anmeldung eines Laufs, von seinen Verbindungen geteilt; Zugriff unter dem Objekt selbst. */
+    private static final class SignIn {
+        boolean declined;
+        Instant unlockedAt;
     }
 
     /** Mermaid-Diagrammtexte aus dem Storage-Format der Seite, in ihrer Reihenfolge. */

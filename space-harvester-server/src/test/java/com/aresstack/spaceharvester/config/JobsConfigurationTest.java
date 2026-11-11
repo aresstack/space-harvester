@@ -22,7 +22,7 @@ class JobsConfigurationTest {
     @Test
     void defaults() {
         context.run(app -> assertThat(app.getBean(JobsProperties.class))
-                .isEqualTo(new JobsProperties(2, 20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null)));
+                .isEqualTo(new JobsProperties(2, 20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null, null)));
     }
 
     @Test
@@ -30,7 +30,7 @@ class JobsConfigurationTest {
         context.withPropertyValues("space-harvester.jobs.max-concurrent=1", "space-harvester.jobs.max-queued=0",
                         "space-harvester.jobs.max-run-time=30m", "space-harvester.jobs.retention=1d")
                 .run(app -> assertThat(app.getBean(JobsProperties.class))
-                        .isEqualTo(new JobsProperties(1, 0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null)));
+                        .isEqualTo(new JobsProperties(1, 0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null, null)));
     }
 
     @Test
@@ -60,6 +60,15 @@ class JobsConfigurationTest {
                     assertThat(app.getBean(Jobs.class).parallelDownloads()).isZero();
                 });
         context.withPropertyValues("space-harvester.jobs.parallel-downloads=-1")
+                .run(app -> assertThat(app).hasFailed());
+    }
+
+    @Test
+    void theConnectionBudgetDefaultsToEightAcceptsZeroAndStopsAtSixtyFour() {
+        context.run(app -> assertThat(app.getBean(JobsProperties.class).toLimits().downloadConnections()).isEqualTo(8));
+        context.withPropertyValues("space-harvester.jobs.download-connections=0")
+                .run(app -> assertThat(app.getBean(JobsProperties.class).toLimits().downloadConnections()).isZero());
+        context.withPropertyValues("space-harvester.jobs.download-connections=65")
                 .run(app -> assertThat(app).hasFailed());
     }
 

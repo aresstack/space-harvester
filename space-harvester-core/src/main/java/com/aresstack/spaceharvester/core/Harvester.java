@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
@@ -297,6 +298,7 @@ public final class Harvester implements AutoCloseable {
     private final ExportConversions conversions;
     private final JobActions jobActions;
     private final Assets assets;
+    private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
@@ -711,7 +713,9 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
-            assets.downloadLimit(jobs.parallelDownloads());
+            // Gesamtbudget der Verbindungen aller ladenden Aufträge (jobs.download-connections, Angelo 11.11.2026).
+            this.connections = new ConnectionBudget(builder.jobLimits.downloadConnections());
+            assets.downloadLimit(Math.max(jobs.parallelDownloads(), connections.total()));
             // Restzeit (Angelo 11.11.2026): Dauer je geladener Datei, über Neustarts im Anwendungszustand.
             DownloadDurations durations = new DownloadDurations(
                     builder.dataDirectory.resolve("download-durations.properties"), clock);
@@ -764,6 +768,7 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns,
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
+            images.connections(connections);
             // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
@@ -1469,7 +1474,24 @@ public final class Harvester implements AutoCloseable {
     public void parallelDownloads(int value) {
         jobs.parallelDownloads(value);
         // Laufende Downloads laufen zu Ende: ihre Plätze bleiben, bis sie fertig sind.
-        assets.downloadLimit(Math.max(value, jobs.downloadingNow()));
+        assets.downloadLimit(Math.max(Math.max(value, jobs.downloadingNow()), connections.total()));
+    }
+
+    /**
+     * Gleichzeitige Verbindungen aller ladenden Bilder- und Anhängeaufträge zusammen ({@code jobs.download-connections},
+     * Angelo 11.11.2026), nach geschätzter Restzeit auf sie verteilt ({@link ConnectionBudget}).
+     */
+    public int downloadConnections() {
+        return connections.total();
+    }
+
+    /**
+     * Ändert {@link #downloadConnections()} sofort (0 bis {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS}); bei 0 laden
+     * Bilder- und Anhängeaufträge nichts und warten. Textdownloads betrifft das nicht.
+     */
+    public void downloadConnections(int value) {
+        connections.total(value);
+        assets.downloadLimit(Math.max(Math.max(jobs.parallelDownloads(), jobs.downloadingNow()), value));
     }
 
     /**

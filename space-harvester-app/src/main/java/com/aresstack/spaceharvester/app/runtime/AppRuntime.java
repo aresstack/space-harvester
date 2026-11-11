@@ -299,6 +299,7 @@ public final class AppRuntime implements AutoCloseable {
         }
         harvester.parallelPreparations(next.jobLimits().parallelPreparations());
         harvester.parallelDownloads(next.jobLimits().parallelDownloads());
+        harvester.downloadConnections(next.jobLimits().downloadConnections());
         settings = next;
         lastRejection = List.of();
         return Reconfiguration.APPLIED;

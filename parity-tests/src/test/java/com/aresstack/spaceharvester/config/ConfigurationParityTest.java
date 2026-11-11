@@ -59,6 +59,7 @@ class ConfigurationParityTest {
               jobs:
                 parallel-preparations: 3
                 parallel-downloads: 0
+                download-connections: 12
                 retry:
                   max-attempts: 4
                   initial-delay: 500ms
@@ -123,6 +124,9 @@ class ConfigurationParityTest {
         assertThat(app.jobLimits().parallelPreparations()).isEqualTo(jobs.toLimits().parallelPreparations())
                 .isEqualTo(3);
         assertThat(app.jobLimits().parallelDownloads()).isEqualTo(jobs.toLimits().parallelDownloads()).isZero();
+        // Gesamtbudget der Verbindungen für Bilder und Anhänge (Angelo 11.11.2026).
+        assertThat(app.jobLimits().downloadConnections()).isEqualTo(jobs.toLimits().downloadConnections())
+                .isEqualTo(12);
 
         // #336: Budget der Synonymerkennung geht beim Dienst über withSyncRules in die HarvesterConfiguration.
         HarvesterConfiguration service2 = ConfigurationManagerConfiguration.withSyncRules(

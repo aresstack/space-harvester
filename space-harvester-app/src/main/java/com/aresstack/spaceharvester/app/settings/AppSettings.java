@@ -165,7 +165,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      */
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
-                jobLimits.withParallel(other.jobLimits.parallelPreparations(), other.jobLimits.parallelDownloads()),
+                jobLimits.withParallel(other.jobLimits.parallelPreparations(), other.jobLimits.parallelDownloads())
+                        .withConnections(other.jobLimits.downloadConnections()),
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms);

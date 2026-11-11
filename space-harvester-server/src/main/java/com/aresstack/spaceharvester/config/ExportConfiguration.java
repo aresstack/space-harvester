@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -17,6 +18,7 @@ import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobRecovery;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
@@ -130,7 +132,8 @@ class ExportConfiguration {
     @Bean
     ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
                                                 Assets assets, Exports exports, AccessGuard access,
-                                                SignInRequests signIns, ConfigurationManager configuration) {
+                                                SignInRequests signIns, ConfigurationManager configuration,
+                                                ObjectProvider<JobsProperties> jobLimits) {
         // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
         // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
@@ -139,6 +142,10 @@ class ExportConfiguration {
                         .isPresent(), signIns,
                 // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                 () -> configuration.current().configuration().export());
+        // Gesamtbudget der Verbindungen aller ladenden Aufträge (jobs.download-connections, Angelo 11.11.2026).
+        JobsProperties limits = jobLimits.getIfAvailable();
+        images.connections(new ConnectionBudget(limits == null ? JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS
+                : limits.downloadConnections()));
         // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
         exports.onSubmitted(images::announce);
         exports.onPublished(images::start);

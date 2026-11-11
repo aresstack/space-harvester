@@ -182,6 +182,18 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     leere Liste heißt ohne Anhänge oder verschoben; vor der Lese-Ansicht (nur der Bilderauftrag, im Ladedurchgang)
     prüft er bei diesen Seiten den aktuellen Space einzeln. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
     betroffenen Seiten einzeln wie bisher. Die Rohantworten der Suche werden nicht je Seite gehalten.
+22. **Verbindungen (gesamt) für Bilder und Anhänge** (Angelo 11.11.2026). Bis hier lud ein Auftrag im Ladedurchgang
+    eine Datei nach der anderen. `jobs.download-connections` (Standard 8, 0 bis 64, beide Loader und
+    `ConfigurationParityTest`) ist ein Gesamtbudget gleichzeitiger Dateiabrufe aller ladenden Bilder- und
+    Anhängeaufträge (`ConnectionBudget`); Textdownloads bleiben bei einer Verbindung. Lädt nur ein Auftrag, bekommt er
+    alle Verbindungen; laden mehrere, verteilt sich das Budget bei jeder Datei neu nach ihrer geschätzten Restzeit
+    (offene Verweise × Durchschnittsdauer aus Punkt 20), damit möglichst alle zugleich fertig werden, jeder mit
+    mindestens einer. Ein Auftrag lädt so viele Seiten zugleich, wie sein Anteil hergibt; jede Datei belegt eine
+    Verbindung. Das Manifest behält die Reihenfolge der Seiten. Fordert die Quelle einen Code an, wartet nur eine
+    Verbindung darauf, die anderen laden danach dieselbe Datei noch einmal (eine Mail, ein Code, wie #571). Bei 0
+    werden keine Bilder und Anhänge geladen: die Aufträge warten in der Phase „Wartet auf Verbindungen“, ohne Fehler zu
+    zählen, und laden weiter, sobald das Budget wieder steigt. Die App ändert es über
+    `Workspace#setDownloadConnections` (Menüeintrag baut Strang OH).
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

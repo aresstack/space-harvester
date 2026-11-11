@@ -16,10 +16,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param retry         Wiederholungen bei vorübergehenden Fehlern ({@code space-harvester.jobs.retry.*}, ADR 0025)
  * @param parallelPreparations Bilder- und Anhängeaufträge, die gleichzeitig vorbereiten (Standard 2, ADR 0025)
  * @param parallelDownloads    Bilder- und Anhängeaufträge, die gleichzeitig laden (Standard 4; 0 bereitet nur vor)
+ * @param downloadConnections  Verbindungen aller ladenden Bilder- und Anhängeaufträge zusammen (Standard 8, 0 bis 64;
+ *                             0 lädt keine Bilder und Anhänge)
  */
 @ConfigurationProperties("space-harvester.jobs")
 public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration maxRunTime, Duration retention,
-        Integer maxOpenPerOwner, Retry retry, Integer parallelPreparations, Integer parallelDownloads) {
+        Integer maxOpenPerOwner, Retry retry, Integer parallelPreparations, Integer parallelDownloads,
+        Integer downloadConnections) {
 
     public JobsProperties {
         maxConcurrent = maxConcurrent == null ? 2 : maxConcurrent;
@@ -32,12 +35,14 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
                 ? JobLimits.DEFAULT_PARALLEL_PREPARATIONS : parallelPreparations);
         parallelDownloads = JobLimits.requireDownloads(parallelDownloads == null
                 ? JobLimits.DEFAULT_PARALLEL_DOWNLOADS : parallelDownloads);
+        downloadConnections = JobLimits.requireConnections(downloadConnections == null
+                ? JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS : downloadConnections);
     }
 
     /** Die Auftragsgrenzen für {@link com.aresstack.spaceharvester.application.jobs.Jobs}. */
     public JobLimits toLimits() {
         return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry.toSettings(),
-                parallelPreparations, parallelDownloads);
+                parallelPreparations, parallelDownloads, downloadConnections);
     }
 
     /**
