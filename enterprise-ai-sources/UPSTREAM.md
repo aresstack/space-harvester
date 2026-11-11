@@ -5,8 +5,7 @@ Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aress
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`9fb91c3200266169da0bc433894a331d575c2e5a`, der Merge von enterprise-ai-client#192 (Änderungssuche und Papierkorb je
-Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main`. Derselbe Stand enthält schon
+`91a4f9069d0f28561e434300e34f0a9089eaac02`, enterprise-ai-client#217 (Upstream-Patches 01–11 des Space Harvester, darunter `AttachmentSearchSource` für den Anhangskatalog über die Confluence-Suche) auf `main`; davor `9fb91c32` (#192 Änderungssuche und Papierkorb je Space, `ChangeListingSource`). Derselbe Stand enthält schon
 `document-tika`; für #183 und für MediaWiki, Git, FTP/JES, NDV und SharePoint (#187) kamen nur weitere Module und Klassen in die
 Auswahl, ohne neuen Upstream-Commit.
 

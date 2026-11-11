@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
  * FTP-Sitzung im JES-Modus ({@code SITE FILETYPE=JES}): Jobs auflisten und die gesamte Ausgabe eines Jobs lesen.
  * Übernommen aus MainframeMate {@code JesFtpService} (Anmeldung, {@code JESINTERFACELEVEL=2}, Filter über
  * {@code SITE JESOWNER/JESJOBNAME/JESSTATUS}, Parsen der {@code LIST}-Zeilen, Ausgabe über {@code <jobId>.x}),
- * ohne Löschen, Einstellungs-Singleton und Spool-Proben.
+ * ohne Löschen, Einstellungs-Singleton und Spool-Proben. Mit {@code tls} läuft die Sitzung über FTPS
+ * ({@link FtpTls}).
  */
 final class JesFtpSession implements FtpSessionPool.Session {
 
@@ -47,14 +48,15 @@ final class JesFtpSession implements FtpSessionPool.Session {
         }
     }
 
-    private final FTPClient ftp = new FTPClient();
+    private final FTPClient ftp;
     private final FtpConnectionSettings settings;
     private final String user;
     private boolean closed;
 
-    private JesFtpSession(FtpConnectionSettings settings, String user) {
+    private JesFtpSession(FtpConnectionSettings settings, String user) throws IOException {
         this.settings = settings;
         this.user = user;
+        this.ftp = FtpTls.client(settings);
     }
 
     static JesFtpSession open(FtpConnectionSettings settings, String user, char[] password) throws IOException {
@@ -62,7 +64,10 @@ final class JesFtpSession implements FtpSessionPool.Session {
         try {
             session.connect(password);
             return session;
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException e) {
+            session.close();
+            throw FtpTls.neutral(e);
+        } catch (RuntimeException e) {
             session.close();
             throw e;
         }
@@ -81,6 +86,7 @@ final class JesFtpSession implements FtpSessionPool.Session {
         if (!ftp.login(user, new String(password))) {
             throw new CommonsNetFtpSession.FtpLoginException("FTP-Anmeldung abgelehnt (" + ftp.getReplyCode() + ")");
         }
+        FtpTls.protect(ftp);
         ftp.enterLocalPassiveMode();
         ftp.setFileType(FTP.ASCII_FILE_TYPE);
         if (!ftp.sendSiteCommand("FILETYPE=JES")) {

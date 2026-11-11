@@ -147,7 +147,9 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
             if (body != null) {
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-                connection.setFixedLengthStreamingMode(body.length);
+                // Kein setFixedLengthStreamingMode: gestreamt kann HttpURLConnection nach einer Anmeldeaufforderung
+                // (407 vom Proxy ohne Tunnel, 401) nicht wiederholen und liefert die 407 als Antwort (#571). Das
+                // Formular ist klein; gepuffert sendet das JDK es nach der Anmeldung erneut.
                 try (java.io.OutputStream out = connection.getOutputStream()) {
                     out.write(body);
                 }
