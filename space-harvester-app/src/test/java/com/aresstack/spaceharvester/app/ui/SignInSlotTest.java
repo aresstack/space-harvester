@@ -251,6 +251,83 @@ class SignInSlotTest {
         });
     }
 
+    /**
+     * Neu anmelden (Angelo 11.11.2026): Bei einer Quelle mit Token steht hinter dem Codefeld ein Knopf, der zurück auf
+     * Benutzername und Passwort schaltet; nach der Anmeldung kommt wieder nur das Codefeld.
+     */
+    @Test
+    void theReloginButtonSwitchesBackToUsernameAndPassword() throws Exception {
+        SignInRequests requests = new SignInRequests(Duration.ofSeconds(30), Clock.systemUTC());
+        java.util.concurrent.atomic.AtomicReference<String> login = new java.util.concurrent.atomic.AtomicReference<>();
+        SignInChallenge[] codeStep = new SignInChallenge[1];
+        codeStep[0] = new SignInChallenge() {
+            public String service() {
+                return "wiki.example.org";
+            }
+
+            public String title() {
+                return "";
+            }
+
+            public String message() {
+                return "Code der Web-Sitzung.";
+            }
+
+            public String error() {
+                return "";
+            }
+
+            public boolean resendAvailable() {
+                return true;
+            }
+
+            @Override
+            public boolean canRestartLogin() {
+                return true;
+            }
+
+            public SignInChallenge submit(char[] value) {
+                return this;
+            }
+
+            @Override
+            public SignInChallenge submit(char[] value, String username, char[] password) {
+                assertThat(value).isEmpty();
+                login.set(username + ":" + new String(password));
+                return this;
+            }
+
+            public SignInChallenge resend() {
+                return this;
+            }
+        };
+        CompletableFuture.supplyAsync(() -> requests.await("wiki", "job-3", codeStep[0], Instant.now(), null));
+        SignInSlot[] slot = new SignInSlot[1];
+        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        await(() -> slot[0].isVisible());
+
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].codeField().isVisible()).isTrue();
+            assertThat(slot[0].reloginButton.isVisible()).isTrue();
+            assertThat(slot[0].reloginButton.getToolTipText()).isEqualTo(SignInSlot.RELOGIN_TIP);
+            slot[0].reloginButton.doClick();
+            assertThat(slot[0].usernameField().isVisible()).isTrue();
+            assertThat(slot[0].codeField().isVisible()).isFalse();
+            assertThat(slot[0].reloginButton.isVisible()).isFalse();
+            assertThat(slot[0].submitButton().getText()).isEqualTo(SignInSlot.LOGIN_TEXT);
+            slot[0].usernameField().setText("maria");
+            slot[0].passwordField().setText("again");
+            slot[0].submitButton().doClick();
+        });
+        await(() -> login.get() != null && slot[0].submitButton().isEnabled());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(slot[0].codeField().isVisible()).as("danach wieder das Codefeld").isTrue();
+            assertThat(slot[0].usernameField().isVisible()).isFalse();
+            assertThat(slot[0].reloginButton.isVisible()).isTrue();
+        });
+        assertThat(login).hasValue("maria:again");
+    }
+
     @Test
     void theFieldsStandFlushUnderEachOtherAndAreEquallyWide() throws Exception {
         SignInSlot[] slot = new SignInSlot[1];

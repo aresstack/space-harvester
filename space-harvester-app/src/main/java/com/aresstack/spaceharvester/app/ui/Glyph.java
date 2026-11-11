@@ -23,7 +23,7 @@ import java.awt.geom.RoundRectangle2D;
 public enum Glyph implements Icon {
 
     REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
-    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM;
+    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE;
 
     private static final int SIZE = 16;
 
@@ -170,6 +170,20 @@ public enum Glyph implements Icon {
                     g.draw(new Ellipse2D.Double(8.6, 3.6, 7, 7));
                     g.draw(new Line2D.Double(12.1, 5.4, 12.1, 8.8));
                     g.draw(new Line2D.Double(10.4, 7.1, 13.8, 7.1));
+                }
+                case BOUNCE -> {
+                    // Abprallender Pfeil (Angelo 11.11.2026): schräg auf eine Kante, von dort zurück nach oben.
+                    g.draw(new Line2D.Double(1.5, 14, 14.5, 14));
+                    Path2D path = new Path2D.Double();
+                    path.moveTo(2, 3);
+                    path.lineTo(7.5, 12);
+                    path.lineTo(13.5, 3.5);
+                    g.draw(path);
+                    Path2D head = new Path2D.Double();
+                    head.moveTo(10.2, 3.2);
+                    head.lineTo(13.5, 3.5);
+                    head.lineTo(13.8, 6.8);
+                    g.draw(head);
                 }
                 case BROOM -> {
                     // Stiel schräg von oben rechts, unten ein Fächer aus Borsten.

@@ -867,6 +867,41 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * Neu anmelden (Angelo 11.11.2026): Ist die Web-Sitzung abgelaufen, lässt sich aus dem Codefeld zurück auf
+     * Benutzer und Passwort wechseln; das öffnet eine neue Web-Sitzung wie beim ersten Mal, deren Code dann gilt.
+     */
+    @Test
+    void anExpiredWebSessionCanBeReplacedByLoggingInAgain() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles tokenPort = new WebFiles(secrets, seen, "token-port", 1, null);
+        java.util.Deque<WebFiles> webPorts = new java.util.ArrayDeque<>(List.of(
+                new WebFiles(secrets, seen, "web-1", 1, null), new WebFiles(secrets, seen, "web-2", 1, null)));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                tokenPort, null, null, true, () -> webPorts.size() > 1 ? webPorts.poll() : webPorts.peek());
+        HarvestSource.ViewImage image = new HarvestSource.ViewImage("/download/attachments/1/a.png", "a", null, null,
+                null);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(image, 1000), SignInRequiredException.class);
+        var signIns = new com.aresstack.spaceharvester.application.signin.SignInRequests(
+                java.time.Duration.ofMinutes(15), java.time.Clock.systemUTC());
+        var request = signIns.open("wiki", "user", required.challenge());
+        assertThat(signIns.beginWebLogin(request.id(), "anna", "pw-value".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        var codeStep = signIns.request(request.id()).orElseThrow();
+        assertThat(codeStep.asksForLogin()).isFalse();
+        assertThat(codeStep.canRestartLogin()).as("zurück auf Benutzer und Passwort möglich").isTrue();
+
+        assertThat(signIns.beginWebLogin(request.id(), "anna", "pw-new".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.NEXT_STEP);
+        assertThat(signIns.submit(request.id(), "222222".toCharArray()))
+                .isEqualTo(com.aresstack.spaceharvester.application.signin.SignInRequest.Answer.ACCEPTED);
+        assertThat(seen).last().as("der Code geht an die neue Sitzung").isEqualTo("web-2 code anna:pw-new");
+        assertThat(principalAndSecret(secrets)).isEqualTo("-:pat-value");
+    }
+
+    /**
      * #571: Scheitert das erste Absenden in der neuen Web-Sitzung (Netz), bleibt deren Code-Seite die Abfrage; der
      * nächste Versuch geht wieder an diese Sitzung, ohne eine weitere zu öffnen.
      */

@@ -47,6 +47,8 @@ public final class SignInSlot extends JPanel {
     static final String RESEND_TEXT = "Code erneut senden";
     static final String DECLINE_TEXT = "Ohne Anmeldung fortfahren";
     static final String SENDING_TEXT = "Wird gesendet …";
+    static final String RELOGIN_TIP = "Neu anmelden: zurück zu Benutzername und Passwort, etwa wenn die Web-Sitzung "
+            + "abgelaufen ist; danach kommt wieder ein Code per E-Mail";
     static final String LOGIN_REQUIRED = "Bitte Benutzername und Passwort eingeben.";
     /** Erster Schritt bei einem Token: erst anmelden, den Code fragt das Feld danach ab. */
     static final String LOGIN_HINT = "Erst mit Benutzername und Passwort anmelden; den Code aus der nächsten E-Mail "
@@ -70,6 +72,13 @@ public final class SignInSlot extends JPanel {
     private final ComicButton resendButton = new ComicButton(RESEND_TEXT);
     private final ComicButton submitButton = new ComicButton(SUBMIT_TEXT);
     private final ComicButton declineButton = new ComicButton(DECLINE_TEXT);
+    /**
+     * Hinter dem Codefeld (Angelo 11.11.2026): zurück zu Benutzername und Passwort, wenn die Web-Sitzung einer Quelle
+     * mit Token abgelaufen ist und der Code allein nicht mehr ankommt. Danach folgt wie beim ersten Mal das Codefeld.
+     */
+    final IconButton reloginButton = new IconButton(Glyph.BOUNCE, RELOGIN_TIP);
+    /** Der Nutzer hat {@link #reloginButton} gedrückt: das Formular fragt wieder Benutzername und Passwort ab. */
+    private boolean relogin;
     private final JTextArea message = text();
     private final JTextArea error = text();
     private SignInRequest shown;
@@ -137,6 +146,12 @@ public final class SignInSlot extends JPanel {
         formRow(form, 0, userLabel, usernameField);
         formRow(form, 1, passwordLabel, passwordField);
         formRow(form, 2, codeLabel, codeField);
+        java.awt.GridBagConstraints next = new java.awt.GridBagConstraints();
+        next.gridx = 2;
+        next.gridy = 2;
+        next.anchor = java.awt.GridBagConstraints.LINE_START;
+        next.insets = new java.awt.Insets(3, 6, 3, 0);
+        form.add(reloginButton, next);
         loginRows = new javax.swing.JComponent[] {userLabel, usernameField, passwordLabel, passwordField};
         codeRow = new javax.swing.JComponent[] {codeLabel, codeField};
         card.add(form);
@@ -160,6 +175,12 @@ public final class SignInSlot extends JPanel {
         passwordField.addActionListener(event -> submit());
         resendButton.addActionListener(event -> resend());
         declineButton.addActionListener(event -> decline());
+        reloginButton.addActionListener(event -> {
+            relogin = true;
+            codeField.setText("");
+            localError = null;
+            refresh();
+        });
         refresh();
     }
 
@@ -184,6 +205,7 @@ public final class SignInSlot extends JPanel {
         Optional<SignInRequest> current = requests == null ? Optional.empty() : which.apply(requests);
         if (current.isEmpty()) {
             shown = null;
+            relogin = false;
             localError = null;
             codeField.setText("");
             clearLoginFields();
@@ -198,17 +220,23 @@ public final class SignInSlot extends JPanel {
             codeField.setText("");
             clearLoginFields();
             localError = null;
+            relogin = false;
         } else if (!next.error().equals(shown.error())) {
             localError = null;
         }
         shown = next;
-        boolean loginVisibilityChanged = loginFields.isVisible() != next.asksForLogin();
-        if (loginVisibilityChanged && !next.asksForLogin()) {
+        if (!next.canRestartLogin()) {
+            relogin = false;
+        }
+        boolean login = loginMode(next);
+        boolean loginVisibilityChanged = loginFields.isVisible() != login;
+        if (loginVisibilityChanged && !login) {
             clearLoginFields();
         }
-        showLogin(next.asksForLogin());
+        showLogin(login);
+        reloginButton.setVisible(!login && next.canRestartLogin());
         // Im ersten Schritt gibt es noch keinen Code für diese Anmeldung: nur der Hinweis über den Feldern.
-        String hint = next.asksForLogin() ? "Für geschützte Bilder und Anhänge ist eine eigene Web-Anmeldung nötig."
+        String hint = login ? "Für geschützte Bilder und Anhänge ist eine eigene Web-Anmeldung nötig."
                 : next.message().isEmpty() ? "Ein Einmalcode wurde per E-Mail versendet." : next.message();
         String where = next.title().isEmpty() ? next.service() : next.title();
         message.setText(hint + (where.isEmpty() ? "" : "\n(" + where + ")"));
@@ -219,7 +247,7 @@ public final class SignInSlot extends JPanel {
         error.setText(problem);
         error.setVisible(!problem.isEmpty());
         // „Code erneut senden“ erst im zweiten Schritt, wenn es ein Codefeld gibt.
-        resendButton.setVisible(!next.asksForLogin() && next.resendAvailable());
+        resendButton.setVisible(!login && next.resendAvailable());
         setSending(sending);
         if (loginVisibilityChanged) {
             revalidateParent();
@@ -254,14 +282,15 @@ public final class SignInSlot extends JPanel {
             return;
         }
         // Bei einem Token geht im ersten Schritt kein Code mit: Die neue Sitzung meldet sich nur an (leerer Code).
-        char[] code = request.asksForLogin() ? new char[0] : codeField.getPassword();
-        if (!request.asksForLogin() && code.length == 0) {
+        boolean login = loginMode(request);
+        char[] code = login ? new char[0] : codeField.getPassword();
+        if (!login && code.length == 0) {
             codeField.requestFocusInWindow();
             return;
         }
-        String username = request.asksForLogin() ? usernameField.getText().trim() : null;
-        char[] password = request.asksForLogin() ? passwordField.getPassword() : null;
-        if (request.asksForLogin() && (username.isEmpty() || password.length == 0)) {
+        String username = login ? usernameField.getText().trim() : null;
+        char[] password = login ? passwordField.getPassword() : null;
+        if (login && (username.isEmpty() || password.length == 0)) {
             Arrays.fill(code, '\0');
             Arrays.fill(password, '\0');
             localError = LOGIN_REQUIRED;
@@ -286,6 +315,10 @@ public final class SignInSlot extends JPanel {
             }
         }, answer -> {
             setSending(false);
+            if (answer != SignInRequest.Answer.FAILED) {
+                // Angemeldet: die neue Sitzung fragt jetzt ihren Code ab, wie beim ersten Mal.
+                relogin = false;
+            }
             localError = answer == SignInRequest.Answer.FAILED ? SEND_FAILED : null;
             refresh();
             if (answer == SignInRequest.Answer.ACCEPTED) {
@@ -339,7 +372,8 @@ public final class SignInSlot extends JPanel {
     private void setSending(boolean value) {
         sending = value;
         submitButton.setText(value ? SENDING_TEXT
-                : shown != null && shown.asksForLogin() ? LOGIN_TEXT : SUBMIT_TEXT);
+                : shown != null && loginMode(shown) ? LOGIN_TEXT : SUBMIT_TEXT);
+        reloginButton.setEnabled(!value);
         submitButton.setEnabled(!value);
         resendButton.setEnabled(!value);
         declineButton.setEnabled(!value);
@@ -363,6 +397,11 @@ public final class SignInSlot extends JPanel {
         for (javax.swing.JComponent part : codeRow) {
             part.setVisible(!login);
         }
+    }
+
+    /** Benutzername und Passwort statt des Codes: erster Schritt bei einem Token oder nach „Neu anmelden“. */
+    private boolean loginMode(SignInRequest request) {
+        return request.asksForLogin() || relogin && request.canRestartLogin();
     }
 
     private JTextField firstField() {
