@@ -989,10 +989,14 @@ public final class ActivitiesView implements View {
         }
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
-        for (String format : FORMATS) {
-            String blocked = exportBlocked(job, format);
-            actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
-                    : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+        if (showsProgress(job)) {
+            actions.addAll(progressSlots(job));
+        } else {
+            for (String format : FORMATS) {
+                String blocked = exportBlocked(job, format);
+                actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
+                        : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+            }
         }
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
@@ -1003,6 +1007,66 @@ public final class ActivitiesView implements View {
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
         actions.addAll(stateActions(job));
         return actions;
+    }
+
+    /**
+     * Bilder und Anhänge haben keine Formate (Angelo 11.11.2026): Statt fünf blasser Formatknöpfe steht auf diesen
+     * Plätzen ein Fortschrittsbalken.
+     */
+    static boolean showsProgress(JobStatus job) {
+        return job.type() == JobType.ASSETS || job.type() == JobType.ATTACHMENTS;
+    }
+
+    /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
+    static List<RowActions.Action> progressSlots(JobStatus job) {
+        JobProgress p = job.progress();
+        Counters counters = Counters.of(job.type());
+        String tip = p.discovered() == 0 ? "Noch nichts gefunden"
+                : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
+                        + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "");
+        List<RowActions.Action> slots = new ArrayList<>();
+        slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
+                p.processed(), p.failed()), tip, true, () -> { }));
+        for (int i = 1; i < FORMATS.size(); i++) {
+            slots.add(RowActions.EMPTY);
+        }
+        return slots;
+    }
+
+    /** Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende. */
+    record ProgressIcon(int width, long total, long done, long failed) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int h = getIconHeight();
+                g.setColor(Comic.LINE);
+                g.fillRoundRect(x, y, width, h, h, h);
+                if (total > 0) {
+                    int filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
+                    int bad = Math.min(filled, (int) Math.round(width * Math.min(1.0, (double) failed / total)));
+                    g.setColor(Comic.PETROL);
+                    g.fillRoundRect(x, y, filled, h, h, h);
+                    if (bad > 0) {
+                        g.setColor(Comic.RED);
+                        g.fillRoundRect(x + filled - bad, y, bad, h, h, h);
+                    }
+                }
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return width;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 8;
+        }
     }
 
     /** Die Zustandsplätze einer Zeile; für Tests ohne Tabelle. */
