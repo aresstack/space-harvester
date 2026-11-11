@@ -191,6 +191,8 @@ public final class PageDetailPanel extends JPanel {
     private final java.util.Deque<PageKey> forwardStack = new java.util.ArrayDeque<>();
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
+    /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
+    private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
     private String pendingAnchor;
     private final com.aresstack.spaceharvester.app.ui.IconButton backButton = new com.aresstack.spaceharvester.app.ui
@@ -999,9 +1001,10 @@ public final class PageDetailPanel extends JPanel {
         String address = url.toString();
         String anchor = url.getRef();
         int current = request;
+        int click = ++linkRequest;
         Background.run(() -> runtime.workspace().pageByUrl(source, address, false), found -> {
-            if (current != request) {
-                return; // inzwischen eine andere Seite gewählt
+            if (current != request || click != linkRequest) {
+                return; // inzwischen eine andere Seite gewählt oder ein anderer Link geklickt
             }
             String target = found.header().metadata().pageId();
             if (target.equals(pageId)) {
@@ -1010,7 +1013,11 @@ public final class PageDetailPanel extends JPanel {
                 load(source, target, false);
                 pendingAnchor = anchor;
             }
-        }, error -> ReadingPane.browse(url));
+        }, error -> {
+            if (click == linkRequest) {
+                ReadingPane.browse(url);
+            }
+        });
     }
 
     /** Ob {@code url} auf dieselbe Domain zeigt wie die bekannte Adresse der Seite (ohne „www.“, Groß/klein egal). */
@@ -1029,11 +1036,13 @@ public final class PageDetailPanel extends JPanel {
     /** Merkt die gezeigte Seite im Verlauf, bevor eine andere geladen wird; Zurück/Vor selbst merken nichts. */
     private void remember(String nextSource, String nextPage) {
         pendingAnchor = null;
-        if (navigating || this.sourceId == null || this.pageId == null
-                || this.sourceId.equals(nextSource) && this.pageId.equals(nextPage)) {
+        if (navigating || nextSource.equals(this.sourceId) && nextPage.equals(this.pageId)) {
             return;
         }
-        backStack.push(new PageKey(this.sourceId, this.pageId));
+        // Eine neu geöffnete Seite verwirft den Vor-Verlauf, auch wenn gerade keine Seite gezeigt wird.
+        if (this.sourceId != null && this.pageId != null) {
+            backStack.push(new PageKey(this.sourceId, this.pageId));
+        }
         forwardStack.clear();
         updateNavigation();
     }

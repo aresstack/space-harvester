@@ -109,6 +109,18 @@ class ReadingPaneTest {
                 .doesNotContain("Bild fehlt");
     }
 
+    /** Sprungziele bleiben als {@code <a name>} erhalten, damit Links mit Anker in der Leseansicht dorthin rollen. */
+    @Test
+    void anchorTargetsSurviveAsNamedAnchors() {
+        ReadingView view = available("<h2 id=\"Start-Installation\">Installation</h2><p><a name=\"alt\"></a>Text</p>"
+                + "<p><a href=\"#Start-Installation\">hin</a></p>", List.of());
+
+        String html = ReadingPane.prepare(view, image -> null, source -> null).html();
+
+        assertThat(html).contains("<a name=\"Start-Installation\"></a>Installation").contains("name=\"alt\"")
+                .doesNotContain("id=");
+    }
+
     @Test
     void mermaidComesFromTheCoreOrIsMarked() throws IOException {
         ReadingView view = available("<div class=\"mermaid\">graph TD; A--&gt;B;</div>"

@@ -71,7 +71,7 @@ final class ReadingPane extends JPanel {
             "embed", "form", "input", "button", "select", "textarea", "noscript", "svg", "video", "audio", "source",
             "canvas", "template", "base");
     private static final Map<String, Set<String>> KEPT_ATTRIBUTES = Map.of(
-            "a", Set.of("href", "title"),
+            "a", Set.of("href", "title", "name"),
             "img", Set.of("src", "alt", "title", "width", "height"),
             "td", Set.of("colspan", "rowspan"),
             "th", Set.of("colspan", "rowspan"),
@@ -400,6 +400,12 @@ final class ReadingPane extends JPanel {
     /** Behält nur harmlose Attribute; Verweise werden absolut und nur http(s) bleibt klickbar. */
     private static void clean(Element element) {
         String tag = element.tagName().toLowerCase(Locale.ROOT);
+        // Sprungziele (id) kennt die Swing-HTML-Ansicht nur als <a name>: als solches davor setzen, damit Links mit
+        // Anker (#abschnitt) in der Leseansicht dorthin rollen.
+        String id = element.id();
+        if (!id.isBlank() && !"body".equals(tag)) {
+            element.prependChild(new Element(Tag.valueOf("a"), "").attr("name", id));
+        }
         Set<String> kept = KEPT_ATTRIBUTES.getOrDefault(tag, Set.of());
         for (Attribute attribute : List.copyOf(element.attributes().asList())) {
             String key = attribute.getKey().toLowerCase(Locale.ROOT);

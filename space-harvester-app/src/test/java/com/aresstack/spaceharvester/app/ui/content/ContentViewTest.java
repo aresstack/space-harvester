@@ -276,6 +276,17 @@ class ContentViewTest {
         await(() -> shown(detail, pages.get(2)));
         assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
         assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+
+        // Auch nach einem Wechsel des Space (keine Seite gezeigt) verwirft eine neue Seite den Vor-Verlauf.
+        onEdt(detail::back);
+        await(() -> shown(detail, pages.get(0)));
+        onEdt(() -> {
+            view.openSpace("notizen", space("notizen"));
+            view.openPage("handbuch", pages.get(1));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(1)));
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
     }
 
     @Test
