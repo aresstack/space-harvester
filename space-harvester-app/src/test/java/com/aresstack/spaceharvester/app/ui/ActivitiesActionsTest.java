@@ -240,6 +240,31 @@ class ActivitiesActionsTest {
                 false, false, null, stage);
     }
 
+    /**
+     * Bilder und Anhänge stehen als Unterzeilen unter ihrem Export (Angelo 11.11.2026), Bilder zuerst; zugeklappt
+     * bleibt nur der Export. Ohne Export in der Liste bleiben sie eigenständig.
+     */
+    @Test
+    void imagesAndAttachmentsAreGroupedUnderTheirExport() {
+        JobStatus older = linked("e0", JobType.EXPORT, null);
+        JobStatus export = linked("e1", JobType.EXPORT, null);
+        JobStatus attachments = linked("a1", JobType.ATTACHMENTS, "e1");
+        JobStatus images = linked("b1", JobType.ASSETS, "e1");
+        JobStatus orphan = linked("b9", JobType.ASSETS, "gone");
+        List<JobStatus> jobs = List.of(attachments, export, orphan, images, older);
+
+        assertThat(ActivitiesView.grouped(jobs, java.util.Set.of())).extracting(JobStatus::id)
+                .containsExactly("e1", "b1", "a1", "b9", "e0");
+        assertThat(ActivitiesView.grouped(jobs, java.util.Set.of("e1"))).extracting(JobStatus::id)
+                .containsExactly("e1", "b9", "e0");
+    }
+
+    private static JobStatus linked(String id, JobType type, String exportId) {
+        return new JobStatus(id, type, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0), null,
+                false, Instant.EPOCH, null, null, null, null,
+                exportId == null ? Map.of() : Map.of("exportId", exportId), false, false, null);
+    }
+
     private static JobStatus withFailures() {
         return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
                 new JobProgress(6, 6, 0, 6), null, false, Instant.EPOCH, null, Instant.EPOCH, null, null, Map.of(),
