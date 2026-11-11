@@ -717,12 +717,29 @@ public final class AppSettingsLoader {
         Duration retention = duration(get(jobs, "retention"), JobLimits.DEFAULT_RETENTION,
                 "space-harvester.jobs.retention", problems);
         RetrySettings retry = retry(map(get(jobs, "retry")), problems);
+        int preparations = parallel(jobs, JobLimits.PARALLEL_PREPARATIONS, JobLimits.DEFAULT_PARALLEL_PREPARATIONS,
+                JobLimits::requirePreparations, problems);
+        int downloads = parallel(jobs, JobLimits.PARALLEL_DOWNLOADS, JobLimits.DEFAULT_PARALLEL_DOWNLOADS,
+                JobLimits::requireDownloads, problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
-            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry);
+            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry)
+                    .withParallel(preparations, downloads);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
-            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry);
+            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry).withParallel(preparations, downloads);
+        }
+    }
+
+    /** {@code jobs.parallel-preparations} und {@code jobs.parallel-downloads}; außerhalb der Grenzen der Standard. */
+    private int parallel(Map<?, ?> jobs, String name, int fallback, java.util.function.IntUnaryOperator check,
+                         List<String> problems) {
+        int number = integer(get(jobs, name), fallback, "space-harvester.jobs." + name, problems);
+        try {
+            return check.applyAsInt(number);
+        } catch (IllegalArgumentException e) {
+            problems.add("space-harvester.jobs: " + e.getMessage() + "; es gilt " + fallback);
+            return fallback;
         }
     }
 

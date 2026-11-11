@@ -895,6 +895,36 @@ public final class Workspace {
         return status;
     }
 
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        return harvester.parallelPreparations();
+    }
+
+    /**
+     * Ändert {@link #parallelPreparations()} sofort, ohne die Konfigurationsdatei
+     * ({@link com.aresstack.spaceharvester.app.settings.ConfigFileEditor#withParallel}).
+     *
+     * @throws IllegalArgumentException außerhalb von 1 bis 16
+     */
+    public void setParallelPreparations(int value) {
+        harvester.parallelPreparations(value);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig laden ({@code jobs.parallel-downloads}); 0 lädt nichts. */
+    public int parallelDownloads() {
+        return harvester.parallelDownloads();
+    }
+
+    /**
+     * Ändert {@link #parallelDownloads()} sofort, ohne die Konfigurationsdatei. Bei 0 werden Bilder und Anhänge nur
+     * vorbereitet (Zustand „Vorbereitet“) und laden erst, wenn wieder ein Platz frei ist.
+     *
+     * @throws IllegalArgumentException außerhalb von 0 bis 64
+     */
+    public void setParallelDownloads(int value) {
+        harvester.parallelDownloads(value);
+    }
+
     /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
     public boolean canResume(String jobId) {
         job(jobId);

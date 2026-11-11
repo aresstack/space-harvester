@@ -141,7 +141,20 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     gehandelt, entfällt er. `Jobs#reconnectAt` nennt den nächsten Anlauf. Auch nach einem Neustart laufen so angehaltene
     Aufträge nach der ersten Wartezeit wieder an. `RETRY_FAILED` bietet jeder Zustand an, sobald etwas gescheitert ist:
     laufend folgt es direkt nach dem Durchgang im selben Eintrag (`Jobs#requestRetryFailed`), angehalten oder
-    abgebrochen setzt es fort, und Fortsetzen holt das Gescheiterte mit.
+    abgebrochen setzt es fort, und Fortsetzen holt das Gescheiterte mit. Bilder und Anhänge besuchen dabei die Seiten mit
+    gescheiterten Dateien erneut (`ExportAssetCollection#retryFailed`). Lehnt der Anwendungsfall das nachgeholte
+    `RETRY_FAILED` ab, etwa weil Bilder des Exports noch laufen, folgt es mit derselben wachsenden Wartezeit. Der
+    Wiederanlauf prüft Lesbarkeit und Exportrecht wie beim Start; der Dienst setzt einen Export nur fort, solange er
+    dessen Arbeit vom Start hält, sonst bleibt er angehalten, bis der Client ihn mit seinem Zugang fortsetzt.
+18. **Vorbereiten und Laden in eigenen Pools** (Angelo 11.11.2026). Bilder- und Anhängeaufträge (`JobType#download`)
+    belegen nicht die allgemeinen Plätze, sondern zwei eigene: höchstens `jobs.parallel-preparations` (Standard 2, 1 bis
+    16) bereiten gleichzeitig vor, höchstens `jobs.parallel-downloads` (Standard 4, 0 bis 64) laden gleichzeitig. Die
+    Vorbereitung fragt für alle Seiten die Anhangsliste und die Leseansicht ab und zählt alle Verweise; erst danach steht
+    die Gesamtzahl fest und ändert sich nicht mehr. Dann wartet der Auftrag im Zustand `PREPARED` („Vorbereitet“) auf
+    einen Ladeplatz (`JobContext#awaitDownloadSlot`; „Jetzt starten“ zieht ihn vor) und lädt im Zustand `RUNNING`. Bei 0 Downloads
+    werden Aufträge angenommen und vorbereitet, laden aber nichts; das Einlesen der Seitentexte läuft weiter. Beide Werte
+    gelten sofort (`Workspace#setParallelPreparations`, `#setParallelDownloads`) und stehen unter `jobs` in der
+    gemeinsamen YAML (`ConfigFileEditor#withParallel`). Zustandsschlüssel: `PREPARING`, `PREPARED`.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

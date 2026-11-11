@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -397,6 +398,33 @@ public final class ConfigFileEditor {
         if (newProblem || !settings.jobLimits().retry().equals(retry)) {
             throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.
+     * parallel-preparations} und {@code parallel-downloads}, ADR 0025), dieselben Schlüssel wie im Dienst; nur diese
+     * beiden Werte ändern sich.
+     *
+     * @param preparations gleichzeitig vorbereitende Aufträge (1 bis {@value JobLimits#MAX_PARALLEL_PREPARATIONS})
+     * @param downloads    gleichzeitig ladende Aufträge (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); 0 bereitet
+     *                     nur vor
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withParallel(Path file, Draft base, int preparations, int downloads) {
+        JobLimits.requirePreparations(preparations);
+        JobLimits.requireDownloads(downloads);
+        String text = nested(base.text(), "jobs", JobLimits.PARALLEL_PREPARATIONS,
+                indent -> indent + JobLimits.PARALLEL_PREPARATIONS + ": " + preparations + "\n");
+        text = nested(text, "jobs", JobLimits.PARALLEL_DOWNLOADS,
+                indent -> indent + JobLimits.PARALLEL_DOWNLOADS + ": " + downloads + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().parallelPreparations() != preparations
+                || settings.jobLimits().parallelDownloads() != downloads) {
+            throw new IllegalArgumentException("Die Grenzen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

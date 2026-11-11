@@ -14,10 +14,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param retention     wie lange beendete Aufträge abrufbar bleiben (Standard 7 Tage)
  * @param maxOpenPerOwner höchstens offene Aufträge je Client (Standard 4)
  * @param retry         Wiederholungen bei vorübergehenden Fehlern ({@code space-harvester.jobs.retry.*}, ADR 0025)
+ * @param parallelPreparations Bilder- und Anhängeaufträge, die gleichzeitig vorbereiten (Standard 2, ADR 0025)
+ * @param parallelDownloads    Bilder- und Anhängeaufträge, die gleichzeitig laden (Standard 4; 0 bereitet nur vor)
  */
 @ConfigurationProperties("space-harvester.jobs")
 public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration maxRunTime, Duration retention,
-        Integer maxOpenPerOwner, Retry retry) {
+        Integer maxOpenPerOwner, Retry retry, Integer parallelPreparations, Integer parallelDownloads) {
 
     public JobsProperties {
         maxConcurrent = maxConcurrent == null ? 2 : maxConcurrent;
@@ -26,6 +28,16 @@ public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration 
         retention = retention == null ? JobLimits.DEFAULT_RETENTION : retention;
         maxOpenPerOwner = maxOpenPerOwner == null ? 4 : maxOpenPerOwner;
         retry = retry == null ? new Retry(null, null, null, null, null, null) : retry;
+        parallelPreparations = JobLimits.requirePreparations(parallelPreparations == null
+                ? JobLimits.DEFAULT_PARALLEL_PREPARATIONS : parallelPreparations);
+        parallelDownloads = JobLimits.requireDownloads(parallelDownloads == null
+                ? JobLimits.DEFAULT_PARALLEL_DOWNLOADS : parallelDownloads);
+    }
+
+    /** Die Auftragsgrenzen für {@link com.aresstack.spaceharvester.application.jobs.Jobs}. */
+    public JobLimits toLimits() {
+        return new JobLimits(maxConcurrent, maxQueued, maxRunTime, retention, maxOpenPerOwner, retry.toSettings(),
+                parallelPreparations, parallelDownloads);
     }
 
     /**
