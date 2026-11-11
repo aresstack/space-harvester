@@ -1166,6 +1166,17 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #assetContent}, aber als Strom ({@code Assets.stream}, #571): ein abgelegter Anhang kommt aus der
+     * Ablage, ohne ganz im Speicher zu liegen. Der Aufrufer schließt den Strom; ein Hashfehler kommt beim Lesen am
+     * Ende als {@link java.io.IOException}.
+     */
+    public Assets.AssetStream assetStream(String sourceId, String pageId, String attachmentId) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return harvester.assets().stream(list, attachmentId, mayStore, Harvester.OWNER);
+    }
+
+    /**
      * Vorschau eines Anhangs, wie die Quelle sie erzeugt ({@code …/assets/{id}/preview}, #183): die erste verfügbare
      * in der Reihenfolge {@link com.aresstack.spaceharvester.application.sources.AttachmentPreview#order()}; legt
      * nur mit sync-Freigabe ab.
