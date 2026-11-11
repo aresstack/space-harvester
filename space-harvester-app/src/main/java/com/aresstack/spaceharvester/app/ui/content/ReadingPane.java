@@ -10,7 +10,6 @@ import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
-import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -306,7 +305,7 @@ final class ReadingPane extends JPanel {
                     continue;
                 }
                 decoded = decode(load, image);
-            } catch (SignInPendingException | SignInRequiredException e) {
+            } catch (SignInPendingException e) {
                 // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
                 missing(img, SIGN_IN_PENDING + label);
                 counts[1]++;
@@ -426,10 +425,12 @@ final class ReadingPane extends JPanel {
         try {
             Optional<VectorDiagram> drawing = vector.apply(image);
             return drawing == null ? Optional.empty() : drawing;
-        } catch (SignInPendingException | SignInRequiredException e) {
-            // Kein zweiter Abruf über das Bild: jeder weitere Abruf kann eine neue Code-Mail auslösen (#571).
+        } catch (SignInPendingException e) {
+            // Die Anforderung ist schon offen: kein weiterer Abruf über das Bild (#571).
             throw e;
         } catch (RuntimeException | LinkageError e) {
+            // Auch SignInRequiredException: Erst der Bildabruf (Workspace.viewImage) meldet die Anforderung an, damit
+            // das Codefeld erscheint; die Sperre in Assets.fromSource verhindert dabei einen neuen Netzabruf.
             return Optional.empty();
         }
     }

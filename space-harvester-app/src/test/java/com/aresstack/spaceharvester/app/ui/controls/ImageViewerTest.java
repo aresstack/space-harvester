@@ -195,4 +195,12 @@ class ImageViewerTest {
         assertThat(java.nio.file.Files.readAllBytes(folder.resolve("stages.svg"))).isEqualTo(vector.svg());
         assertThat(ImageIO.read(png).getWidth()).isEqualTo(750);
     }
+
+    @Test
+    void theChosenFormatReplacesTheExtension() {
+        assertThat(ImageViewer.withExtension("stages.svg", "png")).isEqualTo("stages.png");
+        assertThat(ImageViewer.withExtension("stages", "png")).isEqualTo("stages.png");
+        assertThat(ImageViewer.withExtension("v1.2 plan.png", "svg")).isEqualTo("v1.2 plan.svg");
+        assertThat(ImageViewer.withExtension("stages.svg", null)).isEqualTo("stages.svg");
+    }
 }

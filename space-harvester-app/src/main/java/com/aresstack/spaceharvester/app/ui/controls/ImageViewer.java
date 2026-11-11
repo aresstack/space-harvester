@@ -297,11 +297,38 @@ public final class ImageViewer extends JPanel {
             chooser.addChoosableFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
                     "PNG in der aktuellen Zoomgröße (*.png)", "png"));
             chooser.setFileFilter(svg);
+            // Wechsel des Formats passt die Endung des vorgeschlagenen Namens an.
+            chooser.addPropertyChangeListener(JFileChooser.FILE_FILTER_CHANGED_PROPERTY, event -> {
+                String name = chooser.getSelectedFile() == null ? fileName(picture) : chooser.getSelectedFile().getName();
+                chooser.setSelectedFile(new File(withExtension(name, extensionOf(chooser.getFileFilter()))));
+            });
         }
         chooser.setSelectedFile(new File(fileName(picture)));
         if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
-            saveTo(chooser.getSelectedFile());
+            File chosen = chooser.getSelectedFile();
+            String wanted = extensionOf(chooser.getFileFilter());
+            if (picture.vector() != null && wanted != null && !wanted.equals(format(chosen.getName()))) {
+                // Das gewählte Format gilt, auch wenn der Name noch die andere Endung trägt.
+                chosen = new File(chosen.getParentFile(), withExtension(chosen.getName(), wanted));
+            }
+            saveTo(chosen);
         }
+    }
+
+    /** Die Endung eines Formatfilters des Speicherdialogs ({@code svg}, {@code png}); sonst {@code null}. */
+    private static String extensionOf(javax.swing.filechooser.FileFilter filter) {
+        return filter instanceof javax.swing.filechooser.FileNameExtensionFilter extensions
+                ? extensions.getExtensions()[0] : null;
+    }
+
+    /** {@code name} mit der Endung {@code extension}; eine bekannte Bildendung wird ersetzt. */
+    static String withExtension(String name, String extension) {
+        if (extension == null) {
+            return name;
+        }
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 && format(name) != null ? name.substring(0, dot) : name;
+        return base + "." + extension;
     }
 
     private void show(int target) {
