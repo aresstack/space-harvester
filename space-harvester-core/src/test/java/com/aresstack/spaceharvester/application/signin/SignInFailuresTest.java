@@ -31,6 +31,20 @@ class SignInFailuresTest {
     }
 
     @Test
+    void onlyATunnelRefusedWithAServerErrorNeverReachedTheTarget() {
+        assertThat(SignInFailures.refusedTunnel(wrapped("Einmalcode nicht gesendet (IOException)", new IOException(
+                "Unable to tunnel through proxy. Proxy returns \"HTTP/1.1 503 Service Unavailable\"")))).isEqualTo(503);
+        assertThat(SignInFailures.refusedTunnel(wrapped("x", new IOException("Unable to tunnel through proxy. Proxy "
+                + "returns \"HTTP/1.1 407 Proxy Authentication Required\"")))).isEqualTo(-1);
+        assertThat(SignInFailures.refusedTunnel(new SourceAccessException("wiki",
+                SourceAccessException.Reason.ACCESS_DENIED, "Einmalcode gesendet, Confluence antwortet mit HTTP 503",
+                null))).isEqualTo(-1);
+        assertThat(SignInFailures.describe(new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE,
+                SignInFailures.codeNotDelivered(503), null), HOST))
+                .isEqualTo(SignInFailures.codeNotDelivered(503) + " – Ziel wiki.example.org");
+    }
+
+    @Test
     void eachKindOfFailureIsNamedWithTheTargetHost() {
         assertThat(SignInFailures.describe(wrapped("Einmalcode nicht gesendet (HttpRetryException: cannot retry)",
                 new HttpRetryException("cannot retry due to proxy authentication, in streaming mode", 407)), HOST))
