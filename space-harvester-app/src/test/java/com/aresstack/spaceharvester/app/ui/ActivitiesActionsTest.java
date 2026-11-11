@@ -114,6 +114,27 @@ class ActivitiesActionsTest {
         assertSlots(withFailures(), JobAction.RETRY_FAILED, null, JobAction.FORCE_REFRESH);
     }
 
+    /**
+     * Bilder und Anhänge zeigen statt der blassen Formatknöpfe einen Fortschrittsbalken über dieselben fünf Plätze
+     * (Angelo 11.11.2026); Exporte behalten ihre Formate. Die Platzzahl bleibt gleich, damit alles untereinander steht.
+     */
+    @Test
+    void imageAndAttachmentRowsShowAProgressBarInsteadOfFormats() {
+        for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
+            JobStatus job = new JobStatus("j1", type, "wiki", "OPS", "local", JobState.RUNNING,
+                    new JobProgress(630, 629, 600, 3), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null,
+                    Map.of(), false, false, null);
+            assertThat(ActivitiesView.showsProgress(job)).isTrue();
+            List<RowActions.Action> slots = ActivitiesView.progressSlots(job);
+            assertThat(slots).hasSize(ActivitiesView.FORMATS.size());
+            assertThat(RowActions.wide(slots.get(0))).isTrue();
+            assertThat(slots.subList(1, slots.size())).allMatch(RowActions.Action::empty);
+            assertThat(RowActions.covering(slots, 4)).as("Tooltip auch am rechten Ende").isSameAs(slots.get(0));
+            assertThat(slots.get(0).tooltip()).isEqualTo("629 von 630 geprüft · 3 fehlend");
+        }
+        assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+    }
+
     /** Bilder und Anhänge (#631): fertig → Neu erzwingen; unvollständig → Nur Fehler und Neu erzwingen. */
     @Test
     void imagesAndAttachments() {
