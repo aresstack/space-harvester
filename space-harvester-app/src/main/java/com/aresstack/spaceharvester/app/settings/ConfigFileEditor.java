@@ -430,6 +430,27 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Entwurf {@code base} mit neuem Gesamtbudget an Verbindungen für Bilder und Anhänge ({@code space-harvester.
+     * jobs.download-connections}, Angelo 11.11.2026), derselbe Schlüssel wie im Dienst; nur dieser Wert ändert sich.
+     *
+     * @param connections Verbindungen aller ladenden Aufträge zusammen (0 bis
+     *                    {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS}); 0 lädt keine Bilder und Anhänge
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConnections(Path file, Draft base, int connections) {
+        JobLimits.requireConnections(connections);
+        String text = nested(base.text(), "jobs", JobLimits.DOWNLOAD_CONNECTIONS,
+                indent -> indent + JobLimits.DOWNLOAD_CONNECTIONS + ": " + connections + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().downloadConnections() != connections) {
+            throw new IllegalArgumentException("Die Verbindungen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
     /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
     public static String delay(java.time.Duration delay) {
         return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";

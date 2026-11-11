@@ -60,7 +60,7 @@ class AssetConfiguration {
         // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
         JobsProperties limits = jobs.getIfAvailable();
         if (limits != null) {
-            assets.downloadLimit(limits.parallelDownloads());
+            assets.downloadLimit(Math.max(limits.parallelDownloads(), limits.downloadConnections()));
         }
         return assets;
     }

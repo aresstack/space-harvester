@@ -244,6 +244,88 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void withAConnectionBudgetSeveralFilesLoadAtOnceAndTheManifestKeepsThePageOrder() {
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.of(source);
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        // Bis die Quelle eine Datei geliefert hat, lädt Assets je Quelle nur eine (#571, eine Mail, ein Code).
+        assets.viewImage("confluence", "100", "3", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/100/vorab.png", "vorab.png", null, null, null));
+        java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger most = new java.util.concurrent.atomic.AtomicInteger();
+        source.onDownload = id -> {
+            most.accumulateAndGet(now.incrementAndGet(), Math::max);
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                now.decrementAndGet();
+            }
+        };
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        images.connections(new com.aresstack.spaceharvester.application.assets.ConnectionBudget(4));
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Mehrere Verbindungen aus dem Budget: Dateien beider Seiten laden gleichzeitig (Angelo 11.11.2026).
+        assertThat(most.get()).isGreaterThan(1);
+        JobStatus done = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().discovered()).isEqualTo(4);
+        assertThat(done.progress().written()).isEqualTo(3);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        List<String> pages = manifest.assets().stream().map(ExportAssetManifest.Entry::pageId).toList();
+        assertThat(pages).contains("100", "101").isSortedAccordingTo(java.util.Comparator.naturalOrder());
+    }
+
+    @Test
+    void withABudgetOfZeroNothingLoadsAndTheJobWaitsWithoutErrors() throws Exception {
+        com.aresstack.spaceharvester.application.assets.ConnectionBudget budget =
+                new com.aresstack.spaceharvester.application.assets.ConnectionBudget(0);
+        ExportAssetCollection images = collection();
+        images.connections(budget);
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8))));
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        Thread worker = new Thread(this::drain);
+        worker.start();
+        Thread.sleep(600);
+
+        // Budget 0: der Auftrag wartet, nichts wird geladen und nichts zählt als Fehler.
+        JobStatus waiting = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(waiting.state().terminal()).isFalse();
+        assertThat(source.downloads).isZero();
+        assertThat(waiting.progress().failed()).isZero();
+
+        budget.total(2);
+        worker.join(10_000);
+        assertThat(jobs.list("client-a", JobType.ASSETS).get(0).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(writer().assets(export.id()).orElseThrow().forPage("100")).isNotEmpty();
+    }
+
+    @Test
     void aFailedSpaceCheckLeavesThePageUncheckedOrPausesWithoutLosingTheOtherPages() {
         source.searchable = true;
         source.moved = Set.of("100");
@@ -654,7 +736,7 @@ class ExportAssetCollectionTest {
         /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
         final List<String> listed = new ArrayList<>();
         /** Seiten, deren Lese-Ansicht abgefragt wurde, in Reihenfolge. */
-        final List<String> read = new ArrayList<>();
+        final List<String> read = java.util.Collections.synchronizedList(new ArrayList<>());
         /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
         java.util.function.Consumer<String> onListing = pageId -> { };
         /** Beim Laden eines Bildes der Lese-Ansicht, mit seiner Adresse. */
@@ -741,7 +823,9 @@ class ExportAssetCollectionTest {
             if (attachment.attachmentId().equals("att9")) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND, "gelöscht", null);
             }
-            downloads++;
+            synchronized (this) {
+                downloads++;
+            }
             return new AttachmentFile(attachment, attachment.attachmentId().equals("att3") ? MXFILE : PNG, Instant.parse("2026-10-18T01:00:00Z"));
         }
 
@@ -775,7 +859,9 @@ class ExportAssetCollectionTest {
         @Override
         public byte[] viewImage(ViewImage image, long maxBytes) {
             onDownload.accept(image.src());
-            downloads++;
+            synchronized (this) {
+                downloads++;
+            }
             return PNG;
         }
     }

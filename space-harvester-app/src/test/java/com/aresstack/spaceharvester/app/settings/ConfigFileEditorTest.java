@@ -577,6 +577,24 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theConnectionBudgetIsWrittenOnceAndReadBack() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  jobs:\n    parallel-downloads: 2\n");
+
+        editor.save(file, editor.withConnections(file, new ConfigFileEditor.Draft(Files.readString(file), null), 0));
+        editor.save(file, editor.withConnections(file, new ConfigFileEditor.Draft(Files.readString(file), null), 16));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    download-connections: 16\n", "    parallel-downloads: 2\n");
+        assertThat(text.indexOf("download-connections")).isEqualTo(text.lastIndexOf("download-connections"));
+        assertThat(loader.load(file).jobLimits().downloadConnections()).isEqualTo(16);
+        assertThatThrownBy(() -> editor.withConnections(file, new ConfigFileEditor.Draft(text, null), 65))
+                .isInstanceOf(IllegalArgumentException.class);
+        Files.writeString(file, "space-harvester:\n  jobs:\n    download-connections: 0\n");
+        assertThat(loader.load(file).jobLimits().downloadConnections()).isZero();
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"

@@ -721,13 +721,16 @@ public final class AppSettingsLoader {
                 JobLimits::requirePreparations, problems);
         int downloads = parallel(jobs, JobLimits.PARALLEL_DOWNLOADS, JobLimits.DEFAULT_PARALLEL_DOWNLOADS,
                 JobLimits::requireDownloads, problems);
+        int connections = parallel(jobs, JobLimits.DOWNLOAD_CONNECTIONS, JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS,
+                JobLimits::requireConnections, problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
             return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry)
-                    .withParallel(preparations, downloads);
+                    .withParallel(preparations, downloads).withConnections(connections);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
-            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry).withParallel(preparations, downloads);
+            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry).withParallel(preparations, downloads)
+                    .withConnections(connections);
         }
     }
 
