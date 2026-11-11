@@ -1327,28 +1327,22 @@ public final class ActivitiesView implements View {
             + "des Downloads verschwindet mit dem Auftrag.";
 
     /**
-     * Übernimmt die beiden Grenzen sofort im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
-     * überstehen.
+     * Übernimmt die beiden Grenzen im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
+     * überstehen; beides im Hintergrund ({@link AppContext#parallel}).
      */
     void parallel() {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null) {
+        if (context.runtime() == null) {
             return;
         }
         int prepare = preparations.value();
         int load = downloads.value();
-        try {
-            runtime.workspace().setParallelPreparations(prepare);
-            runtime.workspace().setParallelDownloads(load);
-        } catch (IllegalArgumentException e) {
-            feedback.problem(e);
-            return;
-        }
-        context.parallel(prepare, load, () -> feedback.success(load == 0
-                ? "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet"
-                : "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + ", "
-                        + Texts.count(prepare, "Vorbereitung", "Vorbereitungen")), feedback::problem);
-        poll();
+        context.parallel(prepare, load, () -> {
+            feedback.success(load == 0
+                    ? "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet"
+                    : "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + ", "
+                            + Texts.count(prepare, "Vorbereitung", "Vorbereitungen"));
+            poll();
+        }, feedback::problem);
     }
 
     private void invalidParallel(String message) {
