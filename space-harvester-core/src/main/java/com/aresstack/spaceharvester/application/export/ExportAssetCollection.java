@@ -24,6 +24,7 @@ import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ForeignContent;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -641,6 +642,16 @@ public class ExportAssetCollection {
             context.phase(COMPONENT, PREPARE_PHASE);
             // Nur Kennungen und Verweise je Seite, nie die Seiteninhalte: die liest der Ladedurchgang erneut einzeln.
             Map<String, PagePlan> plans = new java.util.LinkedHashMap<>();
+            // Anhangskatalog über die Suche der Quelle statt zweier Abrufe je Seite (Angelo 11.11.2026).
+            Map<String, PageAttachmentList> catalog = Map.of();
+            try {
+                catalog = catalog(context, dataset, done.keySet());
+            } catch (SourceUnreachable e) {
+                LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
+                        exportId, e.reason);
+                context.pause(PauseReason.CONNECTION_LOST);
+            }
+            Map<String, PageAttachmentList> searched = catalog;
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 String pageId = page.snapshot().key().pageId();
@@ -655,7 +666,7 @@ public class ExportAssetCollection {
                     return;
                 }
                 try {
-                    PagePlan plan = plan(current, exportId, dataset, page.snapshot());
+                    PagePlan plan = plan(current, exportId, dataset, page.snapshot(), searched.get(pageId));
                     if (plan == null) {
                         complete[0] = false;
                     } else {
@@ -801,6 +812,43 @@ public class ExportAssetCollection {
                             boolean checked, long discovered) {
     }
 
+    /** Seiten je Katalogabfrage; die Quelle teilt sie selbst weiter auf (Confluence: 50 Seiten je CQL). */
+    static final int CATALOG_PAGES = 500;
+
+    /**
+     * Die Anhangslisten aller noch nicht geprüften Seiten über die Suche der Quelle ({@link SourceQueries#attachmentsOf}),
+     * in Abfragen zu {@value #CATALOG_PAGES} Seiten, beschränkt auf den Space des Exports: eine inzwischen verschobene
+     * Seite hat eine leere Liste und bekommt so keine Anhänge. Kann die Quelle das nicht oder scheitert eine Abfrage
+     * (etwa zu viele Treffer), fragt die Vorbereitung die betroffenen Seiten einzeln wie bisher.
+     *
+     * @throws SourceUnreachable wenn die Quelle nicht erreichbar ist oder drosselt
+     */
+    private Map<String, PageAttachmentList> catalog(JobContext context, ConversionInput dataset, Set<String> done) {
+        List<String> pageIds = new ArrayList<>();
+        for (PageHeader header : dataset.headers()) {
+            String pageId = header.key().pageId();
+            if (!done.contains(pageId)) {
+                pageIds.add(pageId);
+            }
+        }
+        Map<String, PageAttachmentList> catalog = new HashMap<>();
+        for (int from = 0; from < pageIds.size(); from += CATALOG_PAGES) {
+            context.checkpoint();
+            List<String> chunk = pageIds.subList(from, Math.min(pageIds.size(), from + CATALOG_PAGES));
+            try {
+                catalog.putAll(sources.attachmentsOf(dataset.sourceId(), dataset.spaceKey(), chunk));
+            } catch (SourceAccessException e) {
+                unreachable(e);
+                if (e.reason() == SourceAccessException.Reason.UNSUPPORTED) {
+                    return catalog;
+                }
+                LOG.log(System.Logger.Level.INFO, "Anhangskatalog über die Suche nicht lieferbar ({0}); einzeln",
+                        e.reason());
+            }
+        }
+        return catalog;
+    }
+
     /** Ein Verweis einer Seite: ein Bild- oder Dokument-Anhang, oder ein Bild der Lese-Ansicht. */
     private record Step(PageAttachment attachment, boolean document, HarvestSource.ViewImage image,
                         boolean forbidden) {
@@ -810,7 +858,8 @@ public class ExportAssetCollection {
      * Vorbereitung einer Seite: fragt Anhangsliste und Lese-Ansicht ab, legt die Lese-Ansicht ab und zählt jeden
      * Verweis ({@link JobContext#discovered}); lädt keine Datei.
      */
-    private PagePlan plan(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot) {
+    private PagePlan plan(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot,
+                          PageAttachmentList searched) {
         JobContext context = run.context;
         String sourceId = dataset.sourceId();
         String pageId = snapshot.key().pageId();
@@ -822,10 +871,20 @@ public class ExportAssetCollection {
         Set<String> ownAttachments = new HashSet<>();
         PageAttachmentList list = null;
         try {
-            list = sources.attachments(sourceId, pageId);
+            // Aus dem Katalog schon auf den Space beschränkt; sonst einzeln mit dem aktuellen Space der Seite.
+            list = searched != null ? searched : sources.attachments(sourceId, pageId);
             if (!dataset.spaceKey().equals(list.spaceKey())) {
                 // Inzwischen in einem anderen Space: die Seite bleibt, wie sie exportiert wurde, ohne Bilder.
                 return null;
+            }
+            if (searched != null && list.attachments().attachments().isEmpty() && run.share.images()) {
+                // Leer aus der Suche heißt ohne Anhänge oder verschoben. Vor der Lese-Ansicht, die den Space nicht
+                // prüft, deshalb den aktuellen Space dieser Seite abfragen; Seiten mit Treffern liegen nachweislich im
+                // Space.
+                String current = sources.pageMetadata(sourceId, pageId).entry().page().partitionKey();
+                if (!dataset.spaceKey().equals(current)) {
+                    return null;
+                }
             }
             if (!list.attachments().complete()) {
                 // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.

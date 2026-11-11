@@ -10,7 +10,8 @@ import java.util.List;
 
 /**
  * The attachment list of a resource, see {@link AttachmentListSource}: metadata of every attachment in the order of
- * the source and the native responses of all list pages, byte for byte.
+ * the source and the native responses of all list pages, byte for byte. Lists from {@link AttachmentSearchSource}
+ * carry the search responses attributed to the resource instead, see there.
  */
 public final class StoredAttachmentList {
 
@@ -37,16 +38,50 @@ public final class StoredAttachmentList {
             throw new IllegalArgumentException("attachments, payloads, mediaType, nativeFormat and retrievedAt are required");
         }
         this.attachments = Collections.unmodifiableList(new ArrayList<KnowledgeResource>(attachments));
-        List<byte[]> copies = new ArrayList<byte[]>(payloads.size());
-        for (byte[] payload : payloads) {
-            copies.add(Arrays.copyOf(payload, payload.length));
-        }
-        this.payloads = copies;
+        this.payloads = copies(payloads);
         this.mediaType = mediaType;
         this.nativeFormat = nativeFormat;
         this.retrievedAt = retrievedAt;
         this.warnings = warnings == null ? Collections.<String>emptyList()
                 : Collections.unmodifiableList(new ArrayList<String>(warnings));
+    }
+
+    /**
+     * Like {@link #StoredAttachmentList(List, List, String, String, Instant, List)}, but the payloads are responses
+     * that answer several lists at once (e.g. one search across many resources, see {@link AttachmentSearchSource}):
+     * this list refers to the responses at {@code positions} of {@code shared} instead of copying them again.
+     *
+     * @param positions 0-based positions in {@code shared}, in the order of this list's payloads
+     */
+    public StoredAttachmentList(List<KnowledgeResource> attachments, SharedPayloads shared, List<Integer> positions,
+                                String mediaType, String nativeFormat, Instant retrievedAt, List<String> warnings) {
+        if (attachments == null || shared == null || positions == null || mediaType == null || nativeFormat == null
+                || retrievedAt == null) {
+            throw new IllegalArgumentException(
+                    "attachments, shared, positions, mediaType, nativeFormat and retrievedAt are required");
+        }
+        this.attachments = Collections.unmodifiableList(new ArrayList<KnowledgeResource>(attachments));
+        List<byte[]> selected = new ArrayList<byte[]>(positions.size());
+        for (Integer position : positions) {
+            if (position == null || position < 0 || position >= shared.payloads.size()) {
+                throw new IllegalArgumentException("position outside the shared payloads: " + position);
+            }
+            selected.add(shared.payloads.get(position));
+        }
+        this.payloads = selected;
+        this.mediaType = mediaType;
+        this.nativeFormat = nativeFormat;
+        this.retrievedAt = retrievedAt;
+        this.warnings = warnings == null ? Collections.<String>emptyList()
+                : Collections.unmodifiableList(new ArrayList<String>(warnings));
+    }
+
+    private static List<byte[]> copies(List<byte[]> payloads) {
+        List<byte[]> copies = new ArrayList<byte[]>(payloads.size());
+        for (byte[] payload : payloads) {
+            copies.add(Arrays.copyOf(payload, payload.length));
+        }
+        return copies;
     }
 
     public List<KnowledgeResource> attachments() {
@@ -81,6 +116,34 @@ public final class StoredAttachmentList {
     /** {@code true} if no entry was left out. */
     public boolean complete() {
         return warnings.isEmpty();
+    }
+
+    /**
+     * Native responses that answer the lists of several resources at once. Each response is copied once on creation;
+     * the lists built from them share these copies, and {@link StoredAttachmentList#payloads()} still hands out copies
+     * only, so no caller can change what another list returns.
+     */
+    public static final class SharedPayloads {
+
+        private final List<byte[]> payloads;
+
+        /** @param payloads the response bodies in request order, byte for byte */
+        public SharedPayloads(List<byte[]> payloads) {
+            if (payloads == null) {
+                throw new IllegalArgumentException("payloads are required");
+            }
+            this.payloads = Collections.unmodifiableList(copies(payloads));
+        }
+
+        /** Number of responses. */
+        public int size() {
+            return payloads.size();
+        }
+
+        @Override
+        public String toString() {
+            return "SharedPayloads[" + payloads.size() + " responses]";
+        }
     }
 
     @Override

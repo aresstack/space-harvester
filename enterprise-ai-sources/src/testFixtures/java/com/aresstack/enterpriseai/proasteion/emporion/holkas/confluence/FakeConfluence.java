@@ -28,6 +28,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public static final URI BASE = URI.create("https://confluence.example.org/wiki");
 
     private static final String ID_CQL = "type=page AND id in (";
+    /** Anhänge einiger Seiten ({@code ConfluenceRestClient#attachmentsOfPagesCql}). */
+    private static final java.util.regex.Pattern ATTACHMENTS_OF_PAGES_CQL = java.util.regex.Pattern.compile(
+            "type=attachment AND container in \\(([0-9,]+)\\)(?: AND space=\"([^\"]+)\")? ORDER BY created");
+    /** Alle Anhänge eines Space ({@code ConfluenceRestClient#attachmentsInSpaceCql}). */
+    private static final java.util.regex.Pattern ATTACHMENTS_IN_SPACE_CQL = java.util.regex.Pattern.compile(
+            "space=\"([^\"]+)\" AND type=attachment ORDER BY created");
     private static final java.util.regex.Pattern CHANGED_CQL = java.util.regex.Pattern.compile(
             "space=\"([^\"]+)\" AND type=page AND lastmodified >= now\\(\"-([0-9]+)m\"\\) ORDER BY lastmodified DESC");
 
@@ -293,6 +299,9 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
                 for (FakePage page : recent) {
                     found.add(page.id);
                 }
+            } else if (lastCql != null && (ATTACHMENTS_OF_PAGES_CQL.matcher(lastCql).matches()
+                    || ATTACHMENTS_IN_SPACE_CQL.matcher(lastCql).matches())) {
+                found = searchedAttachments(lastCql);
             } else if (lastCql != null && lastCql.startsWith(ID_CQL) && lastCql.endsWith(")")) {
                 found = new ArrayList<String>();
                 for (String id : lastCql.substring(ID_CQL.length(), lastCql.length() - 1).split(",")) {
@@ -307,7 +316,11 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             for (int i = start; i < found.size() && results.size() < limit; i++) {
                 results.add(searchEntry(found.get(i), query.get("expand")));
             }
-            return json(page(results, nextLink(uri, start + results.size(), found.size())));
+            ConfluenceHttpResponse response = json(page(results, nextLink(uri, start + results.size(), found.size())));
+            if (response.length() > maxBytes) {
+                throw new ConfluenceResponseTooLargeException(maxBytes);
+            }
+            return response;
         }
         if (path.startsWith("/rest/api/content/") && parts.length == 5) {
             String id = parts[4];
@@ -364,6 +377,33 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             }
         }
         return notFound();
+    }
+
+    /**
+     * Anhänge, die eine CQL-Anhangssuche findet, in Anlagereihenfolge (wie {@code ORDER BY created}): wie Confluence
+     * nur die Anhänge sichtbarer Seiten, die nicht im Papierkorb liegen.
+     */
+    private List<String> searchedAttachments(String cql) {
+        java.util.regex.Matcher ofPages = ATTACHMENTS_OF_PAGES_CQL.matcher(cql);
+        java.util.regex.Matcher inSpace = ATTACHMENTS_IN_SPACE_CQL.matcher(cql);
+        Set<String> containers = new LinkedHashSet<String>();
+        if (ofPages.matches()) {
+            Collections.addAll(containers, ofPages.group(1).split(","));
+        }
+        String spaceKey = inSpace.matches() ? inSpace.group(1) : null;
+        String containerSpace = ofPages.matches() ? ofPages.group(2) : null;
+        List<String> found = new ArrayList<String>();
+        for (FakeAttachment attachment : attachments.values()) {
+            FakePage page = pages.get(attachment.pageId);
+            if (restricted.contains(page.id) || trashed.contains(page.id)) {
+                continue;
+            }
+            if (spaceKey != null ? page.spaceKey.equals(spaceKey) : containers.contains(page.id)
+                    && (containerSpace == null || page.spaceKey.equals(containerSpace))) {
+                found.add(attachment.id);
+            }
+        }
+        return found;
     }
 
     /** Folgelink wie Confluence Data Center: relativ zum Kontextpfad, Query unverändert bis auf {@code start}. */
@@ -471,6 +511,14 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             ancestors = before;
         }
         json.add("ancestors", ancestors);
+        // Wie Confluence: Position unter den Geschwistern, "none" ohne manuelle Sortierung.
+        JsonObject extensions = new JsonObject();
+        if (page.position == null) {
+            extensions.addProperty("position", "none");
+        } else {
+            extensions.addProperty("position", page.position);
+        }
+        json.add("extensions", extensions);
         if (expand != null && expand.contains("childTypes.page")) {
             List<String> visible = new ArrayList<String>(page.children);
             visible.removeAll(restricted);
@@ -554,10 +602,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         version.addProperty("number", 1);
         version.addProperty("when", "2026-10-02T10:00:00.000Z");
         json.add("version", version);
-        JsonObject container = new JsonObject();
-        container.addProperty("id", attachment.pageId);
-        container.addProperty("type", "page");
-        json.add("container", container);
+        if (attachment.containerType != null) {
+            JsonObject container = new JsonObject();
+            container.addProperty("id", attachment.pageId);
+            container.addProperty("type", attachment.containerType);
+            json.add("container", container);
+        }
         JsonObject links = new JsonObject();
         links.addProperty("download", attachment.downloadOverride != null
                 ? attachment.downloadOverride : attachment.downloadPath());
@@ -622,6 +672,11 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         String storage;
         /** Feste Antwort für Abrufe mit {@code body.storage}, Byte für Byte (Leerraum, Escapes, Reihenfolge). */
         String rawJson;
+        /**
+         * Manuelle Position unter den Geschwistern ({@code extensions.position}); ohne Wert {@code "none"}. Die
+         * Reihenfolge von {@code /child/page} bleibt die von {@link FakeConfluence#child}.
+         */
+        Integer position;
 
         FakePage(String id, String title, String spaceKey, String html) {
             this.id = id;
@@ -637,6 +692,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
 
         public FakePage rawJson(String json) {
             this.rawJson = json;
+            return this;
+        }
+
+        /** Setzt die manuelle Position unter den Geschwistern, wie Confluence sie nach Verschieben im Baum führt. */
+        public FakePage position(int value) {
+            this.position = value;
             return this;
         }
 
@@ -673,6 +734,8 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         final String mediaType;
         final byte[] content;
         String downloadOverride;
+        /** {@code container.type}; z. B. {@code blogpost}; {@code null} lässt {@code container} weg. */
+        String containerType = "page";
 
         FakeAttachment(String id, String pageId, String title, String mediaType, byte[] content) {
             this.id = id;

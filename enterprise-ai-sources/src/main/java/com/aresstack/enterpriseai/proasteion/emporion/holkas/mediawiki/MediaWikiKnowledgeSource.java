@@ -69,8 +69,17 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
                 credentialsProvider);
     }
 
-    MediaWikiKnowledgeSource(SourceAddress sourceId, MediaWikiSiteConfig site, MediaWikiTransport transport,
-                             MediaWikiCredentialsProvider credentialsProvider) {
+    /**
+     * Mit eigenem Transport ({@link MediaWikiTransport}), z. B. einem asynchronen HTTP-Client der Anwendung; Proxy,
+     * Vertrauen und Timeouts sind dann Sache des Transports.
+     *
+     * @param transport HTTP-Naht zur {@code api.php} dieser Site
+     */
+    public MediaWikiKnowledgeSource(SourceAddress sourceId, MediaWikiSiteConfig site, MediaWikiTransport transport,
+                                    MediaWikiCredentialsProvider credentialsProvider) {
+        if (transport == null) {
+            throw new IllegalArgumentException("transport must not be null");
+        }
         if (sourceId == null) {
             throw new IllegalArgumentException("sourceId must not be null");
         }

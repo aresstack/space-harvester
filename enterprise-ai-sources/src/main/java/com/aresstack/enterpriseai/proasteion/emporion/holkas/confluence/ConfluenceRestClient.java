@@ -360,8 +360,10 @@ final class ConfluenceRestClient {
                 return;
             }
             long delay = backoffMillis(attempt, config.retryBackoffMillis(), config.maxRetryBackoffMillis());
-            LOG.warning("[Confluence] " + failure.getMessage() + "; Wiederholung " + (attempt + 1) + " von "
+            // Wie der synchrone Weg: WARNING nur mit Art des Fehlers, die Meldung kann Adressen enthalten.
+            LOG.warning("[Confluence] " + what + ": " + failure.kind() + ", Wiederholung " + (attempt + 1) + " von "
                     + config.maxRetries() + " in " + delay + " ms");
+            LOG.fine("[Confluence] " + failure.getMessage());
             java.util.concurrent.Future<?> timer = RetryTimer.TIMER.schedule(() -> start(attempt + 1),
                     delay, java.util.concurrent.TimeUnit.MILLISECONDS);
             current.set(timer);
@@ -498,6 +500,119 @@ final class ConfluenceRestClient {
         return new StoredAttachments(payloads, contentType, firstAnswer, attachments, warnings);
     }
 
+    /** Höchstens so viele Seiten-IDs stehen in einem CQL {@code container in (...)}, damit die Anfrage kurz bleibt. */
+    static final int ATTACHMENT_SEARCH_CHUNK = 50;
+
+    /**
+     * CQL der Anhänge einiger Seiten. Nach Anlagezeitpunkt sortiert, damit während des Blätterns neu angelegte
+     * Anhänge hinten einsortiert werden und keinen noch nicht gelesenen verdrängen.
+     */
+    static String attachmentsOfPagesCql(List<String> pageIds) {
+        return attachmentsOfPagesCql(pageIds, null);
+    }
+
+    /**
+     * Wie {@link #attachmentsOfPagesCql(List)}, mit {@code spaceKey} nur Anhänge, die derzeit in diesem Space liegen:
+     * eine inzwischen verschobene Seite liefert keine Treffer. Der Schlüssel ist vorher geprüft
+     * ({@link ConfluenceIds#isSpaceKey}).
+     */
+    static String attachmentsOfPagesCql(List<String> pageIds, String spaceKey) {
+        StringBuilder cql = new StringBuilder("type=attachment AND container in (");
+        for (int i = 0; i < pageIds.size(); i++) {
+            cql.append(i == 0 ? "" : ",").append(pageIds.get(i));
+        }
+        cql.append(')');
+        if (spaceKey != null) {
+            cql.append(" AND space=\"").append(spaceKey).append('"');
+        }
+        return cql.append(" ORDER BY created").toString();
+    }
+
+    /** CQL aller Anhänge eines Space, sortiert wie {@link #attachmentsOfPagesCql}. */
+    static String attachmentsInSpaceCql(String spaceKey) {
+        return "space=\"" + spaceKey + "\" AND type=attachment ORDER BY created";
+    }
+
+    /**
+     * Eine CQL-Anhangssuche über {@code /rest/api/content/search} mit demselben {@code expand} wie
+     * {@link #storedAttachments} ({@value #ATTACHMENT_LIST_EXPAND}, also mit der Seite in {@code container}): alle
+     * Antwortseiten unverändert, dazu jeder Eintrag mit seiner Position und seiner Seite. Nicht-Anhänge werden
+     * übersprungen, zählen aber zur Grenze. Es wird nie gekürzt: mehr als {@code max} Einträge (brauchbar oder nicht)
+     * zusammen mit {@code alreadyRead} Einträgen früherer Suchen desselben Aufrufs oder ein sich wiederholender
+     * Folgelink sind {@code INVALID_RESPONSE}. Die Suche liefert nur, was das Konto sehen darf.
+     */
+    AttachmentSearch attachmentSearch(Session session, String cql, int alreadyRead, int max)
+            throws KnowledgeSourceException {
+        String what = "Anhangssuche";
+        List<byte[]> payloads = new ArrayList<byte[]>();
+        List<SearchedAttachment> entries = new ArrayList<SearchedAttachment>();
+        String contentType = null;
+        Instant firstAnswer = null;
+        int count = alreadyRead;
+        Set<String> visited = new HashSet<String>();
+        String next = "/rest/api/content/search?cql=" + query(cql) + "&expand=" + ATTACHMENT_LIST_EXPAND
+                + "&start=0&limit=" + config.pageSize();
+        while (next != null) {
+            if (!visited.add(next)) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Folgelink wiederholt sich");
+            }
+            ConfluenceHttpResponse response = send(session, next, what, config.maxResponseBytes());
+            if (firstAnswer == null) {
+                firstAnswer = Instant.now();
+            }
+            JsonObject json = jsonObject(response, what);
+            payloads.add(response.body());
+            if (contentType == null) {
+                contentType = response.contentType();
+            }
+            JsonArray results = array(json, "results");
+            if (results == null) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Liste ohne results");
+            }
+            int responseIndex = payloads.size() - 1;
+            int index = 0;
+            for (JsonElement element : results) {
+                index++;
+                // Jeder Eintrag zählt zur Grenze, auch ein unbrauchbarer, damit nichts unbegrenzt wächst.
+                if (++count > max) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
+                            what + ": mehr als " + max + " Einträge, Liste wird nicht gekürzt");
+                }
+                if (!element.isJsonObject()) {
+                    entries.add(new SearchedAttachment(responseIndex, index, null, null, null, "kein JSON-Objekt"));
+                    continue;
+                }
+                JsonObject result = element.getAsJsonObject();
+                JsonObject wrapped = object(result, "content");
+                if (wrapped != null) {
+                    result = wrapped;
+                }
+                String type = string(result, "type");
+                if (type != null && !"attachment".equals(type)) {
+                    continue;
+                }
+                JsonObject container = object(result, "container");
+                String containerId = container == null ? null : string(container, "id");
+                containerId = containerId == null ? null : containerId.trim();
+                if (!ConfluenceIds.isContentId(containerId)) {
+                    entries.add(new SearchedAttachment(responseIndex, index, null, null, null,
+                            "Anhang ohne zuordenbare Seite (Container-ID " + idShape(container) + ")"));
+                    continue;
+                }
+                String containerType = string(container, "type");
+                if (attachmentId(result) == null) {
+                    entries.add(new SearchedAttachment(responseIndex, index, containerId, containerType, null,
+                            "Anhang ohne gültige ID (" + idShape(result) + ")"));
+                    continue;
+                }
+                entries.add(new SearchedAttachment(responseIndex, index, containerId, containerType,
+                        toAttachment(result, containerId), null));
+            }
+            next = nextLink(json, what);
+        }
+        return new AttachmentSearch(payloads, contentType, firstAnswer, entries, count);
+    }
+
     /** Ein Anhang; {@code NOT_FOUND}, wenn es ihn nicht gibt. */
     Attachment attachment(Session session, String attachmentId) throws KnowledgeSourceException {
         JsonObject json = getJson(session, "/rest/api/content/" + attachmentId + "?expand=version,container",
@@ -629,8 +744,8 @@ final class ConfluenceRestClient {
             if (next == null) {
                 break;
             }
-            LOG.info("[Confluence] " + what + ": Weiterleitung von " + withoutQuery(uri.toString()) + " auf "
-                    + withoutQuery(next.toString()) + ", ohne Anmeldung gefolgt");
+            LOG.info("[Confluence] " + what + ": Weiterleitung von " + logPath(uri.toString()) + " auf "
+                    + logPath(next.toString()) + ", ohne Anmeldung gefolgt");
             uri = next;
             headers = withoutAuthorization(headers);
         }
@@ -640,15 +755,19 @@ final class ConfluenceRestClient {
         return response;
     }
 
-    /** Logzeile zum fehlgeschlagenen Anhang bzw. zur Vorschau (Pfad ohne Query, nie Header). */
+    /**
+     * Logzeile zum fehlgeschlagenen Anhang bzw. zur Vorschau: Pfad ohne IDs und Dateinamen ({@link #logPath}), Status,
+     * Content-Type, Größe und Fehlerart; nie Header, nie die Fehlermeldung (sie nennt Adressen und geht mit der
+     * Ausnahme an den Aufrufer).
+     */
     private static KnowledgeSourceException fileFailure(String what, String path, ConfluenceHttpResponse response,
                                                         KnowledgeSourceException error) {
-        LOG.warning("[Confluence] " + what + " nicht geladen: pfad=" + withoutQuery(String.valueOf(path))
+        LOG.warning("[Confluence] " + what + " nicht geladen: pfad=" + logPath(path)
                 + " status=" + (response == null ? "-" : String.valueOf(response.status()))
                 + " contentType=" + (response == null || response.contentType().isEmpty() ? "-"
                 : response.contentType())
                 + " bytes=" + (response == null ? "-" : String.valueOf(response.length()))
-                + " fehler=" + error.kind() + ": " + error.getMessage());
+                + " fehler=" + error.kind());
         return error;
     }
 
@@ -674,7 +793,7 @@ final class ConfluenceRestClient {
         if (fragment != null && fragment.startsWith(ConfluencePageView.DRAWIO_FRAGMENT + "=")
                 && (fragment + "&").contains("&" + ConfluencePageView.DRAWIO_VIEW_ORIGINAL + "&")) {
             // Umschalter „Original“ im Bild-Viewer: nur die von draw.io erzeugte PNG-Vorschau, keine Zeichnung.
-            LOG.info("[Confluence] draw.io: Original-Vorschau angefordert: " + withoutQuery(preview));
+            LOG.info("[Confluence] draw.io: Original-Vorschau angefordert: " + logPath(preview));
             return previewImage(session, preview);
         }
         if (fragment != null && fragment.startsWith(ConfluencePageView.DRAWIO_FRAGMENT + "=")) {
@@ -684,7 +803,7 @@ final class ConfluenceRestClient {
             } catch (KnowledgeSourceException | DrawioDiagramRenderer.Unsupported e) {
                 drawio = e.getMessage();
                 LOG.info("[Confluence] draw.io: JGraphX nicht möglich (" + drawio + "), verwende PNG-Vorschau: "
-                        + withoutQuery(preview == null ? "" : preview));
+                        + logPath(preview == null ? "" : preview));
             }
         }
         try {
@@ -726,8 +845,8 @@ final class ConfluenceRestClient {
         } catch (IllegalArgumentException e) {
             throw new DrawioDiagramRenderer.Unsupported("Diagrammname nicht als Adresse darstellbar");
         }
-        LOG.info("[Confluence] draw.io: rendere Diagramm name=" + decoded(name) + " page=" + page + " revision="
-                + (revision == null ? "-" : revision));
+        // Ohne Diagrammname und Seiten-ID: beide sind Inhalt der Quelle.
+        LOG.info("[Confluence] draw.io: rendere Diagramm revision=" + (revision == null ? "-" : revision));
         ConfluenceHttpResponse response;
         try {
             response = transport.get(uri, session.headers, config.maxResponseBytes());
@@ -752,14 +871,6 @@ final class ConfluenceRestClient {
         byte[] svg = DrawioDiagramRenderer.toSvg(xml).getBytes(java.nio.charset.StandardCharsets.UTF_8);
         LOG.info("[Confluence] draw.io: SVG erzeugt (" + svg.length + " Bytes)");
         return svg;
-    }
-
-    private static String decoded(String encoded) {
-        try {
-            return java.net.URLDecoder.decode(encoded.replace("+", "%2B"), "UTF-8");
-        } catch (java.io.UnsupportedEncodingException | IllegalArgumentException e) {
-            return encoded;
-        }
     }
 
     /** Die PNG-Vorschau bzw. jedes andere Bild der Lese-Ansicht. */
@@ -836,7 +947,7 @@ final class ConfluenceRestClient {
         OneTimeCodeForm form = OneTimeCodeForm.parse(required.page(), required.html(), config.baseUrl());
         if (form != null) {
             LOG.info("[Confluence] Einmalcode-Abfrage: formular=" + form.formId() + " ziel="
-                    + withoutQuery(form.action().toString()) + " felder=" + form.fieldNames() + " neuSenden="
+                    + logPath(form.action().toString()) + " felder=" + form.fieldNames() + " neuSenden="
                     + form.resendAvailable() + " sitzungsCookies=" + web.cookieNames());
         }
         return form;
@@ -1104,8 +1215,8 @@ final class ConfluenceRestClient {
         String file = writeDiagnosticFile(what, uri, response, sent);
         LOG.warning("[Confluence] " + what + ": HTML statt Datei untersucht: status=" + response.status()
                 + " contentType=" + response.contentType() + " bytes=" + response.length()
-                + " adresse=" + withoutQuery(uri.toString())
-                + " weiterleitungen=" + withoutQueries(response.redirects())
+                + " adresse=" + logPath(uri.toString())
+                + " weiterleitungen=" + logPaths(response.redirects())
                 + " gesendet=" + sentDescription(sent)
                 + " gesetzteCookies=" + response.cookieNames()
                 + " " + page.summary()
@@ -1159,6 +1270,14 @@ final class ConfluenceRestClient {
         List<String> out = new ArrayList<String>();
         for (String location : locations) {
             out.add(withoutQuery(location));
+        }
+        return out;
+    }
+
+    private static List<String> logPaths(List<String> locations) {
+        List<String> out = new ArrayList<String>();
+        for (String location : locations) {
+            out.add(logPath(location));
         }
         return out;
     }
@@ -1219,8 +1338,8 @@ final class ConfluenceRestClient {
             // Weiterleitungen auf denselben Host folgt der Transport angemeldet; eine auf einen anderen Host (etwa
             // einen Download-Host) folgt der Bildweg wie ein Browser, aber ohne Authorization und Cookie:
             // Anmeldedaten verlassen die eingestellte Confluence nie.
-            LOG.info("[Confluence] Bild: Weiterleitung von " + withoutQuery(uri.toString()) + " auf "
-                    + withoutQuery(next.toString()) + ", ohne Anmeldung gefolgt");
+            LOG.info("[Confluence] Bild: Weiterleitung von " + logPath(uri.toString()) + " auf "
+                    + logPath(next.toString()) + ", ohne Anmeldung gefolgt");
             uri = next;
             headers = withoutAuthorization(headers);
         }
@@ -1247,8 +1366,8 @@ final class ConfluenceRestClient {
     private URI followedRedirect(URI from, ConfluenceHttpResponse response) {
         URI next = foreignRedirect(from, response);
         if (next != null && !config.foreignFileRedirects()) {
-            LOG.warning("[Confluence] Weiterleitung von " + withoutQuery(from.toString()) + " auf "
-                    + withoutQuery(next.toString()) + " nicht gefolgt (foreignFileRedirects=false)");
+            LOG.warning("[Confluence] Weiterleitung von " + logPath(from.toString()) + " auf "
+                    + logPath(next.toString()) + " nicht gefolgt (foreignFileRedirects=false)");
             return null;
         }
         return next;
@@ -1343,19 +1462,22 @@ final class ConfluenceRestClient {
                 && (head.length() == i + 4 || !Character.isLetterOrDigit(head.charAt(i + 4)));
     }
 
-    /** Schreibt die Logzeile zum fehlgeschlagenen Bild (ohne Header) und gibt den Fehler zurück. */
+    /**
+     * Schreibt die Logzeile zum fehlgeschlagenen Bild (ohne Header, Adressen ohne IDs und Dateinamen, Fehlerart ohne
+     * Meldung) und gibt den Fehler zurück.
+     */
     private static KnowledgeSourceException imageFailure(URI uri, ConfluenceHttpResponse response,
                                                          KnowledgeSourceException error) {
         StringBuilder line = new StringBuilder("[Confluence] Bild nicht geladen: url=")
-                .append(withoutQuery(uri.toString()))
+                .append(logPath(uri.toString()))
                 .append(" status=").append(response == null ? "-" : String.valueOf(response.status()))
                 .append(" contentType=").append(response == null || response.contentType().isEmpty() ? "-"
                         : response.contentType())
                 .append(" bytes=").append(response == null ? "-" : String.valueOf(response.length()));
         if (response != null && response.location() != null) {
-            line.append(" weiterleitung=").append(withoutQuery(response.location()));
+            line.append(" weiterleitung=").append(logPath(response.location()));
         }
-        line.append(" fehler=").append(error.kind()).append(": ").append(error.getMessage());
+        line.append(" fehler=").append(error.kind());
         LOG.warning(line.toString());
         return error;
     }
@@ -1366,6 +1488,50 @@ final class ConfluenceRestClient {
         int fragment = location.indexOf('#');
         int end = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
         return end < 0 ? location : location.substring(0, end);
+    }
+
+    /** Pfadsegmente, denen eine Seiten- oder Anhangs-ID, ein Space-Key, ein Titel oder ein Dateiname folgt. */
+    private static final Set<String> CONTENT_SEGMENTS = new HashSet<String>(java.util.Arrays.asList(
+            "attachments", "thumbnails", "content", "display", "spaces", "crud"));
+
+    /**
+     * Ein Strukturteil eines Pfads: Kleinbuchstaben, Binde- und Unterstrich, keine Ziffern, als Endung nur
+     * {@code .action} (sonst könnte es ein Dateiname sein).
+     */
+    private static final java.util.regex.Pattern STRUCTURAL_SEGMENT =
+            java.util.regex.Pattern.compile("[a-z][a-z_-]*(\\.action)?");
+
+    /**
+     * Adresse oder Pfad für Logzeilen: Schema, Host und die führenden Strukturteile des Pfads ohne Query; ab dem ersten
+     * Segment, das eine ID, einen Space-Key, einen Titel oder einen Dateinamen sein kann, steht {@code …}, z. B.
+     * {@code /confluence/download/attachments/123/Bericht.pdf} → {@code /confluence/download/attachments/…}.
+     */
+    static String logPath(String location) {
+        String plain = withoutQuery(String.valueOf(location));
+        int scheme = plain.indexOf("://");
+        int pathStart = scheme < 0 ? plain.indexOf('/') : plain.indexOf('/', scheme + 3);
+        if (pathStart < 0) {
+            return scheme < 0 && !plain.isEmpty() ? "…" : plain;
+        }
+        StringBuilder out = new StringBuilder(plain.substring(0, pathStart));
+        String[] segments = plain.substring(pathStart + 1).split("/", -1);
+        for (int i = 0; i < segments.length; i++) {
+            String segment = segments[i];
+            if (segment.isEmpty() && i == segments.length - 1) {
+                out.append('/');
+                break;
+            }
+            if (!STRUCTURAL_SEGMENT.matcher(segment).matches()) {
+                out.append("/…");
+                break;
+            }
+            out.append('/').append(segment);
+            if (CONTENT_SEGMENTS.contains(segment) && i < segments.length - 1) {
+                out.append("/…");
+                break;
+            }
+        }
+        return out.toString();
     }
 
     /** Expansion of the search endpoint: the hit's content with version and space (revision, partition). */
@@ -2193,6 +2359,51 @@ final class ConfluenceRestClient {
             this.retrievedAt = retrievedAt;
             this.attachments = attachments;
             this.warnings = warnings;
+        }
+    }
+
+    /** Antwortkörper aller Seiten einer Anhangssuche, unverändert, mit den daraus gelesenen Einträgen. */
+    static final class AttachmentSearch {
+        final List<byte[]> payloads;
+        final String contentType;
+        /** Zeitpunkt der ersten Antwort, nach Anmeldung und Wiederholungen. */
+        final Instant retrievedAt;
+        /** Alle Anhang-Einträge in Antwortreihenfolge, auch unbrauchbare. */
+        final List<SearchedAttachment> entries;
+        /** Gelesene Einträge einschließlich übersprungener und früherer Suchen ({@code alreadyRead}). */
+        final int read;
+
+        AttachmentSearch(List<byte[]> payloads, String contentType, Instant retrievedAt,
+                         List<SearchedAttachment> entries, int read) {
+            this.payloads = payloads;
+            this.contentType = contentType;
+            this.retrievedAt = retrievedAt;
+            this.entries = entries;
+            this.read = read;
+        }
+    }
+
+    /**
+     * Ein Eintrag einer Anhangssuche: Position (Antwortseite ab 0, Eintrag ab 1), Seite und Anhang. Ohne brauchbare ID
+     * ist {@code attachment} {@code null}, ohne zuordenbare Seite auch {@code containerId}; {@code problem} sagt dann,
+     * was fehlt, ohne Werte, Titel oder Dateinamen.
+     */
+    static final class SearchedAttachment {
+        final int response;
+        final int index;
+        final String containerId;
+        final String containerType;
+        final Attachment attachment;
+        final String problem;
+
+        SearchedAttachment(int response, int index, String containerId, String containerType, Attachment attachment,
+                           String problem) {
+            this.response = response;
+            this.index = index;
+            this.containerId = containerId;
+            this.containerType = containerType;
+            this.attachment = attachment;
+            this.problem = problem;
         }
     }
 

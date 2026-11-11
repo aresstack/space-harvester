@@ -37,9 +37,11 @@ class ParityFilesTest {
         ParityFiles.create(directory);
         try (Harvester harvester = harvester(Map.of("exclude", ParityFiles.EXCLUDE))) {
             Map<String, String> texts = sync(harvester);
-            // Heute ohne ParityFiles.IMAGE: die Ordner-Quelle des Core führt Bilder noch nicht als Seite. Kommen
-            // Bilddateien als Seite mit Asset und leerem Text, gehört IMAGE in diese Erwartung.
-            assertThat(texts.keySet()).containsExactlyInAnyOrder(ParityFiles.DOCUMENTS);
+            // Seit Upstream-Patch 05 (enterprise-ai-client#217) führt die Ordner-Quelle Bilder als Seite mit Asset
+            // und leerem Text; ParityFiles.IMAGE gehört deshalb dazu.
+            java.util.List<String> expected = new java.util.ArrayList<>(java.util.List.of(ParityFiles.DOCUMENTS));
+            expected.add(ParityFiles.IMAGE);
+            assertThat(texts.keySet()).containsExactlyInAnyOrderElementsOf(expected);
             assertThat(String.join("\n", texts.values())).contains(ParityFiles.SENTENCES)
                     .doesNotContain(ParityFiles.EXCLUDED_SENTENCE);
 

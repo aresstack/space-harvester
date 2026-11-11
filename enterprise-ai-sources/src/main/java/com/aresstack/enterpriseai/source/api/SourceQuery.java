@@ -7,7 +7,8 @@ import java.util.Set;
 
 /**
  * Suchanfrage an eine durchsuchbare Quelle ({@link SearchableKnowledgeSource}). Der Text wird von der
- * Quelle in ihrer eigenen Syntax interpretiert (MediaWiki-Volltextsuche, Confluence-CQL-Textsuche).
+ * Quelle in ihrer eigenen Syntax interpretiert (MediaWiki-Volltextsuche, Confluence-CQL-Textsuche); mit
+ * {@link #titleOnly()} nur im Titel, wo die Quelle das kann.
  */
 public final class SourceQuery {
 
@@ -17,12 +18,14 @@ public final class SourceQuery {
     private final int limit;
     private final Set<String> excludedPartitions;
     private final Set<String> includedPartitions;
+    private final boolean titleOnly;
 
     public SourceQuery(String text, int limit) {
-        this(text, limit, Collections.<String>emptySet(), Collections.<String>emptySet());
+        this(text, limit, Collections.<String>emptySet(), Collections.<String>emptySet(), false);
     }
 
-    private SourceQuery(String text, int limit, Set<String> excludedPartitions, Set<String> includedPartitions) {
+    private SourceQuery(String text, int limit, Set<String> excludedPartitions, Set<String> includedPartitions,
+                        boolean titleOnly) {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("text must not be blank");
         }
@@ -33,6 +36,7 @@ public final class SourceQuery {
         this.limit = limit;
         this.excludedPartitions = excludedPartitions;
         this.includedPartitions = includedPartitions;
+        this.titleOnly = titleOnly;
     }
 
     public static SourceQuery of(String text) {
@@ -60,9 +64,22 @@ public final class SourceQuery {
         return includedPartitions;
     }
 
+    /**
+     * Ob nur im Titel gesucht wird (Confluence: CQL {@code title ~}); {@code false} = Volltext. Quellen ohne
+     * Titelsuche dürfen das ignorieren und suchen dann im Volltext; Aufrufer prüfen den Titel der Treffer selbst.
+     */
+    public boolean titleOnly() {
+        return titleOnly;
+    }
+
+    /** Dieselbe Anfrage nur im Titel ({@code true}) oder im Volltext ({@code false}). */
+    public SourceQuery withTitleOnly(boolean titleOnly) {
+        return new SourceQuery(text, limit, excludedPartitions, includedPartitions, titleOnly);
+    }
+
     /** Dieselbe Anfrage ohne die angegebenen Bereiche. */
     public SourceQuery withExcludedPartitions(Collection<String> keys) {
-        return new SourceQuery(text, limit, keys(keys), includedPartitions);
+        return new SourceQuery(text, limit, keys(keys), includedPartitions, titleOnly);
     }
 
     /**
@@ -70,7 +87,7 @@ public final class SourceQuery {
      * abgewählt sind; ein Ausschluss gilt zusätzlich.
      */
     public SourceQuery withIncludedPartitions(Collection<String> keys) {
-        return new SourceQuery(text, limit, excludedPartitions, keys(keys));
+        return new SourceQuery(text, limit, excludedPartitions, keys(keys), titleOnly);
     }
 
     private static Set<String> keys(Collection<String> keys) {
@@ -87,7 +104,7 @@ public final class SourceQuery {
 
     @Override
     public String toString() {
-        return "SourceQuery{text='" + text + "', limit=" + limit + "}";
+        return "SourceQuery{text='" + text + "', limit=" + limit + (titleOnly ? ", titleOnly" : "") + "}";
     }
 
     @Override
@@ -99,13 +116,14 @@ public final class SourceQuery {
             return false;
         }
         SourceQuery that = (SourceQuery) o;
-        return limit == that.limit && text.equals(that.text) && excludedPartitions.equals(that.excludedPartitions)
+        return limit == that.limit && titleOnly == that.titleOnly && text.equals(that.text)
+                && excludedPartitions.equals(that.excludedPartitions)
                 && includedPartitions.equals(that.includedPartitions);
     }
 
     @Override
     public int hashCode() {
-        return 31 * (31 * (31 * text.hashCode() + limit) + excludedPartitions.hashCode())
-                + includedPartitions.hashCode();
+        return 31 * (31 * (31 * (31 * text.hashCode() + limit) + excludedPartitions.hashCode())
+                + includedPartitions.hashCode()) + (titleOnly ? 1 : 0);
     }
 }

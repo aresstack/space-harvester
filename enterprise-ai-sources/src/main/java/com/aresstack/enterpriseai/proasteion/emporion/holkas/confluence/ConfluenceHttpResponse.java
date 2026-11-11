@@ -41,12 +41,18 @@ public final class ConfluenceHttpResponse {
      */
     public ConfluenceHttpResponse(int status, String contentType, byte[] body, String location, List<String> cookies,
                                   java.net.URI uri, List<String> redirects) {
+        this(status, contentType, body == null ? null : Arrays.copyOf(body, body.length), location, cookies, uri,
+                redirects, true);
+    }
+
+    private ConfluenceHttpResponse(int status, String contentType, byte[] body, String location, List<String> cookies,
+                                   java.net.URI uri, List<String> redirects, boolean owned) {
         this.uri = uri;
         this.redirects = redirects == null ? Collections.<String>emptyList()
                 : Collections.unmodifiableList(new ArrayList<String>(redirects));
         this.status = status;
         this.contentType = contentType == null ? "" : contentType;
-        this.body = body == null ? new byte[0] : Arrays.copyOf(body, body.length);
+        this.body = body == null ? new byte[0] : body;
         this.location = location == null || location.trim().isEmpty() ? null : location.trim();
         this.cookies = cookies == null ? Collections.<String>emptyList()
                 : Collections.unmodifiableList(new ArrayList<String>(cookies));
@@ -60,8 +66,23 @@ public final class ConfluenceHttpResponse {
         return contentType;
     }
 
+    /**
+     * Übernimmt {@code body} ohne Kopie: für Transporte, die den Körper selbst in einem passenden Feld gesammelt haben
+     * und es danach nicht mehr anfassen. Bei Anhängen bis 100 MiB spart das eine volle Kopie je Antwort.
+     */
+    public static ConfluenceHttpResponse adopting(int status, String contentType, byte[] body, String location,
+                                                  List<String> cookies) {
+        return new ConfluenceHttpResponse(status, contentType, body, location, cookies, null,
+                Collections.<String>emptyList(), true);
+    }
+
     public byte[] body() {
         return Arrays.copyOf(body, body.length);
+    }
+
+    /** Der Körper als Strom, ohne Kopie (für große Anhänge statt {@link #body()}). */
+    public java.io.InputStream bodyStream() {
+        return new java.io.ByteArrayInputStream(body);
     }
 
     /** Länge des Körpers in Bytes. */
