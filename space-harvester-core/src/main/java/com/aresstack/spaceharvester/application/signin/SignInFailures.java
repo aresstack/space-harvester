@@ -39,6 +39,13 @@ public final class SignInFailures {
     static final String TOKEN_LOGIN_REJECTED = "Confluence nimmt den Einmalcode bei Anmeldung mit Personal Access Token "
             + "nicht an";
 
+    /**
+     * Anfang der Meldung, wenn Confluence die Anmeldung mit Benutzer und Passwort für die Web-Sitzung einer Quelle mit
+     * Token ablehnt (HTTP 401, #571): falsches Passwort, falscher Benutzer oder eine gesperrte Anmeldung nach
+     * Fehlversuchen.
+     */
+    static final String LOGIN_REJECTED = "Confluence lehnt Benutzername oder Passwort ab";
+
     /** {@code Unable to tunnel through proxy. Proxy returns "HTTP/1.1 502 Bad Gateway"} des JDK. */
     private static final Pattern TUNNEL = Pattern.compile("tunnel through proxy.*?HTTP/\\d(?:\\.\\d)? (\\d{3})",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
@@ -85,6 +92,28 @@ public final class SignInFailures {
     public static String tokenLoginRejected(int status) {
         return TOKEN_LOGIN_REJECTED + " (HTTP " + status + "). Bilder und Anhänge hinter der Zwei-Faktor-Anmeldung "
                 + "brauchen bei dieser Quelle die Anmeldung mit Benutzer und Passwort";
+    }
+
+    /**
+     * Klare Meldung statt „Quelle antwortet mit HTTP 401“, wenn Confluence Benutzer und Passwort für die Web-Sitzung
+     * ablehnt (#571); {@link #describe} gibt sie unverändert als Art aus.
+     */
+    public static String loginRejected(int status) {
+        return LOGIN_REJECTED + " (HTTP " + status + "). Bitte Benutzername und Passwort prüfen (nicht den Access-Token); "
+                + "nach mehreren Fehlversuchen kann Confluence erst eine Anmeldung im Browser verlangen";
+    }
+
+    /** Ob die Ursachenkette eine Antwort mit diesem HTTP-Status meldet („… HTTP 401 …“). */
+    public static boolean answeredWith(Throwable failure, int status) {
+        for (Throwable current : chain(failure)) {
+            Matcher found = current.getMessage() == null ? null : HTTP_STATUS.matcher(current.getMessage());
+            while (found != null && found.find()) {
+                if (Integer.parseInt(found.group(1)) == status) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Typ der innersten Ursache (einfacher Klassenname) fürs Protokoll; ohne Meldung. */
@@ -172,7 +201,8 @@ public final class SignInFailures {
             if (current instanceof ConnectException) {
                 return "Verbindung abgelehnt (ConnectException)";
             }
-            if (current.getMessage() != null && current.getMessage().startsWith(TOKEN_LOGIN_REJECTED)) {
+            if (current.getMessage() != null && (current.getMessage().startsWith(TOKEN_LOGIN_REJECTED)
+                    || current.getMessage().startsWith(LOGIN_REJECTED))) {
                 return current.getMessage();
             }
             if (current.getMessage() != null) {
