@@ -64,6 +64,22 @@ class DownloadDurationsTest {
     }
 
     @Test
+    void aFailedWriteIsRepeatedOnClose() throws Exception {
+        Path blocked = home.resolve("state");
+        Files.writeString(blocked, "kein Verzeichnis");
+        Path file = blocked.resolve("download-durations.properties");
+        Clock clock = Clock.fixed(Instant.parse("2026-11-11T13:00:00Z"), ZoneOffset.UTC);
+        DownloadDurations durations = new DownloadDurations(file, clock);
+        durations.record(Kind.IMAGE, Duration.ofMillis(700));
+        durations.close();
+        assertThat(Files.isRegularFile(file)).isFalse();
+
+        Files.delete(blocked);
+        durations.close();
+        assertThat(new DownloadDurations(file, clock).average(Kind.IMAGE)).isEqualTo(Duration.ofMillis(700));
+    }
+
+    @Test
     void documentsAndImagesAreToldApartLikeTheTwoJobs() {
         assertThat(Kind.of("image/png", "bild.png")).isEqualTo(Kind.IMAGE);
         assertThat(Kind.of("application/vnd.jgraph.mxfile", "ablauf")).isEqualTo(Kind.IMAGE);
