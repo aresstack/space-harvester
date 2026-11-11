@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.SyncBaseline;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -142,6 +143,31 @@ class ExportPackageImportTest {
         assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION))
                 .contains(SVG);
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
+    }
+
+    @Test
+    void storesTheFilesOfThePackageAsStreamsThroughFilesOfTheStore() throws Exception {
+        JobStatus job = imports.start(pkg(pages("100"), new PackageAssets()), "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).as(String.valueOf(jobs.status(job.id())))
+                .isEqualTo(JobState.COMPLETED);
+        // Bild, draw.io und PDF über eine Datei der Ablage, nie ganz im Speicher; nur die kleine Grafik als Bytes.
+        assertThat(assets.streamed).containsExactlyInAnyOrder("att-foto", "att-drawio", "att-pdf");
+        assertThat(assets.staged).hasSize(3).allSatisfy(file -> assertThat(file).doesNotExist());
+    }
+
+    @Test
+    void aChangedFileOfThePackageIsNotStoredAndLeavesNoFileBehind() throws Exception {
+        Path pkg = pkg(pages("100"), new PackageAssets());
+        Path tampered = rewrite(pkg, name(pkg, PDF), "%PDF-1.4 verändert".getBytes(StandardCharsets.UTF_8));
+
+        JobStatus job = imports.start(tampered, "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).as(String.valueOf(jobs.status(job.id())))
+                .isEqualTo(JobState.COMPLETED);
+        assertThat(assets.content("laptop", "att-pdf", "2")).isEmpty();
+        assertThat(assets.content("laptop", "att-foto", "1")).contains(PNG);
+        assertThat(assets.staged).isNotEmpty().allSatisfy(file -> assertThat(file).doesNotExist());
     }
 
     @Test
@@ -299,6 +325,18 @@ class ExportPackageImportTest {
         throw new AssertionError(name + " fehlt");
     }
 
+    /** Der Name des Eintrags mit genau diesen Bytes. */
+    private static String name(Path pkg, byte[] content) throws Exception {
+        try (InputStream in = Files.newInputStream(pkg); ZipInputStream zip = new ZipInputStream(in)) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                if (java.util.Arrays.equals(zip.readAllBytes(), content)) {
+                    return entry.getName();
+                }
+            }
+        }
+        throw new AssertionError("Kein Eintrag mit diesen Bytes");
+    }
+
     private Path rewrite(Path pkg, String name, byte[] replacement) throws Exception {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         try (InputStream in = Files.newInputStream(pkg); ZipInputStream zip = new ZipInputStream(in)) {
@@ -419,6 +457,23 @@ class ExportPackageImportTest {
 
         private final Map<String, byte[]> contents = new HashMap<>();
         private final Map<String, Asset> entries = new HashMap<>();
+        /** Die Dateien, die {@link #stagingFile()} ausgegeben hat. */
+        private final List<Path> staged = new ArrayList<>();
+        /** Die Anhänge, die über {@link #putFile} kamen. */
+        private final List<String> streamed = new ArrayList<>();
+
+        @Override
+        public Path stagingFile() throws IOException {
+            Path file = AssetStore.super.stagingFile();
+            staged.add(file);
+            return file;
+        }
+
+        @Override
+        public void putFile(Asset asset, Path file) {
+            streamed.add(asset.attachmentId());
+            AssetStore.super.putFile(asset, file);
+        }
 
         Optional<byte[]> content(String sourceId, String attachmentId, String version) {
             return find(sourceId, attachmentId, version).map(asset -> contents.get(asset.sha256()));

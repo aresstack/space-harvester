@@ -38,6 +38,10 @@ import com.aresstack.spaceharvester.application.sync.SyncListener;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.sync.SyncPlan;
 import com.aresstack.spaceharvester.application.sync.SyncPlanner;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -378,14 +382,10 @@ public final class ExportPackageImport {
                 boolean mermaid = entry.reference().kind() == ExportAssetManifest.Kind.MERMAID;
                 // Mermaid trägt seinen Text im Manifest; abgelegt wird nur die gezeichnete Grafik.
                 if (!mermaid && entry.attachmentId() != null) {
-                    Optional<byte[]> content = files.content(entry);
-                    if (content.isEmpty()) {
+                    if (!putFile(files, entry, target, now)) {
                         missing++;
                         continue;
                     }
-                    assets.put(new Asset(target, entry.pageId(), entry.attachmentId(), entry.version(),
-                            entry.title(), entry.mediaType(), AssetKind.of(entry.mediaType(), entry.title()),
-                            content.get().length, entry.sha256(), now), content.get());
                     stored++;
                     if (entry.document() && texts != null) {
                         files.text(entry).filter(text -> !text.isBlank())
@@ -404,7 +404,7 @@ public final class ExportPackageImport {
                             rendition.get().length, entry.rendition().sha256(), now), rendition.get());
                     stored++;
                 }
-            } catch (AssetStoreException | IllegalArgumentException e) {
+            } catch (AssetStoreException | IllegalArgumentException | IOException e) {
                 missing++;
                 LOG.log(System.Logger.Level.WARNING, "Datei aus dem Paket für {0} nicht abgelegt ({1})", target,
                         e.getClass().getName());
@@ -415,6 +415,43 @@ public final class ExportPackageImport {
                     missing + " Dateien aus dem Paket nicht abgelegt"));
         }
         context.record(JobEvent.Draft.info(COMPONENT, stored + " Dateien übernommen"));
+    }
+
+    /**
+     * Legt die Datei eines Eintrags als Strom über eine Datei der Ablage ab ({@link AssetStore#stagingFile()}), nie ganz
+     * im Speicher: Dateien beliebiger Größe (Angelo 11.11.2026). Hash und Größe prüft die Ablage beim Ablegen.
+     *
+     * @return {@code false}, wenn das Paket die Datei nicht hat
+     * @throws IOException wenn sie nicht lesbar ist oder nicht zu ihrer Prüfsumme passt
+     */
+    private boolean putFile(ExportAssets files, ExportAssetManifest.Entry entry, String target, Instant now)
+            throws IOException {
+        Optional<InputStream> content = files.open(entry);
+        if (content.isEmpty()) {
+            return false;
+        }
+        try (InputStream in = content.get()) {
+            Path staging = assets.stagingFile();
+            try {
+                long size;
+                // Die leere Datei der Ablage weiterverwenden, nicht neu anlegen: sie behält ihre Rechte.
+                try (OutputStream out = Files.newOutputStream(staging)) {
+                    size = in.transferTo(out);
+                }
+                // Danach gehört die Datei der Ablage (verschoben oder gelöscht), auch wenn sie scheitert.
+                assets.putFile(new Asset(target, entry.pageId(), entry.attachmentId(), entry.version(),
+                        entry.title(), entry.mediaType(), AssetKind.of(entry.mediaType(), entry.title()), size,
+                        entry.sha256(), now), staging);
+            } catch (IOException | RuntimeException e) {
+                try {
+                    Files.deleteIfExists(staging);
+                } catch (IOException suppressed) {
+                    e.addSuppressed(suppressed);
+                }
+                throw e;
+            }
+        }
+        return true;
     }
 
     /** Die mitgebrachten Lese-Ansichten zur übernommenen Version jeder Seite. */
