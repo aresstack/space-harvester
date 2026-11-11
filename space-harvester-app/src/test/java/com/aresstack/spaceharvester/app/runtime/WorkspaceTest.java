@@ -395,6 +395,12 @@ class WorkspaceTest {
                 .satisfies(entry -> assertThat(entry.stored()).isNotNull());
         assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))
                 .isEqualTo("Wartungsfenster sonntags");
+        // Als Strom aus der Ablage (#571), byte-genau wie assetContent.
+        try (com.aresstack.spaceharvester.application.assets.Assets.AssetStream stream =
+                     workspace.assetStream("wiki", "102", "att900")) {
+            assertThat(new String(stream.content().readAllBytes(), StandardCharsets.UTF_8))
+                    .isEqualTo("Wartungsfenster sonntags");
+        }
         assertNoFileContains(home, TOKEN);
     }
 

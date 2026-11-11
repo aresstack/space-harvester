@@ -61,7 +61,6 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -1374,11 +1373,30 @@ public final class PageDetailPanel extends JPanel {
         String id = pageId;
         feedback.working("Anhang wird geladen …");
         Background.run(() -> {
-            byte[] content = runtime.workspace().assetContent(source, id, entry.attachment().attachmentId()).content();
-            Files.write(target.toPath(), content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE);
-            return content.length;
+            // Als Strom, ohne die ganze Datei in den Speicher zu laden (#571).
+            try (com.aresstack.spaceharvester.application.assets.Assets.AssetStream stream =
+                         runtime.workspace().assetStream(source, id, entry.attachment().attachmentId())) {
+                return writeReplacing(stream.content(), target.toPath());
+            }
         }, bytes -> feedback.success("Gespeichert: " + target + " (" + Texts.bytes(bytes) + ")"), feedback::problem);
+    }
+
+    /**
+     * Schreibt den Strom zuerst in {@code <Ziel>.part} und ersetzt das Ziel erst, wenn alles gelesen ist. Bricht der
+     * Strom ab (etwa ein Hashfehler am Ende), wird die halbe Datei gelöscht und ein vorhandenes Ziel bleibt, wie es war.
+     *
+     * @return die Zahl der geschriebenen Bytes
+     */
+    static long writeReplacing(java.io.InputStream content, java.nio.file.Path target) throws IOException {
+        java.nio.file.Path part = target.resolveSibling(target.getFileName() + ".part");
+        try {
+            long bytes = Files.copy(content, part, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Files.move(part, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return bytes;
+        } catch (IOException | RuntimeException e) {
+            Files.deleteIfExists(part);
+            throw e;
+        }
     }
 
     /** „Vorschau“ nur mit geladener Seite und gewähltem Anhang. */
