@@ -11,10 +11,10 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 
 /**
- * Die Statuszeile unten im Hauptfenster. Ihr Hintergrund ist zugleich der Fortschrittsbalken der Aufträge: er füllt
- * sich von ganz links bis ganz rechts (auch unter „© AresStack“). Darüber ganz links ein Hinweis, der eine Eingabe
- * verlangt (Einmalcode), dann der Stand der App, mittig Schritt,
- * Abbrechen bzw. Endzustand des Auftrags, rechts das Copyright. Bei 100 % bleibt der Balken noch {@link #FADE_DELAY_MS}
+ * Die Statuszeile unten im Hauptfenster. Ihr Hintergrund ist zugleich der Fortschrittsbalken aller Aufträge
+ * (Angelo 11.11.2026): er füllt sich von ganz links bis ganz rechts (auch unter „© AresStack“). Darüber ganz links ein
+ * Hinweis, der eine Eingabe verlangt (Einmalcode), dann der Stand der App, mittig der Gesamtstand der Aufträge bzw.
+ * wie ihr Durchgang endete, rechts das Copyright. Bei 100 % bleibt der Balken noch {@link #FADE_DELAY_MS}
  * Millisekunden stehen und verschwindet dann; der Text („Fertig“) bleibt.
  *
  * <p>Der Balken folgt dem Modell eines (nicht angezeigten) {@link JProgressBar}, den der Bereich „Aufträge“
@@ -63,7 +63,7 @@ final class StatusLine extends JPanel {
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(4, 16, 4, 16)));
-        // Der Stand links darf die Mitte (Abbrechen, Endzustand) nicht verdrängen: höchstens 40 % der Breite,
+        // Der Stand links darf die Mitte (Stand der Aufträge, Endzustand) nicht verdrängen: höchstens 40 % der Breite,
         // ein langer Text (Pfad des Bestands) wird mit „…“ gekürzt.
         // Nur der Stand der App wird auf 40 % gekürzt; der Stand des Bereichs (mit Abbrechen) steht davor.
         if (lead == null && alert == null) {
@@ -79,7 +79,7 @@ final class StatusLine extends JPanel {
                 left.add(new Capped(lead, LEAD_SHARE));
             }
             left.add(new Capped(west, 0.4));
-            // Zusammen höchstens LEFT_SHARE: Die Mitte (Abbrechen, Endzustand) und das Copyright behalten ihren
+            // Zusammen höchstens LEFT_SHARE: Die Mitte (Stand der Aufträge) und das Copyright behalten ihren
             // Platz, auch wenn Hinweis, Stand des Bereichs und Stand der App je für sich voll wären; was dann
             // rechts im linken Teil nicht mehr passt (der Stand der App), fällt weg.
             add(new Capped(left, LEFT_SHARE), BorderLayout.WEST);
