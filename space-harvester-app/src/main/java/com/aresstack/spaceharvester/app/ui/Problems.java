@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
+import com.aresstack.spaceharvester.application.export.ExportPackageException;
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
@@ -182,6 +183,11 @@ public final class Problems {
             return new Problem("Bestand kann nicht geöffnet werden", e.getMessage(),
                     "Läuft schon eine App oder ein Dienst mit demselben Datenverzeichnis? Dann dort beenden oder "
                             + "ein anderes Datenverzeichnis wählen.", technical);
+        }
+        if (e instanceof ExportPackageException) {
+            return new Problem("Paket nicht importierbar", e.getMessage(),
+                    ExportPackageException.UNSUPPORTED.equals(((ExportPackageException) e).code())
+                            ? "Mit der aktuellen Version erneut als „JSON mit Medien“ exportieren." : null, technical);
         }
         if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
             return new Problem("Nicht möglich", e.getMessage() == null ? "Die Aktion ist so nicht möglich." : e.getMessage(),

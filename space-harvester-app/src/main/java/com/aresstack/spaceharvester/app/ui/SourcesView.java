@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -819,6 +820,57 @@ public final class SourcesView implements View {
                         + "Statuszeile"), feedback::problem);
     }
 
+    /**
+     * „JSON-Paket importieren“: übernimmt nach Rückfrage ein Paket „JSON mit Medien“ ({@code export.zip} ab
+     * {@code json-package/3}) als Auftrag in den Bestand dieser Quelle ({@code ExportPackageImport}). Hat der Space
+     * schon Daten, ersetzt das Paket sie nur nach eigener Rückfrage. Der Fortschritt läuft in der Statuszeile.
+     */
+    private void importPackage(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser();
+        chooser.setDialogTitle("JSON-Paket importieren");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("JSON-Paket (*.zip)", "zip"));
+        if (chooser.showOpenDialog(root) != javax.swing.JFileChooser.APPROVE_OPTION
+                || chooser.getSelectedFile() == null) {
+            return;
+        }
+        java.nio.file.Path file = chooser.getSelectedFile().toPath();
+        feedback.working("Paket wird geprüft …");
+        Background.run(() -> runtime.workspace().previewPackage(file, id),
+                preview -> confirmImport(runtime, id, name, file, preview), feedback::problem);
+    }
+
+    private void confirmImport(AppRuntime runtime, String id, String name, java.nio.file.Path file,
+                               ExportPackageImport.Preview preview) {
+        String what = "Space " + preview.spaceName() + " mit " + Texts.count(preview.pages(), "Seite", "Seiten")
+                + " und " + Texts.count(preview.assets(), "Datei", "Dateien");
+        String origin = preview.sourceId().equals(id) ? "" : " Das Paket stammt aus der Quelle " + preview.sourceId()
+                + ".";
+        boolean replace = preview.spaceHasData();
+        if (replace && preview.rootPageId() != null) {
+            feedback.info("Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten",
+                    "Ein Paket mit nur einem Teilbaum lässt sich nur in einen leeren Space importieren.");
+            return;
+        }
+        String question = replace
+                ? "Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten. Wirklich durch das "
+                        + "Paket ersetzen (" + what + ")? Seiten, die das Paket nicht enthält, werden entfernt." + origin
+                : what + " wirklich in die Quelle " + name + " importieren?" + origin;
+        if (!Dialogs.confirm(root, "JSON-Paket importieren", question)) {
+            feedback.success("Import abgebrochen");
+            return;
+        }
+        feedback.working("Paket wird importiert …");
+        Background.run(() -> runtime.workspace().importPackage(file, id, replace),
+                started -> feedback.success("Paket wird in die Quelle " + name + " importiert; Fortschritt in der "
+                        + "Statuszeile"), feedback::problem);
+    }
+
     private void remove(AppSettings.SourceEntry entry) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
@@ -1216,6 +1268,13 @@ public final class SourcesView implements View {
                 secret.addActionListener(e -> askSecret(entry));
                 menu.add(secret);
             }
+            JMenuItem importing = new JMenuItem("JSON-Paket importieren …");
+            importing.setToolTipText("Ein Paket „JSON mit Medien“ (export.zip) in den lokalen Bestand dieser Quelle "
+                    + "übernehmen, ohne die Quelle zu fragen");
+            importing.setEnabled(context.runtime() != null
+                    && !context.runtime().waitingForSecret().contains(entry.id()));
+            importing.addActionListener(e -> SourcesView.this.importPackage(entry));
+            menu.add(importing);
             JMenuItem purge = new JMenuItem("Daten bereinigen …");
             purge.setToolTipText("Alle lokal gespeicherten Daten dieser Quelle löschen; die Quelle bleibt eingerichtet");
             // Auch abgeschaltet; nur nicht, solange der Core die Quelle nicht geöffnet hat (wartet auf ihr Geheimnis).

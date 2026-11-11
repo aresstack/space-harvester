@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.images.ImagePayload;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
@@ -483,6 +484,29 @@ public final class Workspace {
     public JobStatus purgeSourceData(String sourceId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
         JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
+     * Was ein Paket „JSON mit Medien“ enthält und ob der Space in dieser Quelle schon Daten hat, vor dem Import
+     * ({@code ExportPackageImport.preview}).
+     */
+    public ExportPackageImport.Preview previewPackage(Path file, String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        return harvester.packageImport().preview(file, sourceId);
+    }
+
+    /**
+     * Importiert ein Paket „JSON mit Medien“ als Auftrag in den Bestand dieser Quelle, ohne die Quelle zu fragen
+     * ({@code ExportPackageImport.start}, {@code POST /api/v1/sources/{id}/data/imports}); braucht wie das
+     * Abgleichen die sync-Freigabe. Der Fortschritt erscheint wie bei jedem Auftrag in Aktivitäten und Statuszeile.
+     *
+     * @param replace ob vorhandene Daten des Space ersetzt werden dürfen
+     */
+    public JobStatus importPackage(Path file, String sourceId, boolean replace) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.packageImport().start(file, sourceId, replace, Harvester.OWNER);
         activities.remember(status.id());
         return status;
     }
