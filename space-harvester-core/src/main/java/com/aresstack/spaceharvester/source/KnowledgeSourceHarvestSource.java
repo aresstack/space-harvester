@@ -1014,8 +1014,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return images(view);
     }
 
+    /**
+     * Die Bilder der Ansicht ohne die, deren Adresse keine Datei nennt: Der Adapter löst ein leeres {@code src} zur
+     * Basis auf, also zur Startseite der Quelle (Angelo 11.11.2026, 21:28); das ist kein Bild.
+     */
     private static List<ViewImage> images(PageView view) {
-        return view.images().stream().map(image -> {
+        return view.images().stream().filter(image -> !withoutFile(image.src())).map(image -> {
             KnowledgeResource resource = image.resource();
             String version = resource == null ? null : resource.revision().version();
             return new ViewImage(image.src(), image.title(), resource == null ? null : lastSegment(resource.id()),
