@@ -528,7 +528,9 @@ public class Assets {
             return Optional.empty();
         }
         AssetContent loaded = viewImage(sourceId, pageId, pageVersion, image);
-        if (loaded.asset().kind() != AssetKind.VECTOR) {
+        // Am Inhalt erkannt, nicht am Typ: Confluence nennt am Vorschaubild image/png, die Quelle liefert aber die
+        // gezeichnete SVG-Fassung (auch aus der Ablage).
+        if (loaded.asset().kind() != AssetKind.VECTOR && !isSvg(loaded.content())) {
             return Optional.empty();
         }
         Rendered rendered = rendition(sourceId, pageId, SVG_PNG_RENDITION, loaded.content());
@@ -536,6 +538,16 @@ public class Assets {
             return Optional.empty();
         }
         return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /** SVG-Text am Anfang der Bytes (nach einer XML-Deklaration oder einem Kommentar), gleich welcher Typ genannt ist. */
+    static boolean isSvg(byte[] content) {
+        if ("image/svg+xml".equals(sniff(content))) {
+            return true;
+        }
+        String head = new String(content, 0, Math.min(content.length, 1024), java.nio.charset.StandardCharsets.UTF_8)
+                .stripLeading().toLowerCase(Locale.ROOT);
+        return head.startsWith("<") && head.contains("<svg");
     }
 
     /**

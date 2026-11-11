@@ -650,6 +650,27 @@ class AssetsTest {
     }
 
     @Test
+    void aForeignDrawioDiagramDeclaredAsPngIsStillRasterizedFromItsSvg() {
+        Assets assets = assets(100_000);
+        // export_view nennt am Vorschaubild image/png; geliefert wird trotzdem die gezeichnete SVG-Fassung.
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        source.views.put(src, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>"
+                + "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+                + "<rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>");
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", "att-p", "image/png", "3");
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(png.asset().version()).isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Aus der Ablage ebenso gerastert, ohne neuen Abruf.
+        assertThat(assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow().asset().version())
+                .isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(source.viewLoads).isEqualTo(1);
+    }
+
+    @Test
     void anUndrawableDiagramLeavesThePreview() {
         Assets assets = assets(100_000);
         source.file("att-d", "1", "kein xml");
