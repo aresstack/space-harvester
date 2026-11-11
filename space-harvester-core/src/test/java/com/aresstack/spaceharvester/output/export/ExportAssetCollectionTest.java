@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -189,6 +190,54 @@ class ExportAssetCollectionTest {
             assertThat(reading.text()).isEmpty();
         });
         assertThat(dataset.readingView("999")).isEmpty();
+    }
+
+    @Test
+    void theAttachmentCatalogComesFromOneSearchPerJobInsteadOfTwoCallsPerPage() {
+        source.searchable = true;
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Bilder und Anhänge fragen je einmal die Suche, keine Seite einzeln (Anhangsliste und Space).
+        assertThat(source.searched).containsExactly(List.of("100", "101"), List.of("100", "101"));
+        assertThat(source.listed).isEmpty();
+        assertThat(source.metadataCalls).isZero();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(collection -> {
+            assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(collection.progress().discovered()).isEqualTo(4);
+            assertThat(collection.progress().written()).isEqualTo(3);
+        });
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(documents ->
+                assertThat(documents.progress().written()).isEqualTo(1));
+    }
+
+    @Test
+    void aPageMovedToAnotherSpaceGetsNoAttachmentsFromTheCatalog() {
+        source.searchable = true;
+        source.moved = Set.of("100");
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        assertThat(manifest.forPage("100")).noneMatch(entry -> entry.attachmentId() != null
+                && entry.reference().kind() == ExportAssetManifest.Kind.ATTACHMENT);
+        assertThat(manifest.documents()).isEmpty();
     }
 
     @Test
@@ -552,6 +601,12 @@ class ExportAssetCollectionTest {
     private static final class Source implements HarvestSource {
 
         int downloads;
+        int metadataCalls;
+        /** Mit Anhangsuche: die angefragten Seiten je Suche; ohne fragt die Vorbereitung jede Seite einzeln. */
+        boolean searchable;
+        final List<List<String>> searched = new ArrayList<>();
+        /** Seiten, die inzwischen in einem anderen Space liegen: die Suche mit Space-Filter findet ihre Anhänge nicht. */
+        Set<String> moved = Set.of();
         /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
         final List<String> listed = new ArrayList<>();
         /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
@@ -586,14 +641,34 @@ class ExportAssetCollectionTest {
 
         @Override
         public PageMetadata pageMetadata(String pageId) {
+            metadataCalls++;
             return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, "3",
                     null, null, PageMetadata.sorted(Map.of()));
+        }
+
+        @Override
+        public Map<String, PageAttachments> attachmentsOf(java.util.Collection<String> pageIds, String spaceKey) {
+            if (!searchable) {
+                return HarvestSource.super.attachmentsOf(pageIds, spaceKey);
+            }
+            assertThat(spaceKey).isEqualTo("DEV");
+            searched.add(List.copyOf(pageIds));
+            Map<String, PageAttachments> lists = new java.util.LinkedHashMap<>();
+            for (String pageId : pageIds) {
+                lists.put(pageId, moved.contains(pageId) ? new PageAttachments(pageId, List.of(), List.of(),
+                        "application/json", "test", List.of(), Instant.parse("2026-10-18T01:00:00Z")) : list(pageId));
+            }
+            return lists;
         }
 
         @Override
         public PageAttachments attachments(String pageId) {
             listed.add(pageId);
             onListing.accept(pageId);
+            return list(pageId);
+        }
+
+        private PageAttachments list(String pageId) {
             List<PageAttachment> list = new ArrayList<>();
             if (pageId.equals("100")) {
                 list.add(new PageAttachment("att1", "confluence:wiki/attachment/att1", "bild.png", "image/png",

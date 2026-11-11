@@ -171,6 +171,13 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     über etwa die letzten 50 Dateien. Er liegt als Anwendungszustand in `download-durations.properties` im
     Datenverzeichnis, nicht in der YAML. Die App liest ihn über `Workspace#averageDownload(JobType)` und rechnet die
     Restzeit: Durchschnitt × offene Verweise ÷ gleichzeitig ladende Aufträge.
+21. **Anhangskatalog über die Suche** (Angelo 11.11.2026: keine zusätzlichen Aufrufe). Die Vorbereitung von „Bilder
+    beschaffen“ und „Anhänge beschaffen“ holt die Anhangslisten aller Seiten am Anfang über die Suche der Quelle
+    (`HarvestSource#attachmentsOf`, bei Confluence `type=attachment AND container in (…) AND space="KEY"` in Stapeln zu
+    50 Seiten, EAC `AttachmentSearchSource`, enterprise-ai-client#217) statt Seitendaten und Anhangsliste je Seite.
+    Der Space-Filter ersetzt die frühere Space-Prüfung je Seite: eine verschobene Seite hat eine leere Liste und
+    bekommt keine Anhänge. Kann die Quelle nicht suchen oder scheitert eine Abfrage, fragt die Vorbereitung die
+    betroffenen Seiten einzeln wie bisher. Die Rohantworten der Suche werden nicht je Seite gehalten.
 
 REST: `POST /api/v1/exports/{id}/pause|resume` und `POST /api/v1/syncs/{id}/pause|resume`; die Knöpfe in der
 Auftragszeile und im Overlay baut Strang OH über `Workspace#pauseJob`, `#resumeJob` und `#canResume`; künftig

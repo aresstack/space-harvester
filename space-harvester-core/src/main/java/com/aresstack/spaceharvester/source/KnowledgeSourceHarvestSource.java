@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
+import com.aresstack.enterpriseai.source.api.AttachmentSearchSource;
 import com.aresstack.enterpriseai.source.api.CrossReferences;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
@@ -62,6 +63,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -863,6 +865,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
                 .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    @Override
+    public Map<String, PageAttachments> attachmentsOf(Collection<String> pageIds, String spaceKey) {
+        if (!(port instanceof AttachmentSearchSource search)) {
+            return HarvestSource.super.attachmentsOf(pageIds, spaceKey);
+        }
+        Map<String, StoredAttachmentList> lists;
+        try {
+            lists = search.storedAttachmentsOf(pageIds, spaceKey);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        Map<String, PageAttachments> result = new LinkedHashMap<>();
+        lists.forEach((pageId, list) -> result.put(pageId, new PageAttachments(pageId, list.attachments().stream()
+                .map(KnowledgeSourceHarvestSource::attachment).toList(), List.of(), list.mediaType(),
+                list.nativeFormat(), list.warnings(), list.retrievedAt())));
+        return result;
     }
 
     /**

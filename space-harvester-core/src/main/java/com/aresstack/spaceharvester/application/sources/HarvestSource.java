@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.sources;
 
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -200,6 +202,24 @@ public interface HarvestSource {
     default PageAttachments attachments(String pageId) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Anhangslisten nicht liefern", null);
+    }
+
+    /**
+     * Die Anhangslisten vieler Seiten auf einmal über die Suche der Quelle statt eines Abrufs je Seite (bei Confluence
+     * CQL {@code type=attachment AND container in (...) AND space="KEY"} in Stapeln von 50 Seiten). Jede angefragte
+     * Seite bekommt eine Liste; eine Seite ohne Anhänge, eine unsichtbare und eine, die inzwischen nicht mehr in
+     * {@code spaceKey} liegt, gleichermaßen eine leere. Die Rohantworten der Suche werden nicht mitgegeben: eine Antwort
+     * gehört zu vielen Seiten, und niemand liest sie.
+     *
+     * @param pageIds  IDs der Seiten in der Quelle
+     * @param spaceKey nur Anhänge von Seiten, die derzeit in diesem Bereich liegen
+     * @return Liste je Seiten-ID
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das nicht kann; sonst wie
+     *                               {@link #attachments(String)}, {@code INVALID_RESPONSE} auch bei zu vielen Treffern
+     */
+    default Map<String, PageAttachments> attachmentsOf(Collection<String> pageIds, String spaceKey) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhangslisten nicht suchen", null);
     }
 
     /**
