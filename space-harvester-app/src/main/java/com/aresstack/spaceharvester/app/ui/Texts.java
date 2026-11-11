@@ -120,6 +120,7 @@ public final class Texts {
             case PURGE -> "Daten bereinigen";
             case KNOWLEDGE_GRAPH_EXPORT -> "Graph-Export";
             case GLOSSARY -> "Fachbegriffe ermitteln";
+            case IMPORT -> "Import";
         };
     }
 
