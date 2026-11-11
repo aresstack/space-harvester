@@ -97,10 +97,12 @@ Cache; der nächste Abgleich lädt sie dann neu.
   Asset-Ablage wie beim Beschaffen, Texte der Anhänge unter der eingestellten Extraktion, Lese-Ansichten in ihre
   Ablage (ohne Bildliste). Zu jeder Seite, die er in ihrer Paketversion bestätigt, merkt sich der Import die Einträge
   des Bildmanifests (Anreicherung `imported-assets`, verschwindet mit der Seite); nicht übernommene Dateien stehen
-  dort als `UNAVAILABLE` (`import-missing`). Ein neuer Export mit Bildern fragt zuerst die Quelle; die abgelegten
+  dort als `UNAVAILABLE` (`import-missing`), fehlt nur die gezeichnete Grafik, bleibt das Original mit
+  `rendition.problem` `import-missing`. Ein neuer Export mit Bildern fragt zuerst die Quelle; die abgelegten
   Dateien lädt er nicht noch einmal. Ist die Quelle nicht erreichbar und hat jede exportierte Seite gemerkte Einträge
   zu ihrer Version, übernimmt er diese samt Lese-Ansicht statt anzuhalten, mit denselben Rechten wie online (fremde
-  Bilder und Lese-Ansicht nur mit `sourceWide`, Anhänge nur mit `attachments`); sonst hält er wie bisher an. Volltext und Anreicherungen erfahren von der neuen Generation
+  Bilder und Lese-Ansicht nur mit `sourceWide`, Anhänge nur mit `attachments` und nach Medientyp und Größe wie
+  eingestellt, sonst `EXCLUDED`); sonst hält er wie bisher an. Volltext und Anreicherungen erfahren von der neuen Generation
   auch, wenn danach eine Datei scheitert oder der Auftrag abgebrochen wird.
 - `Preview` (`preview(file, sourceId)`) nennt vorab Quelle, Space, Seiten- und Dateizahl und ob der Space Daten hat.
 - **Dienst.** `POST /api/v1/sources/{sourceId}/data/imports?replace=false` mit dem Paket als Body

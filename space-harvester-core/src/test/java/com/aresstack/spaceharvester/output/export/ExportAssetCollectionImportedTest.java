@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.Exports;
@@ -23,6 +24,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.StoredReadingView;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -134,6 +136,25 @@ class ExportAssetCollectionImportedTest {
     }
 
     @Test
+    void importedAttachmentsFollowTheCurrentAttachmentSettings() {
+        ExportAssetCollection images = collection(true, true,
+                new ExportSettings(true, ExportSettings.DEFAULT_MEDIA_TYPES, PDF.length - 1));
+
+        String exportId = export(images);
+
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(documents -> {
+            assertThat(documents.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(documents.incomplete()).isFalse();
+            assertThat(documents.progress().written()).isZero();
+        });
+        assertThat(writer().assets(exportId).orElseThrow().documents()).singleElement().satisfies(entry -> {
+            assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.EXCLUDED);
+            assertThat(entry.reason()).isEqualTo("too-large");
+            assertThat(entry.sha256()).isNull();
+        });
+    }
+
+    @Test
     void aPageWithoutImportedFilesPausesTheJobAsBefore() {
         ExportAssetCollection images = collection(true, false);
 
@@ -158,6 +179,10 @@ class ExportAssetCollectionImportedTest {
 
     /** Was der Import hinterlassen hat: Dateien in der Ablage, Einträge je Seite, die Lese-Ansicht von 100. */
     private ExportAssetCollection collection(boolean sourceWide, boolean withPage101) {
+        return collection(sourceWide, withPage101, ExportSettings.DEFAULT);
+    }
+
+    private ExportAssetCollection collection(boolean sourceWide, boolean withPage101, ExportSettings settings) {
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -188,7 +213,7 @@ class ExportAssetCollectionImportedTest {
                 "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org", "Bild Eingebunden", List.of(), now));
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer(),
                 new SourceQueries(catalog), new Assets(catalog, files, 1_000_000, clock),
-                (owner, sourceId) -> sourceWide);
+                (owner, sourceId) -> sourceWide, SignInRequests.none(), () -> settings);
         images.imported(imported, views);
         return images;
     }

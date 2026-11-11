@@ -1042,10 +1042,13 @@ public class ExportAssetCollection {
                         && entry.reference().kind() == ExportAssetManifest.Kind.VIEW_IMAGE
                         ? new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), null, null, entry.title(),
                         entry.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content")
-                        : entry;
+                        : entry.document() ? filtered(run.settings, entry) : entry;
                 entries.add(own);
                 context.discovered(1);
                 context.processed(1);
+                if (own.status() == ExportAssetManifest.Status.EXCLUDED) {
+                    continue;
+                }
                 if (own.present()) {
                     context.written(1);
                 } else {
@@ -1063,6 +1066,19 @@ public class ExportAssetCollection {
         LOG.log(System.Logger.Level.INFO, "{0} für Export {1} ohne Quelle aus dem Import: {2} Referenzen",
                 run.scope.label, exportId, own.size());
         return true;
+    }
+
+    /** Ein mitgebrachter Dokument-Anhang nach den heutigen Einstellungen gefiltert, wie {@link #document} es tut. */
+    private static ExportAssetManifest.Entry filtered(ExportSettings settings, ExportAssetManifest.Entry entry) {
+        String excluded = null;
+        if (!settings.permits(entry.mediaType())) {
+            excluded = "media-type-excluded";
+        } else if (entry.stored() && settings.tooLarge(entry.size())) {
+            excluded = "too-large";
+        }
+        return excluded == null ? entry : new ExportAssetManifest.Entry(entry.pageId(), entry.reference(),
+                entry.attachmentId(), entry.version(), entry.title(), entry.mediaType(), entry.size(), null,
+                ExportAssetManifest.Status.EXCLUDED, excluded);
     }
 
     /** Die abgelegte Lese-Ansicht zur exportierten Version, sonst als nicht verfügbar. */

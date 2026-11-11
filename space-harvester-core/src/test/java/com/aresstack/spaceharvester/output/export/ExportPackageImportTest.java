@@ -171,6 +171,28 @@ class ExportPackageImportTest {
     }
 
     @Test
+    void aMissingDrawingKeepsTheRememberedOriginalOfTheDiagram() throws Exception {
+        EnrichmentImportedAssets remembered = new EnrichmentImportedAssets(new InMemoryEnrichmentStore(), clock);
+        ExportPackageImport withMemory = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, assets,
+                null, null, remembered, List.of(committed::add), clock);
+        PackageAssets media = new PackageAssets(false);
+
+        withMemory.start(pkg(pages("100"), media), "laptop", false, "client-a");
+
+        String version = store.confirmed("laptop", "DEV").orElseThrow().pages().get("100").version();
+        assertThat(assets.content("laptop", "att-drawio", "1")).contains(MXFILE);
+        assertThat(remembered.find(new PageKey("laptop", "100"), version).orElseThrow().forPage("100"))
+                .filteredOn(entry -> "att-drawio".equals(entry.attachmentId())).singleElement()
+                .satisfies(entry -> {
+                    assertThat(entry.stored()).isTrue();
+                    assertThat(entry.sha256()).isEqualTo(sha256(MXFILE));
+                    assertThat(entry.rendition().drawn()).isFalse();
+                    assertThat(entry.rendition().problem()).isEqualTo("import-missing");
+                });
+    }
+
+    @Test
     void storesTheFilesOfThePackageAsStreamsThroughFilesOfTheStore() throws Exception {
         JobStatus job = imports.start(pkg(pages("100"), new PackageAssets()), "laptop", false, "client-a");
 
@@ -444,6 +466,17 @@ class ExportPackageImportTest {
     /** Ein Bild, ein draw.io mit gezeichneter Grafik und ein PDF mit Text an Seite 100. */
     private static final class PackageAssets implements ExportAssets {
 
+        /** Ob das Paket die gezeichnete Grafik des draw.io mitbringt. */
+        private final boolean drawn;
+
+        PackageAssets() {
+            this(true);
+        }
+
+        PackageAssets(boolean drawn) {
+            this.drawn = drawn;
+        }
+
         private final ExportAssetManifest.Entry image = new ExportAssetManifest.Entry("100",
                 ExportAssetManifest.Reference.attachment("att-foto", "foto.png"), "att-foto", "1", "foto.png",
                 "image/png", PNG.length, sha256(PNG), ExportAssetManifest.Status.STORED, null);
@@ -468,7 +501,7 @@ class ExportPackageImportTest {
 
         @Override
         public Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
-            return entry == drawio ? Optional.of(SVG) : Optional.empty();
+            return entry == drawio && drawn ? Optional.of(SVG) : Optional.empty();
         }
 
         @Override

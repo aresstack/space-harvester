@@ -386,6 +386,8 @@ public final class ExportPackageImport {
         Instant now = clock.instant();
         // Einträge, deren Datei hier nicht abgelegt werden konnte: im gemerkten Manifest als nicht verfügbar.
         Set<ExportAssetManifest.Entry> lost = new HashSet<>();
+        // Einträge, denen nur die gezeichnete Grafik fehlt: Original bzw. Mermaid-Text bleiben.
+        Set<ExportAssetManifest.Entry> undrawn = new HashSet<>();
         List<ExportAssetManifest.Entry> entries = new ArrayList<>(manifest.get().assets());
         entries.sort(Comparator.comparing(ExportAssetManifest.Entry::pageId));
         for (ExportAssetManifest.Entry entry : entries) {
@@ -394,6 +396,7 @@ public final class ExportPackageImport {
                 // Nicht Abgelegtes bleibt mit Status und Grund im Manifest.
                 continue;
             }
+            boolean original = false;
             try {
                 boolean mermaid = entry.reference().kind() == ExportAssetManifest.Kind.MERMAID;
                 // Mermaid trägt seinen Text im Manifest; abgelegt wird nur die gezeichnete Grafik.
@@ -404,6 +407,7 @@ public final class ExportPackageImport {
                         continue;
                     }
                     stored++;
+                    original = true;
                     if (entry.document() && texts != null) {
                         files.text(entry).filter(text -> !text.isBlank())
                                 .ifPresent(text -> texts.test(entry.sha256(), text));
@@ -413,7 +417,7 @@ public final class ExportPackageImport {
                     Optional<byte[]> rendition = files.rendition(entry);
                     if (rendition.isEmpty()) {
                         missing++;
-                        lost.add(entry);
+                        undrawn.add(entry);
                         continue;
                     }
                     assets.put(new Asset(target, entry.pageId(), Assets.renditionId(entry.sha256()),
@@ -424,7 +428,7 @@ public final class ExportPackageImport {
                 }
             } catch (AssetStoreException | IllegalArgumentException | IOException e) {
                 missing++;
-                lost.add(entry);
+                (original || mermaidOf(entry) ? undrawn : lost).add(entry);
                 LOG.log(System.Logger.Level.WARNING, "Datei aus dem Paket für {0} nicht abgelegt ({1})", target,
                         e.getClass().getName());
             }
@@ -434,24 +438,34 @@ public final class ExportPackageImport {
                     missing + " Dateien aus dem Paket nicht abgelegt"));
         }
         context.record(JobEvent.Draft.info(COMPONENT, stored + " Dateien übernommen"));
-        remember(manifest.get(), lost, target, confirmed, pkg.pages());
+        remember(manifest.get(), lost, undrawn, target, confirmed, pkg.pages());
+    }
+
+    private static boolean mermaidOf(ExportAssetManifest.Entry entry) {
+        return entry.reference().kind() == ExportAssetManifest.Kind.MERMAID;
     }
 
     /**
      * Merkt sich je übernommener Seite ihre Einträge des Bildmanifests zur bestätigten Version ({@link ImportedAssets}),
      * auch eine leere Liste: Ein Export ohne erreichbare Quelle nimmt Bilder und Anhänge dann daraus.
      */
-    private void remember(ExportAssetManifest manifest, Set<ExportAssetManifest.Entry> lost, String target,
-                          SyncBaseline confirmed, List<ExportPackage.Page> pages) {
+    private void remember(ExportAssetManifest manifest, Set<ExportAssetManifest.Entry> lost,
+                          Set<ExportAssetManifest.Entry> undrawn, String target, SyncBaseline confirmed,
+                          List<ExportPackage.Page> pages) {
         if (imported == null || confirmed == null) {
             return;
         }
         Map<String, List<ExportAssetManifest.Entry>> byPage = new HashMap<>();
         for (ExportAssetManifest.Entry entry : manifest.assets()) {
-            byPage.computeIfAbsent(entry.pageId(), id -> new ArrayList<>()).add(lost.contains(entry)
-                    ? new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), entry.attachmentId(),
-                    entry.version(), entry.title(), entry.mediaType(), 0, null,
-                    ExportAssetManifest.Status.UNAVAILABLE, "import-missing") : entry);
+            ExportAssetManifest.Entry kept = entry;
+            if (lost.contains(entry)) {
+                kept = new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), entry.attachmentId(),
+                        entry.version(), entry.title(), entry.mediaType(), 0, null,
+                        ExportAssetManifest.Status.UNAVAILABLE, "import-missing");
+            } else if (undrawn.contains(entry)) {
+                kept = entry.withRendition(ExportAssetManifest.Rendition.notDrawn("import-missing"));
+            }
+            byPage.computeIfAbsent(entry.pageId(), id -> new ArrayList<>()).add(kept);
         }
         for (ExportPackage.Page page : pages) {
             // Nur Seiten, die mit der Version aus dem Paket bestätigt sind.
