@@ -322,6 +322,75 @@ class AssetsTest {
     }
 
     @Test
+    void aDocumentAboveTheTextLimitIsNeverReadForItsTextNeitherLaterNorOnRequest() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        source.file("att1", "1", "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES));
+        PageAttachmentList list = list(attachment("att1", "gross.pdf", "application/pdf", "1"));
+        assets.harvest(list);
+
+        // Die nächste Ernte holt keinen Text aus der Ablage nach, und auf Abruf ist die Datei zu groß.
+        assertThat(assets.harvest(list).entries().get(0).status()).isEqualTo(AssetHarvest.Status.REUSED);
+        assertThatThrownBy(() -> assets.text(list, "att1"))
+                .isInstanceOfSatisfying(DocumentTextException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentTextException.Reason.TOO_LARGE));
+        assertThat(documents.extractions).hasValue(0);
+    }
+
+    @Test
+    void theTextOfANotStoredDocumentAboveTheTextLimitIsTooLargeWithoutReadingIt() throws Exception {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        source.file("att1", "1", "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES));
+        PageAttachmentList list = list(attachment("att1", "gross.pdf", "application/pdf", "1"));
+
+        assertThatThrownBy(() -> assets.text(list, "att1", false))
+                .isInstanceOfSatisfying(DocumentTextException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentTextException.Reason.TOO_LARGE));
+
+        assertThat(documents.extractions).hasValue(0);
+        assertThat(assets.overview(list).entries().get(0).stored()).as("nicht abgelegt").isNull();
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).isEmpty();
+    }
+
+    @Test
+    void aLargeAttachmentStreamedWithoutTheRightToStoreComesFromItsStagingFileAndLeavesNothingBehind()
+            throws Exception {
+        Assets assets = assets(64L * 1024 * 1024);
+        String big = "x".repeat((int) Assets.IN_MEMORY_BYTES + 1);
+        source.file("att1", "1", big);
+        PageAttachmentList list = list(attachment("att1", "film.bin", "application/octet-stream", "1"));
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", false, null)) {
+            assertThat(stream.asset().size()).isEqualTo(big.length());
+            assertThat(Assets.sha256(stream.content().readAllBytes()))
+                    .isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        }
+
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).as("mit dem Strom verschwunden").isEmpty();
+        assertThat(assets.overview(list).entries().get(0).stored()).as("nicht abgelegt").isNull();
+    }
+
+    @Test
+    void aLargeAttachmentStreamedWithTheRightToStoreIsStoredAndComesFromTheStore() throws Exception {
+        Assets assets = assets(64L * 1024 * 1024);
+        String big = "x".repeat((int) Assets.IN_MEMORY_BYTES + 1);
+        source.file("att1", "1", big);
+        PageAttachmentList list = list(attachment("att1", "film.bin", "application/octet-stream", "1"));
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", true, null)) {
+            assertThat(Assets.sha256(stream.content().readAllBytes()))
+                    .isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        }
+
+        assertThat(assets.overview(list).entries().get(0).stored()).as("abgelegt").isNotNull();
+        try (Assets.AssetStream again = assets.stream(list, "att1", true, null)) {
+            assertThat(again.asset().size()).isEqualTo(big.length());
+        }
+        assertThat(source.downloads).as("das zweite Mal aus der Ablage").isEqualTo(1);
+    }
+
+    @Test
     void aFailedDownloadLeavesNoFileBehind() throws Exception {
         Assets assets = assets(1000);
         source.file("att1", "1", "Bericht");
