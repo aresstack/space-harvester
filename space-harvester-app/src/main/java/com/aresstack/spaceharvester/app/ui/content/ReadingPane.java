@@ -85,6 +85,8 @@ final class ReadingPane extends JPanel {
     private Map<String, BufferedImage> originals = Map.of();
     /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
     private String html = "";
+    /** Was ein angeklickter Link auslöst; ohne Abnehmer öffnet er im Browser. */
+    private java.util.function.Consumer<URL> links = ReadingPane::browse;
 
     ReadingPane() {
         super(new BorderLayout(0, 6));
@@ -96,7 +98,7 @@ final class ReadingPane extends JPanel {
         pane.setFont(Comic.regular(13.5f));
         pane.addHyperlinkListener(event -> {
             if (event.getEventType() == HyperlinkEvent.EventType.ACTIVATED && event.getURL() != null) {
-                browse(event.getURL());
+                links.accept(event.getURL());
             }
         });
         pane.addMouseListener(new MouseAdapter() {
@@ -123,6 +125,21 @@ final class ReadingPane extends JPanel {
         add(hint, BorderLayout.NORTH);
         add(overlay, BorderLayout.CENTER);
         clear(" ");
+    }
+
+    /**
+     * Was ein angeklickter Link tut (Leseansicht des EAC: Seiten derselben Quelle öffnen im Lesebereich, alles andere
+     * im Browser über {@link #browse}).
+     */
+    void onLink(java.util.function.Consumer<URL> listener) {
+        this.links = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Rollt zum Anker {@code fragment} der gezeigten Ansicht; ohne passenden Anker nichts. */
+    void scrollToAnchor(String fragment) {
+        if (fragment != null && !fragment.isBlank()) {
+            pane.scrollToReference(fragment);
+        }
     }
 
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
@@ -450,7 +467,8 @@ final class ReadingPane extends JPanel {
         return labels;
     }
 
-    private static void browse(URL url) {
+    /** Öffnet eine http(s)-Adresse im Browser des Systems; andere Protokolle nie. */
+    static void browse(URL url) {
         String protocol = url.getProtocol();
         if (!"http".equals(protocol) && !"https".equals(protocol)) {
             return;
