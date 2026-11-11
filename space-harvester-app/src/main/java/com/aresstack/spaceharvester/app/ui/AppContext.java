@@ -270,20 +270,21 @@ public final class AppContext {
 
     /**
      * Übernimmt die Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.parallel-preparations} und
-     * {@code parallel-downloads}) sofort im Core ({@link AppRuntime#parallel}) und speichert sie in der Datei, ohne
+     * {@code parallel-downloads}) und das Verbindungsbudget ({@code download-connections}) sofort im Core ({@link AppRuntime#parallel}) und speichert sie in der Datei, ohne
      * Neustart der Laufzeit. Läuft im Hintergrund; schnell aufeinanderfolgende Änderungen schreiben immer die jüngste
      * zuletzt.
      */
-    public void parallel(int preparations, int downloads, Runnable done, Consumer<Throwable> failed) {
-        parallelWanted = new int[] {preparations, downloads};
+    public void parallel(int preparations, int downloads, int connections, Runnable done,
+            Consumer<Throwable> failed) {
+        parallelWanted = new int[] {preparations, downloads, connections};
         Background.run(() -> {
             synchronized (parallelLock) {
                 int[] wanted = parallelWanted;
                 AppRuntime current = runtime;
                 if (current != null) {
-                    current.parallel(wanted[0], wanted[1]);
+                    current.parallel(wanted[0], wanted[1], wanted[2]);
                 }
-                writeParallel(wanted[0], wanted[1]);
+                writeParallel(wanted[0], wanted[1], wanted[2]);
                 return wanted;
             }
         }, saved -> done.run(), failed);
@@ -292,11 +293,12 @@ public final class AppContext {
     private final Object parallelLock = new Object();
     private volatile int[] parallelWanted;
 
-    private void writeParallel(int preparations, int downloads) throws java.io.IOException {
+    private void writeParallel(int preparations, int downloads, int connections) throws java.io.IOException {
         ConfigFileEditor editor = new ConfigFileEditor(loader);
         String text = Files.isRegularFile(configFile) ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
         ConfigFileEditor.Draft written = editor.withParallel(configFile, new ConfigFileEditor.Draft(text, null),
                 preparations, downloads);
+        written = editor.withConnections(configFile, written, connections);
         editor.save(configFile, written, !editor.fileHasPlaintextSecret(configFile));
     }
 

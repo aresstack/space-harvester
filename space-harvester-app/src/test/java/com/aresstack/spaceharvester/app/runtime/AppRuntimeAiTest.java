@@ -58,5 +58,9 @@ class AppRuntimeAiTest {
         assertThat(after.jobLimits().parallelDownloads()).isZero();
         assertThat(AppRuntime.liveChange(before, after)).isTrue();
         assertThat(AppRuntime.liveChange(after, after.withSetupCompleted())).isTrue();
+        // Das Verbindungsbudget rechts neben „Downloads“ gilt ebenso live (Angelo 11.11.2026).
+        AppSettings closed = after.withParallel(3, 2, 0);
+        assertThat(closed.jobLimits().downloadConnections()).isZero();
+        assertThat(AppRuntime.liveChange(after, closed)).isTrue();
     }
 }

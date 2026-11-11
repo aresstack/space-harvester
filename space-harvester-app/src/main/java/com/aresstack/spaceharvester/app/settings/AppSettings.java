@@ -159,6 +159,17 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     }
 
     /**
+     * Wie {@link #withParallel(int, int)}, zusätzlich mit dem Gesamtbudget an Verbindungen für Bilder und Anhänge
+     * ({@link JobLimits#withConnections}).
+     */
+    public AppSettings withParallel(int preparations, int downloads, int connections) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
+                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
+                sourceKeePass, inactiveRoots, terms);
+    }
+
+    /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
      * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner, parallele Vorbereitungen und Downloads. Gleicht
      * das Ergebnis {@code other}, unterscheiden sich beide nur darin.
