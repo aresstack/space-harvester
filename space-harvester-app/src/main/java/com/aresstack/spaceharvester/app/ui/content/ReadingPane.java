@@ -1,9 +1,9 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
+import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
@@ -24,9 +24,7 @@ import javax.swing.text.html.HTMLEditorKit;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
 import java.awt.Desktop;
-import java.awt.Dimension;
 import java.awt.Image;
-import java.awt.Toolkit;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -85,6 +83,8 @@ final class ReadingPane extends JPanel {
     private final BusyOverlay overlay = new BusyOverlay(Comic.scroll(pane));
     private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
+    /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
+    private String html = "";
 
     ReadingPane() {
         super(new BorderLayout(0, 6));
@@ -129,6 +129,7 @@ final class ReadingPane extends JPanel {
     void clear(String text) {
         overlay.setBusy(false);
         originals = Map.of();
+        html = "";
         details = "";
         pane.setText("");
         hint.setText(text);
@@ -163,6 +164,7 @@ final class ReadingPane extends JPanel {
     void show(Prepared prepared) {
         overlay.setBusy(false);
         originals = prepared.originals();
+        html = prepared.html();
         boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
         details = prepared.html().isEmpty() ? "" : prepared.note();
         hint.setText(visible ? prepared.note() : " ");
@@ -424,54 +426,28 @@ final class ReadingPane extends JPanel {
     }
 
     /**
-     * Bildergalerie: zeigt das Bild {@code index} in Originalgröße (höchstens bildschirmgroß, scrollbar); ◀/▶ und die
-     * Pfeiltasten blättern durch alle Bilder der Seite.
+     * Bildergalerie im Bildbetrachter des EAC ({@link ImageViewer}): das Bild {@code index} eingepasst, Zoom,
+     * Speichern und Blättern als Knöpfe im Bild. Das Fenster merkt sich die zuletzt gezogene Größe, begrenzt auf den
+     * aktuellen Bildschirm.
      */
     private void enlarge(int index) {
-        List<BufferedImage> images = List.copyOf(originals.values());
-        if (index < 0 || images.isEmpty()) {
+        if (index < 0 || originals.isEmpty()) {
             return;
         }
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        int width = images.stream().mapToInt(BufferedImage::getWidth).max().orElse(400);
-        int height = images.stream().mapToInt(BufferedImage::getHeight).max().orElse(300);
-        JLabel label = new JLabel();
-        label.setHorizontalAlignment(JLabel.CENTER);
-        JLabel position = Comic.muted(" ");
-        int[] current = {index};
-        Runnable show = () -> {
-            label.setIcon(new ImageIcon(images.get(current[0])));
-            position.setText("Bild " + (current[0] + 1) + " von " + images.size());
-        };
-        javax.swing.JComponent scroll = Comic.scroll(label);
-        scroll.setPreferredSize(new Dimension(Math.min(width + 30, screen.width - 160),
-                Math.min(height + 30, screen.height - 240)));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
-        body.setOpaque(false);
-        body.add(scroll, BorderLayout.CENTER);
-        if (images.size() > 1) {
-            ComposerButton previous = Comic.button("◀", "Vorheriges Bild");
-            ComposerButton next = Comic.button("▶", "Nächstes Bild");
-            Runnable back = () -> {
-                current[0] = (current[0] + images.size() - 1) % images.size();
-                show.run();
-            };
-            Runnable forward = () -> {
-                current[0] = (current[0] + 1) % images.size();
-                show.run();
-            };
-            previous.addActionListener(e -> back.run());
-            next.addActionListener(e -> forward.run());
-            body.registerKeyboardAction(e -> back.run(), javax.swing.KeyStroke.getKeyStroke(
-                    java.awt.event.KeyEvent.VK_LEFT, 0), javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
-            body.registerKeyboardAction(e -> forward.run(), javax.swing.KeyStroke.getKeyStroke(
-                    java.awt.event.KeyEvent.VK_RIGHT, 0), javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
-            body.add(Comic.row(previous, position, next), BorderLayout.SOUTH);
-        } else {
-            body.add(position, BorderLayout.SOUTH);
+        Map<String, String> labels = labels();
+        List<ImageViewer.Picture> pictures = originals.entrySet().stream()
+                .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey())))
+                .toList();
+        Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index), "reading.images", 0.8);
+    }
+
+    /** Titel der Bilder (Alternativtext) je eigener Bildadresse, aus dem gezeigten HTML. */
+    private Map<String, String> labels() {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (Element img : Jsoup.parse(html).select("img[src^=" + IMAGE_BASE + "]")) {
+            labels.put(img.attr("src"), img.attr("alt"));
         }
-        show.run();
-        Dialogs.view(this, "Bilder der Seite", body);
+        return labels;
     }
 
     private static void browse(URL url) {

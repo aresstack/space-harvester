@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
@@ -103,6 +104,19 @@ public final class ActivitiesView implements View {
     private final Set<String> converting = new HashSet<>();
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    /**
+     * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
+     * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
+     */
+    final ParallelChoice downloads = new ParallelChoice("Parallele Downloads: wie viele Bilder- und Anhängeaufträge "
+            + "gleichzeitig laden (0 bis " + JobLimits.MAX_PARALLEL_DOWNLOADS + "). Bei 0 wird nur vorbereitet, "
+            + "nichts heruntergeladen.", 0, JobLimits.MAX_PARALLEL_DOWNLOADS, List.of(0, 1, 2, 4, 8, 16, 32, 64),
+            JobLimits.DEFAULT_PARALLEL_DOWNLOADS, value -> parallel(), this::invalidParallel);
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    final ParallelChoice preparations = new ParallelChoice("Parallele Vorbereitungen: wie viele Bilder- und "
+            + "Anhängeaufträge gleichzeitig ihre Verweise zählen (1 bis " + JobLimits.MAX_PARALLEL_PREPARATIONS + ").",
+            1, JobLimits.MAX_PARALLEL_PREPARATIONS, List.of(1, 2, 4, 8, 16), JobLimits.DEFAULT_PARALLEL_PREPARATIONS,
+            value -> parallel(), this::invalidParallel);
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
@@ -121,6 +135,18 @@ public final class ActivitiesView implements View {
                 ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
         table.getColumnModel().getColumn(2).setCellRenderer(new StateRenderer());
+        table.getColumnModel().getColumn(0).setCellRenderer(new TypeRenderer());
+        // Ein Klick auf die Art eines Exports klappt seine Bilder und Anhänge auf oder zu (Angelo 11.11.2026).
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                int row = table.rowAtPoint(event.getPoint());
+                if (row >= 0 && table.columnAtPoint(event.getPoint()) == table.convertColumnIndexToView(0)
+                        && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    toggleGroup(row);
+                }
+            }
+        });
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && table.getSelectedRow() >= 0) {
                 select(model.rows.get(table.getSelectedRow()).id());
@@ -137,7 +163,18 @@ public final class ActivitiesView implements View {
         JPanel listHead = new JPanel(new BorderLayout(8, 0));
         listHead.setOpaque(false);
         listHead.add(Comic.row(Comic.caption("Aufträge dieser App"), hint), BorderLayout.WEST);
-        listHead.add(Comic.row(deleteAll), BorderLayout.EAST);
+        JLabel downloadsLabel = new JLabel("Downloads");
+        downloadsLabel.setToolTipText(downloads.box().getToolTipText());
+        JLabel preparationsLabel = new JLabel("Vorbereitung");
+        preparationsLabel.setToolTipText(preparations.box().getToolTipText());
+        for (JLabel label : List.of(downloadsLabel, preparationsLabel)) {
+            label.setFont(Comic.regular(12f));
+            label.setForeground(Comic.INK);
+        }
+        downloadsLabel.setLabelFor(downloads.box());
+        preparationsLabel.setLabelFor(preparations.box());
+        listHead.add(Comic.row(preparationsLabel, preparations.box(), downloadsLabel, downloads.box(), deleteAll),
+                BorderLayout.EAST);
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
 
@@ -346,6 +383,8 @@ public final class ActivitiesView implements View {
             datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
             model.set(jobs);
             deleteAll.setEnabled(!jobs.isEmpty());
+            downloads.refresh(runtime.workspace().parallelDownloads());
+            preparations.refresh(runtime.workspace().parallelPreparations());
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
@@ -441,6 +480,15 @@ public final class ActivitiesView implements View {
             feedback.clear();
             poll();
         }
+    }
+
+    /** Klappt die Gruppe in der Zeile {@code row} auf oder zu; die Auswahl bleibt beim selben Auftrag. */
+    void toggleGroup(int row) {
+        if (row < 0 || row >= model.rows.size() || !model.group(model.rows.get(row))) {
+            return;
+        }
+        model.toggle(model.rows.get(row));
+        reselect();
     }
 
     private void reselect() {
@@ -989,10 +1037,14 @@ public final class ActivitiesView implements View {
         }
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
-        for (String format : FORMATS) {
-            String blocked = exportBlocked(job, format);
-            actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
-                    : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+        if (showsProgress(job)) {
+            actions.addAll(progressSlots(job));
+        } else {
+            for (String format : FORMATS) {
+                String blocked = exportBlocked(job, format);
+                actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
+                        : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+            }
         }
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
@@ -1003,6 +1055,66 @@ public final class ActivitiesView implements View {
                 () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
         actions.addAll(stateActions(job));
         return actions;
+    }
+
+    /**
+     * Bilder und Anhänge haben keine Formate (Angelo 11.11.2026): Statt fünf blasser Formatknöpfe steht auf diesen
+     * Plätzen ein Fortschrittsbalken.
+     */
+    static boolean showsProgress(JobStatus job) {
+        return job.type() == JobType.ASSETS || job.type() == JobType.ATTACHMENTS;
+    }
+
+    /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
+    static List<RowActions.Action> progressSlots(JobStatus job) {
+        JobProgress p = job.progress();
+        Counters counters = Counters.of(job.type());
+        String tip = p.discovered() == 0 ? "Noch nichts gefunden"
+                : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
+                        + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "");
+        List<RowActions.Action> slots = new ArrayList<>();
+        slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
+                p.processed(), p.failed()), tip, true, () -> { }));
+        for (int i = 1; i < FORMATS.size(); i++) {
+            slots.add(RowActions.EMPTY);
+        }
+        return slots;
+    }
+
+    /** Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende. */
+    record ProgressIcon(int width, long total, long done, long failed) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int h = getIconHeight();
+                g.setColor(Comic.LINE);
+                g.fillRoundRect(x, y, width, h, h, h);
+                if (total > 0) {
+                    int filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
+                    int bad = Math.min(filled, (int) Math.round(width * Math.min(1.0, (double) failed / total)));
+                    g.setColor(Comic.PETROL);
+                    g.fillRoundRect(x, y, filled, h, h, h);
+                    if (bad > 0) {
+                        g.setColor(Comic.RED);
+                        g.fillRoundRect(x + filled - bad, y, bad, h, h, h);
+                    }
+                }
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return width;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 8;
+        }
     }
 
     /** Die Zustandsplätze einer Zeile; für Tests ohne Tabelle. */
@@ -1236,6 +1348,29 @@ public final class ActivitiesView implements View {
             + "des Downloads verschwindet mit dem Auftrag.";
 
     /**
+     * Übernimmt die beiden Grenzen im Core und schreibt sie in die Konfigurationsdatei, damit sie einen Neustart
+     * überstehen; beides im Hintergrund ({@link AppContext#parallel}).
+     */
+    void parallel() {
+        if (context.runtime() == null) {
+            return;
+        }
+        int prepare = preparations.value();
+        int load = downloads.value();
+        context.parallel(prepare, load, () -> {
+            feedback.success(load == 0
+                    ? "Downloads angehalten: Bilder und Anhänge werden nur vorbereitet"
+                    : "Gleichzeitig " + Texts.count(load, "Download", "Downloads") + ", "
+                            + Texts.count(prepare, "Vorbereitung", "Vorbereitungen"));
+            poll();
+        }, feedback::problem);
+    }
+
+    private void invalidParallel(String message) {
+        feedback.warning("Nicht übernommen", message);
+    }
+
+    /**
      * Löscht alle Aufträge nach „Wirklich alle Aufträge löschen?“, in jedem Zustand; laufende und wartende bricht der
      * Core dafür ab ({@code Workspace#deleteAllJobs}).
      */
@@ -1274,14 +1409,94 @@ public final class ActivitiesView implements View {
     private record ExportDetail(JobStatus status, ExportArtifact artifact, ExportDatasetInfo dataset) {
     }
 
+    /**
+     * Die Aufträge in Anzeigereihenfolge (Angelo 11.11.2026): „Bilder beschaffen“ und „Anhänge beschaffen“ stehen als
+     * Unterzeilen direkt unter ihrem Export (Verknüpfung {@link ExportAssetCollection#EXPORT_ID}), Bilder vor Anhängen.
+     * Eine Gruppe ist aufgeklappt, bis sie in {@code collapsed} steht; dann zeigt sie nur den Export. Folgeaufträge,
+     * deren Export nicht mehr in der Liste steht, bleiben eigenständige Zeilen.
+     */
+    static List<JobStatus> grouped(List<JobStatus> jobs, Set<String> collapsed) {
+        Map<String, List<JobStatus>> children = children(jobs);
+        List<JobStatus> result = new ArrayList<>(jobs.size());
+        for (JobStatus job : jobs) {
+            if (parentOf(job, children) != null) {
+                continue;
+            }
+            result.add(job);
+            if (!collapsed.contains(job.id())) {
+                result.addAll(children.getOrDefault(job.id(), List.of()));
+            }
+        }
+        return result;
+    }
+
+    /** Folgeaufträge je Export-ID, nur für Exporte, die selbst in {@code jobs} stehen. */
+    static Map<String, List<JobStatus>> children(List<JobStatus> jobs) {
+        Set<String> exports = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (job.type() == JobType.EXPORT) {
+                exports.add(job.id());
+            }
+        }
+        Map<String, List<JobStatus>> children = new HashMap<>();
+        for (JobStatus job : jobs) {
+            String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
+            if (exportId != null && exports.contains(exportId)) {
+                children.computeIfAbsent(exportId, id -> new ArrayList<>()).add(job);
+            }
+        }
+        for (List<JobStatus> list : children.values()) {
+            list.sort(Comparator.comparing((JobStatus job) -> job.type() == JobType.ATTACHMENTS));
+        }
+        return children;
+    }
+
+    private static String parentOf(JobStatus job, Map<String, List<JobStatus>> children) {
+        String exportId = showsProgress(job) ? job.parameter(ExportAssetCollection.EXPORT_ID) : null;
+        return exportId != null && children.containsKey(exportId) ? exportId : null;
+    }
+
     private static final class JobsModel extends AbstractTableModel {
 
         static final int ACTIONS = 5;
         private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
         private List<JobStatus> rows = new ArrayList<>();
+        private List<JobStatus> all = List.of();
+        private Map<String, List<JobStatus>> children = Map.of();
+        /** Zugeklappte Exporte; neue Gruppen sind aufgeklappt. */
+        private final Set<String> collapsed = new HashSet<>();
 
         void set(List<JobStatus> jobs) {
-            rows = new ArrayList<>(jobs);
+            all = List.copyOf(jobs);
+            children = children(all);
+            collapsed.retainAll(children.keySet());
+            rows = grouped(all, collapsed);
+            fireTableDataChanged();
+        }
+
+        /** Ob der Export Unterzeilen hat. */
+        boolean group(JobStatus job) {
+            return children.containsKey(job.id());
+        }
+
+        /** Ob die Zeile eine Unterzeile eines Exports ist. */
+        boolean child(JobStatus job) {
+            return parentOf(job, children) != null;
+        }
+
+        boolean collapsed(JobStatus job) {
+            return collapsed.contains(job.id());
+        }
+
+        /** Klappt die Gruppe des Exports auf oder zu. */
+        void toggle(JobStatus job) {
+            if (!group(job)) {
+                return;
+            }
+            if (!collapsed.remove(job.id())) {
+                collapsed.add(job.id());
+            }
+            rows = grouped(all, collapsed);
             fireTableDataChanged();
         }
 
@@ -1318,6 +1533,25 @@ public final class ActivitiesView implements View {
      * Zustand je Zeile nach dem Zustandsobjekt des Core ({@link Texts#state(JobStatus)}); ein Auftrag, der auf einen
      * Einmalcode wartet, sagt es statt „Läuft“.
      */
+    private final class TypeRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
+                                                       int row, int column) {
+            JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
+            String text = String.valueOf(value);
+            if (job != null && model.group(job)) {
+                text = (model.collapsed(job) ? "▸ " : "▾ ") + text;
+            } else if (job != null && model.child(job)) {
+                text = "└ " + text;
+            }
+            super.getTableCellRendererComponent(table, text, selected, focus, row, column);
+            setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
+            setToolTipText(job != null && model.group(job)
+                    ? (model.collapsed(job) ? "Bilder und Anhänge zeigen" : "Bilder und Anhänge ausblenden") : null);
+            return this;
+        }
+    }
+
     private final class StateRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
