@@ -148,15 +148,15 @@ class ActivitiesActionsTest {
         java.time.Duration average = java.time.Duration.ofSeconds(2);
         java.time.Duration remaining = ActivitiesView.remaining(job, average, 4);
         assertThat(remaining).isEqualTo(java.time.Duration.ofSeconds(1200));
-        assertThat(ActivitiesView.remainingText(remaining)).isEqualTo("≈ 20 min");
+        assertThat(ActivitiesView.remainingText(remaining)).isEqualTo("ca. 20 min");
         assertThat(ActivitiesView.remainingText(java.time.Duration.ofSeconds(30))).isEqualTo("< 1 min");
-        assertThat(ActivitiesView.remainingText(java.time.Duration.ofMinutes(303))).isEqualTo("≈ 5 h 3 min");
+        assertThat(ActivitiesView.remainingText(java.time.Duration.ofMinutes(303))).isEqualTo("ca. 5 h 3 min");
         assertThat(ActivitiesView.remaining(job, average, 0)).as("Downloads abgeschaltet").isNull();
         assertThat(ActivitiesView.remaining(job(JobType.ASSETS, JobState.COMPLETED, false), average, 4)).isNull();
         assertThat(ActivitiesView.remaining(job(JobType.EXPORT, JobState.RUNNING, false), average, 4)).isNull();
 
         List<RowActions.Action> slots = ActivitiesView.progressSlots(job, remaining);
-        assertThat(((ActivitiesView.ProgressIcon) slots.get(0).icon()).label()).isEqualTo("≈ 20 min");
+        assertThat(((ActivitiesView.ProgressIcon) slots.get(0).icon()).label()).isEqualTo("ca. 20 min");
         assertThat(slots.get(0).tooltip()).isEqualTo("30 von 630 geprüft · noch etwa 20 min");
     }
 
@@ -281,6 +281,24 @@ class ActivitiesActionsTest {
                 .containsExactly("e1", "b1", "a1", "b9", "e0");
         assertThat(ActivitiesView.grouped(jobs, java.util.Set.of("e1"))).extracting(JobStatus::id)
                 .containsExactly("e1", "b9", "e0");
+        // Gezeichnete Symbole statt Unicode-Pfeilen, die Swing als Kästchen zeigt.
+        assertThat(ActivitiesView.groupIcon(true, false, false)).isSameAs(Glyph.COLLAPSE);
+        assertThat(ActivitiesView.groupIcon(true, true, false)).isSameAs(Glyph.EXPAND);
+        assertThat(ActivitiesView.groupIcon(false, false, true)).isSameAs(ActivitiesView.BRANCH);
+        assertThat(ActivitiesView.groupIcon(false, false, false)).isNull();
+    }
+
+    /** Alle auf- und alle zuklappen (Angelo 11.11.2026): Knöpfe links neben den Auswahlen. */
+    @Test
+    void allGroupsCanBeExpandedAndCollapsedAtOnce() {
+        ActivitiesView.JobsModel model = new ActivitiesView.JobsModel();
+        model.set(List.of(linked("e1", JobType.EXPORT, null), linked("b1", JobType.ASSETS, "e1"),
+                linked("e2", JobType.EXPORT, null), linked("a2", JobType.ATTACHMENTS, "e2")));
+
+        model.setAll(true);
+        assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "e2");
+        model.setAll(false);
+        assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "b1", "e2", "a2");
     }
 
     private static JobStatus linked(String id, JobType type, String exportId) {

@@ -23,7 +23,7 @@ import java.awt.geom.RoundRectangle2D;
 public enum Glyph implements Icon {
 
     REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
-    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE;
+    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE, EXPAND_ALL;
 
     private static final int SIZE = 16;
 
@@ -115,6 +115,11 @@ public enum Glyph implements Icon {
                 case COLLAPSE_ALL -> {
                     g.draw(new RoundRectangle2D.Double(2.5, 2.5, 11, 11, 3, 3));
                     g.draw(new Line2D.Double(5.2, 8, 10.8, 8));
+                }
+                case EXPAND_ALL -> {
+                    g.draw(new RoundRectangle2D.Double(2.5, 2.5, 11, 11, 3, 3));
+                    g.draw(new Line2D.Double(5.2, 8, 10.8, 8));
+                    g.draw(new Line2D.Double(8, 5.2, 8, 10.8));
                 }
                 case CROSSHAIR -> {
                     g.draw(new Ellipse2D.Double(3.5, 3.5, 9, 9));

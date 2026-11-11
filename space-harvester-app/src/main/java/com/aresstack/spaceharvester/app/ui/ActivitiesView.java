@@ -109,6 +109,9 @@ public final class ActivitiesView implements View {
     private final Set<String> converting = new HashSet<>();
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
+    /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
+    final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Bilder und Anhänge aufklappen");
+    final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Bilder und Anhänge zuklappen");
     /**
      * Links vom Besen (Angelo 11.11.2026): wie viele Bilder- und Anhängeaufträge gleichzeitig laden; 0 bereitet nur vor.
      * Gilt sofort und bleibt in der Konfigurationsdatei ({@code jobs.parallel-downloads}).
@@ -178,7 +181,10 @@ public final class ActivitiesView implements View {
         }
         downloadsLabel.setLabelFor(downloads.box());
         preparationsLabel.setLabelFor(preparations.box());
-        listHead.add(Comic.row(preparationsLabel, preparations.box(), downloadsLabel, downloads.box(), deleteAll),
+        expandAll.addActionListener(e -> setAllGroups(false));
+        collapseAll.addActionListener(e -> setAllGroups(true));
+        listHead.add(Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
+                downloads.box(), deleteAll),
                 BorderLayout.EAST);
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
@@ -499,6 +505,12 @@ public final class ActivitiesView implements View {
             feedback.clear();
             poll();
         }
+    }
+
+    /** Klappt alle Gruppen zu ({@code collapse}) oder auf; die Auswahl bleibt beim selben Auftrag, sofern sichtbar. */
+    void setAllGroups(boolean collapse) {
+        model.setAll(collapse);
+        reselect();
     }
 
     /** Klappt die Gruppe in der Zeile {@code row} auf oder zu; die Auswahl bleibt beim selben Auftrag. */
@@ -1098,14 +1110,14 @@ public final class ActivitiesView implements View {
         return open <= 0 ? null : average.multipliedBy(open);
     }
 
-    /** Kurz genug für die Mitte des Balkens: „< 1 min“, „≈ 12 min“, „≈ 5 h 3 min“. */
+    /** Kurz genug für die Mitte des Balkens: „< 1 min“, „ca. 12 min“, „ca. 5 h 3 min“ (ohne Sonderzeichen). */
     static String remainingText(java.time.Duration remaining) {
         long seconds = remaining.getSeconds();
         if (seconds < 60) {
             return "< 1 min";
         }
         long minutes = (seconds + 59) / 60;
-        return minutes < 60 ? "≈ " + minutes + " min" : "≈ " + minutes / 60 + " h " + minutes % 60 + " min";
+        return minutes < 60 ? "ca. " + minutes + " min" : "ca. " + minutes / 60 + " h " + minutes % 60 + " min";
     }
 
     /** Der Fortschrittsbalken über die fünf Formatplätze: im ersten Platz, die übrigen frei. */
@@ -1121,7 +1133,7 @@ public final class ActivitiesView implements View {
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
                         + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "")
-                        + (eta == null ? "" : " · noch " + eta.replace("≈ ", "etwa ").replace("< 1 min", "unter einer Minute"));
+                        + (eta == null ? "" : " · noch " + eta.replace("ca. ", "etwa ").replace("< 1 min", "unter einer Minute"));
         List<RowActions.Action> slots = new ArrayList<>();
         slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
                 p.processed(), p.failed(), eta), tip, true, () -> { }));
@@ -1542,7 +1554,7 @@ public final class ActivitiesView implements View {
         return exportId != null && children.containsKey(exportId) ? exportId : null;
     }
 
-    private static final class JobsModel extends AbstractTableModel {
+    static final class JobsModel extends AbstractTableModel {
 
         static final int ACTIONS = 5;
         private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
@@ -1572,6 +1584,21 @@ public final class ActivitiesView implements View {
 
         boolean collapsed(JobStatus job) {
             return collapsed.contains(job.id());
+        }
+
+        /** Klappt alle Gruppen zu oder auf. */
+        void setAll(boolean collapse) {
+            collapsed.clear();
+            if (collapse) {
+                collapsed.addAll(children.keySet());
+            }
+            rows = grouped(all, collapsed);
+            fireTableDataChanged();
+        }
+
+        /** Für Tests: die sichtbaren Zeilen. */
+        List<JobStatus> visible() {
+            return rows;
         }
 
         /** Klappt die Gruppe des Exports auf oder zu. */
@@ -1624,19 +1651,50 @@ public final class ActivitiesView implements View {
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
                                                        int row, int column) {
             JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
-            String text = String.valueOf(value);
-            if (job != null && model.group(job)) {
-                text = (model.collapsed(job) ? "▸ " : "▾ ") + text;
-            } else if (job != null && model.child(job)) {
-                text = "└ " + text;
-            }
-            super.getTableCellRendererComponent(table, text, selected, focus, row, column);
+            super.getTableCellRendererComponent(table, value, selected, focus, row, column);
+            // Gezeichnete Symbole statt ▸/▾/└: die Swing-Schrift zeigt diese Zeichen als Kästchen (Angelo 11.11.2026).
+            setIcon(job == null ? null : groupIcon(model.group(job), model.collapsed(job), model.child(job)));
+            setIconTextGap(4);
             setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
             setToolTipText(job != null && model.group(job)
                     ? (model.collapsed(job) ? "Bilder und Anhänge zeigen" : "Bilder und Anhänge ausblenden") : null);
             return this;
         }
     }
+
+    /** Pfeil rechts (zugeklappt) bzw. unten (aufgeklappt) für einen Export mit Unterzeilen, Winkel für Unterzeilen. */
+    static javax.swing.Icon groupIcon(boolean group, boolean collapsed, boolean child) {
+        return group ? (collapsed ? Glyph.EXPAND : Glyph.COLLAPSE) : child ? BRANCH : null;
+    }
+
+    /** Winkel einer Unterzeile (wie └), gezeichnet. */
+    static final javax.swing.Icon BRANCH = new javax.swing.Icon() {
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics graphics, int x, int y) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(Comic.MUTED);
+                g.setStroke(new java.awt.BasicStroke(1.4f, java.awt.BasicStroke.CAP_ROUND,
+                        java.awt.BasicStroke.JOIN_ROUND));
+                g.draw(new java.awt.geom.Line2D.Double(x + 5, y + 2, x + 5, y + 9));
+                g.draw(new java.awt.geom.Line2D.Double(x + 5, y + 9, x + 13, y + 9));
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
+    };
 
     private final class StateRenderer extends DefaultTableCellRenderer {
         @Override
