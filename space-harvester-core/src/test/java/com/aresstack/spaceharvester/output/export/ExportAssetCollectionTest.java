@@ -341,6 +341,37 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void anExportThatPublishesAtOnceStillFindsItsWaitingJobs() {
+        Jobs direct = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(direct, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(direct, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+
+        assertThat(direct.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(direct.list("client-a", JobType.ASSETS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+        assertThat(direct.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
     void deletingTheWaitingJobsKeepsOnlyTheTextWithoutAnError() {
         ExportAssetCollection images = collection();
         Exports exports = new Exports(jobs, cache, writer(), converters, clock);

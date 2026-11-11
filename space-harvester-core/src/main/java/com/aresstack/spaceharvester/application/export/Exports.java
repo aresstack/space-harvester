@@ -192,20 +192,15 @@ public class Exports {
         writer.requireCapacity();
         java.util.function.Consumer<JobStatus> announce = submitted;
         Map<String, String> parameters = parameters(request);
-        if (announce != null) {
-            parameters.put(FOLLOW_UPS, ANNOUNCED);
+        if (announce == null) {
+            return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
+                    request.owner(), parameters, new ExportTask(request, selected));
         }
-        JobStatus status = jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
-                request.owner(), parameters, new ExportTask(request, selected));
-        if (announce != null) {
-            try {
-                announce.accept(status);
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "Folgeaufträge für Export {0} nicht angelegt ({1})", status.id(),
-                        e.getClass().getSimpleName());
-            }
-        }
-        return status;
+        parameters.put(FOLLOW_UPS, ANNOUNCED);
+        // Die Folgeaufträge entstehen, bevor der Export starten kann: sonst könnte ein schneller Export schon
+        // veröffentlichen, ehe es sie gibt.
+        return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
+                request.owner(), parameters, new ExportTask(request, selected), announce);
     }
 
     /**
