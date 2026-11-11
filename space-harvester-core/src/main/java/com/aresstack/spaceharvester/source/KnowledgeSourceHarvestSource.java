@@ -118,6 +118,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** Hinweis, wenn die neue Web-Sitzung den schon gesendeten Code nicht annimmt (#571). */
     static final String NEW_SESSION_NOTE = "Mit Benutzer und Passwort neu angemeldet. Confluence hat dafür einen neuen "
             + "Code per E-Mail gesendet; bitte diesen Code eingeben.";
+    /**
+     * Nach HTTP 500 beim Absenden lud der Abruf neu und bekam eine neue Code-Seite (#571): die alte nahm keinen Code mehr
+     * an, etwa weil Confluence die Sitzung inzwischen beendet hatte.
+     */
+    static final String RELOADED_NOTE = "Die alte Code-Seite nahm keinen Code mehr an. Confluence hat einen neuen Code "
+            + "per E-Mail gesendet; bitte diesen Code eingeben.";
     /** Nach der Anmeldung ohne Code (erster Schritt im Codefeld): Confluence schickt der neuen Sitzung einen Code. */
     static final String LOGIN_NOTE = "Mit Benutzer und Passwort angemeldet. Confluence hat dafür einen Code per E-Mail "
             + "gesendet; bitte diesen Code eingeben.";
@@ -1402,7 +1408,52 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             } catch (KnowledgeSourceException e) {
                 LOG.info("Quelle {}: Einmalcode für Abfrage {} nicht angenommen ({}, {})", id, instance(challenge),
                         e.getClass().getSimpleName(), e.kind());
+                SignInChallenge reloaded = reloadAfterServerError(e);
+                if (reloaded != this) {
+                    return reloaded;
+                }
                 throw sendFailure(e, tokenLogin && bound == null);
+            }
+        }
+
+        /**
+         * Antwortet Confluence auf den Code mit einem Serverfehler, nimmt diese Code-Seite keinen Code mehr an (#571,
+         * Angelo 11.11.2026: Confluence hatte die Sitzung beendet, die Freischaltung kam danach über den Browser zurück).
+         * Dann lädt der Abruf, der die Seite gebracht hat, einmal neu: kommt die Datei, ist die Anmeldung erledigt
+         * ({@code null}); kommt eine neue Code-Seite, gilt sie mit {@link #RELOADED_NOTE}. Eine Mail mehr als nötig gibt
+         * es so nicht, die alte Seite ist ohnehin tot. Nicht bei der Sitzung des Token-Ports: dort ist die 500 die
+         * bekannte Ablehnung des Codes bei Token-Anmeldung ({@link SignInFailures#tokenLoginRejected}).
+         *
+         * @return {@code this}, wenn nicht neu geladen wurde oder das Neuladen anders scheiterte
+         */
+        private SignInChallenge reloadAfterServerError(KnowledgeSourceException e) {
+            FileFetch<?> retry = retries.get(challenge);
+            if (retry == null) {
+                retry = lastRetry;
+            }
+            if (retry == null || (tokenLogin && bound == null) || e.kind() != KnowledgeSourceException.Kind.ACCESS_DENIED
+                    || !SERVER_ERROR_AFTER_SENDING.matcher(String.valueOf(e.getMessage())).find()) {
+                return this;
+            }
+            FileFetch<?> again = retry;
+            LOG.info("Quelle {}: Code-Seite {} antwortet mit Serverfehler, Dateiabruf wird einmal neu geladen", id,
+                    instance(challenge));
+            try {
+                if (bound == null) {
+                    again.from(port);
+                } else {
+                    withWebLogin(bound, () -> again.from(bound.port()));
+                }
+                LOG.info("Quelle {}: Dateiabruf ohne Code geladen, Anmeldung gilt", id);
+                return null;
+            } catch (OneTimeCodeRequiredException required) {
+                retries.put(required.challenge(), again);
+                LOG.info("Quelle {}: neue Code-Seite {} nach Serverfehler", id, instance(required.challenge()));
+                return new Challenge(required.challenge(), bound, RELOADED_NOTE, true);
+            } catch (KnowledgeSourceException failed) {
+                LOG.info("Quelle {}: Neuladen nach Serverfehler gescheitert ({}, {})", id,
+                        failed.getClass().getSimpleName(), failed.kind());
+                return this;
             }
         }
 
