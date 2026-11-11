@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.within;
 
 import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 import com.aresstack.spaceharvester.app.event.JobProgressEvent.Outcome;
+import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobStage;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -44,11 +45,12 @@ class OverallProgressTest {
 
         OverallProgress.Estimate estimate = overall.estimate(List.of(export, images), T0, AVERAGES);
 
-        // Export: 105 s je 110 Elemente; Bilder: (10 s + 90 s) je 910 Dateien seit dem Laden.
-        double exportPerUnit = 105.0 / 110;
-        double imagePerFile = 100.0 / 910;
-        double expected = (100 * exportPerUnit + 900 * imagePerFile) / (1100 * exportPerUnit + 1000 * imagePerFile);
-        assertThat(estimate.fraction()).isCloseTo(expected, within(0.001));
+        // Export: (0,5 s × 10 + 100 s) je (10 + 100) Elemente, ohne Fortschritt im Fenster gilt das auch fürs Offene.
+        // Bilder: erledigt (1 s × 10 + 90 s) je (10 + 900) Dateien seit dem Laden, offen 90 s je 900 Dateien.
+        double exportSeconds = 1100 * (105.0 / 110);
+        double imageSeconds = 900 * (100.0 / 910) + 100 * (90.0 / 900);
+        double expected = (exportSeconds * 100 / 1100 + imageSeconds * 0.9) / (exportSeconds + imageSeconds);
+        assertThat(estimate.fraction()).isCloseTo(expected, within(1e-9));
         assertThat(estimate.fraction()).as("nach Dauer, nicht nach Zahl").isBetween(0.15, 0.19);
         assertThat(estimate.indeterminate()).isFalse();
     }
@@ -101,6 +103,34 @@ class OverallProgressTest {
         overall.observe(jobs, later.plusSeconds(61), AVERAGES);
         assertThat(overall.batch(jobs)).extracting(JobStatus::id).containsExactly("c");
         assertThat(overall.event(jobs, later.plusSeconds(61), AVERAGES, 4).text()).isEqualTo("Aufträge: 1 läuft");
+    }
+
+    /**
+     * Ein Auftrag, der zwischen zwei Abrufen angelegt wird und gleich scheitert, gehört zum Durchgang (Codex-Review
+     * zu #661); beim ersten Abruf der App bleiben ältere Ergebnisse außen vor.
+     */
+    @Test
+    void aJobThatEndsBetweenTwoPollsStillCountsInTheBatch() {
+        OverallProgress overall = new OverallProgress();
+        JobStatus old = failed("old", T0.minusSeconds(3600));
+        JobStatus export = running("e1", JobType.EXPORT, 100, 40, 0, T0.minusSeconds(40));
+        overall.observe(List.of(export, old), T0, AVERAGES);
+        assertThat(overall.batch(List.of(export, old))).extracting(JobStatus::id).containsExactly("e1");
+
+        JobStatus done = completed("e1", JobType.EXPORT, 100, T0.minusSeconds(40), T0.plusSeconds(1));
+        JobStatus quick = failed("f1", T0.plusMillis(500));
+        List<JobStatus> jobs = List.of(quick, done, old);
+        overall.observe(jobs, T0.plusMillis(1500), AVERAGES);
+        JobProgressEvent end = overall.event(jobs, T0.plusMillis(1500), AVERAGES, 4);
+        assertThat(end.text()).isEqualTo("Aufträge: 1 fertig, 1 fehlgeschlagen");
+        assertThat(end.outcome()).isEqualTo(Outcome.FAILED);
+
+        // Nach dem Ende beginnt so ein Auftrag einen neuen Durchgang für sich.
+        JobStatus again = failed("f2", T0.plusSeconds(60));
+        jobs = List.of(again, quick, done, old);
+        overall.observe(jobs, T0.plusSeconds(61), AVERAGES);
+        assertThat(overall.batch(jobs)).extracting(JobStatus::id).containsExactly("f2");
+        assertThat(overall.event(jobs, T0.plusSeconds(61), AVERAGES, 4).text()).isEqualTo("Aufträge: 1 fehlgeschlagen");
     }
 
     @Test
@@ -160,6 +190,38 @@ class OverallProgressTest {
                 .as("Größe des wartenden nur angenommen").isNull();
     }
 
+    /**
+     * Das Offene rechnet mit dem Tempo der letzten Minuten (Strang Q): ein Abgleich, der nach langsamem Beginn schneller
+     * geworden ist, braucht für den Rest weniger, als sein Tempo seit dem Start sagt. Läuft nur er, steht der Balken bei
+     * seinem eigenen Anteil.
+     */
+    @Test
+    void theOpenWorkFollowsTheRecentPace() {
+        OverallProgress overall = new OverallProgress();
+        Instant started = T0.minusSeconds(300);
+        overall.observe(List.of(running("a", JobType.SYNC, 1000, 135, 0, started)), T0.minusSeconds(120), AVERAGES);
+        overall.observe(List.of(running("a", JobType.SYNC, 1000, 255, 0, started)), T0.minusSeconds(60), AVERAGES);
+        JobStatus sync = running("a", JobType.SYNC, 1000, 375, 0, started);
+        overall.observe(List.of(sync), T0, AVERAGES);
+
+        assertThat(overall.recentPace("a")).as("120 s für 240 Seiten").isEqualTo(0.5);
+        OverallProgress.Estimate estimate = overall.estimate(List.of(sync), T0, AVERAGES);
+        assertThat(estimate.remaining()).as("625 Seiten zu je 0,5 s, nicht zu je 305/385 s seit dem Start")
+                .isEqualTo(Duration.ofSeconds(313));
+        assertThat(estimate.fraction()).isCloseTo(0.375, within(1e-9));
+        assertThat(overall.event(List.of(sync), T0, AVERAGES, 4).text())
+                .isEqualTo("Aufträge: 1 läuft · 37 % · noch ≈ 6 min");
+
+        // Angehalten misst er nicht; fortgesetzt beginnt das Fenster neu und gilt erst nach 20 s.
+        overall.observe(List.of(paused("a", JobType.SYNC, 1000, 375)), T0.plusSeconds(5), AVERAGES);
+        assertThat(overall.recentPace("a")).isNull();
+        overall.observe(List.of(running("a", JobType.SYNC, 1000, 0, 0, T0.plusSeconds(10))), T0.plusSeconds(10),
+                AVERAGES);
+        overall.observe(List.of(running("a", JobType.SYNC, 1000, 60, 0, T0.plusSeconds(10))), T0.plusSeconds(20),
+                AVERAGES);
+        assertThat(overall.recentPace("a")).as("erst 10 s beobachtet").isNull();
+    }
+
     /** Laufend nie ganz voll: „100 %“ und der volle Balken heißen nur „Fertig“. */
     @Test
     void aRunningBarNeverReadsAsFinished() {
@@ -217,6 +279,12 @@ class OverallProgressTest {
         return new JobStatus(id, type, "wiki", "OPS", "local", JobState.COMPLETED,
                 new JobProgress(discovered, discovered, discovered, 0), null, false, started.minusSeconds(1), started,
                 finished, null, null, Map.of(), false, false, null);
+    }
+
+    private static JobStatus failed(String id, Instant created) {
+        return new JobStatus(id, JobType.SYNC, "wiki", "OPS", "local", JobState.FAILED, JobProgress.NONE,
+                new JobError("X", "kaputt"), false, created, created, created.plusMillis(200), null, null, Map.of(),
+                false, false, null);
     }
 
     private static JobStatus paused(String id, JobType type, long discovered, long processed) {

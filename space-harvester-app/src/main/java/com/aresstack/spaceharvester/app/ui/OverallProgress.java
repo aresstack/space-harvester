@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
@@ -25,12 +26,17 @@ import java.util.function.Function;
  * Gesamtstand mehrerer Aufträge (Angelo 11.11.2026): der Balken der Statuszeile über alle Aufträge und der Balken
  * hinter einer laufenden Export-Gruppe in der Liste.
  *
- * <p>Jeder Auftrag zählt mit seiner geschätzten Dauer, damit ein großer, langsamer Auftrag mehr wiegt als ein kleiner,
- * schneller und der Balken möglichst gleichmäßig mit der Zeit läuft: erledigte und gesamte Elemente aus seinen Zählern
- * mal Sekunden je Element. Die Sekunden je Element beginnen mit einem Startwert und folgen dem eigenen Tempo des
- * Auftrags, je mehr er erledigt hat, desto mehr ({@link #CONFIDENCE}). Bilder und Anhänge beginnen mit dem gemessenen
- * Durchschnitt je Datei aus dem Core und messen ihr Tempo erst ab dem Laden, weil Vorbereiten und Warten auf einen
- * Platz nichts laden; mehrere Verbindungen je Auftrag gehen so von selbst ein. Alle anderen messen ab ihrem Start.
+ * <p>Jeder Auftrag zählt mit seinem Anteil an erledigten Elementen, gewichtet mit seiner geschätzten Gesamtdauer, damit
+ * ein großer, langsamer Auftrag mehr wiegt als ein kleiner, schneller; läuft nur einer, steht der Balken bei seinem
+ * eigenen Anteil. Die Gesamtdauer ist das Erledigte mal den Sekunden je Element bisher plus das Offene mal dem Tempo der
+ * letzten Minuten ({@link #WINDOW}); dasselbe Offene ergibt die Restzeit. Das jüngste Tempo zählt, weil sich das Tempo
+ * eines Auftrags unterwegs ändert, etwa wenn Bilder- und Anhängeaufträge die Verbindungen neu unter sich aufteilen
+ * (Strang Q, PR #659) oder ein Export vom Abrufen zum schnellen Exportieren wechselt.
+ *
+ * <p>Die Sekunden je Element bisher beginnen mit einem Startwert und folgen dem eigenen Tempo des Auftrags, je mehr er
+ * erledigt hat, desto mehr ({@link #CONFIDENCE}). Bilder und Anhänge beginnen mit dem gemessenen Durchschnitt je Datei
+ * aus dem Core und messen ihr Tempo erst ab dem Laden, weil Vorbereiten und Warten auf einen Platz nichts laden;
+ * mehrere Verbindungen je Auftrag gehen so von selbst ein. Alle anderen messen ab ihrem Start.
  *
  * <p>Ist die Größe eines Auftrags noch unbekannt (Inventur, wartend, Bilder in der Vorbereitung), zählt er mit der
  * zuletzt gesehenen Größe desselben Auftrags, sonst mit dem Mittel der bekannten Aufträge seiner Art, sonst mit einem
@@ -48,25 +54,37 @@ final class OverallProgress {
     static final int CONFIDENCE = 10;
     /** Auflösung des Balkens; laufend nie ganz voll, damit die Statuszeile ihn nicht wie „Fertig“ ausblendet. */
     static final int SCALE = 1000;
+    /** So weit reicht der Blick zurück für das jüngste Tempo, mit dem das Offene rechnet. */
+    static final Duration WINDOW = Duration.ofMinutes(2);
+    /** Das jüngste Tempo gilt erst ab so vielen erledigten Elementen im Fenster … */
+    static final int WINDOW_UNITS = 5;
+    /** … und so vielen Sekunden Beobachtung; vorher rechnet das Offene mit dem Tempo bisher. */
+    static final int WINDOW_SECONDS = 20;
 
     /** Geschätzter Stand: Anteil 0 bis 1, unbestimmt (nichts Messbares) und Restzeit, sofern belastbar. */
     record Estimate(double fraction, boolean indeterminate, Duration remaining) {
     }
 
-    /** Geschätzte Sekunden eines Auftrags, erledigt und insgesamt; {@code assumed}, wenn seine Größe angenommen ist. */
-    record Part(double done, double total, boolean assumed) {
-        double open() {
-            return Math.max(0, total - done);
-        }
+    /**
+     * Ein Auftrag im Gesamtstand: {@code total} seine geschätzte Gesamtdauer in Sekunden, {@code done} der Teil davon,
+     * der seinem Anteil erledigter Elemente entspricht, {@code open} die geschätzten Sekunden bis zu seinem Ende;
+     * {@code assumed}, wenn seine Größe angenommen ist.
+     */
+    record Part(double done, double total, boolean assumed, double open) {
     }
 
     private record Loading(Instant since, long processed) {
+    }
+
+    private record Sample(Instant at, double units) {
     }
 
     /** Bilder und Anhänge, die gerade laden: seit wann und mit wie vielen erledigten Dateien. */
     private final Map<String, Loading> loading = new HashMap<>();
     /** Zuletzt gemessene Sekunden je Element; gilt, solange ein Auftrag nicht misst, etwa nach Fortsetzen. */
     private final Map<String, Double> paces = new HashMap<>();
+    /** Erledigte Elemente je Abruf der letzten Minuten, solange ein Auftrag misst; für das jüngste Tempo. */
+    private final Map<String, ArrayDeque<Sample>> samples = new HashMap<>();
     /** Größte gesehene Gesamtzahl je Auftrag; ein fortgesetzter beginnt mit leeren Zählern. */
     private final Map<String, Double> sizes = new HashMap<>();
     /** Mittlere bekannte Gesamtzahl je Art, über alle Aufträge der Liste. */
@@ -74,6 +92,15 @@ final class OverallProgress {
     /** Der laufende Durchgang. */
     private final Set<String> batch = new LinkedHashSet<>();
     private boolean ended = true;
+    /** Alle Aufträge des letzten Abrufs, um neue zu erkennen. */
+    private final Set<String> seen = new HashSet<>();
+    /** Zeitpunkt des letzten Abrufs; {@code null} vor dem ersten. */
+    private Instant lastObserved;
+    /**
+     * So lange vor dem letzten Abruf darf ein neu gesehener, schon beendeter Auftrag angelegt sein, um noch zum
+     * Durchgang zu zählen: er lief zwischen zwei Abrufen ab. Ältere Ergebnisse gehören zu früheren Durchgängen.
+     */
+    static final Duration FRESH = Duration.ofSeconds(10);
 
     /**
      * Nimmt den neuen Stand aller Aufträge der Liste auf: Tempo, Größen und den Durchgang. Vor {@link #event} und
@@ -104,21 +131,37 @@ final class OverallProgress {
             } else if (job.startedAt() != null && units(job)[0] > 0) {
                 paces.put(job.id(), perUnit(job, now, averages));
             }
+            if (measuring(job)) {
+                sample(job.id(), now, units(job)[0]);
+            } else {
+                samples.remove(job.id());
+            }
         }
         loading.keySet().retainAll(ids);
         paces.keySet().retainAll(ids);
+        samples.keySet().retainAll(ids);
         sizes.keySet().retainAll(ids);
         Map<JobType, Double> typical = new EnumMap<>(JobType.class);
         sums.forEach((type, sum) -> typical.put(type, sum[0] / sum[1]));
         typicalSizes = typical;
         Map<String, JobStatus> byId = index(jobs);
         batch.retainAll(ids);
-        List<String> open = jobs.stream().filter(job -> open(job, byId)).map(JobStatus::id).toList();
-        if (ended && !open.isEmpty()) {
+        List<String> admitted = new ArrayList<>();
+        for (JobStatus job : jobs) {
+            // Offen, oder seit dem letzten Abruf angelegt und schon beendet (etwa sofort gescheitert).
+            if (open(job, byId) || lastObserved != null && !seen.contains(job.id())
+                    && job.createdAt().isAfter(lastObserved.minus(FRESH))) {
+                admitted.add(job.id());
+            }
+        }
+        seen.clear();
+        seen.addAll(ids);
+        lastObserved = now;
+        if (ended && !admitted.isEmpty()) {
             batch.clear();
             ended = false;
         }
-        batch.addAll(open);
+        batch.addAll(admitted);
         if (!ended && batch.stream().map(byId::get).noneMatch(job -> open(job, byId))) {
             ended = true;
         }
@@ -230,8 +273,9 @@ final class OverallProgress {
     }
 
     /**
-     * Anteil des Erledigten an der geschätzten Gesamtdauer dieser Aufträge. Die Restzeit nimmt das Größere aus der
-     * längsten offenen Dauer und der Summe offener Dauern geteilt durch die Zahl der gleichzeitig laufenden; sie fehlt,
+     * Anteil des Erledigten dieser Aufträge, jeder mit seiner geschätzten Gesamtdauer gewichtet ({@link #part}). Die
+     * Restzeit nimmt das Größere aus der längsten offenen Dauer und der Summe offener Dauern geteilt durch die Zahl der
+     * gleichzeitig laufenden, beide im jüngsten Tempo; sie fehlt,
      * solange eine offene Größe nur angenommen ist oder noch kein laufender Auftrag etwas erledigt hat. Angehaltene
      * und Bilder hinter einem angehaltenen Export zählen nicht zur Restzeit.
      *
@@ -270,22 +314,64 @@ final class OverallProgress {
     }
 
     /**
-     * Die geschätzten Sekunden eines Auftrags. Fertige zählen voll mit ihrer echten Größe, gescheiterte und
-     * abgebrochene nur mit dem Erledigten (sie tun nichts mehr), alle anderen mit ihrer erwarteten Größe.
+     * Ein Auftrag im Gesamtstand. Fertige zählen voll mit ihrer echten Größe, gescheiterte und abgebrochene nur mit dem
+     * Erledigten (sie tun nichts mehr), alle anderen mit ihrer erwarteten Größe: Erledigtes mal dem Tempo bisher, Offenes
+     * mal dem jüngsten Tempo, solange er läuft.
      */
     Part part(JobStatus job, Instant now, Function<JobType, Duration> averages) {
         double[] units = units(job);
         double perUnit = perUnit(job, now, averages);
         if (job.state() == JobState.COMPLETED) {
-            return new Part(units[1] * perUnit, units[1] * perUnit, false);
+            return new Part(units[1] * perUnit, units[1] * perUnit, false, 0);
         }
-        double done = units[0];
         if (job.state() == JobState.FAILED || job.state() == JobState.CANCELLED) {
-            return new Part(done * perUnit, done * perUnit, false);
+            return new Part(units[0] * perUnit, units[0] * perUnit, false, 0);
         }
         boolean assumed = units[1] <= 0 || job.stage() == JobStage.PREPARING;
         double size = assumed ? Math.max(units[1], assumedSize(job)) : units[1];
-        return new Part(Math.min(done, size) * perUnit, size * perUnit, assumed);
+        double done = Math.min(units[0], size);
+        Double recent = recentPace(job.id());
+        double open = (size - done) * (recent != null ? recent : perUnit);
+        double total = done * perUnit + open;
+        return new Part(size <= 0 ? 0 : total * done / size, total, assumed, open);
+    }
+
+    /** Ob ein Auftrag gerade Elemente erledigt: Bilder und Anhänge beim Laden, alle anderen, solange sie laufen. */
+    private static boolean measuring(JobStatus job) {
+        return job.state() == JobState.RUNNING
+                && (job.type().download() ? job.stage() == JobStage.DOWNLOADING : job.startedAt() != null);
+    }
+
+    /**
+     * Merkt sich den Stand eines Abrufs. Behält genau einen Abruf am oder vor dem Beginn des Fensters, damit es ganz
+     * gefüllt ist; beginnt neu, wenn die Zähler kleiner werden (fortgesetzt mit leeren Zählern).
+     */
+    private void sample(String id, Instant now, double done) {
+        ArrayDeque<Sample> recent = samples.computeIfAbsent(id, key -> new ArrayDeque<>());
+        if (!recent.isEmpty() && done < recent.peekLast().units()) {
+            recent.clear();
+        }
+        recent.addLast(new Sample(now, done));
+        Instant start = now.minus(WINDOW);
+        while (recent.size() > 1) {
+            java.util.Iterator<Sample> oldest = recent.iterator();
+            oldest.next();
+            if (oldest.next().at().isAfter(start)) {
+                break;
+            }
+            recent.removeFirst();
+        }
+    }
+
+    /** Sekunden je Element im jüngsten Fenster, oder {@code null}, solange es zu wenig zeigt. */
+    Double recentPace(String id) {
+        ArrayDeque<Sample> recent = samples.get(id);
+        if (recent == null || recent.size() < 2) {
+            return null;
+        }
+        double units = recent.peekLast().units() - recent.peekFirst().units();
+        double seconds = seconds(recent.peekFirst().at(), recent.peekLast().at());
+        return units < WINDOW_UNITS || seconds < WINDOW_SECONDS ? null : seconds / units;
     }
 
     /** Größe eines Auftrags, dessen Zähler sie noch nicht kennen. */
