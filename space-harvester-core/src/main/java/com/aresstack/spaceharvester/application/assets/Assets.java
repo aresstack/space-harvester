@@ -626,7 +626,7 @@ public class Assets {
         }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = storedDiagram.map(store::read)
+            byte[] mxfile = storedDiagram.map(this::storedSource)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
         }
@@ -685,7 +685,7 @@ public class Assets {
         }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = storedDiagram.map(store::read)
+            byte[] mxfile = storedDiagram.map(this::storedSource)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_RENDITION, mxfile);
         }
@@ -693,6 +693,19 @@ public class Assets {
             return Optional.empty();
         }
         return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Die abgelegten Quelldaten eines Diagramms als Bytes, höchstens {@link #MAX_IN_MEMORY_BYTES} wie {@link #read}:
+     * Ohne Grenze für Downloads kann ein abgelegtes Diagramm beliebig groß sein. Die Schranke hält schon der Aufrufer.
+     *
+     * @throws AssetTooLargeException darüber; dann gilt das Bild selbst
+     */
+    private byte[] storedSource(Asset asset) {
+        if (asset.size() > maxInMemoryBytes) {
+            throw new AssetTooLargeException(asset.sourceId(), maxInMemoryBytes);
+        }
+        return store.read(asset);
     }
 
     /**
