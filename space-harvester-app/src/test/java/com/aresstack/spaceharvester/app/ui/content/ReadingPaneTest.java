@@ -93,6 +93,33 @@ class ReadingPaneTest {
         assertThat(prepared.note()).contains("1 Bild", "2 nicht darstellbar");
     }
 
+    /**
+     * Ein draw.io-Diagramm kommt als Vektorzeichnung: im Text in Anzeigebreite × Bildschirmskalierung gerastert, der
+     * Betrachter bekommt den Vektor, und das Bild selbst wird nicht zusätzlich geladen.
+     */
+    @Test
+    void aDrawioDiagramIsShownFromItsVectorDrawing() {
+        HarvestSource.ViewImage stages = new HarvestSource.ViewImage("/download/attachments/42/stages.png",
+                "stages.png", "att9", "image/png", "1");
+        ReadingView view = available("<p><img src=\"/download/attachments/42/stages.png\"></p>", List.of(stages));
+        com.aresstack.spaceharvester.application.diagrams.VectorDiagram drawing =
+                com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(("<svg xmlns=\"http://www.w3.org/2000/svg\""
+                        + " width=\"3288\" height=\"1491\"><rect width=\"3288\" height=\"1491\" fill=\"#0077bb\"/></svg>")
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)).orElseThrow();
+        List<HarvestSource.ViewImage> loaded = new ArrayList<>();
+
+        ReadingPane.Prepared prepared = ReadingPane.prepare(view, image -> java.util.Optional.of(drawing), image -> {
+            loaded.add(image);
+            return null;
+        }, source -> null, 2.0);
+
+        assertThat(loaded).isEmpty();
+        assertThat(prepared.images()).isEqualTo(1);
+        assertThat(prepared.html()).contains("width=\"720\"", "height=\"326\"");
+        assertThat(prepared.originals().get("http://reading.invalid/image/0").getWidth()).isEqualTo(1440);
+        assertThat(prepared.vectors().get("http://reading.invalid/image/0")).isSameAs(drawing);
+    }
+
     /** Verlangt die Quelle einen Einmalcode, nennt der Platzhalter ihn statt „Bild fehlt“ (wie im EAC). */
     @Test
     void anImageWaitingForAOneTimeCodeSaysSo() {

@@ -145,4 +145,62 @@ class ImageViewerTest {
         assertThat(message[0]).isEqualTo(ImageViewer.SAVED_PREFIX + "bild.bmp");
         assertThat(ImageIO.read(target).getWidth()).isEqualTo(10);
     }
+
+    private static com.aresstack.spaceharvester.application.diagrams.VectorDiagram diagram() {
+        return com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(("<svg xmlns=\"http://www.w3.org/2000/svg\""
+                + " width=\"3000\" height=\"1000\"><rect x=\"1000\" width=\"1000\" height=\"1000\" fill=\"#ff0000\"/></svg>")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).orElseThrow();
+    }
+
+    @Test
+    void aDiagramIsDrawnFromItsVectorAtEveryZoom() throws Exception {
+        var vector = diagram();
+        SwingUtilities.invokeAndWait(() -> {
+            // Das Rasterbild ist absichtlich winzig: gezeigt wird trotzdem der Vektor in seiner Eigengröße.
+            ImageViewer viewer = new ImageViewer(List.of(new ImageViewer.Picture(
+                    new BufferedImage(30, 10, BufferedImage.TYPE_INT_ARGB), "Stages", vector)), 0);
+            viewer.layoutForTest(600, 400);
+            assertThat(viewer.infoText()).contains("3000 × 1000");
+            assertThat(viewer.zoomPercent()).isEqualTo(20);
+            for (int i = 0; i < 10; i++) {
+                viewer.zoomIn();
+            }
+            java.awt.Component canvas = ((javax.swing.JLayeredPane) viewer.getComponent(0)).getComponent(
+                    ((javax.swing.JLayeredPane) viewer.getComponent(0)).getComponentCount() - 1);
+            BufferedImage shot = new BufferedImage(canvas.getWidth(), canvas.getHeight(), BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = shot.createGraphics();
+            canvas.paint(g);
+            g.dispose();
+            // Mitte des Bildes = Mitte des roten Quadrats: scharf rot, nicht verwaschen.
+            java.awt.Color center = new java.awt.Color(shot.getRGB(shot.getWidth() / 2, shot.getHeight() / 2));
+            assertThat(center).isEqualTo(java.awt.Color.RED);
+        });
+    }
+
+    @Test
+    void aDiagramIsSavedAsSvgOrAsPngInTheCurrentZoomSize() throws Exception {
+        var vector = diagram();
+        File svg = folder.resolve("stages").toFile();
+        File png = folder.resolve("stages.png").toFile();
+        SwingUtilities.invokeAndWait(() -> {
+            ImageViewer viewer = new ImageViewer(List.of(new ImageViewer.Picture(
+                    new BufferedImage(30, 10, BufferedImage.TYPE_INT_ARGB), "Stages", vector)), 0);
+            viewer.layoutForTest(600, 400);
+            assertThat(ImageViewer.fileName(new ImageViewer.Picture(new BufferedImage(1, 1, 1), "s.png", vector)))
+                    .isEqualTo("s.svg");
+            assertThat(viewer.saveTo(svg)).isEqualTo(ImageViewer.SAVED_PREFIX + "stages.svg");
+            viewer.zoomIn();
+            assertThat(viewer.saveTo(png)).isEqualTo(ImageViewer.SAVED_PREFIX + "stages.png");
+        });
+        assertThat(java.nio.file.Files.readAllBytes(folder.resolve("stages.svg"))).isEqualTo(vector.svg());
+        assertThat(ImageIO.read(png).getWidth()).isEqualTo(750);
+    }
+
+    @Test
+    void theChosenFormatReplacesTheExtension() {
+        assertThat(ImageViewer.withExtension("stages.svg", "png")).isEqualTo("stages.png");
+        assertThat(ImageViewer.withExtension("stages", "png")).isEqualTo("stages.png");
+        assertThat(ImageViewer.withExtension("v1.2 plan.png", "svg")).isEqualTo("v1.2 plan.svg");
+        assertThat(ImageViewer.withExtension("stages.svg", null)).isEqualTo("stages.svg");
+    }
 }
