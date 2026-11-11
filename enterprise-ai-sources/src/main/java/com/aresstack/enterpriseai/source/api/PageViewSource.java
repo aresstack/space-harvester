@@ -3,6 +3,8 @@ package com.aresstack.enterpriseai.source.api;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.List;
 
 /**
@@ -76,6 +78,24 @@ public interface PageViewSource {
             throw new ResponseTooLargeException("Anhang größer als " + maxBytes + " Bytes", maxBytes);
         }
         return file;
+    }
+
+    /**
+     * Ein Dateianhang ohne Größengrenze: Die Originalbytes fließen nach {@code sink}, nie ganz in den Speicher. Liefert
+     * die Ressource wie {@link #loadAttachmentFile(KnowledgeResourceId)}. Verlangt die Quelle einen Einmalcode, kommt
+     * {@link OneTimeCodeRequiredException}, bevor etwas geschrieben ist. Quellen ohne eigene Umsetzung laden die Datei
+     * erst ganz und schreiben sie dann.
+     */
+    default KnowledgeResource streamAttachmentFile(KnowledgeResourceId attachment, OutputStream sink)
+            throws KnowledgeSourceException {
+        SourceFile file = loadAttachmentFile(attachment);
+        try {
+            sink.write(file.content());
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                    "Anhang nicht geschrieben (" + e.getClass().getSimpleName() + ")", e);
+        }
+        return file.resource();
     }
 
     /**

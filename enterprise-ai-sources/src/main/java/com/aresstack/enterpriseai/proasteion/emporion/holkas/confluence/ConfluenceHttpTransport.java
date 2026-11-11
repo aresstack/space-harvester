@@ -1,6 +1,7 @@
 package com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URI;
 import java.util.Map;
 
@@ -44,5 +45,36 @@ public interface ConfluenceHttpTransport {
     default ConfluenceHttpResponse getAnonymous(URI uri, Map<String, String> headers, int maxBytes)
             throws IOException {
         return get(uri, headers, maxBytes);
+    }
+
+    /**
+     * Wie {@link #get}, aber ein Körper, der {@link ConfluenceHttpResponse#streamable} ist (Erfolg, kein HTML), fließt
+     * ohne Größengrenze in {@code sink} statt in den Speicher; die Antwort trägt dann
+     * {@link ConfluenceHttpResponse#streamedBytes()}. HTML (Anmelde- und Einmalcode-Seiten), Fehler und
+     * Weiterleitungen werden wie bei {@link #get} höchstens bis {@code pageMaxBytes} gelesen. Der Standard liest ganz
+     * in den Speicher und schreibt danach (Test-Transporte).
+     */
+    default ConfluenceHttpResponse download(URI uri, Map<String, String> headers, OutputStream sink, int pageMaxBytes)
+            throws IOException {
+        return ConfluenceHttpTransport.drain(get(uri, headers, Integer.MAX_VALUE), sink, pageMaxBytes);
+    }
+
+    /** Wie {@link #download}, ohne Client-Zertifikat (siehe {@link #getAnonymous}). */
+    default ConfluenceHttpResponse downloadAnonymous(URI uri, Map<String, String> headers, OutputStream sink,
+                                                     int pageMaxBytes) throws IOException {
+        return ConfluenceHttpTransport.drain(getAnonymous(uri, headers, Integer.MAX_VALUE), sink, pageMaxBytes);
+    }
+
+    /** Schreibt einen strombaren Körper nach {@code sink}; prüft sonst die Grenze für Seiten. */
+    static ConfluenceHttpResponse drain(ConfluenceHttpResponse response, OutputStream sink, int pageMaxBytes)
+            throws IOException {
+        if (ConfluenceHttpResponse.streamable(response.status(), response.contentType())) {
+            sink.write(response.body());
+            return response.streamed(response.length());
+        }
+        if (response.length() > pageMaxBytes) {
+            throw new ConfluenceResponseTooLargeException(pageMaxBytes);
+        }
+        return response;
     }
 }

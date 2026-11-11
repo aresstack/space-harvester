@@ -456,6 +456,29 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
         return new SourceFile(attachmentResource(described[0]), content);
     }
 
+    /** Ohne Größengrenze: die Datei fließt nach {@code sink} ({@link ConfluenceRestClient#streamAttachment}). */
+    @Override
+    public KnowledgeResource streamAttachmentFile(KnowledgeResourceId attachment, final java.io.OutputStream sink)
+            throws KnowledgeSourceException {
+        if (sink == null) {
+            throw new IllegalArgumentException("sink must not be null");
+        }
+        final ConfluenceIds.Parsed parsed = parse(attachment);
+        if (!parsed.attachment) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Kein Anhang: " + attachment.value());
+        }
+        final Attachment[] described = new Attachment[1];
+        file(new Operation<byte[]>() {
+            @Override
+            public byte[] run(Session session) throws KnowledgeSourceException {
+                described[0] = client.attachment(session, parsed.contentId);
+                client.streamAttachment(session, described[0], sink);
+                return new byte[0];
+            }
+        });
+        return attachmentResource(described[0]);
+    }
+
     static String conversionKind(PageView.Preview preview) {
         switch (preview) {
             case DOCUMENT:

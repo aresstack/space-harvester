@@ -273,4 +273,20 @@ public class ConfluencePageViewTest {
         assertTrue(view.html, view.html.contains("#drawio=Ablauf&amp;page=42&amp;revision=3"));
         assertFalse(view.html, view.html.contains("jira-issue.png"));
     }
+
+    @Test
+    public void anImageWithoutSrcTakesDataImageSrcOrIsDropped() {
+        // jsoup löst ein leeres src zur Basis auf: ohne Korrektur wäre die Startseite ein „Bild“ (Upstream-Patch 12).
+        String body = "<p><img src=\"\" data-image-src=\"/confluence/download/attachments/7/b.png\" alt=\"B\"></p>"
+                + "<p><img src=\"\" alt=\"leer\"></p><p><img src=\"#\"></p><p>Text</p>";
+
+        ConfluencePageView view = ConfluencePageView.of(body, BASE);
+
+        assertEquals(1, view.images.size());
+        assertEquals(BASE + "download/attachments/7/b.png", view.images.get(0).src);
+        assertFalse(view.html, view.html.contains("src=\"\""));
+        assertFalse(view.html, view.html.contains("src=\"#\""));
+        assertFalse(view.html, view.html.contains("src=\"" + BASE + "\""));
+        assertTrue(view.html, view.html.contains("<p>Text</p>"));
+    }
 }

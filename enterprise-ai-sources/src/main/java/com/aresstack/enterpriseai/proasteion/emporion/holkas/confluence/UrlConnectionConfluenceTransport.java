@@ -71,13 +71,26 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
 
     private ConfluenceHttpResponse get(URI uri, Map<String, String> headers, int maxBytes, SSLSocketFactory tls)
             throws IOException {
-        return exchange("GET", uri, headers, null, maxBytes, tls);
+        return exchange("GET", uri, headers, null, maxBytes, tls, null);
+    }
+
+    /** Ein strombarer Körper geht ohne Grenze direkt aus der Verbindung nach {@code sink}, nie ganz in den Speicher. */
+    @Override
+    public ConfluenceHttpResponse download(URI uri, Map<String, String> headers, java.io.OutputStream sink,
+                                           int pageMaxBytes) throws IOException {
+        return exchange("GET", uri, headers, null, pageMaxBytes, sslSocketFactory, sink);
+    }
+
+    @Override
+    public ConfluenceHttpResponse downloadAnonymous(URI uri, Map<String, String> headers, java.io.OutputStream sink,
+                                                    int pageMaxBytes) throws IOException {
+        return exchange("GET", uri, headers, null, pageMaxBytes, anonymousSslSocketFactory, sink);
     }
 
     @Override
     public ConfluenceHttpResponse postForm(URI uri, Map<String, String> headers, byte[] form, int maxBytes)
             throws IOException {
-        return exchange("POST", uri, headers, form == null ? new byte[0] : form, maxBytes, sslSocketFactory);
+        return exchange("POST", uri, headers, form == null ? new byte[0] : form, maxBytes, sslSocketFactory, null);
     }
 
     /**
@@ -86,7 +99,8 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
      * geht es mit GET weiter, nach 307/308 mit derselben Methode.
      */
     private ConfluenceHttpResponse exchange(String method, URI uri, Map<String, String> headers, byte[] body,
-                                            int maxBytes, SSLSocketFactory tls) throws IOException {
+                                            int maxBytes, SSLSocketFactory tls, java.io.OutputStream sink)
+            throws IOException {
         URI current = uri;
         String currentMethod = method;
         byte[] currentBody = body;
@@ -95,12 +109,13 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         for (int hop = 0; ; hop++) {
             String[] location = new String[1];
             ConfluenceHttpResponse response = once(currentMethod, current,
-                    hop == 0 ? headers : withCookies(headers, cookies), currentBody, maxBytes, location, tls);
+                    hop == 0 ? headers : withCookies(headers, cookies), currentBody, maxBytes, location, tls, sink);
             merge(cookies, response.cookies());
             URI next = hop < ConfluenceRedirects.MAX_REDIRECTS ? sameHostRedirect(current, response.status(), location[0]) : null;
             if (next == null) {
-                return new ConfluenceHttpResponse(response.status(), response.contentType(), response.body(),
-                        response.location(), pairs(cookies), current, redirects);
+                ConfluenceHttpResponse last = new ConfluenceHttpResponse(response.status(), response.contentType(),
+                        response.body(), response.location(), pairs(cookies), current, redirects);
+                return response.isStreamed() ? last.streamed(response.streamedBytes()) : last;
             }
             if (response.status() != 307 && response.status() != 308) {
                 currentMethod = "GET";
@@ -129,7 +144,8 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
     }
 
     private ConfluenceHttpResponse once(String method, URI uri, Map<String, String> headers, byte[] body,
-                                        int maxBytes, String[] location, SSLSocketFactory tls) throws IOException {
+                                        int maxBytes, String[] location, SSLSocketFactory tls,
+                                        java.io.OutputStream sink) throws IOException {
         String scheme = uri.getScheme();
         if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
             throw new IOException("nur http/https unterstützt: " + scheme);
@@ -157,6 +173,12 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
             int status = connection.getResponseCode();
             location[0] = connection.getHeaderField("Location");
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            if (sink != null && stream != null
+                    && ConfluenceHttpResponse.streamable(status, connection.getContentType())) {
+                long copied = copy(stream, sink);
+                return new ConfluenceHttpResponse(status, connection.getContentType(), new byte[0], location[0],
+                        setCookies(connection.getHeaderFields())).streamed(copied);
+            }
             byte[] received = stream == null ? new byte[0] : readLimited(stream, maxBytes);
             return new ConfluenceHttpResponse(status, connection.getContentType(), received, location[0],
                     setCookies(connection.getHeaderFields()));
@@ -188,6 +210,19 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
             connection.setRequestProperty("User-Agent", userAgent);
         }
         return connection;
+    }
+
+    private static long copy(InputStream stream, java.io.OutputStream sink) throws IOException {
+        try (InputStream in = stream) {
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                sink.write(buffer, 0, read);
+                total += read;
+            }
+            return total;
+        }
     }
 
     private static byte[] readLimited(InputStream stream, int maxBytes) throws IOException {

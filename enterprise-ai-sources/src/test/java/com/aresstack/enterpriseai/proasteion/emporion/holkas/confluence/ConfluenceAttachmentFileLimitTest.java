@@ -55,6 +55,42 @@ public class ConfluenceAttachmentFileLimitTest {
     }
 
     @Test
+    public void aStreamedAttachmentHasNoLimitAndArrivesInTheSink() throws Exception {
+        java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+
+        com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource resource = source.streamAttachmentFile(PDF, sink);
+
+        assertArrayEquals("%PDF-0123456789".getBytes(StandardCharsets.UTF_8), sink.toByteArray());
+        assertEquals("bericht.pdf", resource.title());
+    }
+
+    @Test
+    public void aStreamedAttachmentThatComesBackAsAPageWritesNothing() throws Exception {
+        ConfluenceHttpTransport loginPage = new ConfluenceHttpTransport() {
+            @Override
+            public ConfluenceHttpResponse get(java.net.URI uri, java.util.Map<String, String> headers, int maxBytes)
+                    throws java.io.IOException {
+                if (uri.getRawPath().contains("/download/")) {
+                    return new ConfluenceHttpResponse(200, "text/html;charset=UTF-8",
+                            "<html><title>Log In</title></html>".getBytes(StandardCharsets.UTF_8));
+                }
+                return confluence.get(uri, headers, maxBytes);
+            }
+        };
+        ConfluenceKnowledgeSource html = new ConfluenceKnowledgeSource(SourceAddress.of("confluence-dc"),
+                ConfluenceConfig.builder(FakeConfluence.BASE).credentialRef(RecordingSecretProvider.REF).build(),
+                loginPage, new RecordingSecretProvider());
+        java.io.ByteArrayOutputStream sink = new java.io.ByteArrayOutputStream();
+        try {
+            html.streamAttachmentFile(PDF, sink);
+            fail("Anmeldeseite");
+        } catch (KnowledgeSourceException e) {
+            assertEquals(KnowledgeSourceException.Kind.INVALID_RESPONSE, e.kind());
+        }
+        assertEquals(0, sink.size());
+    }
+
+    @Test
     public void aTransportOverTheLimitIsAbortedAsTooLarge() throws Exception {
         // Die Größe in der Liste kann veraltet sein; dann bricht der Transport beim Lesen ab.
         ConfluenceHttpTransport aborting = new ConfluenceHttpTransport() {

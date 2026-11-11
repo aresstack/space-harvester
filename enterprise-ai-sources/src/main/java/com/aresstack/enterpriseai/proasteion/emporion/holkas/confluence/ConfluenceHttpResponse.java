@@ -16,6 +16,8 @@ public final class ConfluenceHttpResponse {
     private final List<String> cookies;
     private final java.net.URI uri;
     private final List<String> redirects;
+    /** Bytes, die statt in {@link #body} in einen Strom flossen ({@link ConfluenceHttpTransport#download}); sonst -1. */
+    private final long streamed;
 
     public ConfluenceHttpResponse(int status, String contentType, byte[] body) {
         this(status, contentType, body, null);
@@ -47,6 +49,12 @@ public final class ConfluenceHttpResponse {
 
     private ConfluenceHttpResponse(int status, String contentType, byte[] body, String location, List<String> cookies,
                                    java.net.URI uri, List<String> redirects, boolean owned) {
+        this(status, contentType, body, location, cookies, uri, redirects, -1L);
+    }
+
+    private ConfluenceHttpResponse(int status, String contentType, byte[] body, String location, List<String> cookies,
+                                   java.net.URI uri, List<String> redirects, long streamed) {
+        this.streamed = streamed;
         this.uri = uri;
         this.redirects = redirects == null ? Collections.<String>emptyList()
                 : Collections.unmodifiableList(new ArrayList<String>(redirects));
@@ -127,6 +135,31 @@ public final class ConfluenceHttpResponse {
 
     public boolean isSuccess() {
         return status >= 200 && status < 300;
+    }
+
+    /**
+     * Ob der Körper einer Antwort in einen Strom statt in den Speicher gehört ({@link ConfluenceHttpTransport#download}):
+     * Erfolg (2xx) und kein HTML. HTML (Anmelde- und Einmalcode-Seiten), Fehler und Weiterleitungen bleiben im Speicher,
+     * damit der Adapter sie untersuchen kann.
+     */
+    public static boolean streamable(int status, String contentType) {
+        return status >= 200 && status < 300
+                && (contentType == null || !contentType.toLowerCase(java.util.Locale.ROOT).contains("html"));
+    }
+
+    /** Dieselbe Antwort ohne Körper: {@code bytes} Bytes flossen in einen Strom. */
+    public ConfluenceHttpResponse streamed(long bytes) {
+        return new ConfluenceHttpResponse(status, contentType, new byte[0], location, cookies, uri, redirects, bytes);
+    }
+
+    /** Ob der Körper in einen Strom floss ({@link #streamedBytes()}) statt in {@link #body()}. */
+    public boolean isStreamed() {
+        return streamed >= 0;
+    }
+
+    /** Bytes, die in den Strom flossen; -1, wenn der Körper in {@link #body()} liegt. */
+    public long streamedBytes() {
+        return streamed;
     }
 
     /** Ohne Körper: Antworten können Seiteninhalte enthalten. */
