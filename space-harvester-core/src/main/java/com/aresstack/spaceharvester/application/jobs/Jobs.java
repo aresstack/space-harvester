@@ -92,6 +92,8 @@ public class Jobs implements AutoCloseable {
     static final Duration RECONNECT_RESET_AFTER = Duration.ofMinutes(2);
     /** Wer Wiederanlauf und nachgeholtes „Nur Fehler“ ausführt; {@code null}, bis die Anwendung es verbindet. */
     private volatile JobRecovery recovery;
+    /** Wie oft ein nach dem Durchgang abgelehntes „Nur Fehler neu versuchen“ höchstens versucht wird. */
+    static final int RETRY_AFTER_PASS_ATTEMPTS = 48;
     private JobTimer timer;
     private java.util.concurrent.ScheduledExecutorService ownTimer;
     /** Geplante Wiederanläufe je Auftrag; nur der zuletzt geplante zählt ({@link Reconnect#token}). */
@@ -1038,8 +1040,43 @@ public class Jobs implements AutoCloseable {
         }
         if (retryFailed) {
             JobStatus ended = finished;
-            later.schedule(Duration.ZERO, () -> perform(ended, JobAction.RETRY_FAILED));
+            later.schedule(Duration.ZERO, () -> retryAfterPass(ended, 0));
         }
+    }
+
+    /**
+     * Das während des Laufs angeforderte „Nur Fehler neu versuchen“. Lehnt der Anwendungsfall es gerade ab, etwa weil
+     * Bilder oder Anhänge des Exports noch laufen, versucht es der Auftrag mit wachsender Wartezeit erneut, solange er
+     * unverändert so beendet ist, höchstens {@link #RETRY_AFTER_PASS_ATTEMPTS} Mal.
+     */
+    private void retryAfterPass(JobStatus ended, int attempt) {
+        JobStatus now;
+        try {
+            now = status(ended.id());
+        } catch (UnknownJobException e) {
+            return;
+        }
+        if (now.state() != ended.state() || !Objects.equals(now.finishedAt(), ended.finishedAt())) {
+            // Inzwischen fortgesetzt, neu gestartet oder gelöscht: dann entscheidet der Benutzer.
+            return;
+        }
+        if (perform(ended, JobAction.RETRY_FAILED)) {
+            return;
+        }
+        if (attempt + 1 >= RETRY_AFTER_PASS_ATTEMPTS) {
+            LOG.log(System.Logger.Level.INFO, "Nur Fehler neu versuchen für Auftrag {0} aufgegeben", ended.id());
+            return;
+        }
+        Duration delay;
+        JobTimer current;
+        synchronized (lock) {
+            if (closed || recovery == null) {
+                return;
+            }
+            delay = limits.retry().resumeDelay(attempt);
+            current = timer();
+        }
+        current.schedule(delay, () -> retryAfterPass(ended, attempt + 1));
     }
 
     /**

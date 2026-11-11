@@ -865,7 +865,7 @@ public final class Workspace {
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
-            default -> harvester.exports().resume(jobId, Harvester.OWNER);
+            default -> harvester.resumeExport(jobId);
         };
     }
 
@@ -888,7 +888,7 @@ public final class Workspace {
      */
     public JobStatus performJobAction(String jobId, JobAction action) {
         job(jobId);
-        JobStatus status = harvester.jobActions().perform(jobId, Harvester.OWNER, action);
+        JobStatus status = harvester.performJobAction(jobId, action);
         if (action == JobAction.DELETE) {
             activities.forget(jobId);
         }

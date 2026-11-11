@@ -81,16 +81,20 @@ public class JobActions {
                     // Während des Laufs: direkt nach dem Durchgang im selben Eintrag (Angelo 11.11.2026).
                     yield jobs.requestRetryFailed(jobId, owner);
                 }
+                if (current.type() == JobType.ASSETS || current.type() == JobType.ATTACHMENTS) {
+                    // In jedem beendeten oder angehaltenen Zustand: Seiten mit gescheiterten Dateien erneut besuchen;
+                    // abgelegte Dateien kommen aus dem Speicher.
+                    if (conversions == null) {
+                        throw new JobNotResumableException(jobId, "keine Bild- oder Anhangbeschaffung angebunden");
+                    }
+                    yield conversions.retryImages(jobId, owner);
+                }
                 if (state instanceof JobLifecycleState.Paused || state instanceof JobLifecycleState.Stopped) {
                     // Angehalten oder abgebrochen: Fortsetzen holt nur, was fehlt, das Gescheiterte eingeschlossen.
                     yield resume(current, owner, access);
                 }
                 if (sync) {
                     yield syncs.retryFailed(jobId, owner).status();
-                }
-                if (current.type() == JobType.ASSETS || current.type() == JobType.ATTACHMENTS) {
-                    // Holt im selben Eintrag nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
-                    yield resume(current, owner, access);
                 }
                 if (current.type() != JobType.EXPORT) {
                     throw new JobNotResumableException(jobId,
