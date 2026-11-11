@@ -1176,8 +1176,8 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
-     * Nach dem Code lädt nicht der gestreamte Abruf neu (sein Ziel ist verworfen), sondern die Probe: derselbe Anhang,
-     * höchstens {@link KnowledgeSourceHarvestSource#PROBE_BYTES} im Speicher.
+     * Nach dem Code lädt nicht der gestreamte Abruf neu (sein Ziel ist verworfen), sondern die Probe: derselbe Download,
+     * verworfen und nach {@link KnowledgeSourceHarvestSource#PROBE_BYTES} abgebrochen.
      */
     @Test
     void afterTheCodeTheProbeReloadsTheAttachmentNotTheStream() {
@@ -1194,7 +1194,7 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(required.challenge().submit("000000".toCharArray(), "anna", "pw-value".toCharArray())).isNull();
 
         assertThat(seen).containsExactly("token-port stream -:pat-value",
-                "web-port probe " + KnowledgeSourceHarvestSource.PROBE_BYTES + " anna:pw-value",
+                "web-port probe anna:pw-value",
                 "web-port code anna:pw-value");
         assertThat(sink.bytes.size()).as("die Probe schreibt nie in das alte Ziel").isZero();
     }
@@ -1218,8 +1218,34 @@ class KnowledgeSourceHarvestSourceTest {
         source.streamAttachment(PDF, sink);
         assertThat(sink.bytes.toString(StandardCharsets.UTF_8)).isEqualTo("PDF-Inhalt");
         assertThat(seen).containsExactly("token-port stream -:pat-value",
-                "web-port probe " + KnowledgeSourceHarvestSource.PROBE_BYTES + " anna:pw-value",
+                "web-port probe anna:pw-value",
                 "web-port stream anna:pw-value");
+    }
+
+    /**
+     * Eine Datei größer als die Probe: Die neue Web-Sitzung fragt ihren Code trotzdem ab, denn die Probe lädt wirklich
+     * und lehnt nicht schon nach der Größe aus den Angaben des Anhangs ab (Codex zu #668).
+     */
+    @Test
+    void aFileLargerThanTheProbeStillAsksForTheCodeOfTheNewWebSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", null, "pat-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles webPort = new WebFiles(secrets, seen, "web-port", 1, null);
+        webPort.probeTooLarge = true;
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                new WebFiles(secrets, seen, "token-port", 1, null), null, null, true, () -> webPort);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.streamAttachment(PDF, new MemorySink()), SignInRequiredException.class);
+
+        com.aresstack.spaceharvester.application.sources.SignInChallenge again =
+                required.challenge().submit(new char[0], "anna", "pw-value".toCharArray());
+
+        assertThat(again).as("angemeldet ist erst mit dem Code der neuen Sitzung").isNotNull();
+        assertThat(again.message()).isEqualTo(KnowledgeSourceHarvestSource.LOGIN_NOTE);
+        assertThat(again.submit("111111".toCharArray())).isNull();
+        assertThat(seen).containsExactly("token-port stream -:pat-value", "web-port probe anna:pw-value",
+                "web-port code anna:pw-value");
     }
 
     /** Wie {@link #aServerErrorOnSubmitReloadsOnceAndAcceptsWhenTheFileNowLoads}, mit der Probe eines Anhangs. */
@@ -1241,7 +1267,7 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(required.challenge().submit("000000".toCharArray())).isNull();
 
         assertThat(seen).containsExactly("web-port code anna:pw-value",
-                "web-port probe " + KnowledgeSourceHarvestSource.PROBE_BYTES + " anna:pw-value");
+                "web-port probe anna:pw-value");
     }
 
     /** Ziel im Speicher, das mitzählt, wie oft es von vorn begann. */
@@ -1324,33 +1350,46 @@ class KnowledgeSourceHarvestSourceTest {
             return true;
         }
 
-        /** Wie Bilder: die ersten {@code locked} Abrufe liefern die Code-Seite, ohne etwas zu schreiben. */
+        /**
+         * Wie Bilder: die ersten {@code locked} Abrufe liefern die Code-Seite, ohne etwas zu schreiben. Die Probe nach
+         * dem Code schreibt nicht in ein {@link com.aresstack.spaceharvester.application.sources.AttachmentSink}; ein
+         * Fehler des Ziels kommt wie bei Confluence als {@code UNAVAILABLE} mit der Ursache zurück.
+         */
         @Override
         public KnowledgeResource streamAttachmentFile(KnowledgeResourceId attachment, java.io.OutputStream sink)
                 throws KnowledgeSourceException {
-            seen.add(name + " stream " + principalAndSecret(secrets));
+            boolean probe = !(sink instanceof com.aresstack.spaceharvester.application.sources.AttachmentSink);
+            seen.add(name + (probe ? " probe " : " stream ") + principalAndSecret(secrets));
             if (locked > 0) {
                 locked--;
                 throw new OneTimeCodeRequiredException("Einmalcode verlangt", page(false), null);
             }
             try {
+                if (probe && probeTooLarge) {
+                    byte[] chunk = new byte[64 * 1024];
+                    for (long sent = 0; sent <= KnowledgeSourceHarvestSource.PROBE_BYTES; sent += chunk.length) {
+                        sink.write(chunk);
+                    }
+                }
                 sink.write("PDF-Inhalt".getBytes(StandardCharsets.UTF_8));
             } catch (java.io.IOException e) {
-                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE, "x", e);
+                throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE,
+                        "Anhang: Confluence nicht erreichbar", e);
             }
             return attachmentResource(attachment);
         }
 
+        /** Wie Confluence: die Größe aus den Angaben des Anhangs lehnt schon vor dem Download ab (Codex zu #668). */
         @Override
         public SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
                 throws KnowledgeSourceException {
-            seen.add(name + " probe " + maxBytes + " " + principalAndSecret(secrets));
+            seen.add(name + " file " + maxBytes + " " + principalAndSecret(secrets));
+            if (probeTooLarge) {
+                throw new ResponseTooLargeException("Anhang größer als " + maxBytes + " Bytes", maxBytes);
+            }
             if (locked > 0) {
                 locked--;
                 throw new OneTimeCodeRequiredException("Einmalcode verlangt", page(false), null);
-            }
-            if (probeTooLarge) {
-                throw new ResponseTooLargeException("Anhang größer als " + maxBytes + " Bytes", maxBytes);
             }
             return new SourceFile(attachmentResource(attachment), "PDF-Inhalt".getBytes(StandardCharsets.UTF_8));
         }

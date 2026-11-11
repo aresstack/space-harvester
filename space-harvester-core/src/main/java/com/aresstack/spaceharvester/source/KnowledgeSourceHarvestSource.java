@@ -999,12 +999,53 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * Was nach einem Code statt eines gestreamten Anhangs neu geladen wird: derselbe Anhang, aber nur bis {@link
-     * #PROBE_BYTES} im Speicher. Mehr braucht es nicht, um die Code-Seite zu erkennen; eine größere Antwort ist die
-     * Datei selbst, die Anmeldung gilt dann ({@link Challenge#answeredWithTooMuch}).
+     * Was nach einem Code statt eines gestreamten Anhangs neu geladen wird: derselbe Download, aber verworfen und nach
+     * {@link #PROBE_BYTES} abgebrochen. Mehr braucht es nicht, um die Code-Seite zu erkennen; fließt mehr, ist es die
+     * Datei selbst, die Anmeldung gilt dann ({@link Challenge#answeredWithTooMuch}). Nie über die Größe aus den
+     * Angaben des Anhangs: die lehnt der Adapter vor dem Download ab, die Code-Seite käme so nie (Codex zu #668).
      */
-    private static FileFetch<SourceFile> probe(KnowledgeResourceId resourceId) {
-        return p -> ((PageViewSource) p).loadAttachmentFile(resourceId, PROBE_BYTES);
+    private static FileFetch<KnowledgeResource> probe(KnowledgeResourceId resourceId) {
+        return p -> {
+            Probe sink = new Probe();
+            try {
+                return ((PageViewSource) p).streamAttachmentFile(resourceId, sink);
+            } catch (KnowledgeSourceException e) {
+                if (!sink.full()) {
+                    throw e;
+                }
+                // Der Abbruch durch die Probe selbst, gleich in welcher Ausnahme des Adapters: die Datei kam.
+                throw new ResponseTooLargeException("Anhang größer als die Probe (" + PROBE_BYTES + " Bytes)",
+                        PROBE_BYTES);
+            }
+        };
+    }
+
+    /** Ziel der {@link #probe}: verwirft alles und bricht ab, sobald mehr als {@link #PROBE_BYTES} kommen. */
+    private static final class Probe extends java.io.OutputStream {
+
+        private long written;
+
+        boolean full() {
+            return written > PROBE_BYTES;
+        }
+
+        @Override
+        public void write(int b) throws java.io.IOException {
+            count(1);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws java.io.IOException {
+            Objects.checkFromIndexSize(off, len, b.length);
+            count(len);
+        }
+
+        private void count(int n) throws java.io.IOException {
+            written += n;
+            if (full()) {
+                throw new java.io.IOException("Probe nach " + PROBE_BYTES + " Bytes beendet");
+            }
+        }
     }
 
     private KnowledgeResourceId attachmentResource(PageAttachment attachment, PageViewSource files) {
