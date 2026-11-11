@@ -323,10 +323,25 @@ public class Assets {
         if (!fresh) {
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
             if (stored.isPresent()) {
+                verify(stored.get());
                 return stored.get();
             }
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, true, false).asset();
+    }
+
+    /**
+     * Prüft einen abgelegten Inhalt gegen seinen Hash wie {@link AssetStore#read}, aber als Strom: Ein beschädigter
+     * Inhalt gilt nicht als abgelegt, auch wenn die Datei noch da ist.
+     *
+     * @throws AssetStoreException wenn der Inhalt nicht lesbar ist oder nicht zum Hash passt
+     */
+    private void verify(Asset asset) {
+        try (InputStream in = store.open(asset)) {
+            in.transferTo(java.io.OutputStream.nullOutputStream());
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset-Inhalt nicht lesbar oder verändert", e);
+        }
     }
 
     /** Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}). */

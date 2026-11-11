@@ -351,6 +351,20 @@ class AssetsTest {
     }
 
     @Test
+    void keepDoesNotReportADamagedStoredFileAsStored() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        PageAttachmentList list = list(attachment("att1", "a.txt", "text/plain", "1"));
+        Asset kept = assets.keep(list, "att1", false);
+        String hex = kept.sha256().substring("sha256:".length());
+        java.nio.file.Files.writeString(directory.resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                "Bxricht");
+
+        assertThatThrownBy(() -> assets.keep(list, "att1", false)).isInstanceOf(AssetStoreException.class);
+        assertThat(source.downloads).isEqualTo(1);
+    }
+
+    @Test
     void aDeclaredSizeAboveTheConfiguredLimitIsRefusedWithoutDownload() {
         Assets assets = assets(3);
         source.file("att1", "1", "vier");
