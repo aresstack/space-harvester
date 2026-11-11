@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.event.JobProgressEvent;
+import com.aresstack.spaceharvester.app.runtime.AllJobs;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -33,8 +34,13 @@ import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellRenderer;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Container;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -55,10 +61,11 @@ import java.util.function.Consumer;
  * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, danach genau die Aktionen,
  * die der Zustand des Auftrags im Core anbietet ({@link JobLifecycleState#actions()}: Jetzt starten, Anhalten,
  * Fortsetzen, Abbrechen, Löschen; Anhalten und Fortsetzen nie zugleich). Darunter links die Kachel „Auftrag“, rechts
- * „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Der Fortschritt steht im globalen Balken
- * über der Statusleiste ({@link #actions()}), mittig „Anhalten“ und „Abbrechen“, danach „Fortsetzen“ oder der
- * Endzustand. Ein
- * Lauf heißt nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte,
+ * „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Mittig in der Kopfzeile stehen „Alle
+ * anhalten“ (wird „Alle fortsetzen“, sobald alles angehalten ist) und das rote „Alle abbrechen“ für alle Aufträge
+ * zugleich (Angelo 11.11.2026). Der Gesamtstand aller Aufträge steht im Balken der Statuszeile ({@link OverallProgress});
+ * hinter jedem laufenden Export liegt derselbe hellblaue Balken, aufgeklappt auch hinter seinen Bildern und Anhängen.
+ * Ein Lauf heißt nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte,
  * erscheint als Warnung mit Grund.
  */
 public final class ActivitiesView implements View {
@@ -66,7 +73,7 @@ public final class ActivitiesView implements View {
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
     private final JobsModel model = new JobsModel();
-    private final JTable table = Comic.table(new JTable(model));
+    private final JTable table = Comic.table(new JobsTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
     private final Facts facts = new Facts();
     private final Facts result = new Facts();
@@ -128,8 +135,44 @@ public final class ActivitiesView implements View {
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
-    /** Der Auftrag, dem der globale Balken folgt; „Abbrechen“ bricht ihn ab. */
-    private JobStatus barJob;
+    /**
+     * Mittig in der Kopfzeile (Angelo 11.11.2026): hält alle wartenden und laufenden Aufträge an; ist alles
+     * angehalten, wird daraus „Alle fortsetzen“ mit Play-Symbol.
+     */
+    final ComposerButton pauseAll = Comic.button(ComposerIcons.pause(), PAUSE_ALL, PAUSE_ALL_TIP);
+    /**
+     * Daneben, rot wie zuvor „Abbrechen“ in der Statuszeile, mit dem Stopp-Symbol der Zeilen: bricht alle wartenden und
+     * laufenden Aufträge ab.
+     */
+    final ComposerButton cancelAll = Comic.danger(ComposerIcons.stop(), CANCEL_ALL, CANCEL_ALL_TIP);
+    static final String PAUSE_ALL = "Alle anhalten";
+    static final String RESUME_ALL = "Alle fortsetzen";
+    static final String CANCEL_ALL = "Alle abbrechen";
+    static final String PAUSE_ALL_TIP = "Alle wartenden und laufenden Aufträge anhalten · Geladenes bleibt, später "
+            + "fortsetzen";
+    static final String RESUME_ALL_TIP = "Alle angehaltenen Aufträge fortsetzen · holt nur, was noch fehlt; fertige "
+            + "bleiben, wie sie sind";
+    static final String CANCEL_ALL_TIP = "Alle wartenden und laufenden Aufträge abbrechen · Bereits Gelesenes bleibt "
+            + "unbestätigt";
+    /** Was „Alle anhalten“ gerade tut. */
+    private GlobalPause globalPause = GlobalPause.NONE;
+    /** Eine Aktion für alle läuft; beide Knöpfe warten, bis sie fertig ist. */
+    private boolean busyAll;
+    /** Breite der beiden Knöpfe mit Text; „Alle anhalten“ so breit wie „Alle fortsetzen“, damit nichts springt. */
+    private final java.awt.Dimension pauseAllFull;
+    private final java.awt.Dimension cancelAllFull;
+    /** Zu schmal für die Texte: beide Knöpfe nur mit Symbol, der Name steht im Tooltip und für Bildschirmleser. */
+    private boolean compactHead;
+    static final java.awt.Dimension COMPACT_BUTTON = new java.awt.Dimension(30, 28);
+    /** Gesamtstand aller Aufträge für die Statuszeile und die Balken hinter laufenden Exporten. */
+    private final OverallProgress overall = new OverallProgress();
+    /** Geschätzter Stand je Export-Gruppe, in der gerade etwas läuft (Export-ID). */
+    private Map<String, OverallProgress.Estimate> groupEstimates = Map.of();
+    /** Die Balken hinter laufenden Export-Gruppen, in Zeilen der Liste. */
+    private List<Band> bands = List.of();
+    /** Bewegt den Balken einer Gruppe ohne messbaren Fortschritt hin und her, wie die Statuszeile. */
+    private final Timer sweep = new Timer(40, e -> sweepBands());
+    private int sweepOffset;
     /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
     private String phase;
     /** Bildlauf des Detailbereichs unter der Liste. */
@@ -168,9 +211,7 @@ public final class ActivitiesView implements View {
         hint.setToolTipText("<html>Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
                 + "(Rechtsklick oder Download-Symbol).<br>Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist "
                 + "endet oder sie gelöscht werden.</html>");
-        JPanel listHead = new JPanel(new BorderLayout(8, 0));
-        listHead.setOpaque(false);
-        listHead.add(Comic.row(Comic.caption("Aufträge dieser App"), hint), BorderLayout.WEST);
+        JPanel listTitle = Comic.row(Comic.caption("Aufträge dieser App"), hint);
         JLabel downloadsLabel = new JLabel("Downloads");
         downloadsLabel.setToolTipText(downloads.box().getToolTipText());
         JLabel preparationsLabel = new JLabel("Vorbereitung");
@@ -183,9 +224,28 @@ public final class ActivitiesView implements View {
         preparationsLabel.setLabelFor(preparations.box());
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
-        listHead.add(Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), deleteAll),
-                BorderLayout.EAST);
+        JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
+                downloads.box(), deleteAll);
+        // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
+        pauseAll.addActionListener(e -> pauseOrResumeAll());
+        cancelAll.addActionListener(e -> cancelAll());
+        pauseAllFull = widest(pauseAll, PAUSE_ALL, RESUME_ALL);
+        cancelAllFull = cancelAll.getPreferredSize();
+        pauseAll.setPreferredSize(pauseAllFull);
+        cancelAll.setPreferredSize(cancelAllFull);
+        JPanel global = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 6, 0));
+        global.setOpaque(false);
+        global.add(pauseAll);
+        global.add(cancelAll);
+        JPanel listHead = new JPanel();
+        listHead.setLayout(new HeadLayout(listTitle, global, listTools, global.getPreferredSize().width,
+                this::compactHead));
+        listHead.setOpaque(false);
+        listHead.add(listTitle);
+        listHead.add(global);
+        listHead.add(listTools);
+        updateGlobalButtons(List.of());
+        model.addTableModelListener(e -> layoutBands());
         list.add(listHead, BorderLayout.NORTH);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
 
@@ -286,29 +346,13 @@ public final class ActivitiesView implements View {
         return root;
     }
 
-    /** Keine eigene Aktionszeile mehr: der Fortschritt der Aufträge geht als {@link JobProgressEvent} an die Statuszeile. */
+    /**
+     * Keine eigene Aktionszeile: der Gesamtstand der Aufträge geht als {@link JobProgressEvent} an die Statuszeile,
+     * Anhalten und Abbrechen für alle stehen in der Kopfzeile der Liste.
+     */
     @Override
     public JComponent actions() {
         return null;
-    }
-
-    /** Bricht den Auftrag ab, dessen Stand die Statuszeile zeigt (nach Rückfrage). */
-    void cancelShownJob() {
-        cancelSelected();
-    }
-
-    /** Hält den Auftrag an, dessen Stand die Statuszeile zeigt, bzw. setzt ihn fort (Knöpfe in der Statuszeile). */
-    void pauseOrResumeShownJob() {
-        JobStatus status = barJob;
-        if (status == null) {
-            return;
-        }
-        JobLifecycleState state = status.lifecycle();
-        if (state.allows(JobAction.PAUSE)) {
-            perform(status, JobAction.PAUSE);
-        } else if (state.allows(JobAction.RESUME)) {
-            perform(status, JobAction.RESUME);
-        }
     }
 
     @Override
@@ -319,8 +363,8 @@ public final class ActivitiesView implements View {
 
     /**
      * Fragt die Aufträge wieder ab, ohne die Auswahl zu ändern oder die Ansicht zu wechseln, etwa nach einem Start aus
-     * einem anderen Bereich („Fachbegriffe ermitteln“): ohne Auswahl folgt der Balken der Statusleiste dem jüngsten
-     * laufenden Auftrag.
+     * einem anderen Bereich („Fachbegriffe ermitteln“): der Balken der Statusleiste nimmt den neuen Auftrag in seinen
+     * Gesamtstand auf.
      */
     public void follow() {
         poll();
@@ -390,9 +434,6 @@ public final class ActivitiesView implements View {
                     }
                     produced = outputFiles(directory, id);
                 }
-            } else {
-                // Ohne Auswahl folgt der globale Balken dem jüngsten laufenden Auftrag.
-                current = jobs.stream().filter(j -> !j.state().terminal()).findFirst().orElse(null);
             }
             return new Object[] {jobs, current, currentPhase, found, produced};
         }, data -> {
@@ -406,7 +447,13 @@ public final class ActivitiesView implements View {
                 averages.put(type, runtime.workspace().averageDownload(type));
             }
             parallelNow = runtime.workspace().parallelDownloads();
+            // Gesamtstand aller Aufträge für die Statuszeile, Balken hinter laufenden Exporten (Angelo 11.11.2026).
+            Instant now = Instant.now();
+            overall.observe(jobs, now, averages::get);
+            groupEstimates = groupEstimates(jobs, now);
             model.set(jobs);
+            context.events().publish(overall.event(jobs, now, averages::get, parallelNow));
+            updateGlobalButtons(jobs);
             deleteAll.setEnabled(!jobs.isEmpty());
             downloads.refresh(runtime.workspace().parallelDownloads());
             preparations.refresh(runtime.workspace().parallelPreparations());
@@ -416,12 +463,7 @@ public final class ActivitiesView implements View {
                 @SuppressWarnings("unchecked")
                 List<String> produced = (List<String>) data[4];
                 outputFiles = produced;
-                if (id == null) {
-                    detail = null;
-                    renderBar(data[1] instanceof JobStatus running ? running : null);
-                } else {
-                    detail = data[1];
-                }
+                detail = id == null ? null : data[1];
                 phase = (String) data[2];
                 render();
             }
@@ -453,44 +495,6 @@ public final class ActivitiesView implements View {
         } catch (java.io.IOException e) {
             return List.of();
         }
-    }
-
-    /**
-     * Veröffentlicht den Stand dieses Auftrags ({@link JobProgressEvent}) für die Statuszeile: während er läuft der Schritt links und mittig „Abbrechen“, danach mittig
-     * der Endzustand; ohne Auftrag „Kein Auftrag läuft“.
-     */
-    private void renderBar(JobStatus status) {
-        barJob = status;
-        if (status == null) {
-            context.events().publish(JobProgressEvent.none());
-            return;
-        }
-        JobProgress p = status.progress();
-        Step step = Step.of(status.type(), phase, p);
-        boolean running = !status.state().terminal();
-        String subject = Texts.type(status.type()) + " "
-                + (status.partitionKey() != null ? status.partitionKey() : status.sourceId());
-        String text;
-        long done = 0;
-        long total = 0;
-        if (status.state() == JobState.RUNNING && step.total() > 0) {
-            text = subject + " · " + step.text();
-            done = step.done();
-            total = step.total();
-        } else {
-            String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status);
-            text = subject + (running ? " · " + state : "");
-        }
-        JobProgressEvent.Outcome outcome = switch (status.state()) {
-            case COMPLETED -> JobProgressEvent.Outcome.COMPLETED;
-            case CANCELLED -> JobProgressEvent.Outcome.CANCELLED;
-            case FAILED -> JobProgressEvent.Outcome.FAILED;
-            case PAUSED -> JobProgressEvent.Outcome.PAUSED;
-            default -> running ? JobProgressEvent.Outcome.RUNNING : JobProgressEvent.Outcome.NONE;
-        };
-        JobLifecycleState lifecycle = status.lifecycle();
-        context.events().publish(new JobProgressEvent(status.id(), text, done, total, running && total == 0, outcome,
-                status.cancelRequested(), lifecycle.allows(JobAction.PAUSE) || lifecycle.allows(JobAction.RESUME)));
     }
 
     private void select(String id) {
@@ -599,7 +603,6 @@ public final class ActivitiesView implements View {
         JobStatus status = current.get();
         title.setText(Texts.type(status.type()) + " " + where(status));
         JobProgress p = status.progress();
-        renderBar(status);
         Counters counters = Counters.of(status.type());
         boolean waiting = waitingForSignIn(status.id());
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
@@ -1262,9 +1265,9 @@ public final class ActivitiesView implements View {
     }
 
     /**
-     * Führt eine Zustandsaktion aus (Symbol in der Zeile oder Knopf in der Statuszeile): Abbrechen und Löschen nach
-     * Rückfrage, alles über den einen Einstieg des Core, der die Aktion am Zustand prüft. Fortsetzen bleibt im selben
-     * Eintrag, auch nach einem Neustart.
+     * Führt eine Zustandsaktion aus (Symbol in der Zeile): Abbrechen und Löschen nach Rückfrage, alles über den einen
+     * Einstieg des Core, der die Aktion am Zustand prüft. Fortsetzen bleibt im selben Eintrag, auch nach einem
+     * Neustart.
      */
     void perform(JobStatus job, JobAction action) {
         AppRuntime runtime = context.runtime();
@@ -1341,13 +1344,6 @@ public final class ActivitiesView implements View {
             return "kein Datenbestand vorhanden";
         }
         return dataset.formats().contains(format) ? null : "Format nicht angeboten";
-    }
-
-    private void cancelSelected() {
-        JobStatus status = barJob;
-        if (status != null) {
-            perform(status, JobAction.CANCEL);
-        }
     }
 
     /**
@@ -1491,6 +1487,306 @@ public final class ActivitiesView implements View {
             feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
             poll();
         }, feedback::problem);
+    }
+
+    /** Was „Alle anhalten“ in der Kopfzeile gerade tut (Angelo 11.11.2026). */
+    enum GlobalPause {
+        /** Etwas wartet oder läuft und lässt sich anhalten: „Alle anhalten“. */
+        PAUSE,
+        /** Nichts lässt sich mehr anhalten, aber etwas ist angehalten: „Alle fortsetzen“ mit Play-Symbol. */
+        RESUME,
+        /** Nichts anzuhalten und nichts fortzusetzen: „Alle anhalten“, blass. */
+        NONE;
+
+        static GlobalPause of(List<JobStatus> jobs) {
+            if (!AllJobs.toPause(jobs).isEmpty()) {
+                return PAUSE;
+            }
+            return AllJobs.toResume(jobs).isEmpty() ? NONE : RESUME;
+        }
+    }
+
+    /** Stellt die beiden Knöpfe der Kopfzeile auf den Stand aller Aufträge. */
+    void updateGlobalButtons(List<JobStatus> jobs) {
+        globalPause = GlobalPause.of(jobs);
+        boolean resume = globalPause == GlobalPause.RESUME;
+        labelGlobalButtons();
+        pauseAll.setToolTipText(resume ? RESUME_ALL_TIP : globalPause == GlobalPause.PAUSE ? PAUSE_ALL_TIP
+                : PAUSE_ALL_TIP + " · gerade wartet oder läuft nichts, das sich anhalten lässt");
+        pauseAll.setEnabled(globalPause != GlobalPause.NONE && !busyAll);
+        boolean cancellable = !AllJobs.toCancel(jobs).isEmpty();
+        cancelAll.setToolTipText(cancellable ? CANCEL_ALL_TIP : CANCEL_ALL_TIP + " · gerade wartet und läuft nichts");
+        cancelAll.setEnabled(cancellable && !busyAll);
+    }
+
+    /** Für Tests: was „Alle anhalten“ gerade tut. */
+    GlobalPause globalPause() {
+        return globalPause;
+    }
+
+    /** Die Größe eines Knopfs, der seinen Text wechselt, für den breitesten Text, damit die Kopfzeile nicht springt. */
+    private static java.awt.Dimension widest(ComposerButton button, String... texts) {
+        String shown = button.getText();
+        java.awt.Dimension widest = button.getPreferredSize();
+        for (String text : texts) {
+            button.setText(text);
+            java.awt.Dimension size = button.getPreferredSize();
+            widest = new java.awt.Dimension(Math.max(widest.width, size.width), Math.max(widest.height, size.height));
+        }
+        button.setText(shown);
+        return widest;
+    }
+
+    /** Schaltet die schmale Kopfzeile ein oder aus ({@link HeadLayout}). */
+    private void compactHead(boolean compact) {
+        if (compact != compactHead) {
+            compactHead = compact;
+            labelGlobalButtons();
+        }
+    }
+
+    /** Symbol, Text und Größe der beiden Knöpfe: mit Text oder, wenn die Zeile zu schmal ist, nur mit Symbol. */
+    private void labelGlobalButtons() {
+        boolean resume = globalPause == GlobalPause.RESUME;
+        String pauseName = resume ? RESUME_ALL : PAUSE_ALL;
+        pauseAll.setIcon(resume ? RESUME : PAUSE);
+        label(pauseAll, pauseName, pauseAllFull);
+        label(cancelAll, CANCEL_ALL, cancelAllFull);
+    }
+
+    private void label(ComposerButton button, String name, java.awt.Dimension full) {
+        String text = compactHead ? null : name;
+        if (!Objects.equals(button.getText(), text)) {
+            button.setText(text);
+        }
+        button.getAccessibleContext().setAccessibleName(name);
+        java.awt.Dimension size = compactHead ? COMPACT_BUTTON : full;
+        if (!size.equals(button.getPreferredSize())) {
+            button.setPreferredSize(size);
+            button.revalidate();
+        }
+    }
+
+    /** Für Tests: ob die Knöpfe der Kopfzeile nur ihr Symbol zeigen. */
+    boolean compactHead() {
+        return compactHead;
+    }
+
+    /**
+     * Kopfzeile der Liste (Angelo 11.11.2026): links der Titel, rechts Auf- und Zuklappen, Plätze und Aufräumen, in der
+     * Mitte „Alle anhalten“ und „Alle abbrechen“, mittig über der ganzen Zeile. Reicht der Platz dafür nicht, rücken
+     * die Knöpfe zwischen Titel und rechte Gruppe; ist es auch dort zu eng für ihre Texte, zeigen sie nur ihr Symbol,
+     * und zuletzt gibt der Titel Platz ab, damit beide Knöpfe ganz sichtbar bleiben.
+     */
+    static final class HeadLayout implements java.awt.LayoutManager {
+
+        /** Mindestabstand der Mitte zum Titel und zur rechten Gruppe, zusätzlich zu deren eigenen Rändern. */
+        static final int GAP = 2;
+
+        private final Component west;
+        private final Component center;
+        private final Component east;
+        private final int fullWidth;
+        private final Consumer<Boolean> compact;
+
+        /**
+         * @param fullWidth Breite der Mitte mit Texten
+         * @param compact   schaltet die Mitte auf nur Symbole ({@code true}) oder zurück auf Texte
+         */
+        HeadLayout(Component west, Component center, Component east, int fullWidth, Consumer<Boolean> compact) {
+            this.west = west;
+            this.center = center;
+            this.east = east;
+            this.fullWidth = fullWidth;
+            this.compact = compact;
+        }
+
+        @Override
+        public void layoutContainer(Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            int left = in.left;
+            int right = parent.getWidth() - in.right;
+            int top = in.top;
+            int height = Math.max(0, parent.getHeight() - in.top - in.bottom);
+            int westWidth = west.getPreferredSize().width;
+            int eastWidth = east.getPreferredSize().width;
+            int space = right - left - westWidth - eastWidth - 2 * GAP;
+            compact.accept(space < fullWidth);
+            int width = center.getPreferredSize().width;
+            if (space < width) {
+                westWidth = Math.max(0, westWidth - (width - space));
+            }
+            west.setBounds(left, top, westWidth, height);
+            east.setBounds(Math.max(left, right - eastWidth), top, eastWidth, height);
+            int from = left + westWidth + GAP;
+            int to = right - eastWidth - GAP;
+            int x = Math.max(from, Math.min(to - width, left + (right - left - width) / 2));
+            center.setBounds(x, top, Math.max(0, Math.min(width, to - x)), height);
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(Container parent) {
+            return size(parent, west.getPreferredSize(), fullWidth, east.getPreferredSize());
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(Container parent) {
+            return size(parent, west.getMinimumSize(), 0, east.getMinimumSize());
+        }
+
+        private java.awt.Dimension size(Container parent, java.awt.Dimension westSize, int centerWidth,
+                                        java.awt.Dimension eastSize) {
+            java.awt.Insets in = parent.getInsets();
+            int height = Math.max(Math.max(westSize.height, eastSize.height), center.getPreferredSize().height);
+            return new java.awt.Dimension(in.left + in.right + westSize.width + centerWidth + eastSize.width + 2 * GAP,
+                    in.top + in.bottom + height);
+        }
+
+        @Override
+        public void addLayoutComponent(String name, Component component) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component component) {
+        }
+    }
+
+    /**
+     * „Alle anhalten“ bzw. „Alle fortsetzen“ (Angelo 11.11.2026), ohne Rückfrage, denn beides lässt sich umkehren.
+     * Anhalten erfasst auch die wartenden, damit keiner nachrückt; fertige Aufträge startet Fortsetzen nicht neu.
+     */
+    void pauseOrResumeAll() {
+        AppRuntime runtime = context.runtime();
+        GlobalPause mode = globalPause;
+        if (runtime == null || busyAll || mode == GlobalPause.NONE) {
+            return;
+        }
+        boolean resume = mode == GlobalPause.RESUME;
+        runAll(() -> resume ? runtime.workspace().resumeAllJobs() : runtime.workspace().pauseAllJobs(),
+                resume ? "fortgesetzt" : "angehalten");
+    }
+
+    /**
+     * „Alle abbrechen“ nach „Wirklich alle … abbrechen?“: alle wartenden und laufenden Aufträge, wartende zuerst;
+     * angehaltene und beendete bleiben, wie sie sind.
+     */
+    void cancelAll() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || busyAll) {
+            return;
+        }
+        int count = AllJobs.toCancel(model.all).size();
+        if (count == 0 || !Dialogs.confirm(root, "Alle Aufträge abbrechen?", "Wirklich alle wartenden und laufenden "
+                + "Aufträge abbrechen? Das betrifft " + Texts.count(count, "Auftrag", "Aufträge") + "; bereits "
+                + "Gelesenes bleibt unbestätigt. Angehaltene und beendete Aufträge bleiben, wie sie sind.")) {
+            return;
+        }
+        runAll(() -> runtime.workspace().cancelAllJobs(), "abgebrochen");
+    }
+
+    /** Führt eine Aktion für alle im Hintergrund aus; solange warten beide Knöpfe. */
+    private void runAll(java.util.concurrent.Callable<AllJobs.Outcome> work, String done) {
+        busyAll = true;
+        pauseAll.setEnabled(false);
+        cancelAll.setEnabled(false);
+        Background.run(work, outcome -> {
+            busyAll = false;
+            String changed = Texts.count(outcome.changed(), "Auftrag", "Aufträge") + " " + done;
+            if (outcome.failed() > 0) {
+                feedback.warning(changed + ", " + outcome.failed() + " nicht",
+                        outcome.problem() == null ? null : outcome.problem().getMessage());
+            } else if (outcome.changed() > 0) {
+                feedback.success(changed);
+            }
+            poll();
+        }, error -> {
+            busyAll = false;
+            feedback.problem(error);
+            poll();
+        });
+    }
+
+    /**
+     * Geschätzter Stand je Export-Gruppe (der Export mit seinen Bildern und Anhängen), in der gerade etwas läuft; eine
+     * Gruppe, die nur wartet, angehalten oder fertig ist, bekommt keinen Balken.
+     */
+    private Map<String, OverallProgress.Estimate> groupEstimates(List<JobStatus> jobs, Instant now) {
+        Map<String, List<JobStatus>> children = children(jobs);
+        Map<String, OverallProgress.Estimate> estimates = new HashMap<>();
+        for (JobStatus job : jobs) {
+            if (job.type() != JobType.EXPORT) {
+                continue;
+            }
+            List<JobStatus> group = new ArrayList<>();
+            group.add(job);
+            group.addAll(children.getOrDefault(job.id(), List.of()));
+            if (OverallProgress.running(group)) {
+                estimates.put(job.id(), overall.estimate(group, now, averages::get));
+            }
+        }
+        return estimates;
+    }
+
+    /** Legt die Balken auf die Zeilen der Liste, nach jedem Abruf und jedem Auf- oder Zuklappen. */
+    private void layoutBands() {
+        bands = bands(model.rows, model::child, groupEstimates);
+        if (bands.stream().anyMatch(Band::indeterminate)) {
+            sweep.start();
+        } else {
+            sweep.stop();
+        }
+        table.repaint();
+    }
+
+    /** Für Tests: die Balken hinter den Zeilen. */
+    List<Band> bands() {
+        return bands;
+    }
+
+    /** Ein Balken hinter den Zeilen {@code first} bis {@code last} einer Export-Gruppe, in der gerade etwas läuft. */
+    record Band(int first, int last, double fraction, boolean indeterminate) {
+        boolean covers(int row) {
+            return row >= first && row <= last;
+        }
+    }
+
+    /**
+     * Die Balken hinter den Export-Gruppen mit Schätzung (Angelo 11.11.2026): zugeklappt nur hinter der Zeile des
+     * Exports, aufgeklappt auch hinter seinen Bildern und Anhängen direkt darunter.
+     */
+    static List<Band> bands(List<JobStatus> rows, java.util.function.Predicate<JobStatus> child,
+                            Map<String, OverallProgress.Estimate> estimates) {
+        List<Band> result = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            OverallProgress.Estimate estimate = estimates.get(rows.get(i).id());
+            if (estimate == null || child.test(rows.get(i))) {
+                continue;
+            }
+            int last = i;
+            while (last + 1 < rows.size() && child.test(rows.get(last + 1))) {
+                last++;
+            }
+            result.add(new Band(i, last, estimate.fraction(), estimate.indeterminate()));
+        }
+        return List.copyOf(result);
+    }
+
+    private Band bandAt(int row) {
+        for (Band band : bands) {
+            if (band.covers(row)) {
+                return band;
+            }
+        }
+        return null;
+    }
+
+    /** Ein Schritt des wandernden Balkens einer Gruppe ohne messbaren Fortschritt. */
+    private void sweepBands() {
+        int width = table.getWidth();
+        sweepOffset = (sweepOffset + 6) % Math.max(1, width + width / 4);
+        if (table.isShowing()) {
+            table.repaint();
+        }
     }
 
     private void restart() {
@@ -1639,6 +1935,77 @@ public final class ActivitiesView implements View {
                 case 4 -> Texts.time(status.createdAt());
                 default -> "";
             };
+        }
+    }
+
+    /**
+     * Die Auftragsliste. Hinter einer Export-Gruppe, in der gerade etwas läuft, liegt derselbe hellblaue Balken wie in
+     * der Statuszeile ({@link StatusLine#FILL}) und läuft von ganz links bis ganz rechts durch die Zeile, aufgeklappt
+     * durch alle Zeilen der Gruppe (Angelo 11.11.2026). Die Zellen dieser Zeilen sind dafür durchsichtig; die Tabelle
+     * zeichnet ihren Hintergrund, auch die gelbe Auswahl, selbst darunter.
+     */
+    private final class JobsTable extends JTable {
+
+        JobsTable(JobsModel model) {
+            super(model);
+        }
+
+        @Override
+        public Component prepareRenderer(TableCellRenderer renderer, int row, int column) {
+            Component cell = super.prepareRenderer(renderer, row, column);
+            if (cell instanceof JComponent component) {
+                // Derselbe Renderer zeichnet alle Zeilen: für jede Zelle neu festlegen.
+                component.setOpaque(bands == null || bandAt(row) == null);
+            }
+            return cell;
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                paintBands(g);
+            } finally {
+                g.dispose();
+            }
+            // Gitter und Zellen darüber; den Hintergrund hat die Tabelle schon gezeichnet.
+            Graphics cells = graphics.create();
+            try {
+                ui.paint(cells, this);
+            } finally {
+                cells.dispose();
+            }
+        }
+
+        private void paintBands(Graphics2D g) {
+            if (bands == null) {
+                return;
+            }
+            int width = getWidth();
+            for (Band band : bands) {
+                if (band.last() >= getRowCount()) {
+                    continue;
+                }
+                Rectangle top = getCellRect(band.first(), 0, true);
+                Rectangle bottom = getCellRect(band.last(), 0, true);
+                for (int row = band.first(); row <= band.last(); row++) {
+                    if (isRowSelected(row)) {
+                        Rectangle cell = getCellRect(row, 0, true);
+                        g.setColor(getSelectionBackground());
+                        g.fillRect(0, cell.y, width, cell.height);
+                    }
+                }
+                int height = bottom.y + bottom.height - top.y;
+                g.setColor(StatusLine.FILL);
+                if (band.indeterminate()) {
+                    int block = Math.max(40, width / 4);
+                    g.fillRect(sweepOffset - block, top.y, block, height);
+                } else {
+                    g.fillRect(0, top.y, (int) Math.round(width * band.fraction()), height);
+                }
+            }
         }
     }
 

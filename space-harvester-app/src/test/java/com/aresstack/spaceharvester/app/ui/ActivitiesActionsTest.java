@@ -11,9 +11,12 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.PauseReason;
+import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import javax.swing.JPanel;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -299,6 +302,99 @@ class ActivitiesActionsTest {
         assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "e2");
         model.setAll(false);
         assertThat(model.visible()).extracting(JobStatus::id).containsExactly("e1", "b1", "e2", "a2");
+    }
+
+    /**
+     * Hinter einer laufenden Export-Gruppe liegt derselbe hellblaue Balken wie in der Statuszeile (Angelo 11.11.2026):
+     * zugeklappt nur hinter der Zeile des Exports, aufgeklappt auch hinter seinen Bildern und Anhängen. Gruppen ohne
+     * Schätzung (nichts läuft) und andere Aufträge bleiben ohne Balken.
+     */
+    @Test
+    void aRunningExportCarriesOneBandBehindAllRowsOfItsGroup() {
+        ActivitiesView.JobsModel model = new ActivitiesView.JobsModel();
+        model.set(List.of(linked("e1", JobType.EXPORT, null), linked("b1", JobType.ASSETS, "e1"),
+                linked("a1", JobType.ATTACHMENTS, "e1"), linked("s1", JobType.SYNC, null),
+                linked("e2", JobType.EXPORT, null), linked("b2", JobType.ASSETS, "e2"),
+                linked("e3", JobType.EXPORT, null), linked("b3", JobType.ASSETS, "e3")));
+        Map<String, OverallProgress.Estimate> estimates = Map.of(
+                "e1", new OverallProgress.Estimate(0.4, false, null),
+                "e2", new OverallProgress.Estimate(0, true, null));
+
+        assertThat(ActivitiesView.bands(model.visible(), model::child, estimates)).containsExactly(
+                new ActivitiesView.Band(0, 2, 0.4, false), new ActivitiesView.Band(4, 5, 0, true));
+        model.setAll(true);
+        assertThat(ActivitiesView.bands(model.visible(), model::child, estimates)).containsExactly(
+                new ActivitiesView.Band(0, 0, 0.4, false), new ActivitiesView.Band(2, 2, 0, true));
+        assertThat(new ActivitiesView.Band(4, 5, 0, true).covers(5)).isTrue();
+        assertThat(new ActivitiesView.Band(4, 5, 0, true).covers(6)).isFalse();
+    }
+
+    /**
+     * „Alle anhalten“ in der Kopfzeile wird zu „Alle fortsetzen“ mit Play-Symbol, sobald nichts mehr wartet oder läuft,
+     * aber etwas angehalten ist; fertige Aufträge startet es nie neu.
+     */
+    @Test
+    void pauseAllTurnsIntoResumeAllOnceEverythingIsPaused() {
+        JobStatus running = job(JobType.EXPORT, JobState.RUNNING, false);
+        JobStatus paused = paused(PauseReason.USER);
+        JobStatus done = job(JobType.EXPORT, JobState.COMPLETED, false);
+
+        assertThat(ActivitiesView.GlobalPause.of(List.of(running, paused, done)))
+                .isEqualTo(ActivitiesView.GlobalPause.PAUSE);
+        assertThat(ActivitiesView.GlobalPause.of(List.of(paused, done))).isEqualTo(ActivitiesView.GlobalPause.RESUME);
+        assertThat(ActivitiesView.GlobalPause.of(List.of(done, withFailures())))
+                .isEqualTo(ActivitiesView.GlobalPause.NONE);
+        assertThat(ActivitiesView.GlobalPause.of(List.of())).isEqualTo(ActivitiesView.GlobalPause.NONE);
+    }
+
+    /**
+     * „Alle anhalten“ und „Alle abbrechen“ stehen mittig über der ganzen Kopfzeile (Angelo 11.11.2026); wird es eng,
+     * rücken sie zwischen Titel und rechte Gruppe und zeigen zuletzt nur ihr Symbol, statt abgeschnitten zu werden.
+     */
+    @Test
+    void theGlobalButtonsSitInTheMiddleOfTheRowAndShrinkToTheirSymbols() {
+        JPanel west = fixed(150);
+        JPanel center = fixed(260);
+        JPanel east = fixed(380);
+        boolean[] compact = {false};
+        JPanel head = new JPanel();
+        head.setLayout(new ActivitiesView.HeadLayout(west, center, east, 260, narrow -> {
+            compact[0] = narrow;
+            center.setPreferredSize(new Dimension(narrow ? 74 : 260, 28));
+        }));
+        head.add(west);
+        head.add(center);
+        head.add(east);
+
+        layout(head, 1200);
+        assertThat(center.getBounds()).isEqualTo(new Rectangle(470, 0, 260, 28));
+        assertThat(east.getX()).isEqualTo(820);
+        assertThat(compact[0]).isFalse();
+        layout(head, 900);
+        assertThat(center.getX()).as("so mittig wie möglich, ohne die rechte Gruppe zu berühren").isEqualTo(258);
+        assertThat(compact[0]).isFalse();
+        layout(head, 700);
+        assertThat(compact[0]).as("Texte passen nicht mehr").isTrue();
+        assertThat(center.getBounds()).isEqualTo(new Rectangle(244, 0, 74, 28));
+        assertThat(west.getWidth()).isEqualTo(150);
+        layout(head, 560);
+        assertThat(center.getBounds()).as("der Titel gibt Platz ab, beide Knöpfe bleiben ganz sichtbar")
+                .isEqualTo(new Rectangle(104, 0, 74, 28));
+        assertThat(west.getWidth()).isEqualTo(102);
+        layout(head, 1200);
+        assertThat(compact[0]).isFalse();
+        assertThat(head.getPreferredSize().width).isEqualTo(150 + 260 + 380 + 2 * ActivitiesView.HeadLayout.GAP);
+    }
+
+    private static void layout(JPanel head, int width) {
+        head.setSize(width, 28);
+        head.doLayout();
+    }
+
+    private static JPanel fixed(int width) {
+        JPanel panel = new JPanel();
+        panel.setPreferredSize(new Dimension(width, 28));
+        return panel;
     }
 
     private static JobStatus linked(String id, JobType type, String exportId) {

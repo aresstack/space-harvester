@@ -153,8 +153,11 @@ final class RowActions extends JComponent implements TableCellRenderer {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        graphics.setColor(getBackground());
-        graphics.fillRect(0, 0, getWidth(), getHeight());
+        // Durchsichtig, wenn die Tabelle selbst einen Hintergrund zeichnet (Fortschrittsbalken hinter einer Zeile).
+        if (isOpaque()) {
+            graphics.setColor(getBackground());
+            graphics.fillRect(0, 0, getWidth(), getHeight());
+        }
         int start = getWidth() - 4 - shown.size() * SLOT;
         for (int i = 0; i < shown.size(); i++) {
             Action action = shown.get(i);

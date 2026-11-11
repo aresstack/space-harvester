@@ -913,6 +913,31 @@ public final class Workspace {
     }
 
     /**
+     * „Alle anhalten“ (Angelo 11.11.2026): hält alle wartenden und laufenden Aufträge an, die sich fortsetzen lassen
+     * ({@link AllJobs#toPause}), wartende vor laufenden, damit keiner in einen frei werdenden Platz nachrückt. Ein
+     * laufender beendet noch seinen Schritt; was er geladen hat, bleibt.
+     */
+    public AllJobs.Outcome pauseAllJobs() {
+        return AllJobs.apply(AllJobs.toPause(jobs()), job -> pauseJob(job.id()));
+    }
+
+    /**
+     * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
+     * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
+     */
+    public AllJobs.Outcome resumeAllJobs() {
+        return AllJobs.apply(AllJobs.toResume(jobs()), job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /**
+     * „Alle abbrechen“: bricht alle wartenden und laufenden Aufträge ab ({@link AllJobs#toCancel}), wartende zuerst.
+     * Angehaltene und beendete bleiben, wie sie sind.
+     */
+    public AllJobs.Outcome cancelAllJobs() {
+        return AllJobs.apply(AllJobs.toCancel(jobs()), job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
      * Für die Restzeit im Fortschrittsbalken: durchschnittliche Dauer je tatsächlich geladener Datei, global über alle
      * Exporte und Neustarts, getrennt für Bilder ({@link JobType#ASSETS}) und Anhänge ({@link JobType#ATTACHMENTS});
      * vor der ersten Datei ein Startwert. Ein einzelner Transfer, ohne Parallelität; Treffer aus dem Speicher und

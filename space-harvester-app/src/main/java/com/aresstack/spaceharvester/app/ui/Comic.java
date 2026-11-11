@@ -158,6 +158,11 @@ public final class Comic {
         return ComposerButton.primary(null, text, ResearchUiPalette.DANGER_RED, tooltip);
     }
 
+    /** Wie {@link #danger(String, String)}, mit Symbol vor dem Text (weiß auf Rot). */
+    public static ComposerButton danger(Icon icon, String text, String tooltip) {
+        return ComposerButton.primary(icon, text, ResearchUiPalette.DANGER_RED, tooltip);
+    }
+
     /** Nebenaktion: flach mit Hover-Schleier. */
     public static ComposerButton button(String text, String tooltip) {
         return new ComposerButton(null, text, false, tooltip);
