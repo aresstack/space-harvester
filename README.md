@@ -153,14 +153,14 @@ und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | neues Pre-Release `v<Basis>-beta.<N>`; `N` zählt je Push hoch |
+| Push auf `main` | das rollierende Pre-Release `beta` (Version `<Basis>-beta.<N>`) wird ersetzt |
 | Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird ersetzt |
 | **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | reguläres Release genau dieser Version, als *Latest* markiert |
 
 - Ein reguläres Release braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`
   ([v0.1.0](docs/release-notes/v0.1.0.md)); der Workflow stellt sie vor die Dateiübersicht und bricht ohne sie ab.
-- Nach einem regulären Release zählen die Betas auf der nächsten Minor-Version weiter (nach `v0.1.0`:
-  `v0.2.0-beta.1`, …), ohne dass `build.gradle` angepasst werden muss.
+- Die Beta trägt die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`: `0.1.2-beta.<N>`).
+  GitHub sortiert Releases nach Datum, deshalb steht über dem regulären Release („Latest“) höchstens die eine Beta.
 - Nicht über **Releases › Draft a new release** gehen: Versionierte Releases werden nie überschrieben, der Workflow
   lehnt das Hochladen dann ab. Ablauf im Detail: [Desktop › Releases](docs/DESKTOP_APP.md#releases).
 
