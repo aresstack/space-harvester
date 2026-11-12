@@ -15,7 +15,7 @@ allprojects {
 ext.ossLicenseTargetProjectPath = ':space-harvester-app'
 apply from: "$rootDir/gradle/oss-licenses.gradle"
 
-// Bundle für das Central Publisher Portal (Workflow Release, nur reguläre Releases): der Core und die beiden Module,
+// Bundle für das Central Publisher Portal (Workflow maven-central.yml, nur manuell): der Core und die beiden Module,
 // die seine POM nennt, je mit POM, JAR, Sources, Javadoc, Signaturen (.asc) und Prüfsummen. maven-metadata.xml gehört
 // nicht ins Bundle; ältere Versionen aus build/repo auch nicht.
 def centralModules = [':enterprise-ai-sources', ':document-export', ':space-harvester-core']

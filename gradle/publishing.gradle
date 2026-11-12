@@ -1,6 +1,6 @@
 // Maven-Publikation (#100, docs/MODULES.md): Koordinaten unter com.aresstack, POM mit Lizenz, SCM und Entwicklern,
 // Sources- und Javadoc-JAR. Ziel ist das lokale Verzeichnis build/repo; daraus packt die Wurzel-Task centralBundle
-// das Bundle, das der Workflow Release bei regulären Releases nach Maven Central hochlädt. Signiert wird nur, wenn
+// das Bundle, das der manuell gestartete Workflow Maven Central hochlädt. Signiert wird nur, wenn
 // GPG_PRIVATE_KEY gesetzt ist (Secrets der Organisation aresstack, wie bei win-proxy-java).
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
