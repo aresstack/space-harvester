@@ -68,6 +68,24 @@ class KnowledgeGraphTest {
     }
 
     @Test
+    void deleteAllRemovesEveryReadableAnalysisIncludingDisabledSourcesAndKeepsTheRest() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");
+        analyse("geheim", "3", "Die Revision prüft den Beleg.");
+        deniedSources.add("geheim");
+        KnowledgeGraph withoutWiki = new KnowledgeGraph(store, access, key -> Optional.ofNullable(cache.get(key)),
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
+                (caller, term, sourceId) -> expansions.expansions(caller, term, sourceId),
+                sourceId -> !sourceId.equals("wiki"));
+
+        assertThat(withoutWiki.deleteAll(CALLER)).isEqualTo(2);
+
+        assertThat(store.all()).extracting(analysis -> analysis.key().sourceId()).containsExactly("geheim");
+        assertThat(graph().pages(CALLER)).isEmpty();
+        assertThat(graph().search(CALLER, "Beleg", 50).hits()).isEmpty();
+    }
+
+    @Test
     void theSameWordOnTwoPagesIsOnlyALexicalCandidateNeverAnIdentity() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt den Beleg.");
         analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");

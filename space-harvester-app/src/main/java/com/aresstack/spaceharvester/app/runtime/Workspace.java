@@ -605,6 +605,16 @@ public final class Workspace {
         return harvester.knowledgeGraph().links(caller, key);
     }
 
+    /**
+     * Löscht alle Aussagenanalysen aller Quellen ({@code KnowledgeGraph.deleteAll}); synchron, also außerhalb des EDT
+     * aufrufen. Danach ist der Graph leer, bis Seiten neu analysiert werden.
+     *
+     * @return Zahl der gelöschten Seiten
+     */
+    public int deleteAllStatements() {
+        return harvester.knowledgeGraph().deleteAll(caller);
+    }
+
     /** Erwähnungen eines Begriffs auf allen manuell analysierten, sichtbaren Seiten. */
     public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit) {
         return harvester.knowledgeGraph().search(caller, term, limit);
