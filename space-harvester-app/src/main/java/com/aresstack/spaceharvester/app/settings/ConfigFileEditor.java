@@ -281,24 +281,34 @@ public final class ConfigFileEditor {
     /** Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code space-harvester.<parent>}. */
     private static String nested(String text, String parent, String key,
                                  java.util.function.Function<String, String> yaml) {
+        return nested(text, AppSettingsLoader.ROOT, parent, key, yaml);
+    }
+
+    /**
+     * Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code <rootKey>.<parent>}, etwa {@code logging.threshold}
+     * wie beim Dienst; fehlt die Wurzel, kommt sie ans Ende der Datei.
+     */
+    private static String nested(String text, String rootKey, String parent, String key,
+                                 java.util.function.Function<String, String> yaml) {
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
             lines.remove(lines.size() - 1);
         }
+        String normalizedRoot = AppSettingsLoader.normalize(rootKey);
         int root = -1;
         for (int i = 0; i < lines.size(); i++) {
-            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+            if (isKey(ROOT, lines.get(i), 1, normalizedRoot)) {
                 root = i;
                 break;
             }
-            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
-                throw unsupported("space-harvester steht in einer Zeile");
+            if (isKey(ROOT_INLINE, lines.get(i), 1, normalizedRoot)) {
+                throw unsupported(rootKey + " steht in einer Zeile");
             }
         }
         if (root < 0) {
             lines.add("");
-            lines.add("space-harvester:");
+            lines.add(rootKey + ":");
             lines.add("  " + parent + ":");
             add(lines, lines.size(), yaml.apply("    "));
             return String.join(newline, lines) + newline;
@@ -446,6 +456,29 @@ public final class ConfigFileEditor {
         if (settings.jobLimits().downloadConnections() != connections) {
             throw new IllegalArgumentException("Die Verbindungen für Downloads ließen sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Terminal-Ausgabe ({@code logging.threshold.console}, derselbe Schlüssel wie
+     * beim Dienst, Angelo 12.11.2026); nur dieser Wert ändert sich. Der Wert steht in Anführungszeichen, denn ein
+     * unquotiertes {@code off} wäre in YAML {@code false}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConsoleOutput(Path file, Draft base, ConsoleOutput output) {
+        String text = nested(base.text(), "logging", "threshold", "console",
+                indent -> indent + "console: \"" + output.key() + "\"\n");
+        AppSettings settings = loader.read(file, text);
+        // Ein neues Problem heißt: Der Text liest sich nicht mehr wie vorher (etwa kein gültiges YAML). Der Loader fiele
+        // dann auf die Vorgaben zurück, deren Terminal-Ausgabe „Aus“ ist; der Vergleich allein ließe das durch.
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.consoleOutput() != output) {
+            throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

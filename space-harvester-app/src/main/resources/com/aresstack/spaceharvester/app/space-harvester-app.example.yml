@@ -49,3 +49,10 @@ space-harvester:
 #         firma:
 #           truststore:
 #             certificate: C:/Daten/firma-ca.pem
+
+# Terminal-Ausgabe (derselbe Schlüssel wie beim Dienst, Spring Boot): welche Meldungen im Terminal erscheinen, aus dem
+# die App gestartet wurde: off | error | warn | info | all, ohne Angabe off. Die Protokolldatei unter
+# <Benutzerordner>/.space-harvester/logs enthält immer alle Meldungen. Auch unter Einstellungen › Allgemein.
+# logging:
+#   threshold:
+#     console: warn

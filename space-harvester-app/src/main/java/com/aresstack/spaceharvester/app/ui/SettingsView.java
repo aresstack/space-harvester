@@ -5,8 +5,10 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
@@ -22,8 +24,9 @@ import java.util.Locale;
  * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
  * ({@link #drawer()}, an Stelle des Explorers, solange die Einstellungen offen sind), rechts nur der gewählte Bereich.
  * „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen,
- * Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy,
- * Serverzertifikate und Wiederholungen), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte Seiten) und „Sicherheit“
+ * Versionen, was im Terminal erscheint), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
+ * Quellen), „Netzwerk“ (Proxy, Serverzertifikate und Wiederholungen), „Cache“ (Aktualisierung gespeicherter Seiten,
+ * Frist für gesperrte Seiten) und „Sicherheit“
  * (KeePass-Kopplung für KI-Dienst und Quellen, Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“;
  * lokal gespeicherte Zugangsdaten lassen sich dort je Eintrag löschen. „Bibliotheken“ ({@link LibrariesView}) hängt
  * als letzte Zeile am Boden des Drawers über „Zurück“, getrennt von den Einstellungsbereichen darüber. Jede
@@ -42,6 +45,11 @@ public final class SettingsView implements View {
     static final String KEEPASS_TIP = "Die Zugangsdaten liegen nur in KeePass und werden bei Bedarf über die Kopplung "
             + "gelesen; lokal ist nichts gespeichert. Die Verbindung trennt „Entkoppeln“ im Abschnitt KeePass.";
     static final String EXAMPLE = "/com/aresstack/spaceharvester/app/space-harvester-app.example.yml";
+    /** Platte unter Allgemein und Zeile auf der Abschlussseite des Assistenten. */
+    static final String CONSOLE_TITLE = "Terminal-Ausgabe";
+    static final String CONSOLE_HINT = "Meldungen ab dieser Stufe erscheinen im Terminal, aus dem die App gestartet "
+            + "wurde; „Warnungen“ zeigt also auch Fehler. Die Protokolldatei (siehe Diagnose) enthält immer alle "
+            + "Meldungen. Gilt sofort, ohne Neustart.";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
@@ -95,6 +103,15 @@ public final class SettingsView implements View {
     final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
     private final Facts output = new Facts();
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
+    /**
+     * Platte „Terminal-Ausgabe“ unter Allgemein (Angelo 12.11.2026): welche Meldungen im Terminal erscheinen,
+     * {@code logging.threshold.console}; Einträge in der Reihenfolge von {@link ConsoleOutput}.
+     */
+    final JComboBox<String> console = Comic.combo();
+    /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
+    private ConsoleOutput shownConsole;
+    /** Während {@link #renderConsole} die Auswahl setzt, ist das keine Wahl des Benutzers. */
+    private boolean showingConsole;
     final ComposerButton setup = Comic.button(SetupWizard.TITLE + " …",
             "Netzwerk, KI-Dienst, Modelle und erste Wissensquelle Schritt für Schritt einrichten");
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
@@ -131,6 +148,11 @@ public final class SettingsView implements View {
             }
         });
         resetOutput.addActionListener(e -> saveOutput(null));
+        for (ConsoleOutput level : ConsoleOutput.values()) {
+            console.addItem(level.label());
+        }
+        console.setToolTipText("Welche Meldungen im Terminal erscheinen, aus dem die App gestartet wurde");
+        console.addActionListener(e -> chooseConsole());
         about.addActionListener(e -> AboutDialog.open(root, context));
         setup.addActionListener(e -> {
             SetupWizard.open(root, context);
@@ -166,12 +188,15 @@ public final class SettingsView implements View {
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
+        SettingDialogs.Rows consoleRows = new SettingDialogs.Rows();
+        consoleRows.add("Anzeigen", console, CONSOLE_HINT);
         page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
-                Comic.plate("Diagnose", Comic.DARK, diagnosis)));
+                Comic.plate("Diagnose", Comic.DARK, diagnosis),
+                Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
         page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
@@ -494,6 +519,7 @@ public final class SettingsView implements View {
             }
         }
         renderSecurity(settings);
+        renderConsole(settings);
         retry.reset();
         if (settings != null) {
             var r = settings.jobLimits().retry();
@@ -606,6 +632,38 @@ public final class SettingsView implements View {
         feedback.working("Ausgabeordner wird gespeichert …");
         context.outputDirectory(directory, () -> feedback.success("Ausgabeordner: "
                 + context.settings().outputDirectory()), feedback::problem);
+    }
+
+    /** Zeigt die Terminal-Ausgabe aus der Datei; eine offene Liste bleibt unberührt. */
+    private void renderConsole(AppSettings settings) {
+        ConsoleOutput current = settings == null ? ConsoleOutput.DEFAULT : settings.consoleOutput();
+        if (console.isPopupVisible()) {
+            return;
+        }
+        showingConsole = true;
+        try {
+            if (console.getSelectedIndex() != current.ordinal()) {
+                console.setSelectedIndex(current.ordinal());
+            }
+        } finally {
+            showingConsole = false;
+        }
+        shownConsole = current;
+    }
+
+    /** Übernimmt die gewählte Terminal-Ausgabe sofort und speichert sie in der Datei, ohne Neustart der Laufzeit. */
+    private void chooseConsole() {
+        int index = console.getSelectedIndex();
+        if (showingConsole || index < 0) {
+            return;
+        }
+        ConsoleOutput chosen = ConsoleOutput.values()[index];
+        if (chosen == shownConsole) {
+            return;
+        }
+        shownConsole = chosen;
+        context.consoleOutput(chosen, () -> feedback.success(CONSOLE_TITLE + ": " + chosen.label()),
+                feedback::problem);
     }
 
     private void open(Path path) {

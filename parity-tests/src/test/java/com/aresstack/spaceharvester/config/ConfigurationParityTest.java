@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -12,11 +13,13 @@ import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.logging.LoggingSystemProperties;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
@@ -28,10 +31,15 @@ import org.springframework.core.io.ByteArrayResource;
  * {@link AppSettingsLoader} der App; beide müssen dieselben Quellen, KI-Einstellungen und Abgleichswerte lesen.
  * Ein neuer gemeinsamer Schlüssel unter {@code space-harvester} gehört in beide Loader und hierher. Der KI-API-Key
  * bleibt bewusst außen vor: die App bezieht ihn aus KeePass oder dem Tresor ({@code AiAccess}), nie aus der YAML.
+ * Die Terminal-Ausgabe ({@code logging.threshold.console}) liest der Dienst über Spring Boot selbst; verglichen wird
+ * mit dem, was Spring Boot daraus an Logback gibt.
  */
 class ConfigurationParityTest {
 
     private static final String YAML = """
+            logging:
+              threshold:
+                console: warn
             space-harvester:
               sources:
                 - id: confluence
@@ -134,5 +142,32 @@ class ConfigurationParityTest {
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+
+        // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
+        assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);
+        assertThat(springConsoleThreshold(environment)).isEqualToIgnoringCase(app.consoleOutput().name());
+    }
+
+    @Test
+    void anUnquotedOffSilencesTheTerminalInServiceAndApp(@TempDir Path home) throws IOException {
+        String yaml = "logging:\n  threshold:\n    console: off\n";
+        Path file = home.resolve("space-harvester.yml");
+        Files.writeString(file, yaml);
+        AppSettings app = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader().load("yaml", new ByteArrayResource(yaml.getBytes()))
+                .forEach(source -> environment.getPropertySources().addLast(source));
+
+        assertThat(app.problems()).isEmpty();
+        assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.OFF);
+        // YAML liest ein unquotiertes off als false; Spring Boot macht daraus wieder OFF.
+        assertThat(springConsoleThreshold(environment)).isEqualTo("OFF").isEqualTo(app.consoleOutput().name());
+    }
+
+    /** Was Spring Boot dem Logback-Filter am Konsolen-Appender gibt ({@code CONSOLE_LOG_THRESHOLD}). */
+    private static String springConsoleThreshold(StandardEnvironment environment) {
+        Map<String, String> properties = new HashMap<>();
+        new LoggingSystemProperties(environment, properties::put).apply();
+        return properties.get("CONSOLE_LOG_THRESHOLD");
     }
 }
