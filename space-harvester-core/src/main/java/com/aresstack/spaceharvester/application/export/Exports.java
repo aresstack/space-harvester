@@ -1192,7 +1192,7 @@ public class Exports {
         }
 
         private void reserve(int len) throws ConversionLimitExceededException {
-            if (written + len > maxBytes) {
+            if (maxBytes > 0 && written + len > maxBytes) {
                 throw new ConversionLimitExceededException(fileName, maxBytes);
             }
             written += len;

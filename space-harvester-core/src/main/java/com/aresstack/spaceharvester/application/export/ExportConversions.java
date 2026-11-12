@@ -180,9 +180,12 @@ public class ExportConversions {
             } finally {
                 Files.deleteIfExists(part);
             }
+        } catch (ConversionLimitExceededException e) {
+            throw new UncheckedIOException("Konvertierung des Exports " + exportId + " nach " + format + " zu groß: "
+                    + e.getMessage(), e);
         } catch (IOException e) {
             throw new UncheckedIOException("Konvertierung des Exports " + exportId + " nach " + format
-                    + " nicht schreibbar", e);
+                    + " nicht schreibbar (" + e.getClass().getSimpleName() + ")", e);
         }
     }
 
@@ -382,7 +385,7 @@ public class ExportConversions {
         }
 
         private void require(long bytes) throws ConversionLimitExceededException {
-            if (written + bytes > maxBytes) {
+            if (maxBytes > 0 && written + bytes > maxBytes) {
                 throw new ConversionLimitExceededException("Datei", maxBytes);
             }
             written += bytes;

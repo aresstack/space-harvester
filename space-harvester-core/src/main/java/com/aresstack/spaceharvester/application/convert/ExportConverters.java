@@ -16,15 +16,19 @@ import java.util.Set;
  */
 public final class ExportConverters {
 
-    /** Standardgrenze je konvertierter Datei. */
-    public static final long DEFAULT_MAX_BYTES = 512L * 1024 * 1024;
+    /**
+     * Standardgrenze je konvertierter Datei: {@code 0}, ohne Grenze (Angelo 11.11.2026: kein Größenlimit; ein Paket
+     * „JSON mit Medien“ eines großen Space mit allen Bildern und Anhängen ist leicht mehrere GiB groß).
+     */
+    public static final long DEFAULT_MAX_BYTES = 0;
 
     private final Map<String, ExportConverter> byFormat = new LinkedHashMap<>();
     private final long maxBytes;
 
+    /** @param maxBytes Grenze je konvertierter Datei in Bytes, {@code 0} ohne Grenze */
     public ExportConverters(Collection<? extends ExportConverter> converters, long maxBytes) {
-        if (maxBytes <= 0) {
-            throw new IllegalArgumentException("maxBytes muss positiv sein");
+        if (maxBytes < 0) {
+            throw new IllegalArgumentException("maxBytes darf nicht negativ sein");
         }
         this.maxBytes = maxBytes;
         Set<String> fileNames = new HashSet<>();
@@ -44,6 +48,7 @@ public final class ExportConverters {
         return new ExportConverters(List.of(), DEFAULT_MAX_BYTES);
     }
 
+    /** Grenze je konvertierter Datei in Bytes, {@code 0} ohne Grenze. */
     public long maxBytes() {
         return maxBytes;
     }

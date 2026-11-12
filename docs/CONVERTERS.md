@@ -36,8 +36,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Unverändert gelesen.** Hat sich eine Seite seit dem ersten Durchlauf im Cache geändert, scheitert der Export
   (`CHANGED_DURING_EXPORT`), statt zwei Stände zu mischen.
 - **Grenzen.** Jede konvertierte Datei darf höchstens `space-harvester.export.max-converted-bytes` groß werden
-  (Standard 512 MiB). Wird die Grenze überschritten, scheitert der Export mit `CONVERSION_TOO_LARGE`, nichts wird
-  abgeschnitten.
+  (Standard 0, ohne Grenze; Angelo 11.11.2026: kein Größenlimit, ein Paket „JSON mit Medien“ eines großen Space ist
+  leicht mehrere GiB groß). Ist eine Grenze gesetzt und wird sie überschritten, scheitert der Export mit
+  `CONVERSION_TOO_LARGE` bzw. die Konvertierung in den Ausgabeordner mit „… zu groß“, nichts wird abgeschnitten.
 - **Rechte.** Konvertierte Dateien liegen im selben Artefakt. Sie sind nur über dieselbe Download-Route erreichbar,
   mit den Freigaben `export` und `content` und nur für den Client, der den Export gestartet hat.
 - **Fehlendes erkennbar melden.** Fehlt ein Bild, ein Diagramm oder ein Anhang im Datenbestand oder lässt es sich
