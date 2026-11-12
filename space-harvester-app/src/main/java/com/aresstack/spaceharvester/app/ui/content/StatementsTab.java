@@ -323,6 +323,13 @@ final class StatementsTab extends JPanel {
         });
     }
 
+    /** Lädt die gespeicherte Analyse der geöffneten Seite neu (z. B. nachdem alle Aussagen gelöscht wurden). */
+    void reload() {
+        if (snapshot != null) {
+            page(snapshot, text);
+        }
+    }
+
     /**
      * Eine Seite wird geladen: neutraler Zustand ohne Aussage über die Analyse. Läuft gerade eine Analyse genau
      * dieser Seite, bleibt sie und ihr Stand stehen.
