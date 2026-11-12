@@ -376,6 +376,8 @@ final class SetupWizard {
                 ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");
         summary.add("Freigegeben für den KI-Dienst",
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
+        // Einstellbar unter Allgemein › Terminal-Ausgabe; die Protokolldatei bekommt immer alles.
+        summary.add(SettingsView.CONSOLE_TITLE, settings.consoleOutput().label());
         summary.add("Konfigurationsdatei", context.configFile().toAbsolutePath().toString());
     }
 

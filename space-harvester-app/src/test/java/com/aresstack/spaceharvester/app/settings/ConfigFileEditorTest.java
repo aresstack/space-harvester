@@ -595,6 +595,42 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theConsoleOutputUsesTheServiceKeyAndLeavesTheOtherLoggingKeysAlone() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        assertThat(loader.load(file).consoleOutput()).as("ohne Angabe still").isEqualTo(ConsoleOutput.OFF);
+
+        editor.save(file, editor.withConsoleOutput(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ConsoleOutput.WARN));
+        assertThat(Files.readString(file)).startsWith("space-harvester:\n  sources: []\n")
+                .endsWith("logging:\n  threshold:\n    console: \"warn\"\n");
+        assertThat(loader.load(file).consoleOutput()).isEqualTo(ConsoleOutput.WARN);
+
+        // Spring-Boot-Schlüssel daneben (Stufen, Datei-Schwelle) und Kommentare bleiben; erneut setzen ersetzt die Zeile.
+        Files.writeString(file, """
+                logging:
+                  level:
+                    root: INFO   # Kommentar bleibt
+                  threshold:
+                    file: warn
+                    console: info
+                space-harvester:
+                  sources: []
+                """);
+        editor.save(file, editor.withConsoleOutput(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ConsoleOutput.OFF));
+        String text = Files.readString(file);
+        assertThat(text).contains("    root: INFO   # Kommentar bleibt\n", "    file: warn\n", "    console: \"off\"\n")
+                .doesNotContain("console: info");
+        assertThat(text.split("console:", -1)).hasSize(2);
+        assertThat(loader.load(file).consoleOutput()).isEqualTo(ConsoleOutput.OFF);
+        for (ConsoleOutput output : ConsoleOutput.values()) {
+            String written = editor.withConsoleOutput(file, new ConfigFileEditor.Draft(text, null), output).text();
+            assertThat(loader.read(file, written).consoleOutput()).isEqualTo(output);
+        }
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"

@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Protokoll der Desktop-App: Konsole und Datei unter <Benutzerordner>/.space-harvester/logs (eine Woche). Der Core
-     schreibt keine Geheimnisse ins Protokoll (docs/SECURITY.md). -->
+     schreibt keine Geheimnisse ins Protokoll (docs/SECURITY.md). Die Datei bekommt alles; die Konsole (Terminal) nur
+     ab der Stufe aus Einstellungen › Allgemein › Terminal-Ausgabe (logging.threshold.console, Standard aus). Auch
+     java.util.logging und System.Logger landen hier (ConsoleLogging). -->
 <configuration>
     <property name="LOG_DIR" value="${SPACE_HARVESTER_LOG_DIR:-${user.home}/.space-harvester/logs}"/>
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="com.aresstack.spaceharvester.app.logging.ConsoleThreshold"/>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
         </encoder>

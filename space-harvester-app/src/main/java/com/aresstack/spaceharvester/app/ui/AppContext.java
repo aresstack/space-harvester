@@ -4,11 +4,13 @@ import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePas
 import com.aresstack.spaceharvester.app.credentials.AiCredentials;
 import com.aresstack.spaceharvester.app.credentials.KeePassLink;
 import com.aresstack.spaceharvester.app.credentials.ManualAiCredentials;
+import com.aresstack.spaceharvester.app.logging.ConsoleLogging;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -324,6 +326,43 @@ public final class AppContext {
     }
 
     /**
+     * Stellt die Terminal-Ausgabe sofort um ({@link ConsoleLogging#apply}) und speichert sie in der Datei
+     * ({@code logging.threshold.console}), ohne Neustart der Laufzeit; die Protokolldatei bleibt unberührt. Schnell
+     * aufeinanderfolgende Änderungen schreiben immer die jüngste zuletzt. Scheitert das Speichern, gilt wieder der
+     * gespeicherte Wert.
+     */
+    public void consoleOutput(ConsoleOutput output, Runnable done, Consumer<Throwable> failed) {
+        ConsoleLogging.apply(output);
+        consoleWanted = output;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                ConsoleOutput wanted = consoleWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withConsoleOutput(configFile, new ConfigFileEditor.Draft(text, null),
+                        wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withConsoleOutput(saved);
+            }
+            // Die jüngste Wahl gilt, auch wenn ein früheres Speichern scheiterte und zurückgesetzt hat.
+            ConsoleLogging.apply(consoleWanted);
+            fire();
+            done.run();
+        }, error -> {
+            ConsoleLogging.apply(settings == null ? ConsoleOutput.DEFAULT : settings.consoleOutput());
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private final Object consoleLock = new Object();
+    private volatile ConsoleOutput consoleWanted;
+
+    /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
      * ({@code space-harvester-app.disabled-sources}) und startet die Quellen neu; beim Start setzt die Laufzeit ihn im
      * Core ({@code SourceManagement.setEnabled}). Der Bestand der Quelle bleibt.
@@ -514,6 +553,8 @@ public final class AppContext {
         AppRuntime previous = runtime;
         Background.run(() -> {
             AppSettings loaded = loader.load(configFile);
+            // Gleich nach dem Lesen, damit schon der Start der Laufzeit der Terminal-Ausgabe folgt.
+            ConsoleLogging.apply(loaded.consoleOutput());
             unlock(loaded);
             // Nur Laufzeitwerte geändert (KI-Dienst, Modelle, Freigaben, Synchronisierung): der Core übernimmt sie
             // ohne Neustart, laufende Aufträge laufen weiter (ADR 0015).
@@ -524,8 +565,9 @@ public final class AppContext {
             }
             if (live == AppRuntime.Reconfiguration.REJECTED) {
                 // Der Core behält die bisherige Version (ADR 0015); ein Neustart mit derselben Datei hülfe nicht und
-                // beendete laufende Aufträge. Was er bemängelt, steht unter Einstellungen › Konfiguration.
-                return new Started(previous.settings(), previous, null);
+                // beendete laufende Aufträge. Was er bemängelt, steht unter Einstellungen › Konfiguration. Die
+                // Terminal-Ausgabe betrifft den Core nicht und gilt wie gelesen.
+                return new Started(previous.settings().withConsoleOutput(loaded.consoleOutput()), previous, null);
             }
             if (previous != null) {
                 previous.close();

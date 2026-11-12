@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
@@ -117,6 +118,31 @@ class SetupWizardTest {
         String text = Files.readString(config, StandardCharsets.UTF_8);
         assertThat(text).contains("  setup-completed: true", "# Kommentar bleibt stehen", "title: Firmenwiki");
         assertThat(context.loader().read(config, text).setupCompleted()).isTrue();
+    }
+
+    @Test
+    void theTerminalOutputIsChosenUnderGeneralSavedAtOnceAndShownOnTheSummary() throws Exception {
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            java.util.List<String> items = new java.util.ArrayList<>();
+            for (int i = 0; i < view[0].console.getItemCount(); i++) {
+                items.add(view[0].console.getItemAt(i));
+            }
+            assertThat(items).containsExactly("Aus", "Fehler", "Warnungen", "Informationen", "Alles");
+            assertThat(view[0].console.getSelectedItem()).as("ohne Angabe still").isEqualTo("Aus");
+            view[0].console.setSelectedItem("Warnungen");
+        });
+        await(() -> context.settings().consoleOutput() == ConsoleOutput.WARN);
+        assertThat(Files.readString(config, StandardCharsets.UTF_8))
+                .contains("logging:\n  threshold:\n    console: \"warn\"\n", "# Kommentar bleibt stehen");
+        SetupWizard[] wizard = new SetupWizard[1];
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].console.getSelectedItem()).isEqualTo("Warnungen");
+            wizard[0] = new SetupWizard(context);
+            wizard[0].show(SetupWizard.SUMMARY);
+            assertThat(texts(wizard[0].summary)).containsSubsequence(SettingsView.CONSOLE_TITLE, "Warnungen");
+        });
     }
 
     @Test

@@ -217,7 +217,34 @@ public final class AppSettingsLoader {
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
-                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems));
+                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
+                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems));
+    }
+
+    /**
+     * {@code logging.threshold.console}: derselbe Schlüssel wie beim Dienst (Spring Boot). Ein unquotiertes
+     * {@code off} liest YAML als {@code false}; das gilt wie dort als aus. Ohne Angabe oder bei einem unbekannten Wert
+     * gilt der Standard der App, {@link ConsoleOutput#DEFAULT}.
+     */
+    private ConsoleOutput consoleOutput(Object raw, List<String> problems) {
+        if (raw == null) {
+            return ConsoleOutput.DEFAULT;
+        }
+        if (raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            problems.add(ConsoleOutput.KEY + " ist eine einzelne Stufe: off, error, warn, info oder all");
+            return ConsoleOutput.DEFAULT;
+        }
+        String text = raw instanceof Boolean flag ? flag.toString() : text(raw, problems);
+        if (text == null || text.isBlank()) {
+            // Ein ungelöster Platzhalter steht schon unter den Problemen.
+            return ConsoleOutput.DEFAULT;
+        }
+        ConsoleOutput output = ConsoleOutput.parse(text);
+        if (output == null) {
+            problems.add(ConsoleOutput.KEY + " kennt nur off, error, warn, info und all, nicht " + text.strip());
+            return ConsoleOutput.DEFAULT;
+        }
+        return output;
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
