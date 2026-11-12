@@ -81,7 +81,9 @@ jobs:
           fi
           if [ "$mode" = "snapshot" ]; then
             version="$base-SNAPSHOT"
-            echo "args=" >> "$GITHUB_OUTPUT"
+            # Nach einem regulären Release (v0.1.0) ist die Basis schon eine Minor-Version weiter als build.gradle;
+            # ohne Angabe hießen die JARs noch nach build.gradle und die Prüfung unten fände sie nicht.
+            echo "args=-PreleaseVersion=$version" >> "$GITHUB_OUTPUT"
             echo "tag=$SNAPSHOT_TAG" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else

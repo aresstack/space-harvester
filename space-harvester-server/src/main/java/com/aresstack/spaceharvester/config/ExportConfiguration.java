@@ -53,7 +53,7 @@ import org.springframework.context.annotation.Configuration;
  * der Export über {@link SpaceSyncJobs} im eigenen Auftrag ein (ADR 0010).
  *
  * <p>Converter (#30) sind Beans vom Typ {@link ExportConverter}; jede konvertierte Datei darf höchstens
- * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 512 MiB), sonst scheitert der Export.
+ * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 0, ohne Grenze), sonst scheitert der Export.
  * Alle Artefakte zusammen belegen höchstens {@code space-harvester.export.max-total-bytes} (Standard 20 GiB); ist die
  * Ablage voll, lehnt der Start mit 507 ab und ein laufender Export scheitert mit {@code EXPORT_STORAGE_FULL}.
  * {@code space-harvester.export.pdf.font} nennt optional eine TrueType-Schrift, die PDFs einbetten.

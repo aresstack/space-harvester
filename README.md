@@ -810,7 +810,7 @@ Storage-Format, `docx` `pages.docx` (Word-Exporter des Enterprise AI Client mit 
 Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
 `conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
 ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
-`space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
+`space-harvester.export.max-converted-bytes` groß werden (Standard 0, ohne Grenze), sonst scheitert der Export mit
 `CONVERSION_TOO_LARGE`, statt abzuschneiden. Alle Artefakte zusammen belegen höchstens
 `space-harvester.export.max-total-bytes` (Standard 20 GiB); ist die Ablage voll, lehnt der Start mit
 `export-storage-full` (507) ab, ein laufender Export scheitert mit `EXPORT_STORAGE_FULL`.
