@@ -213,6 +213,66 @@ public final class ExportPackageImport {
         }
     }
 
+    /**
+     * Mehrere Pakete in einem Auftrag {@link JobType#IMPORT} (Angelo 12.11.2026: eine Quelle hat 20 bis 30 Spaces,
+     * ein Klick je Space taugt nichts): nacheinander, jedes wie {@link #start(Path, String, boolean, String)}. Ein
+     * Paket, das nicht passt (beschädigt, Space mit Daten ohne {@code replace}, Teilbaum in gefüllten Space), wird als
+     * Warnung übersprungen; der Auftrag gilt dann als unvollständig und scheitert nur, wenn kein Paket übernommen
+     * wurde. Alle Pakete werden vorab geöffnet, damit eine falsche Datei sofort scheitert. Die Dateien bleiben liegen.
+     *
+     * @throws ExportPackageException wenn eine Datei kein importierbares Paket ist
+     * @throws UnknownSourceException ohne eingerichtete Zielquelle
+     */
+    public JobStatus start(List<Path> files, String targetSourceId, boolean replace, String owner) {
+        List<Path> all = List.copyOf(files);
+        if (all.isEmpty()) {
+            throw new IllegalArgumentException("Keine Pakete");
+        }
+        if (all.size() == 1) {
+            return start(all.get(0), targetSourceId, replace, owner);
+        }
+        sweep();
+        requireConfigured(targetSourceId);
+        Set<String> spaces = new java.util.LinkedHashSet<>();
+        for (Path file : all) {
+            try (ExportPackage pkg = reader.open(file)) {
+                spaces.add(pkg.spaceKey());
+            }
+        }
+        String spaceKey = spaces.size() == 1 ? spaces.iterator().next() : null;
+        return jobs.submit(JobType.IMPORT, targetSourceId, spaceKey, owner,
+                JobTask.blocking(context -> runAll(all, targetSourceId, replace, owner, context)));
+    }
+
+    private void runAll(List<Path> files, String target, boolean replace, String owner, JobContext context) {
+        int imported = 0;
+        List<String> skipped = new ArrayList<>();
+        JobFailedException first = null;
+        for (int i = 0; i < files.size(); i++) {
+            context.checkpoint();
+            Path file = files.get(i);
+            context.record(JobEvent.Draft.info(COMPONENT, "Paket " + (i + 1) + " von " + files.size() + ": "
+                    + file.getFileName()));
+            try {
+                run(file, target, replace, owner, context);
+                imported++;
+            } catch (JobFailedException e) {
+                first = first == null ? e : first;
+                skipped.add(String.valueOf(file.getFileName()));
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, e.code(),
+                        file.getFileName() + " übersprungen: " + e.getMessage()));
+            }
+        }
+        if (imported == 0) {
+            throw new JobFailedException(first.code(), "Kein Paket importiert: " + first.getMessage(), first);
+        }
+        if (!skipped.isEmpty()) {
+            context.incomplete();
+        }
+        context.record(JobEvent.Draft.info(COMPONENT, imported + " von " + files.size() + " Paketen importiert"
+                + (skipped.isEmpty() ? "" : "; übersprungen: " + String.join(", ", skipped))));
+    }
+
     /** Löscht die Dateien beendeter oder verschwundener Aufträge; die laufender löscht ihr Auftrag selbst. */
     private void sweep() {
         for (Map.Entry<String, Path> entry : List.copyOf(owned.entrySet())) {

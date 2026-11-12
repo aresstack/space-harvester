@@ -821,9 +821,11 @@ public final class SourcesView implements View {
     }
 
     /**
-     * „JSON-Paket importieren“: übernimmt nach Rückfrage ein Paket „JSON mit Medien“ ({@code export.zip} ab
-     * {@code json-package/3}) als Auftrag in den Bestand dieser Quelle ({@code ExportPackageImport}). Hat der Space
-     * schon Daten, ersetzt das Paket sie nur nach eigener Rückfrage. Der Fortschritt läuft in der Statuszeile.
+     * „JSON-Paket importieren“: übernimmt nach Rückfrage Pakete „JSON mit Medien“ ({@code export.zip} ab
+     * {@code json-package/3}) in den Bestand dieser Quelle ({@code ExportPackageImport}). Mehrere Pakete oder ganze
+     * Ordner auf einmal (Angelo 12.11.2026: 20 bis 30 Spaces je Quelle), dann ein Auftrag für alle, nach einer
+     * einzigen Rückfrage. Hat ein Space schon Daten, nennt die Rückfrage das: Ja ersetzt sie. Der Fortschritt läuft in
+     * der Statuszeile.
      */
     private void importPackage(AppSettings.SourceEntry entry) {
         String id = entry.id();
@@ -833,42 +835,137 @@ public final class SourcesView implements View {
             return;
         }
         javax.swing.JFileChooser chooser = new javax.swing.JFileChooser();
-        chooser.setDialogTitle("JSON-Paket importieren");
-        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("JSON-Paket (*.zip)", "zip"));
-        if (chooser.showOpenDialog(root) != javax.swing.JFileChooser.APPROVE_OPTION
-                || chooser.getSelectedFile() == null) {
+        chooser.setDialogTitle("JSON-Pakete importieren (mehrere Dateien oder Ordner)");
+        chooser.setMultiSelectionEnabled(true);
+        chooser.setFileSelectionMode(javax.swing.JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("JSON-Pakete (*.zip) und Ordner",
+                "zip"));
+        if (chooser.showOpenDialog(root) != javax.swing.JFileChooser.APPROVE_OPTION) {
             return;
         }
-        java.nio.file.Path file = chooser.getSelectedFile().toPath();
-        feedback.working("Paket wird geprüft …");
-        Background.run(() -> runtime.workspace().previewPackage(file, id),
-                preview -> confirmImport(runtime, id, name, file, preview), feedback::problem);
+        List<java.nio.file.Path> chosen = new ArrayList<>();
+        java.io.File[] selected = chooser.getSelectedFiles();
+        if (selected != null) {
+            for (java.io.File file : selected) {
+                chosen.add(file.toPath());
+            }
+        }
+        if (chosen.isEmpty() && chooser.getSelectedFile() != null) {
+            chosen.add(chooser.getSelectedFile().toPath());
+        }
+        if (chosen.isEmpty()) {
+            return;
+        }
+        feedback.working("Pakete werden geprüft …");
+        Background.run(() -> checkPackages(runtime.workspace(), id, packageFiles(chosen)),
+                checked -> confirmImport(runtime, id, name, checked), feedback::problem);
     }
 
-    private void confirmImport(AppRuntime runtime, String id, String name, java.nio.file.Path file,
-                               ExportPackageImport.Preview preview) {
-        String what = "Space " + preview.spaceName() + " mit " + Texts.count(preview.pages(), "Seite", "Seiten")
-                + " und " + Texts.count(preview.assets(), "Datei", "Dateien");
-        String origin = preview.sourceId().equals(id) ? "" : " Das Paket stammt aus der Quelle " + preview.sourceId()
-                + ".";
-        boolean replace = preview.spaceHasData();
-        if (replace && preview.rootPageId() != null) {
-            feedback.info("Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten",
-                    "Ein Paket mit nur einem Teilbaum lässt sich nur in einen leeren Space importieren.");
+    /** Die gewählten Dateien; ein Ordner steht für alle {@code .zip} darin, nach Namen sortiert. */
+    static List<java.nio.file.Path> packageFiles(List<java.nio.file.Path> chosen) throws IOException {
+        java.util.Set<java.nio.file.Path> files = new java.util.LinkedHashSet<>();
+        for (java.nio.file.Path path : chosen) {
+            if (java.nio.file.Files.isDirectory(path)) {
+                try (java.util.stream.Stream<java.nio.file.Path> inside = java.nio.file.Files.list(path)) {
+                    inside.filter(java.nio.file.Files::isRegularFile)
+                            .filter(file -> file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".zip"))
+                            .sorted().forEach(files::add);
+                }
+            } else {
+                files.add(path);
+            }
+        }
+        return new ArrayList<>(files);
+    }
+
+    /** Ein lesbares Paket mit seiner Vorschau. */
+    record ReadyPackage(java.nio.file.Path file, ExportPackageImport.Preview preview) {
+    }
+
+    /** Was sich importieren lässt und was nicht, mit Grund. */
+    record CheckedPackages(List<ReadyPackage> ready, List<String> skipped) {
+    }
+
+    private static CheckedPackages checkPackages(Workspace workspace, String sourceId, List<java.nio.file.Path> files) {
+        List<ReadyPackage> ready = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        for (java.nio.file.Path file : files) {
+            try {
+                ExportPackageImport.Preview preview = workspace.previewPackage(file, sourceId);
+                if (preview.spaceHasData() && preview.rootPageId() != null) {
+                    skipped.add(file.getFileName() + " (Teilbaum, Space " + preview.spaceKey() + " hat schon Daten)");
+                } else {
+                    ready.add(new ReadyPackage(file, preview));
+                }
+            } catch (com.aresstack.spaceharvester.application.export.ExportPackageException e) {
+                skipped.add(file.getFileName() + " (kein importierbares Paket)");
+            }
+        }
+        return new CheckedPackages(ready, skipped);
+    }
+
+    private void confirmImport(AppRuntime runtime, String id, String name, CheckedPackages checked) {
+        String skipped = checked.skipped().isEmpty() ? ""
+                : " Übersprungen: " + String.join(", ", checked.skipped()) + ".";
+        if (checked.ready().isEmpty()) {
+            feedback.info("Kein importierbares Paket gefunden", skipped.strip());
             return;
         }
-        String question = replace
-                ? "Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten. Wirklich durch das "
-                        + "Paket ersetzen (" + what + ")? Seiten, die das Paket nicht enthält, werden entfernt." + origin
-                : what + " wirklich in die Quelle " + name + " importieren?" + origin;
-        if (!Dialogs.confirm(root, "JSON-Paket importieren", question)) {
+        int pages = 0;
+        int files = 0;
+        List<String> filled = new ArrayList<>();
+        List<String> spaces = new ArrayList<>();
+        java.util.Set<String> origins = new java.util.TreeSet<>();
+        for (ReadyPackage ready : checked.ready()) {
+            ExportPackageImport.Preview preview = ready.preview();
+            pages += preview.pages();
+            files += preview.assets();
+            spaces.add(preview.spaceKey());
+            if (preview.spaceHasData()) {
+                filled.add(preview.spaceKey());
+            }
+            if (!preview.sourceId().equals(id)) {
+                origins.add(preview.sourceId());
+            }
+        }
+        boolean replace = !filled.isEmpty();
+        String origin = origins.isEmpty() ? "" : " Die Pakete stammen aus " + String.join(", ", origins) + ".";
+        String question;
+        if (checked.ready().size() == 1) {
+            ExportPackageImport.Preview preview = checked.ready().get(0).preview();
+            String what = "Space " + preview.spaceName() + " mit " + Texts.count(pages, "Seite", "Seiten") + " und "
+                    + Texts.count(files, "Datei", "Dateien");
+            question = replace
+                    ? "Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten. Wirklich durch "
+                            + "das Paket ersetzen (" + what + ")? Seiten, die das Paket nicht enthält, werden entfernt."
+                    : what + " wirklich in die Quelle " + name + " importieren?";
+        } else {
+            question = Texts.count(checked.ready().size(), "Paket", "Pakete") + " (" + shortList(spaces) + ") mit "
+                    + Texts.count(pages, "Seite", "Seiten") + " und " + Texts.count(files, "Datei", "Dateien")
+                    + " wirklich in die Quelle " + name + " importieren?"
+                    + (replace ? " Schon Daten haben " + shortList(filled) + "; sie werden ersetzt, Seiten, die das "
+                    + "Paket nicht enthält, werden entfernt." : "");
+        }
+        if (!Dialogs.confirm(root, "JSON-Pakete importieren", question + origin + skipped)) {
             feedback.success("Import abgebrochen");
             return;
         }
-        feedback.working("Paket wird importiert …");
-        Background.run(() -> runtime.workspace().importPackage(file, id, replace),
-                started -> feedback.success("Paket wird in die Quelle " + name + " importiert; Fortschritt in der "
-                        + "Statuszeile"), feedback::problem);
+        List<java.nio.file.Path> chosen = new ArrayList<>();
+        for (ReadyPackage ready : checked.ready()) {
+            chosen.add(ready.file());
+        }
+        feedback.working(chosen.size() == 1 ? "Paket wird importiert …" : "Pakete werden importiert …");
+        Background.run(() -> runtime.workspace().importPackages(chosen, id, replace),
+                started -> feedback.success(Texts.count(chosen.size(), "Paket wird", "Pakete werden")
+                        + " in die Quelle " + name + " importiert; Fortschritt in der Statuszeile"), feedback::problem);
+    }
+
+    /** Höchstens acht Einträge, dann „und N weitere“. */
+    static String shortList(List<String> items) {
+        if (items.size() <= 8) {
+            return String.join(", ", items);
+        }
+        return String.join(", ", items.subList(0, 8)) + " und " + (items.size() - 8) + " weitere";
     }
 
     private void remove(AppSettings.SourceEntry entry) {

@@ -511,6 +511,17 @@ public final class Workspace {
         return status;
     }
 
+    /**
+     * Importiert mehrere Pakete „JSON mit Medien“ in einem Auftrag nacheinander in den Bestand dieser Quelle
+     * ({@code ExportPackageImport.start(List, …)}); ein unpassendes Paket wird übersprungen.
+     */
+    public JobStatus importPackages(List<Path> files, String sourceId, boolean replace) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.packageImport().start(files, sourceId, replace, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
