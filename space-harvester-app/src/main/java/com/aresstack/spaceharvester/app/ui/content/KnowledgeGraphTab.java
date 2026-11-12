@@ -192,6 +192,7 @@ final class KnowledgeGraphTab extends JPanel {
     private boolean tableShown;
     private boolean syncingTable;
     private boolean deleting;
+    private boolean dropHistory;
     private Runnable onDeleted = () -> { };
     private BooleanSupplier confirmDelete = () -> Dialogs.confirm(this, "Alle Aussagen löschen?",
             "Wirklich alle Aussagen aller Seiten löschen?");
@@ -468,7 +469,12 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             loading = false;
-            if (!nodes.isEmpty() || entry != null) {
+            if (dropHistory) {
+                // Nach „Alle Aussagen löschen“: frühere Ansichten zeigen gelöschte Analysen, „Zurück“ darf sie nicht
+                // wiederherstellen.
+                dropHistory = false;
+                history.clear();
+            } else if (!nodes.isEmpty() || entry != null) {
                 history.push(snapshot());
             }
             entry = start;
@@ -1003,7 +1009,14 @@ final class KnowledgeGraphTab extends JPanel {
             deleteAll.setEnabled(actions.get() != null);
             exportNote(pages == 0 ? "Keine Aussagen vorhanden"
                     : "Aussagen von " + (pages == 1 ? "1 Seite" : pages + " Seiten") + " gelöscht");
+            history.clear();
+            dropHistory = true;
             reloadFocus();
+            if (!loading) {
+                // Keine Ansicht offen, nichts neu zu laden: nur „Zurück“ sperren.
+                dropHistory = false;
+                refresh();
+            }
             onDeleted.run();
         }, failure -> {
             deleting = false;
@@ -1654,6 +1667,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     void clickBack() {
         back.doClick();
+    }
+
+    boolean backOffered() {
+        return back.isEnabled();
     }
 
     /** Klickt „Zum Beleg im Text“ im Detailfenster. */

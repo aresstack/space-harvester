@@ -91,6 +91,26 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void afterDeletingBackNoLongerRestoresTheDeletedGraph() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.selectNode(BELEG);
+        tab.clickExpand();
+        runner.runAll();
+        assertThat(tab.backOffered()).isTrue();
+        tab.confirmDeleteWith(() -> true);
+
+        tab.clickDeleteAll();
+        runner.runAll();
+
+        assertThat(tab.backOffered()).as("frühere Ansichten zeigen Gelöschtes").isFalse();
+        tab.clickBack();
+        runner.runAll();
+        assertThat(tab.nodeIds()).isEmpty();
+    }
+
+    @Test
     void aFailedDeletionNamesTheReasonAndKeepsTheGraph() {
         List<String> status = new ArrayList<>();
         tab.onStatus(status::add);
