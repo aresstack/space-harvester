@@ -62,7 +62,7 @@ jobs:
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Basisversion $base aus build.gradle unbrauchbar"; exit 1; }
           # Betas und Snapshots laufen auf der nächsten Patch-Version nach dem neuesten regulären Release (nach v0.1.1:
           # 0.1.2-beta.N), damit sie nach dem Versionsschema nie unter dem Release einsortiert werden
-          stable=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+          stable=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1 || true)
           if [ -n "$stable" ] && [ "$(printf '%s\n%s\n' "$base" "$stable" | sort -V | tail -1)" = "$stable" ]; then
             IFS=. read -r major minor patch <<< "$stable"
             base="$major.$minor.$((patch + 1))"
