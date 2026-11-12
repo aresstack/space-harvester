@@ -13,7 +13,8 @@ import java.util.Objects;
  * deren Art es kennt ({@link JobType#resumable()}), lassen sich anhalten und fortsetzen; Löschen gibt es in jedem
  * Zustand, als letzte Aktion (wartende und laufende bricht {@link Jobs#delete} vorher ab); „Nur Fehler neu versuchen“
  * gibt es in jedem Zustand, sobald etwas gescheitert ist, als erste Aktion (Angelo 11.11.2026): während des Laufs
- * folgt es direkt nach dem Durchgang, angehalten oder abgebrochen holt Fortsetzen das Gescheiterte mit.
+ * hält der Durchgang an und startet sofort neu ({@link Restarting}, Angelo 12.11.2026), angehalten oder abgebrochen
+ * holt Fortsetzen das Gescheiterte mit.
  */
 public sealed interface JobLifecycleState {
 
@@ -49,9 +50,9 @@ public sealed interface JobLifecycleState {
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
         boolean failures = forceable && status.progress().failed() > 0;
         return switch (status.state()) {
-            case QUEUED -> status.cancelRequested() ? new Stopping(status.pauseRequested())
+            case QUEUED -> status.cancelRequested() ? stopping(status)
                     : status.stage() == JobStage.AWAITING ? new AwaitingExport() : new Waiting(resumable);
-            case RUNNING -> status.cancelRequested() ? new Stopping(status.pauseRequested())
+            case RUNNING -> status.cancelRequested() ? stopping(status)
                     : status.stage() == JobStage.PREPARING ? new Preparing(failures)
                     : status.stage() == JobStage.PREPARED ? new Prepared()
                     : new Running(resumable, failures);
@@ -64,6 +65,12 @@ public sealed interface JobLifecycleState {
                     : new Stopped(status.state(), resumable, forceable, failures && resumable);
             case CANCELLED -> new Stopped(status.state(), resumable, forceable, failures && resumable);
         };
+    }
+
+    /** Hält an, bricht ab oder hält für einen sofortigen Neustart an ({@link PauseReason#RETRY}). */
+    private static JobLifecycleState stopping(JobStatus status) {
+        return status.pauseRequested() && status.pauseReason() == PauseReason.RETRY ? new Restarting()
+                : new Stopping(status.pauseRequested());
     }
 
     /** Wartet auf einen freien Platz. */
@@ -99,7 +106,7 @@ public sealed interface JobLifecycleState {
      * Läuft.
      *
      * @param retryable ob schon etwas gescheitert ist und die Art es gezielt nachladen kann; „Nur Fehler neu versuchen“
-     *                  folgt dann direkt nach dem Durchgang ({@link Jobs#requestRetryFailed})
+     *                  hält den Durchgang dann an und startet ihn sofort neu ({@link Jobs#requestRetryFailed})
      */
     record Running(boolean resumable, boolean retryable) implements JobLifecycleState {
 
@@ -162,6 +169,23 @@ public sealed interface JobLifecycleState {
     }
 
     /**
+     * „Nur Fehler neu versuchen“ während des Laufs: der Durchgang beendet noch seinen Schritt und startet dann sofort
+     * im selben Eintrag neu (Angelo 12.11.2026). Bis dahin lässt er sich noch anhalten (dann ohne Neustart) oder
+     * abbrechen; weiteres ↻ löst keinen zweiten Neustart aus und wird daher nicht angeboten.
+     */
+    record Restarting() implements JobLifecycleState {
+        @Override
+        public String key() {
+            return "RESTARTING";
+        }
+
+        @Override
+        public List<JobAction> actions() {
+            return List.of(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
+        }
+    }
+
+    /**
      * Anhalten oder Abbrechen ist angefordert, der Auftrag beendet noch seinen Schritt. Ein angefordertes Anhalten
      * lässt sich noch in einen Abbruch verwandeln, nie umgekehrt.
      */
@@ -192,7 +216,8 @@ public sealed interface JobLifecycleState {
 
         @Override
         public String key() {
-            return reason == null || reason == PauseReason.USER ? "PAUSED" : "PAUSED_" + reason.name();
+            return reason == null || reason == PauseReason.USER || reason == PauseReason.RETRY ? "PAUSED"
+                    : "PAUSED_" + reason.name();
         }
 
         @Override

@@ -67,9 +67,9 @@ public class JobActions {
         Objects.requireNonNull(access, "access");
         JobStatus current = jobs.status(jobId, owner);
         JobLifecycleState state = current.lifecycle();
-        if (action == JobAction.RETRY_FAILED && state instanceof JobLifecycleState.Stopping stopping
-                && stopping.pausing()) {
-            // Hält er gerade an, etwa für ein schon gedrücktes ↻: kein Fehler, höchstens ein Neustart.
+        if (action == JobAction.RETRY_FAILED && (state instanceof JobLifecycleState.Restarting
+                || state instanceof JobLifecycleState.Stopping stopping && stopping.pausing())) {
+            // Startet er für ein schon gedrücktes ↻ gerade neu oder hält er an: kein Fehler, höchstens ein Neustart.
             return jobs.requestRetryFailed(jobId, owner);
         }
         if (!state.allows(action)) {

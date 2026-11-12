@@ -316,7 +316,48 @@ class JobsRecoveryTest {
 
         clock.advance(Jobs.RETRY_DEBOUNCE.plusSeconds(1));
         jobs.requestRetryFailed(job.id(), "client-a");
-        assertThat(jobs.status(job.id()).lifecycle().key()).isEqualTo("PAUSE_REQUESTED");
+        assertThat(jobs.status(job.id()).lifecycle().key()).isEqualTo("RESTARTING");
+    }
+
+    @Test
+    void theLockAgainstRepeatedPressesStartsWithTheNewRunNotWithThePress() {
+        Pass next = new Pass();
+        connect(next);
+        Pass pass = new Pass();
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", pass);
+        executor.runNext();
+        pass.context.failed(3);
+
+        jobs.requestRetryFailed(job.id(), "client-a");
+        // Der laufende Schritt braucht länger als die Sperre, bis er seinen Prüfpunkt erreicht.
+        clock.advance(Jobs.RETRY_DEBOUNCE.plusSeconds(10));
+        pass.check();
+        fireLast();
+        executor.runNext();
+        next.context.failed(1);
+        jobs.requestRetryFailed(job.id(), "client-a");
+
+        assertThat(jobs.status(job.id()).cancelRequested()).isFalse();
+        assertThat(performed).containsExactly(JobAction.RETRY_FAILED);
+    }
+
+    @Test
+    void aJobThatPausesItselfDuringARetryRestartStaysPausedForThatReason() {
+        connect(JobTask.blocking(context -> context.processed(1)));
+        Pass pass = new Pass();
+        JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", pass);
+        executor.runNext();
+        pass.context.failed(2);
+
+        jobs.requestRetryFailed(job.id(), "client-a");
+        try {
+            pass.context.pause(PauseReason.CONNECTION_LOST);
+        } catch (JobCancelledException e) {
+            pass.done.completeExceptionally(e);
+        }
+
+        assertThat(jobs.status(job.id()).lifecycle().key()).isEqualTo("PAUSED_CONNECTION_LOST");
+        assertThat(performed).isEmpty();
     }
 
     @Test
