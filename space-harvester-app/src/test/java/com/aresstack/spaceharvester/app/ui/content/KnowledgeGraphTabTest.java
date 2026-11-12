@@ -203,12 +203,29 @@ class KnowledgeGraphTabTest {
         GraphNeighbourhood.Options options = tab.options();
         assertThat(options.includeStale()).isFalse();
         assertThat(options.maxNodes()).isEqualTo(GraphNeighbourhood.DEFAULT_MAX_NODES);
-        assertThat(options.types()).contains(GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE);
+        assertThat(options.types()).as("Kandidaten anfangs aus")
+                .doesNotContain(GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE)
+                .contains(GraphNeighbourhood.EdgeType.CONFIRMED_TERM_RELATION);
+        tab.setShowCandidates(true);
+        assertThat(tab.options().types()).contains(GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE);
+    }
+
+    @Test
+    void candidatesAndStalePagesStartHiddenSoTheGraphStaysReadable() {
+        assertThat(tab.showsCandidates()).isFalse();
+        assertThat(tab.showsStale()).isFalse();
+        assertThat(tab.options().includeStale()).isFalse();
+        assertThat(tab.filterHighlighted()).as("Grundeinstellung gilt nicht als gefiltert").isFalse();
+
+        tab.setShowCandidates(true);
+        tab.refreshNow();
+        assertThat(tab.filterHighlighted()).isTrue();
     }
 
     @Test
     void aFilterChangeRepeatsTheTermSearchAndBackRestoresFiltersWithTheView() {
         tab.page(WIKI);
+        tab.setShowStale(true);
         tab.searchTerm("Beleg");
         runner.runAll();
         assertThat(tab.nodeIds()).containsExactly(BELEG, OTHER);
