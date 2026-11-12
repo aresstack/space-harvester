@@ -132,6 +132,8 @@ final class KnowledgeGraphTab extends JPanel {
     private final JCheckBoxMenuItem roles = check("Rollen");
     private final JCheckBoxMenuItem nominal = check("Nominale Bezüge");
     private final JCheckBoxMenuItem crossPage = check("Seitenverbindungen");
+    /** Unbestätigte Kandidaten „gleiche Grundform?“; anfangs aus, sonst überdecken sie den Graphen (Angelo). */
+    private final JCheckBoxMenuItem candidates = check("Gleiche Grundform (Kandidaten)");
     private final JCheckBoxMenuItem stale = check("Veraltete zeigen");
     private final JCheckBoxMenuItem thisSource = check("Nur diese Quelle");
     private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
@@ -215,6 +217,10 @@ final class KnowledgeGraphTab extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
         thisSource.setSelected(false);
+        // Anfangs ohne Kandidatenkanten und ohne veraltete Seiten: beides lässt sich im Filtermenü einschalten.
+        candidates.setSelected(false);
+        stale.setSelected(false);
+        candidates.setToolTipText("Kanten zwischen Erwähnungen mit gleicher Grundform – unbestätigt, nur ein Kandidat");
         head.badge("Experimentell", Comic.PETROL)
                 .note("nur manuell analysierte Seiten · Parserbefunde, nicht fachlich geprüft");
         search.setToolTipText("Begriff, Grundform oder Wortlaut; Enter sucht");
@@ -223,8 +229,8 @@ final class KnowledgeGraphTab extends JPanel {
         head.action(pageButton, expand, back);
         head.copy(this::copyText);
         head.tool(filter, fit, view, export, deleteAll);
-        for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, stale,
-                thisSource)) {
+        for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, candidates,
+                stale, thisSource)) {
             box.addActionListener(e -> reloadFocus());
             if (box == stale) {
                 filterMenu.addSeparator();
@@ -536,7 +542,8 @@ final class KnowledgeGraphTab extends JPanel {
             boolean wanted = type == GraphNeighbourhood.EdgeType.CONTAINS
                     || type.role() && roles.isSelected()
                     || type == GraphNeighbourhood.EdgeType.NOMINAL && nominal.isSelected()
-                    || type.crossPage() && crossPage.isSelected();
+                    || (type == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE ? candidates.isSelected()
+                            : type.crossPage() && crossPage.isSelected());
             if (wanted) {
                 types.add(type);
             }
@@ -551,8 +558,8 @@ final class KnowledgeGraphTab extends JPanel {
     /** Die Filter, wie sie die Abfrage tatsächlich anwendet („Nur diese Quelle“ nur mit geöffneter Seite). */
     private Filters filters() {
         return new Filters(documents.isSelected(), statements.isSelected(), mentions.isSelected(),
-                roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), stale.isSelected(),
-                thisSource.isSelected() && page != null);
+                roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), candidates.isSelected(),
+                stale.isSelected(), thisSource.isSelected() && page != null);
     }
 
     /** Setzt die Filter ohne neues Laden ({@code setSelected} löst keine ActionListener aus). */
@@ -566,6 +573,7 @@ final class KnowledgeGraphTab extends JPanel {
         roles.setSelected(filters.roles());
         nominal.setSelected(filters.nominal());
         crossPage.setSelected(filters.crossPage());
+        candidates.setSelected(filters.candidates());
         stale.setSelected(filters.stale());
         thisSource.setSelected(filters.thisSource());
     }
@@ -948,8 +956,10 @@ final class KnowledgeGraphTab extends JPanel {
         back.setEnabled(!history.isEmpty());
         pageButton.setEnabled(page != null);
         thisSource.setEnabled(page != null);
-        boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage, stale).stream()
-                .allMatch(JCheckBoxMenuItem::isSelected) || (thisSource.isSelected() && page != null);
+        // Blau, sobald die Filter von der Grundeinstellung abweichen (Kandidaten und Veraltete sind anfangs aus).
+        boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage).stream()
+                .allMatch(JCheckBoxMenuItem::isSelected) || candidates.isSelected() || stale.isSelected()
+                || (thisSource.isSelected() && page != null);
         filter.setForeground(filtered ? Comic.BLUE : Comic.INK);
         export.setEnabled(actions.get() != null && !exporting);
         deleteAll.setEnabled(actions.get() != null && !deleting);
@@ -1504,7 +1514,7 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private record Filters(boolean documents, boolean statements, boolean mentions, boolean roles, boolean nominal,
-                           boolean crossPage, boolean stale, boolean thisSource) {
+                           boolean crossPage, boolean candidates, boolean stale, boolean thisSource) {
     }
 
     private record Loaded(GraphNeighbourhood.Subgraph base, List<GraphNeighbourhood.Subgraph> more,
@@ -1703,6 +1713,26 @@ final class KnowledgeGraphTab extends JPanel {
 
     void setShowStale(boolean show) {
         stale.setSelected(show);
+    }
+
+    void setShowCandidates(boolean show) {
+        candidates.setSelected(show);
+    }
+
+    boolean showsCandidates() {
+        return candidates.isSelected();
+    }
+
+    boolean showsStale() {
+        return stale.isSelected();
+    }
+
+    boolean filterHighlighted() {
+        return Comic.BLUE.equals(filter.getForeground());
+    }
+
+    void refreshNow() {
+        refreshButtons();
     }
 
     /** Wie ein Klick auf „Veraltete zeigen“ (lädt neu). */
