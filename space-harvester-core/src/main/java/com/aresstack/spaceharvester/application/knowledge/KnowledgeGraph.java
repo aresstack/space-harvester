@@ -301,6 +301,27 @@ public class KnowledgeGraph {
         return links;
     }
 
+    /**
+     * Löscht alle gespeicherten Aussagenanalysen, die der Aufrufer lesen darf, über alle Quellen, auch abgeschaltete
+     * und veraltete (Knopf „Alle Aussagen löschen“). Danach ist der Graph für ihn leer; neue Aussagen entstehen nur
+     * durch erneutes Analysieren auf Klick. Synchron; Seiten ohne Leserecht bleiben unberührt.
+     *
+     * @return Zahl der gelöschten Seiten
+     */
+    public int deleteAll(AccessContext caller) {
+        int deleted = 0;
+        for (PageStatementAnalysis analysis : store.all()) {
+            PageKey key = analysis.key();
+            String spaceKey = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(analysis.spaceKey());
+            if (access.canRead(caller, key.sourceId(), spaceKey, key.pageId())) {
+                store.remove(key);
+                inputs.remove(key);
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+
     /** Vergisst gemerkte Eingabe-Hashes, etwa nach einem Neuaufbau des Caches. */
     public void forgetInputs() {
         inputs.clear();
