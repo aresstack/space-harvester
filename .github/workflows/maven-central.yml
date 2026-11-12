@@ -1,0 +1,93 @@
+name: Maven Central
+
+# Veröffentlicht den Core mit enterprise-ai-sources und document-export auf Maven Central
+# (com.aresstack:space-harvester-core, -enterprise-ai-sources, -document-export). Nur nach Bedarf und nur manuell:
+# Actions › Maven Central › Run workflow. Bei „Use workflow from“ den Stand wählen (am besten einen Release-Tag wie
+# v0.1.1); „version“ leer lassen, dann gilt die Version des Tags. Maven-Central-Versionen sind endgültig, eine einmal
+# veröffentlichte Version lässt sich nie ersetzen. Secrets der Organisation aresstack wie bei win-proxy-java.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, z. B. 0.1.1; leer: Version des gewählten Tags v<Version>'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-central
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version bestimmen
+        id: version
+        run: |
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            [ "$GITHUB_REF_TYPE" = "tag" ] || { echo "::error::Ohne Eingabe „version“ einen Tag bei „Use workflow from“ wählen"; exit 1; }
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] && [[ "$version" != *SNAPSHOT* ]] \
+            || { echo "::error::Version $version folgt nicht <Major>.<Minor>.<Patch>[-<Vorabkennung>] (kein SNAPSHOT)"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Maven Central: Version $version aus ${GITHUB_REF_NAME} (${GITHUB_SHA:0:12})" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Bundle bauen, prüfen und signieren
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          [ -n "$GPG_PRIVATE_KEY" ] || { echo "::error::Secret GPG_PRIVATE_KEY fehlt (Organisation aresstack, Repository access)"; exit 1; }
+          # check der drei Module (Tests, Upstream-Prüfung der Kopie, verifyPublishedPom), dann das signierte Bundle
+          ./gradlew :enterprise-ai-sources:check :document-export:check :space-harvester-core:check centralBundle \
+            -PreleaseVersion="$VERSION" --console=plain
+          bundle="build/central/central-bundle-$VERSION.zip"
+          for f in space-harvester-core space-harvester-enterprise-ai-sources space-harvester-document-export; do
+            unzip -Z1 "$bundle" | grep -qx "com/aresstack/$f/$VERSION/$f-$VERSION.jar.asc" \
+              || { echo "::error::$f ist im Bundle nicht signiert"; exit 1; }
+          done
+      - name: Nach Maven Central hochladen
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+        run: |
+          [ -n "$CENTRAL_USERNAME" ] && [ -n "$CENTRAL_PASSWORD" ] \
+            || { echo "::error::Secrets CENTRAL_USERNAME/CENTRAL_PASSWORD fehlen (Organisation aresstack, Repository access)"; exit 1; }
+          bundle="build/central/central-bundle-$VERSION.zip"
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          api=https://central.sonatype.com/api/v1/publisher
+          id=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $token" -F "bundle=@$bundle" \
+            "$api/upload?publishingType=AUTOMATIC&name=space-harvester-$VERSION")
+          echo "Deployment $id"
+          # Nach der Prüfung (PUBLISHING) veröffentlicht das Portal selbst; bis zur Suche auf Maven Central dauert es
+          # dann noch bis zu 30 Minuten
+          for i in $(seq 1 90); do
+            status=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $token" "$api/status?id=$id")
+            state=$(jq -r .deploymentState <<< "$status")
+            echo "Zustand $state"
+            case "$state" in
+              PUBLISHING|PUBLISHED)
+                echo "com.aresstack:space-harvester-core:$VERSION ($state)" >> "$GITHUB_STEP_SUMMARY"
+                exit 0 ;;
+              FAILED)
+                jq . <<< "$status"
+                echo "::error::Central Portal hat das Bundle abgelehnt"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Central Portal hat das Bundle nach 30 Minuten nicht geprüft (Deployment $id)"; exit 1

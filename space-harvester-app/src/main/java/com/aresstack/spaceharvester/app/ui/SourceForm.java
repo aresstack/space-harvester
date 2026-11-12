@@ -107,6 +107,8 @@ final class SourceForm {
     private boolean secretFromKeePass;
     /** Benutzer des gelesenen Eintrags ("" ohne Benutzer); {@code null}: keiner gelesen. */
     private String keePassUser;
+    /** Zusatzfelder des gelesenen KeePass-Eintrags (etwa {@code MM_RequiresLogin}), nie Benutzer oder Passwort. */
+    private java.util.Map<String, String> keePassFields;
     /** Adresse des gelesenen Eintrags ("" ohne Adresse); {@code null}: keiner gelesen. Leeres Adressfeld = sie gilt. */
     private String keePassUrl;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
@@ -539,7 +541,8 @@ final class SourceForm {
         }
         Background.run(() -> {
             try (var read = context.keePass().read(title)) {
-                return new Object[] {read.userName(), read.copyPassword(), read.location()};
+                return new Object[] {read.userName(), read.copyPassword(), read.location(),
+                        read.fields() == null ? java.util.Map.of() : new java.util.HashMap<>(read.fields())};
             }
         }, read -> {
             if (!keePassChosen() || !title.equals(keePassTitle())) {
@@ -549,6 +552,9 @@ final class SourceForm {
             }
             String user = (String) read[0];
             keePassUser = user == null ? "" : user;
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, String> fields = (java.util.Map<String, String>) read[3];
+            keePassFields = fields;
             keePassUrl = read[2] == null ? "" : ((String) read[2]).strip();
             if (!authPickedInKeePass) {
                 deriveAuthFromKeePass(keePassUser);
@@ -572,6 +578,7 @@ final class SourceForm {
 
     private void forgetKeePassSecret() {
         keePassUser = null;
+        keePassFields = null;
         keePassUrl = null;
         showKeePassSecret(false);
         if (keePassSecret != null) {
@@ -959,7 +966,7 @@ final class SourceForm {
         if (fields.certificateMissing() && !GraphicsEnvironment.isHeadless() && !Dialogs.confirm(root,
                 "Hinweis: Kein Zertifikat", "„Zertifikat verwenden“ ist eingeschaltet, aber kein Zertifikat gewählt. "
                         + "Ohne mTLS-Zertifikat kann die Verbindung fehlschlagen, wenn der Server eines verlangt. "
-                        + "Trotzdem ohne Zertifikat speichern?", "Ohne Zertifikat speichern")) {
+                        + "Wirklich ohne Zertifikat speichern?")) {
             return;
         }
         if (!validateInput() || !Dialogs.restartAllowed(root, context)) {
@@ -1014,7 +1021,12 @@ final class SourceForm {
             }
             return source.id();
         }, savedId -> {
+            java.util.Map<String, String> fields = keePassChosen() ? keePassFields : null;
             SourceSaving.remember(context, editing, source, sessionOnly.length > 0 ? sessionOnly : value);
+            if (fields != null && savedId != null) {
+                // Wie beim Start (AppContext.unlockFromKeePass): Zusatzfelder des Eintrags gelten sofort (#571).
+                context.secrets().keePassFields(savedId, fields);
+            }
             Arrays.fill(value, '\0');
             Arrays.fill(sessionOnly, '\0');
             forgetKeePassSecret();

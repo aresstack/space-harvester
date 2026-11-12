@@ -107,6 +107,37 @@ public class ExportConversions {
     }
 
     /**
+     * Setzt einen eigenen angehaltenen, gescheiterten oder abgebrochenen Bilder- oder Anhängeauftrag im selben Eintrag
+     * fort
+     * ({@link ExportAssetCollection#resume}).
+     *
+     * @throws UnknownJobException wenn es keinen eigenen Bilder- oder Anhängeauftrag mit dieser ID gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht fortsetzen lässt
+     */
+    public JobStatus resumeImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.resume(jobId, owner);
+    }
+
+    /** „Nur Fehler neu versuchen“ für einen eigenen Bilder- oder Anhängeauftrag ({@link ExportAssetCollection#retryFailed}). */
+    public JobStatus retryImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.retryFailed(jobId, owner);
+    }
+
+    /** „Neu erzwingen“ für einen eigenen Bilder- oder Anhängeauftrag ({@link ExportAssetCollection#forceRefresh}). */
+    public JobStatus forceImages(String jobId, String owner) {
+        if (images == null) {
+            throw new UnknownJobException(jobId);
+        }
+        return images.forceRefresh(jobId, owner);
+    }
+
+    /**
      * Schreibt die Datei in {@code directory}. Eine vorhandene Datei wird nie überschrieben; der Name bekommt dann
      * einen Zähler. Die Datei entsteht erst als {@code .part} und erscheint vollständig oder gar nicht.
      *
@@ -149,9 +180,12 @@ public class ExportConversions {
             } finally {
                 Files.deleteIfExists(part);
             }
+        } catch (ConversionLimitExceededException e) {
+            throw new UncheckedIOException("Konvertierung des Exports " + exportId + " nach " + format + " zu groß: "
+                    + e.getMessage(), e);
         } catch (IOException e) {
             throw new UncheckedIOException("Konvertierung des Exports " + exportId + " nach " + format
-                    + " nicht schreibbar", e);
+                    + " nicht schreibbar (" + e.getClass().getSimpleName() + ")", e);
         }
     }
 
@@ -351,7 +385,7 @@ public class ExportConversions {
         }
 
         private void require(long bytes) throws ConversionLimitExceededException {
-            if (written + bytes > maxBytes) {
+            if (maxBytes > 0 && written + bytes > maxBytes) {
                 throw new ConversionLimitExceededException("Datei", maxBytes);
             }
             written += bytes;

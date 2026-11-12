@@ -286,7 +286,8 @@ public final class MainWindow implements AppContext.Navigator {
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
 
-        jobStatus = new JobStatusLine(context.events(), activities::cancelShownJob);
+        // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
+        jobStatus = new JobStatusLine(context.events());
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -386,6 +387,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (button != null) {
             button.setSelected(true);
         }
+        findBar.tools(view.tools());
         view.shown();
         if (changed) {
             findBar.areaChanged();
@@ -422,6 +424,11 @@ public final class MainWindow implements AppContext.Navigator {
     public void showJob(String jobId) {
         show(AppContext.Section.ACTIVITIES);
         activities.show(jobId);
+    }
+
+    @Override
+    public void followJobs() {
+        activities.follow();
     }
 
     @Override
@@ -529,9 +536,9 @@ public final class MainWindow implements AppContext.Navigator {
         } catch (RuntimeException e) {
             running = 0;
         }
-        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", Texts.count(running, "Auftrag läuft",
-                "Aufträge laufen") + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.",
-                "Beenden");
+        return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", "Space Harvester wirklich beenden? "
+                + Texts.count(running, "Auftrag läuft", "Aufträge laufen")
+                + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
     }
 
     private static Icon icon(AppContext.Section section) {

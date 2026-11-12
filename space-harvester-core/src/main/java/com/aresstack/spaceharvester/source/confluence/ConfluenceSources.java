@@ -60,14 +60,47 @@ public final class ConfluenceSources {
         return async == null ? provider : async.attach(provider, trust, thumbprint);
     }
 
+    /**
+     * Für die Desktop-App gebaut wie im Enterprise AI Client 0.80.98 ({@code AdapterAssembly.sourceProviders}): ohne
+     * asynchronen Transport, alle Abrufe einer Quelle über denselben UrlConnection-Transport, und HTML-Antworten statt
+     * Dateien als Diagnosedateien in {@code diagnosticsDirectory} (#571).
+     *
+     * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
+     */
+    public static KnowledgeSourceProvider desktopProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                          String userAgent, X509TrustManager trust, String thumbprint,
+                                                          Path diagnosticsDirectory) {
+        return desktopProvider(secrets, routes, userAgent, trust, thumbprint, diagnosticsDirectory, null);
+    }
+
+    /**
+     * Wie {@link #desktopProvider(SecretProvider, HttpRoutePort, String, X509TrustManager, String, Path)}, zusätzlich
+     * mit einer Protokollzeile je Webaufruf außerhalb von {@code /rest/} (Downloads, Zwei-Faktor-Seite, Formularziel,
+     * Weiterleitungen; ohne Query-Werte, #571).
+     *
+     * @param logLabel Quelle und Anmeldeart fürs Protokoll, etwa {@code wiki, PAT}; {@code null} ohne diese Zeilen
+     */
+    public static KnowledgeSourceProvider desktopProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                          String userAgent, X509TrustManager trust, String thumbprint,
+                                                          Path diagnosticsDirectory, String logLabel) {
+        HttpRoutePort logged = logLabel == null || routes == null ? routes : new WebCallLog(routes, logLabel);
+        return confluenceProvider(secrets, logged, userAgent, trust, thumbprint, diagnosticsDirectory);
+    }
+
     private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
                                                                String userAgent, X509TrustManager trust,
                                                                String thumbprint) {
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint, null);
+    }
+
+    private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                               String userAgent, X509TrustManager trust,
+                                                               String thumbprint, Path diagnosticsDirectory) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
         return new ConfluenceSourceProvider(secrets, routes, trustOnly(trust), userAgent,
-                new ConfiguredClientCertificates(secrets, trust, thumbprint));
+                new ConfiguredClientCertificates(secrets, trust, thumbprint), diagnosticsDirectory);
     }
 
     /**

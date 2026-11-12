@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentSink;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -14,6 +15,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.StreamedAttachment;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -282,6 +284,211 @@ class AssetsTest {
                 .isInstanceOf(AssetTooLargeException.class);
         assertThat(assets.overview(list(attachment("att1", "a", "text/plain", "1"))).entries().get(0).stored())
                 .isNull();
+    }
+
+    @Test
+    void aSourceThatStartsOverAfterABrokenAttemptStoresOnlyTheLastOne() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        source.brokenFirst.put("att1", "Ber");
+
+        Asset stored = assets.harvest(list(attachment("att1", "a.txt", "text/plain", "1"))).entries().get(0).asset();
+
+        byte[] expected = "Bericht".getBytes(StandardCharsets.UTF_8);
+        assertThat(stored.size()).isEqualTo(expected.length);
+        assertThat(stored.sha256()).isEqualTo(Assets.sha256(expected));
+        assertThat(assets.content(list(attachment("att1", "a.txt", "text/plain", "1")), "att1").content())
+                .isEqualTo(expected);
+        assertThat(java.nio.file.Files.list(directory.resolve("staging")))
+                .as("die Zwischendatei ist in die Ablage gewandert").isEmpty();
+    }
+
+    @Test
+    void aFileAboveTheTextLimitIsStoredWithoutTextAndNeverReadBackForTheHarvest() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        String big = "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES);
+        source.file("att1", "1", big);
+
+        AssetHarvest harvest = assets.harvest(list(attachment("att1", "gross.pdf", "application/octet-stream",
+                "1")));
+
+        Asset stored = harvest.entries().get(0).asset();
+        assertThat(harvest.entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
+        assertThat(stored.size()).isEqualTo(big.length());
+        assertThat(stored.mediaType()).as("die Signatur am Anfang reicht").isEqualTo("application/pdf");
+        assertThat(stored.sha256()).isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        assertThat(documents.extractions).as("zu groß für die Textextraktion").hasValue(0);
+    }
+
+    @Test
+    void aDocumentAboveTheTextLimitIsNeverReadForItsTextNeitherLaterNorOnRequest() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        source.file("att1", "1", "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES));
+        PageAttachmentList list = list(attachment("att1", "gross.pdf", "application/pdf", "1"));
+        assets.harvest(list);
+
+        // Die nächste Ernte holt keinen Text aus der Ablage nach, und auf Abruf ist die Datei zu groß.
+        assertThat(assets.harvest(list).entries().get(0).status()).isEqualTo(AssetHarvest.Status.REUSED);
+        assertThatThrownBy(() -> assets.text(list, "att1"))
+                .isInstanceOfSatisfying(DocumentTextException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentTextException.Reason.TOO_LARGE));
+        assertThat(documents.extractions).hasValue(0);
+    }
+
+    @Test
+    void theTextOfANotStoredDocumentAboveTheTextLimitIsTooLargeWithoutReadingIt() throws Exception {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        source.file("att1", "1", "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES));
+        PageAttachmentList list = list(attachment("att1", "gross.pdf", "application/pdf", "1"));
+
+        assertThatThrownBy(() -> assets.text(list, "att1", false))
+                .isInstanceOfSatisfying(DocumentTextException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentTextException.Reason.TOO_LARGE));
+
+        assertThat(documents.extractions).hasValue(0);
+        assertThat(assets.overview(list).entries().get(0).stored()).as("nicht abgelegt").isNull();
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).isEmpty();
+    }
+
+    @Test
+    void aLargeAttachmentStreamedWithoutTheRightToStoreComesFromItsStagingFileAndLeavesNothingBehind()
+            throws Exception {
+        Assets assets = assets(64L * 1024 * 1024);
+        String big = "x".repeat((int) Assets.IN_MEMORY_BYTES + 1);
+        source.file("att1", "1", big);
+        PageAttachmentList list = list(attachment("att1", "film.bin", "application/octet-stream", "1"));
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", false, null)) {
+            assertThat(stream.asset().size()).isEqualTo(big.length());
+            assertThat(Assets.sha256(stream.content().readAllBytes()))
+                    .isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        }
+
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).as("mit dem Strom verschwunden").isEmpty();
+        assertThat(assets.overview(list).entries().get(0).stored()).as("nicht abgelegt").isNull();
+    }
+
+    @Test
+    void aLargeAttachmentStreamedWithTheRightToStoreIsStoredAndComesFromTheStore() throws Exception {
+        Assets assets = assets(64L * 1024 * 1024);
+        String big = "x".repeat((int) Assets.IN_MEMORY_BYTES + 1);
+        source.file("att1", "1", big);
+        PageAttachmentList list = list(attachment("att1", "film.bin", "application/octet-stream", "1"));
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", true, null)) {
+            assertThat(Assets.sha256(stream.content().readAllBytes()))
+                    .isEqualTo(Assets.sha256(big.getBytes(StandardCharsets.UTF_8)));
+        }
+
+        assertThat(assets.overview(list).entries().get(0).stored()).as("abgelegt").isNotNull();
+        try (Assets.AssetStream again = assets.stream(list, "att1", true, null)) {
+            assertThat(again.asset().size()).isEqualTo(big.length());
+        }
+        assertThat(source.downloads).as("das zweite Mal aus der Ablage").isEqualTo(1);
+    }
+
+    @Test
+    void aFailedDownloadLeavesNoFileBehind() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        source.brokenFirst.put("att1", "Ber");
+        source.failure("att1", SourceAccessException.Reason.UNAVAILABLE);
+
+        AssetHarvest harvest = assets.harvest(list(attachment("att1", "a.txt", "text/plain", "1")));
+
+        assertThat(harvest.entries().get(0).code()).isEqualTo("source-unavailable");
+        assertThat(java.nio.file.Files.list(directory.resolve("staging"))).isEmpty();
+    }
+
+    @Test
+    void aStoredFileOpensAsAStreamCheckedAgainstItsHash() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        Asset stored = assets.keep(list(attachment("att1", "a.txt", "text/plain", "1")), "att1", false);
+
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThat(in.readAllBytes()).isEqualTo("Bericht".getBytes(StandardCharsets.UTF_8));
+        }
+        assertThat(assets.openStored("wiki", "att1", "1", Assets.sha256("anders".getBytes(StandardCharsets.UTF_8))))
+                .as("nichts mit diesem Hash abgelegt").isEmpty();
+
+        String hex = stored.sha256().substring("sha256:".length());
+        java.nio.file.Files.writeString(directory.resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                "Bericht?");
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThatThrownBy(in::readAllBytes).as("verändert").isInstanceOf(java.io.IOException.class);
+        }
+    }
+
+    @Test
+    void aFileAboveTheMemoryLimitIsStoredButOnlyHandedOutAsAStream() throws Exception {
+        Assets assets = assets(1000);
+        assets.maxInMemoryBytes(10);
+        byte[] content = "zwölf Bytes!".getBytes(StandardCharsets.UTF_8);
+        source.file("att1", "1", "zwölf Bytes!");
+        PageAttachmentList list = list(attachment("att1", "a.bin", "application/octet-stream", "1"));
+
+        assertThatThrownBy(() -> assets.content(list, "att1")).isInstanceOf(AssetTooLargeException.class);
+        Asset stored = assets.overview(list).entries().get(0).stored();
+        assertThat(stored).as("trotzdem abgelegt").isNotNull();
+        assertThatThrownBy(() -> assets.content(list, "att1")).as("auch aus der Ablage nicht ganz in den Speicher")
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(assets.stored("wiki", "att1", "1", stored.sha256())).isEmpty();
+        assertThat(assets.stored("wiki", "att1", "2", stored.sha256())).as("ohne Eintrag, Größe unbekannt").isEmpty();
+
+        try (Assets.AssetStream stream = assets.stream(list, "att1", true, null)) {
+            assertThat(stream.content().readAllBytes()).isEqualTo(content);
+        }
+        try (java.io.InputStream in = assets.openStored("wiki", "att1", "1", stored.sha256()).orElseThrow()) {
+            assertThat(in.readAllBytes()).isEqualTo(content);
+        }
+        assertThat(source.downloads).isEqualTo(1);
+    }
+
+    @Test
+    void aFileAboveTheMemoryLimitThatMayNotBeStoredIsNotDownloadedForItsBytes() {
+        Assets assets = assets(1000);
+        assets.maxInMemoryBytes(10);
+        source.file("att1", "1", "zwölf Bytes!");
+        PageAttachment declared = new PageAttachment("att1", "test:wiki/attachment/att1", "a.bin",
+                "application/octet-stream", 13L, "1", null, null);
+
+        assertThatThrownBy(() -> assets.content(list(declared), "att1", false))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(source.downloads).as("weder abzulegen noch ganz im Speicher zu halten").isZero();
+    }
+
+    @Test
+    void keepStoresTheAttachmentOnceAndLoadsAgainOnlyWhenForced() {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        PageAttachmentList list = list(attachment("att1", "a.txt", "text/plain", "1"));
+
+        Asset kept = assets.keep(list, "att1", false);
+        Asset again = assets.keep(list, "att1", false);
+        Asset forced = assets.keep(list, "att1", true);
+
+        assertThat(again).isEqualTo(kept);
+        assertThat(forced.sha256()).isEqualTo(kept.sha256());
+        assertThat(source.downloads).as("abgelegt heißt: nicht noch einmal laden, außer erzwungen").isEqualTo(2);
+        assertThat(assets.content(list, "att1").content()).isEqualTo("Bericht".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void keepDoesNotReportADamagedStoredFileAsStored() throws Exception {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "Bericht");
+        PageAttachmentList list = list(attachment("att1", "a.txt", "text/plain", "1"));
+        Asset kept = assets.keep(list, "att1", false);
+        String hex = kept.sha256().substring("sha256:".length());
+        java.nio.file.Files.writeString(directory.resolve("blobs").resolve(hex.substring(0, 2)).resolve(hex),
+                "Bxricht");
+
+        assertThatThrownBy(() -> assets.keep(list, "att1", false)).isInstanceOf(AssetStoreException.class);
+        assertThat(source.downloads).isEqualTo(1);
     }
 
     @Test
@@ -623,6 +830,122 @@ class AssetsTest {
     }
 
     @Test
+    void aDrawioDiagramOfAnotherPageBecomesAPngFromTheSvgOfTheSource() {
+        Assets assets = assets(100_000);
+        // Eingebunden über multiexcerpt-include: das Diagramm hängt an Seite 202, nicht an der gezeigten Seite 101.
+        // Die Quelle zeichnet es selbst (REST des Plugins) und liefert SVG wie im Enterprise AI Client.
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        source.views.put(src, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+                + "<rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>");
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", null, null, null);
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(png.asset().mediaType()).isEqualTo("image/png");
+        assertThat(png.asset().version()).isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Das SVG liegt danach in der Ablage: kein zweiter Abruf von der Quelle.
+        assertThat(assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow().asset().sha256())
+                .isEqualTo(png.asset().sha256());
+        assertThat(source.viewLoads).isEqualTo(1);
+        // Ein gewöhnliches Bild ohne draw.io-Angaben bleibt beim Bildweg der App.
+        assertThat(assets.viewDiagram("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/202/foto.png", "Foto", null, "image/png", null)))
+                .isEmpty();
+        assertThat(source.viewLoads).isEqualTo(1);
+    }
+
+    @Test
+    void aForeignDrawioDiagramDeclaredAsPngIsStillRasterizedFromItsSvg() {
+        Assets assets = assets(100_000);
+        // export_view nennt am Vorschaubild image/png; geliefert wird trotzdem die gezeichnete SVG-Fassung.
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        source.views.put(src, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>"
+                + "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"40\">"
+                + "<rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>");
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", "att-p", "image/png", "3");
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(png.asset().version()).isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Aus der Ablage ebenso gerastert, ohne neuen Abruf.
+        assertThat(assets.viewDiagram("wiki", "101", "7", diagram).orElseThrow().asset().version())
+                .isEqualTo(Assets.SVG_PNG_RENDITION);
+        assertThat(source.viewLoads).isEqualTo(1);
+    }
+
+    @Test
+    void theDrawioDiagramOfTheReadingViewIsAvailableAsVectorSvg() {
+        Assets assets = assets(100_000);
+        String mxfile = "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+                + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+                + "</root></mxGraphModel></diagram></mxfile>";
+        source.file("att-d", "2", mxfile);
+        source.listed.add(attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "2"));
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png?version=2", "Ablauf", null,
+                "image/png", null);
+
+        Assets.AssetContent svg = assets.viewDiagramSvg("wiki", "101", "7", preview).orElseThrow();
+
+        assertThat(svg.asset().mediaType()).isEqualTo("image/svg+xml");
+        assertThat(svg.asset().version()).isEqualTo(Assets.DRAWIO_RENDITION);
+        assertThat(new String(svg.content(), StandardCharsets.UTF_8)).contains("<svg");
+        assertThat(com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content())).isPresent();
+        // Einmal gezeichnet: kein zweiter Download der Quelldaten.
+        assets.viewDiagramSvg("wiki", "101", "7", preview).orElseThrow();
+        assertThat(source.downloads).isEqualTo(1);
+        // Ein gewöhnliches Bild ist kein Diagramm.
+        assertThat(assets.viewDiagramSvg("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null)))
+                .isEmpty();
+    }
+
+    @Test
+    void aDrawioDiagramOfAnotherPageIsAvailableAsTheSvgOfTheSource() {
+        Assets assets = assets(100_000);
+        String src = "https://wiki.example.org/download/attachments/202/Stages.png?version=14&api=v2"
+                + "#drawio=Stages&page=202&revision=14";
+        String drawn = "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"3288\" "
+                + "height=\"1492\"><rect x=\"0\" y=\"0\" width=\"80\" height=\"40\" fill=\"#3366cc\"/></svg>";
+        source.views.put(src, drawn);
+        HarvestSource.ViewImage diagram = new HarvestSource.ViewImage(src, "Stages", "att-p", "image/png", "3");
+
+        Assets.AssetContent svg = assets.viewDiagramSvg("wiki", "101", "7", diagram).orElseThrow();
+
+        assertThat(new String(svg.content(), StandardCharsets.UTF_8)).isEqualTo(drawn);
+        var vector = com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content()).orElseThrow();
+        assertThat(vector.width()).isEqualTo(3288.0);
+        // Gezeichnet wird in jeder Größe, ohne Obergrenze: doppelte Eigengröße für einen Ausschnitt.
+        assertThat(vector.raster(6576).getWidth()).isEqualTo(6576);
+    }
+
+    @Test
+    void aStoredDiagramAboveTheMemoryLimitIsNotReadForDrawing() {
+        Assets assets = assets(100_000);
+        source.file("att-d", "2", "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                + "</root></mxGraphModel></diagram></mxfile>");
+        PageAttachment drawio = attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "2");
+        source.listed.add(drawio);
+        assets.keep(list(drawio), "att-d", false);
+        assets.maxInMemoryBytes(10);
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png?version=2", "Ablauf", null,
+                "image/png", null);
+
+        // Ohne Grenze für Downloads abgelegt, zum Zeichnen aber zu groß für den Speicher: es bleibt das Bild selbst.
+        assertThatThrownBy(() -> assets.viewDiagram("wiki", "101", "7", preview))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThatThrownBy(() -> assets.viewDiagramSvg("wiki", "101", "7", preview))
+                .isInstanceOf(AssetTooLargeException.class);
+        assertThat(source.downloads).as("nur beim Ablegen").isEqualTo(1);
+    }
+
+    @Test
     void anUndrawableDiagramLeavesThePreview() {
         Assets assets = assets(100_000);
         source.file("att-d", "1", "kein xml");
@@ -648,6 +971,18 @@ class AssetsTest {
         int downloads;
         final List<Long> limits = new ArrayList<>();
         final List<PageAttachment> listed = new ArrayList<>();
+        final Map<String, String> views = new HashMap<>();
+        int viewLoads;
+
+        @Override
+        public byte[] viewImage(ViewImage image, long maxBytes) {
+            viewLoads++;
+            String content = views.get(image.src());
+            if (content == null) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.NOT_FOUND, "x", null);
+            }
+            return content.getBytes(StandardCharsets.UTF_8);
+        }
 
         @Override
         public PageAttachments attachments(String pageId) {
@@ -662,6 +997,26 @@ class AssetsTest {
 
         void failure(String id, SourceAccessException.Reason reason) {
             files.put(id + "#failure", reason);
+        }
+
+        /** Erster, abgebrochener Versuch einer strömenden Quelle; der Neuversuch beginnt von vorn. */
+        final Map<String, String> brokenFirst = new HashMap<>();
+
+        @Override
+        public StreamedAttachment streamAttachment(PageAttachment attachment, AttachmentSink sink) {
+            String broken = brokenFirst.get(attachment.attachmentId());
+            if (broken == null) {
+                return HarvestSource.super.streamAttachment(attachment, sink);
+            }
+            try {
+                sink.write(broken.getBytes(StandardCharsets.UTF_8));
+                sink.restart();
+                AttachmentFile file = attachmentFile(attachment, sink.maxBytes());
+                sink.write(file.content());
+                return new StreamedAttachment(file.attachment(), file.retrievedAt());
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
         }
 
         @Override

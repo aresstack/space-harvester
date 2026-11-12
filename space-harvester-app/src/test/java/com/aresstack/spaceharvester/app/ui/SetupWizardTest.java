@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
@@ -120,13 +121,42 @@ class SetupWizardTest {
     }
 
     @Test
+    void theTerminalOutputIsChosenUnderGeneralSavedAtOnceAndShownOnTheSummary() throws Exception {
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            java.util.List<String> items = new java.util.ArrayList<>();
+            for (int i = 0; i < view[0].console.getItemCount(); i++) {
+                items.add(view[0].console.getItemAt(i));
+            }
+            assertThat(items).containsExactly("Aus", "Fehler", "Warnungen", "Informationen", "Alles");
+            assertThat(view[0].console.getSelectedItem()).as("ohne Angabe still").isEqualTo("Aus");
+            view[0].console.setSelectedItem("Warnungen");
+        });
+        await(() -> context.settings().consoleOutput() == ConsoleOutput.WARN);
+        assertThat(Files.readString(config, StandardCharsets.UTF_8))
+                .contains("logging:\n  threshold:\n    console: \"warn\"\n", "# Kommentar bleibt stehen");
+        SetupWizard[] wizard = new SetupWizard[1];
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].console.getSelectedItem()).isEqualTo("Warnungen");
+            wizard[0] = new SetupWizard(context);
+            wizard[0].show(SetupWizard.SUMMARY);
+            assertThat(texts(wizard[0].summary)).containsSubsequence(SettingsView.CONSOLE_TITLE, "Warnungen");
+        });
+    }
+
+    @Test
     void theSecurityTabNamesWhereSecretsLiveButNeverTheirValues() throws Exception {
         SettingsView[] view = new SettingsView[1];
-        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
-        assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
-                "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
-        // Ohne lokal gespeicherte Zugangsdaten gibt es nichts zu löschen.
-        assertThat(view[0].deleteButtons).isEmpty();
+        // Gelesen wird auf dem EDT: Meldet die Laufzeit inzwischen einen neuen Stand (etwa eine pausierte Quelle),
+        // baut SettingsView die Seite dort neu auf; von einem anderen Thread aus sähe der Test sie halb leer.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
+                    "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
+            // Ohne lokal gespeicherte Zugangsdaten gibt es nichts zu löschen.
+            assertThat(view[0].deleteButtons).isEmpty();
+        });
     }
 
     @Test
@@ -156,15 +186,19 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> context.reload(reloaded::countDown));
         assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
         SettingsView[] view = new SettingsView[1];
-        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
-        java.util.List<String> texts = texts(view[0].security);
-        assertThat(texts).contains("Zugang Firmenwiki", "API-Key des KI-Dienstes")
-                .noneMatch(text -> text.equals("fehlt") || text.equals("gespeichert"));
-        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Wiki-Zugang“"))).hasSize(1);
-        assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Enterprise AI API“"))).hasSize(1);
-        assertThat(view[0].deleteButtons).as("aus KeePass: nichts Lokales zu löschen").isEmpty();
-        assertThat(tooltips(view[0].security)).anyMatch(tip -> tip != null && tip.contains("nur in KeePass")
-                && tip.contains("Entkoppeln"));
+        // Auf dem EDT gelesen, wie im Test oben: ein Neuaufbau der Seite läuft dort und nie mitten in die Prüfung.
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            java.util.List<String> texts = texts(view[0].security);
+            assertThat(texts).contains("Zugang Firmenwiki", "API-Key des KI-Dienstes")
+                    .noneMatch(text -> text.equals("fehlt") || text.equals("gespeichert"));
+            assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Wiki-Zugang“"))).hasSize(1);
+            assertThat(texts.stream().filter(text -> text.startsWith("in KeePass („Enterprise AI API“")))
+                    .hasSize(1);
+            assertThat(view[0].deleteButtons).as("aus KeePass: nichts Lokales zu löschen").isEmpty();
+            assertThat(tooltips(view[0].security)).anyMatch(tip -> tip != null && tip.contains("nur in KeePass")
+                    && tip.contains("Entkoppeln"));
+        });
     }
 
     @Test

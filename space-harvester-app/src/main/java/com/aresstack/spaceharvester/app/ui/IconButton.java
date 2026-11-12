@@ -9,11 +9,11 @@ import java.awt.Graphics;
  * Ein runder Knopf nur mit Symbol; der Text steht im Tooltip und als zugänglicher Name (Bildschirmleser, Tastatur:
  * Tab und Leertaste). Durchsichtig in Ruhe, beim Darüberfahren der Kreis aus {@link RoundHover}.
  */
-final class IconButton extends JButton {
+public final class IconButton extends JButton {
 
     private static final int SIZE = RoundHover.SIZE;
 
-    IconButton(Icon icon, String tooltip) {
+    public IconButton(Icon icon, String tooltip) {
         super(icon);
         setToolTipText(tooltip);
         getAccessibleContext().setAccessibleName(tooltip);

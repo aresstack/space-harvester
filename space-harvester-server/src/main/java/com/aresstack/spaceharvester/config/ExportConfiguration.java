@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -16,8 +17,12 @@ import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobRecovery;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
@@ -28,7 +33,9 @@ import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
+import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -46,7 +53,7 @@ import org.springframework.context.annotation.Configuration;
  * der Export über {@link SpaceSyncJobs} im eigenen Auftrag ein (ADR 0010).
  *
  * <p>Converter (#30) sind Beans vom Typ {@link ExportConverter}; jede konvertierte Datei darf höchstens
- * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 512 MiB), sonst scheitert der Export.
+ * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 0, ohne Grenze), sonst scheitert der Export.
  * Alle Artefakte zusammen belegen höchstens {@code space-harvester.export.max-total-bytes} (Standard 20 GiB); ist die
  * Ablage voll, lehnt der Start mit 507 ab und ein laufender Export scheitert mit {@code EXPORT_STORAGE_FULL}.
  * {@code space-harvester.export.pdf.font} nennt optional eine TrueType-Schrift, die PDFs einbetten.
@@ -128,7 +135,9 @@ class ExportConfiguration {
     @Bean
     ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
                                                 Assets assets, Exports exports, AccessGuard access,
-                                                SignInRequests signIns, ConfigurationManager configuration) {
+                                                SignInRequests signIns, ConfigurationManager configuration,
+                                                ObjectProvider<JobsProperties> jobLimits,
+                                                ObjectProvider<LuceneEnrichmentStore> enrichments) {
         // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
         // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
@@ -137,6 +146,17 @@ class ExportConfiguration {
                         .isPresent(), signIns,
                 // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                 () -> configuration.current().configuration().export());
+        // Gesamtbudget der Verbindungen aller ladenden Aufträge (jobs.download-connections, Angelo 11.11.2026).
+        JobsProperties limits = jobLimits.getIfAvailable();
+        images.connections(new ConnectionBudget(limits == null ? JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS
+                : limits.downloadConnections()));
+        // Nach einem Import ohne erreichbare Quelle: Bilder und Anhänge aus dem Paket (ImportConfiguration).
+        LuceneEnrichmentStore store = enrichments.getIfAvailable();
+        if (store != null) {
+            images.imported(new EnrichmentImportedAssets(store, Clock.systemUTC()), new ReadingViewStore(store));
+        }
+        // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
+        exports.onSubmitted(images::announce);
         exports.onPublished(images::start);
         return images;
     }
@@ -155,5 +175,18 @@ class ExportConfiguration {
     ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters,
                                         ExportAssetCollection images) {
         return new ExportConversions(jobs, writer, converters, images);
+    }
+
+    /**
+     * ADR 0025 Punkt 17: Aufträge, die wegen fehlender Verbindung angehalten sind, laufen nach wachsender Wartezeit von
+     * selbst wieder an ({@code jobs.retry.resume-initial-delay} bis {@code resume-max-delay}).
+     */
+    @Bean
+    JobRecovery jobRecovery(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions) {
+        JobActions actions = new JobActions(jobs, exports, syncs, conversions);
+        JobRecovery recovery = new ServerJobRecovery(jobs,
+                (status, action) -> actions.perform(status.id(), status.owner(), action));
+        jobs.recovery(recovery);
+        return recovery;
     }
 }

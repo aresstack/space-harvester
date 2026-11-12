@@ -1,11 +1,12 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
+import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -24,9 +25,7 @@ import javax.swing.text.html.HTMLEditorKit;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
 import java.awt.Desktop;
-import java.awt.Dimension;
 import java.awt.Image;
-import java.awt.Toolkit;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -40,6 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import org.jsoup.Jsoup;
@@ -73,7 +73,7 @@ final class ReadingPane extends JPanel {
             "embed", "form", "input", "button", "select", "textarea", "noscript", "svg", "video", "audio", "source",
             "canvas", "template", "base");
     private static final Map<String, Set<String>> KEPT_ATTRIBUTES = Map.of(
-            "a", Set.of("href", "title"),
+            "a", Set.of("href", "title", "name"),
             "img", Set.of("src", "alt", "title", "width", "height"),
             "td", Set.of("colspan", "rowspan"),
             "th", Set.of("colspan", "rowspan"),
@@ -81,22 +81,32 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    /** Oberer Innenabstand der Ansicht ohne Wolkenbanner. */
+    private static final int PADDING_TOP = 10;
+    /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
+    private final NavigableDocumentPage page = new NavigableDocumentPage(Comic.scroll(pane), pane, PADDING_TOP);
     /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
-    private final BusyOverlay overlay = new BusyOverlay(Comic.scroll(pane));
+    private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
     private Map<String, BufferedImage> originals = Map.of();
+    /** Vektorzeichnungen der draw.io-Diagramme je eigener Bildadresse; der Betrachter zeichnet sie bei jedem Zoom. */
+    private Map<String, VectorDiagram> vectors = Map.of();
+    /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
+    private String html = "";
+    /** Was ein angeklickter Link auslöst; ohne Abnehmer öffnet er im Browser. */
+    private java.util.function.Consumer<URL> links = ReadingPane::browse;
 
     ReadingPane() {
         super(new BorderLayout(0, 6));
         setOpaque(false);
         pane.setEditable(false);
         pane.setContentType("text/html");
-        pane.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        pane.setBorder(BorderFactory.createEmptyBorder(PADDING_TOP, 12, 10, 12));
         pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
         pane.setFont(Comic.regular(13.5f));
         pane.addHyperlinkListener(event -> {
             if (event.getEventType() == HyperlinkEvent.EventType.ACTIVATED && event.getURL() != null) {
-                browse(event.getURL());
+                links.accept(event.getURL());
             }
         });
         pane.addMouseListener(new MouseAdapter() {
@@ -125,10 +135,49 @@ final class ReadingPane extends JPanel {
         clear(" ");
     }
 
+    /**
+     * Was ein angeklickter Link tut (Leseansicht des EAC: Seiten derselben Quelle öffnen im Lesebereich, alles andere
+     * im Browser über {@link #browse}).
+     */
+    void onLink(java.util.function.Consumer<URL> listener) {
+        this.links = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Die Inhaltswolken über der Ansicht (dieselbe Dokumentnavigation wie unter „Text“, mit Unterwolken des gewählten
+     * Kapitels); {@code null} blendet sie aus. Die Abschnitte findet die Ansicht über ihren Anker im Text.
+     */
+    void setNavigation(Navigation navigation, String plainText) {
+        page.setNavigation(navigation, plainText == null ? "" : plainText);
+    }
+
+    /** Für Tests: die Ansicht mit dem Wolkenbanner. */
+    NavigableDocumentPage navigablePage() {
+        return page;
+    }
+
+    /** Rollt zum Anker {@code fragment} der gezeigten Ansicht; ohne passenden Anker nichts. */
+    void scrollToAnchor(String fragment) {
+        if (fragment == null || fragment.isBlank() || !(pane.getDocument() instanceof HTMLDocument document)) {
+            return;
+        }
+        // Wie scrollToReference, aber das Ziel steht unter den Inhaltswolken statt dahinter.
+        HTMLDocument.Iterator anchors = document.getIterator(HTML.Tag.A);
+        for (; anchors.isValid(); anchors.next()) {
+            Object name = anchors.getAttributes().getAttribute(HTML.Attribute.NAME);
+            if (fragment.equals(name)) {
+                page.scrollToOffset(anchors.getStartOffset());
+                return;
+            }
+        }
+    }
+
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
         overlay.setBusy(false);
         originals = Map.of();
+        vectors = Map.of();
+        html = "";
         details = "";
         pane.setText("");
         hint.setText(text);
@@ -163,6 +212,8 @@ final class ReadingPane extends JPanel {
     void show(Prepared prepared) {
         overlay.setBusy(false);
         originals = prepared.originals();
+        vectors = prepared.vectors();
+        html = prepared.html();
         boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
         details = prepared.html().isEmpty() ? "" : prepared.note();
         hint.setText(visible ? prepared.note() : " ");
@@ -195,11 +246,12 @@ final class ReadingPane extends JPanel {
         }
         pane.setDocument(document);
         pane.setCaretPosition(0);
+        page.contentChanged();
     }
 
     /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */
-    record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals, int images,
-                    int missing, String note) {
+    record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
+                    Map<String, VectorDiagram> vectors, int images, int missing, String note) {
     }
 
     /**
@@ -208,6 +260,17 @@ final class ReadingPane extends JPanel {
      */
     static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, byte[]> load,
                             Function<String, byte[]> mermaid) {
+        return prepare(view, image -> Optional.empty(), load, mermaid, screenScale());
+    }
+
+    /**
+     * Wie {@link #prepare(ReadingView, Function, Function)}, holt aber zuerst über {@code vector} die Vektorzeichnung
+     * eines draw.io-Diagramms. Gibt es sie, wird nur sie genutzt (kein zweiter Abruf über {@code load}): im Text
+     * gerastert in Anzeigebreite × {@code scale} (Bildschirmskalierung), im Betrachter bei jedem Zoom neu gezeichnet.
+     */
+    static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                            Function<HarvestSource.ViewImage, byte[]> load, Function<String, byte[]> mermaid,
+                            double scale) {
         switch (view.status()) {
             case RESTRICTED -> {
                 return note("Diese Seite bindet Inhalte ein, die du nicht nachweislich lesen darfst. Die Leseansicht "
@@ -223,6 +286,7 @@ final class ReadingPane extends JPanel {
         document.select(String.join(",", REMOVED)).remove();
         Map<String, Image> scaled = new LinkedHashMap<>();
         Map<String, BufferedImage> originals = new LinkedHashMap<>();
+        Map<String, VectorDiagram> vectors = new LinkedHashMap<>();
         int[] counts = new int[2];
         for (Element img : document.select("img")) {
             HarvestSource.ViewImage image = match(view, img);
@@ -234,6 +298,12 @@ final class ReadingPane extends JPanel {
             }
             BufferedImage decoded;
             try {
+                Optional<VectorDiagram> drawing = vectorOf(vector, image);
+                if (drawing.isPresent()) {
+                    placeVector(img, drawing.get(), label, scale, scaled, originals, vectors);
+                    counts[0]++;
+                    continue;
+                }
                 decoded = decode(load, image);
             } catch (SignInPendingException e) {
                 // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
@@ -280,12 +350,12 @@ final class ReadingPane extends JPanel {
                 + (counts[1] == 0 ? "" : " · " + counts[1] + " nicht darstellbar, im Text markiert")
                 + (view.stored() ? " · aus dem Bestand" : " · live aus der Quelle")
                 + (counts[0] == 0 ? "" : " · Klick auf ein Bild vergrößert es");
-        return new Prepared("<html><body>" + document.body().html() + "</body></html>", scaled, originals, counts[0],
-                counts[1], note);
+        return new Prepared("<html><body>" + document.body().html() + "</body></html>", scaled, originals, vectors,
+                counts[0], counts[1], note);
     }
 
     private static Prepared note(String text) {
-        return new Prepared("", Map.of(), Map.of(), 0, 0, text);
+        return new Prepared("", Map.of(), Map.of(), Map.of(), 0, 0, text);
     }
 
     /** Das Bild der Ansicht zu einem {@code <img>}: gleiche Adresse, roh oder gegen die Basis aufgelöst. */
@@ -349,6 +419,54 @@ final class ReadingPane extends JPanel {
         }
     }
 
+    /** Die Vektorzeichnung zu einem Bild; eine fehlende Anmeldung geht weiter (Platzhalter), sonst leer. */
+    private static Optional<VectorDiagram> vectorOf(Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                                                    HarvestSource.ViewImage image) {
+        try {
+            Optional<VectorDiagram> drawing = vector.apply(image);
+            return drawing == null ? Optional.empty() : drawing;
+        } catch (SignInPendingException e) {
+            // Die Anforderung ist schon offen: kein weiterer Abruf über das Bild (#571).
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            // Auch SignInRequiredException: Erst der Bildabruf (Workspace.viewImage) meldet die Anforderung an, damit
+            // das Codefeld erscheint; die Sperre in Assets.fromSource verhindert dabei einen neuen Netzabruf.
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Setzt ein draw.io-Diagramm ein: im Text höchstens {@link #MAX_WIDTH} breit, gerastert in dieser Breite mal der
+     * Bildschirmskalierung, damit es auch auf hochauflösenden Bildschirmen scharf ist.
+     */
+    private static void placeVector(Element img, VectorDiagram drawing, String label, double scale,
+                                    Map<String, Image> scaled, Map<String, BufferedImage> originals,
+                                    Map<String, VectorDiagram> vectors) {
+        String src = IMAGE_BASE + originals.size();
+        int width = Math.max(1, (int) Math.round(Math.min(MAX_WIDTH, drawing.width())));
+        int height = Math.max(1, (int) Math.round(drawing.height() * (width / drawing.width())));
+        BufferedImage shown = drawing.raster(Math.max(1, (int) Math.round(width * Math.max(1.0, scale))));
+        originals.put(src, shown);
+        vectors.put(src, drawing);
+        scaled.put(src, shown);
+        img.clearAttributes();
+        img.attr("src", src).attr("width", String.valueOf(width)).attr("height", String.valueOf(height))
+                .attr("alt", label).attr("title", label);
+    }
+
+    /** Skalierung des Bildschirms (Windows 150 % = 1,5); ohne Bildschirm 1. */
+    static double screenScale() {
+        try {
+            if (java.awt.GraphicsEnvironment.isHeadless()) {
+                return 1.0;
+            }
+            return java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
+                    .getDefaultConfiguration().getDefaultTransform().getScaleX();
+        } catch (RuntimeException e) {
+            return 1.0;
+        }
+    }
+
     /** Setzt ein geladenes Bild ein: eigene Adresse, höchstens {@link #MAX_WIDTH} breit. */
     private static void place(Element img, BufferedImage decoded, String label, Map<String, Image> scaled,
                               Map<String, BufferedImage> originals) {
@@ -381,6 +499,12 @@ final class ReadingPane extends JPanel {
     /** Behält nur harmlose Attribute; Verweise werden absolut und nur http(s) bleibt klickbar. */
     private static void clean(Element element) {
         String tag = element.tagName().toLowerCase(Locale.ROOT);
+        // Sprungziele (id) kennt die Swing-HTML-Ansicht nur als <a name>: als solches davor setzen, damit Links mit
+        // Anker (#abschnitt) in der Leseansicht dorthin rollen.
+        String id = element.id();
+        if (!id.isBlank() && !"body".equals(tag)) {
+            element.prependChild(new Element(Tag.valueOf("a"), "").attr("name", id));
+        }
         Set<String> kept = KEPT_ATTRIBUTES.getOrDefault(tag, Set.of());
         for (Attribute attribute : List.copyOf(element.attributes().asList())) {
             String key = attribute.getKey().toLowerCase(Locale.ROOT);
@@ -424,57 +548,33 @@ final class ReadingPane extends JPanel {
     }
 
     /**
-     * Bildergalerie: zeigt das Bild {@code index} in Originalgröße (höchstens bildschirmgroß, scrollbar); ◀/▶ und die
-     * Pfeiltasten blättern durch alle Bilder der Seite.
+     * Bildergalerie im Bildbetrachter des EAC ({@link ImageViewer}): das Bild {@code index} eingepasst, Zoom,
+     * Speichern und Blättern als Knöpfe im Bild. Das Fenster merkt sich die zuletzt gezogene Größe, begrenzt auf den
+     * aktuellen Bildschirm.
      */
     private void enlarge(int index) {
-        List<BufferedImage> images = List.copyOf(originals.values());
-        if (index < 0 || images.isEmpty()) {
+        if (index < 0 || originals.isEmpty()) {
             return;
         }
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        int width = images.stream().mapToInt(BufferedImage::getWidth).max().orElse(400);
-        int height = images.stream().mapToInt(BufferedImage::getHeight).max().orElse(300);
-        JLabel label = new JLabel();
-        label.setHorizontalAlignment(JLabel.CENTER);
-        JLabel position = Comic.muted(" ");
-        int[] current = {index};
-        Runnable show = () -> {
-            label.setIcon(new ImageIcon(images.get(current[0])));
-            position.setText("Bild " + (current[0] + 1) + " von " + images.size());
-        };
-        javax.swing.JComponent scroll = Comic.scroll(label);
-        scroll.setPreferredSize(new Dimension(Math.min(width + 30, screen.width - 160),
-                Math.min(height + 30, screen.height - 240)));
-        JPanel body = new JPanel(new BorderLayout(0, 8));
-        body.setOpaque(false);
-        body.add(scroll, BorderLayout.CENTER);
-        if (images.size() > 1) {
-            ComposerButton previous = Comic.button("◀", "Vorheriges Bild");
-            ComposerButton next = Comic.button("▶", "Nächstes Bild");
-            Runnable back = () -> {
-                current[0] = (current[0] + images.size() - 1) % images.size();
-                show.run();
-            };
-            Runnable forward = () -> {
-                current[0] = (current[0] + 1) % images.size();
-                show.run();
-            };
-            previous.addActionListener(e -> back.run());
-            next.addActionListener(e -> forward.run());
-            body.registerKeyboardAction(e -> back.run(), javax.swing.KeyStroke.getKeyStroke(
-                    java.awt.event.KeyEvent.VK_LEFT, 0), javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
-            body.registerKeyboardAction(e -> forward.run(), javax.swing.KeyStroke.getKeyStroke(
-                    java.awt.event.KeyEvent.VK_RIGHT, 0), javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
-            body.add(Comic.row(previous, position, next), BorderLayout.SOUTH);
-        } else {
-            body.add(position, BorderLayout.SOUTH);
-        }
-        show.run();
-        Dialogs.view(this, "Bilder der Seite", body);
+        Map<String, String> labels = labels();
+        List<ImageViewer.Picture> pictures = originals.entrySet().stream()
+                .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey()),
+                        vectors.get(entry.getKey())))
+                .toList();
+        Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index), "reading.images", 0.8);
     }
 
-    private static void browse(URL url) {
+    /** Titel der Bilder (Alternativtext) je eigener Bildadresse, aus dem gezeigten HTML. */
+    private Map<String, String> labels() {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (Element img : Jsoup.parse(html).select("img[src^=" + IMAGE_BASE + "]")) {
+            labels.put(img.attr("src"), img.attr("alt"));
+        }
+        return labels;
+    }
+
+    /** Öffnet eine http(s)-Adresse im Browser des Systems; andere Protokolle nie. */
+    static void browse(URL url) {
         String protocol = url.getProtocol();
         if (!"http".equals(protocol) && !"https".equals(protocol)) {
             return;

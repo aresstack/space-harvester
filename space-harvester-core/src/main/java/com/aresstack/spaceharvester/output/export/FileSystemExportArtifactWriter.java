@@ -14,13 +14,13 @@ import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import com.aresstack.spaceharvester.output.convert.ExportFileJson;
 import com.aresstack.spaceharvester.output.convert.PageJson;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -84,6 +84,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String RAW = "raw";
     static final String VIEWS = "views";
     static final String INCOMPLETE = ".incomplete";
+    /** Ein ersetztes Artefakt, kurz während des Austauschs ({@link #replace}). */
+    static final String REPLACED = ".replaced";
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
     /** Dateinamen konvertierter Dateien. */
@@ -93,7 +95,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     private static final Pattern SAFE_FILE = Pattern.compile(
             "(pages\\.ndjson|tree\\.json|manifest\\.json|assets\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin)"
                     + "|" + CONVERTED_NAME + ")");
-    private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
     /** Standardgrenze aller Artefakte zusammen. */
     public static final long DEFAULT_MAX_TOTAL_BYTES = 20L * 1024 * 1024 * 1024;
@@ -114,6 +115,35 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.maxTotalBytes = maxTotalBytes;
+        recoverAll();
+    }
+
+    /** Beim Start: Artefakte, deren Austausch ein Absturz unterbrochen hat, zurück an ihren Platz. */
+    private void recoverAll() {
+        for (String exportId : exportIds(root.resolve(REPLACED))) {
+            try {
+                recover(exportId);
+            } catch (IOException | UncheckedIOException e) {
+                // Bleibt unter .replaced liegen; der nächste Start oder Austausch versucht es erneut.
+            }
+        }
+    }
+
+    /**
+     * Ein Absturz zwischen den beiden Umbenennungen eines Austauschs ließe das bisherige Artefakt nur unter
+     * {@code .replaced/} zurück: Fehlt das veröffentlichte, kommt es zurück; sonst ist die Sicherung überflüssig.
+     */
+    private void recover(String exportId) throws IOException {
+        Path backup = root.resolve(REPLACED).resolve(exportId);
+        if (!Files.isDirectory(backup)) {
+            return;
+        }
+        Path target = root.resolve(exportId);
+        if (Files.exists(target)) {
+            deleteRecursively(backup);
+        } else {
+            move(backup, target);
+        }
     }
 
     @Override
@@ -140,20 +170,34 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     @Override
     public Session begin(String exportId, ExportScope scope) {
+        return open(exportId, scope, false);
+    }
+
+    /**
+     * Schreibt das neue Artefakt neben dem bisherigen; erst {@link Session#publish} tauscht beide aus. Mit Bildern,
+     * Anhängen und Lese-Ansichten des bisherigen, das Bildermanifest als unvollständig.
+     */
+    @Override
+    public Session replace(String exportId, ExportScope scope) {
+        return open(exportId, scope, true);
+    }
+
+    private Session open(String exportId, ExportScope scope, boolean replacing) {
         requireSafe(exportId);
         Path target = root.resolve(exportId);
         Path work = root.resolve(INCOMPLETE).resolve(exportId);
         try {
-            if (Files.exists(target)) {
+            if (!replacing && Files.exists(target)) {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht");
             }
             deleteRecursively(work);
+            recover(exportId);
             long published = publishedBytes();
             if (published + inProgress.get() >= maxTotalBytes) {
                 throw new ExportStorageFullException(maxTotalBytes);
             }
             Files.createDirectories(work.resolve(RAW));
-            return new FileSession(exportId, scope, work, target, published);
+            return new FileSession(exportId, scope, work, target, published, replacing);
         } catch (IOException e) {
             throw new UncheckedIOException("Exportverzeichnis für " + exportId + " nicht anlegbar", e);
         }
@@ -239,7 +283,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         Path part = dir.resolve(ASSETS + ".part");
         try {
             try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
-                writeAssets(generator, manifest);
+                ExportFileJson.writeAssets(generator, manifest);
             }
             try {
                 Files.move(part, dir.resolve(ASSETS), StandardCopyOption.ATOMIC_MOVE,
@@ -264,16 +308,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         try {
             Files.createDirectories(file.getParent());
             try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
-                generator.writeStartObject();
-                generator.writeStringProperty("format", ExportReadingView.FORMAT);
-                generator.writeStringProperty("pageId", view.pageId());
-                generator.writeStringProperty("version", view.version());
-                generator.writeStringProperty("status", view.status().name());
-                generator.writeStringProperty("reason", view.reason());
-                generator.writeStringProperty("html", view.html());
-                generator.writeStringProperty("baseUri", view.baseUri());
-                generator.writeStringProperty("text", view.text());
-                generator.writeEndObject();
+                ExportFileJson.writeReadingView(generator, view);
             }
             try {
                 Files.move(part, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -292,14 +327,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             return Optional.empty();
         }
         try {
-            JsonNode node = json.readTree(file.toFile());
-            if (!ExportReadingView.FORMAT.equals(node.path("format").asString())
-                    || !pageId.equals(node.path("pageId").asString())) {
-                return Optional.empty();
-            }
-            return Optional.of(new ExportReadingView(pageId, optional(node, "version"),
-                    ExportReadingView.Status.valueOf(node.path("status").asString()), optional(node, "reason"),
-                    node.path("html").asString(), node.path("baseUri").asString(), node.path("text").asString()));
+            return ExportFileJson.readReadingView(json.readTree(file.toFile()), pageId);
         } catch (RuntimeException e) {
             return Optional.empty();
         }
@@ -314,92 +342,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         if (!Files.isRegularFile(file)) {
             return Optional.empty();
         }
-        JsonNode node = json.readTree(file.toFile());
-        if (!ExportAssetManifest.FORMAT.equals(node.path("format").asString())) {
-            return Optional.empty();
-        }
-        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
-        for (JsonNode entry : node.path("assets")) {
-            JsonNode ref = entry.path("reference");
-            ExportAssetManifest.Reference reference = new ExportAssetManifest.Reference(
-                    ExportAssetManifest.Kind.ofJson(ref.path("kind").asString()), optional(ref, "attachmentId"),
-                    optional(ref, "filename"), optional(ref, "src"),
-                    ref.hasNonNull("index") ? ref.path("index").asInt() : null, optional(ref, "source"));
-            entries.add(new ExportAssetManifest.Entry(entry.path("pageId").asString(), reference,
-                    optional(entry, "attachmentId"), optional(entry, "version"), optional(entry, "title"),
-                    optional(entry, "mediaType"), entry.path("size").asLong(), optional(entry, "sha256"),
-                    ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason"),
-                    rendition(entry.path("rendition"))));
-        }
-        return Optional.of(new ExportAssetManifest(node.path("complete").asBoolean(false), entries));
-    }
-
-    private static ExportAssetManifest.Rendition rendition(JsonNode node) {
-        if (!node.isObject()) {
-            return null;
-        }
-        return node.hasNonNull("sha256") ? ExportAssetManifest.Rendition.drawn(node.path("mediaType").asString(),
-                node.path("size").asLong(), node.path("sha256").asString())
-                : ExportAssetManifest.Rendition.notDrawn(node.path("problem").asString());
-    }
-
-    private static String optional(JsonNode node, String name) {
-        return node.hasNonNull(name) ? node.path(name).asString() : null;
-    }
-
-    private static void writeAssets(JsonGenerator generator, ExportAssetManifest manifest) {
-        generator.writeStartObject();
-        generator.writeStringProperty("format", ExportAssetManifest.FORMAT);
-        generator.writeBooleanProperty("complete", manifest.complete());
-        generator.writeName("assets");
-        generator.writeStartArray();
-        for (ExportAssetManifest.Entry entry : manifest.assets()) {
-            ExportAssetManifest.Reference ref = entry.reference();
-            generator.writeStartObject();
-            generator.writeStringProperty("pageId", entry.pageId());
-            generator.writeName("reference");
-            generator.writeStartObject();
-            generator.writeStringProperty("kind", ref.kind().json());
-            if (ref.attachmentId() != null) {
-                generator.writeStringProperty("attachmentId", ref.attachmentId());
-            }
-            if (ref.filename() != null) {
-                generator.writeStringProperty("filename", ref.filename());
-            }
-            if (ref.src() != null) {
-                generator.writeStringProperty("src", ref.src());
-            }
-            if (ref.index() != null) {
-                generator.writeNumberProperty("index", ref.index());
-            }
-            if (ref.source() != null) {
-                generator.writeStringProperty("source", ref.source());
-            }
-            generator.writeEndObject();
-            generator.writeStringProperty("attachmentId", entry.attachmentId());
-            generator.writeStringProperty("version", entry.version());
-            generator.writeStringProperty("title", entry.title());
-            generator.writeStringProperty("mediaType", entry.mediaType());
-            generator.writeNumberProperty("size", entry.size());
-            generator.writeStringProperty("sha256", entry.sha256());
-            generator.writeStringProperty("status", entry.status().name());
-            generator.writeStringProperty("reason", entry.reason());
-            if (entry.rendition() != null) {
-                generator.writeName("rendition");
-                generator.writeStartObject();
-                if (entry.rendition().drawn()) {
-                    generator.writeStringProperty("mediaType", entry.rendition().mediaType());
-                    generator.writeNumberProperty("size", entry.rendition().size());
-                    generator.writeStringProperty("sha256", entry.rendition().sha256());
-                } else {
-                    generator.writeStringProperty("problem", entry.rendition().problem());
-                }
-                generator.writeEndObject();
-            }
-            generator.writeEndObject();
-        }
-        generator.writeEndArray();
-        generator.writeEndObject();
+        return ExportFileJson.readAssets(json.readTree(file.toFile()));
     }
 
     @Override
@@ -450,10 +393,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     /** Dateiname der Payload einer Seite innerhalb von {@code raw/}; eindeutig je Seiten-ID. */
     static String rawFileName(String pageId, String mediaType) {
-        String base = SAFE_PAGE_ID.matcher(pageId).matches()
-                ? pageId
-                : "id-" + sha256Hex(pageId.getBytes(StandardCharsets.UTF_8)).substring(0, 40);
-        return base + ("application/json".equals(mediaType) ? ".json" : ".bin");
+        return ExportFileJson.rawFileName(pageId, mediaType);
     }
 
     /** Datei der Lese-Ansicht einer Seite innerhalb von {@code views/}; eindeutig je Seiten-ID. */
@@ -483,9 +423,13 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final List<ExportArtifact.File> convertedFiles = new ArrayList<>();
         private final List<Conversion> conversions = new ArrayList<>();
         private boolean published;
+        private final boolean replacing;
+        /** Die geschriebenen Seiten; beim Austausch wandern nur ihre Bilder und Lese-Ansichten mit. */
+        private final java.util.Set<String> pageIds = new java.util.HashSet<>();
 
-        FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin)
-                throws IOException {
+        FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin,
+                    boolean replacing) throws IOException {
+            this.replacing = replacing;
             this.exportId = exportId;
             this.scope = scope;
             this.work = work;
@@ -515,6 +459,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalArgumentException("Kopfdaten und Snapshot gehören zu verschiedenen Seiten");
             }
             String pageId = header.key().pageId();
+            pageIds.add(pageId);
             NativePayload payload = snapshot.payload();
             byte[] bytes = payload.bytes();
             String rawName = RAW + "/" + rawFileName(pageId, payload.mediaType());
@@ -586,10 +531,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 allWarnings.addAll(warnings);
                 writeJson(MANIFEST, generator -> writeManifest(generator, summary, allWarnings, files, conversions));
                 Files.createDirectories(root);
-                try {
-                    Files.move(work, target, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(work, target);
+                if (replacing && Files.isDirectory(target)) {
+                    swap();
+                } else {
+                    move(work, target);
                 }
                 published = true;
                 release();
@@ -598,6 +543,47 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht", e);
             } catch (IOException e) {
                 throw new UncheckedIOException("Export " + exportId + " nicht veröffentlichbar", e);
+            }
+        }
+
+        /**
+         * Setzt das neue Artefakt an die Stelle des bisherigen: Bilder, Anhänge und Lese-Ansichten wandern mit, dann
+         * zwei Umbenennungen. Scheitert die erste, bleibt das bisherige unberührt; scheitert die zweite, kommt es
+         * zurück.
+         */
+        private void swap() throws IOException {
+            // Nur für Seiten, die im neuen Artefakt stehen: was nicht mehr lesbar oder weg ist, nimmt nichts mit.
+            for (String pageId : pageIds) {
+                Path view = target.resolve(viewFileName(pageId));
+                if (Files.isRegularFile(view)) {
+                    Path copy = work.resolve(viewFileName(pageId));
+                    Files.createDirectories(copy.getParent());
+                    Files.copy(view, copy, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            Optional<ExportAssetManifest> assets = assets(exportId);
+            if (assets.isPresent()) {
+                // Neue Seiten haben noch keine Bilder und Anhänge: unvollständig, bis die Aufträge sie beschafft haben.
+                List<ExportAssetManifest.Entry> kept = assets.get().assets().stream()
+                        .filter(entry -> pageIds.contains(entry.pageId())).toList();
+                try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(work.resolve(ASSETS)))) {
+                    ExportFileJson.writeAssets(generator, new ExportAssetManifest(false, false, kept));
+                }
+            }
+            Path backup = root.resolve(REPLACED).resolve(exportId);
+            deleteRecursively(backup);
+            Files.createDirectories(backup.getParent());
+            move(target, backup);
+            try {
+                move(work, target);
+            } catch (IOException e) {
+                move(backup, target);
+                throw e;
+            }
+            try {
+                deleteRecursively(backup);
+            } catch (IOException e) {
+                // Bleibt liegen, bis der nächste Austausch desselben Exports es entfernt; zählt nicht als Export.
             }
         }
 
@@ -715,6 +701,15 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             generator.writeEndObject();
         }
         generator.writeEndArray();
+        if (!summary.unfetched().isEmpty()) {
+            // Lesbare Seiten, deren Abruf beim Einlesen scheiterte; „Nur Fehler neu versuchen“ lädt sie nach.
+            generator.writeName("unfetched");
+            generator.writeStartArray();
+            for (String pageId : summary.unfetched()) {
+                generator.writeString(pageId);
+            }
+            generator.writeEndArray();
+        }
         generator.writeName("warnings");
         generator.writeStartArray();
         for (String warning : warnings) {
@@ -726,6 +721,36 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     private static String text(Instant instant) {
         return PageJson.text(instant);
+    }
+
+    private static void move(Path from, Path to) throws IOException {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(from, to);
+        }
+    }
+
+    @Override
+    public Optional<Set<String>> retryPages(String exportId) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return Optional.empty();
+        }
+        Path manifest = root.resolve(exportId).resolve(MANIFEST);
+        if (!Files.isRegularFile(manifest)) {
+            return Optional.empty();
+        }
+        JsonNode node = json.readTree(manifest.toFile());
+        Set<String> pageIds = new java.util.TreeSet<>();
+        for (JsonNode pageId : node.path("unfetched")) {
+            pageIds.add(pageId.asString());
+        }
+        for (JsonNode failure : node.path("failures")) {
+            if (failure.hasNonNull("pageId")) {
+                pageIds.add(failure.path("pageId").asString());
+            }
+        }
+        return Optional.of(Set.copyOf(pageIds));
     }
 
     private static void deleteRecursively(Path path) throws IOException {
@@ -749,10 +774,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 nicht verfügbar", e);
         }
-    }
-
-    private static String sha256Hex(byte[] bytes) {
-        return HexFormat.of().formatHex(sha256().digest(bytes));
     }
 
     @FunctionalInterface

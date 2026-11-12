@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
+import com.aresstack.spaceharvester.application.assets.Sha256CheckedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -16,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -126,27 +126,77 @@ public class FileSystemAssetStore implements AssetStore {
                     throw e;
                 }
             }
-            if (asset.version() == null) {
-                return;
-            }
-            Properties p = new Properties();
-            p.setProperty("sourceId", asset.sourceId());
-            p.setProperty("pageId", asset.pageId());
-            p.setProperty("attachmentId", asset.attachmentId());
-            p.setProperty("version", asset.version());
-            p.setProperty("title", asset.title());
-            p.setProperty("mediaType", asset.mediaType());
-            p.setProperty("kind", asset.kind().name());
-            p.setProperty("size", Long.toString(asset.size()));
-            p.setProperty("sha256", asset.sha256());
-            p.setProperty("retrievedAt", asset.retrievedAt().toString());
-            var text = new java.io.StringWriter();
-            p.store(text, null);
-            write(entry(asset.sourceId(), asset.attachmentId(), asset.version()),
-                    text.toString().getBytes(StandardCharsets.UTF_8));
+            putEntry(asset);
         } catch (IOException | UncheckedIOException e) {
             throw new AssetStoreException("Asset nicht ablegbar", e);
         }
+    }
+
+    /** Unter {@code staging/} neben den Inhalten, damit {@link #putFile} sie ohne Kopie verschieben kann. */
+    @Override
+    public Path stagingFile() throws IOException {
+        Path staging = root.resolve("staging");
+        Files.createDirectories(staging);
+        return Files.createTempFile(staging, "asset-", ".part");
+    }
+
+    /**
+     * Legt den Inhalt aus {@code file} ab, ohne ihn in den Speicher zu laden: Hash und Größe werden beim Lesen geprüft,
+     * dann wird die Datei verschoben. Gibt es den Inhalt schon, wird sie nur gelöscht.
+     */
+    @Override
+    public void putFile(Asset asset, Path file) {
+        try {
+            if (!HEX_SHA.matcher(asset.sha256()).matches() || !asset.sha256().equals(sha256(file))
+                    || asset.size() != Files.size(file)) {
+                throw new IllegalArgumentException("sha256 oder size passen nicht zum Inhalt");
+            }
+            Path blob = blob(asset.sha256());
+            if (!Files.isRegularFile(blob) || Files.size(blob) != asset.size()) {
+                reserve(asset.size());
+                try {
+                    Files.createDirectories(blob.getParent());
+                    try {
+                        Files.move(file, blob, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (AtomicMoveNotSupportedException e) {
+                        Files.move(file, blob, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } catch (IOException | RuntimeException e) {
+                    release(asset.size());
+                    throw e;
+                }
+            }
+            putEntry(asset);
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
+        } finally {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException e) {
+                // Rest unter staging/; der nächste Start räumt ihn nicht auf, schadet aber nicht.
+            }
+        }
+    }
+
+    private void putEntry(Asset asset) throws IOException {
+        if (asset.version() == null) {
+            return;
+        }
+        Properties p = new Properties();
+        p.setProperty("sourceId", asset.sourceId());
+        p.setProperty("pageId", asset.pageId());
+        p.setProperty("attachmentId", asset.attachmentId());
+        p.setProperty("version", asset.version());
+        p.setProperty("title", asset.title());
+        p.setProperty("mediaType", asset.mediaType());
+        p.setProperty("kind", asset.kind().name());
+        p.setProperty("size", Long.toString(asset.size()));
+        p.setProperty("sha256", asset.sha256());
+        p.setProperty("retrievedAt", asset.retrievedAt().toString());
+        var text = new java.io.StringWriter();
+        p.store(text, null);
+        write(entry(asset.sourceId(), asset.attachmentId(), asset.version()),
+                text.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     @Override
@@ -171,43 +221,13 @@ public class FileSystemAssetStore implements AssetStore {
         if (!HEX_SHA.matcher(asset.sha256()).matches()) {
             throw new AssetStoreException("Ungültiger Hash", null);
         }
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
         InputStream in;
         try {
             in = Files.newInputStream(blob(asset.sha256()));
         } catch (IOException e) {
             throw new AssetStoreException("Asset-Inhalt nicht lesbar", e);
         }
-        return new DigestInputStream(in, digest) {
-            private boolean checked;
-
-            @Override
-            public int read() throws IOException {
-                int b = super.read();
-                return b < 0 ? end(b) : b;
-            }
-
-            @Override
-            public int read(byte[] bytes, int off, int len) throws IOException {
-                int n = super.read(bytes, off, len);
-                return n < 0 ? end(n) : n;
-            }
-
-            private int end(int eof) throws IOException {
-                if (!checked) {
-                    checked = true;
-                    if (!asset.sha256().equals("sha256:" + HexFormat.of().formatHex(digest.digest()))) {
-                        throw new IOException("Asset-Inhalt passt nicht zu seinem Hash");
-                    }
-                }
-                return eof;
-            }
-        };
+        return new Sha256CheckedInputStream(in, asset.sha256(), "Asset-Inhalt passt nicht zu seinem Hash");
     }
 
     @Override
@@ -446,6 +466,23 @@ public class FileSystemAssetStore implements AssetStore {
         } finally {
             Files.deleteIfExists(temp);
         }
+    }
+
+    private static String sha256(Path file) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        try (InputStream in = Files.newInputStream(file)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 
     private static String sha256(byte[] content) {

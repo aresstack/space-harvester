@@ -5,6 +5,7 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -17,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -113,7 +115,8 @@ class ExportMediaSignInTest {
         }
         assertThat(files.keySet()).containsExactly("pages.json", "assets.json", "attachments.json",
                 "assets/100/ablauf.drawio",
-                "assets/100/ablauf.graph.json", "assets/100/ablauf.svg", "assets/100/foto.png");
+                "assets/100/ablauf.graph.json", "assets/100/ablauf.svg", "assets/100/foto.png", "raw/100.json", "tree.json",
+                "manifest.json");
         assertThat(files.get("assets/100/ablauf.drawio")).isEqualTo(MXFILE);
         assertThat(files.get("assets/100/foto.png")).isEqualTo(PNG);
         String manifest = new String(files.get("assets.json"), StandardCharsets.UTF_8);
@@ -244,7 +247,7 @@ class ExportMediaSignInTest {
 
     @Test
     @Timeout(value = 20, unit = TimeUnit.SECONDS)
-    void declinedTheJobFinishesWithoutTheFilesAndAsksOnlyOnce() throws Exception {
+    void declinedTheJobPausesInsteadOfCountingTheFilesAsFailedAndAsksOnlyOnce() throws Exception {
         Source source = new Source(true);
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(5), Clock.systemUTC());
         Setup setup = setup(source, signIns);
@@ -257,17 +260,23 @@ class ExportMediaSignInTest {
         worker.join(10_000);
 
         assertThat(signIns.pending()).isEmpty();
+        // Ohne Anmeldung hält der Auftrag an; die übrigen Dateien zählen nicht als Fehler.
+        JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(collection.state()).isEqualTo(JobState.PAUSED);
+        assertThat(collection.pauseReason()).isEqualTo(PauseReason.SIGN_IN_REQUIRED);
+        assertThat(collection.lifecycle().key()).isEqualTo("PAUSED_SIGN_IN_REQUIRED");
+        assertThat(collection.progress().failed()).isZero();
         ExportAssetManifest manifest = setup.writer.assets(setup.export.id()).orElseThrow();
         assertThat(manifest.complete()).isFalse();
-        assertThat(manifest.assets()).filteredOn(e -> e.status() == ExportAssetManifest.Status.SIGN_IN_REQUIRED)
-                .hasSizeGreaterThanOrEqualTo(2);
         assertThat(signIns.submit(request.id(), "1".toCharArray())).isEqualTo(SignInRequest.Answer.GONE);
 
-        // Später nachholen: ein neuer Auftrag für denselben Export.
+        // Nach der Anmeldung im selben Eintrag fortsetzen.
         source.locked = false;
-        assertThat(setup.conversions.collectImages(setup.export.id(), "client-a")).isPresent();
+        assertThat(setup.conversions.resumeImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
         drain();
+        assertThat(jobs.status(collection.id()).state()).isEqualTo(JobState.COMPLETED);
         assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
     }
 
     @Test
@@ -276,6 +285,8 @@ class ExportMediaSignInTest {
         Source source = new Source(true);
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(5), Clock.systemUTC());
         jobs = jobs(3); // zwei Bilder-Aufträge gleichzeitig
+        // Nur Bilderaufträge: „Anhänge beschaffen“ ist ein eigener Auftrag und belegte sonst den zweiten Platz.
+        settings = new ExportSettings(false, ExportSettings.DEFAULT_MEDIA_TYPES, ExportSettings.DEFAULT_MAX_SIZE);
         Setup first = setup(source, signIns, page("confluence", "DEV", "100", null), true);
         JobStatus secondExport = first.exports.start("confluence", "DEV", "client-a", List.of("json"));
         Runnable firstExport = poll();
@@ -335,8 +346,12 @@ class ExportMediaSignInTest {
         assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
 
         source.listingDown = true;
-        assertThat(setup.conversions.collectImages(setup.export.id(), "client-a")).isPresent();
+        JobStatus again = setup.conversions.collectImages(setup.export.id(), "client-a").orElseThrow();
         drain();
+
+        // Nicht erreichbar: der Auftrag hält an, statt die übrigen Dateien als Fehler zu zählen.
+        assertThat(jobs.status(again.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(jobs.status(again.id()).pauseReason()).isEqualTo(PauseReason.CONNECTION_LOST);
 
         ExportAssetManifest manifest = setup.writer.assets(setup.export.id()).orElseThrow();
         assertThat(manifest.complete()).isFalse();
@@ -368,6 +383,9 @@ class ExportMediaSignInTest {
         return setup(source, signIns, page("confluence", "DEV", "100", null));
     }
 
+    /** Wirksame Export-Einstellung je Lauf; Standard mit Anhängen. */
+    private ExportSettings settings = ExportSettings.DEFAULT;
+
     private Setup setup(Source source, SignInRequests signIns, PageSnapshot page100) {
         return setup(source, signIns, page100, false);
     }
@@ -390,7 +408,7 @@ class ExportMediaSignInTest {
                 Clock.systemUTC(), null, null, null, com.aresstack.spaceharvester.application.assets.LargeFileGate
                 .defaults(), assetsSignIns ? signIns : null);
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
-                (owner, sourceId) -> true, signIns);
+                (owner, sourceId) -> true, signIns, () -> settings);
         Exports exports = new Exports(jobs, cache, writer, converters, Clock.systemUTC());
         exports.onPublished(images::start);
         ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);

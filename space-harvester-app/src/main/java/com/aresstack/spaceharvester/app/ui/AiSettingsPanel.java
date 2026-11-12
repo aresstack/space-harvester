@@ -1230,8 +1230,8 @@ final class AiSettingsPanel {
     }
 
     private void removeKey() {
-        if (!Dialogs.confirm(root, "API-Key entfernen?", "Ohne API-Key bleibt die semantische Suche aus.",
-                "Entfernen")) {
+        if (!Dialogs.confirm(root, "API-Key entfernen?", "API-Key wirklich entfernen? Ohne API-Key "
+                + "bleibt die semantische Suche aus.")) {
             return;
         }
         Background.execute(() -> context.aiVault().remove(KEY_ID), () -> {

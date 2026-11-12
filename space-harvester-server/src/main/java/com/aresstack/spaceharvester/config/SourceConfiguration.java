@@ -41,10 +41,13 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(SpaceHarvesterProperties.class)
 class SourceConfiguration {
 
-    /** Quellentyp {@code confluence}. Weitere Typen kommen als weitere {@link SourceAdapter}-Beans dazu (#18). */
+    /**
+     * Quellentyp {@code confluence}, mit den Wiederholungen aus {@code space-harvester.jobs.retry} (ADR 0025). Weitere
+     * Typen kommen als weitere {@link SourceAdapter}-Beans dazu (#18).
+     */
     @Bean
-    ConfluenceSourceAdapter confluenceSourceAdapter() {
-        return new ConfluenceSourceAdapter();
+    ConfluenceSourceAdapter confluenceSourceAdapter(JobsProperties jobs) {
+        return new ConfluenceSourceAdapter().withRetry(jobs.retry().toSettings());
     }
 
     /**

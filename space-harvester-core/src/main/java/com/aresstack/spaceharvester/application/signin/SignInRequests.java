@@ -55,6 +55,8 @@ public class SignInRequests {
     private final Clock clock;
     private final Map<String, Pending> bySource = new HashMap<>();
     private final Map<String, Instant> unlockedAt = new HashMap<>();
+    /** Zählt je Quelle, wie oft eine Anforderung erledigt wurde (Code angenommen oder abgelehnt). */
+    private final Map<String, Long> settled = new HashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
 
     /** @param wait wie lange ein Auftrag höchstens auf den Code wartet; {@link Duration#ZERO}: nie */
@@ -161,6 +163,15 @@ public class SignInRequests {
     public synchronized boolean unlockedSince(String sourceId, Instant since) {
         Instant unlocked = unlockedAt.get(sourceId);
         return unlocked != null && since != null && !unlocked.isBefore(since.minus(RECENT));
+    }
+
+    /**
+     * Wie oft eine Anforderung der Quelle erledigt wurde, mit angenommenem Code oder abgelehnt. Ändert sich der Wert
+     * nicht, gilt eine zuletzt gesehene Zwei-Faktor-Seite der Quelle weiter (#571); danach fragt ein Abruf die Quelle
+     * wieder.
+     */
+    public synchronized long settlements(String sourceId) {
+        return settled.getOrDefault(sourceId, 0L);
     }
 
     /**
@@ -288,7 +299,32 @@ public class SignInRequests {
      * {@link SignInRequest.Answer#FAILED} nennt {@link SignInRequest#failure()} der Anforderung die Ursache (#571).
      */
     public SignInRequest.Answer submit(String requestId, char[] code) {
+        return submit(requestId, code, null, null);
+    }
+
+    /**
+     * Erster Schritt bei einem Token ({@link SignInRequest#asksForLogin()}), oder Neuanmeldung, wenn die Web-Sitzung
+     * abgelaufen ist ({@link SignInRequest#canRestartLogin()}): meldet eine neue Web-Sitzung nur mit Benutzer und
+     * Passwort an, ohne Code. Danach fragt die Anforderung den Code dieser Sitzung ab
+     * ({@link SignInRequest.Answer#NEXT_STEP}). Überschreibt {@code password}.
+     */
+    public SignInRequest.Answer beginWebLogin(String requestId, String username, char[] password) {
+        Objects.requireNonNull(username, "username");
+        Objects.requireNonNull(password, "password");
+        return submit(requestId, new char[0], username, password);
+    }
+
+    /**
+     * Wie {@link #submit(String, char[])}, bei {@link SignInRequest#asksForLogin()} mit Benutzer und Passwort nur für
+     * dieses Absenden (#571). Überschreibt {@code code} und {@code password} danach; beide erscheinen nie in
+     * Protokoll oder {@link SignInRequest#failure()}.
+     *
+     * @param username Benutzer oder {@code null}
+     * @param password Passwort oder {@code null}
+     */
+    public SignInRequest.Answer submit(String requestId, char[] code, String username, char[] password) {
         Objects.requireNonNull(code, "code");
+        boolean loginOnly = code.length == 0 && username != null && password != null;
         try {
             Pending pending;
             synchronized (this) {
@@ -296,6 +332,13 @@ public class SignInRequests {
             }
             if (pending == null) {
                 return SignInRequest.Answer.GONE;
+            }
+            // Erste Zeile des Absendens: fehlt danach jede weitere, steht im Protokoll, wo es hängt (#571).
+            if (loginOnly) {
+                LOG.log(System.Logger.Level.INFO, "Web-Anmeldung für Quelle {0} wird gestartet", pending.sourceId);
+            } else {
+                LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} wird gesendet{1}", pending.sourceId,
+                        username == null || password == null ? "" : " (mit Benutzeranmeldung)");
             }
             synchronized (pending.sending) {
                 SignInChallenge challenge;
@@ -309,10 +352,11 @@ public class SignInRequests {
                 }
                 SignInChallenge next;
                 try {
-                    next = challenge.submit(code);
+                    next = username == null || password == null ? challenge.submit(code)
+                            : challenge.submit(code, username, password);
                 } catch (SourceAccessException e) {
                     sent(pending);
-                    failed(pending, challenge, e, code, "Einmalcode");
+                    failed(pending, challenge, e, code, password, "Einmalcode");
                     return SignInRequest.Answer.FAILED;
                 } catch (RuntimeException | Error e) {
                     sent(pending);
@@ -324,6 +368,7 @@ public class SignInRequests {
                     if (next == null) {
                         pending.state = State.UNLOCKED;
                         unlockedAt.put(pending.sourceId, clock.instant());
+                        settled.merge(pending.sourceId, 1L, Long::sum);
                         if (bySource.get(pending.sourceId) == pending) {
                             bySource.remove(pending.sourceId);
                         }
@@ -333,13 +378,22 @@ public class SignInRequests {
                         pending.challenge = next;
                     }
                 }
-                LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} {1}", pending.sourceId,
-                        next == null ? "angenommen" : "nicht angenommen");
+                if (loginOnly) {
+                    LOG.log(System.Logger.Level.INFO, "Web-Anmeldung für Quelle {0}: {1}", pending.sourceId,
+                            next == null ? "angenommen" : "Einmalcode für die neue Sitzung erforderlich");
+                } else {
+                    LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} {1}", pending.sourceId,
+                            next == null ? "angenommen" : "nicht angenommen");
+                }
                 changed();
-                return next == null ? SignInRequest.Answer.ACCEPTED : SignInRequest.Answer.REJECTED;
+                return next == null ? SignInRequest.Answer.ACCEPTED
+                        : loginOnly ? SignInRequest.Answer.NEXT_STEP : SignInRequest.Answer.REJECTED;
             }
         } finally {
             Arrays.fill(code, '\0');
+            if (password != null) {
+                Arrays.fill(password, '\0');
+            }
         }
     }
 
@@ -372,7 +426,7 @@ public class SignInRequests {
                 next = challenge.resend();
             } catch (SourceAccessException e) {
                 sent(pending);
-                failed(pending, challenge, e, null, "Neuer Einmalcode");
+                failed(pending, challenge, e, null, null, "Neuer Einmalcode");
                 throw e;
             } catch (RuntimeException | Error e) {
                 sent(pending);
@@ -395,11 +449,13 @@ public class SignInRequests {
      * Merkt sich die bereinigte Ursache an der Anforderung und protokolliert Quelle, Art und Typ der innersten
      * Ursache, nie Meldungstexte oder den Code.
      *
-     * @param code der gesendete Code oder {@code null}; taucht er im Text auf, wird er entfernt
+     * @param code     der gesendete Code oder {@code null}; taucht er im Text auf, wird er entfernt
+     * @param password das mitgesendete Passwort oder {@code null}; ebenso
      */
     private void failed(Pending pending, SignInChallenge challenge, SourceAccessException e, char[] code,
-                        String what) {
-        String failure = SignInFailures.without(SignInFailures.describe(e, challenge.service()), code);
+                        char[] password, String what) {
+        String failure = SignInFailures.without(SignInFailures.without(SignInFailures.describe(e,
+                challenge.service()), code), password);
         LOG.log(System.Logger.Level.WARNING, "{0} für Quelle {1} nicht gesendet ({2}, {3})", what, pending.sourceId,
                 e.reason(), SignInFailures.rootType(e));
         synchronized (this) {
@@ -417,6 +473,7 @@ public class SignInRequests {
             }
             pending.state = State.DECLINED;
             bySource.remove(pending.sourceId);
+            settled.merge(pending.sourceId, 1L, Long::sum);
             notifyAll();
         }
         changed();
@@ -495,7 +552,8 @@ public class SignInRequests {
 
         SignInRequest view() {
             return new SignInRequest(id, sourceId, challenge.service(), challenge.title(), challenge.message(),
-                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure);
+                    challenge.error(), challenge.resendAvailable(), List.copyOf(jobs), since, failure,
+                    challenge.asksForLogin(), challenge.canRestartLogin());
         }
     }
 }

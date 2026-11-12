@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app;
 
+import com.aresstack.spaceharvester.app.logging.ConsoleLogging;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.AppContext;
@@ -22,6 +23,9 @@ public final class SpaceHarvesterApp {
     }
 
     public static void main(String[] args) throws Exception {
+        // Vor jeder Meldung: java.util.logging und System.Logger durch Logback, das Terminal still, bis die Einstellung
+        // „Terminal-Ausgabe“ gelesen ist; die Protokolldatei bekommt alles.
+        ConsoleLogging.install();
         // Das JDK liest die Freigabe von BASIC im HTTPS-Tunnel nur beim ersten Verbindungsaufbau; eine später (nach
         // geänderten Einstellungen) eingerichtete Proxy-Anmeldung braucht sie deshalb schon jetzt (#189).
         ProxyAuthenticator.allowBasicTunneling();

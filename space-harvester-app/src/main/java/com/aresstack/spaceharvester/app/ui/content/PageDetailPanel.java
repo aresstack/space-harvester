@@ -61,7 +61,6 @@ import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -150,6 +149,8 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
+    /** Die Hauptreiter als quadratische Symbolknöpfe für die Werkzeugleiste unten ({@link #tabIcons()}). */
+    private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
     /** Inhalt des Unterreiters „Aussagen“; bis {@link #statementsTab(JComponent)} ein Hinweis. */
@@ -182,6 +183,31 @@ public final class PageDetailPanel extends JPanel {
     private boolean referencesLoaded;
     private boolean imagesLoaded;
     private final ReadingPane readingPane = new ReadingPane();
+    /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
+    static final int MOUSE_BACK_BUTTON = 4;
+    /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
+    static final int MOUSE_FORWARD_BUTTON = 5;
+    /** Verlauf wie im Lesebereich des EAC: zuvor gezeigte Seiten und die per Zurück verlassenen. */
+    private final java.util.Deque<PageKey> backStack = new java.util.ArrayDeque<>();
+    private final java.util.Deque<PageKey> forwardStack = new java.util.ArrayDeque<>();
+    /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
+    private boolean navigating;
+    /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
+    private int linkRequest;
+    /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
+    private String pendingAnchor;
+    private final com.aresstack.spaceharvester.app.ui.IconButton backButton = new com.aresstack.spaceharvester.app.ui
+            .IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronLeft(),
+            "Zurück (Maustaste Zurück)");
+    private final com.aresstack.spaceharvester.app.ui.IconButton forwardButton = new com.aresstack.spaceharvester.app
+            .ui.IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronRight(),
+            "Vor (Maustaste Vor)");
+    /** Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, beim Loslassen wie im EAC. */
+    private final java.awt.event.AWTEventListener mouseNavigation = event -> {
+        if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED) {
+            mouseButton(mouse.getButton(), mouse.getComponent());
+        }
+    };
     private List<Enrichments.View> views = List.of();
     private ReaderDocument shown;
     /** Zählt Lade- und Neuberechnungsaufträge; nur das Ergebnis des letzten wird angezeigt. */
@@ -286,6 +312,16 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced);
+        // Die Hauptreiter wandern als Symbolknöpfe mittig in die Werkzeugleiste unten (wie die Kopfzeile in AskAI);
+        // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
+        java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
+        icons.put(READING, PageTabIcons.reading());
+        icons.put(READ, PageTabIcons.text());
+        icons.put(PROPERTIES, PageTabIcons.properties());
+        icons.put(ATTACHMENTS, PageTabIcons.attachments());
+        icons.put(ANALYSES, PageTabIcons.analyses());
+        icons.put(ADVANCED, PageTabIcons.advanced());
+        tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
             loadVisible();
@@ -329,6 +365,10 @@ public final class PageDetailPanel extends JPanel {
         previewAsset.addActionListener(e -> openAttachment());
         recompute.addActionListener(e -> recompute());
         recomputeReader.addActionListener(e -> recompute());
+        readingPane.onLink(this::linkActivated);
+        backButton.addActionListener(e -> back());
+        forwardButton.addActionListener(e -> forward());
+        updateNavigation();
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
@@ -363,6 +403,8 @@ public final class PageDetailPanel extends JPanel {
         heading.add(title);
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
+        // Zurück und Vor wie im Browser vor dem Titel.
+        titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
         titleRow.add(heading, BorderLayout.CENTER);
         titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
         header.add(titleRow, BorderLayout.NORTH);
@@ -414,6 +456,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.clear();
         setActionsEnabled(false);
         cards.show(deck, EMPTY);
+        tabIcons.setVisible(false);
     }
 
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
@@ -458,6 +501,7 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
+        remember(sourceId, pageId);
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
@@ -471,6 +515,7 @@ public final class PageDetailPanel extends JPanel {
         references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
+        tabIcons.setVisible(true);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
@@ -648,6 +693,8 @@ public final class PageDetailPanel extends JPanel {
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
         readerPage.contentChanged();
+        // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
+        readingPane.setNavigation(readerPage.sky().navigation(), reader.getText());
         acronymHint.setText(document.hint(live));
         recomputeReader.setVisible(recomputeOffered(document, live));
     }
@@ -930,12 +977,18 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         Background.run(() -> {
             var view = runtime.workspace().readingView(source, id, false);
-            return ReadingPane.prepare(view, image -> image(runtime, view, image),
-                    diagram -> runtime.workspace().mermaid(view, diagram).orElse(null));
+            return ReadingPane.prepare(view, image -> runtime.workspace().viewDiagramVector(view, image),
+                    image -> image(runtime, view, image),
+                    diagram -> runtime.workspace().mermaid(view, diagram).orElse(null), ReadingPane.screenScale());
         }, prepared -> {
             if (shown == page) {
                 readingPane.show(prepared);
                 renderDetails();
+                String anchor = pendingAnchor;
+                pendingAnchor = null;
+                if (anchor != null) {
+                    javax.swing.SwingUtilities.invokeLater(() -> readingPane.scrollToAnchor(anchor));
+                }
             }
         }, error -> {
             if (shown != page) {
@@ -944,6 +997,151 @@ public final class PageDetailPanel extends JPanel {
             readingLoaded = false;
             readingPane.clear("Leseansicht nicht geladen: " + Problems.describe(error).title());
         });
+    }
+
+    // ------------------------------------------------------------------ Links, Zurück/Vor
+
+    /**
+     * Ein Link der Leseansicht (wie {@code KnowledgeReadingController.pageLinkActivated} im EAC): Zeigt er auf denselben
+     * Server wie die Seite und löst die Quelle ihn als eigene Seite auf, öffnet diese hier (ein Anker rollt danach
+     * dorthin); alles andere, auch ein Fehler beim Auflösen, öffnet im Browser.
+     */
+    void linkActivated(java.net.URL url) {
+        AppRuntime runtime = context.runtime();
+        java.net.URI known = page == null ? null : page.header().metadata().url();
+        String source = sourceId;
+        if (runtime == null || source == null || !sameDomain(url, known)) {
+            ReadingPane.browse(url);
+            return;
+        }
+        String address = url.toString();
+        String anchor = url.getRef();
+        int current = request;
+        int click = ++linkRequest;
+        Background.run(() -> runtime.workspace().pageByUrl(source, address, false), found -> {
+            if (current != request || click != linkRequest) {
+                return; // inzwischen eine andere Seite gewählt oder ein anderer Link geklickt
+            }
+            String target = found.header().metadata().pageId();
+            if (target.equals(pageId)) {
+                readingPane.scrollToAnchor(anchor);
+            } else {
+                load(source, target, false);
+                pendingAnchor = anchor;
+            }
+        }, error -> {
+            if (click == linkRequest) {
+                ReadingPane.browse(url);
+            }
+        });
+    }
+
+    /** Ob {@code url} auf dieselbe Domain zeigt wie die bekannte Adresse der Seite (ohne „www.“, Groß/klein egal). */
+    static boolean sameDomain(java.net.URL url, java.net.URI known) {
+        if (url == null || known == null || known.getHost() == null || url.getHost() == null) {
+            return false;
+        }
+        return host(url.getHost()).equals(host(known.getHost()));
+    }
+
+    private static String host(String host) {
+        String lower = host.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("www.") ? lower.substring(4) : lower;
+    }
+
+    /** Merkt die gezeigte Seite im Verlauf, bevor eine andere geladen wird; Zurück/Vor selbst merken nichts. */
+    private void remember(String nextSource, String nextPage) {
+        pendingAnchor = null;
+        if (navigating || nextSource.equals(this.sourceId) && nextPage.equals(this.pageId)) {
+            return;
+        }
+        // Eine neu geöffnete Seite verwirft den Vor-Verlauf, auch wenn gerade keine Seite gezeigt wird.
+        if (this.sourceId != null && this.pageId != null) {
+            backStack.push(new PageKey(this.sourceId, this.pageId));
+        }
+        forwardStack.clear();
+        updateNavigation();
+    }
+
+    /** Zurück zur zuvor gezeigten Seite; die aktuelle kommt in den Vor-Verlauf. */
+    public boolean back() {
+        return step(backStack, forwardStack);
+    }
+
+    /** Vor zur zuletzt per Zurück verlassenen Seite. */
+    public boolean forward() {
+        return step(forwardStack, backStack);
+    }
+
+    public boolean canGoBack() {
+        return !backStack.isEmpty();
+    }
+
+    public boolean canGoForward() {
+        return !forwardStack.isEmpty();
+    }
+
+    private boolean step(java.util.Deque<PageKey> from, java.util.Deque<PageKey> to) {
+        if (from.isEmpty() || context.runtime() == null) {
+            return false;
+        }
+        PageKey next = from.pop();
+        if (sourceId != null && pageId != null) {
+            to.push(new PageKey(sourceId, pageId));
+        }
+        navigating = true;
+        try {
+            load(next.sourceId(), next.pageId(), false);
+        } finally {
+            navigating = false;
+        }
+        updateNavigation();
+        return true;
+    }
+
+    private void updateNavigation() {
+        backButton.setEnabled(canGoBack());
+        forwardButton.setEnabled(canGoForward());
+    }
+
+    /**
+     * Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, wie im Lesebereich des EAC.
+     *
+     * @return ob die Taste behandelt wurde
+     */
+    boolean mouseButton(int button, java.awt.Component source) {
+        if (source == null || !javax.swing.SwingUtilities.isDescendingFrom(source, this)
+                || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
+            return false;
+        }
+        if (button == MOUSE_BACK_BUTTON) {
+            back();
+        } else {
+            forward();
+        }
+        return true;
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(mouseNavigation, java.awt.AWTEvent.MOUSE_EVENT_MASK);
+    }
+
+    @Override
+    public void removeNotify() {
+        java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseNavigation);
+        super.removeNotify();
+    }
+
+    /** Der Zurück-Knopf (Tests). */
+    javax.swing.JButton backButton() {
+        return backButton;
+    }
+
+    /** Der Vor-Knopf (Tests). */
+    javax.swing.JButton forwardButton() {
+        return forwardButton;
     }
 
     /** Lädt den Pfad der angezeigten Seite; ohne Seitenbaum der Quelle bleibt er leer. */
@@ -1175,11 +1373,33 @@ public final class PageDetailPanel extends JPanel {
         String id = pageId;
         feedback.working("Anhang wird geladen …");
         Background.run(() -> {
-            byte[] content = runtime.workspace().assetContent(source, id, entry.attachment().attachmentId()).content();
-            Files.write(target.toPath(), content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE);
-            return content.length;
+            // Als Strom, ohne die ganze Datei in den Speicher zu laden (#571).
+            try (com.aresstack.spaceharvester.application.assets.Assets.AssetStream stream =
+                         runtime.workspace().assetStream(source, id, entry.attachment().attachmentId())) {
+                return writeReplacing(stream.content(), target.toPath());
+            }
         }, bytes -> feedback.success("Gespeichert: " + target + " (" + Texts.bytes(bytes) + ")"), feedback::problem);
+    }
+
+    /**
+     * Schreibt den Strom zuerst in eine eigene, neu angelegte Zwischendatei im Zielordner und ersetzt das Ziel erst,
+     * wenn alles gelesen ist. Bricht der Strom ab (etwa ein Hashfehler am Ende), wird nur diese Zwischendatei gelöscht
+     * und ein vorhandenes Ziel bleibt, wie es war; fremde Dateien im Ordner bleiben unberührt.
+     *
+     * @return die Zahl der geschriebenen Bytes
+     */
+    static long writeReplacing(java.io.InputStream content, java.nio.file.Path target) throws IOException {
+        java.nio.file.Path absolute = target.toAbsolutePath();
+        java.nio.file.Path part = Files.createTempFile(absolute.getParent(), "." + absolute.getFileName() + "-",
+                ".part");
+        try {
+            long bytes = Files.copy(content, part, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Files.move(part, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return bytes;
+        } catch (IOException | RuntimeException e) {
+            Files.deleteIfExists(part);
+            throw e;
+        }
     }
 
     /** „Vorschau“ nur mit geladener Seite und gewähltem Anhang. */
@@ -1573,6 +1793,14 @@ public final class PageDetailPanel extends JPanel {
         return terms;
     }
 
+    /**
+     * Die Hauptreiter (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als quadratische Symbolknöpfe;
+     * das Hauptfenster setzt sie mittig in die Werkzeugleiste unten. Sichtbar nur, solange eine Seite gezeigt wird.
+     */
+    public JComponent tabIcons() {
+        return tabIcons;
+    }
+
     PillTabs tabs() {
         return tabs;
     }
@@ -1636,12 +1864,20 @@ public final class PageDetailPanel extends JPanel {
      * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ab ({@link Navigation#of}). EDT.
      */
     void showNavigation(Navigation navigation) {
-        readerPage.setNavigation(navigation == null || navigation.isEmpty() ? null : navigation);
+        Navigation shownNavigation = navigation == null || navigation.isEmpty() ? null : navigation;
+        readerPage.setNavigation(shownNavigation);
+        // Dieselben Inhaltswolken auch über der Leseansicht, als Übersicht beim Lesen.
+        readingPane.setNavigation(shownNavigation, reader.getText());
     }
 
     /** Für Tests: der Navigationsbanner über dem Lesetext. */
     DocumentNavigationSky navigationSky() {
         return readerPage.sky();
+    }
+
+    /** Für Tests: die Leseansicht. */
+    ReadingPane readingPane() {
+        return readingPane;
     }
 
     /** Für Tests: der Lesetext mit dem Banner darüber. */

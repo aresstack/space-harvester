@@ -19,6 +19,12 @@ public enum JobType {
      */
     ASSETS,
     /**
+     * Dokument-Anhänge eines veröffentlichten Exports beschaffen (ADR 0023, „Anhänge beschaffen“), als eigener Auftrag
+     * neben {@link #ASSETS}, mit demselben Download, derselben Anmeldung und derselben Ablage; nur bei eingeschalteten
+     * Anhängen.
+     */
+    ATTACHMENTS,
+    /**
      * MaltParser-Aussagenanalyse einer Seite, eines Unterzweigs, Space oder einer Quelle, nur auf ausdrückliche
      * Anforderung in der Desktop-App (#499, ADR 0024); nie Folgeauftrag eines Abgleichs oder Exports.
      */
@@ -32,13 +38,42 @@ public enum JobType {
      * Export des Knowledge Graph als JSON-LD 1.1 (#499, ADR 0024); liest nur vorhandene Analysen und stößt nie eine
      * Analyse an.
      */
-    KNOWLEDGE_GRAPH_EXPORT;
+    KNOWLEDGE_GRAPH_EXPORT,
+    /**
+     * „Fachbegriffe ermitteln“ (#122 Stufe 2, ADR 0019): der KI-Lauf des Fachglossars je Quelle, nur auf ausdrücklichen
+     * Wunsch; eigener Eintrag in der Auftragsliste. Eingeplant wie ein Folgeauftrag ({@link #followUp()}): er wartet
+     * auf Abgleiche und Exporte und belegt nie alle Plätze.
+     */
+    GLOSSARY,
+    /**
+     * Import eines JSON-Pakets ({@code export.zip} ab {@code json-package/3}) in den Cache einer Quelle; bestätigt eine
+     * Generation wie ein Abgleich, ohne die Quelle zu fragen.
+     */
+    IMPORT;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
      * alle Plätze.
      */
+    /**
+     * Lädt Dateien herunter (Bilder, Anhänge): erst Vorbereitung, dann Download, mit je eigener Grenze
+     * ({@link JobStage}); belegt keinen der Plätze für Abgleiche und Exporte.
+     */
+    public boolean download() {
+        return this == ASSETS || this == ATTACHMENTS;
+    }
+
     public boolean followUp() {
-        return this == ENRICHMENT || this == ASSETS;
+        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY;
+    }
+
+    /**
+     * Lässt sich anhalten und im selben Eintrag fortsetzen (ADR 0025): Einlesen und Download legen jede geladene neue
+     * Seite sofort ab, ein neuer Lauf holt nur, was fehlt. Bilder ({@link #ASSETS}) legen jede Datei sofort im
+     * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
+     * Anhänge ({@link #ATTACHMENTS}) ebenso.
+     */
+    public boolean resumable() {
+        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS;
     }
 }

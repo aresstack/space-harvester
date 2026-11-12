@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
-import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -17,14 +16,19 @@ import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.StreamedAttachment;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -141,12 +145,76 @@ public class Assets {
         this.maxBytes = maxBytes;
     }
 
+    /**
+     * Die Grenze für Downloads aus der Konfiguration ({@code space-harvester.assets.max-size}): {@code 0} heißt ohne
+     * Grenze ({@link #UNLIMITED}), der Standard; jede andere Zahl bleibt, wie sie ist.
+     */
+    public static long maxBytes(long configured) {
+        return configured == 0 ? UNLIMITED : configured;
+    }
+
     /** Gleichzeitige Downloads von Anhängen, und wie lange ein weiterer auf einen freien Platz wartet. */
     static final int MAX_CONCURRENT_DOWNLOADS = 4;
     /** Obergrenze der gemerkten Nachhol-Versuche, danach beginnt die Liste neu. */
     static final int MAX_BACKFILLED = 10_000;
+    /**
+     * Bis zu dieser Größe liest ein Download die Datei nach dem Ablegen auch in den Speicher, für Typerkennung am ganzen
+     * Inhalt und Text; so groß wie die Grenze der Textextraktion ({@code TikaDocumentText.DEFAULT_MAX_BYTES}).
+     */
+    static final long IN_MEMORY_BYTES = 20L * 1024 * 1024;
+    /**
+     * Größte Datei, die {@link #content} und {@link #stored} mit ihren Bytes liefern, unabhängig von der Grenze für
+     * Downloads: so groß wie bisher die Standardgrenze für Anhänge ({@code READER_MAX_BYTES} im Enterprise AI Client).
+     * Größere Dateien gibt es nur als Strom ({@link #stream}, {@link #openStored}), damit keine den Speicher füllt.
+     */
+    public static final long MAX_IN_MEMORY_BYTES = 100L * 1024 * 1024;
+    private volatile long maxInMemoryBytes = MAX_IN_MEMORY_BYTES;
+    /** Ohne Grenze für Downloads: Dateien beliebiger Größe fließen in die Ablage (Angelo 11.11.2026). */
+    public static final long UNLIMITED = Long.MAX_VALUE;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
-    private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
+    private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
+    private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
+
+    /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
+    private static final class Downloads extends Semaphore {
+        Downloads(int permits) {
+            super(permits);
+        }
+
+        void shrink(int by) {
+            reducePermits(by);
+        }
+    }
+
+    /**
+     * Wie viele Dateien höchstens gleichzeitig von den Quellen geladen werden: mindestens
+     * {@value #MAX_CONCURRENT_DOWNLOADS}, und so viele, dass jeder Download-Platz der Aufträge
+     * ({@code jobs.parallel-downloads}) und daneben die Lese-Ansicht einen hat; sonst warteten Aufträge auf diese Schranke
+     * und zählten das als Drosselung.
+     *
+     * @param jobDownloads gleichzeitig ladende Aufträge
+     */
+    private volatile DownloadDurations durations = new DownloadDurations();
+
+    /** Misst ab jetzt in {@code durations}, etwa mit einem über Neustarts gespeicherten Stand. */
+    public void durations(DownloadDurations durations) {
+        this.durations = java.util.Objects.requireNonNull(durations, "durations");
+    }
+
+    /** Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, getrennt für Bilder und Anhänge. */
+    public DownloadDurations durations() {
+        return durations;
+    }
+
+    public synchronized void downloadLimit(int jobDownloads) {
+        int wanted = Math.max(MAX_CONCURRENT_DOWNLOADS, jobDownloads + 2);
+        if (wanted > downloadLimit) {
+            downloads.release(wanted - downloadLimit);
+        } else if (wanted < downloadLimit) {
+            downloads.shrink(downloadLimit - wanted);
+        }
+        downloadLimit = wanted;
+    }
     /** Abgelegte Dokumente, deren Text beim Ernten schon einmal nachgeholt wurde (je Laufzeit, nach SHA-256). */
     private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
@@ -199,11 +267,11 @@ public class Assets {
             }
             // Download und Textextraktion derselben Datei belegen zusammen einen Platz der Schranke.
             try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
-                AssetContent content = download(source, pageId, attachment);
-                harvestText(content);
-                indexed |= indexStored(list, content.asset());
+                Downloaded downloaded = download(source, pageId, attachment, true, false);
+                harvestText(downloaded);
+                indexed |= indexStored(list, downloaded.asset());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
-                        content.asset(), null));
+                        downloaded.asset(), null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
                 indexed |= forgetStale(list, attachment);
@@ -229,7 +297,8 @@ public class Assets {
      * heruntergeladen und abgelegt.
      *
      * @throws SourceAccessException  {@code NOT_FOUND}, wenn der Anhang nicht zur Seite gehört, sonst wie die Quelle
-     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
+     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet oder größer ist als {@link
+     *                                #MAX_IN_MEMORY_BYTES}; dann gibt es sie nur als Strom ({@link #stream})
      */
     public AssetContent content(PageAttachmentList list, String attachmentId) {
         return content(list, attachmentId, true);
@@ -241,16 +310,81 @@ public class Assets {
      * vorbehalten, sonst füllte jeder Leser die Ablage.
      */
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore) {
+        return content(list, attachmentId, mayStore, false);
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean)}; mit {@code fresh} am Speicher vorbei von der Quelle
+     * („Neu erzwingen“, ADR 0025). Der abgelegte Stand gilt weiter, bis der neue Download ihn ersetzt; scheitert er,
+     * bleibt der alte.
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
-        if (stored.isPresent()) {
-            return read(stored.get());
+        if (!fresh) {
+            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            if (stored.isPresent()) {
+                return read(stored.get());
+            }
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
     }
 
-    /** Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}). */
+    /**
+     * Legt einen Anhang der Seite in seiner aktuellen Version ab, ohne seine Bytes in den Speicher zu lesen: für Aufträge
+     * wie den Export, die nur den abgelegten Stand brauchen (Dateien beliebiger Größe, Angelo 11.11.2026). Mit {@code
+     * fresh} am Speicher vorbei von der Quelle („Neu erzwingen“, ADR 0025); der alte Stand gilt, bis der neue da ist.
+     *
+     * @throws SourceAccessException  {@code NOT_FOUND}, wenn der Anhang nicht zur Seite gehört, sonst wie die Quelle
+     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
+     */
+    public Asset keep(PageAttachmentList list, String attachmentId, boolean fresh) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        if (!fresh) {
+            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            if (stored.isPresent()) {
+                verify(stored.get());
+                return stored.get();
+            }
+        }
+        return download(source(list.sourceId()), list.attachments().pageId(), attachment, true, false).asset();
+    }
+
+    /**
+     * Prüft einen abgelegten Inhalt gegen seinen Hash wie {@link AssetStore#read}, aber als Strom: Ein beschädigter
+     * Inhalt gilt nicht als abgelegt, auch wenn die Datei noch da ist.
+     *
+     * @throws AssetStoreException wenn der Inhalt nicht lesbar ist oder nicht zum Hash passt
+     */
+    private void verify(Asset asset) {
+        try (InputStream in = store.open(asset)) {
+            in.transferTo(java.io.OutputStream.nullOutputStream());
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset-Inhalt nicht lesbar oder verändert", e);
+        }
+    }
+
+    /**
+     * Die Grenze für Bilder der Lese-Ansicht und Vorschauen: sie kommen nur als Bytes, also höchstens so groß wie
+     * Dateien im Speicher, auch ohne Grenze für Downloads.
+     */
+    private long inMemoryLimit() {
+        return Math.min(maxBytes, maxInMemoryBytes);
+    }
+
+    /** Nur für Tests: eine kleinere Grenze für Dateien im Speicher als {@link #MAX_IN_MEMORY_BYTES}. */
+    void maxInMemoryBytes(long maxInMemoryBytes) {
+        this.maxInMemoryBytes = maxInMemoryBytes;
+    }
+
+    /**
+     * Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}).
+     *
+     * @throws AssetTooLargeException über {@link #MAX_IN_MEMORY_BYTES}: dann nur als Strom
+     */
     private AssetContent read(Asset asset) {
+        if (asset.size() > maxInMemoryBytes) {
+            throw new AssetTooLargeException(asset.sourceId(), maxInMemoryBytes);
+        }
         try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
             return new AssetContent(asset, store.read(asset));
         }
@@ -272,7 +406,9 @@ public class Assets {
      * Wie {@link #content(PageAttachmentList, String, boolean, String)}, aber ein abgelegter Anhang kommt als Strom
      * aus der Ablage, ohne ganz im Speicher zu liegen. Eine große Datei hält ihren Platz an der Schranke
      * ({@link LargeFileGate}), bis der Aufrufer den Strom schließt, auch aus einem anderen Thread. Ein nicht
-     * abgelegter Anhang wird wie bisher geladen und aus dem Speicher geliefert.
+     * abgelegter Anhang wird geladen, ohne ganz im Speicher zu liegen (Dateien beliebiger Größe, Angelo 11.11.2026):
+     * mit {@code mayStore} in die Ablage und von dort geliefert, sonst aus seiner Zwischendatei, die mit dem Strom
+     * verschwindet; bis {@link #IN_MEMORY_BYTES} aus dem Speicher wie bisher.
      *
      * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
      */
@@ -284,17 +420,57 @@ public class Assets {
         PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
-            Asset asset = stored.get();
-            LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
-            try {
-                return new AssetStream(asset, store.open(asset), permit);
-            } catch (RuntimeException e) {
-                permit.close();
-                throw e;
+            return open(stored.get());
+        }
+        HarvestSource source = source(list.sourceId());
+        String pageId = list.attachments().pageId();
+        if (mayStore) {
+            Downloaded downloaded = download(source, pageId, attachment, true, false);
+            return downloaded.content() != null ? downloaded.stream() : open(downloaded.asset());
+        }
+        Path staging = staging(source.id(), attachment);
+        boolean handedOver = false;
+        try {
+            Downloaded downloaded = download(source, pageId, attachment, false, false, staging);
+            if (downloaded.content() != null) {
+                return downloaded.stream();
+            }
+            AssetStream delivered = handOver(downloaded.asset(), staging);
+            handedOver = true;
+            return delivered;
+        } finally {
+            if (!handedOver) {
+                delete(source.id(), staging);
             }
         }
-        AssetContent content = download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
-        return new AssetStream(content.asset(), new ByteArrayInputStream(content.content()), null);
+    }
+
+    /** Ein abgelegter Inhalt als Strom; eine große Datei hält ihren Platz an der Schranke bis zum Schließen. */
+    private AssetStream open(Asset asset) {
+        LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+        try {
+            return new AssetStream(asset, store.open(asset), permit);
+        } catch (RuntimeException e) {
+            permit.close();
+            throw e;
+        }
+    }
+
+    /**
+     * Die Zwischendatei eines nicht abgelegten Anhangs als Strom, wie {@link #open(Asset)} mit Platz an der Schranke;
+     * die Datei verschwindet beim Schließen. Ihr Hash entstand beim Schreiben, sie ist nur diesem Strom bekannt.
+     */
+    private AssetStream handOver(Asset asset, Path staging) {
+        LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+        try {
+            return new AssetStream(asset, Files.newInputStream(staging, StandardOpenOption.DELETE_ON_CLOSE), permit);
+        } catch (IOException e) {
+            permit.close();
+            throw new AssetStoreException("Asset nicht lesbar", e);
+        } catch (RuntimeException e) {
+            permit.close();
+            throw e;
+        }
     }
 
     /**
@@ -322,7 +498,7 @@ public class Assets {
     /**
      * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
      * ist, sonst die Anforderung angelegt. Ist sie schon offen, fragt der Lesezugriff die Quelle nicht noch einmal
-     * ({@link #holdWhileSignInOpen}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
+     * ({@link #fromSource}), sondern schließt sich ihr an. Code und Token sieht diese Stelle nie.
      */
     private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
         java.time.Instant started = clock.instant();
@@ -349,36 +525,48 @@ public class Assets {
      * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
      */
     public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image) {
+        return viewImage(sourceId, pageId, pageVersion, image, false);
+    }
+
+    /**
+     * Wie {@link #viewImage(String, String, String, HarvestSource.ViewImage)}; mit {@code fresh} am Speicher vorbei
+     * von der Quelle („Neu erzwingen“, ADR 0025); der abgelegte Stand gilt, bis der neue ihn ersetzt.
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image,
+                                  boolean fresh) {
         HarvestSource source = source(sourceId);
         String attachmentId = image.attachmentId() != null ? image.attachmentId()
                 : "view-" + sha256(image.src().getBytes(java.nio.charset.StandardCharsets.UTF_8))
                         .substring("sha256:".length(), "sha256:".length() + 32);
         String version = image.attachmentId() != null ? image.version() : pageVersion;
-        Optional<Asset> stored = store.find(sourceId, attachmentId, version);
+        Optional<Asset> stored = fresh ? Optional.empty() : store.find(sourceId, attachmentId, version);
         if (stored.isPresent()) {
             return read(stored.get());
         }
-        holdWhileSignInOpen(sourceId);
-        byte[] content;
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Bildern", null);
+        byte[] content = fromSource(sourceId, () -> {
+            try {
+                if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                    throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                            "Zu viele gleichzeitige Downloads von Bildern", null);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                        "Download abgebrochen", e);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
-                    e);
-        }
-        try {
-            content = source.viewImage(image, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(sourceId, maxBytes);
-        } finally {
-            downloads.release();
-        }
-        if (content.length > maxBytes) {
-            throw new AssetTooLargeException(sourceId, maxBytes);
+            try {
+                long started = System.nanoTime();
+                byte[] loaded = source.viewImage(image, inMemoryLimit());
+                durations.record(DownloadDurations.Kind.IMAGE, Duration.ofNanos(System.nanoTime() - started));
+                return loaded;
+            } catch (AttachmentTooLargeException e) {
+                throw new AssetTooLargeException(sourceId, inMemoryLimit());
+            } finally {
+                downloads.release();
+            }
+        });
+        if (content.length > inMemoryLimit()) {
+            throw new AssetTooLargeException(sourceId, inMemoryLimit());
         }
         // Die Größe eines Bildes der Lese-Ansicht steht erst nach dem Download fest; Typerkennung und Ablegen laufen
         // dann unter der Schranke.
@@ -419,12 +607,26 @@ public class Assets {
             }
         }
         if (diagram == null) {
-            return Optional.empty();
+            return foreignDrawio(sourceId, pageId, pageVersion, image);
         }
         PageAttachment found = diagram;
+        Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
+        if (storedDiagram.isEmpty() && !deliveredSinceTwoFactorPage(sourceId)) {
+            // Wie der Enterprise AI Client (#571): Der erste geschützte Abruf einer Quelle ist das Bild der Lese-Ansicht,
+            // nicht der rohe Diagramm-Anhang. Verlangt die Quelle einen Einmalcode, merkt sich das Zwei-Faktor-Plugin
+            // diese Adresse und leitet nach dem Code dorthin weiter; im EAC ist das immer ein Bild. Das Bild liegt
+            // danach in der Ablage, die Lese-Ansicht lädt es nicht noch einmal.
+            try {
+                viewImage(sourceId, pageId, pageVersion, image);
+            } catch (SignInRequiredException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Das Bild selbst lädt nicht (zu groß, nicht unterstützt …): weiter mit den Quelldaten.
+            }
+        }
         Rendered rendered;
         try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
-            byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+            byte[] mxfile = storedDiagram.map(this::storedSource)
                     .orElseGet(() -> download(source, pageId, found).content());
             rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
         }
@@ -432,6 +634,114 @@ public class Assets {
             return Optional.empty();
         }
         return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als SVG, damit die Oberfläche es als Vektorzeichnung
+     * zeigen und bei jeder Vergrößerung scharf zeichnen kann ({@link com.aresstack.spaceharvester.application.diagrams.VectorDiagram}),
+     * statt ein in fester Breite gerastertes PNG zu vergrößern. Hängt das Diagramm an dieser Seite, wird es aus seinen
+     * Quelldaten gezeichnet ({@link #DRAWIO_RENDITION}, einmal je Quelldaten abgelegt, wie {@link #viewDiagram}); ist es
+     * eingebunden ({@code #drawio=…&page=<andere Seite>}), gilt das SVG, das die Quelle über das Plugin zeichnet.
+     *
+     * @return leer, wenn das Bild kein draw.io-Diagramm ist oder sich nicht zeichnen lässt; dann gilt das Bild selbst
+     * @throws SourceAccessException  wie {@link #viewDiagram}
+     * @throws AssetTooLargeException wie {@link #viewDiagram}
+     */
+    public Optional<AssetContent> viewDiagramSvg(String sourceId, String pageId, String pageVersion,
+                                                 HarvestSource.ViewImage image) {
+        String filename = viewFileName(image);
+        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png")) {
+            return Optional.empty();
+        }
+        HarvestSource source = source(sourceId);
+        PageAttachment diagram = null;
+        for (PageAttachment attachment : source.attachments(pageId).attachments()) {
+            if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
+                    && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
+                diagram = attachment;
+                break;
+            }
+        }
+        if (diagram == null) {
+            String src = image.src() == null ? "" : image.src();
+            if (!src.contains("#drawio=")) {
+                return Optional.empty();
+            }
+            AssetContent loaded = viewImage(sourceId, pageId, pageVersion, image);
+            return loaded.asset().kind() == AssetKind.VECTOR || isSvg(loaded.content())
+                    ? Optional.of(loaded) : Optional.empty();
+        }
+        PageAttachment found = diagram;
+        Optional<Asset> storedDiagram = store.find(sourceId, found.attachmentId(), found.version());
+        if (storedDiagram.isEmpty() && !deliveredSinceTwoFactorPage(sourceId)) {
+            // Wie viewDiagram (#571): der erste geschützte Abruf ist das Bild der Lese-Ansicht.
+            try {
+                viewImage(sourceId, pageId, pageVersion, image);
+            } catch (SignInRequiredException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Das Bild selbst lädt nicht: weiter mit den Quelldaten.
+            }
+        }
+        Rendered rendered;
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
+            byte[] mxfile = storedDiagram.map(this::storedSource)
+                    .orElseGet(() -> download(source, pageId, found).content());
+            rendered = rendition(sourceId, pageId, DRAWIO_RENDITION, mxfile);
+        }
+        if (rendered.asset() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Die abgelegten Quelldaten eines Diagramms als Bytes, höchstens {@link #MAX_IN_MEMORY_BYTES} wie {@link #read}:
+     * Ohne Grenze für Downloads kann ein abgelegtes Diagramm beliebig groß sein. Die Schranke hält schon der Aufrufer.
+     *
+     * @throws AssetTooLargeException darüber; dann gilt das Bild selbst
+     */
+    private byte[] storedSource(Asset asset) {
+        if (asset.size() > maxInMemoryBytes) {
+            throw new AssetTooLargeException(asset.sourceId(), maxInMemoryBytes);
+        }
+        return store.read(asset);
+    }
+
+    /**
+     * Ein draw.io-Diagramm, das nicht an dieser Seite hängt (eingebunden über {@code multiexcerpt-include},
+     * {@code include} oder {@code inc-drawio}; die Adresse trägt {@code #drawio=…&page=<Eigentümerseite>}): Die Quelle
+     * zeichnet es selbst über die REST-Schnittstelle des Plugins und liefert SVG wie im Enterprise AI Client. Swing
+     * zeigt kein SVG, also wird es hier gerastert ({@link #SVG_PNG_RENDITION}, einmal je SVG abgelegt), wie der
+     * EAC-Leser es mit Batik tut. Liefert die Quelle ein Rasterbild (Vorschau als Rückfall), bleibt es beim Bild selbst.
+     */
+    private Optional<AssetContent> foreignDrawio(String sourceId, String pageId, String pageVersion,
+                                                 HarvestSource.ViewImage image) {
+        String src = image.src() == null ? "" : image.src();
+        if (!src.contains("#drawio=")) {
+            return Optional.empty();
+        }
+        AssetContent loaded = viewImage(sourceId, pageId, pageVersion, image);
+        // Am Inhalt erkannt, nicht am Typ: Confluence nennt am Vorschaubild image/png, die Quelle liefert aber die
+        // gezeichnete SVG-Fassung (auch aus der Ablage).
+        if (loaded.asset().kind() != AssetKind.VECTOR && !isSvg(loaded.content())) {
+            return Optional.empty();
+        }
+        Rendered rendered = rendition(sourceId, pageId, SVG_PNG_RENDITION, loaded.content());
+        if (rendered.asset() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /** SVG-Text am Anfang der Bytes (nach einer XML-Deklaration oder einem Kommentar), gleich welcher Typ genannt ist. */
+    static boolean isSvg(byte[] content) {
+        if ("image/svg+xml".equals(sniff(content))) {
+            return true;
+        }
+        String head = new String(content, 0, Math.min(content.length, 1024), java.nio.charset.StandardCharsets.UTF_8)
+                .stripLeading().toLowerCase(Locale.ROOT);
+        return head.startsWith("<") && head.contains("<svg");
     }
 
     /**
@@ -497,29 +807,60 @@ public class Assets {
      * Die abgelegten Bytes zu {@code sha256}, dagegen geprüft; liest nie von der Quelle. Der Inhalt liegt nach seinem
      * Hash ab, daher auch ohne Version der Quelle und auch dann, wenn inzwischen eine neuere Version abgelegt ist.
      *
-     * @return leer, wenn nichts oder etwas anderes abgelegt ist
+     * @return leer, wenn nichts oder etwas anderes abgelegt ist, oder über {@link #MAX_IN_MEMORY_BYTES} (dann nur
+     *         als Strom, {@link #openStored})
      */
     public Optional<byte[]> stored(String sourceId, String attachmentId, String version, String sha256) {
         if (sha256 == null) {
             return Optional.empty();
         }
         Optional<Asset> found = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256));
+        if (found.isPresent() && found.get().size() > maxInMemoryBytes) {
+            return Optional.empty();
+        }
         Asset asset = found.orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId,
                 version, null, null, AssetKind.OTHER, 0, sha256, clock.instant()));
         byte[] content;
-        // Ohne Eintrag ist die Größe unbekannt und zählt als groß.
-        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null))) {
-            content = store.read(asset);
-        } catch (AssetStoreException e) {
+        // Ohne Eintrag ist die Größe unbekannt und zählt als groß; gelesen wird dann höchstens bis zur Grenze.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null));
+             InputStream in = store.open(asset)) {
+            content = in.readNBytes((int) Math.min(maxInMemoryBytes + 1, Integer.MAX_VALUE - 8));
+        } catch (AssetStoreException | IOException e) {
+            return Optional.empty();
+        }
+        if (content.length > maxInMemoryBytes) {
             return Optional.empty();
         }
         return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
+    }
+
+    /**
+     * Wie {@link #stored}, aber als Strom, ohne die Datei ganz in den Speicher zu lesen (Dateien beliebiger Größe,
+     * Angelo 11.11.2026): Eine Abweichung von {@code sha256} meldet der Strom am Ende als {@link IOException}, bevor
+     * er das Ende anzeigt. Der Aufrufer schließt ihn.
+     *
+     * @return leer, wenn nichts abgelegt ist
+     */
+    public Optional<InputStream> openStored(String sourceId, String attachmentId, String version, String sha256) {
+        if (sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256))
+                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
+                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        try {
+            return Optional.of(store.open(asset));
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
     }
 
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
     public static final String DRAWIO_PNG_RENDITION = "drawio-png-1";
+    /** Version eines gerasterten SVG der Quelle (draw.io einer anderen Seite) als PNG für die Lese-Ansicht. */
+    public static final String SVG_PNG_RENDITION = "svg-png-1";
     /** Version der Mermaid-Grafik im Speicher. */
     public static final String MERMAID_RENDITION = "mermaid-png-1";
 
@@ -542,6 +883,7 @@ public class Assets {
         Diagrams.Rendering rendering = switch (renderer) {
             case DRAWIO_RENDITION -> Diagrams.drawio(source);
             case DRAWIO_PNG_RENDITION -> Diagrams.drawioPng(source);
+            case SVG_PNG_RENDITION -> Diagrams.svgPng(source);
             case MERMAID_RENDITION -> Diagrams.mermaid(new String(source, java.nio.charset.StandardCharsets.UTF_8));
             default -> throw new IllegalArgumentException("Unbekannter Renderer " + renderer);
         };
@@ -599,10 +941,16 @@ public class Assets {
         if (existing.isPresent()) {
             asset = stored.get();
             text = existing.get();
+        } else if (stored.isPresent() && stored.get().size() > IN_MEMORY_BYTES) {
+            // Über der Grenze der Textextraktion bleibt die Datei ungelesen (Dateien beliebiger Größe, Angelo
+            // 11.11.2026); sie hat wie bisher keinen Text.
+            throw tooLarge();
         } else {
             try (LargeFileGate.Permit permit = gate.enter(list.sourceId(),
                     stored.map(Asset::size).orElse(attachment.fileSize()))) {
-                AssetContent content = content(list, attachmentId, mayStore);
+                // Auch frisch geladen kommt eine Datei über dieser Grenze nicht in den Speicher.
+                Downloaded content = stored.isPresent() ? new Downloaded(stored.get(), read(stored.get()).content())
+                        : download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore, false);
                 asset = content.asset();
                 existing = storedText(extraction, asset);
                 text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
@@ -624,6 +972,20 @@ public class Assets {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
         return store.text(asset.sha256(), extraction.id(), extraction.version());
+    }
+
+    /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
+    private AssetText extract(DocumentText extraction, Downloaded content, boolean keep) {
+        if (content.content() == null) {
+            throw tooLarge();
+        }
+        return extract(extraction, new AssetContent(content.asset(), content.content()), keep);
+    }
+
+    /** Eine Datei über {@link #IN_MEMORY_BYTES}: zu groß für die Textextraktion, wie in {@code TikaDocumentText}. */
+    private static DocumentTextException tooLarge() {
+        return new DocumentTextException(DocumentTextException.Reason.TOO_LARGE,
+                "Datei größer als " + IN_MEMORY_BYTES + " Bytes", null);
     }
 
     private AssetText extract(DocumentText extraction, AssetContent content, boolean keep) {
@@ -772,6 +1134,19 @@ public class Assets {
     }
 
     /**
+     * Wie {@link #harvestText(AssetContent)} für einen frischen Download; über der Grenze der Textextraktion liegt er
+     * nicht im Speicher und hat wie bisher keinen Text.
+     */
+    private void harvestText(Downloaded downloaded) {
+        if (downloaded.content() != null) {
+            harvestText(new AssetContent(downloaded.asset(), downloaded.content()));
+        } else if (documents != null && downloaded.asset().kind() == AssetKind.OTHER) {
+            LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
+                    downloaded.asset().sourceId(), DocumentTextException.Reason.TOO_LARGE.code());
+        }
+    }
+
+    /**
      * Liest beim Ablegen gleich den Text eines Dokuments (#183), damit er als Anreicherung bereitliegt. Ein Fehler hält
      * das Ablegen nicht auf und wird mit festem Code protokolliert; ein nicht lesbares Format wird erst auf Abruf
      * ({@link #text}) erneut versucht, nicht bei jeder Ernte.
@@ -807,6 +1182,11 @@ public class Assets {
             backfilled.clear();
         }
         if (!backfilled.add(asset.sha256())) {
+            return;
+        }
+        if (asset.size() > IN_MEMORY_BYTES) {
+            // Wie beim Ablegen: Über der Grenze der Textextraktion bleibt die Datei ungelesen und ohne Text.
+            harvestText(new Downloaded(asset, null));
             return;
         }
         try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
@@ -957,7 +1337,6 @@ public class Assets {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }
-        holdWhileSignInOpen(sourceId);
         // Die Größe der Vorschau ist vorher unbekannt; es gilt die des Anhangs (unbekannt zählt als groß).
         try (LargeFileGate.Permit permit = gate.enter(sourceId, attachment.fileSize())) {
             return fetchPreview(list, attachment, source, kinds, version, mayStore);
@@ -994,6 +1373,10 @@ public class Assets {
 
     /** Lädt eine Vorschau über die Quelle, mit derselben Begrenzung gleichzeitiger Downloads wie Anhänge. */
     private byte[] previewBytes(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
+        return fromSource(source.id(), () -> previewBytesNow(source, attachment, kind));
+    }
+
+    private byte[] previewBytesNow(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
         try {
             if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
                 throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
@@ -1006,14 +1389,14 @@ public class Assets {
         }
         byte[] content;
         try {
-            content = source.attachmentPreview(attachment, kind, maxBytes);
+            content = source.attachmentPreview(attachment, kind, inMemoryLimit());
         } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+            throw new AssetTooLargeException(source.id(), inMemoryLimit());
         } finally {
             downloads.release();
         }
-        if (content.length > maxBytes) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+        if (content.length > inMemoryLimit()) {
+            throw new AssetTooLargeException(source.id(), inMemoryLimit());
         }
         return content;
     }
@@ -1141,6 +1524,20 @@ public class Assets {
             return Optional.empty();
         }
         return store.text(sha256, documents.id(), documents.version());
+    }
+
+    /**
+     * Legt einen mitgebrachten Text eines Dokument-Anhangs ab (Import eines JSON-Pakets), unter der eingestellten
+     * Extraktion, als hätte sie ihn gelesen; so findet {@link #storedText} ihn ohne erneutes Lesen.
+     *
+     * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
+     */
+    public boolean adoptText(String sha256, String text) {
+        if (documents == null || sha256 == null || text == null || text.isBlank()) {
+            return false;
+        }
+        store.putText(new AssetText(sha256, documents.id(), documents.version(), text, false, clock.instant()));
+        return true;
     }
 
     /**
@@ -1285,62 +1682,168 @@ public class Assets {
     }
 
     private AssetContent download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
-        if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
+        Downloaded downloaded = download(source, pageId, attachment, keep, true);
+        return new AssetContent(downloaded.asset(), downloaded.content());
+    }
+
+    /**
+     * @param keep  ablegen, sonst nur liefern
+     * @param bytes die Bytes auch über {@link #IN_MEMORY_BYTES} in den Speicher lesen, bis {@link
+     *              #MAX_IN_MEMORY_BYTES}; darüber {@link AssetTooLargeException}, nachdem er abgelegt ist
+     */
+    private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
+                                boolean bytes) {
+        if (bytes && !keep && attachment.fileSize() != null && attachment.fileSize() > maxInMemoryBytes) {
+            // Weder abzulegen noch ganz im Speicher zu halten: der Download wäre umsonst.
+            throw new AssetTooLargeException(source.id(), maxInMemoryBytes);
         }
-        // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
-        try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
-            return downloadGated(source, pageId, attachment, keep);
+        Path staging = staging(source.id(), attachment);
+        try {
+            return download(source, pageId, attachment, keep, bytes, staging);
+        } finally {
+            delete(source.id(), staging);
         }
     }
 
-    private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
-        holdWhileSignInOpen(source.id());
-        AttachmentFile file;
-        // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
-        try {
-            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
-                throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
-                        "Zu viele gleichzeitige Downloads von Anhängen", null);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
-                    "Download abgebrochen", e);
+    /**
+     * Wie {@link #download(HarvestSource, String, PageAttachment, boolean, boolean)}, aber in die Zwischendatei des
+     * Aufrufers, der sie auch löscht.
+     */
+    private Downloaded download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
+                                boolean bytes, Path staging) {
+        // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
+        try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
+            return downloadGated(source, pageId, attachment, keep, bytes, staging);
+        }
+    }
+
+    /** Eine leere Zwischendatei der Ablage für den Anhang; ist er laut Quelle zu groß, scheitert schon das. */
+    private Path staging(String sourceId, PageAttachment attachment) {
+        if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
+            throw new AssetTooLargeException(sourceId, maxBytes);
         }
         try {
-            file = source.attachmentFile(attachment, maxBytes);
-        } catch (AttachmentTooLargeException e) {
-            throw new AssetTooLargeException(source.id(), maxBytes);
-        } finally {
-            downloads.release();
+            return store.stagingFile();
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
         }
-        byte[] content = file.content();
-        if (content.length > maxBytes) {
+    }
+
+    private static void delete(String sourceId, Path staging) {
+        try {
+            Files.deleteIfExists(staging);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Zwischendatei nicht gelöscht: source={0} ({1})", sourceId,
+                    e.getClass().getName());
+        }
+    }
+
+    /**
+     * Der Anhang fließt als Strom in eine Datei der Ablage ({@link AssetStore#stagingFile()}), nie ganz in den
+     * Speicher; Hash, Größe und Anfang entstehen dabei. Bis {@link #IN_MEMORY_BYTES} oder auf Wunsch liegen die Bytes
+     * danach auch im Speicher, für Typerkennung am ganzen Inhalt und Text wie bisher.
+     */
+    private Downloaded downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep,
+                                     boolean bytes, Path staging) {
+        StreamedAttachment file;
+        StagedAttachment sink;
+        try {
+            sink = new StagedAttachment(staging, maxBytes);
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
+        }
+        try (sink) {
+            // Höchstens wenige Downloads gleichzeitig, auch wenn keiner mehr die ganze Datei im Speicher hält.
+            file = fromSource(source.id(), () -> {
+                try {
+                    if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                        throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
+                                "Zu viele gleichzeitige Downloads von Anhängen", null);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                            "Download abgebrochen", e);
+                }
+                try {
+                    // Nur der Transfer zählt, nicht das Warten auf einen Platz (Restzeit, Angelo 11.11.2026).
+                    long started = System.nanoTime();
+                    StreamedAttachment loaded = source.streamAttachment(attachment, sink);
+                    durations.record(DownloadDurations.Kind.of(attachment.mediaType(), attachment.title()),
+                            Duration.ofNanos(System.nanoTime() - started));
+                    return loaded;
+                } catch (AttachmentTooLargeException e) {
+                    throw new AssetTooLargeException(source.id(), maxBytes);
+                } catch (SourceAccessException e) {
+                    if (sink.failure() != null) {
+                        // Die eigene Platte, nicht die Quelle: kein Grund für Neuversuch oder Pause der Quelle.
+                        throw new AssetStoreException("Asset nicht ablegbar", sink.failure());
+                    }
+                    throw e;
+                } finally {
+                    downloads.release();
+                }
+            });
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset nicht ablegbar", e);
+        }
+        long size = sink.size();
+        if (size > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
         }
-        if (content.length == 0 && attachment.fileSize() != null && attachment.fileSize() > 0) {
+        if (size == 0 && attachment.fileSize() != null && attachment.fileSize() > 0) {
             // Leere Antwort für eine Datei mit Größe: der Download ging ins Leere (etwa ein Pfad, den der Server anders
             // liest). Nicht als fertig ablegen, sonst gilt der Anhang überall als vorhanden und leer.
             throw new SourceAccessException(source.id(), SourceAccessException.Reason.INVALID_RESPONSE,
                     "Anhang: leere Antwort, erwartet " + attachment.fileSize() + " Bytes", null);
+        }
+        byte[] content = null;
+        if (size <= (bytes ? maxInMemoryBytes : Math.min(IN_MEMORY_BYTES, maxInMemoryBytes))) {
+            try {
+                content = Files.readAllBytes(staging);
+            } catch (IOException e) {
+                throw new AssetStoreException("Asset nicht ablegbar", e);
+            }
         }
         PageAttachment described = file.attachment();
         String version = described.version() != null ? described.version() : attachment.version();
         String declaredType = described.mediaType() != null && !described.mediaType().isBlank()
                 ? described.mediaType() : attachment.mediaType();
         String title = described.title().isEmpty() ? attachment.title() : described.title();
-        String mediaType = mediaType(source.id(), declaredType, content, title);
+        // Über der Grenze der Textextraktion reicht ihr der Anfang für die Signatur, wie bisher bei großen Dateien.
+        String mediaType = mediaType(source.id(), declaredType, size <= IN_MEMORY_BYTES ? content : sink.head(),
+                title);
         // Hat eine Binärsignatur die Angabe der Quelle ersetzt, zählt die Dateiendung (.drawio, .svg) nicht mehr: Ein PDF
         // namens report.drawio ist ein Dokument, kein Diagramm.
         boolean corrected = !base(mediaType).equals(base(declaredType)) && !textual(base(mediaType));
         AssetKind kind = corrected ? AssetKind.of(mediaType, null) : AssetKind.of(mediaType, title);
         Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType, kind,
-                content.length, sha256(content), file.retrievedAt());
+                size, sink.sha256(), file.retrievedAt());
         if (keep) {
-            store.put(asset, content);
+            store.putFile(asset, staging);
         }
-        return new AssetContent(asset, content);
+        if (bytes && content == null) {
+            // Abgelegt ist er dann schon; ganz in den Speicher kommt er nicht, nur als Strom.
+            throw new AssetTooLargeException(source.id(), maxInMemoryBytes);
+        }
+        return new Downloaded(asset, content);
+    }
+
+    /**
+     * Ein heruntergeladener Anhang; die Bytes nur, wenn sie im Speicher liegen ({@link #downloadGated}), sonst
+     * {@code null}. Bleibt in dieser Klasse.
+     */
+    private record Downloaded(Asset asset, byte[] content) {
+
+        /** Die Bytes aus dem Speicher als Strom; ohne Platz an der Schranke, wie bisher. */
+        AssetStream stream() {
+            return new AssetStream(asset, new ByteArrayInputStream(content), null);
+        }
+
+        @Override
+        public String toString() {
+            return "Downloaded[asset=" + asset + ", bytes=" + (content == null ? "-" : content.length) + "]";
+        }
     }
 
     /** Ordnet Vorschaubilder ihren draw.io-Diagrammen zu: {@code name.png} bzw. {@code name.drawio.png}. */
@@ -1389,14 +1892,122 @@ public class Assets {
         }
     }
 
+    /** Zustand der Dateiabrufe einer Quelle (#571), siehe {@link #fromSource}. */
+    private static final class SourceGate {
+        final java.util.concurrent.locks.ReentrantLock probe = new java.util.concurrent.locks.ReentrantLock(true);
+        /** Wann die Quelle zuletzt eine Datei ohne Einmalcode geliefert hat; {@code null} seit einer Code-Seite. */
+        volatile java.time.Instant delivered;
+        /** Die zuletzt gesehene Zwei-Faktor-Seite, solange keine Datei kam; {@code null} sonst. */
+        volatile Seen seen;
+    }
+
     /**
-     * Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht keine geschützte Datei
-     * ans Netz (#571): jede Abfrage bekäme eine neue Zwei-Faktor-Seite, deren Sitzungs-Cookie die gemeinsame Sitzung
-     * überschreibt, und der Code der offenen Anforderung passte beim Senden nicht mehr (HTTP 500). Wirft stattdessen,
-     * was die Quelle geworfen hätte, mit der Seite der offenen Anforderung; Lesen auf Abruf schließt sich ihr damit an
-     * ({@link #unlocking}), ein Auftrag wartet auf sie ({@link SignInRequests#await}). Abgelegte Dateien kommen
-     * weiter aus der Ablage; nach Annahme, Ablehnung oder Ablauf der Anforderung liest diese Stelle wieder normal.
+     * Eine Zwei-Faktor-Seite der Quelle: wann sie kam und wie viele Anforderungen der Quelle vor dem Abruf erledigt waren
+     * ({@link SignInRequests#settlements}).
      */
+    private record Seen(SignInChallenge challenge, java.time.Instant at, long settlements) {
+    }
+
+    /** So lange nach einer gelieferten Datei gilt die Sitzung als freigeschaltet: Abrufe laufen dann parallel. */
+    private static final java.time.Duration FLOWING = java.time.Duration.ofMinutes(1);
+    /**
+     * So lange gilt eine gesehene Zwei-Faktor-Seite ohne Anforderung (etwa ohne Oberfläche); danach fragt ein Abruf die
+     * Quelle wieder und bringt eine frische Seite mit frischem Code.
+     */
+    private static final java.time.Duration SEEN = java.time.Duration.ofMinutes(5);
+
+    private final ConcurrentHashMap<String, SourceGate> gates = new ConcurrentHashMap<>();
+
+    /**
+     * Der eine Weg aller geschützten Dateiabrufe (Bild, Anhang, Vorschau) an die Quelle (#571), damit es wie im
+     * Enterprise AI Client je Quelle nur eine Zwei-Faktor-Sitzung, eine Mail und einen Code gibt:
+     * <ul>
+     *   <li>Solange die Anmeldung der Quelle offen ist ({@link SignInRequests#pendingChallenge}), geht kein Abruf ans
+     *       Netz; geworfen wird, was die Quelle geworfen hätte, mit der Seite der offenen Anforderung.</li>
+     *   <li>Hat ein Abruf die Zwei-Faktor-Seite bekommen, geht kein weiterer ans Netz, bis ein Code angenommen oder die
+     *       Anforderung abgelehnt ist ({@link SignInRequests#settlements}); jeder bekommt dieselbe Seite. Auch dann, wenn
+     *       noch niemand die Anforderung angelegt hat: die Lese-Ansicht versucht für ein draw.io-Bild zuerst die
+     *       Quelldaten ohne Anforderung und gleich danach die Vorschau; jede neue Abfrage hätte eine neue Seite mit
+     *       neuer Mail gebracht, und der Code der ersten passte nicht mehr (HTTP 500). Ohne Anforderung gilt die Seite
+     *       {@code SEEN} lang; ohne {@link SignInRequests} (nichts kann freischalten) gar nicht.</li>
+     *   <li>Ohne frisch gelieferte Datei (seit {@code FLOWING}) läuft je Quelle immer nur ein Abruf, auch wenn eine
+     *       freigeschaltete Sitzung inzwischen abgelaufen sein kann; erst nach einer gelieferten Datei wieder parallel,
+     *       auch die schon wartenden. Länger als {@code DOWNLOAD_WAIT} wartet niemand auf den Abruf vor ihm
+     *       ({@code RATE_LIMITED}).</li>
+     * </ul>
+     * Lesen auf Abruf schließt sich damit derselben Anforderung an ({@link #unlocking}), ein Auftrag wartet auf sie
+     * ({@link SignInRequests#await}). Abgelegte Dateien kommen weiter aus der Ablage. Code und Token sieht diese Stelle
+     * nie.
+     */
+    private <T> T fromSource(String sourceId, java.util.function.Supplier<T> call) {
+        SourceGate state = gates.computeIfAbsent(sourceId, id -> new SourceGate());
+        if (flowing(state)) {
+            holdWhileSignInOpen(sourceId);
+            return observed(sourceId, state, call);
+        }
+        try {
+            if (!state.probe.tryLock(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                        "Die Quelle antwortet noch auf einen anderen Download", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
+                    e);
+        }
+        boolean locked = true;
+        try {
+            holdWhileSignInOpen(sourceId);
+            Seen seen = state.seen;
+            if (seen != null && signIns != null && clock.instant().isBefore(seen.at().plus(SEEN))
+                    && settlements(sourceId) == seen.settlements()) {
+                throw new SignInRequiredException(sourceId, "Die Quelle verlangt einen Einmalcode", seen.challenge(),
+                        null);
+            }
+            if (flowing(state)) {
+                // Der vorige Abruf hat eine Datei geliefert: wieder parallel, wer noch wartet, kommt sofort dran.
+                state.probe.unlock();
+                locked = false;
+            }
+            return observed(sourceId, state, call);
+        } finally {
+            if (locked) {
+                state.probe.unlock();
+            }
+        }
+    }
+
+    /** Ob die Quelle seit dem Start und seit der letzten Zwei-Faktor-Seite eine Datei ohne Einmalcode geliefert hat. */
+    private boolean deliveredSinceTwoFactorPage(String sourceId) {
+        SourceGate state = gates.get(sourceId);
+        return state != null && state.delivered != null;
+    }
+
+    private boolean flowing(SourceGate state) {
+        java.time.Instant delivered = state.delivered;
+        return delivered != null && clock.instant().isBefore(delivered.plus(FLOWING));
+    }
+
+    private long settlements(String sourceId) {
+        return signIns == null ? 0 : signIns.settlements(sourceId);
+    }
+
+    private <T> T observed(String sourceId, SourceGate state, java.util.function.Supplier<T> call) {
+        // Vor dem Abruf gezählt: wird währenddessen ein Code angenommen, gilt die Seite, die der Abruf mitbringt, nicht.
+        long settledBefore = settlements(sourceId);
+        try {
+            T result = call.get();
+            state.seen = null;
+            state.delivered = clock.instant();
+            return result;
+        } catch (SignInRequiredException e) {
+            state.delivered = null;
+            state.seen = e.challenge() == null ? null : new Seen(e.challenge(), clock.instant(), settledBefore);
+            throw e;
+        }
+    }
+
+    /** Wirft statt eines Abrufs, solange die Anmeldung der Quelle offen ist ({@link #fromSource}). */
     private void holdWhileSignInOpen(String sourceId) {
         if (signIns == null) {
             return;

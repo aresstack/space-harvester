@@ -7,7 +7,9 @@ import org.junit.Test;
 import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class SourceModelTest {
@@ -78,11 +80,34 @@ public class SourceModelTest {
     }
 
     @Test
+    public void queryTitleOnlyIsOffByDefaultAndKeptByTheOtherOptions() {
+        assertFalse(SourceQuery.of("x").titleOnly());
+        SourceQuery title = SourceQuery.of("x").withTitleOnly(true);
+        assertTrue(title.titleOnly());
+        assertTrue(title.withIncludedPartitions(Arrays.asList("DEV")).withExcludedPartitions(Arrays.asList("OPS"))
+                .titleOnly());
+        assertFalse(title.equals(SourceQuery.of("x")));
+        assertEquals(SourceQuery.of("x"), title.withTitleOnly(false));
+        assertEquals(SourceQuery.of("x").hashCode(), title.withTitleOnly(false).hashCode());
+    }
+
+    @Test
     public void linksAndHitsNormalizeOptionalText() {
         KnowledgeResourceId id = KnowledgeResourceId.of("wiki:w/A");
         assertEquals("", new SourceLink(id, null).label());
         assertEquals(new SourceLink(id, "A"), new SourceLink(id, " A "));
         assertEquals("", new SourceSearchHit(id, null, null).snippet());
+    }
+
+    @Test
+    public void hitPartitionIsOptionalAndNormalized() {
+        KnowledgeResourceId id = KnowledgeResourceId.of("wiki:w/A");
+        assertNull(new SourceSearchHit(id, "A", null).partitionKey());
+        assertNull(new SourceSearchHit(id, "A", null, null, null, " ").partitionKey());
+        SourceSearchHit hit = new SourceSearchHit(id, "A", null, null, null, " DEV ");
+        assertEquals("DEV", hit.partitionKey());
+        // Der Bereich ist Zusatzinformation wie Stand und Adresse, keine Identität des Treffers.
+        assertEquals(new SourceSearchHit(id, "A", null), hit);
     }
 
     @Test

@@ -47,6 +47,11 @@ final class NavigableDocumentPage extends JLayeredPane {
     /** Zuletzt angesprungener Abschnitt und die Rollposition danach. */
     private Navigation.Section jumped;
     private int jumpedViewY = -1;
+    /**
+     * Klartext, auf den sich die Startpositionen der Abschnitte beziehen, wenn die Ansicht einen anderen Text zeigt
+     * (die HTML-Leseansicht); {@code null}: die Positionen gelten im angezeigten Text selbst.
+     */
+    private String sourceText;
     /** Hört nach jedem Sprung aus dem Banner mit; die Seite selbst rollt schon. */
     private java.util.function.Consumer<Navigation.Section> onJump = section -> { };
 
@@ -84,6 +89,16 @@ final class NavigableDocumentPage extends JLayeredPane {
     }
 
     void setNavigation(Navigation navigation) {
+        setNavigation(navigation, null);
+    }
+
+    /**
+     * Wie {@link #setNavigation(Navigation)} für eine Ansicht, deren Text nicht der Klartext der Navigation ist: Die
+     * Abschnitte werden über ihren Anker gefunden, bei wiederholten Überschriften das gleichzählige Vorkommen wie im
+     * Klartext {@code sourceText}.
+     */
+    void setNavigation(Navigation navigation, String sourceText) {
+        this.sourceText = sourceText;
         positions.clear();
         jumped = null;
         sky.setNavigation(navigation);
@@ -151,6 +166,21 @@ final class NavigableDocumentPage extends JLayeredPane {
         jumpedViewY = to.y;
         viewport.setViewPosition(to);
         syncActive();
+    }
+
+    /** Rollt so, dass die Zeile von {@code offset} direkt unter dem Banner steht (Sprung zu einem Linkanker). */
+    void scrollToOffset(int offset) {
+        if (offset < 0 || offset > page.getDocument().getLength()) {
+            return;
+        }
+        Rectangle rect = rectOf(offset);
+        if (rect == null) {
+            return;
+        }
+        JViewport viewport = scroll.getViewport();
+        int max = Math.max(0, page.getHeight() - viewport.getExtentSize().height);
+        int target = rect.y - sky.coveredHeight() - TARGET_GAP;
+        viewport.setViewPosition(new Point(viewport.getViewPosition().x, Math.max(0, Math.min(max, target))));
     }
 
     /**
@@ -262,12 +292,20 @@ final class NavigableDocumentPage extends JLayeredPane {
             return 0;
         }
         String anchor = normalize(section.anchor());
+        if (sourceText != null && !anchor.isEmpty()) {
+            // Andere Ansicht als der Klartext: das gleichzählige Vorkommen des Ankers wie im Klartext.
+            Integer y = anchorY(content, anchor, occurrence(sourceText, anchor, section.start()));
+            if (y == null) {
+                y = anchorY(content, anchor, 0);
+            }
+            return y == null ? 0 : y;
+        }
         int start = Math.min(section.start(), content.length());
         if (anchor.isEmpty() || startsWithAnchor(content, start, anchor)) {
             Rectangle rect = rectOf(start);
             return rect == null ? 0 : rect.y;
         }
-        Integer y = anchorY(content, anchor);
+        Integer y = anchorY(content, anchor, 0);
         if (y != null) {
             return y;
         }
@@ -287,8 +325,26 @@ final class NavigableDocumentPage extends JLayeredPane {
         return normalized.toString().equals(probe);
     }
 
-    /** y der Zeile, in der der Anker im Lesetext beginnt. */
-    private Integer anchorY(String content, String anchor) {
+    /** Wie viele Vorkommen des Ankers im Klartext vor {@code start} beginnen. */
+    static int occurrence(String text, String anchor, int start) {
+        String probe = anchor.length() > 24 ? anchor.substring(0, 24) : anchor;
+        StringBuilder normalized = new StringBuilder();
+        int limit = Math.max(0, Math.min(start, text.length()));
+        for (int i = 0; i < limit; i++) {
+            char c = text.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                normalized.append(Character.toLowerCase(c));
+            }
+        }
+        int count = 0;
+        for (int hit = normalized.indexOf(probe); hit >= 0; hit = normalized.indexOf(probe, hit + 1)) {
+            count++;
+        }
+        return count;
+    }
+
+    /** y der Zeile, in der das {@code nth}-te Vorkommen (ab 0) des Ankers im Lesetext beginnt. */
+    private Integer anchorY(String content, String anchor, int nth) {
         String probe = anchor.length() > 24 ? anchor.substring(0, 24) : anchor;
         int[] map = new int[content.length()];
         StringBuilder normalized = new StringBuilder();
@@ -300,6 +356,9 @@ final class NavigableDocumentPage extends JLayeredPane {
             }
         }
         int hit = normalized.indexOf(probe);
+        for (int i = 0; i < nth && hit >= 0; i++) {
+            hit = normalized.indexOf(probe, hit + 1);
+        }
         if (hit < 0) {
             return null;
         }

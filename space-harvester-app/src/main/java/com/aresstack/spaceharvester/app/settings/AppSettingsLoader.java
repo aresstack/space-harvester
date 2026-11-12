@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
@@ -186,8 +187,9 @@ public final class AppSettingsLoader {
         data = data == null ? home.resolve("data") : data;
         Path exports = path(get(map(get(root, "export")), "directory"), problems);
         Path assets = path(get(map(get(root, "assets")), "directory"), problems);
-        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 100L * 1024 * 1024,
-                "space-harvester.assets.max-size", problems);
+        // 0: ohne Grenze, wie AssetConfiguration des Dienstes (Angelo 11.11.2026).
+        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 0, "space-harvester.assets.max-size",
+                problems);
         // Wie AssetConfiguration des Dienstes; die Wartezeit (large-file-wait) ist in der Bibliothek fest 30 s.
         long largeAsset = size(get(map(get(root, "assets")), "large-file-threshold"), 20L * 1024 * 1024,
                 "space-harvester.assets.large-file-threshold", problems);
@@ -215,7 +217,34 @@ public final class AppSettingsLoader {
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
-                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems));
+                inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
+                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems));
+    }
+
+    /**
+     * {@code logging.threshold.console}: derselbe Schlüssel wie beim Dienst (Spring Boot). Ein unquotiertes
+     * {@code off} liest YAML als {@code false}; das gilt wie dort als aus. Ohne Angabe oder bei einem unbekannten Wert
+     * gilt der Standard der App, {@link ConsoleOutput#DEFAULT}.
+     */
+    private ConsoleOutput consoleOutput(Object raw, List<String> problems) {
+        if (raw == null) {
+            return ConsoleOutput.DEFAULT;
+        }
+        if (raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            problems.add(ConsoleOutput.KEY + " ist eine einzelne Stufe: off, error, warn, info oder all");
+            return ConsoleOutput.DEFAULT;
+        }
+        String text = raw instanceof Boolean flag ? flag.toString() : text(raw, problems);
+        if (text == null || text.isBlank()) {
+            // Ein ungelöster Platzhalter steht schon unter den Problemen.
+            return ConsoleOutput.DEFAULT;
+        }
+        ConsoleOutput output = ConsoleOutput.parse(text);
+        if (output == null) {
+            problems.add(ConsoleOutput.KEY + " kennt nur off, error, warn, info und all, nicht " + text.strip());
+            return ConsoleOutput.DEFAULT;
+        }
+        return output;
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
@@ -715,12 +744,57 @@ public final class AppSettingsLoader {
                 problems);
         Duration retention = duration(get(jobs, "retention"), JobLimits.DEFAULT_RETENTION,
                 "space-harvester.jobs.retention", problems);
+        RetrySettings retry = retry(map(get(jobs, "retry")), problems);
+        int preparations = parallel(jobs, JobLimits.PARALLEL_PREPARATIONS, JobLimits.DEFAULT_PARALLEL_PREPARATIONS,
+                JobLimits::requirePreparations, problems);
+        int downloads = parallel(jobs, JobLimits.PARALLEL_DOWNLOADS, JobLimits.DEFAULT_PARALLEL_DOWNLOADS,
+                JobLimits::requireDownloads, problems);
+        int connections = parallel(jobs, JobLimits.DOWNLOAD_CONNECTIONS, JobLimits.DEFAULT_DOWNLOAD_CONNECTIONS,
+                JobLimits::requireConnections, problems);
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
-            return new JobLimits(concurrent, queued, runTime, retention);
+            return new JobLimits(concurrent, queued, runTime, retention).withRetry(retry)
+                    .withParallel(preparations, downloads).withConnections(connections);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
-            return new JobLimits(2, 20, Duration.ofHours(6));
+            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry).withParallel(preparations, downloads)
+                    .withConnections(connections);
+        }
+    }
+
+    /** {@code jobs.parallel-preparations} und {@code jobs.parallel-downloads}; außerhalb der Grenzen der Standard. */
+    private int parallel(Map<?, ?> jobs, String name, int fallback, java.util.function.IntUnaryOperator check,
+                         List<String> problems) {
+        int number = integer(get(jobs, name), fallback, "space-harvester.jobs." + name, problems);
+        try {
+            return check.applyAsInt(number);
+        } catch (IllegalArgumentException e) {
+            problems.add("space-harvester.jobs: " + e.getMessage() + "; es gilt " + fallback);
+            return fallback;
+        }
+    }
+
+    /** {@code space-harvester.jobs.retry.*} (ADR 0025), dieselben Schlüssel wie beim Dienst. */
+    private RetrySettings retry(Map<?, ?> retry, List<String> problems) {
+        String prefix = "space-harvester." + RetrySettings.PREFIX;
+        RetrySettings fallback = RetrySettings.DEFAULT;
+        int attempts = integer(get(retry, RetrySettings.MAX_ATTEMPTS), fallback.maxAttempts(),
+                prefix + RetrySettings.MAX_ATTEMPTS, problems);
+        Duration initial = duration(get(retry, RetrySettings.INITIAL_DELAY), fallback.initialDelay(),
+                prefix + RetrySettings.INITIAL_DELAY, problems);
+        Duration max = duration(get(retry, RetrySettings.MAX_DELAY), fallback.maxDelay(),
+                prefix + RetrySettings.MAX_DELAY, problems);
+        int pauseAfter = integer(get(retry, RetrySettings.PAUSE_AFTER_FAILURES), fallback.pauseAfterFailures(),
+                prefix + RetrySettings.PAUSE_AFTER_FAILURES, problems);
+        Duration resumeInitial = duration(get(retry, RetrySettings.RESUME_INITIAL_DELAY),
+                fallback.resumeInitialDelay(), prefix + RetrySettings.RESUME_INITIAL_DELAY, problems);
+        Duration resumeMax = duration(get(retry, RetrySettings.RESUME_MAX_DELAY), fallback.resumeMaxDelay(),
+                prefix + RetrySettings.RESUME_MAX_DELAY, problems);
+        try {
+            return new RetrySettings(attempts, initial, max, pauseAfter, resumeInitial, resumeMax);
+        } catch (IllegalArgumentException e) {
+            problems.add(prefix + "*: " + e.getMessage() + "; es gelten die Standards");
+            return fallback;
         }
     }
 

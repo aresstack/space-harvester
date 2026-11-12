@@ -207,7 +207,8 @@ public class ConfluenceViewImageTest {
         }
         assertNull("kein Request an fremde Hosts", requested);
         assertEquals(1, logLines.size());
-        assertTrue(logLines.get(0), logLines.get(0).contains("url=" + foreign));
+        assertTrue(logLines.get(0), logLines.get(0).contains("url=https://other.invalid/confluence/download/attachments/… "));
+        assertFalse(logLines.get(0), logLines.get(0).contains("bild.png") || logLines.get(0).contains("/7/"));
         assertTrue(logLines.get(0), logLines.get(0).contains("fehler=UNSUPPORTED"));
     }
 
@@ -233,7 +234,8 @@ public class ConfluenceViewImageTest {
 
         assertEquals(1, logLines.size());
         String line = logLines.get(0);
-        assertTrue(line, line.contains("url=" + BASE + "/download/attachments/7/bild.png "));
+        assertTrue(line, line.contains("url=" + BASE + "/download/attachments/… "));
+        assertFalse("ohne Seiten-ID und Dateiname", line.contains("/7/") || line.contains("bild.png"));
         assertFalse("ohne Query", line.contains("api=v2"));
         assertTrue(line, line.contains("status=200"));
         assertTrue(line, line.contains("contentType=application/json"));
@@ -389,8 +391,9 @@ public class ConfluenceViewImageTest {
         assertEquals("version=3&api=v2", preview.getRawQuery());
         assertNull("das Fragment geht nicht über die Leitung", preview.getRawFragment());
         assertTrue("Rückfall ist kein Fehler", logLines.isEmpty());
-        assertTrue(infoLines.toString(), infoLines.contains("[Confluence] draw.io: rendere Diagramm name=Bild A page=42"
-                + " revision=3"));
+        assertTrue(infoLines.toString(), infoLines.contains("[Confluence] draw.io: rendere Diagramm revision=3"));
+        assertTrue(infoLines.toString(), infoLines.stream().noneMatch(line -> line.contains("Bild A")
+                || line.contains("Bild%20A") || line.contains("page=")));
         assertTrue(infoLines.toString(), infoLines.stream().anyMatch(line -> line.startsWith(
                 "[Confluence] draw.io: JGraphX nicht möglich (nicht unterstützt: shape=mxgraph.unbekannt.form),"
                         + " verwende PNG-Vorschau")));
@@ -425,8 +428,7 @@ public class ConfluenceViewImageTest {
         assertTrue(svg, svg.contains("<svg") && svg.contains("Kasten") && svg.contains("<path"));
         assertEquals(1, requests.size());
         assertEquals("/confluence/rest/drawio/1.0/diagram/crud/Bild%20A/42", requests.get(0).getRawPath());
-        assertTrue(infoLines.toString(), infoLines.contains("[Confluence] draw.io: rendere Diagramm name=Bild A page=42"
-                + " revision=55"));
+        assertTrue(infoLines.toString(), infoLines.contains("[Confluence] draw.io: rendere Diagramm revision=55"));
         assertTrue(infoLines.toString(), infoLines.stream().anyMatch(
                 line -> line.startsWith("[Confluence] draw.io: SVG erzeugt")));
         assertTrue(logLines.isEmpty());
@@ -498,7 +500,7 @@ public class ConfluenceViewImageTest {
         for (URI request : requests) {
             assertFalse(request.toString(), "files.invalid".equals(request.getHost()));
         }
-        assertTrue(logLines.get(0), logLines.get(0).contains("weiterleitung=http://files.invalid/a.png "));
+        assertTrue(logLines.get(0), logLines.get(0).contains("weiterleitung=http://files.invalid/… "));
     }
 
     @Test

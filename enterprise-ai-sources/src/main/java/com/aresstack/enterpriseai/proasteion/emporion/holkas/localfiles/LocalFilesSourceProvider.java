@@ -29,7 +29,8 @@ public final class LocalFilesSourceProvider implements KnowledgeSourceProvider {
     public static final String TYPE_ID = "files";
 
     private static final KnowledgeSourceType TYPE = KnowledgeSourceType.builder(TYPE_ID, "file", "Lokale Dateien")
-            .description("Ein Verzeichnis, rekursiv; PDF, Office, Text, Markdown und HTML über Apache Tika")
+            .description("Ein Verzeichnis, rekursiv; PDF, Office, Text, Markdown und HTML über Apache Tika, "
+                    + "Bilder nur mit Name, Typ und Größe")
             .idPrefix("dateien")
             .fullIndexing(true)
             .summaryKey("directory")

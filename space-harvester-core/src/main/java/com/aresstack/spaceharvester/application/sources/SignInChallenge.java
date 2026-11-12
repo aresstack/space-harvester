@@ -35,6 +35,38 @@ public interface SignInChallenge {
     SignInChallenge submit(char[] code);
 
     /**
+     * Ob die Abfrage neben dem Code einmalig Benutzer und Passwort braucht (#571): Eine Quelle mit Personal Access
+     * Token hat keine Web-Sitzung, an die die Zwei-Faktor-Anmeldung den Code binden kann. Die Oberfläche zeigt dann
+     * zwei weitere Felder und sendet mit {@link #submit(char[], String, char[])}.
+     */
+    default boolean asksForLogin() {
+        return false;
+    }
+
+    /**
+     * Ob sich die Web-Anmeldung mit Benutzer und Passwort neu beginnen lässt, auch wenn die Abfrage gerade nur den Code
+     * will (Angelo 11.11.2026): Ist die Web-Sitzung einer Quelle mit Personal Access Token abgelaufen, nimmt
+     * Confluence den Code dort nicht mehr an. {@link #submit(char[], String, char[])} mit leerem Code öffnet dann eine
+     * neue Web-Sitzung wie beim ersten Mal.
+     */
+    default boolean canRestartLogin() {
+        return asksForLogin();
+    }
+
+    /**
+     * Sendet den Code wie {@link #submit(char[])}, für genau dieses Absenden aber mit Benutzer und Passwort statt der
+     * konfigurierten Anmeldung (#571). Danach gilt die freigeschaltete Web-Sitzung; alle anderen Abrufe laufen weiter
+     * mit der konfigurierten Anmeldung. Benutzer und Passwort werden nie gespeichert oder protokolliert; der Aufrufer
+     * überschreibt {@code password} danach. Ohne {@link #asksForLogin()} oder ohne Benutzer bzw. Passwort wie
+     * {@link #submit(char[])}.
+     *
+     * @throws SourceAccessException wenn das Senden scheitert
+     */
+    default SignInChallenge submit(char[] code, String username, char[] password) {
+        return submit(code);
+    }
+
+    /**
      * Fordert einen neuen Code an; liefert die Abfrage danach.
      *
      * @throws SourceAccessException wenn das Anfordern scheitert

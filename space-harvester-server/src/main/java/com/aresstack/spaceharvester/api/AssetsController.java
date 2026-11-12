@@ -148,7 +148,7 @@ public class AssetsController {
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle, Seite oder Anhang, nicht sichtbar, oder die "
             + "Quelle hat für diesen Typ keine Vorschau")
     @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder die "
-            + "Vorschau ist größer als space-harvester.assets.max-size (asset-too-large)")
+            + "Vorschau ist größer als space-harvester.assets.max-size oder 100 MiB (asset-too-large)")
     @ApiResponse(responseCode = "503", description = "Die Quelle erzeugt die Vorschau noch; später erneut fragen")
     public ResponseEntity<byte[]> preview(
             @Parameter(hidden = true) AccessContext caller,

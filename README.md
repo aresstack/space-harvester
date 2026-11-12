@@ -153,14 +153,14 @@ und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | neues Pre-Release `v<Basis>-beta.<N>`; `N` zählt je Push hoch |
+| Push auf `main` | das rollierende Pre-Release `beta` (Version `<Basis>-beta.<N>`) wird ersetzt |
 | Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird ersetzt |
 | **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | reguläres Release genau dieser Version, als *Latest* markiert |
 
 - Ein reguläres Release braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`
   ([v0.1.0](docs/release-notes/v0.1.0.md)); der Workflow stellt sie vor die Dateiübersicht und bricht ohne sie ab.
-- Nach einem regulären Release zählen die Betas auf der nächsten Minor-Version weiter (nach `v0.1.0`:
-  `v0.2.0-beta.1`, …), ohne dass `build.gradle` angepasst werden muss.
+- Die Beta trägt die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`: `0.1.2-beta.<N>`).
+  GitHub sortiert Releases nach Datum, deshalb steht über dem regulären Release („Latest“) höchstens die eine Beta.
 - Nicht über **Releases › Draft a new release** gehen: Versionierte Releases werden nie überschrieben, der Workflow
   lehnt das Hochladen dann ab. Ablauf im Detail: [Desktop › Releases](docs/DESKTOP_APP.md#releases).
 
@@ -810,7 +810,7 @@ Storage-Format, `docx` `pages.docx` (Word-Exporter des Enterprise AI Client mit 
 Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
 `conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
 ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
-`space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
+`space-harvester.export.max-converted-bytes` groß werden (Standard 0, ohne Grenze), sonst scheitert der Export mit
 `CONVERSION_TOO_LARGE`, statt abzuschneiden. Alle Artefakte zusammen belegen höchstens
 `space-harvester.export.max-total-bytes` (Standard 20 GiB); ist die Ablage voll, lehnt der Start mit
 `export-storage-full` (507) ab, ein laufender Export scheitert mit `EXPORT_STORAGE_FULL`.
@@ -820,9 +820,10 @@ dieselbe Anmeldung, dieselben Zertifikate und denselben Proxy wie die Seiten; fr
 abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Space der Seite; ein Anhang, der nicht zur
 Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
 (Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
-Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
-(Standard 100 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
-dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
+Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Eine Größengrenze gibt es standardmäßig nicht:
+Anhänge fließen als Strom in die Ablage, nie ganz in den Speicher (`space-harvester.assets.max-size` = `0`, #571). Mit
+einer Größe werden größere Dateien weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon beim
+Lesen an dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
 darüber `asset-store-full` (507), ohne etwas zu verdrängen. Leitet die Quelle einen Download auf einen anderen Host um,
 wird dem nie gefolgt, der Anhang gilt dann als fehlgeschlagen; `options.foreignFileRedirects: true` ist ein
 Konfigurationsfehler. Fehler je Anhang stehen mit festem Code im

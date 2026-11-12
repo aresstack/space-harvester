@@ -78,6 +78,75 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void afterARestartResumingASyncKeepsTheEntryAndItsMode() {
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        JobLimits limits = new JobLimits(2, 10, Duration.ofHours(1));
+        Jobs before = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs first = new SpaceSyncJobs(before, source.queries(), store, fetcher, FakeSource.CLOCK);
+        JobStatus accepted = first.start("wiki", "DOC", "client:a", SyncMode.FULL);
+        first.pause(accepted.id(), "client:a");
+        runQueued();
+        assertThat(first.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.PAUSED);
+
+        Jobs restarted = new Jobs(jobStore, queued::add, limits, FakeSource.CLOCK);
+        SpaceSyncJobs second = new SpaceSyncJobs(restarted, source.queries(), store, fetcher, FakeSource.CLOCK);
+        SpaceSyncJobs.SyncJob resumed = second.resume(accepted.id(), "client:a");
+        runQueued();
+
+        assertThat(resumed.status().id()).isEqualTo(accepted.id());
+        JobStatus done = second.status(accepted.id(), "client:a").status();
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.parameters()).containsEntry("mode", "FULL");
+        assertThat(done.progress().written()).isEqualTo(3);
+        assertThat(restarted.list("client:a", JobType.SYNC)).hasSize(1);
+    }
+
+    @Test
+    void whenTheSourceStaysUnreachableTheSyncPausesInsteadOfFailingEveryPage() {
+        for (int i = 4; i <= 12; i++) {
+            source.put(String.valueOf(i), "DOC", null, "1", null);
+        }
+        beforeFetch = pageId -> {
+            throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "kein Netz", null);
+        };
+
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        JobStatus paused = syncs.status(accepted.id(), "client:a").status();
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.pauseReason()).isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason
+                .CONNECTION_LOST);
+        assertThat(paused.lifecycle().key()).isEqualTo("PAUSED_CONNECTION_LOST");
+        // Nach fünf Versuchen hört er auf, statt alle zwölf Seiten als Fehler zu zählen.
+        assertThat(paused.progress().failed()).isLessThan(12);
+
+        beforeFetch = pageId -> { };
+        syncs.resume(accepted.id(), "client:a");
+        runQueued();
+        assertThat(syncs.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void howManyNetworkFailuresPauseTheSyncIsConfigurable() {
+        for (int i = 4; i <= 12; i++) {
+            source.put(String.valueOf(i), "DOC", null, "1", null);
+        }
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        beforeFetch = pageId -> {
+            attempts.incrementAndGet();
+            throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "kein Netz", null);
+        };
+        syncs.connectionLostAfter(2);
+
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        assertThat(syncs.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.PAUSED);
+        assertThat(attempts).hasValue(2);
+    }
+
+    @Test
     void catchingUpUsesTheChangeSearchWhereTheSourceListsChanges() {
         source.listingChanges();
         runQueued();

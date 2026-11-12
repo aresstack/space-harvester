@@ -15,7 +15,10 @@ import com.aresstack.spaceharvester.application.images.ImagePayload;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.export.ExportPackageImport;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -381,6 +384,23 @@ public final class Workspace {
     }
 
     /**
+     * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als Vektorzeichnung ({@link Assets#viewDiagramSvg}):
+     * Leseansicht und Bildbetrachter zeichnen es bei jedem Maßstab scharf, statt ein Rasterbild zu vergrößern. Leer,
+     * wenn das Bild kein draw.io-Diagramm ist oder sich nicht zeichnen lässt; dann gilt {@link #viewDiagram} bzw. das Bild.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.diagrams.VectorDiagram> viewDiagramVector(
+            ReadingView view, HarvestSource.ViewImage image) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE || !view.images().contains(image)) {
+            throw new IllegalArgumentException("Das Bild gehört nicht zu dieser Lese-Ansicht");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        return harvester.assets().viewDiagramSvg(header.key().sourceId(), header.key().pageId(), view.version(), image)
+                .flatMap(svg -> com.aresstack.spaceharvester.application.diagrams.VectorDiagram.of(svg.content()));
+    }
+
+    /**
      * Das gezeichnete Mermaid-Diagramm einer Lese-Ansicht ({@link Assets#rendition}): einmal gezeichnet und abgelegt,
      * dieselben Quelldaten werden nie erneut gezeichnet (#190). Leer, wenn es sich nicht zeichnen lässt.
      */
@@ -464,6 +484,40 @@ public final class Workspace {
     public JobStatus purgeSourceData(String sourceId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
         JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
+     * Was ein Paket „JSON mit Medien“ enthält und ob der Space in dieser Quelle schon Daten hat, vor dem Import
+     * ({@code ExportPackageImport.preview}).
+     */
+    public ExportPackageImport.Preview previewPackage(Path file, String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        return harvester.packageImport().preview(file, sourceId);
+    }
+
+    /**
+     * Importiert ein Paket „JSON mit Medien“ als Auftrag in den Bestand dieser Quelle, ohne die Quelle zu fragen
+     * ({@code ExportPackageImport.start}, {@code POST /api/v1/sources/{id}/data/imports}); braucht wie das
+     * Abgleichen die sync-Freigabe. Der Fortschritt erscheint wie bei jedem Auftrag in Aktivitäten und Statuszeile.
+     *
+     * @param replace ob vorhandene Daten des Space ersetzt werden dürfen
+     */
+    public JobStatus importPackage(Path file, String sourceId, boolean replace) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.packageImport().start(file, sourceId, replace, Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
+     * Importiert mehrere Pakete „JSON mit Medien“ in einem Auftrag nacheinander in den Bestand dieser Quelle
+     * ({@code ExportPackageImport.start(List, …)}); ein unpassendes Paket wird übersprungen.
+     */
+    public JobStatus importPackages(List<Path> files, String sourceId, boolean replace) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        JobStatus status = harvester.packageImport().start(files, sourceId, replace, Harvester.OWNER);
         activities.remember(status.id());
         return status;
     }
@@ -834,8 +888,159 @@ public final class Workspace {
     /** Status eines Auftrags dieser App, unabhängig von seiner Art. */
     public JobStatus job(String jobId) {
         JobStatus status = harvester.jobs().status(jobId, Harvester.OWNER);
-        requireVisible(status, status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC);
+        requireVisible(status, visibility(status));
         return status;
+    }
+
+    /** Welches Recht ein Auftrag zum Anzeigen braucht: Exporte die Export-Freigabe, alle anderen die zum Abgleichen. */
+    private static AccessKind visibility(JobStatus status) {
+        return status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC;
+    }
+
+    /**
+     * Hält einen Download oder Abgleich an (Pause, ADR 0025): er beendet seinen Schritt und steht dann auf
+     * „Angehalten“; was er geladen hat, bleibt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException bei anderen Auftragsarten
+     */
+    public JobStatus pauseJob(String jobId) {
+        JobStatus status = job(jobId);
+        return status.type() == JobType.SYNC ? harvester.syncs().pause(jobId, Harvester.OWNER).status()
+                : harvester.jobs().pause(jobId, Harvester.OWNER);
+    }
+
+    /**
+     * Setzt einen angehaltenen, gescheiterten oder abgebrochenen Download oder Abgleich im selben Eintrag fort (ADR
+     * 0025); er holt nur, was noch fehlt. Geht das nicht ({@link #canResume}), startet die App ihn mit denselben
+     * Angaben neu, was ebenfalls nur den Rest holt.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException wenn er sich nicht im selben
+     *                                                                               Eintrag fortsetzen lässt
+     */
+    public JobStatus resumeJob(String jobId) {
+        JobStatus status = job(jobId);
+        return switch (status.type()) {
+            case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
+            case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
+            default -> harvester.resumeExport(jobId);
+        };
+    }
+
+    /**
+     * Der wirksame Zustand eines Auftrags mit den Aktionen, die die Oberfläche jetzt anbietet, in Anzeigereihenfolge
+     * ({@link JobLifecycleState#actions()}).
+     */
+    public JobLifecycleState jobState(String jobId) {
+        return job(jobId).lifecycle();
+    }
+
+    /**
+     * Führt eine Aktion auf einem Auftrag dieser App aus, nachdem der Core sie am Zustand geprüft hat
+     * ({@link com.aresstack.spaceharvester.application.jobcontrol.JobActions}). Fortsetzen bleibt im selben Eintrag,
+     * auch nach einem Neustart der App; Löschen entfernt nur den Auftrag, nie die geladenen Daten.
+     *
+     * @return der Zustand danach; bei {@link JobAction#DELETE} der letzte vor dem Löschen
+     * @throws com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException wenn der Zustand die Aktion
+     *                                                                                   nicht anbietet
+     */
+    public JobStatus performJobAction(String jobId, JobAction action) {
+        job(jobId);
+        JobStatus status = harvester.performJobAction(jobId, action);
+        if (action == JobAction.DELETE) {
+            activities.forget(jobId);
+        }
+        return status;
+    }
+
+    /**
+     * „Alle anhalten“ (Angelo 11.11.2026): hält alle wartenden und laufenden Aufträge an, die sich fortsetzen lassen
+     * ({@link AllJobs#toPause}), wartende vor laufenden, damit keiner in einen frei werdenden Platz nachrückt. Ein
+     * laufender beendet noch seinen Schritt; was er geladen hat, bleibt.
+     */
+    public AllJobs.Outcome pauseAllJobs() {
+        return AllJobs.apply(AllJobs.toPause(jobs()), job -> pauseJob(job.id()));
+    }
+
+    /**
+     * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
+     * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
+     */
+    public AllJobs.Outcome resumeAllJobs() {
+        return AllJobs.apply(AllJobs.toResume(jobs()), job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /**
+     * „Alle abbrechen“: bricht alle wartenden und laufenden Aufträge ab ({@link AllJobs#toCancel}), wartende zuerst.
+     * Angehaltene und beendete bleiben, wie sie sind.
+     */
+    public AllJobs.Outcome cancelAllJobs() {
+        return AllJobs.apply(AllJobs.toCancel(jobs()), job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Für die Restzeit im Fortschrittsbalken: durchschnittliche Dauer je tatsächlich geladener Datei, global über alle
+     * Exporte und Neustarts, getrennt für Bilder ({@link JobType#ASSETS}) und Anhänge ({@link JobType#ATTACHMENTS});
+     * vor der ersten Datei ein Startwert. Ein einzelner Transfer, ohne Parallelität; Treffer aus dem Speicher und
+     * Seitentexte zählen nicht.
+     *
+     * @throws IllegalArgumentException für andere Auftragsarten
+     */
+    public java.time.Duration averageDownload(JobType type) {
+        return harvester.averageDownload(type);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig vorbereiten ({@code jobs.parallel-preparations}). */
+    public int parallelPreparations() {
+        return harvester.parallelPreparations();
+    }
+
+    /**
+     * Ändert {@link #parallelPreparations()} sofort, ohne die Konfigurationsdatei
+     * ({@link com.aresstack.spaceharvester.app.settings.ConfigFileEditor#withParallel}).
+     *
+     * @throws IllegalArgumentException außerhalb von 1 bis 16
+     */
+    public void setParallelPreparations(int value) {
+        harvester.parallelPreparations(value);
+    }
+
+    /** Wie viele Bilder- und Anhängeaufträge gleichzeitig laden ({@code jobs.parallel-downloads}); 0 lädt nichts. */
+    public int parallelDownloads() {
+        return harvester.parallelDownloads();
+    }
+
+    /**
+     * Ändert {@link #parallelDownloads()} sofort, ohne die Konfigurationsdatei. Bei 0 werden Bilder und Anhänge nur
+     * vorbereitet (Zustand „Vorbereitet“) und laden erst, wenn wieder ein Platz frei ist.
+     *
+     * @throws IllegalArgumentException außerhalb von 0 bis 64
+     */
+    public void setParallelDownloads(int value) {
+        harvester.parallelDownloads(value);
+    }
+
+    /**
+     * Gleichzeitige Verbindungen je ladendem Bilder- oder Anhängeauftrag ({@code jobs.download-connections}, Angelo
+     * 11.11.2026).
+     */
+    public int downloadConnections() {
+        return harvester.downloadConnections();
+    }
+
+    /**
+     * Ändert {@link #downloadConnections()} sofort, ohne die Konfigurationsdatei; die Verteilung auf die ladenden
+     * Aufträge gilt sofort, ein laufender Ladedurchgang nutzt höchstens so viele Verbindungen wie bei seinem Start.
+     *
+     * @throws IllegalArgumentException außerhalb von 0 bis 64
+     */
+    public void setDownloadConnections(int value) {
+        harvester.downloadConnections(value);
+    }
+
+    /** Ob sich der Auftrag jetzt im selben Eintrag fortsetzen lässt ({@link #resumeJob}). */
+    public boolean canResume(String jobId) {
+        job(jobId);
+        return harvester.jobs().resumable(jobId, Harvester.OWNER);
     }
 
     /**
@@ -845,22 +1050,36 @@ public final class Workspace {
     public List<JobStatus> jobs() {
         List<JobStatus> result = new ArrayList<>();
         for (String id : activities.ids()) {
+            JobStatus status;
             try {
-                result.add(job(id));
+                status = harvester.jobs().status(id, Harvester.OWNER);
             } catch (UnknownJobException e) {
+                // Nur was die Auftragsablage nicht mehr kennt, fällt aus der Liste.
                 activities.forget(id);
+                continue;
             } catch (RuntimeException e) {
-                // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar.
+                continue;
+            }
+            try {
+                requireVisible(status, visibility(status));
+                result.add(status);
+            } catch (RuntimeException e) {
+                // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar, aber
+                // gemerkt: eine kurz verweigerte Prüfung (etwa beim Start) löscht ihn nicht aus der Liste.
             }
         }
-        // Anreicherungen und Bilder plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
-        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
+        // Exporte, Anreicherungen, Bilder und Anhänge auch direkt aus der Auftragsablage: Bilder und Anhänge stehen als
+        // Unterzeilen unter ihrem Export, der deshalb nie fehlen darf, auch wenn die gemerkte Liste ihn verloren hat.
+        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.EXPORT));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
-        for (JobStatus enrichment : followUps) {
-            if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
+        for (JobStatus followUp : followUps) {
+            if (result.stream().noneMatch(known -> known.id().equals(followUp.id()))) {
                 try {
-                    requireVisible(enrichment, AccessKind.SYNC);
-                    result.add(enrichment);
+                    requireVisible(followUp, visibility(followUp));
+                    result.add(followUp);
                 } catch (RuntimeException e) {
                     // wie oben: ohne Recht auf den Space unsichtbar
                 }
@@ -894,15 +1113,30 @@ public final class Workspace {
     }
 
     /**
-     * Löscht einen beendeten Auftrag samt Diagnoseereignissen und nimmt ihn aus der Liste. Exportdateien, die der
-     * Benutzer gespeichert hat, und der Seitenbestand bleiben.
-     *
-     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     * Löscht einen Auftrag in jedem Zustand samt Diagnoseereignissen und nimmt ihn aus der Liste; einen wartenden oder
+     * laufenden bricht das vorher ab. Exportdateien, die der Benutzer gespeichert hat, und der Seitenbestand bleiben.
      */
     public void deleteJob(String jobId) {
         job(jobId);
         harvester.deleteJob(jobId);
         activities.forget(jobId);
+    }
+
+    /**
+     * Löscht alle sichtbaren Aufträge in jedem Zustand („Alle Aufträge löschen“); wartende und laufende werden vorher
+     * abgebrochen. @return Anzahl
+     */
+    public int deleteAllJobs() {
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            try {
+                deleteJob(status.id());
+                deleted++;
+            } catch (UnknownJobException e) {
+                activities.forget(status.id());
+            }
+        }
+        return deleted;
     }
 
     /** Löscht alle sichtbaren beendeten Aufträge; wartende und laufende bleiben. @return Anzahl */
@@ -981,6 +1215,17 @@ public final class Workspace {
         PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
         return harvester.assets().content(list, attachmentId, mayStore, Harvester.OWNER);
+    }
+
+    /**
+     * Wie {@link #assetContent}, aber als Strom ({@code Assets.stream}, #571): ein abgelegter Anhang kommt aus der
+     * Ablage, ohne ganz im Speicher zu liegen. Der Aufrufer schließt den Strom; ein Hashfehler kommt beim Lesen am
+     * Ende als {@link java.io.IOException}.
+     */
+    public Assets.AssetStream assetStream(String sourceId, String pageId, String attachmentId) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return harvester.assets().stream(list, attachmentId, mayStore, Harvester.OWNER);
     }
 
     /**

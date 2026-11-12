@@ -172,7 +172,7 @@ public class GlossaryController {
 
     @PostMapping("/classify")
     @Operation(summary = "Fachbegriffe ermitteln (KI-Lauf auf Knopfdruck)",
-            description = "Asynchron und abbrechbar, je Quelle ein Auftrag ENRICHMENT. Ohne sourceId alle für den "
+            description = "Asynchron und abbrechbar, je Quelle ein Auftrag GLOSSARY. Ohne sourceId alle für den "
                     + "KI-Dienst freigegebenen Quellen mit sync-Freigabe, mit spaceKey nur dieser Space. Arbeitet auf "
                     + "dem vorhandenen Begriffsindex, lädt keine Seiten nach. Ergebnis sind nur Vorschläge (ai, "
                     + "proposed); manuelle, bestätigte und abgelehnte Einträge bleiben. Scheitert ein Auftrag, bleibt "
@@ -215,7 +215,7 @@ public class GlossaryController {
             throw new UnknownJobException(jobId);
         }
         JobStatus job = jobs.status(jobId, caller.jobOwner());
-        if (job.type() != JobType.ENRICHMENT) {
+        if (job.type() != JobType.GLOSSARY) {
             throw new UnknownJobException(jobId);
         }
         return job;

@@ -21,21 +21,22 @@ import java.util.Set;
  * FTP-Sitzung über Apache Commons Net. Übernommen aus MainframeMate {@code CommonsNetFtpFileService} (Anmeldung,
  * MVS-Erkennung über {@code SYST}, doppelte MVS-Auflistung, Satzstruktur, Entfernen der Füllbytes {@code 00}), ohne
  * Schreibzugriff, Einstellungs-Singleton und Konsolenausgaben. Zugangsdaten werden nur beim Öffnen gebraucht und
- * nicht gehalten.
+ * nicht gehalten. Mit {@code tls} läuft die Sitzung über FTPS ({@link FtpTls}).
  */
 final class CommonsNetFtpSession implements FtpClientSession {
 
     private static final byte PADDING = 0x00;
 
-    private final FTPClient client = new FTPClient();
+    private final FTPClient client;
     private final FtpConnectionSettings settings;
     private final MvsPathDialect dialect = new MvsPathDialect();
     private boolean mvs;
     private boolean recordStructure;
     private boolean closed;
 
-    private CommonsNetFtpSession(FtpConnectionSettings settings) {
+    private CommonsNetFtpSession(FtpConnectionSettings settings) throws IOException {
         this.settings = settings;
+        this.client = FtpTls.client(settings);
     }
 
     /**
@@ -49,7 +50,10 @@ final class CommonsNetFtpSession implements FtpClientSession {
         try {
             session.connect(user, password);
             return session;
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException e) {
+            session.close();
+            throw FtpTls.neutral(e);
+        } catch (RuntimeException e) {
             session.close();
             throw e;
         }
@@ -65,6 +69,7 @@ final class CommonsNetFtpSession implements FtpClientSession {
         if (!client.login(user, new String(password))) {
             throw new FtpLoginException("FTP-Anmeldung abgelehnt (" + client.getReplyCode() + ")");
         }
+        FtpTls.protect(client);
         client.enterLocalPassiveMode();
         String systemType = client.getSystemType();
         String upper = systemType == null ? "" : systemType.toUpperCase(Locale.ROOT);

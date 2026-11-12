@@ -356,6 +356,7 @@ final class SetupWizard {
         }
         summary.add("Proxy", proxyMode);
         summary.add("Serverzertifikate", settings.tls().describe());
+        summary.add(SettingDialogs.RETRY_TITLE, SettingDialogs.retrySummary(settings.jobLimits().retry()));
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("Vision-Modell", blank(settings.ai().visionModel()));
@@ -375,6 +376,8 @@ final class SetupWizard {
                 ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");
         summary.add("Freigegeben für den KI-Dienst",
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
+        // Einstellbar unter Allgemein › Terminal-Ausgabe; die Protokolldatei bekommt immer alles.
+        summary.add(SettingsView.CONSOLE_TITLE, settings.consoleOutput().label());
         summary.add("Konfigurationsdatei", context.configFile().toAbsolutePath().toString());
     }
 

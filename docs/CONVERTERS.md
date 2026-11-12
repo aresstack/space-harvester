@@ -12,7 +12,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `format` | Datei | Inhalt |
 |---|---|---|
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
-| `json-package` | `export.zip` | `pages.json` wie `json`, dazu `assets.json` (Zuordnung Seite → Datei, Medientyp, `sha256`, Status, relativer Pfad) und `assets/<Seiten-ID>/` mit Bildern, draw.io-Originalen, gezeichneten Grafiken und `*.graph.json` (Knoten und Verbindungen); dazu `attachments.json` (Format `attachments/v1`: je Dokument-Anhang `pageId`, `attachmentId`, `title`, `mediaType`, `size`, `sha256`, `status`, `reason`, `path`, `textPath`) und `attachments/<Seiten-ID>/` mit dem Original und seinem Text als `<Datei>.txt` (ohne lesbaren Text `textPath: null`, Grund `text-unavailable`; ausgeschlossene Anhänge ohne Dateien, Einstellung `export.attachments.*`); keine Base64-Einbettung ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md), [ADR 0023](adr/0023-dateianhaenge-im-export.md)); Version `json-package/2` |
+| `json-package` | `export.zip` | `pages.json` wie `json`, dazu `assets.json` (Zuordnung Seite → Datei, Medientyp, `sha256`, Status, relativer Pfad) und `assets/<Seiten-ID>/` mit Bildern, draw.io-Originalen, gezeichneten Grafiken und `*.graph.json` (Knoten und Verbindungen); dazu `attachments.json` (Format `attachments/v1`: je Dokument-Anhang `pageId`, `attachmentId`, `title`, `mediaType`, `size`, `sha256`, `status`, `reason`, `path`, `textPath`) und `attachments/<Seiten-ID>/` mit dem Original und seinem Text als `<Datei>.txt` (ohne lesbaren Text `textPath: null`, Grund `text-unavailable`; ausgeschlossene Anhänge ohne Dateien, Einstellung `export.attachments.*`); seit `json-package/3` außerdem `raw/` (Payload jeder Seite Byte für Byte), `views/` (Lese-Ansicht mit Makro-Inhalten, sofern abgelegt), `tree.json` (Baum mit Geschwister-Reihenfolge) und `manifest.json` (Abschnitt „JSON-Paket als Datenbestand“); keine Base64-Einbettung ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md), [ADR 0023](adr/0023-dateianhaenge-im-export.md)); Version `json-package/3` |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
 | `markdown-package` | `export-markdown.zip` | `pages.md` wie `markdown`, die Abbildungen aber als Dateien `assets/<sha256>.png` relativ verlinkt statt als `data:`-URI; jede Abbildung einmal ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)) |
 | `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
@@ -36,8 +36,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Unverändert gelesen.** Hat sich eine Seite seit dem ersten Durchlauf im Cache geändert, scheitert der Export
   (`CHANGED_DURING_EXPORT`), statt zwei Stände zu mischen.
 - **Grenzen.** Jede konvertierte Datei darf höchstens `space-harvester.export.max-converted-bytes` groß werden
-  (Standard 512 MiB). Wird die Grenze überschritten, scheitert der Export mit `CONVERSION_TOO_LARGE`, nichts wird
-  abgeschnitten.
+  (Standard 0, ohne Grenze; Angelo 11.11.2026: kein Größenlimit, ein Paket „JSON mit Medien“ eines großen Space ist
+  leicht mehrere GiB groß). Ist eine Grenze gesetzt und wird sie überschritten, scheitert der Export mit
+  `CONVERSION_TOO_LARGE` bzw. die Konvertierung in den Ausgabeordner mit „… zu groß“, nichts wird abgeschnitten.
 - **Rechte.** Konvertierte Dateien liegen im selben Artefakt. Sie sind nur über dieselbe Download-Route erreichbar,
   mit den Freigaben `export` und `content` und nur für den Client, der den Export gestartet hat.
 - **Fehlendes erkennbar melden.** Fehlt ein Bild, ein Diagramm oder ein Anhang im Datenbestand oder lässt es sich
@@ -49,6 +50,67 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   (`missing-image=2, missing-diagram=1`).
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
+
+## JSON-Paket als Datenbestand
+
+`export.zip` (`json-package/3`) enthält den Datenbestand eines Exports verlustfrei, damit ein anderes Programm oder
+eine andere Space-Harvester-Installation ihn ohne Quelle wieder einlesen kann. `pages.json` bleibt unverändert die
+lesbare Fassung (Inhalt inhaltlich gleich, nicht bytegleich; Antworten, die kein JSON sind, dort `content: null`).
+Dazu kommen:
+
+- `raw/<Seiten-ID>.json` (sonst `.bin`): die Payload jeder Seite Byte für Byte; ihr SHA-256 ist `rawSha256` aus
+  `pages.json`. Unsichere Seiten-IDs heißen `id-<Hash>`.
+- `views/<Seiten-ID>.json`: die beim Herunterladen abgelegte Lese-Ansicht zur exportierten Version
+  (`space-harvester/export-reading-view/v1`, wie im Exportverzeichnis), sonst fehlt die Datei.
+- `tree.json`: `roots`, je Knoten `id`, `url`, `children` in der Geschwister-Reihenfolge des Baums.
+- `manifest.json` (`space-harvester/export-package/v1`): `converter`, `pageSnapshotSchema`, `sourceId`, `spaceKey`,
+  `spaceName`, `rootPageId`, `pageCount`, je Seite in Baumreihenfolge `pageId`, `resourceId`, `depth`, `revision`,
+  `metadataHash` und `attributesHash` (der Kopfdaten aus `pages.json`, zum Prüfen), `retrievedAt`, `mediaType`, `nativeFormat`, `rawSha256`, `size`, `raw`, `view`
+  (Pfad oder `null`) und unter `assets` das vollständige Bildmanifest des Datenbestands
+  (`space-harvester/export-assets/v1`, `null` ohne Beschaffung). Die Dateien dazu findet ein Import über `sha256` in
+  `assets.json` und `attachments.json`.
+
+Nicht im Paket: ältere Revisionen, Abgleichstand, Analysen und Fakten (Analyse-Export), Glossar,
+Begriffsbeziehungen, Suchindex und Embeddings; ein Import rechnet sie neu oder beginnt ohne sie.
+
+### Import
+
+`Harvester.packageImport()` (`ExportPackageImport`, Auftrag `IMPORT`) liest ein solches Paket in den Cache einer
+eingerichteten Quelle ein, auch auf einem Rechner ohne Zugang zur Quelle. Der Import läuft wie ein Abgleich mit dem
+Paket statt der Quelle: Die Seiten des Pakets sind die Inventur, `raw/` der Abruf; er bestätigt eine neue Generation
+des Space und meldet sie wie ein Abgleich an Volltext und Anreicherungen. `changesSince` der Generation ist der
+früheste Abruf im Paket, der nächste Abgleich mit der Quelle holt alles Neuere nach. Ist die Payload einer Seite
+älter als ihre Kopfdaten (nach einem Abgleich nur der Kopfdaten), kommt die Seite mit der Version ihrer Payload in den
+Cache; der nächste Abgleich lädt sie dann neu.
+
+- **Prüfung.** Gelesen wird je ZIP-Eintrag über seinen Namen, nie entpackt. Kopfdaten müssen zu `metadataHash` und
+  `attributesHash` passen, jede Payload zu `rawSha256`, jede Datei zu ihrem `sha256`; Payloads höchstens so groß wie
+  der Cache sie annimmt, Dateien wie die Asset-Ablage; jede Seite muss im Space des Pakets liegen. Ein Paket vor
+  `json-package/3` lehnt der Import ab (`import-unsupported`), ein verändertes scheitert (`import-damaged`), ohne
+  etwas zu übernehmen.
+- **Ziel.** Die Zielquelle wählt der Aufrufer (meist die Quelle des Pakets); die Hashes werden für sie neu berechnet.
+  Ein leerer Space nimmt jedes Paket auf. Hat der Space schon Daten, ersetzt nur ein Paket des ganzen Space sie und
+  nur auf ausdrücklichen Wunsch (`replace`): dann gilt das Paket auch bei gleicher Version, Seiten außerhalb werden
+  entfernt (`import-space-not-empty`, `import-subtree-into-filled-space`). Entschieden und geplant wird auf demselben
+  bestätigten Stand; bestätigt ein anderer Lauf währenddessen eine Generation, scheitert der Import
+  (`import-conflict`), ohne etwas zu übernehmen.
+- **Dateien.** Bilder, Anhänge und gezeichnete Diagramme kommen unter denselben Kennungen (Anhang, Version) in die
+  Asset-Ablage wie beim Beschaffen, Texte der Anhänge unter der eingestellten Extraktion, Lese-Ansichten in ihre
+  Ablage (ohne Bildliste). Zu jeder Seite, die er in ihrer Paketversion bestätigt, merkt sich der Import die Einträge
+  des Bildmanifests (Anreicherung `imported-assets`, verschwindet mit der Seite); nicht übernommene Dateien stehen
+  dort als `UNAVAILABLE` (`import-missing`), fehlt nur die gezeichnete Grafik, bleibt das Original mit
+  `rendition.problem` `import-missing`. Ein neuer Export mit Bildern fragt zuerst die Quelle; die abgelegten
+  Dateien lädt er nicht noch einmal. Ist die Quelle nicht erreichbar und hat jede exportierte Seite gemerkte Einträge
+  zu ihrer Version, übernimmt er diese samt Lese-Ansicht statt anzuhalten, mit denselben Rechten wie online (fremde
+  Bilder und Lese-Ansicht nur mit `sourceWide`, Anhänge nur mit `attachments` und nach Medientyp und Größe wie
+  eingestellt, sonst `EXCLUDED`); sonst hält er wie bisher an. Volltext und Anreicherungen erfahren von der neuen Generation
+  auch, wenn danach eine Datei scheitert oder der Auftrag abgebrochen wird.
+- **Mehrere Pakete** (`start(List<Path>, …)`): ein Auftrag liest sie nacheinander ein; ein Paket, das nicht passt, wird als Warnung übersprungen (Auftrag unvollständig), gescheitert ist er nur, wenn keines passte. Bei Paketen aus verschiedenen Spaces hat der Auftrag keinen Space.
+- `Preview` (`preview(file, sourceId)`) nennt vorab Quelle, Space, Seiten- und Dateizahl und ob der Space Daten hat.
+- **Dienst.** `POST /api/v1/sources/{sourceId}/data/imports?replace=false` mit dem Paket als Body
+  (`application/zip`, höchstens 4 GiB) → 202, Stand unter `…/data/imports/{jobId}`; nur für Clients mit
+  `manage-configuration` wie „Daten bereinigen“. Ein Paket, das sich nicht öffnen lässt, beantwortet der Dienst sofort
+  mit 400 (`import-not-a-package`, `import-unsupported`, `import-damaged`), ein zu großes mit 413.
 
 ## Analyse-Export (#359)
 

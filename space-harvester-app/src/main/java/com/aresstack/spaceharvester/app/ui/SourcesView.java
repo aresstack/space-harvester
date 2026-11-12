@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -555,8 +556,13 @@ public final class SourcesView implements View {
                 }
             });
             if (confluence) {
-                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart, Benutzer und Token bzw. Passwort ändern",
+                String keePassEntry = context.settings() == null ? null
+                        : context.settings().keePassEntry(entry.id());
+                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth())
+                                + (keePassEntry == null || config.auth().type() == SourceSettingsConfig.AuthType.NONE
+                                ? "" : " · aus KeePass „" + keePassEntry + "“"), Comic.INK,
+                        "Zugangsdaten (KeePass oder Manuell), KeePass-Eintrag, Anmeldeart, Benutzer und Token bzw. "
+                                + "Passwort ändern",
                         () -> setting(entry, SettingDialogs::auth)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
@@ -779,9 +785,9 @@ public final class SourcesView implements View {
      */
     private void enable(AppSettings.SourceEntry entry, boolean enabled) {
         String id = entry.id();
-        if (!enabled && !Dialogs.confirm(root, "Quelle abschalten", "Die Quelle " + id + " ruht danach: Sie wird "
+        if (!enabled && !Dialogs.confirm(root, "Quelle abschalten", "Quelle " + id + " wirklich abschalten? Sie ruht danach und wird "
                 + "nicht mehr durchsucht, gelesen oder abgeglichen, ihre laufenden Aufträge brechen ab. Einstellungen, "
-                + "Zugangsdaten und lokaler Bestand bleiben; „Einschalten“ holt sie zurück.", "Abschalten")) {
+                + "Zugangsdaten und lokaler Bestand bleiben; „Einschalten“ holt sie zurück.")) {
             return;
         }
         if (!Dialogs.restartAllowed(root, context)) {
@@ -800,8 +806,8 @@ public final class SourcesView implements View {
     private void purge(AppSettings.SourceEntry entry) {
         String id = entry.id();
         String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
-        if (!Dialogs.confirm(root, "Daten bereinigen", "Alle gespeicherten Daten der Quelle " + name + " löschen? "
-                + "Der Index muss danach neu aufgebaut werden, das kann lange dauern.", "Löschen")) {
+        if (!Dialogs.confirm(root, "Daten bereinigen", "Wirklich alle gespeicherten Daten der Quelle " + name + " löschen? "
+                + "Der Index muss danach neu aufgebaut werden, das kann lange dauern.")) {
             return;
         }
         AppRuntime runtime = context.runtime();
@@ -812,6 +818,154 @@ public final class SourcesView implements View {
         Background.run(() -> runtime.workspace().purgeSourceData(id),
                 started -> feedback.success("Daten der Quelle " + name + " werden gelöscht; Fortschritt in der "
                         + "Statuszeile"), feedback::problem);
+    }
+
+    /**
+     * „JSON-Paket importieren“: übernimmt nach Rückfrage Pakete „JSON mit Medien“ ({@code export.zip} ab
+     * {@code json-package/3}) in den Bestand dieser Quelle ({@code ExportPackageImport}). Mehrere Pakete oder ganze
+     * Ordner auf einmal (Angelo 12.11.2026: 20 bis 30 Spaces je Quelle), dann ein Auftrag für alle, nach einer
+     * einzigen Rückfrage. Hat ein Space schon Daten, nennt die Rückfrage das: Ja ersetzt sie. Der Fortschritt läuft in
+     * der Statuszeile.
+     */
+    private void importPackage(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser();
+        chooser.setDialogTitle("JSON-Pakete importieren (mehrere Dateien oder Ordner)");
+        chooser.setMultiSelectionEnabled(true);
+        chooser.setFileSelectionMode(javax.swing.JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("JSON-Pakete (*.zip) und Ordner",
+                "zip"));
+        if (chooser.showOpenDialog(root) != javax.swing.JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        List<java.nio.file.Path> chosen = new ArrayList<>();
+        java.io.File[] selected = chooser.getSelectedFiles();
+        if (selected != null) {
+            for (java.io.File file : selected) {
+                chosen.add(file.toPath());
+            }
+        }
+        if (chosen.isEmpty() && chooser.getSelectedFile() != null) {
+            chosen.add(chooser.getSelectedFile().toPath());
+        }
+        if (chosen.isEmpty()) {
+            return;
+        }
+        feedback.working("Pakete werden geprüft …");
+        Background.run(() -> checkPackages(runtime.workspace(), id, packageFiles(chosen)),
+                checked -> confirmImport(runtime, id, name, checked), feedback::problem);
+    }
+
+    /** Die gewählten Dateien; ein Ordner steht für alle {@code .zip} darin, nach Namen sortiert. */
+    static List<java.nio.file.Path> packageFiles(List<java.nio.file.Path> chosen) throws IOException {
+        java.util.Set<java.nio.file.Path> files = new java.util.LinkedHashSet<>();
+        for (java.nio.file.Path path : chosen) {
+            if (java.nio.file.Files.isDirectory(path)) {
+                try (java.util.stream.Stream<java.nio.file.Path> inside = java.nio.file.Files.list(path)) {
+                    inside.filter(java.nio.file.Files::isRegularFile)
+                            .filter(file -> file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".zip"))
+                            .sorted().forEach(files::add);
+                }
+            } else {
+                files.add(path);
+            }
+        }
+        return new ArrayList<>(files);
+    }
+
+    /** Ein lesbares Paket mit seiner Vorschau. */
+    record ReadyPackage(java.nio.file.Path file, ExportPackageImport.Preview preview) {
+    }
+
+    /** Was sich importieren lässt und was nicht, mit Grund. */
+    record CheckedPackages(List<ReadyPackage> ready, List<String> skipped) {
+    }
+
+    private static CheckedPackages checkPackages(Workspace workspace, String sourceId, List<java.nio.file.Path> files) {
+        List<ReadyPackage> ready = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        for (java.nio.file.Path file : files) {
+            try {
+                ExportPackageImport.Preview preview = workspace.previewPackage(file, sourceId);
+                if (preview.spaceHasData() && preview.rootPageId() != null) {
+                    skipped.add(file.getFileName() + " (Teilbaum, Space " + preview.spaceKey() + " hat schon Daten)");
+                } else {
+                    ready.add(new ReadyPackage(file, preview));
+                }
+            } catch (com.aresstack.spaceharvester.application.export.ExportPackageException e) {
+                skipped.add(file.getFileName() + " (kein importierbares Paket)");
+            }
+        }
+        return new CheckedPackages(ready, skipped);
+    }
+
+    private void confirmImport(AppRuntime runtime, String id, String name, CheckedPackages checked) {
+        String skipped = checked.skipped().isEmpty() ? ""
+                : " Übersprungen: " + String.join(", ", checked.skipped()) + ".";
+        if (checked.ready().isEmpty()) {
+            feedback.info("Kein importierbares Paket gefunden", skipped.strip());
+            return;
+        }
+        int pages = 0;
+        int files = 0;
+        List<String> filled = new ArrayList<>();
+        List<String> spaces = new ArrayList<>();
+        java.util.Set<String> origins = new java.util.TreeSet<>();
+        for (ReadyPackage ready : checked.ready()) {
+            ExportPackageImport.Preview preview = ready.preview();
+            pages += preview.pages();
+            files += preview.assets();
+            spaces.add(preview.spaceKey());
+            if (preview.spaceHasData()) {
+                filled.add(preview.spaceKey());
+            }
+            if (!preview.sourceId().equals(id)) {
+                origins.add(preview.sourceId());
+            }
+        }
+        boolean replace = !filled.isEmpty();
+        String origin = origins.isEmpty() ? "" : " Die Pakete stammen aus " + String.join(", ", origins) + ".";
+        String question;
+        if (checked.ready().size() == 1) {
+            ExportPackageImport.Preview preview = checked.ready().get(0).preview();
+            String what = "Space " + preview.spaceName() + " mit " + Texts.count(pages, "Seite", "Seiten") + " und "
+                    + Texts.count(files, "Datei", "Dateien");
+            question = replace
+                    ? "Der Space " + preview.spaceKey() + " hat in der Quelle " + name + " schon Daten. Wirklich durch "
+                            + "das Paket ersetzen (" + what + ")? Seiten, die das Paket nicht enthält, werden entfernt."
+                    : what + " wirklich in die Quelle " + name + " importieren?";
+        } else {
+            question = Texts.count(checked.ready().size(), "Paket", "Pakete") + " (" + shortList(spaces) + ") mit "
+                    + Texts.count(pages, "Seite", "Seiten") + " und " + Texts.count(files, "Datei", "Dateien")
+                    + " wirklich in die Quelle " + name + " importieren?"
+                    + (replace ? " Schon Daten haben " + shortList(filled) + "; sie werden ersetzt, Seiten, die das "
+                    + "Paket nicht enthält, werden entfernt." : "");
+        }
+        if (!Dialogs.confirm(root, "JSON-Pakete importieren", question + origin + skipped)) {
+            feedback.success("Import abgebrochen");
+            return;
+        }
+        List<java.nio.file.Path> chosen = new ArrayList<>();
+        for (ReadyPackage ready : checked.ready()) {
+            chosen.add(ready.file());
+        }
+        feedback.working(chosen.size() == 1 ? "Paket wird importiert …" : "Pakete werden importiert …");
+        Background.run(() -> runtime.workspace().importPackages(chosen, id, replace),
+                started -> feedback.success(Texts.count(chosen.size(), "Paket wird", "Pakete werden")
+                        + " in die Quelle " + name + " importiert; Fortschritt in der Statuszeile"), feedback::problem);
+    }
+
+    /** Höchstens acht Einträge, dann „und N weitere“. */
+    static String shortList(List<String> items) {
+        if (items.size() <= 8) {
+            return String.join(", ", items);
+        }
+        return String.join(", ", items.subList(0, 8)) + " und " + (items.size() - 8) + " weitere";
     }
 
     private void remove(AppSettings.SourceEntry entry) {
@@ -831,10 +985,9 @@ public final class SourcesView implements View {
                         + "angelegt "
                         + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
                 : "Die vorige Fassung bleibt als .bak erhalten.";
-        if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "
-                + "entfernt. " + backup + " Ihre offenen Aufträge werden abgebrochen, ihr lokaler Bestand (Seiten, "
-                + "Suchindex, Analysen, Bilder) wird gelöscht; fertige Exporte bleiben. Die Quellen starten danach neu.",
-                "Entfernen")
+        if (!Dialogs.confirm(root, "Quelle entfernen", "Quelle " + id + " wirklich entfernen? Sie wird aus der "
+                + "Konfigurationsdatei entfernt. " + backup + " Ihre offenen Aufträge werden abgebrochen, ihr lokaler Bestand (Seiten, "
+                + "Suchindex, Analysen, Bilder) wird gelöscht; fertige Exporte bleiben. Die Quellen starten danach neu.")
                 || !Dialogs.restartAllowed(root, context)) {
             return;
         }
@@ -1212,6 +1365,13 @@ public final class SourcesView implements View {
                 secret.addActionListener(e -> askSecret(entry));
                 menu.add(secret);
             }
+            JMenuItem importing = new JMenuItem("JSON-Paket importieren …");
+            importing.setToolTipText("Ein Paket „JSON mit Medien“ (export.zip) in den lokalen Bestand dieser Quelle "
+                    + "übernehmen, ohne die Quelle zu fragen");
+            importing.setEnabled(context.runtime() != null
+                    && !context.runtime().waitingForSecret().contains(entry.id()));
+            importing.addActionListener(e -> SourcesView.this.importPackage(entry));
+            menu.add(importing);
             JMenuItem purge = new JMenuItem("Daten bereinigen …");
             purge.setToolTipText("Alle lokal gespeicherten Daten dieser Quelle löschen; die Quelle bleibt eingerichtet");
             // Auch abgeschaltet; nur nicht, solange der Core die Quelle nicht geöffnet hat (wartet auf ihr Geheimnis).

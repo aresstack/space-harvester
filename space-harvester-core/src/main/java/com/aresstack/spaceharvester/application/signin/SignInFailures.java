@@ -32,6 +32,26 @@ public final class SignInFailures {
     /** Proxy verlangt Anmeldung; das JDK meldet die 407 je nach Weg unterschiedlich. */
     static final String PROXY_AUTHENTICATION = "Proxy verlangt Anmeldung (HTTP 407)";
 
+    /**
+     * Anfang der Meldung, wenn Confluence einen Einmalcode bei Anmeldung mit Personal Access Token mit einem Serverfehler
+     * beantwortet (#571): Ein Token hat keine Web-Sitzung, an die die Zwei-Faktor-Anmeldung den Code binden könnte.
+     */
+    static final String TOKEN_LOGIN_REJECTED = "Confluence nimmt den Einmalcode bei Anmeldung mit Personal Access Token "
+            + "nicht an";
+
+    /**
+     * Anfang der Meldung, wenn Confluence die Anmeldung mit Benutzer und Passwort für die Web-Sitzung einer Quelle mit
+     * Token ablehnt (HTTP 401, #571): falsches Passwort, falscher Benutzer oder eine gesperrte Anmeldung nach
+     * Fehlversuchen.
+     */
+    static final String LOGIN_REJECTED = "Confluence lehnt Benutzername oder Passwort ab";
+
+    /**
+     * Anfang der Meldung, wenn der Proxy beim Senden des Einmalcodes auch im zweiten Versuch keinen Tunnel zu Confluence
+     * aufbaute (HTTP 5xx auf {@code CONNECT}, #571): Der Code hat Confluence nicht erreicht.
+     */
+    static final String CODE_NOT_DELIVERED = "Der Proxy hat keine Verbindung zu Confluence aufgebaut";
+
     /** {@code Unable to tunnel through proxy. Proxy returns "HTTP/1.1 502 Bad Gateway"} des JDK. */
     private static final Pattern TUNNEL = Pattern.compile("tunnel through proxy.*?HTTP/\\d(?:\\.\\d)? (\\d{3})",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
@@ -67,6 +87,63 @@ public final class SignInFailures {
         String kind = kind(failure);
         String target = host(host);
         return target.isEmpty() ? kind : kind + " – Ziel " + target;
+    }
+
+    /**
+     * Klare Meldung statt „Quelle antwortet mit HTTP 500“, wenn Confluence den Einmalcode einer Quelle mit Personal Access
+     * Token nicht annimmt (#571); {@link #describe} gibt sie unverändert als Art aus.
+     *
+     * @param status HTTP-Status der Antwort auf das Senden
+     */
+    public static String tokenLoginRejected(int status) {
+        return TOKEN_LOGIN_REJECTED + " (HTTP " + status + "). Bilder und Anhänge hinter der Zwei-Faktor-Anmeldung "
+                + "brauchen bei dieser Quelle die Anmeldung mit Benutzer und Passwort";
+    }
+
+    /**
+     * Klare Meldung statt „Quelle antwortet mit HTTP 401“, wenn Confluence Benutzer und Passwort für die Web-Sitzung
+     * ablehnt (#571); {@link #describe} gibt sie unverändert als Art aus.
+     */
+    public static String loginRejected(int status) {
+        return LOGIN_REJECTED + " (HTTP " + status + "). Bitte Benutzername und Passwort prüfen (nicht den Access-Token); "
+                + "nach mehreren Fehlversuchen kann Confluence erst eine Anmeldung im Browser verlangen";
+    }
+
+    /**
+     * Klare Meldung, wenn der Proxy den Tunnel beim Senden des Codes zweimal mit einem Serverfehler ablehnte (#571);
+     * {@link #describe} gibt sie unverändert als Art aus.
+     */
+    public static String codeNotDelivered(int status) {
+        return CODE_NOT_DELIVERED + " (HTTP " + status + ", auch im zweiten Versuch). Der Code hat Confluence nicht "
+                + "erreicht und ist noch nicht verbraucht; bitte gleich noch einmal Bestätigen";
+    }
+
+    /**
+     * HTTP-Status, mit dem der Proxy den {@code CONNECT}-Tunnel mit einem Serverfehler (5xx) ablehnte, sonst -1. Dann
+     * kam die Anfrage nie beim Ziel an.
+     */
+    public static int refusedTunnel(Throwable failure) {
+        StringBuilder messages = new StringBuilder();
+        for (Throwable current : chain(failure)) {
+            if (current.getMessage() != null) {
+                messages.append(current.getMessage()).append('\n');
+            }
+        }
+        Matcher tunnel = TUNNEL.matcher(messages);
+        return tunnel.find() && tunnel.group(1).startsWith("5") ? Integer.parseInt(tunnel.group(1)) : -1;
+    }
+
+    /** Ob die Ursachenkette eine Antwort mit diesem HTTP-Status meldet („… HTTP 401 …“). */
+    public static boolean answeredWith(Throwable failure, int status) {
+        for (Throwable current : chain(failure)) {
+            Matcher found = current.getMessage() == null ? null : HTTP_STATUS.matcher(current.getMessage());
+            while (found != null && found.find()) {
+                if (Integer.parseInt(found.group(1)) == status) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Typ der innersten Ursache (einfacher Klassenname) fürs Protokoll; ohne Meldung. */
@@ -153,6 +230,11 @@ public final class SignInFailures {
             }
             if (current instanceof ConnectException) {
                 return "Verbindung abgelehnt (ConnectException)";
+            }
+            if (current.getMessage() != null && (current.getMessage().startsWith(TOKEN_LOGIN_REJECTED)
+                    || current.getMessage().startsWith(LOGIN_REJECTED)
+                    || current.getMessage().startsWith(CODE_NOT_DELIVERED))) {
+                return current.getMessage();
             }
             if (current.getMessage() != null) {
                 messages.append(current.getMessage()).append('\n');

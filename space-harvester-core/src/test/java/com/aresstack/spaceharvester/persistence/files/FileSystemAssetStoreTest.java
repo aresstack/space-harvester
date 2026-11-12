@@ -37,6 +37,29 @@ class FileSystemAssetStoreTest {
         assertThat(store.read(asset)).isEqualTo(content);
     }
 
+    /** Streaming (Angelo 11.11.2026: kein Größenlimit): Die Datei wird verschoben, nie ganz in den Speicher gelesen. */
+    @Test
+    void aStagedFileIsMovedIntoTheStoreAndCheckedAgainstHashAndSize() throws Exception {
+        FileSystemAssetStore store = new FileSystemAssetStore(root);
+        byte[] content = bytes("%PDF-sehr-groß");
+        Path staged = store.stagingFile();
+        java.nio.file.Files.write(staged, content);
+        Asset asset = asset("att1", "1", content);
+
+        store.putFile(asset, staged);
+
+        assertThat(staged).doesNotExist();
+        assertThat(store.find("wiki", "att1", "1")).contains(asset);
+        assertThat(store.read(asset)).isEqualTo(content);
+
+        Path wrong = store.stagingFile();
+        java.nio.file.Files.write(wrong, bytes("anders"));
+        assertThatThrownBy(() -> store.putFile(asset("att2", "1", content), wrong))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(wrong).doesNotExist();
+        assertThat(store.find("wiki", "att2", "1")).isEmpty();
+    }
+
     @Test
     void theTotalLimitRefusesNewContentButNotKnownContentAndCountsWhatIsAlreadyThere() {
         byte[] first = bytes("1234567890");

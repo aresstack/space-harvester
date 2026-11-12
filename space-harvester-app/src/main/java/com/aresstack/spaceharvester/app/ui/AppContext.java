@@ -4,11 +4,13 @@ import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePas
 import com.aresstack.spaceharvester.app.credentials.AiCredentials;
 import com.aresstack.spaceharvester.app.credentials.KeePassLink;
 import com.aresstack.spaceharvester.app.credentials.ManualAiCredentials;
+import com.aresstack.spaceharvester.app.logging.ConsoleLogging;
 import com.aresstack.spaceharvester.app.settings.AiAccess;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -80,6 +82,13 @@ public final class AppContext {
         }
 
         void showJob(String jobId);
+
+        /**
+         * Ein Auftrag wurde außerhalb von „Aufträge“ gestartet und läuft im Hintergrund weiter: die Auftragsliste und
+         * der Balken der Statusleiste folgen ihm, ohne dass die Ansicht wechselt.
+         */
+        default void followJobs() {
+        }
 
         /** Status mit der Diagnose genau dieses Auftrags. */
         void showDiagnosis(String jobId);
@@ -262,6 +271,40 @@ public final class AppContext {
     }
 
     /**
+     * Übernimmt die Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.parallel-preparations} und
+     * {@code parallel-downloads}) und das Verbindungsbudget ({@code download-connections}) sofort im Core ({@link AppRuntime#parallel}) und speichert sie in der Datei, ohne
+     * Neustart der Laufzeit. Läuft im Hintergrund; schnell aufeinanderfolgende Änderungen schreiben immer die jüngste
+     * zuletzt.
+     */
+    public void parallel(int preparations, int downloads, int connections, Runnable done,
+            Consumer<Throwable> failed) {
+        parallelWanted = new int[] {preparations, downloads, connections};
+        Background.run(() -> {
+            synchronized (parallelLock) {
+                int[] wanted = parallelWanted;
+                AppRuntime current = runtime;
+                if (current != null) {
+                    current.parallel(wanted[0], wanted[1], wanted[2]);
+                }
+                writeParallel(wanted[0], wanted[1], wanted[2]);
+                return wanted;
+            }
+        }, saved -> done.run(), failed);
+    }
+
+    private final Object parallelLock = new Object();
+    private volatile int[] parallelWanted;
+
+    private void writeParallel(int preparations, int downloads, int connections) throws java.io.IOException {
+        ConfigFileEditor editor = new ConfigFileEditor(loader);
+        String text = Files.isRegularFile(configFile) ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+        ConfigFileEditor.Draft written = editor.withParallel(configFile, new ConfigFileEditor.Draft(text, null),
+                preparations, downloads);
+        written = editor.withConnections(configFile, written, connections);
+        editor.save(configFile, written, !editor.fileHasPlaintextSecret(configFile));
+    }
+
+    /**
      * Merkt in der Datei, dass der Einrichtungsassistent lief ({@code space-harvester-app.setup-completed}); ohne
      * Neustart der Laufzeit, denn nur die Oberfläche liest den Merker.
      */
@@ -281,6 +324,43 @@ public final class AppContext {
             done.run();
         }, failed);
     }
+
+    /**
+     * Stellt die Terminal-Ausgabe sofort um ({@link ConsoleLogging#apply}) und speichert sie in der Datei
+     * ({@code logging.threshold.console}), ohne Neustart der Laufzeit; die Protokolldatei bleibt unberührt. Schnell
+     * aufeinanderfolgende Änderungen schreiben immer die jüngste zuletzt. Scheitert das Speichern, gilt wieder der
+     * gespeicherte Wert.
+     */
+    public void consoleOutput(ConsoleOutput output, Runnable done, Consumer<Throwable> failed) {
+        ConsoleLogging.apply(output);
+        consoleWanted = output;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                ConsoleOutput wanted = consoleWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withConsoleOutput(configFile, new ConfigFileEditor.Draft(text, null),
+                        wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withConsoleOutput(saved);
+            }
+            // Die jüngste Wahl gilt, auch wenn ein früheres Speichern scheiterte und zurückgesetzt hat.
+            ConsoleLogging.apply(consoleWanted);
+            fire();
+            done.run();
+        }, error -> {
+            ConsoleLogging.apply(settings == null ? ConsoleOutput.DEFAULT : settings.consoleOutput());
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private final Object consoleLock = new Object();
+    private volatile ConsoleOutput consoleWanted;
 
     /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
@@ -473,6 +553,8 @@ public final class AppContext {
         AppRuntime previous = runtime;
         Background.run(() -> {
             AppSettings loaded = loader.load(configFile);
+            // Gleich nach dem Lesen, damit schon der Start der Laufzeit der Terminal-Ausgabe folgt.
+            ConsoleLogging.apply(loaded.consoleOutput());
             unlock(loaded);
             // Nur Laufzeitwerte geändert (KI-Dienst, Modelle, Freigaben, Synchronisierung): der Core übernimmt sie
             // ohne Neustart, laufende Aufträge laufen weiter (ADR 0015).
@@ -483,8 +565,9 @@ public final class AppContext {
             }
             if (live == AppRuntime.Reconfiguration.REJECTED) {
                 // Der Core behält die bisherige Version (ADR 0015); ein Neustart mit derselben Datei hülfe nicht und
-                // beendete laufende Aufträge. Was er bemängelt, steht unter Einstellungen › Konfiguration.
-                return new Started(previous.settings(), previous, null);
+                // beendete laufende Aufträge. Was er bemängelt, steht unter Einstellungen › Konfiguration. Die
+                // Terminal-Ausgabe betrifft den Core nicht und gilt wie gelesen.
+                return new Started(previous.settings().withConsoleOutput(loaded.consoleOutput()), previous, null);
             }
             if (previous != null) {
                 previous.close();
@@ -592,7 +675,12 @@ public final class AppContext {
             char[] value = read.copyPassword();
             if (value != null && value.length > 0) {
                 secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
+            } else if (AppRuntime.SessionSecrets.withoutLogin(read.fields())) {
+                // Ohne Anmeldung braucht die Quelle kein Passwort; sie gilt trotzdem als bereit.
+                secrets.put(entry.id(), AppRuntime.SessionSecrets.login(entry), new char[0]);
             }
+            // Zusatzfelder wie im Enterprise AI Client (MM_RequiresLogin), nie Benutzer oder Passwort (#571).
+            secrets.keePassFields(entry.id(), read.fields());
         } catch (com.aresstack.enterpriseai.adyton.SecretUnavailableException | RuntimeException e) {
             // Nur Quelle und Ausnahmeklasse, nie Eintrag oder Wert.
             LOG.warn("Zugangsdaten der Quelle {} ließen sich nicht aus KeePass lesen: {}", entry.id(),

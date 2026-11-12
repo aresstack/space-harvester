@@ -44,4 +44,23 @@ class AppRuntimeAiTest {
 
         assertThat(AppRuntime.liveChange(before, before.withSetupCompleted())).isTrue();
     }
+
+    @Test
+    void parallelLimitsChangeLiveWithoutARestart(@org.junit.jupiter.api.io.TempDir java.nio.file.Path home) {
+        // Die Auswahl in der Auftragsliste ändert die Grenzen sofort; eine spätere Live-Änderung (Frist o. Ä.) darf
+        // die Laufzeit deshalb nicht still neu starten.
+        AppSettings before = new com.aresstack.spaceharvester.app.settings.AppSettingsLoader(
+                new com.aresstack.spaceharvester.app.settings.Placeholders(name -> null), home)
+                .load(home.resolve("fehlt.yml"));
+        AppSettings after = before.withParallel(3, 0);
+
+        assertThat(after.jobLimits().parallelPreparations()).isEqualTo(3);
+        assertThat(after.jobLimits().parallelDownloads()).isZero();
+        assertThat(AppRuntime.liveChange(before, after)).isTrue();
+        assertThat(AppRuntime.liveChange(after, after.withSetupCompleted())).isTrue();
+        // Das Verbindungsbudget rechts neben „Downloads“ gilt ebenso live (Angelo 11.11.2026).
+        AppSettings closed = after.withParallel(3, 2, 0);
+        assertThat(closed.jobLimits().downloadConnections()).isZero();
+        assertThat(AppRuntime.liveChange(after, closed)).isTrue();
+    }
 }

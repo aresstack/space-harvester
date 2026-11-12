@@ -27,6 +27,24 @@ class JobsTest {
     }
 
     @Test
+    void waitingFollowUpsDisappearWithTheirExportAlsoAfterARestart() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "wiki", "DEV", null, "client-a", java.util.Map.of(),
+                JobTask.blocking(context -> { }), submitted -> jobs.submitAwaiting(JobType.ASSETS, "wiki", "DEV", null,
+                        "client-a", java.util.Map.of(), JobTask.blocking(context -> { }), submitted.id()));
+        JobStatus images = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(images.lifecycle().key()).isEqualTo("AWAITING_EXPORT");
+        assertThat(images.parameter(Jobs.AWAITS)).isEqualTo(export.id());
+        jobs.close();
+
+        Jobs restarted = jobs(1, 5);
+        assertThat(restarted.status(images.id()).state().terminal()).isTrue();
+        restarted.delete(export.id(), "client-a");
+
+        assertThat(restarted.list("client-a", JobType.ASSETS)).isEmpty();
+    }
+
+    @Test
     void submitReturnsQueuedJobAtOnceAndRunsItLater() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(3);
@@ -76,6 +94,237 @@ class JobsTest {
     }
 
     @Test
+    void aPausedJobIsNeitherCancelledNorFailedAndResumesInTheSameEntry() {
+        Jobs jobs = jobs(1, 5);
+        List<String> runs = new ArrayList<>();
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", JobTask.blocking(context -> {
+            runs.add("lauf");
+            context.processed(1);
+            context.checkpoint();
+        }));
+
+        assertThat(jobs.pause(export.id(), "client-a").cancelRequested()).isTrue();
+        executor.runNext();
+
+        JobStatus paused = jobs.status(export.id());
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.state().terminal()).isTrue();
+        assertThat(paused.error()).isNull();
+        assertThat(paused.progress().processed()).isEqualTo(1);
+        assertThat(jobs.events(export.id())).last().extracting(JobEvent::code).isEqualTo("PAUSED");
+        assertThat(jobs.resumable(export.id(), "client-a")).isTrue();
+
+        JobStatus resumed = jobs.resume(export.id(), "client-a");
+
+        // Derselbe Eintrag, frische Zähler, wieder gestartet.
+        assertThat(resumed.id()).isEqualTo(export.id());
+        assertThat(resumed.progress()).isEqualTo(new JobProgress(0, 0, 0, 0));
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
+        executor.runNext();
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(export.id()).finishedAt()).isNotNull();
+        assertThat(runs).hasSize(2);
+        assertThat(jobs.resumable(export.id(), "client-a")).isFalse();
+    }
+
+    @Test
+    void aQueuedJobPausesAtOnceAndFreesItsPlace() {
+        Jobs jobs = jobs(1, 5);
+        jobs.submit(JobType.SYNC, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus waiting = jobs.submit(JobType.SYNC, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
+
+        assertThat(jobs.pause(waiting.id(), "client-a").state()).isEqualTo(JobState.PAUSED);
+        executor.runNext();
+        assertThat(executor.pending()).isZero();
+
+        jobs.resume(waiting.id(), "client-a");
+        executor.runNext();
+        assertThat(jobs.status(waiting.id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void failedAndCancelledDownloadsResumeButOtherKindsAndFinishedJobsDoNot() {
+        Jobs jobs = jobs(2, 5);
+        JobStatus failed = jobs.submit(JobType.SYNC, "confluence", "A", "client-a", JobTask.blocking(context -> {
+            throw new SourceAccessException("confluence", SourceAccessException.Reason.UNAVAILABLE, "weg", null);
+        }));
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }));
+        executor.runNext();
+        executor.runNext();
+
+        assertThat(jobs.status(failed.id()).state()).isEqualTo(JobState.FAILED);
+        assertThat(jobs.resumable(failed.id(), "client-a")).isTrue();
+        assertThatThrownBy(() -> jobs.pause(enrichment.id(), "client-a"))
+                .isInstanceOf(JobNotResumableException.class);
+        assertThatThrownBy(() -> jobs.resume(enrichment.id(), "client-a"))
+                .isInstanceOf(JobNotResumableException.class);
+
+        JobStatus cancelled = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+        jobs.cancel(cancelled.id(), "client-a");
+        executor.runNext();
+        assertThat(jobs.status(cancelled.id()).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(jobs.resumable(cancelled.id(), "client-a")).isTrue();
+
+        JobStatus done = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        executor.runNext();
+        assertThatThrownBy(() -> jobs.resume(done.id(), "client-a")).isInstanceOf(JobNotResumableException.class);
+        assertThatThrownBy(() -> jobs.resume(failed.id(), "client-b")).isInstanceOf(UnknownJobException.class);
+    }
+
+    @Test
+    void resumingCanRenewTheWorkAndADeletedJobCannotBeResumed() {
+        Jobs jobs = jobs(1, 5);
+        List<String> runs = new ArrayList<>();
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(context -> {
+                    runs.add("alt");
+                    context.checkpoint();
+                }));
+        jobs.pause(export.id(), "client-a");
+        executor.runNext();
+
+        jobs.resume(export.id(), "client-a", old -> JobTask.blocking(context -> runs.add("neu")));
+        executor.runNext();
+        assertThat(runs).containsExactly("alt", "neu");
+
+        JobStatus other = jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+        jobs.pause(other.id(), "client-a");
+        executor.runNext();
+        jobs.delete(other.id(), "client-a");
+        assertThatThrownBy(() -> jobs.resume(other.id(), "client-a")).isInstanceOf(UnknownJobException.class);
+    }
+
+    @Test
+    void cancellingWinsOverPausing() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+
+        jobs.pause(export.id(), "client-a");
+        jobs.cancel(export.id(), "client-a");
+        executor.runNext();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.CANCELLED);
+    }
+
+    @Test
+    void afterARestartAPausedJobStaysPausedButStartsAnewInsteadOfInPlace() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+        jobs.pause(export.id(), "client-a");
+        executor.runNext();
+
+        Jobs restarted = jobs(1, 5);
+
+        assertThat(restarted.status(export.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(restarted.resumable(export.id(), "client-a")).isFalse();
+        assertThatThrownBy(() -> restarted.resume(export.id(), "client-a"))
+                .isInstanceOf(JobNotResumableException.class);
+    }
+
+    @Test
+    void afterARestartAJobRunsAgainInTheSameEntryWithItsParameters() {
+        InMemoryJobEventStore events = new InMemoryJobEventStore();
+        JobLimits limits = new JobLimits(1, 5, Duration.ofHours(1));
+        Jobs jobs = new Jobs(store, events, RouteLookup.NONE, executor, limits, clock);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "100", "client-a",
+                java.util.Map.of("depth", "0"), JobTask.blocking(JobContext::checkpoint));
+        jobs.pause(export.id(), "client-a");
+        executor.runNext();
+        Jobs restarted = new Jobs(store, events, RouteLookup.NONE, executor, limits, clock);
+        List<String> runs = new ArrayList<>();
+
+        JobStatus again = restarted.rerun(export.id(), "client-a", JobTask.blocking(context -> {
+            runs.add(context.jobId());
+            context.processed(2);
+        }));
+        executor.runNext();
+
+        assertThat(again.id()).isEqualTo(export.id());
+        assertThat(runs).containsExactly(export.id());
+        JobStatus done = restarted.status(export.id());
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.rootPageId()).isEqualTo("100");
+        assertThat(done.parameters()).containsEntry("depth", "0");
+        assertThat(done.progress().processed()).isEqualTo(2);
+        assertThat(restarted.list("client-a", JobType.EXPORT)).hasSize(1);
+        // Die Diagnose läuft im selben Eintrag weiter, ohne Nummern doppelt zu vergeben.
+        List<JobEvent> diagnosis = restarted.events(export.id());
+        assertThat(diagnosis).extracting(JobEvent::sequence).doesNotHaveDuplicates();
+        assertThat(diagnosis).extracting(JobEvent::message).contains("Auftrag angehalten: 0 Seiten verarbeitet; "
+                + "Fortsetzen holt nur, was noch fehlt", "Auftrag erneut gestartet");
+    }
+
+    @Test
+    void aFinishedJobRunsAgainInTheSameEntryButNotWhileItRuns() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus done = jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> {
+            context.failed(1);
+        }));
+        executor.runNext();
+        assertThat(jobs.status(done.id()).lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+
+        JobStatus again = jobs.rerun(done.id(), "client-a", JobTask.blocking(JobContext::checkpoint));
+
+        assertThat(again.id()).isEqualTo(done.id());
+        assertThat(again.progress()).isEqualTo(JobProgress.NONE);
+        assertThatThrownBy(() -> jobs.rerun(done.id(), "client-a", JobTask.blocking(context -> { })))
+                .isInstanceOf(JobNotResumableException.class);
+        assertThatThrownBy(() -> jobs.rerun(done.id(), "client-b", JobTask.blocking(context -> { })))
+                .isInstanceOf(UnknownJobException.class);
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "DEV", "client-a",
+                JobTask.blocking(context -> { }));
+        executor.runNext();
+        executor.runNext();
+        assertThatThrownBy(() -> jobs.rerun(enrichment.id(), "client-a", JobTask.blocking(context -> { })))
+                .isInstanceOf(JobNotResumableException.class);
+    }
+
+    @Test
+    void startNowMovesAWaitingJobToTheFrontOfTheQueue() {
+        Jobs jobs = jobs(1, 5);
+        List<String> order = new ArrayList<>();
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> order.add("A")));
+        jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> order.add("B")));
+        JobStatus c = jobs.submit(JobType.EXPORT, "confluence", "C", "client-a",
+                JobTask.blocking(context -> order.add("C")));
+        assertThat(c.lifecycle().actions()).containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);
+
+        jobs.prioritize(c.id(), "client-a");
+        executor.runNext();
+        executor.runNext();
+        executor.runNext();
+
+        assertThat(order).containsExactly("A", "C", "B");
+    }
+
+    @Test
+    void aRequestedPauseShowsUntilTheJobStopsAndAnIncompleteResultIsNotFinished() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+
+        JobStatus pausing = jobs.pause(export.id(), "client-a");
+
+        assertThat(pausing.pauseRequested()).isTrue();
+        assertThat(pausing.lifecycle().key()).isEqualTo("PAUSE_REQUESTED");
+        assertThat(pausing.lifecycle().actions()).containsExactly(JobAction.CANCEL, JobAction.DELETE);
+        executor.runNext();
+        assertThat(jobs.status(export.id()).pauseRequested()).isFalse();
+
+        JobStatus partial = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::incomplete));
+        executor.runNext();
+        assertThat(jobs.status(partial.id()).incomplete()).isTrue();
+        assertThat(jobs.status(partial.id()).lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+        assertThat(store.find(partial.id())).get().extracting(JobStatus::incomplete).isEqualTo(true);
+    }
+
+    @Test
     void submittedStatusIsQueued() {
         Jobs jobs = jobs(1, 5);
         jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));
@@ -108,16 +357,20 @@ class JobsTest {
     void followUpJobsNeverTakeTheLastSlotAndWaitBehindExports() {
         Jobs jobs = jobs(2, 10);
         JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus first = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }));
         JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
                 JobTask.blocking(context -> { }));
         JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
-        // Ein Platz für die Bilder, der letzte bleibt dem Export; die Anreicherung wartet.
-        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.RUNNING);
+        // Bilder haben eigene Plätze; eine Anreicherung bekommt einen Platz, der letzte bleibt dem Export.
+        assertThat(jobs.status(images.id()).stage()).isEqualTo(JobStage.PREPARING);
+        assertThat(jobs.status(first.id()).state()).isEqualTo(JobState.RUNNING);
         assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
         assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.QUEUED);
         JobStatus sync = jobs.submit(JobType.SYNC, "confluence", "C", "client-a", JobTask.blocking(context -> { }));
 
+        executor.runNext();
         executor.runNext();
         executor.runNext();
 

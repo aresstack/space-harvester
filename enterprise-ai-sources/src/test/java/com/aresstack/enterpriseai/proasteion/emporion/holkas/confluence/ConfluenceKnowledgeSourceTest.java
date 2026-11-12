@@ -387,6 +387,19 @@ public class ConfluenceKnowledgeSourceTest {
     }
 
     @Test
+    public void searchHitCarriesTheSpaceOfThePageAsPartition() throws Exception {
+        confluence.page("200", "Runbook", "OPS", "<p>Ops</p>");
+        confluence.searchResults("101", "200");
+
+        List<SourceSearchHit> hits = source().search(new SourceQuery("x", 5));
+
+        assertEquals(Arrays.asList(page("101"), page("200")), hitIds(hits));
+        assertEquals("DEV", hits.get(0).partitionKey());
+        assertEquals("OPS", hits.get(1).partitionKey());
+        assertTrue(confluence.lastSearchQuery.get("expand").contains("content.space"));
+    }
+
+    @Test
     public void searchFallsBackToTheWrapperUrlAndLastModified() throws Exception {
         confluence.searchContentWithoutVersionAndLinks = true;
         confluence.wrappedSearchResult("101", "Eins");
@@ -624,6 +637,22 @@ public class ConfluenceKnowledgeSourceTest {
         int before = confluence.requestCount("/rest/api/search");
         assertTrue(source().search(new SourceQuery("x", 5).withIncludedPartitions(Arrays.asList("HR"))).isEmpty());
         assertEquals(before, confluence.requestCount("/rest/api/search"));
+    }
+
+    @Test
+    public void aTitleOnlyQuerySearchesTheTitleWithTheSameRestrictions() throws Exception {
+        confluence.searchResults.addAll(Arrays.asList("101"));
+        config.searchSpaceKey("DEV");
+
+        List<SourceSearchHit> hits = source().search(new SourceQuery("Kapitel \"1\"", 5).withTitleOnly(true)
+                .withExcludedPartitions(Arrays.asList("ARCHIV")));
+
+        assertEquals("title ~ \"Kapitel \\\"1\\\"\" AND type=page AND space in (\"DEV\") AND space not in (\"ARCHIV\")",
+                confluence.lastCql);
+        assertEquals(1, confluence.requestCount("/rest/api/search"));
+        assertEquals(page("101"), hits.get(0).resourceId());
+        assertEquals("siteSearch ~ \"x\" AND type=page",
+                ConfluenceKnowledgeSource.cql("x", new ArrayList<String>(), Collections.<String>emptySet(), false));
     }
 
     @Test

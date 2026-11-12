@@ -7,7 +7,11 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -35,10 +39,95 @@ import java.util.TreeSet;
  */
 public class PlanApplier {
 
+    /**
+     * Standard: so viele Inhaltsabrufe nacheinander dürfen an fehlender Verbindung oder Drosselung scheitern, bevor der
+     * Lauf {@link SyncListener#connectionLost()} meldet; jede Antwort der Quelle setzt die Zählung zurück. Einstellbar
+     * über {@code jobs.retry.pause-after-failures} ({@link #connectionLostAfter(int)}).
+     */
+    public static final int CONNECTION_LOST_AFTER = 5;
+
     private final PageContentFetcher fetcher;
+    private volatile int connectionLostAfter = CONNECTION_LOST_AFTER;
 
     public PlanApplier(PageContentFetcher fetcher) {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
+    }
+
+    /**
+     * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung ein Lauf {@link SyncListener#connectionLost()} meldet
+     * ({@link com.aresstack.spaceharvester.application.jobs.RetrySettings#pauseAfterFailures()}); gilt ab dem nächsten
+     * Fehler.
+     *
+     * @throws IllegalArgumentException wenn {@code count} kleiner als 1 ist
+     */
+    public void connectionLostAfter(int count) {
+        if (count < 1) {
+            throw new IllegalArgumentException("count muss mindestens 1 sein");
+        }
+        connectionLostAfter = count;
+    }
+
+    /** Die wirksame Grenze aus {@link #connectionLostAfter(int)}, auch für {@link FailedPageRetry}. */
+    public int connectionLostLimit() {
+        return connectionLostAfter;
+    }
+
+    /**
+     * Vorab, vor {@link SyncBaselineStore#begin} (ADR 0025): lädt alle {@link PageChange.Kind#NEW}-Seiten und legt sie
+     * mit {@code keep} sofort ab, mit {@link SyncListener#checkpoint()} vor jedem Abruf. Ein Abbruch behält, was schon
+     * abgelegt ist; der nächste Lauf lädt es nicht erneut. Was {@code keep} nicht annimmt, bleibt zum Vormerken in
+     * {@link Prefetched#held()}.
+     */
+    public Prefetched loadNew(SyncPlan plan, SyncBaselineStore store, SyncListener listener) {
+        String sourceId = plan.inventory().sourceId();
+        Set<String> handled = new HashSet<>();
+        Set<String> failed = new TreeSet<>();
+        List<PageSnapshot> held = new ArrayList<>();
+        Reachability reachability = new Reachability(listener, connectionLostAfter);
+        for (PageChange change : plan.changes()) {
+            if (change.kind() != PageChange.Kind.NEW) {
+                continue;
+            }
+            listener.checkpoint();
+            PageKey key = new PageKey(sourceId, change.pageId());
+            // Vor dem Abruf: was ein anderer Lauf währenddessen ablegt, darf diese Antwort nicht überschreiben.
+            String before = store.loadState(key);
+            PageSnapshot snapshot = matching(key, change.current().page(), reachability);
+            handled.add(change.pageId());
+            boolean superseded = false;
+            if (snapshot == null) {
+                failed.add(change.pageId());
+            } else {
+                switch (store.keepLoaded(snapshot, before)) {
+                    case STORED -> { }
+                    case DEFERRED -> held.add(snapshot);
+                    case SUPERSEDED -> {
+                        failed.add(change.pageId());
+                        superseded = true;
+                    }
+                }
+            }
+            listener.pageDone(change, snapshot != null && !superseded, snapshot == null || superseded);
+        }
+        return new Prefetched(handled, failed, held);
+    }
+
+    /**
+     * Ergebnis von {@link #loadNew}.
+     *
+     * @param handled alle bearbeiteten neuen Seiten
+     * @param failed  davon gescheitert
+     * @param held    geladen, aber nicht abgelegt; werden in der Generation vorgemerkt
+     */
+    public record Prefetched(Set<String> handled, Set<String> failed, List<PageSnapshot> held) {
+
+        public static final Prefetched NONE = new Prefetched(Set.of(), Set.of(), List.of());
+
+        public Prefetched {
+            handled = Set.copyOf(handled);
+            failed = Set.copyOf(failed);
+            held = List.copyOf(held);
+        }
     }
 
     /** @return die Seiten, deren Abgleich fehlgeschlagen ist, für {@link SyncPlan#nextBaseline} */
@@ -51,16 +140,26 @@ public class PlanApplier {
      * vor jedem Inhaltsabruf.
      */
     public Set<String> apply(SyncPlan plan, StagedGeneration target, SyncListener listener) {
+        return apply(plan, target, listener, Prefetched.NONE);
+    }
+
+    /** Wie {@link #apply(SyncPlan, StagedGeneration, SyncListener)} nach {@link #loadNew}: die neuen Seiten sind erledigt. */
+    public Set<String> apply(SyncPlan plan, StagedGeneration target, SyncListener listener, Prefetched prefetched) {
         String sourceId = plan.inventory().sourceId();
         Instant observedAt = plan.inventory().finishedAt();
-        Set<String> failed = new TreeSet<>();
+        Set<String> failed = new TreeSet<>(prefetched.failed());
+        prefetched.held().forEach(target::save);
+        Reachability reachability = new Reachability(listener, connectionLostAfter);
         for (PageChange change : plan.changes()) {
+            if (prefetched.handled().contains(change.pageId())) {
+                continue;
+            }
             PageKey key = new PageKey(sourceId, change.pageId());
             boolean written = true;
             switch (change.kind()) {
                 case NEW, CONTENT_CHANGED -> {
                     listener.checkpoint();
-                    if (!fetch(key, change.current().page(), target)) {
+                    if (!fetch(key, change.current().page(), target, reachability)) {
                         failed.add(change.pageId());
                         written = false;
                     }
@@ -99,23 +198,61 @@ public class PlanApplier {
         return failed;
     }
 
-    private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target) {
+    private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target, Reachability reachability) {
+        PageSnapshot snapshot = matching(key, expected, reachability);
+        if (snapshot != null) {
+            target.save(snapshot);
+        }
+        return snapshot != null;
+    }
+
+    /** Der geladene Snapshot, wenn er zur Inventur passt; sonst {@code null}. */
+    private PageSnapshot matching(PageKey key, PageMetadata expected, Reachability reachability) {
         PageSnapshot snapshot;
         try {
             snapshot = fetcher.fetch(key.sourceId(), key.pageId());
         } catch (SourceAccessException e) {
-            return false;
+            reachability.failed(e.reason());
+            return null;
         }
+        reachability.answered();
         boolean matches = snapshot.key().equals(key)
                 && expected.partitionKey().equals(snapshot.spaceKey())
                 && (expected.version() == null || expected.version().equals(snapshot.revision()));
-        if (matches) {
-            target.save(snapshot);
-        }
-        return matches;
+        return matches ? snapshot : null;
     }
 
     private static PageHeader header(PageKey key, PageMetadataListing.Entry entry, Instant observedAt) {
         return new PageHeader(key, entry.page(), entry.metadataHash(), entry.attributesHash(), observedAt);
+    }
+
+    /** Zählt Abrufe nacheinander, die an fehlender Verbindung oder Drosselung scheitern; je Lauf. */
+    private static final class Reachability {
+
+        private final SyncListener listener;
+        private final int limit;
+        private int unreachable;
+
+        Reachability(SyncListener listener, int limit) {
+            this.listener = listener;
+            this.limit = limit;
+        }
+
+        void answered() {
+            unreachable = 0;
+        }
+
+        void failed(SourceAccessException.Reason reason) {
+            if (reason != SourceAccessException.Reason.UNAVAILABLE
+                    && reason != SourceAccessException.Reason.RATE_LIMITED) {
+                // Die Quelle hat geantwortet, nur nicht mit dieser Seite.
+                unreachable = 0;
+                return;
+            }
+            if (++unreachable >= limit) {
+                unreachable = 0;
+                listener.connectionLost();
+            }
+        }
     }
 }

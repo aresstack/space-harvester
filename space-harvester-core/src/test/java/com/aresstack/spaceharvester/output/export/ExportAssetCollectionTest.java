@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,7 +60,9 @@ class ExportAssetCollectionTest {
             + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
     private static final String STORAGE = "{\"body\":{\"storage\":{\"value\":\"<p>Bild</p>"
             + "<ac:structured-macro ac:name=\\\"mermaid-cloud\\\"><ac:plain-text-body><![CDATA[graph TD; A-->B]]>"
-            + "</ac:plain-text-body></ac:structured-macro>\"}}}";
+            + "</ac:plain-text-body></ac:structured-macro><ac:structured-macro ac:name=\\\"include\\\">"
+            + "<ac:parameter ac:name=\\\"\\\"><ac:link><ri:page ri:content-title=\\\"Eingebunden\\\"/></ac:link>"
+            + "</ac:parameter></ac:structured-macro>\"}}}";
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-18T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
@@ -112,11 +116,16 @@ class ExportAssetCollectionTest {
 
         JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
         assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
-        // 100: Anhänge bild.png und ablauf.drawio, ein Bild der Lese-Ansicht, das kein Anhang ist, und das Dokument
-        // handbuch.pdf (ADR 0023); 101: ein fehlender Anhang.
-        assertThat(collection.progress().discovered()).isEqualTo(5);
-        assertThat(collection.progress().written()).isEqualTo(4);
+        // 100: Anhänge bild.png und ablauf.drawio und ein Bild der Lese-Ansicht, das kein Anhang ist; 101: ein
+        // fehlender Anhang. Das Dokument handbuch.pdf (ADR 0023) beschafft der eigene Auftrag „Anhänge beschaffen“.
+        assertThat(collection.progress().discovered()).isEqualTo(4);
+        assertThat(collection.progress().written()).isEqualTo(3);
         assertThat(collection.progress().failed()).isEqualTo(1);
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(documents -> {
+            assertThat(documents.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(documents.progress().discovered()).isEqualTo(1);
+            assertThat(documents.progress().written()).isEqualTo(1);
+        });
         ExportDatasetInfo info = conversions.dataset(export.id(), "client-a").orElseThrow();
         assertThat(info.images()).isEqualTo(ExportDatasetInfo.Images.INCOMPLETE);
         ExportAssetManifest manifest = writer.assets(export.id()).orElseThrow();
@@ -145,6 +154,13 @@ class ExportAssetCollectionTest {
             assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.MISSING);
             assertThat(entry.stored()).isFalse();
         });
+        // Restzeit: jede tatsächlich geladene Datei fließt in die Dauer ihrer Art ein, Speichertreffer nie.
+        var durations = assets.durations();
+        assertThat(durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.DOCUMENT))
+                .isEqualTo(1);
+        assertThat(durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.IMAGE)
+                + durations.count(com.aresstack.spaceharvester.application.assets.DownloadDurations.Kind.DOCUMENT))
+                .isEqualTo(source.downloads);
         // Die Bytes kommen aus dem Speicher, nie wieder von der Quelle.
         int downloads = source.downloads;
         ExportAssets stored = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
@@ -170,12 +186,488 @@ class ExportAssetCollectionTest {
             assertThat(reading.html()).contains("Eingebunden");
             assertThat(reading.text()).isEqualTo("Bild Eingebunden");
         });
-        assertThat(dataset.readingView("101")).hasValueSatisfying(reading -> {
-            assertThat(reading.status()).isEqualTo(ExportReadingView.Status.UNAVAILABLE);
-            assertThat(reading.reason()).isEqualTo("page-changed");
-            assertThat(reading.text()).isEmpty();
-        });
+        // 101 hat keine berechneten Makros: keine Lese-Ansicht, kein Abruf.
+        assertThat(dataset.readingView("101")).isEmpty();
+        assertThat(source.read).containsExactly("100");
         assertThat(dataset.readingView("999")).isEmpty();
+    }
+
+    @Test
+    void theAttachmentCatalogComesFromOneSearchPerJobInsteadOfTwoCallsPerPage() {
+        source.searchable = true;
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Bilder und Anhänge fragen je einmal die Suche, keine Seite einzeln (Anhangsliste und Space).
+        assertThat(source.searched).containsExactly(List.of("100", "101"), List.of("100", "101"));
+        assertThat(source.listed).isEmpty();
+        assertThat(source.metadataCalls).isZero();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(collection -> {
+            assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(collection.progress().discovered()).isEqualTo(4);
+            assertThat(collection.progress().written()).isEqualTo(3);
+        });
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement().satisfies(documents ->
+                assertThat(documents.progress().written()).isEqualTo(1));
+    }
+
+    @Test
+    void aPageMovedToAnotherSpaceGetsNoAttachmentsFromTheCatalog() {
+        source.searchable = true;
+        source.moved = Set.of("100");
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        // Weder Anhänge noch die Lese-Ansicht der verschobenen Seite: ihre leere Liste wird am Space geprüft.
+        assertThat(manifest.forPage("100")).isEmpty();
+        assertThat(manifest.documents()).isEmpty();
+        assertThat(writer().dataset(export.id()).orElseThrow().readingView("100")).isEmpty();
+        // Nur der Bilderauftrag braucht die Lese-Ansicht und fragt dafür einmal den Space ab.
+        assertThat(source.metadataCalls).isEqualTo(1);
+    }
+
+    @Test
+    void withAConnectionBudgetSeveralFilesLoadAtOnceAndTheManifestKeepsThePageOrder() {
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.of(source);
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        // Bis die Quelle eine Datei geliefert hat, lädt Assets je Quelle nur eine (#571, eine Mail, ein Code).
+        assets.viewImage("confluence", "100", "3", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/100/vorab.png", "vorab.png", null, null, null));
+        java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger most = new java.util.concurrent.atomic.AtomicInteger();
+        source.onDownload = id -> {
+            most.accumulateAndGet(now.incrementAndGet(), Math::max);
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                now.decrementAndGet();
+            }
+        };
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        images.connections(new com.aresstack.spaceharvester.application.assets.ConnectionBudget(4));
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Mehrere Verbindungen aus dem Budget: Dateien beider Seiten laden gleichzeitig (Angelo 11.11.2026).
+        assertThat(most.get()).isGreaterThan(1);
+        JobStatus done = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().discovered()).isEqualTo(4);
+        assertThat(done.progress().written()).isEqualTo(3);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        List<String> pages = manifest.assets().stream().map(ExportAssetManifest.Entry::pageId).toList();
+        assertThat(pages).contains("100", "101").isSortedAccordingTo(java.util.Comparator.naturalOrder());
+    }
+
+    @Test
+    void withABudgetOfZeroNothingLoadsAndTheJobWaitsWithoutErrors() throws Exception {
+        com.aresstack.spaceharvester.application.assets.ConnectionBudget budget =
+                new com.aresstack.spaceharvester.application.assets.ConnectionBudget(0);
+        ExportAssetCollection images = collection();
+        images.connections(budget);
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8))));
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        Thread worker = new Thread(this::drain);
+        worker.start();
+        Thread.sleep(600);
+
+        // Budget 0: der Auftrag wartet, nichts wird geladen und nichts zählt als Fehler.
+        JobStatus waiting = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(waiting.state().terminal()).isFalse();
+        assertThat(source.downloads).isZero();
+        assertThat(waiting.progress().failed()).isZero();
+
+        budget.total(2);
+        worker.join(10_000);
+        assertThat(jobs.list("client-a", JobType.ASSETS).get(0).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(writer().assets(export.id()).orElseThrow().forPage("100")).isNotEmpty();
+    }
+
+    @Test
+    void aFailedSpaceCheckLeavesThePageUncheckedOrPausesWithoutLosingTheOtherPages() {
+        source.searchable = true;
+        source.moved = Set.of("100");
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.NOT_FOUND);
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        // Gelöscht oder nicht lesbar: die Seite bleibt ungeprüft, die übrigen stehen im Manifest.
+        JobStatus done = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isTrue();
+        ExportAssetManifest manifest = writer().assets(export.id()).orElseThrow();
+        assertThat(manifest.complete()).isFalse();
+        assertThat(manifest.forPage("100")).isEmpty();
+        assertThat(manifest.forPage("101")).isNotEmpty();
+        assertThat(writer().dataset(export.id()).orElseThrow().readingView("100")).isEmpty();
+
+        // Nicht erreichbar: der Auftrag hält an, statt zu scheitern.
+        source.metadataFails = Map.of("100", SourceAccessException.Reason.UNAVAILABLE);
+        JobStatus again = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        assertThat(jobs.list("client-a", JobType.ASSETS).stream()
+                .filter(job -> again.id().equals(job.parameters().get(ExportAssetCollection.EXPORT_ID)))
+                .map(JobStatus::state)).containsExactly(JobState.PAUSED);
+    }
+
+    @Test
+    void pausedImagesResumeInTheSameEntryWithoutAskingTheSourceForCheckedPagesAgain() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+        // Während Seite 100 lädt, hält der Benutzer an; sie wird noch fertig, 101 nicht mehr.
+        long[] discoveredAtFirstDownload = {-1};
+        List<String> readAtFirstDownload = new ArrayList<>();
+        source.onDownload = src -> {
+            if (discoveredAtFirstDownload[0] < 0) {
+                discoveredAtFirstDownload[0] = jobs.list("client-a", JobType.ASSETS).get(0).progress().discovered();
+                readAtFirstDownload.addAll(source.read);
+            }
+            if (src.contains("mermaid")) {
+                jobs.list("client-a", JobType.ASSETS).stream()
+                        .filter(job -> job.state() == JobState.RUNNING)
+                        .forEach(job -> jobs.pause(job.id(), "client-a"));
+            }
+        };
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+
+        JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
+        // Die Vorbereitung hat die Anhänge beider Seiten gezählt, bevor die erste Datei geladen wurde; die Lese-Ansicht
+        // holt erst der Ladedurchgang, Seite für Seite (Angelo 11.11.2026): bis zur ersten Datei nur die von Seite 100.
+        assertThat(discoveredAtFirstDownload[0]).isEqualTo(4);
+        assertThat(readAtFirstDownload).containsExactly("100");
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.parameters()).containsEntry(ExportAssetCollection.EXPORT_ID, export.id());
+        assertThat(paused.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
+        // Was bis zum Anhalten abgelegt ist, steht schon im Manifest.
+        ExportAssetManifest partial = writer.assets(export.id()).orElseThrow();
+        assertThat(partial.complete()).isFalse();
+        assertThat(partial.forPage("100")).isNotEmpty();
+        assertThat(partial.forPage("101")).isEmpty();
+        int downloads = source.downloads;
+        List<String> listedBefore = List.copyOf(source.listed);
+        source.onDownload = src -> { };
+
+        assertThat(conversions.resumeImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
+        drain();
+
+        JobStatus done = jobs.status(paused.id());
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isTrue();
+        assertThat(done.lifecycle().key()).isEqualTo("COMPLETED_WITH_ERRORS");
+        // Zähler wie bei einem Lauf ohne Pause, Seite 100 ohne neuen Abruf.
+        assertThat(done.progress().discovered()).isEqualTo(4);
+        assertThat(done.progress().written()).isEqualTo(3);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        assertThat(source.listed.subList(listedBefore.size(), source.listed.size())).doesNotContain("100");
+        assertThat(source.downloads).isEqualTo(downloads);
+        ExportAssetManifest manifest = writer.assets(export.id()).orElseThrow();
+        assertThat(manifest.forPage("100")).hasSize(partial.forPage("100").size());
+        assertThat(manifest.forPage("101")).singleElement()
+                .extracting(ExportAssetManifest.Entry::status).isEqualTo(ExportAssetManifest.Status.MISSING);
+    }
+
+    @Test
+    void retryingFailuresOfPausedImagesVisitsPagesWithFailedFilesAgain() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100"), page("confluence", "DEV", "103", "100"),
+                page("confluence", "DEV", "104", "100")));
+        // Während die Datei von 101 scheitert, hält der Benutzer an: 100 und 101 sind fertig, 103 und 104 nicht.
+        source.onDownload = src -> {
+            if (src.equals("att9")) {
+                jobs.list("client-a", JobType.ASSETS).stream()
+                        .filter(job -> job.state() == JobState.RUNNING)
+                        .forEach(job -> jobs.pause(job.id(), "client-a"));
+            }
+        };
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        JobStatus paused = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(paused.state()).isEqualTo(JobState.PAUSED);
+        assertThat(paused.progress().failed()).isEqualTo(1);
+        assertThat(paused.lifecycle().actions()).first().isEqualTo(JobAction.RETRY_FAILED);
+        int listedBefore = source.listed.size();
+        source.onDownload = src -> { };
+
+        assertThat(conversions.retryImages(paused.id(), "client-a").id()).isEqualTo(paused.id());
+        drain();
+
+        // Seite 101 mit der gescheiterten Datei wird erneut gefragt, die fehlerfreie 100 nicht.
+        assertThat(source.listed.subList(listedBefore, source.listed.size())).contains("101").doesNotContain("100");
+        JobStatus done = jobs.status(paused.id());
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().failed()).isEqualTo(1);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+    }
+
+    @Test
+    void imagesAndAttachmentsAreCreatedWithTheExportAndWaitForItsText() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+
+        // Schon vor dem Text da, ohne einen Platz zu belegen.
+        JobStatus waiting = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(waiting.parameter(ExportAssetCollection.EXPORT_ID)).isEqualTo(export.id());
+        assertThat(waiting.lifecycle().key()).isEqualTo("AWAITING_EXPORT");
+        assertThat(waiting.lifecycle().actions()).containsExactly(JobAction.DELETE);
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.lifecycle().key()).isEqualTo("AWAITING_EXPORT"));
+        assertThat(jobs.status(export.id()).parameter(Exports.FOLLOW_UPS)).isEqualTo(Exports.ANNOUNCED);
+        drain();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(job -> {
+            assertThat(job.id()).isEqualTo(waiting.id());
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().written()).isEqualTo(3);
+        });
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
+    void anExportThatPublishesAtOnceStillFindsItsWaitingJobs() {
+        Jobs direct = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(direct, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(direct, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+
+        assertThat(direct.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(direct.list("client-a", JobType.ASSETS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+        assertThat(direct.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
+    void deletingTheWaitingJobsKeepsOnlyTheTextWithoutAnError() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        jobs.list("client-a", JobType.ASSETS).forEach(job -> jobs.delete(job.id(), "client-a"));
+        jobs.list("client-a", JobType.ATTACHMENTS).forEach(job -> jobs.delete(job.id(), "client-a"));
+
+        drain();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(export.id()).error()).isNull();
+        assertThat(jobs.list("client-a", JobType.ASSETS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+        assertThat(source.downloads).isZero();
+    }
+
+    @Test
+    void deletingTheExportRemovesItsWaitingJobs() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        publishTwoPages();
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+
+        jobs.delete(export.id(), "client-a");
+        drain();
+
+        assertThat(jobs.list("client-a", JobType.ASSETS)).isEmpty();
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isEmpty();
+    }
+
+    private FileSystemExportArtifactWriter writer;
+
+    private FileSystemExportArtifactWriter writer() {
+        if (writer == null) {
+            writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        }
+        return writer;
+    }
+
+    /** Mit eingeschalteten Anhängen, damit auch „Anhänge beschaffen“ entsteht. */
+    private ExportAssetCollection collection() {
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        return new ExportAssetCollection(jobs, writer(), new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+    }
+
+    private void publishTwoPages() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+    }
+
+    @Test
+    void retryingTakesStoredFilesAndForcingLoadsEveryFileAgainInTheSameEntry() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+        exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(collection.lifecycle().actions())
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.FORCE_REFRESH, JobAction.DELETE);
+        int afterFirst = source.downloads;
+
+        // ↻ Nur Fehler: derselbe Eintrag, abgelegte Dateien kommen aus dem Speicher.
+        assertThat(conversions.resumeImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
+        drain();
+        assertThat(jobs.status(collection.id()).progress().written()).isEqualTo(3);
+        int afterRetry = source.downloads;
+        assertThat(afterRetry - afterFirst).isLessThanOrEqualTo(1);
+
+        // ⟲ Neu erzwingen: derselbe Eintrag, jede Datei noch einmal von der Quelle.
+        assertThat(conversions.forceImages(collection.id(), "client-a").id()).isEqualTo(collection.id());
+        drain();
+        JobStatus forced = jobs.status(collection.id());
+        assertThat(forced.parameters()).containsEntry("rerun", "force-refresh");
+        assertThat(forced.progress().written()).isEqualTo(3);
+        assertThat(source.downloads - afterRetry).isGreaterThanOrEqualTo(3);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).hasSize(1);
+        assertThat(writer.assets(jobs.status(collection.id()).parameter(ExportAssetCollection.EXPORT_ID))
+                .orElseThrow().forPage("100")).hasSize(4);
     }
 
     @Test
@@ -233,6 +725,22 @@ class ExportAssetCollectionTest {
     private static final class Source implements HarvestSource {
 
         int downloads;
+        int metadataCalls;
+        /** Mit Anhangsuche: die angefragten Seiten je Suche; ohne fragt die Vorbereitung jede Seite einzeln. */
+        boolean searchable;
+        final List<List<String>> searched = new ArrayList<>();
+        /** Seiten, die inzwischen in einem anderen Space liegen: die Suche mit Space-Filter findet ihre Anhänge nicht. */
+        Set<String> moved = Set.of();
+        /** Seiten, deren Seitendaten mit diesem Grund scheitern. */
+        Map<String, SourceAccessException.Reason> metadataFails = Map.of();
+        /** Seiten, deren Anhangsliste abgefragt wurde, in Reihenfolge. */
+        final List<String> listed = new ArrayList<>();
+        /** Seiten, deren Lese-Ansicht abgefragt wurde, in Reihenfolge. */
+        final List<String> read = java.util.Collections.synchronizedList(new ArrayList<>());
+        /** Beim Abfragen der Anhänge dieser Seite den laufenden Bilderauftrag anhalten. */
+        java.util.function.Consumer<String> onListing = pageId -> { };
+        /** Beim Laden eines Bildes der Lese-Ansicht, mit seiner Adresse. */
+        java.util.function.Consumer<String> onDownload = src -> { };
 
         @Override
         public String id() {
@@ -261,12 +769,38 @@ class ExportAssetCollectionTest {
 
         @Override
         public PageMetadata pageMetadata(String pageId) {
-            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, "3",
+            metadataCalls++;
+            if (metadataFails.containsKey(pageId)) {
+                throw new SourceAccessException(id(), metadataFails.get(pageId), "Seitendaten", null);
+            }
+            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId,
+                    moved.contains(pageId) ? "OPS" : "DEV", null, "3",
                     null, null, PageMetadata.sorted(Map.of()));
         }
 
         @Override
+        public Map<String, PageAttachments> attachmentsOf(java.util.Collection<String> pageIds, String spaceKey) {
+            if (!searchable) {
+                return HarvestSource.super.attachmentsOf(pageIds, spaceKey);
+            }
+            assertThat(spaceKey).isEqualTo("DEV");
+            searched.add(List.copyOf(pageIds));
+            Map<String, PageAttachments> lists = new java.util.LinkedHashMap<>();
+            for (String pageId : pageIds) {
+                lists.put(pageId, moved.contains(pageId) ? new PageAttachments(pageId, List.of(), List.of(),
+                        "application/json", "test", List.of(), Instant.parse("2026-10-18T01:00:00Z")) : list(pageId));
+            }
+            return lists;
+        }
+
+        @Override
         public PageAttachments attachments(String pageId) {
+            listed.add(pageId);
+            onListing.accept(pageId);
+            return list(pageId);
+        }
+
+        private PageAttachments list(String pageId) {
             List<PageAttachment> list = new ArrayList<>();
             if (pageId.equals("100")) {
                 list.add(new PageAttachment("att1", "confluence:wiki/attachment/att1", "bild.png", "image/png",
@@ -285,10 +819,13 @@ class ExportAssetCollectionTest {
 
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
+            onDownload.accept(attachment.attachmentId());
             if (attachment.attachmentId().equals("att9")) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND, "gelöscht", null);
             }
-            downloads++;
+            synchronized (this) {
+                downloads++;
+            }
             return new AttachmentFile(attachment, attachment.attachmentId().equals("att3") ? MXFILE : PNG, Instant.parse("2026-10-18T01:00:00Z"));
         }
 
@@ -310,6 +847,7 @@ class ExportAssetCollectionTest {
         /** 100: Ansicht mit eingebundenem Inhalt; 101 hat sich seit dem Export geändert. */
         @Override
         public ReadingPage readingPage(String pageId) {
+            read.add(pageId);
             return switch (pageId) {
                 case "100" -> new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
                         "Bild Eingebunden", viewImages(pageId));
@@ -320,7 +858,10 @@ class ExportAssetCollectionTest {
 
         @Override
         public byte[] viewImage(ViewImage image, long maxBytes) {
-            downloads++;
+            onDownload.accept(image.src());
+            synchronized (this) {
+                downloads++;
+            }
             return PNG;
         }
     }

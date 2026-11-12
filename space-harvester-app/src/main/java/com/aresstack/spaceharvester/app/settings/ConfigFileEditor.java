@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -34,6 +36,8 @@ public final class ConfigFileEditor {
     private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
     private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
     private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
+    /** Ein Schlüssel mit Wert in derselben Zeile; „retry: # Kommentar“ ist ein Blockkopf, kein Wert. */
+    private static final Pattern SCALAR = Pattern.compile(" *([A-Za-z_-]+):\\s*[^\\s#].*");
     /** Schlüssel (normalisiert wie im Loader), deren Wert ein Geheimnis ist. */
     private static final Set<String> SECRET_KEYS = Set.of("password", "token", "secret", "clientsecret", "passphrase",
             "apikey", "keypassword", "storepassword");
@@ -277,24 +281,34 @@ public final class ConfigFileEditor {
     /** Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code space-harvester.<parent>}. */
     private static String nested(String text, String parent, String key,
                                  java.util.function.Function<String, String> yaml) {
+        return nested(text, AppSettingsLoader.ROOT, parent, key, yaml);
+    }
+
+    /**
+     * Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code <rootKey>.<parent>}, etwa {@code logging.threshold}
+     * wie beim Dienst; fehlt die Wurzel, kommt sie ans Ende der Datei.
+     */
+    private static String nested(String text, String rootKey, String parent, String key,
+                                 java.util.function.Function<String, String> yaml) {
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
             lines.remove(lines.size() - 1);
         }
+        String normalizedRoot = AppSettingsLoader.normalize(rootKey);
         int root = -1;
         for (int i = 0; i < lines.size(); i++) {
-            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+            if (isKey(ROOT, lines.get(i), 1, normalizedRoot)) {
                 root = i;
                 break;
             }
-            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
-                throw unsupported("space-harvester steht in einer Zeile");
+            if (isKey(ROOT_INLINE, lines.get(i), 1, normalizedRoot)) {
+                throw unsupported(rootKey + " steht in einer Zeile");
             }
         }
         if (root < 0) {
             lines.add("");
-            lines.add("space-harvester:");
+            lines.add(rootKey + ":");
             lines.add("  " + parent + ":");
             add(lines, lines.size(), yaml.apply("    "));
             return String.join(newline, lines) + newline;
@@ -313,7 +327,7 @@ public final class ConfigFileEditor {
         for (int i = network + 1; i < networkEnd; i++) {
             // Ein einzelner Wert wie „max-age: 6h“ wird in seiner Zeile ersetzt, ein Kommentar dahinter entfällt.
             String line = lines.get(i);
-            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SOURCES_INLINE, line, 1, normalized)) {
+            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SCALAR, line, 1, normalized)) {
                 lines.remove(i);
                 add(lines, i, yaml.apply(" ".repeat(proxyIndent)));
                 return String.join(newline, lines) + newline;
@@ -369,6 +383,110 @@ public final class ConfigFileEditor {
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Wiederholungen ({@code space-harvester.jobs.retry.*}, ADR 0025), dieselben
+     * Schlüssel wie im Dienst; nur der Block {@code retry} unter {@code jobs} ändert sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withRetry(Path file, Draft base, RetrySettings retry) {
+        String text = nested(base.text(), "jobs", "retry", indent -> {
+            String inner = indent + "  ";
+            return indent + "retry:\n"
+                    + inner + RetrySettings.MAX_ATTEMPTS + ": " + retry.maxAttempts() + "\n"
+                    + inner + RetrySettings.INITIAL_DELAY + ": " + delay(retry.initialDelay()) + "\n"
+                    + inner + RetrySettings.MAX_DELAY + ": " + delay(retry.maxDelay()) + "\n"
+                    + inner + RetrySettings.PAUSE_AFTER_FAILURES + ": " + retry.pauseAfterFailures() + "\n"
+                    + inner + RetrySettings.RESUME_INITIAL_DELAY + ": " + delay(retry.resumeInitialDelay()) + "\n"
+                    + inner + RetrySettings.RESUME_MAX_DELAY + ": " + delay(retry.resumeMaxDelay()) + "\n";
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.jobLimits().retry().equals(retry)) {
+            throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.
+     * parallel-preparations} und {@code parallel-downloads}, ADR 0025), dieselben Schlüssel wie im Dienst; nur diese
+     * beiden Werte ändern sich.
+     *
+     * @param preparations gleichzeitig vorbereitende Aufträge (1 bis {@value JobLimits#MAX_PARALLEL_PREPARATIONS})
+     * @param downloads    gleichzeitig ladende Aufträge (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); 0 bereitet
+     *                     nur vor
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withParallel(Path file, Draft base, int preparations, int downloads) {
+        JobLimits.requirePreparations(preparations);
+        JobLimits.requireDownloads(downloads);
+        String text = nested(base.text(), "jobs", JobLimits.PARALLEL_PREPARATIONS,
+                indent -> indent + JobLimits.PARALLEL_PREPARATIONS + ": " + preparations + "\n");
+        text = nested(text, "jobs", JobLimits.PARALLEL_DOWNLOADS,
+                indent -> indent + JobLimits.PARALLEL_DOWNLOADS + ": " + downloads + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().parallelPreparations() != preparations
+                || settings.jobLimits().parallelDownloads() != downloads) {
+            throw new IllegalArgumentException("Die Grenzen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Gesamtbudget an Verbindungen für Bilder und Anhänge ({@code space-harvester.
+     * jobs.download-connections}, Angelo 11.11.2026), derselbe Schlüssel wie im Dienst; nur dieser Wert ändert sich.
+     *
+     * @param connections Verbindungen aller ladenden Aufträge zusammen (0 bis
+     *                    {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS}); 0 lädt keine Bilder und Anhänge
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConnections(Path file, Draft base, int connections) {
+        JobLimits.requireConnections(connections);
+        String text = nested(base.text(), "jobs", JobLimits.DOWNLOAD_CONNECTIONS,
+                indent -> indent + JobLimits.DOWNLOAD_CONNECTIONS + ": " + connections + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().downloadConnections() != connections) {
+            throw new IllegalArgumentException("Die Verbindungen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Terminal-Ausgabe ({@code logging.threshold.console}, derselbe Schlüssel wie
+     * beim Dienst, Angelo 12.11.2026); nur dieser Wert ändert sich. Der Wert steht in Anführungszeichen, denn ein
+     * unquotiertes {@code off} wäre in YAML {@code false}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConsoleOutput(Path file, Draft base, ConsoleOutput output) {
+        String text = nested(base.text(), "logging", "threshold", "console",
+                indent -> indent + "console: \"" + output.key() + "\"\n");
+        AppSettings settings = loader.read(file, text);
+        // Ein neues Problem heißt: Der Text liest sich nicht mehr wie vorher (etwa kein gültiges YAML). Der Loader fiele
+        // dann auf die Vorgaben zurück, deren Terminal-Ausgabe „Aus“ ist; der Vergleich allein ließe das durch.
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.consoleOutput() != output) {
+            throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
+    public static String delay(java.time.Duration delay) {
+        return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";
     }
 
     /**

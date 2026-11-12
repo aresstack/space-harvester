@@ -281,6 +281,43 @@ public class SyncController {
         return SyncResponse.of(job, pageIdsVisible(caller, job));
     }
 
+    @PostMapping("/syncs/{syncId}/pause")
+    @Operation(summary = "Abgleich anhalten",
+            description = "Wie Abbrechen, aber der Abgleich endet als PAUSED (angehalten): bereits geladene neue "
+                    + "Seiten bleiben, und Fortsetzen holt nur, was noch fehlt (ADR 0025). Ein beendeter Abgleich "
+                    + "bleibt unverändert.")
+    @ApiResponse(responseCode = "200", description = "Der Abgleich nach der Anforderung")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public SyncResponse pause(@Parameter(hidden = true) AccessContext caller,
+                              @Parameter(description = "ID aus der Location des Starts") @PathVariable String syncId) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        SpaceSyncJobs.SyncJob job = syncs.pause(syncId, owner(caller));
+        return SyncResponse.of(job, pageIdsVisible(caller, job));
+    }
+
+    @PostMapping("/syncs/{syncId}/resume")
+    @Operation(summary = "Abgleich fortsetzen",
+            description = "Setzt einen angehaltenen, gescheiterten oder abgebrochenen Abgleich unter derselben ID fort; "
+                    + "er holt nur, was noch fehlt, und die Zähler beginnen neu (ADR 0025). Nach einem Neustart des "
+                    + "Dienstes geht das nicht mehr (409 job-not-resumable); ein neuer Abgleich holt dann ebenfalls "
+                    + "nur den Rest.")
+    @ApiResponse(responseCode = "200", description = "Der Abgleich, wieder eingereiht")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Nicht fortsetzbar (job-not-resumable), oder für den Space "
+            + "läuft inzwischen ein anderer Abgleich (sync-already-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public SyncResponse resume(@Parameter(hidden = true) AccessContext caller,
+                               @Parameter(description = "ID aus der Location des Starts") @PathVariable String syncId) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        SpaceSyncJobs.SyncJob job = syncs.resume(syncId, owner(caller));
+        return SyncResponse.of(job, pageIdsVisible(caller, job));
+    }
+
     @DeleteMapping("/syncs/{syncId}")
     @Operation(summary = "Beendeten Abgleich löschen",
             description = "Entfernt den Abgleich samt Delta und Diagnoseereignissen; der Seitenbestand bleibt. "

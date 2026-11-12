@@ -20,9 +20,10 @@ import org.springframework.util.unit.DataSize;
 
 /**
  * Verdrahtet die Asset-Ernte (#19). Anhänge liegen unter {@code space-harvester.assets.directory} (Standard
- * {@code data/assets}); sie sind so schutzbedürftig wie die Seiten, das Verzeichnis gehört nur dem Dienstkonto. Größere
- * Dateien als {@code space-harvester.assets.max-size} (Standard 100 MB, wie {@code READER_MAX_BYTES} im Enterprise AI
- * Client) werden weder geladen noch gekürzt abgelegt; der Download bricht schon im Transport an dieser Grenze ab.
+ * {@code data/assets}); sie sind so schutzbedürftig wie die Seiten, das Verzeichnis gehört nur dem Dienstkonto.
+ * {@code space-harvester.assets.max-size} ist ohne Grenze ({@code 0}, Standard seit Angelo 11.11.2026): Anhänge fließen
+ * als Strom in die Ablage, über {@link Assets#MAX_IN_MEMORY_BYTES} gibt es sie nur als Strom. Mit einer Größe werden
+ * größere Dateien weder geladen noch gekürzt abgelegt; der Download bricht schon beim Lesen an dieser Grenze ab.
  * Dateien über {@code space-harvester.assets.large-file-threshold} (Standard 20 MB) laufen höchstens
  * {@code space-harvester.assets.max-concurrent-large-files} (Standard 2) gleichzeitig, weitere warten höchstens
  * {@code space-harvester.assets.large-file-wait} (Standard 30 s) und scheitern dann vorübergehend
@@ -46,15 +47,22 @@ class AssetConfiguration {
     @Bean
     Assets assets(SourceCatalog catalog, AssetStore store, ObjectProvider<ImageDescriber> describer,
                   ObjectProvider<PageTextIndex> texts, ObjectProvider<SignInRequests> signIns,
-                  @Value("${space-harvester.assets.max-size:100MB}") DataSize maxSize,
+                  @Value("${space-harvester.assets.max-size:0}") DataSize maxSize,
                   @Value("${space-harvester.assets.large-file-threshold:20MB}") DataSize largeFileThreshold,
                   @Value("${space-harvester.assets.max-concurrent-large-files:"
                           + LargeFileGate.DEFAULT_MAX_CONCURRENT + "}") int maxConcurrentLargeFiles,
-                  @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait) {
+                  @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait,
+                  ObjectProvider<JobsProperties> jobs) {
         LargeFileGate gate = new LargeFileGate(largeFileThreshold.toBytes(), maxConcurrentLargeFiles, largeFileWait);
         // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
-        return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
-                TikaDocumentText.shared(), texts.getIfAvailable(), gate,
+        Assets assets = new Assets(catalog, store, Assets.maxBytes(maxSize.toBytes()), Clock.systemUTC(),
+                describer.getIfAvailable(), TikaDocumentText.shared(), texts.getIfAvailable(), gate,
                 signIns.getIfAvailable());
+        // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
+        JobsProperties limits = jobs.getIfAvailable();
+        if (limits != null) {
+            assets.downloadLimit(Math.max(limits.parallelDownloads(), limits.downloadConnections()));
+        }
+        return assets;
     }
 }

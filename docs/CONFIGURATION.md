@@ -178,10 +178,14 @@ veraltete `revision` gibt 409 (`fact-conflict`):
 
 ## Anhänge und große Dateien (#19)
 
-Anhänge, Vorschauen und Bilder der Lese-Ansicht liegen beim Laden, Ablegen, Lesen aus der Ablage, bei der
-Textextraktion (Tika), der Bildbeschreibung und im Export vollständig im Speicher, wie im Enterprise AI Client
-(`READER_MAX_BYTES` = 100 MiB in `ConfluenceKnowledgeSource`). Damit wenige große Dateien den Heap nicht füllen, gilt
-für alle diese Wege eine gemeinsame Schranke (`LargeFileGate` im Core): Dateien über der Schwelle laufen nur in
+Anhänge haben standardmäßig keine Größengrenze (Angelo 11.11.2026, #571): Beim Laden fließen sie als Strom in eine
+Zwischendatei unter `staging/` der Ablage und von dort in die Ablage, nie ganz in den Speicher; Hash, Größe und
+Dateianfang entstehen dabei. Im Speicher liegt eine Datei nur bis 20 MiB nach dem Laden (Typerkennung am ganzen Inhalt
+und Textextraktion) und bis 100 MiB, wenn ihre Bytes verlangt werden (`Assets.MAX_IN_MEMORY_BYTES`, etwa für die
+Vorschau); größere gibt es nur als Strom: über `GET …/assets/{id}/content`, im JSON-Paket, beim Import eines Pakets und
+beim Speichern in der App. Vorschauen und Bilder der Lese-Ansicht kommen nur als Bytes und sind daher höchstens
+100 MiB groß; die Quelle setzt meist eine kleinere Grenze. Damit wenige große Dateien den Heap nicht füllen, gilt
+für die Wege im Speicher eine gemeinsame Schranke (`LargeFileGate` im Core): Dateien über der Schwelle laufen nur in
 begrenzter Zahl gleichzeitig. Groß ist eine Datei nach ihrer angegebenen Größe; nennt die Quelle für einen Anhang keine,
 zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und scheitert dann vorübergehend mit
 `source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
@@ -190,30 +194,33 @@ bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
 Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung. Ein abgelegter Anhang geht über
 `GET …/assets/{id}/content` als Strom aus der Ablage an den Client und hält seinen Platz, bis die Antwort geschrieben
 oder abgebrochen ist; die Antwort hat keine Content-Length, und passt der Inhalt am Ende nicht zu seinem Hash, bricht
-sie ab, statt als vollständig zu gelten. Bei Vorschauen und im Export ist der Platz frei, sobald die Datei gelesen ist,
-die Bytes liegen danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
-dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
-der Schranke erfasst.
+sie ab, statt als vollständig zu gelten. Bei Vorschauen ist der Platz frei, sobald die Datei gelesen ist, die Bytes
+liegen danach bis zum Ende der Antwort im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach dem Download;
+sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und höchstens 100 MiB) und erst beim Ablegen von der
+Schranke erfasst.
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
-| `space-harvester.assets.max-size` | `100MB` | Größte einzelne Datei; größere werden weder geladen noch gekürzt abgelegt (`asset-too-large`) |
+| `space-harvester.assets.max-size` | `0` | `0`: ohne Grenze. Sonst die größte einzelne Datei; größere werden weder geladen noch gekürzt abgelegt (`asset-too-large`) |
 | `space-harvester.assets.large-file-threshold` | `20MB` | Dateien darüber fallen unter die Schranke |
 | `space-harvester.assets.max-concurrent-large-files` | `2` | So viele große Dateien höchstens gleichzeitig |
 | `space-harvester.assets.large-file-wait` | `30s` | Wartezeit auf einen freien Platz, danach `source-rate-limited` |
 
 Alle vier wirken nur beim Start. In der Bibliothek entsprechen ihnen `Harvester.builder().maxAssetBytes(…)`
-(Standard 100 MiB), `.largeAssetThresholdBytes(…)` (20 MiB) und `.maxConcurrentLargeAssets(…)` (2); die Wartezeit ist
-dort fest 30 s.
+(Standard `0`, ohne Grenze), `.largeAssetThresholdBytes(…)` (20 MiB) und `.maxConcurrentLargeAssets(…)` (2); die
+Wartezeit ist dort fest 30 s.
 
-- **Heap:** Mit 2 gleichzeitigen großen Dateien bis 100 MiB mindestens 512 MiB Heap einplanen (`-Xmx512m`, besser
-  mehr bei vielen gleichzeitigen Nutzern); Download, Hash, Ablage und Auslieferung arbeiten auf demselben
-  `byte[]`, die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
-  Wer `max-size` oder `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
-- **Kopien:** Der Confluence-Transport legt einen erfolgreichen Körper gleich in der angekündigten Länge an, das
-  JSON-Paket liest jede Datei erst beim Schreiben, und Export-Bilder übernehmen ihre Bytes ohne Kopie. Eine Kopie
-  bleibt in `ConfluenceHttpResponse` aus dem Enterprise AI Client (Konstruktor und `body()`; Vorschlag als
-  Upstream-Patch 08).
+- **Heap:** Die Größe einer Datei bestimmt den Heap nicht mehr, nur die Grenzen im Speicher: Mit 2 gleichzeitigen
+  großen Dateien bis 100 MiB mindestens 512 MiB Heap einplanen (`-Xmx512m`, besser mehr bei vielen gleichzeitigen
+  Nutzern); die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
+  Wer `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
+- **Platte:** Ohne Grenze kann eine Datei so groß sein wie der freie Platz. Sie lädt in eine Zwischendatei unter
+  `staging/` der Ablage und wird danach ohne Kopie hineinverschoben. `space-harvester.assets.max-total-bytes` zählt
+  erst abgelegte Inhalte: passt eine Datei dann nicht mehr hinein, scheitert sie mit `asset-store-full`, und die
+  Zwischendatei wird gelöscht.
+- **Kopien:** Anhänge und Originale im JSON-Paket gehen als Strom ohne Kopie im Speicher. Eine Kopie bleibt in
+  `ConfluenceHttpResponse` aus dem Enterprise AI Client für Antworten im Speicher (Konstruktor und `body()`;
+  Vorschlag als Upstream-Patch 08).
 - **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
   keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
   Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
@@ -274,7 +281,8 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen: gemerkte Routen samt PAC-Ergebnissen werden verworfen, Proxy-Anmeldung und Vertrauen ohne Bundle neu gesetzt, alle Quellen neu geöffnet (Trust-Bundles und Client-Zertifikate neu gelesen); laufende Anfragen enden über ihre Verbindung |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
-| Dateianhänge im Export (siehe unten) | `export.attachments.enabled` (Standard `true`), `export.attachments.media-types`, `export.attachments.max-size` (Standard `20MB`) | ja, beim nächsten Auftrag „Bilder beschaffen“ |
+| Dateianhänge im Export (siehe unten) | `export.attachments.enabled` (Standard `true`), `export.attachments.media-types`, `export.attachments.max-size` (Standard `0`, ohne Grenze) | ja, beim nächsten Auftrag „Bilder beschaffen“ |
+| Bilder- und Anhängeaufträge (ADR 0025 Punkte 18 und 22): gleichzeitig vorbereitende und ladende Aufträge sowie das Gesamtbudget gleichzeitiger Verbindungen aller ladenden Aufträge, nach Restzeit verteilt; Textdownloads bleiben bei einer Verbindung | `jobs.parallel-preparations` (Standard `2`), `jobs.parallel-downloads` (Standard `4`, `0` bereitet nur vor), `jobs.download-connections` (Standard `8`, `0` bis `64`; `0` lädt keine Bilder und Anhänge, die Aufträge warten ohne Fehler) | in der App ja, sofort; im Dienst nach Neustart |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
 | Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) samt Ergebnis-Cache der KI-Akronymauflösung (#122, `ai-cache.json`: nur Fingerabdrücke und Beziehungs-IDs, Auslösung über `POST /api/v1/term-relations/refresh?sourceId=` mit `{"kind":"acronym"}`, Auftrag unter `/api/v1/term-relations/refresh-jobs/{id}`) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 | Speicherort des Fachglossars (Nutzerdaten, außerhalb des Caches; „Fachbegriffe ermitteln“ nur auf Knopfdruck über `POST /api/v1/glossary/classify`) | `glossary.directory` (Standard `data/glossary`; im Core `<dataDirectory>/glossary`) | **nein**, wirkt nach Neustart |
@@ -347,7 +355,7 @@ Apache Tika gelesen; das JSON-Paket enthält Original und Text in `attachments.j
 | --- | --- | --- |
 | `export.attachments.enabled` | `true` | `false`: keine Dokument-Anhänge, nur Bilder |
 | `export.attachments.media-types` | PDF, Word/Excel/PowerPoint (alt und OOXML), OpenDocument, RTF, `message/rfc822`, `application/vnd.ms-outlook`, `text/*` | zugelassene Medientypen der Quelle, als YAML-Liste oder Text mit Kommas; `typ/*` und ein Eintrag mit `.*` am Ende passen auf alle Untertypen (etwa `application/vnd.oasis.opendocument.*`) |
-| `export.attachments.max-size` | `20MB` | größte Datei; Bytes oder mit `KB`, `MB`, `GB` (je 1024); Standard ist die Grenze der Textextraktion |
+| `export.attachments.max-size` | `0` | `0`: ohne Grenze. Sonst die größte Datei; Bytes oder mit `KB`, `MB`, `GB` (je 1024). Text gibt es unabhängig davon nur bis 20 MiB, die Grenze der Textextraktion |
 
 - Ein Anhang mit anderem Medientyp oder über der Grenze wird nicht geladen; er steht mit Status `EXCLUDED` und Grund
   `media-type-excluded` bzw. `too-large` im Manifest, ohne Inhalt, und gilt nicht als fehlend.

@@ -60,6 +60,46 @@ class FindBarTest {
     }
 
     @Test
+    void theMagnifierUnfoldsTheSearchOverTheToolsAndEscapeFoldsItAgain() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea text = new JTextArea("eins zwei eins");
+            JPanel page = new JPanel();
+            page.add(text);
+            FindBar bar = new FindBar(() -> page);
+            JPanel switches = new JPanel();
+            switches.add(new javax.swing.JToggleButton("A"));
+            bar.tools(switches);
+            bar.setSize(800, 36);
+            bar.doLayout();
+            // Zu: nur die Lupe links, die Umschalter mittig.
+            assertThat(bar.isOpen()).isFalse();
+            assertThat(bar.searchArea().isVisible()).isFalse();
+            assertThat(bar.toolsArea().isVisible()).isTrue();
+            assertThat(bar.findButton().getX()).isLessThan(bar.toolsArea().getX());
+            int middle = bar.toolsArea().getX() + bar.toolsArea().getWidth() / 2;
+            assertThat(Math.abs(middle - 400)).isLessThanOrEqualTo(2);
+
+            // Klick auf die Lupe: die Suche klappt nach rechts auf und überdeckt die Umschalter.
+            bar.findButton().doClick();
+            bar.doLayout();
+            assertThat(bar.isOpen()).isTrue();
+            assertThat(bar.searchArea().isVisible()).isTrue();
+            assertThat(bar.toolsArea().isVisible()).isFalse();
+            assertThat(bar.searchArea().getX()).isGreaterThan(bar.findButton().getX());
+            assertThat(bar.search("eins")).isEqualTo(2);
+
+            // Esc: Markierungen weg, zugeklappt, der Text bleibt für das nächste Aufklappen.
+            bar.close();
+            assertThat(bar.isOpen()).isFalse();
+            assertThat(bar.toolsArea().isVisible()).isTrue();
+            assertThat(text.getHighlighter().getHighlights()).isEmpty();
+            assertThat(bar.field().getText()).isEqualTo("eins");
+            bar.focus();
+            assertThat(bar.counterText()).isEqualTo("1 / 2");
+        });
+    }
+
+    @Test
     void expandingLowercaseDoesNotShiftOffsets() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JTextArea text = new JTextArea("İİİ Neustart");

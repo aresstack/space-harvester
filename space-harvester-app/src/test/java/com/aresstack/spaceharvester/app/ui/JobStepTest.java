@@ -14,6 +14,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JobStepTest {
 
     @Test
+    void theProgressColumnCountsLikeTheStatusLine() {
+        // Abrufen: 504 geladen oder geprüft, noch nichts exportiert → nicht 0/2495.
+        assertThat(ActivitiesView.progressText(running(JobType.EXPORT, new JobProgress(2495, 504, 0, 0))))
+                .isEqualTo("504/2495");
+        // Exportieren: die exportierten Seiten.
+        assertThat(ActivitiesView.progressText(running(JobType.EXPORT, new JobProgress(2495, 2495, 40, 0))))
+                .isEqualTo("40/2495");
+        assertThat(ActivitiesView.progressText(running(JobType.EXPORT, new JobProgress(23, 23, 21, 2))))
+                .isEqualTo("21/23 · 2 Fehler");
+        assertThat(ActivitiesView.progressText(running(JobType.SYNC, new JobProgress(100, 37, 30, 0))))
+                .isEqualTo("37/100");
+        // Beendet ohne eine exportierte Seite (alle fehlten): die exportierten, nicht die geprüften.
+        assertThat(ActivitiesView.progressText(finished(JobType.EXPORT, new JobProgress(5, 5, 0, 5))))
+                .isEqualTo("0/5 · 5 Fehler");
+    }
+
+    private static JobStatus finished(JobType type, JobProgress progress) {
+        return new JobStatus("j3", type, "wiki", "OPS", "local", JobState.COMPLETED, progress, null, false,
+                Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, null, null);
+    }
+
+    private static JobStatus running(JobType type, JobProgress progress) {
+        return new JobStatus("j2", type, "wiki", "OPS", "local", JobState.RUNNING, progress, null, false,
+                Instant.EPOCH, null, null, null, null);
+    }
+
+    @Test
     void theExportCountsFetchedPagesWhileFetchingAndExportedPagesWhileExporting() {
         JobProgress progress = new JobProgress(127, 127, 40, 0);
 

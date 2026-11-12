@@ -14,3 +14,26 @@ allprojects {
 // Die Bibliotheksliste von Einstellungen › Bibliotheken (oss-licenses.json in den Ressourcen der Desktop-App).
 ext.ossLicenseTargetProjectPath = ':space-harvester-app'
 apply from: "$rootDir/gradle/oss-licenses.gradle"
+
+// Bundle für das Central Publisher Portal (Workflow maven-central.yml, nur manuell): der Core und die beiden Module,
+// die seine POM nennt, je mit POM, JAR, Sources, Javadoc, Signaturen (.asc) und Prüfsummen. maven-metadata.xml gehört
+// nicht ins Bundle; ältere Versionen aus build/repo auch nicht.
+def centralModules = [':enterprise-ai-sources', ':document-export', ':space-harvester-core']
+tasks.register('centralBundle', Zip) {
+    group = 'publishing'
+    description = 'Packt das Maven-Central-Bundle von Core, enterprise-ai-sources und document-export.'
+    dependsOn centralModules.collect { "${it}:publishMavenPublicationToLocalRepository" }
+    def releaseVersion = version.toString()
+    centralModules.each { path ->
+        from(project(path).layout.buildDirectory.dir('repo')) {
+            include "**/${releaseVersion}/**"
+        }
+    }
+    archiveFileName = "central-bundle-${releaseVersion}.zip"
+    destinationDirectory = layout.buildDirectory.dir('central')
+    doFirst {
+        if (releaseVersion.endsWith('-SNAPSHOT')) {
+            throw new GradleException('Maven Central nimmt keine SNAPSHOT-Versionen an (-PreleaseVersion=<v> setzen)')
+        }
+    }
+}

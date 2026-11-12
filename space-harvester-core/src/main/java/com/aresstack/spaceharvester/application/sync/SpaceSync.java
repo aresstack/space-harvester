@@ -167,14 +167,47 @@ public class SpaceSync {
 
     /** Wie {@link #run(String, String, PlanApplier, SyncListener, boolean)}, in der Betriebsart {@code mode}. */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode) {
-        SyncPlan plan = plan(sourceId, spaceKey, mode);
+        return run(sourceId, spaceKey, applier, listener, mode, null);
+    }
+
+    /**
+     * Wie {@link #run(String, String, PlanApplier, SyncListener, SyncMode)}; Inhalte lädt der Lauf nur für die Seiten,
+     * die {@code loading} aus der Inventur bestimmt ({@link SyncPlan#withLoadingLimitedTo}), etwa den Teilbaum eines
+     * Exports. Die Generation führt die übrigen als nicht geladen oder veraltet.
+     *
+     * @param loading aus der Inventur die Seiten mit Inhalt, oder {@code null} für alle
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
+                       java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading) {
+        return run(sourceId, spaceKey, applier, listener, mode, loading, false);
+    }
+
+    /**
+     * Wie {@link #run(String, String, PlanApplier, SyncListener, SyncMode, java.util.function.Function)}; mit
+     * {@code reloadAll} („Neu erzwingen“, ADR 0025) lädt der Lauf auch unveränderte Seiten im Ladeumfang neu
+     * ({@link SyncPlan#withContentReloaded}).
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
+                       java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading,
+                       boolean reloadAll) {
+        SyncPlan planned = plan(sourceId, spaceKey, mode);
+        java.util.function.Predicate<String> inScope = loading == null || !planned.inventory().confirmed()
+                ? pageId -> true : loading.apply(planned.inventory());
+        SyncPlan limited = loading == null || !planned.inventory().confirmed() ? planned
+                : planned.withLoadingLimitedTo(inScope);
+        SyncPlan plan = reloadAll && planned.inventory().confirmed() && mode.refreshesContent()
+                ? limited.withContentReloaded(inScope) : limited;
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {
             return new SyncRun(plan, Set.of(), null, unconfirmable.get());
         }
+        // Neue Seiten zuerst und dauerhaft (ADR 0025): ein Abbruch oder Verbindungsverlust verwirft sie nicht, der
+        // nächste Lauf setzt fort. Nebenbei hält das die Schreibsperre des Caches nicht über den ganzen Abruf.
+        PlanApplier.Prefetched prefetched = store.keepsLoadedPages()
+                ? applier.loadNew(plan, store, listener) : PlanApplier.Prefetched.NONE;
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
-            Set<String> failed = applier.apply(plan, staged, listener);
+            Set<String> failed = applier.apply(plan, staged, listener, prefetched);
             SyncBaseline next = plan.nextBaseline(clock.instant(), failed);
             listener.checkpoint();
             staged.commit(next);

@@ -123,8 +123,8 @@ class AppSettingsLoaderTest {
 
         assertThat(settings.sources()).isEmpty();
         assertThat(settings.problems()).isEmpty();
-        // Anhänge wie im Core und im Enterprise AI Client (#423): bis 100 MiB, ab 20 MiB höchstens zwei zugleich.
-        assertThat(settings.storage().maxAssetBytes()).isEqualTo(100L * 1024 * 1024);
+        // Anhänge wie im Core: ohne Grenze (Angelo 11.11.2026), ab 20 MiB höchstens zwei zugleich.
+        assertThat(settings.storage().maxAssetBytes()).isZero();
         assertThat(settings.storage().largeAssetBytes()).isEqualTo(20L * 1024 * 1024);
         assertThat(settings.storage().maxLargeAssets()).isEqualTo(2);
     }
@@ -157,6 +157,35 @@ class AppSettingsLoaderTest {
         Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
         assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, true).load(file).proxy().mode())
                 .as("ausdrücklich gesetzt gilt").isEqualTo(ProxySettings.Mode.DISABLED);
+    }
+
+    @Test
+    void theConsoleOutputIsOffByDefaultAndReadsTheSpringSpellings() throws Exception {
+        assertThat(load("space-harvester:\n  sources: []\n", Map.of()).consoleOutput()).isEqualTo(ConsoleOutput.OFF);
+        // Unquotiert ist off in YAML false; Spring Boot liest das als OFF, die App auch.
+        assertThat(load("logging:\n  threshold:\n    console: off\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.OFF);
+        assertThat(load("logging:\n  threshold:\n    console: WARN\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.WARN);
+        assertThat(load("logging:\n  threshold:\n    console: warning\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.WARN);
+        assertThat(load("logging:\n  threshold:\n    console: error\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.ERROR);
+        assertThat(load("logging:\n  threshold:\n    console: \"info\"\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.INFO);
+        // Darunter protokolliert die App nichts: debug und trace zeigen dasselbe wie alles.
+        assertThat(load("logging:\n  threshold:\n    console: trace\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.ALL);
+        assertThat(load("logging:\n  threshold:\n    console: ${CONSOLE:all}\n", Map.of()).consoleOutput())
+                .isEqualTo(ConsoleOutput.ALL);
+
+        AppSettings unknown = load("logging:\n  threshold:\n    console: laut\n", Map.of());
+        assertThat(unknown.consoleOutput()).isEqualTo(ConsoleOutput.OFF);
+        assertThat(unknown.problems()).singleElement().asString()
+                .contains("logging.threshold.console", "off, error, warn, info und all", "laut");
+        AppSettings on = load("logging:\n  threshold:\n    console: on\n", Map.of());
+        assertThat(on.consoleOutput()).isEqualTo(ConsoleOutput.OFF);
+        assertThat(on.problems()).singleElement().asString().contains("logging.threshold.console");
     }
 
     @Test

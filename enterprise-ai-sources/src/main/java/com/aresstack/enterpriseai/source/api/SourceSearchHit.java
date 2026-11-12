@@ -13,6 +13,7 @@ public final class SourceSearchHit {
     private final String snippet;
     private final KnowledgeRevision revision;
     private final URI url;
+    private final String partitionKey;
 
     public SourceSearchHit(KnowledgeResourceId resourceId, String title, String snippet) {
         this(resourceId, title, snippet, KnowledgeRevision.unknown());
@@ -29,6 +30,15 @@ public final class SourceSearchHit {
     /** @param url aufrufbare Adresse der Seite (Bookmark), {@code null}, wenn die Suche keine nennt */
     public SourceSearchHit(KnowledgeResourceId resourceId, String title, String snippet, KnowledgeRevision revision,
                            URI url) {
+        this(resourceId, title, snippet, revision, url, null);
+    }
+
+    /**
+     * @param partitionKey Schlüssel des Bereichs ({@link SourcePartition#key()}), in dem der Treffer liegt
+     *                     (Confluence: Space-Key); {@code null} oder leer, wenn die Suche ihn nicht nennt
+     */
+    public SourceSearchHit(KnowledgeResourceId resourceId, String title, String snippet, KnowledgeRevision revision,
+                           URI url, String partitionKey) {
         if (resourceId == null) {
             throw new IllegalArgumentException("resourceId must not be null");
         }
@@ -37,6 +47,12 @@ public final class SourceSearchHit {
         this.snippet = snippet == null ? "" : snippet.trim();
         this.revision = revision == null ? KnowledgeRevision.unknown() : revision;
         this.url = url;
+        this.partitionKey = partitionKey == null || partitionKey.trim().isEmpty() ? null : partitionKey.trim();
+    }
+
+    /** Schlüssel des Bereichs ({@link SourcePartition#key()}) laut Suche; {@code null}, wenn unbekannt. */
+    public String partitionKey() {
+        return partitionKey;
     }
 
     /** Aufrufbare Adresse (Bookmark); {@code null}, wenn unbekannt. */

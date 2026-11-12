@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
@@ -40,7 +41,62 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
      */
     static final String FOREIGN_FILE_REDIRECTS = "false";
 
+    /**
+     * User-Agent des Enterprise AI Client 0.80.98 ({@code NetworkServices.defaultUserAgent}); die Desktop-App schickt
+     * ihn an Confluence, damit die Anfragen dort genauso aussehen wie aus dem EAC (#571).
+     */
+    static final String EAC_USER_AGENT = "EnterpriseAiClient/0.80.98";
+
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
+
+    /** Ob die Quelle wie im Enterprise AI Client geöffnet wird ({@link #desktop()}) statt mit den Dienst-Standards. */
+    private final boolean desktop;
+    /** Nur Desktop: Ordner für HTML-Antworten statt Dateien wie im EAC (neben dem Protokoll) oder {@code null}. */
+    private final java.nio.file.Path diagnosticsDirectory;
+    /** Wiederholungen aus {@code jobs.retry} oder {@code null} für die Standards von Dienst bzw. Desktop. */
+    private final RetrySettings retry;
+
+    /** Mit den Standards des Dienstes: Netzfehler und 5xx zweimal wiederholt, keine Weiterleitung auf fremde Hosts. */
+    public ConfluenceSourceAdapter() {
+        this(false, null, null);
+    }
+
+    private ConfluenceSourceAdapter(boolean desktop, java.nio.file.Path diagnosticsDirectory, RetrySettings retry) {
+        this.desktop = desktop;
+        this.diagnosticsDirectory = diagnosticsDirectory;
+        this.retry = retry;
+    }
+
+    /**
+     * Derselbe Adapter mit den Wiederholungen aus {@code space-harvester.jobs.retry} (ADR 0025): weitere Versuche und
+     * Wartezeiten des REST-Clients bei Netzfehlern, Zeitüberschreitung, 429 und 5xx. Datei-Downloads und das Absenden
+     * eines Einmalcodes wiederholt der Client nie. Eigene {@code options} der Quelle gehen vor.
+     */
+    public ConfluenceSourceAdapter withRetry(RetrySettings value) {
+        return new ConfluenceSourceAdapter(desktop, diagnosticsDirectory, value);
+    }
+
+    /**
+     * Für die Desktop-App: genau die Standards des Enterprise AI Client (#571), keine Wiederholung
+     * ({@code maxRetries} 0) und Weiterleitungen beim Datei-Download wie dort ({@code foreignFileRedirects}
+     * Upstream-Standard {@code true}). Mit Zwei-Faktor-Anmeldung öffnete jede Wiederholung bei Confluence eine eigene
+     * Sitzung mit eigenem Code per Mail; der EAC wiederholt nicht. Eigene {@code options} der Quelle gelten weiter.
+     */
+    public static ConfluenceSourceAdapter desktop() {
+        return desktop(null);
+    }
+
+    /**
+     * Wie {@link #desktop()}, und der Confluence-Adapter wird gebaut wie im Enterprise AI Client 0.80.98
+     * ({@code AdapterAssembly.sourceProviders}): ohne asynchronen Transport (Seiten über denselben UrlConnection-Weg
+     * wie Dateien und Einmalcode), mit dessen User-Agent und mit Diagnoseordner für HTML-Antworten statt Dateien
+     * (#571).
+     *
+     * @param diagnosticsDirectory Ordner neben dem Protokoll oder {@code null} ohne Diagnosedateien
+     */
+    public static ConfluenceSourceAdapter desktop(java.nio.file.Path diagnosticsDirectory) {
+        return new ConfluenceSourceAdapter(true, diagnosticsDirectory, null);
+    }
 
     /** Schlüssel, die der Adapter selbst setzt und die nicht über {@code options} kommen dürfen. */
     private static final Set<String> RESERVED_OPTIONS = Set.of("baseUrl", "title", "credentialRef",
@@ -100,7 +156,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             }
         }
         String foreign = config.options().get("foreignFileRedirects");
-        if (foreign != null && !FOREIGN_FILE_REDIRECTS.equalsIgnoreCase(foreign.trim())) {
+        if (!desktop && foreign != null && !FOREIGN_FILE_REDIRECTS.equalsIgnoreCase(foreign.trim())) {
             problems.add("options.foreignFileRedirects ist im Dienst nicht einschaltbar; Weiterleitungen auf fremde Hosts"
                     + " werden nie verfolgt");
         }
@@ -136,9 +192,14 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }
         String thumbprint = certificate.enabled() ? certificate.thumbprint() : null;
-        KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, context.routes(), context.userAgent(),
-                trust, thumbprint, context.async());
-        SourceSettings settings = settings(config);
+        // Desktop wie der EAC: kein asynchroner Transport (WebClient), dessen User-Agent, Diagnoseordner neben dem
+        // Protokoll (#571).
+        KnowledgeSourceProvider provider = desktop
+                ? ConfluenceSources.desktopProvider(secrets, context.routes(), EAC_USER_AGENT, trust, thumbprint,
+                        diagnosticsDirectory, config.id() + ", " + config.auth().type())
+                : ConfluenceSources.provider(secrets, context.routes(), context.userAgent(), trust, thumbprint,
+                        context.async());
+        SourceSettings settings = settings(config, desktop, retry);
         List<String> invalid = provider.validate(settings);
         if (!invalid.isEmpty()) {
             throw new InvalidSourceConfigurationException(invalid);
@@ -155,8 +216,13 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             // Startpunkte und Tiefe wie beim Indexieren im Client gelten auch beim Abgleich; ohne eigene Startpunkte
             // (Standard alle Spaces) bleibt die Auflistung je Space unverändert.
             SourceScope scope = provider.scope(settings);
+            // Mit Token bei Bedarf eine zweite Instanz mit eigener Web-Sitzung für Dateiabrufe mit Benutzer und Passwort
+            // (#571): nur der Port aus demselben Anbieter, mit dem schon geladenen Zertifikat, ohne Netz.
+            java.util.function.Supplier<com.aresstack.enterpriseai.source.api.KnowledgeSourcePort> webPorts =
+                    config.auth().type() == SourceSettingsConfig.AuthType.PAT
+                            ? () -> provider.open(SourceAddress.of(config.id()), settings) : null;
             return new OpenedSource(port, delegated,
-                    scope.startPoints().equals(List.of(ALL_SPACES)) ? null : scope);
+                    scope.startPoints().equals(List.of(ALL_SPACES)) ? null : scope, webPorts);
         } catch (ClientCertificateException e) {
             throw new InvalidSourceConfigurationException(List.of("client-certificate: " + e.getMessage()));
         }
@@ -258,12 +324,30 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     static final String ALL_SPACES = "space:*";
 
     static SourceSettings settings(SourceSettingsConfig config) {
+        return settings(config, false);
+    }
+
+    /** @param desktop Standards des Enterprise AI Client ({@link #desktop()}) statt der des Dienstes */
+    static SourceSettings settings(SourceSettingsConfig config, boolean desktop) {
+        return settings(config, desktop, null);
+    }
+
+    /** @param retry Wiederholungen aus {@code jobs.retry} oder {@code null} für die Standards von Dienst bzw. Desktop */
+    static SourceSettings settings(SourceSettingsConfig config, boolean desktop, RetrySettings retry) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
-        // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
-        // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
-        values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
-        // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird nie dort geladen.
-        values.put("foreignFileRedirects", FOREIGN_FILE_REDIRECTS);
+        if (retry != null) {
+            // Eine Schleife: die des REST-Clients. Was die Quelle selbst angibt, gilt weiter.
+            values.putIfAbsent("maxRetries", Integer.toString(retry.maxAttempts()));
+            values.putIfAbsent("retryBackoffMillis", Long.toString(retry.initialDelay().toMillis()));
+            values.putIfAbsent("maxRetryBackoffMillis", Long.toString(retry.maxDelay().toMillis()));
+        }
+        if (!desktop) {
+            // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
+            // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
+            values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
+            // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird nie dort geladen.
+            values.put("foreignFileRedirects", FOREIGN_FILE_REDIRECTS);
+        }
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());

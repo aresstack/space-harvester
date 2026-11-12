@@ -12,7 +12,9 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSettingsReader;
 
+import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 
@@ -22,7 +24,9 @@ import java.util.Locale;
  * {@code credentialRef} (KeePass-Eintrag mit Benutzer und Passwort; leer = anonym), {@code startPoints},
  * {@code maxDepth} (Standard 1), {@code maxResources}, {@code encoding} (Standard ISO-8859-1 wie MainframeMate);
  * nur in der Datei: {@code recordStructure} ({@code auto}, {@code on}, {@code off}), {@code connectTimeoutMillis},
- * {@code readTimeoutMillis}.
+ * {@code readTimeoutMillis}, {@code tls} ({@code none} wie bisher, {@code explicit} = {@code AUTH TLS},
+ * {@code implicit} = TLS ab Verbindungsbeginn, Standardport dann 990) und {@code trustBundle} (PEM- oder DER-Datei mit
+ * den vertrauten Zertifikaten; leer = Vertrauensquellen der JVM; nur zusammen mit {@code tls}).
  */
 public final class FtpSourceProvider implements KnowledgeSourceProvider {
 
@@ -52,6 +56,7 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
             .build();
 
     private static final int DEFAULT_PORT = 21;
+    private static final int DEFAULT_IMPLICIT_TLS_PORT = 990;
     private static final int DEFAULT_MAX_RESOURCES = 2000;
     private static final int MAX_TIMEOUT = 600000;
 
@@ -114,16 +119,54 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
             r.problem("host", "nur Name oder Adresse, ohne Schema, Pfad und Zugangsdaten");
             host = null;
         }
-        int port = r.integer("port", DEFAULT_PORT, 1, 65535);
+        FtpConnectionSettings.Tls tls = tls(r);
+        int port = r.integer("port", tls == FtpConnectionSettings.Tls.IMPLICIT ? DEFAULT_IMPLICIT_TLS_PORT
+                : DEFAULT_PORT, 1, 65535);
+        Path trustBundle = trustBundle(r, tls);
         SecretRef credentialRef = r.secretRef("credentialRef");
         Charset encoding = charset(r);
         int connectTimeout = r.integer("connectTimeoutMillis", 15000, 1, MAX_TIMEOUT);
         int readTimeout = r.integer("readTimeoutMillis", 60000, 1, MAX_TIMEOUT);
         FtpConnectionSettings.RecordStructure structure = recordStructure(r);
-        if (host == null || encoding == null || structure == null) {
+        if (host == null || encoding == null || structure == null || tls == null) {
             return null;
         }
-        return new FtpConnectionSettings(host, port, credentialRef, encoding, connectTimeout, readTimeout, structure);
+        return new FtpConnectionSettings(host, port, credentialRef, encoding, connectTimeout, readTimeout, structure,
+                tls, trustBundle);
+    }
+
+    private static FtpConnectionSettings.Tls tls(SourceSettingsReader r) {
+        String value = r.text("tls", "none").toLowerCase(Locale.ROOT);
+        if ("none".equals(value)) {
+            return FtpConnectionSettings.Tls.NONE;
+        }
+        if ("explicit".equals(value)) {
+            return FtpConnectionSettings.Tls.EXPLICIT;
+        }
+        if ("implicit".equals(value)) {
+            return FtpConnectionSettings.Tls.IMPLICIT;
+        }
+        r.problem("tls", "muss none, explicit oder implicit sein");
+        return null;
+    }
+
+    /** Das Trust-Bundle, geprüft beim Lesen der Einstellungen; {@code null} ohne Angabe oder bei Fehler. */
+    private static Path trustBundle(SourceSettingsReader r, FtpConnectionSettings.Tls tls) {
+        Path bundle = r.path("trustBundle", null);
+        if (bundle == null) {
+            return null;
+        }
+        if (tls == FtpConnectionSettings.Tls.NONE) {
+            r.problem("trustBundle", "nur zusammen mit tls=explicit oder tls=implicit");
+            return null;
+        }
+        try {
+            FtpTls.trustManager(bundle);
+            return bundle;
+        } catch (IOException e) {
+            r.problem("trustBundle", "keine lesbare PEM- oder DER-Datei mit Zertifikaten");
+            return null;
+        }
     }
 
     private static Charset charset(SourceSettingsReader r) {

@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.sources;
 
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -203,6 +205,24 @@ public interface HarvestSource {
     }
 
     /**
+     * Die Anhangslisten vieler Seiten auf einmal über die Suche der Quelle statt eines Abrufs je Seite (bei Confluence
+     * CQL {@code type=attachment AND container in (...) AND space="KEY"} in Stapeln von 50 Seiten). Jede angefragte
+     * Seite bekommt eine Liste; eine Seite ohne Anhänge, eine unsichtbare und eine, die inzwischen nicht mehr in
+     * {@code spaceKey} liegt, gleichermaßen eine leere. Die Rohantworten der Suche werden nicht mitgegeben: eine Antwort
+     * gehört zu vielen Seiten, und niemand liest sie.
+     *
+     * @param pageIds  IDs der Seiten in der Quelle
+     * @param spaceKey nur Anhänge von Seiten, die derzeit in diesem Bereich liegen
+     * @return Liste je Seiten-ID
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle das nicht kann; sonst wie
+     *                               {@link #attachments(String)}, {@code INVALID_RESPONSE} auch bei zu vielen Treffern
+     */
+    default Map<String, PageAttachments> attachmentsOf(Collection<String> pageIds, String spaceKey) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhangslisten nicht suchen", null);
+    }
+
+    /**
      * Lädt einen Anhang aus {@link #attachments(String)} über die Anmeldung und den Netzweg der Quelle herunter (#19).
      * Nur Anhänge der Quelle selbst, nie fremde URLs. Eine Datei über {@code maxBytes} oder der Größengrenze der Quelle
      * wird nicht weiter gelesen und nie gekürzt.
@@ -215,6 +235,30 @@ public interface HarvestSource {
     default AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Anhänge nicht herunterladen", null);
+    }
+
+    /**
+     * Wie {@link #attachmentFile}, aber die Originalbytes fließen nach {@code sink} statt ganz in den Speicher (Angelo
+     * 11.11.2026). Eine Quelle ohne eigenen Strom lädt wie {@link #attachmentFile} mit der Grenze von {@code sink} und
+     * schreibt danach.
+     *
+     * @throws AttachmentTooLargeException über {@link AttachmentSink#maxBytes()} oder der Grenze der Quelle
+     * @throws SourceAccessException       wie {@link #attachmentFile}; {@code UNAVAILABLE}, wenn {@code sink} nicht
+     *                                     schreibbar ist
+     */
+    default StreamedAttachment streamAttachment(PageAttachment attachment, AttachmentSink sink) {
+        AttachmentFile file = attachmentFile(attachment, sink.maxBytes());
+        try {
+            sink.restart();
+            sink.write(file.content());
+        } catch (java.io.IOException e) {
+            if (sink.exceeded()) {
+                throw new AttachmentTooLargeException(id(), sink.maxBytes());
+            }
+            throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE,
+                    "Anhang nicht geschrieben (" + e.getClass().getSimpleName() + ")", e);
+        }
+        return new StreamedAttachment(file.attachment(), file.retrievedAt());
     }
 
     /**

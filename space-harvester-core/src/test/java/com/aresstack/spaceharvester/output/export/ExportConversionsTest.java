@@ -147,6 +147,57 @@ class ExportConversionsTest {
     }
 
     @Test
+    void withoutALimitLargeFilesAreWrittenAndASetLimitSaysTooLarge() throws IOException {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        ExportConverter large = new ExportConverter() {
+            @Override
+            public String format() {
+                return "gross";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public String mediaType() {
+                return "application/octet-stream";
+            }
+
+            @Override
+            public String fileName() {
+                return "gross.bin";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) throws IOException {
+                byte[] block = new byte[1024];
+                for (int i = 0; i < 64; i++) {
+                    out.write(block);
+                }
+            }
+        };
+        // Angelo 11.11.2026: kein Größenlimit, auch nicht für die Konvertierung in den Ausgabeordner.
+        assertThat(ExportConverters.DEFAULT_MAX_BYTES).isZero();
+        ExportConversions unlimited = new ExportConversions(jobs, writer, new ExportConverters(List.of(large),
+                ExportConverters.DEFAULT_MAX_BYTES));
+
+        assertThat(Files.size(unlimited.convert(exportId, "client-a", "gross", downloads).path()))
+                .isEqualTo(64 * 1024);
+
+        ExportConversions limited = new ExportConversions(jobs, writer, new ExportConverters(List.of(large),
+                32 * 1024));
+        Path elsewhere = Files.createDirectory(downloads.resolve("begrenzt"));
+        assertThatThrownBy(() -> limited.convert(exportId, "client-a", "gross", elsewhere))
+                .isInstanceOf(java.io.UncheckedIOException.class).hasMessageContaining("zu groß");
+        try (Stream<Path> left = Files.list(elsewhere)) {
+            assertThat(left).isEmpty();
+        }
+    }
+
+    @Test
     void theJsonConversionMatchesTheOneMadeDuringTheExport() throws IOException {
         FileSystemExportArtifactWriter writer = writer();
         String exportId = exportOnce(writer);

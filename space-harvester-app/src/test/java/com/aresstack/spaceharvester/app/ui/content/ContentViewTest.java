@@ -167,6 +167,31 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
+        // Die Hauptreiter sind quadratische Symbolknöpfe für die Werkzeugleiste unten; ihr Name steht im Tooltip,
+        // die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
+        assertThat(onEdt(() -> {
+            List<String> tips = new java.util.ArrayList<>();
+            for (java.awt.Component c : ((java.awt.Container) detail.tabIcons()).getComponents()) {
+                javax.swing.AbstractButton button = (javax.swing.AbstractButton) c;
+                assertThat(button.getText()).isNullOrEmpty();
+                assertThat(button.getIcon()).isNotNull();
+                assertThat(button.getPreferredSize().width).isEqualTo(button.getPreferredSize().height);
+                tips.add(button.getToolTipText());
+            }
+            return tips;
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+        assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
+        assertThat(onEdt(() -> view.tools())).isSameAs(detail.tabIcons());
+        onEdt(() -> {
+            detail.tabs().button("Text").doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
+        assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
+        onEdt(() -> {
+            detail.tabs().select("Leseansicht");
+            return null;
+        });
 
         // „Aussagen“ zeigt den eingebauten Reiter der Aussagenanalyse; statementsTab ersetzt ihn, null zeigt den Hinweis.
         assertThat(onEdt(() -> detail.statements().getComponent(0))).isInstanceOf(StatementsTab.class);
@@ -236,6 +261,72 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
         assertThat(onEdt(detail::selectedTab)).isEqualTo("Absätze");
+    }
+
+    @Test
+    void backAndForwardReturnToThePagesShownBeforeAlsoWithTheThumbButtons() throws Exception {
+        PageDetailPanel detail = view.detail();
+        String space = space("handbuch");
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        onEdt(() -> {
+            view.openPage("handbuch", pages.get(0));
+            view.openPage("handbuch", pages.get(1));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(1)));
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+
+        onEdt(detail::back);
+        await(() -> shown(detail, pages.get(0)));
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+
+        // Maustaste Vor (5) irgendwo in der Seitenansicht, danach Zurück (4); eine andere Taste tut nichts.
+        assertThat(onEdt(() -> detail.mouseButton(PageDetailPanel.MOUSE_FORWARD_BUTTON, detail.tabs()))).isTrue();
+        await(() -> shown(detail, pages.get(1)));
+        assertThat(onEdt(() -> detail.mouseButton(2, detail.tabs()))).isFalse();
+        assertThat(onEdt(() -> detail.mouseButton(PageDetailPanel.MOUSE_BACK_BUTTON, new javax.swing.JLabel())))
+                .as("außerhalb der Seitenansicht").isFalse();
+        assertThat(onEdt(() -> detail.mouseButton(PageDetailPanel.MOUSE_BACK_BUTTON, detail.tabs()))).isTrue();
+        await(() -> shown(detail, pages.get(0)));
+
+        // Eine neu geöffnete Seite verwirft den Vor-Verlauf wie im Browser.
+        onEdt(() -> {
+            view.openPage("handbuch", pages.get(2));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(2)));
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+
+        // Auch nach einem Wechsel des Space (keine Seite gezeigt) verwirft eine neue Seite den Vor-Verlauf.
+        onEdt(detail::back);
+        await(() -> shown(detail, pages.get(0)));
+        onEdt(() -> {
+            view.openSpace("notizen", space("notizen"));
+            view.openPage("handbuch", pages.get(1));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(1)));
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+    }
+
+    @Test
+    void onlyLinksToTheDomainOfThePageStayInTheReader() throws Exception {
+        java.net.URI page = java.net.URI.create("https://wiki.example.org/pages/viewpage.action?pageId=1");
+        assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://wiki.example.org/display/DEV/Start").toURL(), page))
+                .isTrue();
+        assertThat(PageDetailPanel.sameDomain(java.net.URI.create("http://WWW.wiki.example.org/x").toURL(), page)).isTrue();
+        assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://example.org/x").toURL(), page)).isFalse();
+        assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://www.google.com/").toURL(), page)).isFalse();
+        assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://wiki.example.org/x").toURL(), null)).isFalse();
+    }
+
+    private static boolean shown(PageDetailPanel detail, String pageId) {
+        return detail.shownPage() != null && pageId.equals(detail.shownPage().header().metadata().pageId());
     }
 
     private static String labelText(java.awt.Container container) {

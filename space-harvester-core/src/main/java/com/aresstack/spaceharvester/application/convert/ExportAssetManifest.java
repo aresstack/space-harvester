@@ -12,15 +12,30 @@ import java.util.Objects;
  * Beschaffung, Anmeldung, Ablage und Statuswerte dieselben bleiben. {@link #forPage} und {@link #images()} liefern
  * nur die Bilder, wie bisher; {@link #documents()} die Dokumente.
  *
- * @param complete ob jede gefundene Referenz abgelegt (oder als {@link Status#REDUNDANT} überflüssig) ist und jede
- *                 Seite geprüft werden konnte
+ * <p>Bilder und Dokumente beschaffen zwei Aufträge („Bilder beschaffen“, „Anhänge beschaffen“), die jeder nur ihre
+ * eigenen Einträge schreiben; daher ist die Vollständigkeit je Art vermerkt.
+ *
+ * @param imagesComplete    ob jede gefundene Bildreferenz abgelegt (oder als {@link Status#REDUNDANT} überflüssig) ist
+ *                          und jede Seite auf Bilder geprüft werden konnte
+ * @param documentsComplete ob jeder Dokument-Anhang abgelegt oder bewusst ausgeschlossen ist und jede Seite auf
+ *                          Anhänge geprüft werden konnte; ohne eingeschaltete Anhänge {@code true}
  */
-public record ExportAssetManifest(boolean complete, List<Entry> assets) {
+public record ExportAssetManifest(boolean imagesComplete, boolean documentsComplete, List<Entry> assets) {
 
     public static final String FORMAT = "space-harvester/export-assets/v1";
 
     public ExportAssetManifest {
         assets = List.copyOf(assets);
+    }
+
+    /** Bilder und Dokumente gleich vollständig, wie vor der Trennung in zwei Aufträge. */
+    public ExportAssetManifest(boolean complete, List<Entry> assets) {
+        this(complete, complete, assets);
+    }
+
+    /** Ob Bilder und Dokumente vollständig sind. */
+    public boolean complete() {
+        return imagesComplete && documentsComplete;
     }
 
     /** Die Bild-Einträge einer Seite in ihrer Reihenfolge, ohne Dokument-Anhänge. */

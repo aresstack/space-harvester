@@ -176,13 +176,18 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    `Harvester.addresses().resolve(caller, adresse)` fragt jede passende Quelle einzeln und liefert je Treffer Seite und
    Lesezeichen. Die Auflösung gehört der Quelle (`HarvestSource.resolveAddress`, Fähigkeit `ADDRESSES`); Rechte gelten
    an der gefundenen Seite.
-6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
+6. **Veröffentlichung auf Maven Central.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
    Entwickler), Sources- und Javadoc-JAR; Koordinaten `com.aresstack:space-harvester-core`. Weil der Core die Kopie
    `enterprise-ai-sources` braucht, bekommt auch sie eine Publikation
    (`com.aresstack:space-harvester-enterprise-ai-sources`), damit die Core-POM keine unveröffentlichte
    Projektabhängigkeit enthält; der Code der Kopie bleibt unverändert, nur ihr `build.gradle` gehört uns. Eine
    Gradle-Prüfung stellt sicher, dass die Core-POM weder Spring Boot noch Servlet noch unbekannte Projekte nennt.
-   Signatur und Veröffentlichung kommen erst mit einem Release-Prozess; es werden keine Secrets angelegt.
+   Nur nach Bedarf und nur manuell (Actions › Maven Central › Run workflow, Workflow `maven-central.yml`, am besten
+   auf einem Release-Tag) signiert der Workflow die drei Publikationen
+   (`com.aresstack:space-harvester-core`, `-enterprise-ai-sources`, `-document-export`) und lädt sie als Bundle
+   (`./gradlew centralBundle -PreleaseVersion=<v>`) über das Central Publisher Portal hoch. Secrets wie bei
+   `win-proxy-java` aus der Organisation aresstack: `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`,
+   `GPG_PASSPHRASE`. Das GitHub-Release (`release.yml`) lädt nie nach Maven Central.
 7. **Abhängigkeitsversionen im Core.** Bisher liefert die Spring-Boot-BOM die Versionen für Jackson 3, Reactor
    Netty und Spring WebFlux. Der Core darf diese BOM nicht in seine POM tragen; die Versionen stehen daher im
    Versionskatalog, abgestimmt auf Spring Boot 4.1.1, und der Server erzwingt weiter über die BOM dieselben.
@@ -229,7 +234,6 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
 - Ein eigenes Konnektor-Modul (`space-harvester-connector-confluence`) erst, wenn ein zweiter Quellentyp außerhalb
   der Upstream-Kopie dazukommt.
 - Core-, Server- und App-JAR erscheinen gemeinsam in jedem GitHub-Release (Workflow `release.yml`, siehe
-  [DESKTOP_APP.md › Releases](DESKTOP_APP.md#releases)). Signatur und tatsächliche Veröffentlichung auf Maven Central
-  entscheidet Angelo später.
+  [DESKTOP_APP.md › Releases](DESKTOP_APP.md#releases)). Maven Central nur manuell über `maven-central.yml` (Punkt 6).
 - Ein Austausch von Spring WebClient gegen Reactor Netty direkt würde die letzte Spring-Abhängigkeit des Core
   entfernen; nur sinnvoll zusammen mit einer neuen Abnahme des Transports.

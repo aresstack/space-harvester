@@ -135,6 +135,20 @@ public class ConfluenceDownloadDiagnosisTest {
     }
 
     @Test
+    public void logPathKeepsHostAndCallKindButNoIdsTitlesOrFileNames() {
+        assertEquals(BASE + "/download/attachments/…",
+                ConfluenceRestClient.logPath(BASE + "/download/attachments/7/Handbuch.pdf?version=2"));
+        assertEquals("/rest/api/content/…", ConfluenceRestClient.logPath("/rest/api/content/att900/download"));
+        assertEquals("/display/…", ConfluenceRestClient.logPath("/display/DEV/handbuch"));
+        assertEquals("/rest/drawio/…", ConfluenceRestClient.logPath("/rest/drawio/1.0/diagram/crud/Bild%20A/42"));
+        assertEquals("https://files.invalid/…", ConfluenceRestClient.logPath("https://files.invalid/bericht.pdf"));
+        assertEquals(BASE + "/pages/viewpage.action", ConfluenceRestClient.logPath(BASE + "/pages/viewpage.action?pageId=7"));
+        assertEquals("https://sso.invalid/login", ConfluenceRestClient.logPath("https://sso.invalid/login?os_destination=x"));
+        assertEquals(BASE + "/download/attachments", ConfluenceRestClient.logPath(BASE + "/download/attachments"));
+        assertEquals("https://sso.invalid", ConfluenceRestClient.logPath("https://sso.invalid"));
+    }
+
+    @Test
     public void aHtmlAnswerToTheDownloadIsLoggedAndSavedWithoutSecrets() throws Exception {
         File directory = temp.newFolder("logs");
         ConfluenceKnowledgeSource source = source(directory);
@@ -158,7 +172,10 @@ public class ConfluenceDownloadDiagnosisTest {
         assertTrue(examined, examined.contains("art=TWO_FACTOR"));
         assertTrue(examined, examined.contains("gesendet={authorization=Basic, cookies=[], accept=*/*}"));
         assertTrue(examined, examined.contains("gesetzteCookies=[DOWNLOADSESSION]"));
-        assertTrue(examined, examined.contains("adresse=" + BASE + "/download/attachments/7/Handbuch.pdf "));
+        assertTrue(examined, examined.contains("adresse=" + BASE + "/download/attachments/… "));
+        for (String line : lines) {
+            assertFalse("ohne Seiten-ID und Dateiname: " + line, line.contains("/7/") || line.contains("Handbuch"));
+        }
         for (String line : lines) {
             assertFalse("eine Einmalcode-Seite löst kein Cookie aus user/current", line.contains("benutzerTyp="));
         }

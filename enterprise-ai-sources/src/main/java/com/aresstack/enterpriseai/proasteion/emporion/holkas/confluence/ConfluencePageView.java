@@ -100,7 +100,7 @@ final class ConfluencePageView {
         int fromStorage = storageDrawioPreviews(doc, baseUri, storage, pageId);
         if (fromData + fromStorage > 0 || (storage != null && storage.contains("ac:name=\"drawio"))
                 || (storage != null && storage.contains("ac:name=\"inc-drawio"))) {
-            LOG.info("[Confluence] draw.io: Seite " + pageId + ": Bilder gekennzeichnet aus Diagrammdaten=" + fromData
+            LOG.info("[Confluence] draw.io: Bilder gekennzeichnet aus Diagrammdaten=" + fromData
                     + ", aus Makroparametern=" + fromStorage + ", Makros im Seitenquelltext="
                     + (storage == null ? "unbekannt" : String.valueOf(storageMacros(storage).size())));
         }
@@ -115,7 +115,19 @@ final class ConfluencePageView {
         Set<String> seen = new LinkedHashSet<String>();
         for (Element img : doc.select("img")) {
             img.removeAttr("srcset");
-            String raw = img.attr("src");
+            String raw = img.attr("src").trim();
+            if (raw.isEmpty() || raw.startsWith("#")) {
+                // jsoup löst ein leeres src zur Basis auf, also zur Startseite: kein Bild. Wer es abruft, bekommt das
+                // Dashboard statt einer Datei (Space Harvester, 11.11.2026). Steht die Adresse in data-image-src, gilt
+                // sie, sonst ist das img kein Inhalt.
+                String data = img.attr("data-image-src").trim();
+                if (data.isEmpty() || data.startsWith("#")) {
+                    img.remove();
+                    continue;
+                }
+                img.attr("src", data);
+                raw = data;
+            }
             String src = img.absUrl("src");
             if (src.isEmpty()) {
                 src = raw;

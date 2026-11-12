@@ -11,3 +11,4 @@ bin/
 config/application-local.yml
 # Laufzeitdaten (Standard-Datenverzeichnis des Servers)
 /data/
+.chatgpt/

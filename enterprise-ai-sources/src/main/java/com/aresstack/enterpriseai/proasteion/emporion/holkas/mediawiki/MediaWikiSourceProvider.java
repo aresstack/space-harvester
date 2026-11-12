@@ -49,10 +49,24 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
 
     private static final int MAX_TIMEOUT = 600000;
 
+    /**
+     * Baut den Transport einer Quelle ({@link #withTransports}), etwa über einen asynchronen HTTP-Client mit
+     * Proxy-Route je Ziel. Die Composition Root gibt ihm Proxy, Vertrauen und Timeouts der Site selbst mit.
+     */
+    public interface Transports {
+        /**
+         * @param sourceId die Quelle
+         * @param site     Site-Konfiguration aus den Einstellungen (Endpoint, Timeouts, User-Agent)
+         * @return der Transport oder {@code null}, dann gilt der Standardtransport
+         */
+        MediaWikiTransport transport(SourceAddress sourceId, MediaWikiSiteConfig site);
+    }
+
     private final Function<SecretRef, MediaWikiCredentialsProvider> credentials;
     private final HttpRoutePort routes;
     private final SSLSocketFactory sslSocketFactory;
     private final String defaultUserAgent;
+    private final Transports transports;
 
     /**
      * @param credentials      Zugangsdaten zum KeePass-Verweis (Brücke der Composition Root)
@@ -62,6 +76,12 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
      */
     public MediaWikiSourceProvider(Function<SecretRef, MediaWikiCredentialsProvider> credentials,
                                    HttpRoutePort routes, SSLSocketFactory sslSocketFactory, String defaultUserAgent) {
+        this(credentials, routes, sslSocketFactory, defaultUserAgent, null);
+    }
+
+    private MediaWikiSourceProvider(Function<SecretRef, MediaWikiCredentialsProvider> credentials,
+                                    HttpRoutePort routes, SSLSocketFactory sslSocketFactory, String defaultUserAgent,
+                                    Transports transports) {
         if (credentials == null) {
             throw new IllegalArgumentException("credentials must not be null");
         }
@@ -69,6 +89,20 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
         this.routes = routes;
         this.sslSocketFactory = sslSocketFactory;
         this.defaultUserAgent = defaultUserAgent;
+        this.transports = transports;
+    }
+
+    /**
+     * Derselbe Provider, dessen Quellen ihren Transport aus {@code transports} beziehen; liefert er {@code null},
+     * bleibt es beim Standardtransport mit {@code routes} und {@code sslSocketFactory}.
+     *
+     * @param transports baut den Transport je Quelle
+     */
+    public MediaWikiSourceProvider withTransports(Transports transports) {
+        if (transports == null) {
+            throw new IllegalArgumentException("transports must not be null");
+        }
+        return new MediaWikiSourceProvider(credentials, routes, sslSocketFactory, defaultUserAgent, transports);
     }
 
     /** Der Typ ohne Laufzeitumgebung (Beschreibung, Felder). */
@@ -104,6 +138,10 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
         }
         MediaWikiCredentialsProvider provider = credentialRef == null ? MediaWikiCredentialsProvider.anonymous()
                 : credentials.apply(credentialRef);
+        MediaWikiTransport transport = transports == null ? null : transports.transport(sourceId, site);
+        if (transport != null) {
+            return new MediaWikiKnowledgeSource(sourceId, site, transport, provider);
+        }
         return new MediaWikiKnowledgeSource(sourceId, site, provider, routes, sslSocketFactory);
     }
 

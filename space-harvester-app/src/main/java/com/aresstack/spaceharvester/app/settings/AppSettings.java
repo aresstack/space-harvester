@@ -46,6 +46,9 @@ import java.util.Set;
  *                        der Tabelle „Dateizugriff“ stehen, gelten aber nicht; nur die App kennt sie
  * @param terms           Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*}, #336), wie beim
  *                        Dienst
+ * @param consoleOutput   welche Meldungen im Terminal erscheinen ({@code logging.threshold.console}, derselbe Schlüssel
+ *                        wie beim Dienst); ohne Angabe {@link ConsoleOutput#DEFAULT}, die Protokolldatei bekommt immer
+ *                        alles
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -54,7 +57,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           TrustSettings tls, Cache cache, boolean setupCompleted,
                           Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
                           LocalFileSettings localFiles, Map<String, String> sourceKeePass,
-                          List<Path> inactiveRoots, TermSettings terms) {
+                          List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -76,6 +79,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         sourceKeePass = sourceKeePass == null ? Map.of() : Map.copyOf(sourceKeePass);
         inactiveRoots = inactiveRoots == null ? List.of() : List.copyOf(inactiveRoots);
         terms = terms == null ? TermSettings.DEFAULT : terms;
+        consoleOutput = consoleOutput == null ? ConsoleOutput.DEFAULT : consoleOutput;
+    }
+
+    /** Mit der Terminal-Ausgabe ohne Angabe ({@link ConsoleOutput#DEFAULT}), für Aufrufer, die sie nicht brauchen. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, ConsoleOutput.DEFAULT);
     }
 
     /** Mit dem Budget der Synonymerkennung aus der Konfiguration, für Aufrufer, die es nicht brauchen. */
@@ -148,24 +166,55 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms);
+                inactiveRoots, terms, consoleOutput);
+    }
+
+    /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
+    public AppSettings withParallel(int preparations, int downloads) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
+                cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
+                consoleOutput);
+    }
+
+    /**
+     * Wie {@link #withParallel(int, int)}, zusätzlich mit dem Gesamtbudget an Verbindungen für Bilder und Anhänge
+     * ({@link JobLimits#withConnections}).
+     */
+    public AppSettings withParallel(int preparations, int downloads, int connections) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
+                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
+                sourceKeePass, inactiveRoots, terms, consoleOutput);
     }
 
     /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
-     * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner, parallele Vorbereitungen und Downloads,
+     * Terminal-Ausgabe. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
-        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+                jobLimits.withParallel(other.jobLimits.parallelPreparations(), other.jobLimits.parallelDownloads())
+                        .withConnections(other.jobLimits.downloadConnections()),
+                other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
-                other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms);
+                other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
+                other.consoleOutput);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms);
+                inactiveRoots, terms, consoleOutput);
+    }
+
+    /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
+    public AppSettings withConsoleOutput(ConsoleOutput output) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
+                localFiles, sourceKeePass, inactiveRoots, terms, output);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
@@ -213,7 +262,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param dataDirectory   Datenverzeichnis; darunter liegt der Cache in {@code cache/}
      * @param exportDirectory Exportartefakte
      * @param assetDirectory  abgelegte Anhänge
-     * @param maxAssetBytes   größter Anhang, der geladen wird
+     * @param maxAssetBytes   größter Anhang, der geladen wird; {@code 0} ohne Grenze (Standard)
      * @param largeAssetBytes ab dieser Größe gilt ein Anhang als groß ({@code assets.large-file-threshold})
      * @param maxLargeAssets  so viele große Anhänge höchstens gleichzeitig ({@code assets.max-concurrent-large-files})
      * @param searchTimeout   Zeitgrenze einer Suche

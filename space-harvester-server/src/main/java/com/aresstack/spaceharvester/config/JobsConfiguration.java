@@ -43,9 +43,7 @@ class JobsConfiguration {
               JobsProperties properties) {
         ConfiguredSourceCatalog sources = catalog.getIfAvailable();
         RouteLookup routes = sources == null ? RouteLookup.NONE : sources::route;
-        return new ExecutorOwningJobs(jobStore, jobEventStore, routes,
-                new JobLimits(properties.maxConcurrent(), properties.maxQueued(), properties.maxRunTime(),
-                        properties.retention(), properties.maxOpenPerOwner()));
+        return new ExecutorOwningJobs(jobStore, jobEventStore, routes, properties.toLimits());
     }
 
     /**

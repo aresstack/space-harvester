@@ -130,7 +130,9 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
    Caches, atomar ersetzt. REST unter `/api/v1/glossary`.
    - „Fachbegriffe ermitteln“ (`GlossaryClassification`, `POST /api/v1/glossary/classify?sourceId=&spaceKey=`) läuft
      nur auf ausdrücklichen Wunsch, nie beim Start, Abgleich, bei der Anreicherung oder beim Öffnen eines Reiters. Je
-     Quelle ein abbrechbarer Auftrag; ohne `sourceId` alle freigegebenen Quellen. Kandidaten sind Bezeichner und
+     Quelle ein abbrechbarer eigener Auftrag `GLOSSARY` (eingeplant wie ein Folgeauftrag, eigener Eintrag in der
+     Auftragsliste der App mit Fortschritt in der Statusleiste; das Fenster bleibt bedienbar); ohne `sourceId` alle
+     freigegebenen Quellen. Kandidaten sind Bezeichner und
      Akronyme des Begriffsindex im Umfang (aktuelle Revision, keine nachgeladenen Seiten), je Kandidat bis zu drei
      Fundstellen von verschiedenen Seiten mit 160 Zeichen Kontext. Das Chat-Modell (dasselbe wie für #122) wählt nur
      aus; Begriffe außerhalb der Anfrage fallen weg, Erläuterungen schreibt es keine. Budget je Lauf: 300 Kandidaten,
@@ -139,8 +141,11 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
    - Schutzregeln: Manuelle, bestätigte und abgelehnte Einträge gehen nicht an das Modell und ändert kein Lauf; eine
      Ablehnung hängt an Begriff und Geltungsbereich, gilt also über Neustarts und Modellwechsel. Nur ungeprüfte
      KI-Vorschläge ersetzt oder entfernt ein Lauf; ein bestätigter KI-Eintrag, den der Begriffsindex nicht mehr kennt,
-     wird nur `evidenceStale`. Abgeglichen wird erst nach der letzten Antwort in einem Schritt; Abbruch, Modellfehler
-     oder Sperre der Quelle lassen den Stand unverändert. Ablehnungen lassen sich aufheben (`restore`). Das Glossar
+     wird nur `evidenceStale`. Neue Vorschläge legt der Lauf nach jeder beantworteten Anfrage sofort an
+     (`Glossary.proposeSome`, Teilergebnisse); entfernt oder als veraltet markiert wird erst im Abgleich nach der
+     letzten Antwort. Abbruch, Modellfehler oder Sperre der Quelle lassen die bisherigen Einträge unverändert, die
+     schon vorgeschlagenen bleiben. Jede Änderung meldet `Glossary.subscribe` (Beobachter), die App lädt das
+     Fachglossar daraufhin neu. Ablehnungen lassen sich aufheben (`restore`). Das Glossar
      weitet keine Suche aus.
 10. Synonymerkennung (#336) auf Knopfdruck, `Harvester.synonymDiscovery()` → `SynonymDiscovery`, REST
    `POST /api/v1/term-relations/refresh` mit `kind=synonyms` (`sourceId=*` alle Quellen, sonst die Quelle, mit

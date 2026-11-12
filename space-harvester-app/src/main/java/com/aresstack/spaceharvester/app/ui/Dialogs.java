@@ -41,22 +41,28 @@ public final class Dialogs {
     static final int WINDOW_PADDING = 4;
     static final int RESIZE_GRIP = 6;
     static final int CLOSE_SIZE = 24;
+    static final String YES = "Ja";
+    static final String NO = "Nein";
 
     private Dialogs() {
     }
 
-    /** Fragt eine riskante Aktion ab; {@code true} nur nach ausdrücklicher Bestätigung. */
-    public static boolean confirm(Component parent, String title, String text, String action) {
+    /**
+     * Fragt eine riskante Aktion ab, mit „Nein“ und „Ja“ (rot); {@code true} nur nach „Ja“. Die Frage im Text sagt
+     * „wirklich“ („Auftrag wirklich löschen?“), damit klar ist, dass es eine Vorsichtsabfrage ist (Angelo 10.11.2026).
+     * Escape und ✕ heißen „Nein“.
+     */
+    public static boolean confirm(Component parent, String title, String question) {
         boolean[] result = {false};
         JDialog dialog = dialog(parent, title);
-        ComposerButton yes = Comic.danger(action, null);
-        ComposerButton no = Comic.button("Abbrechen", null);
+        ComposerButton yes = Comic.danger(YES, null);
+        ComposerButton no = Comic.button(NO, null);
         yes.addActionListener(e -> {
             result[0] = true;
             dialog.dispose();
         });
         no.addActionListener(e -> dialog.dispose());
-        show(dialog, title, Comic.note(text), no, yes);
+        show(dialog, title, Comic.note(question), no, yes);
         return result[0];
     }
 
@@ -99,8 +105,8 @@ public final class Dialogs {
         return confirm(parent, "Laufende Aufträge", Texts.count(running.size(), "Auftrag läuft", "Aufträge laufen")
                 + " noch: " + jobs + ". Zum Übernehmen startet die App die Quellen neu; "
                 + (running.size() == 1 ? "dieser Auftrag bricht" : "diese Aufträge brechen") + " dabei ab. "
-                + "Wer das nicht will, wartet, bis sie unter „Aufträge“ fertig sind, und übernimmt dann.",
-                "Trotzdem übernehmen");
+                + "Wer das nicht will, wartet, bis sie unter „Aufträge“ fertig sind, und übernimmt dann.\n\n"
+                + "Wirklich übernehmen und " + (running.size() == 1 ? "den Auftrag" : "die Aufträge") + " abbrechen?");
     }
 
     /**
@@ -205,15 +211,62 @@ public final class Dialogs {
 
     /** Packt, rundet die Ecken, zentriert über dem Besitzer und zeigt den Dialog modal. */
     static void present(JDialog dialog, Dimension minimum) {
+        present(dialog, minimum, null, size -> { });
+    }
+
+    /** Wie {@link #present(JDialog, Dimension)}, mit fester Wunschgröße statt der gepackten; {@code sized} erfährt die Größe beim Öffnen. */
+    static void present(JDialog dialog, Dimension minimum, Dimension preferred,
+                        java.util.function.Consumer<Dimension> sized) {
         dialog.pack();
+        // Nie höher oder breiter als der nutzbare Bildschirm (ohne Taskleiste): Sonst ragt die Knopfleiste unten
+        // heraus, und der Bildlauf im Inhalt glaubt, alles passe, bis eine Meldung Platz nimmt (Angelo, 10.11.).
+        java.awt.Rectangle screen = usableScreen(dialog);
+        Dimension fitted = fit(preferred != null ? preferred : dialog.getSize(), minimum, screen);
         if (minimum != null) {
-            dialog.setMinimumSize(minimum);
-            dialog.setSize(Math.max(dialog.getWidth(), minimum.width), Math.max(dialog.getHeight(), minimum.height));
+            dialog.setMinimumSize(fit(minimum, null, screen));
         }
+        dialog.setSize(fitted);
         ComicWindowShape.install(dialog, (JComponent) dialog.getContentPane(), Comic.PALETTE, WINDOW_PADDING,
                 ResearchUiMetrics.RADIUS_WINDOW);
         dialog.setLocationRelativeTo(dialog.getOwner());
+        if (screen != null) {
+            // Ganz auf dem Bildschirm, auch wenn der Besitzer nah am Rand steht.
+            int x = Math.max(screen.x, Math.min(dialog.getX(), screen.x + screen.width - dialog.getWidth()));
+            int y = Math.max(screen.y, Math.min(dialog.getY(), screen.y + screen.height - dialog.getHeight()));
+            dialog.setLocation(x, y);
+        }
+        sized.accept(dialog.getSize());
         dialog.setVisible(true);
+    }
+
+    /**
+     * Fenstergröße: mindestens {@code minimum}, höchstens der nutzbare Bildschirm {@code screen} ({@code null}: keine
+     * Grenze, etwa ohne Bildschirm). Die Grenze des Bildschirms gewinnt über das Minimum.
+     */
+    static Dimension fit(Dimension size, Dimension minimum, java.awt.Rectangle screen) {
+        int width = minimum == null ? size.width : Math.max(size.width, minimum.width);
+        int height = minimum == null ? size.height : Math.max(size.height, minimum.height);
+        if (screen != null) {
+            width = Math.min(width, screen.width);
+            height = Math.min(height, screen.height);
+        }
+        return new Dimension(width, height);
+    }
+
+    /** Der nutzbare Bereich des Bildschirms, auf dem das Fenster (bzw. sein Besitzer) steht; ohne Bildschirm {@code null}. */
+    static java.awt.Rectangle usableScreen(Window window) {
+        if (java.awt.GraphicsEnvironment.isHeadless()) {
+            return null;
+        }
+        Window anchor = window.getOwner() != null && window.getOwner().isShowing() ? window.getOwner() : window;
+        java.awt.GraphicsConfiguration config = anchor.getGraphicsConfiguration();
+        if (config == null) {
+            return java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        }
+        java.awt.Rectangle bounds = config.getBounds();
+        java.awt.Insets insets = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(config);
+        return new java.awt.Rectangle(bounds.x + insets.left, bounds.y + insets.top,
+                bounds.width - insets.left - insets.right, bounds.height - insets.top - insets.bottom);
     }
 
     /** Zeigt {@code body} in einem rahmenlosen Fenster ohne Knöpfe; Escape und ✕ schließen (z. B. ein vergrößertes Bild). */
@@ -221,6 +274,34 @@ public final class Dialogs {
         JDialog dialog = dialog(parent, title);
         frame(dialog, title, body, dialog::dispose);
         present(dialog, new Dimension(320, 240));
+    }
+
+    /**
+     * Wie {@link #view}, aber das Fenster merkt sich unter {@code sizeKey} die Größe, die der Benutzer zuletzt gezogen
+     * hat; ohne gemerkte Größe ist es {@code share} des nutzbaren Bildschirms groß. Beim Öffnen wird die Größe immer
+     * auf den aktuellen Bildschirm begrenzt (sonst läge das ✕ nach einem Bildschirmwechsel außerhalb); gespeichert wird
+     * nur eine selbst gezogene Größe, nicht diese Begrenzung.
+     */
+    public static void viewSized(Component parent, String title, JComponent body, String sizeKey, double share) {
+        JDialog dialog = dialog(parent, title);
+        Dimension[] opened = new Dimension[1];
+        Runnable close = () -> {
+            if (opened[0] != null && !opened[0].equals(dialog.getSize())) {
+                WindowSizes.remember(sizeKey, dialog.getSize());
+            }
+            dialog.dispose();
+        };
+        frame(dialog, title, body, close);
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                close.run();
+            }
+        });
+        java.awt.Rectangle screen = usableScreen(dialog);
+        Dimension preferred = WindowSizes.recall(sizeKey).orElseGet(() -> screen == null ? new Dimension(900, 700)
+                : new Dimension((int) (screen.width * share), (int) (screen.height * share)));
+        present(dialog, new Dimension(320, 240), preferred, size -> opened[0] = size);
     }
 
     static void show(JDialog dialog, String title, JComponent body, ComposerButton... buttons) {

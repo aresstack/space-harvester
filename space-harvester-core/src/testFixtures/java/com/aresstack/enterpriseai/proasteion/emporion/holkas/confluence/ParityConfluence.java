@@ -175,7 +175,7 @@ public final class ParityConfluence {
                         + "System.out.println(&quot;Delta&quot;);</pre></div></div>"
                         + "<p>" + image("1002", "system.svg", "2001", "image/svg+xml", "Systembild", false) + "</p>"
                         + "<p><span class=\"hidden\">" + userLink("hidden", HIDDEN_MENTION) + "</span>"
-                        + "Ansprechpartnerin ist " + userLink("aschmidt", MENTIONS[0][1]) + ".</p>");
+                        + "Ansprechpartnerin ist " + userLink("aschmidt", MENTIONS[0][1]) + ".</p>").position(0);
         confluence.child(HOME, "1002");
         confluence.attachment("att2001", "1002", "system.svg", "image/svg+xml", SYSTEM_SVG);
 
@@ -211,7 +211,7 @@ public final class ParityConfluence {
                         + "<p>" + image("1004", "fehlt.png", "2999", "image/png", "fehlt.png", false) + "</p>"
                         + "<p><img class=\"confluence-embedded-image confluence-external-resource\""
                         + " src=\"https://images.example.org/logo.svg\"></p>"
-                        + drawio("1004"));
+                        + drawio("1004")).position(1);
         confluence.child(HOME, "1004");
         confluence.attachment("att2002", "1004", "ablauf", "application/vnd.jgraph.mxfile", DRAWIO);
         binary(confluence, "att2006", "1004", "ablauf.png", "image/png", PREVIEW_PNG);
@@ -231,7 +231,7 @@ public final class ParityConfluence {
                         + rendered("children", "<ul class=\"childpages-macro\"><li>"
                         + "<a href=\"/wiki/spaces/PARITY/pages/1010/Juliett\" data-linked-resource-id=\"1010\""
                         + " data-linked-resource-type=\"page\">Juliett</a></li></ul>")
-                        + "<p>Fragen an " + userLink("cconrad", MENTIONS[1][1]) + ".</p>");
+                        + "<p>Fragen an " + userLink("cconrad", MENTIONS[1][1]) + ".</p>").position(2);
         confluence.child(HOME, "1009");
         page(confluence, "1010", "Juliett", "<p>Satz Juliett.</p>", "<p>Satz Juliett.</p>");
         confluence.child("1009", "1010");
@@ -244,7 +244,7 @@ public final class ParityConfluence {
         page(confluence, MISMATCH_PAGE, "Zählung", "<p>Satz Quebec zur Zählung.</p>" + byLabel + byLabel,
                 "<p>Satz Quebec zur Zählung.</p>" + rendered("contentbylabel", "<ul class=\"content-by-label\">"
                         + "<li><a href=\"/wiki/spaces/PARITY/pages/1002/Architektur\" data-linked-resource-id=\"1002\""
-                        + " data-linked-resource-type=\"page\">Architektur</a></li></ul>"));
+                        + " data-linked-resource-type=\"page\">Architektur</a></li></ul>")).position(4);
         confluence.child(HOME, MISMATCH_PAGE);
         return confluence;
     }
@@ -282,7 +282,7 @@ public final class ParityConfluence {
                 + "<a class=\"jira-issue-key\" href=\"https://jira.example.org/browse/" + JIRA_KEY + "\">"
                 + JIRA_KEY + "</a> - <span class=\"summary\">" + JIRA_SENTENCE + "</span></span></p>" + after;
         confluence.page(ATTACHMENTS_PAGE, "Anhänge", SPACE, view).storage(storage).exportView(export)
-                .version(1, MODIFIED);
+                .version(1, MODIFIED).position(3);
         confluence.attachment("att2003", ATTACHMENTS_PAGE, "symbol.svg", "image/svg+xml", SYMBOL_SVG);
         binary(confluence, "att2004", ATTACHMENTS_PAGE, DOCUMENTS[0][0], DOCUMENTS[0][1], pdf(DOCUMENTS[0][2]));
         binary(confluence, "att2005", ATTACHMENTS_PAGE, DOCUMENTS[1][0], DOCUMENTS[1][1], docx(DOCUMENTS[1][2]));
@@ -363,8 +363,14 @@ public final class ParityConfluence {
         zip.closeEntry();
     }
 
-    private static void page(FakeConfluence confluence, String id, String title, String storage, String view) {
-        confluence.page(id, title, SPACE, view).storage(storage).exportView(view).version(1, MODIFIED);
+    /**
+     * Legt eine Seite an. Kapitel unter der Startseite bekommen wie in Confluence eine manuelle Position in der
+     * Reihenfolge ihres Einfügens ({@code extensions.position}); sonst ordnete der Core sie nach Titel, der Enterprise AI
+     * Client nach der Antwort von {@code /child/page}.
+     */
+    private static FakeConfluence.FakePage page(FakeConfluence confluence, String id, String title, String storage,
+                                                String view) {
+        return confluence.page(id, title, SPACE, view).storage(storage).exportView(view).version(1, MODIFIED);
     }
 
     private static String macro(String name, String parameters) {

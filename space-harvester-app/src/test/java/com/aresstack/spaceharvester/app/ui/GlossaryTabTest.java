@@ -27,8 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Der Reiter „Fachglossar“ unter Begriffe (#122 Stufe 2) mit einem Glossar im Speicher: Einträge lesen sich in Worten,
- * die Zeilenaktionen folgen Herkunft und Stand, Filter und Suche gehen an das Glossar, der KI-Lauf zeigt seinen
- * Fortschritt im Schleier.
+ * die Zeilenaktionen folgen Herkunft und Stand, Filter und Suche gehen an das Glossar, der KI-Lauf läuft als Auftrag im
+ * Hintergrund und der Beobachter lädt die Liste bei jeder Änderung neu.
  */
 class GlossaryTabTest {
 
@@ -141,7 +141,9 @@ class GlossaryTabTest {
         });
         await("Suche nach daten", () -> tab[0].directory().table().getRowCount() == 1
                 && "Datenprodukt".equals(tab[0].directory().table().getValueAt(0, 0)));
-        assertThat(glossary.searches).last().isEqualTo("status=null q=daten");
+        // Filter „Alle“ und Suchtext lösen zwei Abfragen nebeneinander aus; welche das Glossar zuletzt sieht, ist
+        // Zufall. Die Tabelle zeigt die neuere (Anforderungszähler), die Abfrage selbst muss nur angekommen sein.
+        assertThat(glossary.searches).contains("status=null q=daten");
         SwingUtilities.invokeAndWait(() -> {
             tab[0].directory().search().setText("");
             tab[0].create(new GlossaryAccess.NewEntry("Haushaltsverfahren", null, null, "Verfahren des Haushalts"));
@@ -161,70 +163,44 @@ class GlossaryTabTest {
     }
 
     @Test
-    void detectingShowsProgressInTheOverlayAndReloadsWhenTheJobEnds() throws Exception {
+    void detectingRunsInTheBackgroundAndTheObserverReloadsWhileTheJobRuns() throws Exception {
         FakeGlossary glossary = new FakeGlossary();
         glossary.aiAvailable = true;
         GlossaryTab[] tab = new GlossaryTab[1];
         SwingUtilities.invokeAndWait(() -> {
             tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].showing = () -> true;
             tab[0].load();
         });
         await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
         SwingUtilities.invokeAndWait(() -> tab[0].detect("wiki", null));
-        await("Lauf läuft im Schleier", () -> !tab[0].jobIds().isEmpty() && tab[0].overlay().isBusy());
+        await("Auftrag läuft", () -> !tab[0].jobIds().isEmpty());
         assertThat(glossary.calls).contains("classify wiki/null");
-        glossary.progress = new JobProgress(40, 12, 3, 0);
-        await("Fortschritt", () -> tab[0].overlay().text().equals(
-                "Fachbegriffe ermitteln · 12 von 40 Begriffen · 3 Einträge"));
-        SwingUtilities.invokeAndWait(() -> assertThat(tab[0].detectButton().isEnabled()).isFalse());
-        glossary.put(entry("9", "Datenprodukt", "wiki", null, RelationOrigin.AI, ReviewStatus.PROPOSED, 2, false));
+        // Kein Schleier: die Liste bleibt bedienbar, nur der Knopf ist gesperrt.
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tab[0].component()).isSameAs(tab[0].directory());
+            assertThat(tab[0].detectButton().isEnabled()).isFalse();
+            assertThat(tab[0].detectButton().getToolTipText()).isEqualTo(GlossaryTab.RUNNING);
+        });
+        // Teilergebnis während des Laufs: der Beobachter lädt neu, ohne dass der Auftrag endet.
+        glossary.put(entry("9", "Datenprodukt", "wiki", null, RelationOrigin.AI, ReviewStatus.PROPOSED, 2,
+                false));
+        glossary.changed();
+        await("Teilergebnis sichtbar", () -> tab[0].directory().table().getRowCount() == 1);
+        assertThat(tab[0].jobIds()).containsExactly("job-1");
         glossary.state = JobState.COMPLETED;
-        await("Schleier weg, Liste neu", () -> !tab[0].overlay().isBusy() && tab[0].jobIds().isEmpty()
-                && tab[0].directory().table().getRowCount() == 1);
+        await("Auftrag zu Ende", () -> tab[0].jobIds().isEmpty());
         SwingUtilities.invokeAndWait(() -> assertThat(tab[0].detectButton().isEnabled()).isTrue());
     }
 
     @Test
-    void cancellingWhileTheRunStartsIsForwardedOnceTheJobsHaveTheirIds() throws Exception {
-        FakeGlossary glossary = new FakeGlossary();
-        glossary.aiAvailable = true;
-        glossary.startGate = new java.util.concurrent.CountDownLatch(1);
-        GlossaryTab[] tab = new GlossaryTab[1];
-        SwingUtilities.invokeAndWait(() -> {
-            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
-            tab[0].load();
-        });
-        await("geladen", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
-        SwingUtilities.invokeAndWait(() -> {
-            tab[0].detect(null, null);
-            assertThat(tab[0].starting()).isTrue();
-            assertThat(tab[0].detectButton().isEnabled()).isFalse();
-            tab[0].cancelFromOverlay();
-            // Der Schleier bleibt, bis der Abbruch wirklich beim Core ist.
-            assertThat(tab[0].overlay().isBusy()).isTrue();
-            assertThat(tab[0].overlay().text()).contains("wird abgebrochen");
-        });
-        glossary.startGate.countDown();
-        await("Abbruch nachgeholt, Schleier weg", () -> !tab[0].overlay().isBusy() && tab[0].jobIds().isEmpty());
-        assertThat(glossary.calls).containsExactly("classify null/null", "cancel job-1");
-    }
-
-    @Test
     void textsForProgressOutcomeAndDetails() {
-        assertThat(GlossaryTab.progressText(JobProgress.NONE, false))
-                .isEqualTo("Fachbegriffe ermitteln · Begriffe werden gesammelt …");
-        assertThat(GlossaryTab.progressText(new JobProgress(5, 2, 1, 0), true))
-                .isEqualTo("Fachbegriffe ermitteln · 2 von 5 Begriffen · 1 Eintrag · wird abgebrochen …");
-        // Mehrere Quellen: Summen und die Zahl der Quellen.
-        assertThat(GlossaryTab.progressText(List.of(job("a", JobState.RUNNING, new JobProgress(5, 2, 1, 0), null),
-                job("b", JobState.RUNNING, new JobProgress(3, 3, 2, 0), null))))
-                .isEqualTo("Fachbegriffe ermitteln · 5 von 8 Begriffen · 3 Einträge · 2 Quellen");
         assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.CANCELLED, new JobProgress(5, 2, 1, 0), null))))
                 .isEqualTo("Fachbegriffe ermitteln abgebrochen; 1 Eintrag bleibt, Entscheidungen unverändert");
         assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.COMPLETED, new JobProgress(5, 5, 2, 0), null),
                 job("k", JobState.FAILED, JobProgress.NONE, new JobError("ai", "Dienst nicht erreichbar")))))
                 .isEqualTo("Fachbegriffe ermitteln fehlgeschlagen (Quelle wiki): Dienst nicht erreichbar · "
-                        + "Entscheidungen unverändert");
+                        + "Vorgeschlagenes bleibt, Entscheidungen unverändert");
         assertThat(GlossaryTab.outcomeText(List.of(job("j", JobState.COMPLETED, new JobProgress(5, 5, 2, 0), null))))
                 .isEqualTo("Fachbegriffe ermitteln abgeschlossen: 2 Einträge aus 5 geprüften Begriffen");
         Entry stale = entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.CONFIRMED, 2, true);
@@ -259,7 +235,7 @@ class GlossaryTabTest {
     }
 
     private static JobStatus job(String id, JobState state, JobProgress progress, JobError error) {
-        return new JobStatus(id, JobType.ENRICHMENT, "wiki", null, "app", state, progress, error, false, T,
+        return new JobStatus(id, JobType.GLOSSARY, "wiki", null, "app", state, progress, error, false, T,
                 T, state.terminal() ? T : null);
     }
 
@@ -287,10 +263,22 @@ class GlossaryTabTest {
         volatile JobState state = JobState.RUNNING;
         /** Hält {@link #classify} auf, bis der Test ihn freigibt. */
         volatile java.util.concurrent.CountDownLatch startGate;
+        final List<Runnable> observers = new java.util.concurrent.CopyOnWriteArrayList<>();
         private int next = 3;
 
         synchronized void put(Entry entry) {
             entries.put(entry.id(), entry);
+        }
+
+        /** Meldet eine Änderung wie der Core, aus einem fremden Thread. */
+        void changed() {
+            new Thread(() -> observers.forEach(Runnable::run)).start();
+        }
+
+        @Override
+        public Runnable observe(Runnable onChange) {
+            observers.add(onChange);
+            return () -> observers.remove(onChange);
         }
 
         @Override
