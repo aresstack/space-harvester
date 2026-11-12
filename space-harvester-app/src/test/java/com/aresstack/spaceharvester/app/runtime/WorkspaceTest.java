@@ -207,6 +207,25 @@ class WorkspaceTest {
     }
 
     @Test
+    void anExportTheActivityListLostStaysInTheList() throws Exception {
+        Workspace first = start().workspace();
+        await(first, first.startSync("wiki", "DEV"));
+        String export = await(first, first.startExport("wiki", "DEV", List.of("markdown"))).id();
+        runtime.close();
+        runtime = null;
+        // Die gemerkte Liste hat den Export verloren (#678). Bilder und Anhänge stehen als Unterzeilen unter ihm, auch
+        // die Export-Knöpfe hängen an ihm: er bleibt in der Liste, solange die Auftragsablage ihn kennt.
+        try (java.util.stream.Stream<Path> files = Files.walk(home)) {
+            Path log = files.filter(file -> file.getFileName().toString().equals("activities.txt")).findFirst()
+                    .orElseThrow();
+            Files.writeString(log, "");
+        }
+
+        assertThat(start().workspace().jobs()).filteredOn(job -> job.type() == JobType.EXPORT)
+                .extracting(JobStatus::id).containsExactly(export);
+    }
+
+    @Test
     void theWizardTestsANewSourceBeforeSavingWhileTheAppKeepsRunning() throws Exception {
         Workspace running = start().workspace();
         Path config = home.resolve("space-harvester-app.yml");
