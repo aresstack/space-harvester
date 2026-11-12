@@ -52,6 +52,82 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void deletingAllStatementsAsksFirstAndDoesNothingOnNo() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        actions.calls.clear();
+        tab.confirmDeleteWith(() -> false);
+
+        assertThat(tab.deleteAllOffered()).as("Knopf oben rechts in der Kopfleiste").isTrue();
+        tab.clickDeleteAll();
+        runner.runAll();
+
+        assertThat(actions.calls).as("Nein löscht nichts").isEmpty();
+        assertThat(tab.nodeIds()).hasSize(3);
+    }
+
+    @Test
+    void deletingAllStatementsEmptiesTheGraphReportsInTheStatusLineAndTellsThePage() {
+        List<String> status = new ArrayList<>();
+        int[] deleted = {0};
+        tab.onStatus(status::add);
+        tab.onDeleted(() -> deleted[0]++);
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        actions.calls.clear();
+        tab.confirmDeleteWith(() -> true);
+
+        tab.clickDeleteAll();
+        assertThat(tab.deleteAllOffered()).as("gesperrt, solange gelöscht wird").isFalse();
+        runner.runAll();
+
+        assertThat(actions.calls).startsWith("deleteAll").contains("page wiki/1");
+        assertThat(tab.nodeIds()).as("Graph danach leer").isEmpty();
+        assertThat(status.get(status.size() - 1)).contains("Aussagen von 3 Seiten gelöscht");
+        assertThat(deleted[0]).as("Aussagen-Reiter lädt neu").isEqualTo(1);
+        assertThat(tab.deleteAllOffered()).isTrue();
+    }
+
+    @Test
+    void afterDeletingBackNoLongerRestoresTheDeletedGraph() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.selectNode(BELEG);
+        tab.clickExpand();
+        runner.runAll();
+        assertThat(tab.backOffered()).isTrue();
+        tab.confirmDeleteWith(() -> true);
+
+        tab.clickDeleteAll();
+        runner.runAll();
+
+        assertThat(tab.backOffered()).as("frühere Ansichten zeigen Gelöschtes").isFalse();
+        tab.clickBack();
+        runner.runAll();
+        assertThat(tab.nodeIds()).isEmpty();
+    }
+
+    @Test
+    void aFailedDeletionNamesTheReasonAndKeepsTheGraph() {
+        List<String> status = new ArrayList<>();
+        tab.onStatus(status::add);
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        actions.deleteFailure = new IllegalStateException("Datenverzeichnis schreibgeschützt");
+        tab.confirmDeleteWith(() -> true);
+
+        tab.clickDeleteAll();
+        runner.runAll();
+
+        assertThat(status.get(status.size() - 1)).contains("Aussagen nicht gelöscht: Datenverzeichnis schreibgeschützt");
+        assertThat(tab.nodeIds()).hasSize(3);
+    }
+
+    @Test
     void expandingAddsNeighboursAndBackRestoresTheView() {
         tab.page(WIKI);
         tab.showPageNow();
@@ -353,6 +429,18 @@ class KnowledgeGraphTabTest {
         GraphNeighbourhood.Options lastOptions;
         final List<String> exports = new ArrayList<>();
         RuntimeException exportFailure;
+        RuntimeException deleteFailure;
+        int deletedPages = 3;
+
+        @Override
+        public int deleteAllStatements() {
+            calls.add("deleteAll");
+            if (deleteFailure != null) {
+                throw deleteFailure;
+            }
+            empty = true;
+            return deletedPages;
+        }
 
         @Override
         public JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale) {
