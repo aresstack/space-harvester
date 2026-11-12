@@ -1,0 +1,104 @@
+name: ChatGPT-compatible offline build ZIP
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chatgpt-compatible-release
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Build, verify and publish offline ZIP
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: chatgpt-compatible
+      RELEASE_TITLE: ChatGPT-compatible offline build
+      ASSET_NAME: space-harvester-chatgpt-compatible.zip
+      PACKAGE_DIR: space-harvester
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install display and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb zip unzip rsync
+
+      - name: Build and populate portable Gradle cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GRADLE_USER_HOME="$GITHUB_WORKSPACE/.chatgpt/gradle-home"
+          xvfb-run -a bash "$GITHUB_WORKSPACE/gradlew" --no-daemon --console=plain --refresh-dependencies clean build
+
+      - name: Clean transient Gradle state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache="$GITHUB_WORKSPACE/.chatgpt/gradle-home"
+          find "$cache" -type f \( -name '*.lock' -o -name '*.lck' -o -name 'gc.properties' \) -delete
+          rm -rf "$cache/daemon" "$cache/workers" "$cache/native"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+
+      - name: Package repository and cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_parent="$(mktemp -d)"
+          package_root="$package_parent/$PACKAGE_DIR"
+          mkdir -p "$package_root"
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.gradle/' \
+            --exclude='.idea/' \
+            --exclude='build/' \
+            --exclude='out/' \
+            --exclude='bin/' \
+            --exclude='*.log' \
+            --exclude='config/application-local.yml' \
+            --exclude='data/' \
+            "$GITHUB_WORKSPACE/" "$package_root/"
+          cd "$package_parent"
+          zip -qr "$GITHUB_WORKSPACE/build/$ASSET_NAME" "$PACKAGE_DIR"
+
+      - name: Verify a clean extraction without network access
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_dir="$(mktemp -d)"
+          unzip -q "$GITHUB_WORKSPACE/build/$ASSET_NAME" -d "$verify_dir"
+          cd "$verify_dir/$PACKAGE_DIR"
+          chmod -x gradlew
+          env -u GRADLE_USER_HOME bash chatgpt-build.sh
+
+      - name: Publish verified rolling release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes="Offline-tested against commit $GITHUB_SHA. Contains the repository, Gradle 8.14.3 distribution and resolved dependency cache. Use: bash chatgpt-build.sh (Java 21 required)."
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" --notes "$notes" --prerelease --latest=false
+          fi
+
+          gh release delete-asset "$RELEASE_TAG" "$ASSET_NAME" --yes >/dev/null 2>&1 || true
+          gh release upload "$RELEASE_TAG" "build/$ASSET_NAME"
