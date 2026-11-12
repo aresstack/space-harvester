@@ -13,7 +13,8 @@ name: Release
 # - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ wird durch diesen Stand ersetzt.
 # - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
 #   „tag“: Release genau mit dieser Version (ohne Vorabkennung = reguläres Release, „Latest“, braucht
-#   docs/release-notes/<tag>.md).
+#   docs/release-notes/<tag>.md). Reguläre Releases veröffentlichen zusätzlich den Core samt enterprise-ai-sources und
+#   document-export auf Maven Central (com.aresstack:space-harvester-core).
 # Versionierte Releases werden nie überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
@@ -245,6 +246,52 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
             --prerelease --latest=false *.jar SHA256SUMS
+      # Reguläre Releases (ohne Vorabkennung) bringen den Core mit enterprise-ai-sources und document-export auf Maven
+      # Central (com.aresstack:space-harvester-*), vor dem GitHub-Release: scheitert die Prüfung im Central Portal, ist
+      # nichts veröffentlicht und der Lauf kann wiederholt werden. Secrets der Organisation aresstack wie bei
+      # win-proxy-java; fehlen sie, gibt es nur eine Warnung. Betas und Snapshots gehen nie nach Maven Central.
+      - name: Core auf Maven Central veröffentlichen
+        if: (steps.version.outputs.mode == 'tag' || steps.version.outputs.mode == 'new-tag') && steps.version.outputs.prerelease == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$CENTRAL_USERNAME" ] || [ -z "$CENTRAL_PASSWORD" ] || [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::warning::Secrets CENTRAL_USERNAME, CENTRAL_PASSWORD oder GPG_PRIVATE_KEY fehlen; Core nicht auf Maven Central veröffentlicht"
+            echo "Maven Central: übersprungen (Secrets fehlen)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ./gradlew centralBundle ${{ steps.version.outputs.args }} --console=plain
+          bundle="build/central/central-bundle-$VERSION.zip"
+          for f in space-harvester-core space-harvester-enterprise-ai-sources space-harvester-document-export; do
+            unzip -Z1 "$bundle" | grep -qx "com/aresstack/$f/$VERSION/$f-$VERSION.jar.asc" \
+              || { echo "::error::$f ist im Bundle nicht signiert"; exit 1; }
+          done
+          token=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          api=https://central.sonatype.com/api/v1/publisher
+          id=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $token" -F "bundle=@$bundle" \
+            "$api/upload?publishingType=AUTOMATIC&name=space-harvester-$VERSION")
+          echo "Deployment $id"
+          # Nach der Prüfung (PUBLISHING) veröffentlicht das Portal selbst; bis zur Suche auf Maven Central dauert es
+          # dann noch bis zu 30 Minuten
+          for i in $(seq 1 90); do
+            status=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $token" "$api/status?id=$id")
+            state=$(jq -r .deploymentState <<< "$status")
+            echo "Zustand $state"
+            case "$state" in
+              PUBLISHING|PUBLISHED)
+                echo "Maven Central: com.aresstack:space-harvester-core:$VERSION ($state)" >> "$GITHUB_STEP_SUMMARY"
+                exit 0 ;;
+              FAILED)
+                jq . <<< "$status"
+                echo "::error::Central Portal hat das Bundle abgelehnt"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Central Portal hat das Bundle nach 30 Minuten nicht geprüft (Deployment $id)"; exit 1
       - name: Release anlegen
         if: steps.version.outputs.mode == 'tag' || steps.version.outputs.mode == 'new-tag'
         working-directory: ${{ steps.dist.outputs.dir }}

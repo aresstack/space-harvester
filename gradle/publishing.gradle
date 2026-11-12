@@ -1,7 +1,9 @@
-// Veröffentlichung vorbereiten, nicht veröffentlichen (#100, docs/MODULES.md): Maven-Koordinaten unter com.aresstack,
-// POM mit Lizenz, SCM und Entwicklern, Sources- und Javadoc-JAR. Ziel ist nur das lokale Verzeichnis build/repo;
-// Signatur und Upload nach Maven Central kommen erst mit einem Release-Prozess.
+// Maven-Publikation (#100, docs/MODULES.md): Koordinaten unter com.aresstack, POM mit Lizenz, SCM und Entwicklern,
+// Sources- und Javadoc-JAR. Ziel ist das lokale Verzeichnis build/repo; daraus packt die Wurzel-Task centralBundle
+// das Bundle, das der Workflow Release bei regulären Releases nach Maven Central hochlädt. Signiert wird nur, wenn
+// GPG_PRIVATE_KEY gesetzt ist (Secrets der Organisation aresstack, wie bei win-proxy-java).
 apply plugin: 'maven-publish'
+apply plugin: 'signing'
 
 java {
     withSourcesJar()
@@ -51,6 +53,14 @@ publishing {
             name = 'local'
             url = layout.buildDirectory.dir('repo')
         }
+    }
+}
+
+def signingKey = providers.environmentVariable('GPG_PRIVATE_KEY')
+if (signingKey.isPresent()) {
+    signing {
+        useInMemoryPgpKeys(signingKey.get(), providers.environmentVariable('GPG_PASSPHRASE').getOrElse(''))
+        sign publishing.publications.maven
     }
 }
 
