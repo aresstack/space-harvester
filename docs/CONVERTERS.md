@@ -104,6 +104,7 @@ Cache; der nächste Abgleich lädt sie dann neu.
   Bilder und Lese-Ansicht nur mit `sourceWide`, Anhänge nur mit `attachments` und nach Medientyp und Größe wie
   eingestellt, sonst `EXCLUDED`); sonst hält er wie bisher an. Volltext und Anreicherungen erfahren von der neuen Generation
   auch, wenn danach eine Datei scheitert oder der Auftrag abgebrochen wird.
+- **Mehrere Pakete** (`start(List<Path>, …)`): ein Auftrag liest sie nacheinander ein; ein Paket, das nicht passt, wird als Warnung übersprungen (Auftrag unvollständig), gescheitert ist er nur, wenn keines passte. Bei Paketen aus verschiedenen Spaces hat der Auftrag keinen Space.
 - `Preview` (`preview(file, sourceId)`) nennt vorab Quelle, Space, Seiten- und Dateizahl und ob der Space Daten hat.
 - **Dienst.** `POST /api/v1/sources/{sourceId}/data/imports?replace=false` mit dem Paket als Body
   (`application/zip`, höchstens 4 GiB) → 202, Stand unter `…/data/imports/{jobId}`; nur für Clients mit

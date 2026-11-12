@@ -193,6 +193,44 @@ class ExportPackageImportTest {
     }
 
     @Test
+    void importsSeveralPackagesInOneJobAndSkipsThoseThatDoNotFit() throws Exception {
+        imports.start(pkg(pagesOf("OPS", "300"), ExportAssets.NONE), "laptop", false, "client-a");
+        Path dev = pkg(pages("100", "101"), ExportAssets.NONE);
+        Path ops = pkg(pagesOf("OPS", "300", "301"), ExportAssets.NONE);
+        Path qa = pkg(pagesOf("QA", "400"), ExportAssets.NONE);
+
+        JobStatus job = imports.start(List.of(dev, ops, qa), "laptop", false, "client-a");
+
+        JobStatus done = jobs.status(job.id());
+        assertThat(done.state()).as(String.valueOf(done)).isEqualTo(JobState.COMPLETED);
+        assertThat(done.partitionKey()).isNull();
+        // OPS hat schon Daten und replace fehlt: übersprungen, die anderen kommen herein.
+        assertThat(done.incomplete()).isTrue();
+        assertThat(store.confirmed("laptop", "DEV").orElseThrow().pages().keySet()).containsExactly("100", "101");
+        assertThat(store.confirmed("laptop", "QA").orElseThrow().pages().keySet()).containsExactly("400");
+        assertThat(store.confirmed("laptop", "OPS").orElseThrow().pages().keySet()).containsExactly("300");
+        assertThat(dev).exists();
+
+        JobStatus replaced = imports.start(List.of(ops, qa), "laptop", true, "client-a");
+
+        assertThat(jobs.status(replaced.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(replaced.id()).incomplete()).isFalse();
+        assertThat(store.confirmed("laptop", "OPS").orElseThrow().pages().keySet()).containsExactly("300", "301");
+    }
+
+    @Test
+    void aJobOfSeveralPackagesFailsOnlyIfNoneFits() throws Exception {
+        imports.start(pkg(pages("100"), ExportAssets.NONE), "laptop", false, "client-a");
+        imports.start(pkg(pagesOf("OPS", "300"), ExportAssets.NONE), "laptop", false, "client-a");
+
+        JobStatus job = imports.start(List.of(pkg(pages("100", "101"), ExportAssets.NONE),
+                pkg(pagesOf("OPS", "300", "301"), ExportAssets.NONE)), "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.FAILED);
+        assertThat(jobs.status(job.id()).error().code()).isEqualTo(ExportPackageImport.SPACE_NOT_EMPTY);
+    }
+
+    @Test
     void storesTheFilesOfThePackageAsStreamsThroughFilesOfTheStore() throws Exception {
         JobStatus job = imports.start(pkg(pages("100"), new PackageAssets()), "laptop", false, "client-a");
 
@@ -344,6 +382,15 @@ class ExportPackageImportTest {
         return pages;
     }
 
+    /** Seiten eines anderen Space, alle ohne Eltern bis auf die zweite unter der ersten. */
+    private static List<PageSnapshot> pagesOf(String space, String... ids) {
+        List<PageSnapshot> pages = new ArrayList<>();
+        for (int i = 0; i < ids.length; i++) {
+            pages.add(page("confluence", space, ids[i], i == 0 ? null : ids[0]));
+        }
+        return pages;
+    }
+
     private Path pkg(List<PageSnapshot> pages, ExportAssets media) throws Exception {
         return pkg(pages, media, Map.of());
     }
@@ -413,7 +460,7 @@ class ExportPackageImportTest {
 
         @Override
         public String spaceKey() {
-            return "DEV";
+            return pages.isEmpty() ? "DEV" : pages.get(0).metadata().partitionKey();
         }
 
         @Override
