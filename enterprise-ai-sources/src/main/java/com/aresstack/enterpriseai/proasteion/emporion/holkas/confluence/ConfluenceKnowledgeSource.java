@@ -317,7 +317,11 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
             }
         } catch (KnowledgeSourceException e) {
             // Ohne Seiten-ID und Meldung: beide können Inhalt der Quelle nennen.
-            LOG.warning("[Confluence] Anhänge einer Seite nicht gelesen (" + e.kind() + ")");
+            // Nur der HTTP-Status aus der Meldung, damit 401 (Anmeldung) und 403 (Seite gesperrt) unterscheidbar sind.
+            java.util.regex.Matcher status = java.util.regex.Pattern.compile("HTTP (\\d{3})")
+                    .matcher(String.valueOf(e.getMessage()));
+            LOG.warning("[Confluence] Anhänge einer Seite nicht gelesen (" + e.kind()
+                    + (status.find() ? ", HTTP " + status.group(1) : "") + ")");
         }
         return result;
     }

@@ -5,7 +5,9 @@ Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aress
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`133fb6b4d1f2f0542db7b4ba20dc8b5028d2e300`, der Merge von enterprise-ai-client#218 (Upstream-Patches 12 und 13: `<img>` mit leerem `src` in der Lese-Ansicht nimmt `data-image-src` oder entfällt; Anhänge ohne Größengrenze in einen Strom, `PageViewSource#streamAttachmentFile`) auf `main`; davor
+`fb85f3808adaf269d00acec16b7d11f79ffe8cff`, der Merge von enterprise-ai-client#219 (Zwei-Faktor-Sitzung: fehlende Datei
+`/attachmentnotfound.action` ist `NOT_FOUND`, nach einer Einmalcode-Abfrage keine neue Sitzung über die REST-Anmeldung, der
+Code geht an die Sitzung seiner Seite) auf `main`; davor `133fb6b4`, der Merge von enterprise-ai-client#218 (Upstream-Patches 12 und 13: `<img>` mit leerem `src` in der Lese-Ansicht nimmt `data-image-src` oder entfällt; Anhänge ohne Größengrenze in einen Strom, `PageViewSource#streamAttachmentFile`) auf `main`; davor
 `7a5ee718` (#217, Upstream-Patches 01–11, darunter `AttachmentSearchSource` für den Anhangskatalog über die Confluence-Suche), davor `9fb91c32` (#192 Änderungssuche und Papierkorb je Space, `ChangeListingSource`). Derselbe Stand enthält schon
 `document-tika`; für #183 und für MediaWiki, Git, FTP/JES, NDV und SharePoint (#187) kamen nur weitere Module und Klassen in die
 Auswahl, ohne neuen Upstream-Commit.
