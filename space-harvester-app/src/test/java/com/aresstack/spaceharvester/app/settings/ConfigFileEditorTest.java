@@ -631,6 +631,30 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void aConsoleOutputThatWouldBreakTheFileIsRefusedEvenWhenTheFallbackMatches() throws Exception {
+        // Eine Wurzel in Anführungszeichen erkennt der Editor nicht und hängt eine zweite an; das doppelte „logging“
+        // ist kein gültiges YAML mehr. Der Loader fiele auf die Vorgaben zurück, und deren Terminal-Ausgabe ist „Aus“:
+        // Gerade diese Wahl darf die Datei nicht zerstören.
+        Path file = home.resolve("app.yml");
+        String original = """
+                'logging':
+                  threshold:
+                    console: info
+                space-harvester:
+                  sources: []
+                """;
+        Files.writeString(file, original);
+        assertThat(loader.load(file).consoleOutput()).isEqualTo(ConsoleOutput.INFO);
+        for (ConsoleOutput output : ConsoleOutput.values()) {
+            assertThatThrownBy(() -> editor.withConsoleOutput(file, new ConfigFileEditor.Draft(original, null), output))
+                    .as(output.name())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(ConsoleOutput.KEY);
+        }
+        assertThat(Files.readString(file)).isEqualTo(original);
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"

@@ -472,7 +472,11 @@ public final class ConfigFileEditor {
         String text = nested(base.text(), "logging", "threshold", "console",
                 indent -> indent + "console: \"" + output.key() + "\"\n");
         AppSettings settings = loader.read(file, text);
-        if (settings.consoleOutput() != output) {
+        // Ein neues Problem heißt: Der Text liest sich nicht mehr wie vorher (etwa kein gültiges YAML). Der Loader fiele
+        // dann auf die Vorgaben zurück, deren Terminal-Ausgabe „Aus“ ist; der Vergleich allein ließe das durch.
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.consoleOutput() != output) {
             throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
