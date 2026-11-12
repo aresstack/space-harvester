@@ -182,11 +182,12 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    (`com.aresstack:space-harvester-enterprise-ai-sources`), damit die Core-POM keine unveröffentlichte
    Projektabhängigkeit enthält; der Code der Kopie bleibt unverändert, nur ihr `build.gradle` gehört uns. Eine
    Gradle-Prüfung stellt sicher, dass die Core-POM weder Spring Boot noch Servlet noch unbekannte Projekte nennt.
-   Jedes reguläre Release (Workflow `release.yml`, Tag ohne Vorabkennung) signiert die drei Publikationen
+   Nur nach Bedarf und nur manuell (Actions › Maven Central › Run workflow, Workflow `maven-central.yml`, am besten
+   auf einem Release-Tag) signiert der Workflow die drei Publikationen
    (`com.aresstack:space-harvester-core`, `-enterprise-ai-sources`, `-document-export`) und lädt sie als Bundle
    (`./gradlew centralBundle -PreleaseVersion=<v>`) über das Central Publisher Portal hoch. Secrets wie bei
    `win-proxy-java` aus der Organisation aresstack: `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`,
-   `GPG_PASSPHRASE`. Betas und Snapshots gehen nicht nach Maven Central.
+   `GPG_PASSPHRASE`. Das GitHub-Release (`release.yml`) lädt nie nach Maven Central.
 7. **Abhängigkeitsversionen im Core.** Bisher liefert die Spring-Boot-BOM die Versionen für Jackson 3, Reactor
    Netty und Spring WebFlux. Der Core darf diese BOM nicht in seine POM tragen; die Versionen stehen daher im
    Versionskatalog, abgestimmt auf Spring Boot 4.1.1, und der Server erzwingt weiter über die BOM dieselben.
@@ -233,6 +234,6 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
 - Ein eigenes Konnektor-Modul (`space-harvester-connector-confluence`) erst, wenn ein zweiter Quellentyp außerhalb
   der Upstream-Kopie dazukommt.
 - Core-, Server- und App-JAR erscheinen gemeinsam in jedem GitHub-Release (Workflow `release.yml`, siehe
-  [DESKTOP_APP.md › Releases](DESKTOP_APP.md#releases)). Reguläre Releases gehen zusätzlich nach Maven Central (Punkt 6).
+  [DESKTOP_APP.md › Releases](DESKTOP_APP.md#releases)). Maven Central nur manuell über `maven-central.yml` (Punkt 6).
 - Ein Austausch von Spring WebClient gegen Reactor Netty direkt würde die letzte Spring-Abhängigkeit des Core
   entfernen; nur sinnvoll zusammen mit einer neuen Abnahme des Transports.
