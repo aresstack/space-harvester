@@ -135,6 +135,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     static final String LOGIN_NOTE = "Mit Benutzer und Passwort angemeldet. Confluence hat dafür einen Code per E-Mail "
             + "gesendet; bitte diesen Code eingeben.";
 
+    /**
+     * Pfad, unter dem Confluence ein Bild einer anderen Seite nur mit Space und Titel nennt
+     * ({@code /download/attachments/embedded-page/<Space>/<Titel>/<Datei>}). Bei einem Titel mit „/“ antwortet
+     * Confluence darauf mit 404 (Angelo 12.11.2026, beta.411); die Datei liegt unter
+     * {@code /download/attachments/<Seiten-ID>/}.
+     */
+    private static final String EMBEDDED_PAGE = "/download/attachments/embedded-page/";
+    /** So viele Seiten aus Space und Titel merkt sich die Quelle höchstens. */
+    private static final int TITLED_PAGES = 256;
+    /** So lange gilt eine gemerkte Seite aus Space und Titel, auch eine nicht gefundene. */
+    private static final long TITLED_PAGE_NANOS = java.util.concurrent.TimeUnit.MINUTES.toNanos(10);
+
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
 
     private final String id;
@@ -183,6 +195,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private volatile Set<String> inScope;
     /** Die letzte Discovery; Folgestapel derselben Listung lesen aus ihr, statt die Quelle erneut zu befragen. */
     private volatile Discovery discovery;
+    /** Seiten-IDs zu Space und Titel für Bilder anderer Seiten ({@link #EMBEDDED_PAGE}); leer, wenn die Seite fehlt. */
+    private final Map<String, TitledPage> titledPages = new java.util.concurrent.ConcurrentHashMap<>();
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
         this(id, type, title, port, null);
@@ -1265,9 +1279,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             // freigeschaltete Sitzung ging und mit HTTP 500 scheiterte. Darum gar nicht erst abrufen.
             throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Bild ohne Dateipfad", null);
         }
+        String src = embeddedPageImage(image.src());
         byte[] bytes;
         try {
-            bytes = fetch(p -> ((PageViewSource) p).loadViewImage(image.src()));
+            bytes = fetch(p -> ((PageViewSource) p).loadViewImage(src));
         } catch (ResponseTooLargeException e) {
             throw new AttachmentTooLargeException(id, e.maxBytes());
         } catch (KnowledgeSourceException e) {
@@ -1277,6 +1292,79 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw new AttachmentTooLargeException(id, maxBytes);
         }
         return bytes;
+    }
+
+    /**
+     * Die Adresse, unter der Confluence ein Bild einer anderen Seite ausliefert: Für {@link #EMBEDDED_PAGE} löst die
+     * Quelle Space und Titel per REST in die Seiten-ID auf ({@link #resolveAddress} mit
+     * {@code pages/viewpage.action?spaceKey=…&title=…}) und lädt {@code /download/attachments/<Seiten-ID>/<Datei>}.
+     * Jede andere Adresse, und diese, wenn die Seite nicht zu finden ist, bleibt, wie sie ist.
+     */
+    private String embeddedPageImage(String src) {
+        int at = src.indexOf(EMBEDDED_PAGE);
+        if (at < 0) {
+            return src;
+        }
+        String root = src.substring(0, at);
+        String rest = src.substring(at + EMBEDDED_PAGE.length());
+        int end = rest.length();
+        for (char c : new char[] {'?', '#'}) {
+            int stop = rest.indexOf(c);
+            if (stop >= 0 && stop < end) {
+                end = stop;
+            }
+        }
+        String path = rest.substring(0, end);
+        int first = path.indexOf('/');
+        int last = path.lastIndexOf('/');
+        if (first <= 0 || last <= first + 1 || last == path.length() - 1) {
+            return src;
+        }
+        // Space und Datei haben kein „/“; was dazwischen steht, ist der Titel, ob Confluence sein „/“ kodiert oder
+        // nicht.
+        String spaceKey = pathSegment(path.substring(0, first));
+        String title = pathSegment(path.substring(first + 1, last));
+        if (spaceKey == null || title == null || spaceKey.isBlank() || title.isBlank()) {
+            return src;
+        }
+        String file = path.substring(last + 1) + rest.substring(end);
+        return titledPage(root, spaceKey, title).map(page -> root + "/download/attachments/" + page + "/" + file)
+                .orElse(src);
+    }
+
+    /** Die Content-ID der Seite {@code title} im Space, gemerkt für {@link #TITLED_PAGE_NANOS}; leer ohne sie. */
+    private Optional<String> titledPage(String root, String spaceKey, String title) {
+        String key = spaceKey + '\n' + title;
+        long now = System.nanoTime();
+        TitledPage known = titledPages.get(key);
+        if (known != null && now - known.at() < TITLED_PAGE_NANOS) {
+            return known.pageId();
+        }
+        Optional<String> pageId = resolveAddress(root + "/pages/viewpage.action?spaceKey="
+                + java.net.URLEncoder.encode(spaceKey, StandardCharsets.UTF_8) + "&title="
+                + java.net.URLEncoder.encode(title, StandardCharsets.UTF_8))
+                .filter(page -> !page.isEmpty() && page.chars().allMatch(c -> c >= '0' && c <= '9'));
+        if (pageId.isEmpty()) {
+            LOG.info("[{}] Bild einer anderen Seite: Seite im Space {} nicht gefunden", id, spaceKey);
+        }
+        if (titledPages.size() >= TITLED_PAGES) {
+            titledPages.clear();
+        }
+        titledPages.put(key, new TitledPage(pageId, now));
+        return pageId;
+    }
+
+    /** Ein Pfadteil ohne Prozentkodierung; „+“ bleibt im Pfad ein Plus. {@code null}, wenn die Kodierung kaputt ist. */
+    private static String pathSegment(String raw) {
+        try {
+            return java.net.URLDecoder.decode(raw.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** Eine Seite aus Space und Titel ({@link #titledPage}) und wann die Quelle sie nachgefragt hat. */
+    private record TitledPage(Optional<String> pageId, long at) {
     }
 
     /** Ob {@code src} keinen Dateipfad hat: leer, nur Host, oder ein Pfad, der auf „/“ endet (Query und Anker zählen nicht). */
