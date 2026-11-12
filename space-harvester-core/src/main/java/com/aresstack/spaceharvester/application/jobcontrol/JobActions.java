@@ -67,6 +67,11 @@ public class JobActions {
         Objects.requireNonNull(access, "access");
         JobStatus current = jobs.status(jobId, owner);
         JobLifecycleState state = current.lifecycle();
+        if (action == JobAction.RETRY_FAILED && (state instanceof JobLifecycleState.Restarting
+                || state instanceof JobLifecycleState.Stopping stopping && stopping.pausing())) {
+            // Startet er für ein schon gedrücktes ↻ gerade neu oder hält er an: kein Fehler, höchstens ein Neustart.
+            return jobs.requestRetryFailed(jobId, owner);
+        }
         if (!state.allows(action)) {
             throw new JobActionNotAllowedException(jobId, action, state);
         }
@@ -78,7 +83,8 @@ public class JobActions {
             case RESUME -> resume(current, owner, access);
             case RETRY_FAILED -> {
                 if (state instanceof JobLifecycleState.Running || state instanceof JobLifecycleState.Preparing) {
-                    // Während des Laufs: direkt nach dem Durchgang im selben Eintrag (Angelo 11.11.2026).
+                    // Während des Laufs: der Durchgang hält an und läuft sofort im selben Eintrag neu (Angelo
+                    // 12.11.2026), Mehrfachdrücken löst nur einen Neustart aus.
                     yield jobs.requestRetryFailed(jobId, owner);
                 }
                 if (current.type() == JobType.ASSETS || current.type() == JobType.ATTACHMENTS) {

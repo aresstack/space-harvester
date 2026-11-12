@@ -162,4 +162,16 @@ class JobLifecycleStateTest {
         assertThat(cancelling.actions()).containsExactly(JobAction.DELETE);
         assertThat(cancelling.allows(JobAction.PAUSE)).isFalse();
     }
+
+    @Test
+    void whileARetryRestartIsPendingTheJobCanStillBePausedOrCancelled() {
+        JobStatus restarting = new JobStatus("j", JobType.ASSETS, "confluence", "DEV", "client-a", JobState.RUNNING,
+                new JobProgress(3, 3, 1, 2), null, true, T0, T0, null, null, null, Map.of(), false, true,
+                PauseReason.RETRY);
+        assertThat(restarting.lifecycle().key()).isEqualTo("RESTARTING");
+        assertThat(restarting.lifecycle().actions()).containsExactly(JobAction.PAUSE, JobAction.CANCEL,
+                JobAction.DELETE);
+        // Angehalten zählt es wie ein Anhalten durch den Benutzer.
+        assertThat(new JobLifecycleState.Paused(PauseReason.RETRY).key()).isEqualTo("PAUSED");
+    }
 }

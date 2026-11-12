@@ -140,7 +140,11 @@ Zudem hält der Lauf die Schreibsperre des Caches über den ganzen Abruf, sodass
     `JobActions#perform(RESUME)` (`Jobs#recovery`), also denselben Weg wie ein Klick; hat der Benutzer inzwischen selbst
     gehandelt, entfällt er. `Jobs#reconnectAt` nennt den nächsten Anlauf. Auch nach einem Neustart laufen so angehaltene
     Aufträge nach der ersten Wartezeit wieder an. `RETRY_FAILED` bietet jeder Zustand an, sobald etwas gescheitert ist:
-    laufend folgt es direkt nach dem Durchgang im selben Eintrag (`Jobs#requestRetryFailed`), angehalten oder
+    laufend hält der Durchgang am nächsten Prüfpunkt an und läuft sofort im selben Eintrag neu, Abgelegtes bleibt
+    (`Jobs#requestRetryFailed`, Angelo 12.11.2026: nicht bis zum Ende warten). Bis dahin heißt der Zustand `RESTARTING`
+    („Startet neu“, `PauseReason#RETRY`) und bietet ⏸ (dann ohne Neustart) und Abbrechen an; hält der Auftrag sich selbst
+    an (Anmeldung, Verbindung), gilt das statt des Neustarts. Weiteres Drücken, solange der Neustart aussteht und bis
+    `Jobs#RETRY_DEBOUNCE` (5 s) nach dem Start des neuen Laufs, löst keinen weiteren aus. Angehalten oder
     abgebrochen setzt es fort, und Fortsetzen holt das Gescheiterte mit. Bilder und Anhänge besuchen dabei die Seiten mit
     gescheiterten Dateien erneut (`ExportAssetCollection#retryFailed`). Lehnt der Anwendungsfall das nachgeholte
     `RETRY_FAILED` ab, etwa weil Bilder des Exports noch laufen, folgt es mit derselben wachsenden Wartezeit. Der

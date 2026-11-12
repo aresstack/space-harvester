@@ -94,6 +94,8 @@ public class Jobs implements AutoCloseable {
     private volatile JobRecovery recovery;
     /** Wie oft ein nach dem Durchgang abgelehntes „Nur Fehler neu versuchen“ höchstens versucht wird. */
     static final int RETRY_AFTER_PASS_ATTEMPTS = 48;
+    /** So lange nach dem Start eines Laufs für „Nur Fehler neu versuchen“ löst weiteres Drücken keinen weiteren aus. */
+    static final Duration RETRY_DEBOUNCE = Duration.ofSeconds(5);
     private JobTimer timer;
     private java.util.concurrent.ScheduledExecutorService ownTimer;
     /** Geplante Wiederanläufe je Auftrag; nur der zuletzt geplante zählt ({@link Reconnect#token}). */
@@ -321,15 +323,27 @@ public class Jobs implements AutoCloseable {
     public JobStatus status(String jobId) {
         boolean detached = false;
         JobStatus status = null;
+        JobTimer restart = null;
         synchronized (lock) {
             Job job = open.get(jobId);
             if (job != null) {
                 detached = detachIfStuck(job);
                 status = job.snapshot();
+                if (detached && job.restartForRetry && job.state == JobState.PAUSED && recovery != null) {
+                    // Auch wenn der Durchgang für „Nur Fehler neu versuchen“ abgekoppelt werden musste: gleich neu.
+                    job.restartForRetry = false;
+                    job.retryFailedRequested = false;
+                    job.awaitingRetryRestart = true;
+                    restart = timer();
+                }
             }
         }
         if (detached) {
             dispatch();
+        }
+        if (restart != null) {
+            JobStatus ended = status;
+            restart.schedule(Duration.ZERO, () -> retryAfterPass(ended, 0));
         }
         return status != null ? status : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
     }
@@ -433,6 +447,9 @@ public class Jobs implements AutoCloseable {
                 job.pauseRequested = true;
                 job.pauseReason = PauseReason.USER;
                 job.cancelRequested = true;
+                // Wer nach ↻ anhält, will anhalten: kein Neustart danach.
+                job.restartForRetry = false;
+                job.retryFailedRequested = false;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
                 }
@@ -928,8 +945,9 @@ public class Jobs implements AutoCloseable {
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
                 }
-                // Abbrechen geht vor Anhalten.
+                // Abbrechen geht vor Anhalten und vor einem Neustart für „Nur Fehler neu versuchen“.
                 job.pauseRequested = false;
+                job.restartForRetry = false;
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
                     queued.remove(job);
@@ -1077,6 +1095,11 @@ public class Jobs implements AutoCloseable {
                 }
                 job.state = JobState.RUNNING;
                 job.startedAt = clock.instant();
+                if (job.awaitingRetryRestart) {
+                    // Neuer Lauf für „Nur Fehler neu versuchen“: ab jetzt RETRY_DEBOUNCE lang kein weiterer Neustart.
+                    job.awaitingRetryRestart = false;
+                    job.retryRestartedAt = job.startedAt;
+                }
                 // Bilder und Anhänge: die Laufzeitgrenze gilt erst ab dem Download-Platz (grantDownloads), nicht für
                 // Vorbereitung und Warten.
                 job.deadline = job.type.download() ? null : job.startedAt.plus(limits.maxRunTime());
@@ -1241,7 +1264,13 @@ public class Jobs implements AutoCloseable {
             recordEnd(job, finished, cause);
             store.save(finished);
             reconnectAttempt = followUp(job, finished);
-            retryFailed = job.retryFailedRequested && hasFailures(finished) && recovery != null;
+            // Für ↻ angehalten: gleich weiter im selben Eintrag, auch ohne neue Fehler; sonst nur mit Fehlern.
+            boolean pressed = job.restartForRetry;
+            boolean restart = pressed && finished.state() == JobState.PAUSED;
+            job.restartForRetry = false;
+            retryFailed = job.retryFailedRequested && (restart || hasFailures(finished)) && recovery != null;
+            // Die Sperre gegen Mehrfachdrücken beginnt mit dem neuen Lauf (dispatch), nicht schon beim Drücken.
+            job.awaitingRetryRestart = pressed && retryFailed;
             if (retryFailed || finished.state() != JobState.PAUSED) {
                 job.retryFailedRequested = false;
             }
@@ -1442,8 +1471,13 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
-     * „Nur Fehler neu versuchen“ für einen eigenen laufenden Auftrag (Angelo 11.11.2026: ↻ jederzeit): läuft direkt
-     * nach dem Durchgang im selben Eintrag, wenn er dann gescheiterte Teile hat.
+     * „Nur Fehler neu versuchen“ für einen eigenen laufenden Auftrag (Angelo 11.11.2026: ↻ jederzeit; 12.11.2026:
+     * sofort, nicht erst nach dem Durchgang). Lässt sich die Art anhalten, hält der Durchgang am nächsten Prüfpunkt an
+     * und läuft gleich danach im selben Eintrag neu ({@link JobAction#RETRY_FAILED}); was schon abgelegt oder geladen
+     * ist, bleibt. Weiteres Drücken, solange der Neustart aussteht, und bis {@link #RETRY_DEBOUNCE} nach dem Start des
+     * neuen Laufs, löst keinen weiteren aus; bis zum Neustart lässt er sich noch anhalten (dann ohne Neustart). Ohne
+     * Anhalten (oder ohne angebundene Wiederaufnahme) folgt es wie bisher direkt nach dem Durchgang.
+     * Ein angeforderter Abbruch bleibt ein Abbruch; ein angefordertes Anhalten wird zum Neustart.
      *
      * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
      * @throws JobNotResumableException wenn der Auftrag nicht mehr läuft
@@ -1454,6 +1488,30 @@ public class Jobs implements AutoCloseable {
             Job job = open.get(jobId);
             if (job == null) {
                 throw new JobNotResumableException(jobId, "der Auftrag läuft nicht mehr");
+            }
+            Instant now = clock.instant();
+            if (job.restartForRetry || job.retryRestartedAt != null
+                    && now.isBefore(job.retryRestartedAt.plus(RETRY_DEBOUNCE))) {
+                // Mehrfach gedrückt: ein Neustart genügt.
+                return job.snapshot();
+            }
+            if (job.cancelRequested && !job.pauseRequested) {
+                return job.snapshot();
+            }
+            if (job.type.resumable() && job.state == JobState.RUNNING && recovery != null) {
+                job.retryFailedRequested = true;
+                job.restartForRetry = true;
+                job.pauseRequested = true;
+                job.pauseReason = PauseReason.RETRY;
+                job.cancelRequested = true;
+                if (job.stopRequestedAt == null) {
+                    job.stopRequestedAt = now;
+                }
+                job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                        "Nur Fehler neu versuchen: Durchgang hält an und startet sofort neu", null, null, null, null);
+                JobStatus status = job.snapshot();
+                store.save(status);
+                return status;
             }
             if (!job.retryFailedRequested) {
                 job.retryFailedRequested = true;
@@ -1485,12 +1543,15 @@ public class Jobs implements AutoCloseable {
                 String why = switch (reason) {
                     case SIGN_IN_REQUIRED -> "Auftrag angehalten, weil die Anmeldung fehlt: ";
                     case CONNECTION_LOST -> "Auftrag angehalten, weil die Quelle nicht erreichbar ist: ";
-                    case USER -> "Auftrag angehalten: ";
+                    case USER, RETRY -> job.restartForRetry ? "Durchgang für „Nur Fehler neu versuchen“ angehalten: "
+                            : "Auftrag angehalten: ";
                 };
-                job.emit(true, reason == PauseReason.USER ? JobEvent.Severity.INFO : JobEvent.Severity.WARNING,
-                        JobEvent.Category.JOB, COMPONENT, reason == PauseReason.USER ? "PAUSED" : reason.name(),
-                        why + progress.processed() + " Seiten verarbeitet; Fortsetzen holt nur, was noch fehlt", null,
-                        null, null, null);
+                boolean user = reason == PauseReason.USER || reason == PauseReason.RETRY;
+                job.emit(true, user ? JobEvent.Severity.INFO : JobEvent.Severity.WARNING,
+                        JobEvent.Category.JOB, COMPONENT, user ? "PAUSED" : reason.name(),
+                        why + progress.processed() + " Seiten verarbeitet; " + (job.restartForRetry
+                                ? "startet sofort neu und holt nur, was noch fehlt"
+                                : "Fortsetzen holt nur, was noch fehlt"), null, null, null, null);
             }
             default -> {
                 JobError error = finished.error();
@@ -1571,6 +1632,12 @@ public class Jobs implements AutoCloseable {
         volatile PauseReason pauseReason;
         /** „Nur Fehler neu versuchen“ ist während des Laufs angefordert und folgt nach dem Durchgang. */
         volatile boolean retryFailedRequested;
+        /** Der Durchgang hält für „Nur Fehler neu versuchen“ an und läuft sofort neu ({@link #requestRetryFailed}). */
+        volatile boolean restartForRetry;
+        /** Der Durchgang hat für „Nur Fehler neu versuchen“ angehalten, der neue Lauf hat noch nicht begonnen. */
+        volatile boolean awaitingRetryRestart;
+        /** Wann zuletzt ein Lauf für „Nur Fehler neu versuchen“ begann; bleibt über Läufe, gegen Mehrfachdrücken. */
+        volatile Instant retryRestartedAt;
         /** Abschnitt eines laufenden Downloads ({@link JobType#download()}), sonst {@code null}. */
         volatile JobStage stage;
         /** Der Auftrag, auf den dieser wartet ({@link Jobs#submitAwaiting}), bis {@link Jobs#releaseAwaiting}. */
@@ -1602,6 +1669,10 @@ public class Jobs implements AutoCloseable {
         }
 
         void finish(JobState end, JobError failure, Instant at) {
+            if (pauseReason == PauseReason.RETRY) {
+                // Angehalten und abgelegt ist es ein gewöhnliches Anhalten: bleibt der Neustart aus, setzt ▶ fort.
+                pauseReason = PauseReason.USER;
+            }
             state = end;
             error = failure;
             finishedAt = at;
@@ -1618,6 +1689,7 @@ public class Jobs implements AutoCloseable {
             pauseRequested = false;
             stopRequestedAt = null;
             pauseReason = null;
+            restartForRetry = false;
             stage = null;
             incomplete = false;
             discovered.set(0);
@@ -1682,6 +1754,11 @@ public class Jobs implements AutoCloseable {
                     pauseReason = reason == null ? PauseReason.USER : reason;
                     pauseRequested = true;
                     cancelRequested = true;
+                    // Hält er selbst an, etwa ohne Anmeldung oder Verbindung, gilt das statt eines Neustarts für ↻.
+                    if (restartForRetry) {
+                        restartForRetry = false;
+                        retryFailedRequested = false;
+                    }
                 }
             }
             throw new JobCancelledException(id);

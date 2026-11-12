@@ -37,8 +37,10 @@ import java.util.TreeMap;
  * @param stage           bei {@link JobState#RUNNING} eines Downloads ({@link JobType#download()}): Vorbereitung,
  *                        vorbereitet oder Download; bei {@link JobState#QUEUED} nur {@link JobStage#AWAITING}, solange
  *                        der Auftrag auf seinen Vorgänger wartet; sonst {@code null}; wird nicht abgelegt
- * @param pauseReason     nur bei {@link JobState#PAUSED}: warum angehalten, sonst {@code null}; ältere abgelegte
- *                        Aufträge lesen sich mit {@link PauseReason#USER}
+ * @param pauseReason     bei {@link JobState#PAUSED}: warum angehalten; solange ein Anhalten angefordert ist
+ *                        ({@code pauseRequested}): warum angehalten wird, etwa {@link PauseReason#RETRY} für einen
+ *                        sofortigen Neustart; sonst {@code null}; ältere abgelegte Aufträge lesen sich mit
+ *                        {@link PauseReason#USER}
  */
 public record JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
@@ -63,7 +65,9 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
             stage = null;
         }
         if (state != JobState.PAUSED) {
-            pauseReason = null;
+            if (!pauseRequested || state.terminal()) {
+                pauseReason = null;
+            }
         } else if (pauseReason == null) {
             pauseReason = PauseReason.USER;
         }

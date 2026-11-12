@@ -82,6 +82,7 @@ public final class Texts {
         return switch (status.lifecycle().key()) {
             case "PAUSE_REQUESTED" -> "Anhalten angefordert";
             case "CANCEL_REQUESTED" -> "Abbruch angefordert";
+            case "RESTARTING" -> "Startet neu";
             case "COMPLETED_WITH_ERRORS" -> "Fertig, unvollständig";
             case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
             case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
