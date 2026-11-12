@@ -21,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1146,6 +1147,14 @@ final class ConfluenceRestClient {
                 // fehlt die zweite Stufe (echter Test 0.20.2).
                 throw first;
             }
+            if (web.access() != DownloadAccess.OPEN) {
+                // Mit Zwei-Faktor-Plugin ist eine Sitzung aus der REST-Anmeldung nie freigeschaltet: Ihr Cookie würde
+                // die bestätigte Sitzung ersetzen, eine neue Einmalcode-Abfrage auslösen und den Code an die falsche
+                // Sitzung schicken (HTTP 500, Space Harvester 12.11.2026). Darum hier keine neue Sitzung.
+                LOG.info("[Confluence] " + what + ": keine REST-Anmeldung für ein neues Sitzungs-Cookie, die "
+                        + "Zwei-Faktor-Sitzung bleibt (" + web.access() + ", " + first.kind() + ")");
+                throw first;
+            }
             // Weder MainframeMate noch dieser Client hielten eine Sitzung: Jeder Bildabruf kam nur mit dem
             // Authorization-Header. Instanzen, die Basic nur unter /rest/ annehmen (SSO), leiten /download/ ohne
             // Sitzung auf die Anmeldung um. Darum einmal das Sitzungs-Cookie eines angemeldeten REST-Aufrufs holen
@@ -1160,7 +1169,12 @@ final class ConfluenceRestClient {
             try {
                 return attempt.run(Collections.unmodifiableMap(headers));
             } catch (TwoFactorRequired required) {
-                // Keep the challenge type through the retry, the cookie session reached the second factor.
+                // Keep the challenge type through the retry, the cookie session reached the second factor. Die
+                // Code-Seite gehört zu dieser Sitzung: Der Code gilt nur dort (sonst HTTP 500 beim Absenden, Space
+                // Harvester 12.11.2026). Darum übernimmt die Web-Sitzung das Cookie, damit postOneTimeCode es sendet.
+                web.absorb(Arrays.asList(cookie.split("; ")));
+                LOG.info("[Confluence] " + what + ": Einmalcode-Seite kam in der Sitzung der REST-Anmeldung, "
+                        + "Web-Sitzung übernimmt deren Cookies " + web.cookieNames());
                 throw required.withDetail(" (auch mit Sitzungs-Cookie aus der REST-Anmeldung)");
             } catch (KnowledgeSourceException second) {
                 throw new KnowledgeSourceException(second.kind(), second.getMessage()
@@ -1298,7 +1312,20 @@ final class ConfluenceRestClient {
         if (page != null && page.kind() == HtmlResponseDiagnosis.Kind.TWO_FACTOR) {
             return new TwoFactorRequired(error, at, response.body());
         }
+        if (attachmentNotFound(at)) {
+            // Confluence kennt den Anhang, die Datei fehlt aber im Dateispeicher. Das ist keine Anmeldeseite: kein
+            // Neuversuch mit REST-Anmeldung, die sonst eine freigeschaltete Sitzung durch eine neue ersetzt und eine
+            // unnötige Einmalcode-Abfrage auslöst (Space Harvester 12.11.2026).
+            return new KnowledgeSourceException(Kind.NOT_FOUND, "Datei fehlt im Dateispeicher von Confluence "
+                    + "(attachmentnotfound)", error);
+        }
         return error;
+    }
+
+    /** Ob Confluence auf seine Seite „Attachment File Not Found“ weitergeleitet hat. */
+    static boolean attachmentNotFound(URI at) {
+        String path = at == null ? null : at.getPath();
+        return path != null && path.endsWith("/attachmentnotfound.action");
     }
 
     /** Die Adresse, von der eine Datei-Antwort kam: laut Transport, sonst Basis-URL und Pfad. */
