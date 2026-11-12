@@ -877,8 +877,13 @@ public final class Workspace {
     /** Status eines Auftrags dieser App, unabhängig von seiner Art. */
     public JobStatus job(String jobId) {
         JobStatus status = harvester.jobs().status(jobId, Harvester.OWNER);
-        requireVisible(status, status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC);
+        requireVisible(status, visibility(status));
         return status;
+    }
+
+    /** Welches Recht ein Auftrag zum Anzeigen braucht: Exporte die Export-Freigabe, alle anderen die zum Abgleichen. */
+    private static AccessKind visibility(JobStatus status) {
+        return status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC;
     }
 
     /**
@@ -1034,24 +1039,36 @@ public final class Workspace {
     public List<JobStatus> jobs() {
         List<JobStatus> result = new ArrayList<>();
         for (String id : activities.ids()) {
+            JobStatus status;
             try {
-                result.add(job(id));
+                status = harvester.jobs().status(id, Harvester.OWNER);
             } catch (UnknownJobException e) {
+                // Nur was die Auftragsablage nicht mehr kennt, fällt aus der Liste.
                 activities.forget(id);
+                continue;
             } catch (RuntimeException e) {
-                // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar.
+                continue;
+            }
+            try {
+                requireVisible(status, visibility(status));
+                result.add(status);
+            } catch (RuntimeException e) {
+                // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar, aber
+                // gemerkt: eine kurz verweigerte Prüfung (etwa beim Start) löscht ihn nicht aus der Liste.
             }
         }
-        // Anreicherungen und Bilder plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
-        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
+        // Exporte, Anreicherungen, Bilder und Anhänge auch direkt aus der Auftragsablage: Bilder und Anhänge stehen als
+        // Unterzeilen unter ihrem Export, der deshalb nie fehlen darf, auch wenn die gemerkte Liste ihn verloren hat.
+        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.EXPORT));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
-        for (JobStatus enrichment : followUps) {
-            if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
+        for (JobStatus followUp : followUps) {
+            if (result.stream().noneMatch(known -> known.id().equals(followUp.id()))) {
                 try {
-                    requireVisible(enrichment, AccessKind.SYNC);
-                    result.add(enrichment);
+                    requireVisible(followUp, visibility(followUp));
+                    result.add(followUp);
                 } catch (RuntimeException e) {
                     // wie oben: ohne Recht auf den Space unsichtbar
                 }
