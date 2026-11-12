@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.application.sync.SyncCommitted;
+import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -40,7 +41,8 @@ class ImportConfiguration {
         return new ExportPackageImport(jobs, new ZipExportPackageReader(cache.maxPayloadSize().toBytes(),
                 Assets.maxBytes(maxAsset.toBytes())), store, sourceId -> catalog.config(sourceId).isPresent(),
                 assetStore.getIfAvailable(), found == null ? null : found::adoptText,
-                views == null ? null : new ReadingViewStore(views), afterCommit.orderedStream().toList(),
-                Clock.systemUTC());
+                views == null ? null : new ReadingViewStore(views),
+                views == null ? null : new EnrichmentImportedAssets(views, Clock.systemUTC()),
+                afterCommit.orderedStream().toList(), Clock.systemUTC());
     }
 }

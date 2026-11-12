@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
+import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.export.ExportPackageException;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
@@ -143,6 +144,52 @@ class ExportPackageImportTest {
         assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION))
                 .contains(SVG);
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
+    }
+
+    @Test
+    void remembersTheImageEntriesOfEachPageForAnExportWithoutTheSource() throws Exception {
+        EnrichmentImportedAssets remembered = new EnrichmentImportedAssets(new InMemoryEnrichmentStore(), clock);
+        ExportPackageImport withMemory = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, assets,
+                null, null, remembered, List.of(committed::add), clock);
+        PackageAssets media = new PackageAssets();
+
+        JobStatus job = withMemory.start(pkg(pages("100", "101"), media), "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).as(String.valueOf(jobs.status(job.id())))
+                .isEqualTo(JobState.COMPLETED);
+        String version = store.confirmed("laptop", "DEV").orElseThrow().pages().get("100").version();
+        assertThat(remembered.find(new PageKey("laptop", "100"), version)).hasValueSatisfying(manifest -> {
+            assertThat(manifest.forPage("100")).containsExactly(media.image, media.drawio);
+            assertThat(manifest.documents()).containsExactly(media.pdf);
+        });
+        // Auch eine Seite ohne Bilder ist gemerkt, damit der Export sie ohne Quelle als vollständig kennt.
+        String other = store.confirmed("laptop", "DEV").orElseThrow().pages().get("101").version();
+        assertThat(remembered.find(new PageKey("laptop", "101"), other))
+                .hasValueSatisfying(manifest -> assertThat(manifest.assets()).isEmpty());
+        assertThat(remembered.find(new PageKey("laptop", "100"), "anders")).isEmpty();
+    }
+
+    @Test
+    void aMissingDrawingKeepsTheRememberedOriginalOfTheDiagram() throws Exception {
+        EnrichmentImportedAssets remembered = new EnrichmentImportedAssets(new InMemoryEnrichmentStore(), clock);
+        ExportPackageImport withMemory = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, assets,
+                null, null, remembered, List.of(committed::add), clock);
+        PackageAssets media = new PackageAssets(false);
+
+        withMemory.start(pkg(pages("100"), media), "laptop", false, "client-a");
+
+        String version = store.confirmed("laptop", "DEV").orElseThrow().pages().get("100").version();
+        assertThat(assets.content("laptop", "att-drawio", "1")).contains(MXFILE);
+        assertThat(remembered.find(new PageKey("laptop", "100"), version).orElseThrow().forPage("100"))
+                .filteredOn(entry -> "att-drawio".equals(entry.attachmentId())).singleElement()
+                .satisfies(entry -> {
+                    assertThat(entry.stored()).isTrue();
+                    assertThat(entry.sha256()).isEqualTo(sha256(MXFILE));
+                    assertThat(entry.rendition().drawn()).isFalse();
+                    assertThat(entry.rendition().problem()).isEqualTo("import-missing");
+                });
     }
 
     @Test
@@ -419,6 +466,17 @@ class ExportPackageImportTest {
     /** Ein Bild, ein draw.io mit gezeichneter Grafik und ein PDF mit Text an Seite 100. */
     private static final class PackageAssets implements ExportAssets {
 
+        /** Ob das Paket die gezeichnete Grafik des draw.io mitbringt. */
+        private final boolean drawn;
+
+        PackageAssets() {
+            this(true);
+        }
+
+        PackageAssets(boolean drawn) {
+            this.drawn = drawn;
+        }
+
         private final ExportAssetManifest.Entry image = new ExportAssetManifest.Entry("100",
                 ExportAssetManifest.Reference.attachment("att-foto", "foto.png"), "att-foto", "1", "foto.png",
                 "image/png", PNG.length, sha256(PNG), ExportAssetManifest.Status.STORED, null);
@@ -443,7 +501,7 @@ class ExportPackageImportTest {
 
         @Override
         public Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
-            return entry == drawio ? Optional.of(SVG) : Optional.empty();
+            return entry == drawio && drawn ? Optional.of(SVG) : Optional.empty();
         }
 
         @Override
