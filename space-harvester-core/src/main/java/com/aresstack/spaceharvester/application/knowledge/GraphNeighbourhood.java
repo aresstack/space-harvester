@@ -272,40 +272,65 @@ public class GraphNeighbourhood {
     }
 
     /**
-     * Ein Begriff als Fokus: passende Erwähnungen auf sichtbaren Seiten, die die Filter zulassen, mit den Aussagen, an
-     * denen sie beteiligt sind. Quelle, Space und „veraltet“ gelten schon bei der Suche, damit die Grenze nur Treffer im
-     * gewählten Umfang zählt.
+     * Ein Begriff als Fokus: passende Erwähnungen auf sichtbaren Seiten, die die Filter zulassen, mit ihrer Umgebung in
+     * der Seitenprojektion ({@link PageGraph}, Standardansicht): die Aussagen, an denen sie beteiligt sind, samt deren
+     * übrigen Beteiligten, und ihre nominalen Bezüge. So steht ein Begriff nicht allein, wenn er nur über einen
+     * nominalen Bezug oder als Mitbeteiligter vorkommt. Quelle, Space und „veraltet“ gelten schon bei der Suche, damit
+     * die Grenze nur Treffer im gewählten Umfang zählt.
      */
     public Subgraph term(AccessContext caller, String term, Options options) {
         KnowledgeGraph.Search search = graph.search(caller, term,
                 Math.min(options.maxNodes(), KnowledgeGraph.MAX_LIMIT), page -> admitted(page, options));
         Builder builder = new Builder(options);
+        Map<PageKey, Optional<Projection>> projections = new LinkedHashMap<>();
         String focus = null;
         for (KnowledgeGraph.Hit hit : search.hits()) {
             ParsedStatements.Mention mention = hit.mention();
             if (!builder.node(new Node(mention.id(), PageGraph.NodeKind.MENTION, mention.text(), mention.lemma(),
                     hit.page(), mention.start(), mention.end(), false))) {
-                for (KnowledgeGraph.Participation participation : hit.statements()) {
-                    ParsedStatements.Statement statement = participation.statement();
-                    if (builder.options.types().contains(EdgeType.valueOf(participation.role().name()))) {
-                        builder.omit(new Node(statement.id(), PageGraph.NodeKind.STATEMENT,
-                                statement.predicateText(), statement.predicateLemma(), hit.page(), statement.start(),
-                                statement.end(), statement.core()));
-                    }
-                }
                 continue;
             }
             focus = focus == null ? mention.id() : focus;
-            for (KnowledgeGraph.Participation participation : hit.statements()) {
-                ParsedStatements.Statement statement = participation.statement();
-                builder.connect(roleEdge(statement, mention.id(), participation),
-                        new Node(statement.id(), PageGraph.NodeKind.STATEMENT, statement.predicateText(),
-                                statement.predicateLemma(), hit.page(), statement.start(), statement.end(),
-                                statement.core()));
+            Optional<Projection> projection = projections.computeIfAbsent(hit.page().key(),
+                    key -> graph.page(caller, key).map(Projection::new));
+            if (projection.isEmpty()) {
+                continue;
+            }
+            Projection here = projection.get();
+            for (PageGraph.Edge edge : here.graph.edgesOf(mention.id())) {
+                PageGraph.Node other = here.nodes.get(edge.from().equals(mention.id()) ? edge.to() : edge.from());
+                if (other == null || other.kind() == PageGraph.NodeKind.DOCUMENT) {
+                    continue;
+                }
+                builder.connect(edge(edge), node(here.page, other));
+                if (other.kind() == PageGraph.NodeKind.STATEMENT && builder.has(other.id())) {
+                    // Die übrigen Beteiligten derselben Aussage: „Anwendungen nutzen LDAP“, nicht nur „nutzen“.
+                    for (PageGraph.Edge role : here.graph.edgesOf(other.id())) {
+                        PageGraph.Node participant = here.nodes.get(role.from().equals(other.id()) ? role.to()
+                                : role.from());
+                        if (participant != null && participant.kind() != PageGraph.NodeKind.DOCUMENT) {
+                            builder.connect(edge(role), node(here.page, participant));
+                        }
+                    }
+                }
             }
         }
         builder.extraHidden = Math.max(0, search.total() - search.hits().size());
         return builder.build(focus);
+    }
+
+    /** Die Standardprojektion einer Seite mit Knoten nach ID, einmal je Seite einer Begriffssuche. */
+    private static final class Projection {
+
+        private final KnowledgeGraph.AnalysedPage page;
+        private final PageGraph graph;
+        private final Map<String, PageGraph.Node> nodes = new LinkedHashMap<>();
+
+        private Projection(KnowledgeGraph.AnalysedPage page) {
+            this.page = page;
+            this.graph = page.graph();
+            graph.nodes().forEach(node -> nodes.put(node.id(), node));
+        }
     }
 
     /**
@@ -346,21 +371,6 @@ public class GraphNeighbourhood {
                 }
             }
         }
-    }
-
-    /**
-     * Rollenkante einer Begriffssuche mit derselben Herkunft (Grundlage, UD-Relation, Präposition) wie in der Seiten-
-     * und Knotenansicht ({@link PageGraph}).
-     */
-    private static Edge roleEdge(ParsedStatements.Statement statement, String mentionId,
-                                 KnowledgeGraph.Participation participation) {
-        ParsedStatements.Argument argument = statement.arguments().stream()
-                .filter(candidate -> candidate.mention().equals(mentionId) && candidate.role() == participation.role())
-                .findFirst().orElse(null);
-        return new Edge(statement.id(), mentionId, EdgeType.valueOf(participation.role().name()),
-                argument == null ? null : argument.basis().name(), argument == null ? null : argument.relation(),
-                argument == null ? null : argument.marker(), "s" + statement.sentence(),
-                argument == null ? participation.certain() : argument.certain());
     }
 
     private static boolean crossPageAllowed(Options options) {

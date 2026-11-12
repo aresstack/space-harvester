@@ -141,8 +141,12 @@ class GraphNeighbourhoodTest {
 
         GraphNeighbourhood.Subgraph subgraph = neighbourhood.term(CALLER, "beleg", GraphNeighbourhood.Options.DEFAULT);
 
-        assertThat(subgraph.nodes()).filteredOn(node -> node.kind() == PageGraph.NodeKind.MENTION).hasSize(2);
+        // Zwei Treffer und je ein Handelnder derselben Aussage.
+        assertThat(subgraph.nodes()).filteredOn(node -> node.kind() == PageGraph.NodeKind.MENTION).hasSize(4);
         assertThat(subgraph.edges()).filteredOn(edge -> edge.type() == GraphNeighbourhood.EdgeType.AFFECTED_OBJECT)
+                .hasSize(2);
+        // Die übrigen Beteiligten derselben Aussage stehen mit im Bild, der Begriff nicht allein.
+        assertThat(subgraph.edges()).filteredOn(edge -> edge.type() == GraphNeighbourhood.EdgeType.ACTOR)
                 .hasSize(2);
         assertThat(subgraph.edges()).noneMatch(edge -> edge.type().crossPage());
     }
