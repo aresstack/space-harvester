@@ -6,12 +6,14 @@ name: Release
 # - space-harvester-<v>.jar         REST-Service (:space-harvester-server, ausführbares Spring-Boot-JAR)
 # - space-harvester-core-<v>.jar    Bibliothek (:space-harvester-core, normales JAR) mit -sources.jar und -javadoc.jar
 # Die Version kommt zentral über -PreleaseVersion (build.gradle). Auslöser:
-# - Push auf main: neues Pre-Release v<Basis>-<Kanal>.<N> (z. B. v0.1.0-beta.3), N zählt je Push hoch. Basis ist die
-#   Version aus build.gradle ohne -SNAPSHOT, Kanal steht unten in RELEASE_CHANNEL.
+# - Push auf main: das rollierende Pre-Release „beta“ wird durch diesen Stand ersetzt, Version <Basis>-beta.<N>
+#   (z. B. 0.1.2-beta.812). Basis ist die nächste Patch-Version nach dem neuesten regulären Release (mindestens die
+#   Version aus build.gradle ohne -SNAPSHOT), N die Zahl der Commits auf main. GitHub sortiert die Releases-Seite
+#   nach Datum; so steht über dem regulären Release („Latest“) höchstens dieser eine Beta-Eintrag.
 # - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ wird durch diesen Stand ersetzt.
 # - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
 #   „tag“: Release genau mit dieser Version (ohne Vorabkennung = reguläres Release, „Latest“, braucht
-#   docs/release-notes/<tag>.md). Danach zählen die main-Pre-Releases auf der nächsten Minor-Version weiter.
+#   docs/release-notes/<tag>.md).
 # Versionierte Releases werden nie überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
@@ -33,8 +35,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 env:
-  # Vorabkanal für automatische main-Releases: alpha, beta oder rc
-  RELEASE_CHANNEL: beta
+  # Rollierende Pre-Releases: main ersetzt „beta“, alle anderen Branches ersetzen „snapshot“
+  BETA_TAG: beta
   SNAPSHOT_TAG: snapshot
 
 jobs:
@@ -58,12 +60,13 @@ jobs:
           base=$(sed -n "s/.*gradleProperty('releaseVersion').getOrElse('\(.*\)').*/\1/p" build.gradle)
           base="${base%-SNAPSHOT}"
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Basisversion $base aus build.gradle unbrauchbar"; exit 1; }
-          # Ist die Basis schon regulär veröffentlicht (Tag v<Basis>), laufen Betas und Snapshots auf der nächsten
-          # Minor-Version weiter (nach v0.1.0: v0.2.0-beta.1 …), damit sie nie unter dem Release einsortiert werden
-          while git rev-parse -q --verify "refs/tags/v$base" >/dev/null; do
-            IFS=. read -r major minor _ <<< "$base"
-            base="$major.$((minor + 1)).0"
-          done
+          # Betas und Snapshots laufen auf der nächsten Patch-Version nach dem neuesten regulären Release (nach v0.1.1:
+          # 0.1.2-beta.N), damit sie nach dem Versionsschema nie unter dem Release einsortiert werden
+          stable=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+          if [ -n "$stable" ] && [ "$(printf '%s\n%s\n' "$base" "$stable" | sort -V | tail -1)" = "$stable" ]; then
+            IFS=. read -r major minor patch <<< "$stable"
+            base="$major.$minor.$((patch + 1))"
+          fi
           tag=""
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             mode=tag; tag="$GITHUB_REF_NAME"
@@ -71,20 +74,20 @@ jobs:
             [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Release-Tags nur von main aus anlegen"; exit 1; }
             mode=new-tag; tag="$INPUT_TAG"
           elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            mode=new-tag
-            [[ "$RELEASE_CHANNEL" =~ ^(alpha|beta|rc)$ ]] || { echo "::error::RELEASE_CHANNEL $RELEASE_CHANNEL ungültig"; exit 1; }
-            prefix="v$base-$RELEASE_CHANNEL."
-            last=$(git tag -l "$prefix*" | sed "s/^${prefix//./\\.}//" | grep -E '^[0-9]+$' | sort -n | tail -1)
-            tag="$prefix$(( ${last:-0} + 1 ))"
+            mode=beta
           else
             mode=snapshot
           fi
-          if [ "$mode" = "snapshot" ]; then
-            version="$base-SNAPSHOT"
-            # Nach einem regulären Release (v0.1.0) ist die Basis schon eine Minor-Version weiter als build.gradle;
-            # ohne Angabe hießen die JARs noch nach build.gradle und die Prüfung unten fände sie nicht.
+          if [ "$mode" = "beta" ] || [ "$mode" = "snapshot" ]; then
+            # Nach einem regulären Release ist die Basis weiter als build.gradle; ohne Angabe hießen die JARs noch
+            # nach build.gradle und die Prüfung unten fände sie nicht.
+            if [ "$mode" = "beta" ]; then
+              version="$base-beta.$(git rev-list --count HEAD)"; tag="$BETA_TAG"
+            else
+              version="$base-SNAPSHOT"; tag="$SNAPSHOT_TAG"
+            fi
             echo "args=-PreleaseVersion=$version" >> "$GITHUB_OUTPUT"
-            echo "tag=$SNAPSHOT_TAG" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
@@ -110,7 +113,7 @@ jobs:
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Modus $mode, Version $version, Tag ${tag:-$SNAPSHOT_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Modus $mode, Version $version, Tag $tag" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -188,7 +191,10 @@ jobs:
           app="space-harvester-app-$VERSION.jar"
           sum=$(grep " $app\$" SHA256SUMS | cut -d' ' -f1)
           if [ "$MODE" = "snapshot" ]; then
-            intro="Rollierender Entwicklungsstand vom Branch \`$BRANCH\` (\`${GITHUB_SHA:0:12}\`). Wird beim nächsten Push auf einen Branch außer main ersetzt; zum Testen ein versioniertes Release nehmen."
+            intro="Rollierender Entwicklungsstand vom Branch \`$BRANCH\` (\`${GITHUB_SHA:0:12}\`). Wird beim nächsten Push auf einen Branch außer main ersetzt; zum Testen die Beta nehmen."
+            ref="$GITHUB_SHA"
+          elif [ "$MODE" = "beta" ]; then
+            intro="Space Harvester $VERSION – Beta zum Testen, gebaut aus \`${GITHUB_SHA:0:12}\` auf main. Wird bei jedem Push auf main ersetzt; das stabile Release ist mit „Latest“ markiert."
             ref="$GITHUB_SHA"
           else
             kind="Release"
@@ -219,23 +225,28 @@ jobs:
           NOTES
           # Kuratierte Release-Notizen (Pflicht für reguläre Releases) stehen vor der Dateiübersicht
           notes="$GITHUB_WORKSPACE/docs/release-notes/$TAG.md"
-          if [ "$MODE" != "snapshot" ] && [ -s "$notes" ]; then
+          if [ "$MODE" != "snapshot" ] && [ "$MODE" != "beta" ] && [ -s "$notes" ]; then
             { cat "$notes"; echo; echo '## Dateien'; echo; cat "$RUNNER_TEMP/RELEASE_NOTES.md"; } > "$RUNNER_TEMP/notes.tmp"
             mv "$RUNNER_TEMP/notes.tmp" "$RUNNER_TEMP/RELEASE_NOTES.md"
           fi
-      - name: Snapshot ersetzen
-        if: steps.version.outputs.mode == 'snapshot'
+      - name: Beta bzw. Snapshot ersetzen
+        if: steps.version.outputs.mode == 'snapshot' || steps.version.outputs.mode == 'beta'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
           BRANCH: ${{ github.ref_name }}
+          MODE: ${{ steps.version.outputs.mode }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release delete "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
-          git push origin ":refs/tags/$SNAPSHOT_TAG" 2>/dev/null || true
-          gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Space Harvester Snapshot ($BRANCH)" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
+          title="Space Harvester Snapshot ($BRANCH)"
+          [ "$MODE" = "beta" ] && title="Space Harvester $VERSION (Beta)"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
             --prerelease --latest=false *.jar SHA256SUMS
       - name: Release anlegen
-        if: steps.version.outputs.mode != 'snapshot'
+        if: steps.version.outputs.mode == 'tag' || steps.version.outputs.mode == 'new-tag'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
           MODE: ${{ steps.version.outputs.mode }}

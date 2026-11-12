@@ -13,7 +13,7 @@ Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21). 
 `"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar`.
 
 1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) die gewünschte Version öffnen
-   (reguläre Releases wie `v0.1.0` sind als *Latest* markiert, Testversionen wie `v0.2.0-beta.1` als *Pre-release*, `snapshot` ist der letzte Stand eines
+   (reguläre Releases wie `v0.1.0` sind als *Latest* markiert, die Testversion `beta` als *Pre-release*, `snapshot` ist der letzte Stand eines
    Entwicklungs-Branches) und `space-harvester-app-<version>.jar`
    sowie `SHA256SUMS` herunterladen.
 2. Optional die Prüfsumme vergleichen: `certutil -hashfile space-harvester-app-<version>.jar SHA256` muss den Wert aus
@@ -382,26 +382,27 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | neues Pre-Release `v<Basis>-<Kanal>.<N>`, z. B. `v0.1.0-beta.3`, `v0.1.0-beta.4`, … |
+| Push auf `main` | das rollierende Pre-Release `beta` wird durch diesen Stand ersetzt (`…-beta.<N>.jar`) |
 | Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird durch diesen Stand ersetzt (`…-SNAPSHOT.jar`) |
 | Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version |
 | *Run workflow* auf `main` mit Feld `tag` | wie ein Tag; der Lauf legt den Tag selbst an |
 
 - Die Version steuert zentral `build.gradle` für alle Module: ohne Angabe `0.1.0-SNAPSHOT`, im Release
   `-PreleaseVersion=<v>`. Lokal: `./gradlew build -PreleaseVersion=0.1.0-beta.3`.
-- **Basis** ist die Version aus `build.gradle` ohne `-SNAPSHOT` (derzeit `0.1.0`), **Kanal** steht als
-  `RELEASE_CHANNEL` im Workflow (derzeit `beta`; davor gab es `v0.1.0-alpha.1`). `N` zählt die vorhandenen Tags des
-  Kanals je Push hoch. Für den nächsten Kanal `RELEASE_CHANNEL` auf `rc` setzen, für eine neue Version die Basis in
-  `build.gradle` erhöhen; die Zählung beginnt dann wieder bei 1.
+- **Betas:** Jeder Push auf `main` ersetzt das eine Pre-Release `beta` (Version `<Basis>-beta.<N>`, z. B.
+  `0.1.2-beta.812`). **Basis** ist die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`:
+  `0.1.2`), mindestens die Version aus `build.gradle`; `N` ist die Zahl der Commits auf `main`. Snapshots anderer
+  Branches heißen `<Basis>-SNAPSHOT`. `build.gradle` muss nach einem Release nicht angepasst werden.
+- GitHub sortiert die Releases-Seite nach Datum, nicht nach Version. Ein neuer Eintrag steht deshalb immer oben;
+  rollierend steht über dem regulären Release höchstens je ein Eintrag `beta` und `snapshot`. „Latest“ und der Link
+  `…/releases/latest` zeigen immer auf das reguläre Release.
 - Ein reguläres Release (ohne Vorabkennung, als „Latest“ markiert) entsteht nur über einen Tag wie `v0.1.0` oder
   *Run workflow* mit `tag`. Es braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`; der Workflow
   stellt sie vor die Dateiübersicht und bricht ohne sie ab.
-- Nach einem regulären Release `v<Basis>` zählen die automatischen Pre-Releases auf der nächsten Minor-Version weiter
-  (nach `v0.1.0`: `v0.2.0-beta.1`, `v0.2.0-beta.2`, …), damit keine Beta unter dem Release einsortiert wird; ein
-  reines Fehlerbehebungs-Release `v0.1.1` bleibt per Tag möglich. `build.gradle` muss dafür nicht angepasst werden.
 - **Nur im Browser** (ohne IDE): auf GitHub unter **Actions** › **Release** › **Run workflow** den Branch `main`
   lassen, ins Feld `tag` z. B. `v0.1.0` eintragen und **Run workflow** klicken. Der Lauf baut, testet, legt Tag und
   Release an. Nicht über **Releases** › **Draft a new release** gehen: das legt das Release selbst an, und der
   Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
-- Versionierte Releases werden nie überschrieben. Nur `snapshot` wird ersetzt; zum Testen ein versioniertes Release
-  nehmen. Releases bis `v0.1.0-beta.2` enthalten nur die Desktop-App.
+- Versionierte Releases werden nie überschrieben. Nur `beta` und `snapshot` werden ersetzt. Bis `v0.1.0-beta.332`
+  bzw. `v0.2.0-beta.2` bekam jeder main-Push ein eigenes Pre-Release; Releases bis `v0.1.0-beta.2` enthalten nur die
+  Desktop-App.
