@@ -1056,6 +1056,127 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /**
+     * #571, Angelo 12.11.2026 (beta.411): Bilder einer anderen Seite nennt Confluence als
+     * {@code /download/attachments/embedded-page/<Space>/<Titel>/<Datei>}; bei Titeln mit „/“ antwortet es darauf mit
+     * 404. Die Quelle löst Space und Titel per REST in die Seiten-ID auf, einmal je Seite, und lädt die Datei unter
+     * dieser ID.
+     */
+    @Test
+    void anImageOfAnotherPageIsLoadedUnderThatPagesId() {
+        TitledImages port = new TitledImages(Map.of("Community of Practice UX/UI", "4711",
+                "Anwendungsfälle & VM/ PostgreSQL", "815"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+
+        assertThat(source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/PMDH/"
+                + "Community%20of%20Practice%20UX%2FUI/Accordion%20hover%20.png?api=v2"), 1000))
+                .containsExactly(1, 2, 3);
+        source.viewImage(image("https://wiki.example.org/download/attachments/embedded-page/PMDH/"
+                + "Community%20of%20Practice%20UX%2FUI/Details.png?api=v2"), 1000);
+        source.viewImage(image("https://wiki.example.org/confluence/download/attachments/embedded-page/PMDH/"
+                + "Anwendungsf%C3%A4lle%20&%20VM%2F%20PostgreSQL/image-2024-10-22_14-9-59.png?api=v2"), 1000);
+
+        assertThat(port.loaded).containsExactly(
+                "https://wiki.example.org/download/attachments/4711/Accordion%20hover%20.png?api=v2",
+                "https://wiki.example.org/download/attachments/4711/Details.png?api=v2",
+                "https://wiki.example.org/confluence/download/attachments/815/image-2024-10-22_14-9-59.png?api=v2");
+        // Je Seite eine Nachfrage, das zweite Bild derselben Seite fragt nicht noch einmal.
+        assertThat(port.resolved).containsExactly(
+                "https://wiki.example.org/pages/viewpage.action?spaceKey=PMDH&title=Community+of+Practice+UX%2FUI",
+                "https://wiki.example.org/confluence/pages/viewpage.action?spaceKey=PMDH"
+                        + "&title=Anwendungsf%C3%A4lle+%26+VM%2F+PostgreSQL");
+    }
+
+    @Test
+    void anImageOfAnUnknownPageAndAnOrdinaryImageKeepTheirAddress() {
+        TitledImages port = new TitledImages(Map.of());
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+        String unknown = "https://wiki.example.org/download/attachments/embedded-page/PMDH/Gibt%20es%20nicht/a.png"
+                + "?api=v2";
+        String ordinary = "https://wiki.example.org/download/attachments/123/a.png?version=2&api=v2";
+
+        source.viewImage(image(unknown), 1000);
+        source.viewImage(image(unknown), 1000);
+        source.viewImage(image(ordinary), 1000);
+
+        assertThat(port.loaded).containsExactly(unknown, unknown, ordinary);
+        assertThat(port.resolved).hasSize(1);
+    }
+
+    private static HarvestSource.ViewImage image(String src) {
+        return new HarvestSource.ViewImage(src, "", null, null, null);
+    }
+
+    /**
+     * Bilder und Adressen wie Confluence: {@code pages/viewpage.action?spaceKey=…&title=…} löst bekannte Titel in die
+     * Seite auf, jedes Bild lädt. Merkt sich die nachgefragten Adressen und die geladenen Bilder.
+     */
+    private static final class TitledImages implements KnowledgeSourcePort, PageViewSource,
+            com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource {
+
+        private final Map<String, String> pages;
+        final List<String> resolved = new java.util.ArrayList<>();
+        final List<String> loaded = new java.util.ArrayList<>();
+
+        TitledImages(Map<String, String> pages) {
+            this.pages = pages;
+        }
+
+        @Override
+        public java.util.regex.Pattern addressPattern() {
+            return java.util.regex.Pattern.compile("^https?://[^\\s]+$");
+        }
+
+        @Override
+        public KnowledgeResourceId resolveAddress(String address) {
+            resolved.add(address);
+            String spaceKey = null;
+            String title = null;
+            for (String pair : address.substring(address.indexOf('?') + 1).split("&")) {
+                String value = java.net.URLDecoder.decode(pair.substring(pair.indexOf('=') + 1),
+                        StandardCharsets.UTF_8);
+                if (pair.startsWith("spaceKey=")) {
+                    spaceKey = value;
+                } else if (pair.startsWith("title=")) {
+                    title = value;
+                }
+            }
+            String pageId = "PMDH".equals(spaceKey) ? pages.get(title) : null;
+            return pageId == null ? null : KnowledgeResourceId.of("confluence", "wiki.example.org/page/" + pageId);
+        }
+
+        @Override
+        public byte[] loadViewImage(String src) {
+            loaded.add(src);
+            return new byte[] {1, 2, 3};
+        }
+
+        @Override
+        public PageView pageView(KnowledgeResourceId page) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SourceAddress sourceId() {
+            return SourceAddress.of("confluence://wiki.example.org");
+        }
+
+        @Override
+        public List<KnowledgeResource> discover(SourceScope scope) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public KnowledgeDocument load(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
      * #571, Angelo 11.11.2026: Der Proxy lehnte den Tunnel beim Absenden nach 20 s mit HTTP 503 ab; Confluence sah den
      * Code nie, derselbe Code galt zwei Minuten später. Darum geht er nach einer solchen Ablehnung gleich noch einmal.
      */
