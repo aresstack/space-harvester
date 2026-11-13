@@ -64,7 +64,11 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
      */
     public String value() {
         StringBuilder value = new StringBuilder(page.sourceId()).append(SEPARATOR).append(page.pageId());
-        attachmentId.ifPresent(id -> value.append(SEPARATOR).append(id));
+        // Ein Teil direkt in der Seite (ohne Anhang) behält den leeren Platz des Anhangs: sonst fiele er mit einem
+        // Anhang zusammen, dessen Kennung zufällig wie eine Teilkennung aussieht. Anhangskennungen sind nie leer.
+        if (attachmentId.isPresent() || part.isPresent()) {
+            value.append(SEPARATOR).append(attachmentId.orElse(""));
+        }
         part.ifPresent(id -> value.append(SEPARATOR).append(id.value()));
         return value.toString();
     }
@@ -100,11 +104,14 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
     /**
      * Name für flache Ablagen nach Hash (etwa der Graph, ADR 0026, Schlüsselform Punkt 7): SHA-256 (64 Hexziffern) über
      * Quelle, Seite, Anhangskennung und {@link PartId#value()}, je durch {@code \n} getrennt; fehlende Felder entfallen
-     * samt Trenner. Die Seite behält so genau ihren heutigen Namen {@code sha256(quelle \n seite)}.
+     * samt Trenner, nur ein Teil direkt in der Seite behält den leeren Platz des Anhangs. Die Seite behält so genau
+     * ihren heutigen Namen {@code sha256(quelle \n seite)}.
      */
     public String hash() {
         StringBuilder input = new StringBuilder(page.sourceId()).append('\n').append(page.pageId());
-        attachmentId.ifPresent(id -> input.append('\n').append(id));
+        if (attachmentId.isPresent() || part.isPresent()) {
+            input.append('\n').append(attachmentId.orElse(""));
+        }
         part.ifPresent(id -> input.append('\n').append(id.value()));
         return sha256(input.toString());
     }

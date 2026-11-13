@@ -53,7 +53,12 @@ class DocumentKeyTest {
         // Ohne Anhang (Quelle files): die Teilkennung im Behälter Seite.
         DocumentKey inPage = DocumentKey.page(PAGE).child(CONTENT);
         assertThat(inPage.storagePath()).isEqualTo("documents/parts/" + CONTENT.fileName());
-        assertThat(inPage.hash()).isEqualTo(sha256("wiki\n100\n" + CONTENT.value()));
+        assertThat(inPage.hash()).isEqualTo(sha256("wiki\n100\n\n" + CONTENT.value()));
+        assertThat(inPage.value()).isEqualTo("wiki\u0000100\u0000\u0000" + CONTENT.value());
+        // Ein Anhang, dessen Kennung wie eine Teilkennung aussieht, bleibt ein anderes Dokument.
+        DocumentKey lookalike = DocumentKey.attachment(PAGE, CONTENT.value());
+        assertThat(lookalike.value()).isNotEqualTo(inPage.value());
+        assertThat(lookalike.hash()).isNotEqualTo(inPage.hash());
     }
 
     @Test
