@@ -3,7 +3,9 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermOrigin;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -70,9 +72,13 @@ public class TermsController {
                                   @RequestParam(required = false) String cursor,
                                   @Parameter(description = "nur Begriffe, deren Suchwert so beginnt (etwa ein "
                                           + "Buchstabe der A–Z-Leiste); nie ein Wort mitten im Begriff")
-                                  @RequestParam(required = false) String startsWith) {
+                                  @RequestParam(required = false) String startsWith,
+                                  @Parameter(description = "pages (Vorgabe), documents (Anhänge und enthaltene "
+                                          + "Dateien) oder all; Vorkommen in Dokumenten stehen getrennt")
+                                  @RequestParam(required = false) String origin) {
         TermQueries.TermList list = terms.terms(caller, new TermQueries.TermSearch(blankToNull(sourceId),
-                blankToNull(spaceKey), kind(kind), q, exact, limit, blankToNull(cursor), blankToNull(startsWith)));
+                blankToNull(spaceKey), kind(kind), q, exact, limit, blankToNull(cursor), blankToNull(startsWith),
+                origin(origin)));
         return new TermListResponse(list.terms().stream().map(TermEntry::of).toList(), list.nextCursor());
     }
 
@@ -103,9 +109,12 @@ public class TermsController {
                                               @RequestParam(defaultValue = "50") int limit,
                                               @RequestParam(required = false) String cursor,
                                               @Parameter(description = "Zeichen Kontext je Seite, 0 für keinen")
-                                              @RequestParam(defaultValue = "0") int snippetChars) {
+                                              @RequestParam(defaultValue = "0") int snippetChars,
+                                              @Parameter(description = "pages (Vorgabe), documents oder all")
+                                              @RequestParam(required = false) String origin) {
         TermQueries.OccurrenceList list = terms.occurrences(caller, new TermQueries.OccurrenceSearch(term, kind(kind),
-                blankToNull(sourceId), blankToNull(spaceKey), limit, blankToNull(cursor), snippetChars));
+                blankToNull(sourceId), blankToNull(spaceKey), limit, blankToNull(cursor), snippetChars,
+                origin(origin)));
         return new OccurrenceListResponse(list.normalized(),
                 list.occurrences().stream().map(OccurrenceEntry::of).toList(), list.nextCursor());
     }
@@ -152,17 +161,33 @@ public class TermsController {
         }
     }
 
+    private static TermOrigin origin(String origin) {
+        if (origin == null || origin.isBlank()) {
+            return TermOrigin.PAGES;
+        }
+        try {
+            return TermOrigin.of(origin.trim());
+        } catch (IllegalArgumentException e) {
+            throw new InvalidQueryException("origin muss pages, documents oder all sein");
+        }
+    }
+
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    /** Ein Begriff über alle sichtbaren Seiten. */
+    /**
+     * Ein Begriff über alle sichtbaren Seiten; {@code documentOccurrences} und {@code documents} zählen Anhänge und
+     * enthaltene Dateien getrennt (0 bei origin=pages).
+     */
     public record TermEntry(String term, String normalized, String kind, int occurrences, int pages, int sources,
-                            List<String> spellings, List<String> expansions) {
+                            List<String> spellings, List<String> expansions, int documentOccurrences,
+                            int documents) {
 
         static TermEntry of(TermQueries.TermSummary summary) {
             return new TermEntry(summary.term(), summary.normalized(), summary.kind().id(), summary.occurrences(),
-                    summary.pages(), summary.sources(), summary.spellings(), summary.expansions());
+                    summary.pages(), summary.sources(), summary.spellings(), summary.expansions(),
+                    summary.documentOccurrences(), summary.documents());
         }
     }
 
@@ -170,17 +195,28 @@ public class TermsController {
     public record TermListResponse(List<TermEntry> terms, String nextCursor) {
     }
 
-    /** Eine Fundstelle. */
+    /**
+     * Eine Fundstelle; bei einem Anhang zusätzlich {@code attachmentId}, bei einer enthaltenen Datei {@code partId},
+     * und {@code documentSection}, in dessen Lesetext die Positionen gelten (ADR 0026, AP9b). Bei der Seite selbst
+     * fehlen die drei.
+     */
     public record OccurrenceEntry(String sourceId, String spaceKey, String pageId, String title, String kind,
                                   String term, String expansion, String section, int start, int end, String revision,
-                                  String inputSha256, String processorVersion, SnippetResponse snippet) {
+                                  String inputSha256, String processorVersion, SnippetResponse snippet,
+                                  @JsonInclude(JsonInclude.Include.NON_NULL)
+                                  String attachmentId,
+                                  @JsonInclude(JsonInclude.Include.NON_NULL)
+                                  String partId,
+                                  @JsonInclude(JsonInclude.Include.NON_NULL)
+                                  Integer documentSection) {
 
         static OccurrenceEntry of(TermQueries.Occurrence occurrence) {
             return new OccurrenceEntry(occurrence.sourceId(), occurrence.spaceKey(), occurrence.pageId(),
                     occurrence.title(), occurrence.kind().id(), occurrence.term(), occurrence.expansion(),
                     occurrence.section(), occurrence.start(), occurrence.end(), occurrence.revision(),
                     occurrence.inputSha256(), occurrence.processorVersion(),
-                    occurrence.snippet() == null ? null : SnippetResponse.of(occurrence.snippet()));
+                    occurrence.snippet() == null ? null : SnippetResponse.of(occurrence.snippet()),
+                    occurrence.attachmentId(), occurrence.partId(), occurrence.documentSection());
         }
     }
 

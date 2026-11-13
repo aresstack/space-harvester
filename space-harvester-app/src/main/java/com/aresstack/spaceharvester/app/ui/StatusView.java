@@ -570,20 +570,22 @@ public final class StatusView implements View {
         if (runtime == null) {
             note(context.startProblem() == null ? "Die App startet …"
                     : "Der Start ist fehlgeschlagen: " + Problems.describe(context.startProblem()).title()
-                    + ". Details unter Einstellungen.", AppContext.Section.SETTINGS, "Zu den Einstellungen");
+                    + ". Details unter Einstellungen.", () -> context.navigator().showGeneralSettings(),
+                    "Zu den Einstellungen");
         } else {
             if (!context.settings().problems().isEmpty()) {
                 note(Texts.count(context.settings().problems().size(), "Hinweis", "Hinweise")
                         + " zur Konfiguration: " + context.settings().problems().get(0),
-                        AppContext.Section.SETTINGS, "Alle ansehen");
+                        () -> context.navigator().showGeneralSettings(), "Alle ansehen");
             }
             if (!runtime.rejectedSources().isEmpty()) {
                 note(Texts.count(runtime.rejectedSources().size(), "Quelle fehlt", "Quellen fehlen")
                         + " wegen fehlerhafter Einstellungen: " + runtime.rejectedSources().get(0),
-                        AppContext.Section.SETTINGS, "Alle ansehen");
+                        () -> context.navigator().showGeneralSettings(), "Alle ansehen");
             }
             for (String id : runtime.waitingForSecret()) {
-                note("Für „" + id + "“ fehlen die Zugangsdaten.", AppContext.Section.SOURCES, "Zugangsdaten eingeben");
+                note("Für „" + id + "“ fehlen die Zugangsdaten.", () -> context.navigator().show(AppContext.Section.SOURCES),
+                        "Zugangsdaten eingeben");
             }
         }
         boolean open = attention.getComponentCount() > 0;
@@ -640,13 +642,14 @@ public final class StatusView implements View {
         root.add(show ? welcome : dashboard, BorderLayout.CENTER);
     }
 
-    private void note(String message, AppContext.Section section, String action) {
-        ComposerButton go = Comic.button(action, null);
-        go.addActionListener(e -> context.navigator().show(section));
+    /** Ein Hinweis oben in der Diagnose mit einem Knopf, der dorthin führt, wo sich der Hinweis beheben lässt. */
+    private void note(String message, Runnable go, String action) {
+        ComposerButton button = Comic.button(action, null);
+        button.addActionListener(e -> go.run());
         JPanel line = new JPanel(new BorderLayout(10, 0));
         line.setOpaque(false);
         line.add(Comic.text(message), BorderLayout.CENTER);
-        line.add(go, BorderLayout.EAST);
+        line.add(button, BorderLayout.EAST);
         line.setAlignmentX(0f);
         attention.add(line);
     }

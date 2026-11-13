@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -41,6 +42,8 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
+    /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
+    static final String DIAGNOSIS = "Diagnose";
     /** Tooltip der Tresor-Zeilen, deren Wert nur in KeePass liegt: lokal gibt es nichts zu löschen. */
     static final String KEEPASS_TIP = "Die Zugangsdaten liegen nur in KeePass und werden bei Bedarf über die Kopplung "
             + "gelesen; lokal ist nichts gespeichert. Die Verbindung trennt „Entkoppeln“ im Abschnitt KeePass.";
@@ -69,8 +72,9 @@ public final class SettingsView implements View {
     /** Die Löschknöpfe des Reiters „Sicherheit“ in Zeilenreihenfolge, für Tests. */
     final java.util.List<IconButton> deleteButtons = new java.util.ArrayList<>();
     private final java.util.Map<IconButton, Runnable> deletions = new java.util.HashMap<>();
-    private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
-            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
+    private final ComposerButton editCache = Comic.button(Glyph.PENCIL, "Alle Quellen anpassen …",
+            "Erkennung, Aktualisierung und Bereinigung für alle Quellen ändern; je Quelle unter Wissensquellen › "
+                    + "Synchronisierung");
     /** Rechts: der gewählte Bereich. */
     private final java.awt.CardLayout pages = new java.awt.CardLayout();
     private final JPanel pageDeck = new JPanel(pages);
@@ -165,8 +169,8 @@ public final class SettingsView implements View {
                 () -> feedback.success("Serverzertifikate übernommen")).open());
         editRetry.addActionListener(e -> SettingDialogs.retry(root, context,
                 () -> feedback.success("Wiederholungen übernommen")).open());
-        editCache.addActionListener(e -> SettingDialogs.cache(root, context,
-                () -> feedback.success("Cache-Einstellungen übernommen")).open());
+        editCache.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
+                () -> feedback.success("Regeln aller Quellen übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -202,7 +206,7 @@ public final class SettingsView implements View {
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
-        page(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
+        page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
@@ -215,6 +219,7 @@ public final class SettingsView implements View {
         vault.add(securityFeedback, BorderLayout.SOUTH);
         page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
                 Comic.plate("Tresor", Comic.RED, vault)));
+        page(DIAGNOSIS, diagnosisHolder);
         page(LIBRARIES, Comic.column(Comic.plate(LibrariesView.HEADING, Comic.DARK, libraries.component())),
                 bottomRows);
         pageDeck.setOpaque(false);
@@ -280,6 +285,19 @@ public final class SettingsView implements View {
     }
 
     /** Zeigt rechts den Bereich {@code name} und markiert ihn links im Drawer. */
+    /** Seite „Diagnose“: nimmt den Status-Bereich auf, sobald das Hauptfenster ihn übergibt. */
+    private final JPanel diagnosisHolder = new JPanel(new BorderLayout());
+    private View diagnosis;
+
+    /** Hängt die Diagnose ({@link StatusView}) als Seite ein; beim Öffnen der Seite lädt sie neu. */
+    public void diagnosis(View view) {
+        diagnosis = view;
+        diagnosisHolder.setOpaque(false);
+        diagnosisHolder.removeAll();
+        diagnosisHolder.add(view.component(), BorderLayout.CENTER);
+        diagnosisHolder.revalidate();
+    }
+
     void select(String name) {
         if (!rows.containsKey(name)) {
             return;
@@ -287,6 +305,9 @@ public final class SettingsView implements View {
         selected = name;
         rows.forEach((title, row) -> row.setSelected(title.equals(name)));
         pages.show(pageDeck, name);
+        if (DIAGNOSIS.equals(name) && diagnosis != null) {
+            diagnosis.shown();
+        }
         if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
             ai.render();
         }
@@ -427,6 +448,10 @@ public final class SettingsView implements View {
     public void shown() {
         render();
         ai.render();
+        // Die Diagnose hält ihre Abfrage an, solange sie nicht sichtbar ist; steht ihre Seite noch an, läuft sie weiter.
+        if (DIAGNOSIS.equals(selected) && diagnosis != null) {
+            diagnosis.shown();
+        }
     }
 
     /** Öffnet den Reiter „KI-Dienst“, z. B. vom Hinweis an der semantischen Suche. */
@@ -532,6 +557,12 @@ public final class SettingsView implements View {
         cache.reset();
         if (settings != null) {
             AppSettings.Cache c = settings.cache();
+            SyncSettings sync = settings.sync();
+            cache.add(SettingDialogs.CHANGE_SEARCH_TITLE, SettingDialogs.every(sync.interval()))
+                    .add(SettingDialogs.INVENTORY_TITLE, SettingDialogs.every(sync.inventoryInterval()))
+                    .add(SettingDialogs.MODE_TITLE, SettingDialogs.modeLabel(sync.mode()))
+                    .add(SettingDialogs.CATCH_UP_TITLE, sync.catchUpOnStart() ? "an" : "aus")
+                    .add(SettingDialogs.BEFORE_SEARCH_TITLE, sync.beforeSearch() ? "an" : "aus");
             cache.add(SettingDialogs.REFRESH_TITLE, SettingDialogs.refreshStrategy(c));
             if (!c.maxAge().isZero()) {
                 cache.add(SettingDialogs.CACHE_MAX_AGE, ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage, danach "

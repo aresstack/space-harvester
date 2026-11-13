@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
+import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
@@ -116,7 +117,7 @@ class TermConfiguration {
                                                   ObjectProvider<AcronymExpansionModel> model,
                                                   ObjectProvider<SnapshotRepository> repository,
                                                   ObjectProvider<PageCacheReader> reader,
-                                                  SentenceSegmenter sentences) {
+                                                  SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -194,7 +195,7 @@ class TermConfiguration {
     @Bean
     TermQueries termQueries(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
                             ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
-                            SentenceSegmenter sentences) {
+                            SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -211,7 +212,13 @@ class TermConfiguration {
             headers = key -> Optional.empty();
             payloads = key -> Optional.empty();
         }
-        return new TermQueries(catalog, index, access, headers, payloads, projector(), termsVersion(sentences));
+        // ADR 0026, AP9b: Snippets aus Anhängen nur gegen die am Stand vermerkte Extraktion.
+        return new TermQueries(catalog, index, access, headers, payloads, projector(), termsVersion(sentences),
+                (document, section, inputSha256, extraction) -> {
+                    DocumentEnrichments found = documents.getIfAvailable();
+                    return found == null ? Optional.empty()
+                            : found.sectionText(document, section, inputSha256, extraction);
+                });
     }
 
     /** Wie {@code terms} in der Anreicherung (EnrichmentConfiguration): dieselben Satzgrenzen, dieselbe Version. */

@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.TextSection;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ExtractionWriter;
+import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
@@ -20,6 +21,8 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.terms.TermPayload;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -89,8 +92,12 @@ class DocumentEnrichmentsTest {
     }
 
     private DocumentEnrichments documents(boolean enabled, Jobs jobs) {
-        Enrichments enrichments = new Enrichments(snapshot -> Optional.empty(),
-                List.of(new OutlineProcessor(), recording, pageOnly), results, Clock.fixed(NOW, ZoneOffset.UTC));
+        return documents(enabled, jobs, List.of(new OutlineProcessor(), recording, pageOnly));
+    }
+
+    private DocumentEnrichments documents(boolean enabled, Jobs jobs, List<EnrichmentProcessor> processors) {
+        Enrichments enrichments = new Enrichments(snapshot -> Optional.empty(), processors, results,
+                Clock.fixed(NOW, ZoneOffset.UTC));
         DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs, () -> enabled);
         documents.assets(new DocumentInventory() {
             @Override
@@ -139,6 +146,36 @@ class DocumentEnrichmentsTest {
         documents.indexed(list(), asset, extractions);
 
         assertThat(recording.inputs).hasSize(1);
+    }
+
+    @Test
+    void termsAndAcronymsOfEachDocumentAreComputedOnceAndStayWhileCurrent() {
+        AtomicInteger runs = new AtomicInteger();
+        TermProcessor terms = new TermProcessor() {
+            @Override
+            public EnrichmentOutput process(PageText text) {
+                runs.incrementAndGet();
+                return super.process(text);
+            }
+        };
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Der RSL (Rückmelde-Schlüssel-Liste) im Teil."));
+        DocumentEnrichments documents = documents(true, null, List.of(terms, new AcronymProcessor()));
+
+        documents.indexed(list(), asset, extractions);
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(runs).as("ein zweiter Lauf rechnet nichts").hasValue(1);
+        List<Enrichment> found = results.findDocuments(PAGE);
+        assertThat(found).extracting(Enrichment::processorId).containsExactlyInAnyOrder("terms", "acronyms");
+        assertThat(found).allSatisfy(result -> {
+            assertThat(result.document().isEmbedded()).isTrue();
+            assertThat(result.extraction()).as("der Lauf ist durch").isNotNull();
+        });
+        assertThat(TermPayload.postings(found.stream().filter(result -> result.processorId().equals("terms"))
+                .findFirst().orElseThrow())).anySatisfy(posting -> {
+                    assertThat(posting.normalized()).isEqualTo("rsl");
+                    assertThat(posting.ofDocument()).isTrue();
+                });
     }
 
     @Test

@@ -669,6 +669,29 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theSharedSyncRulesUseTheCoreKeysAndDropAnIntervalThatIsOff() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sync:\n    interval: 2h   # alt\n    withheld-retention: 14d\n");
+        var sync = new com.aresstack.spaceharvester.application.configuration.SyncSettings(true, null, java.util.List.of(),
+                true, Duration.ofDays(14), true, com.aresstack.spaceharvester.application.sync.SyncMode.FULL,
+                Duration.ofDays(1), Map.of());
+        editor.save(file, editor.withSync(file, new ConfigFileEditor.Draft(Files.readString(file), null), sync));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    withheld-retention: 14d", "    inventory-interval: 1d", "    mode: full",
+                "    catch-up-on-start: true", "    before-search: true", "    events: true")
+                .doesNotContain("interval: 2h");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sync().interval()).as("aus = Schlüssel weg").isNull();
+        assertThat(settings.sync().inventoryInterval()).isEqualTo(Duration.ofDays(1));
+        assertThat(settings.sync().mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
+        assertThat(settings.sync().catchUpOnStart()).isTrue();
+        assertThat(settings.sync().beforeSearch()).isTrue();
+        assertThat(settings.sync().events()).isTrue();
+    }
+
+    @Test
     void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");

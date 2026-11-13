@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.terms;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -45,23 +46,33 @@ public interface TermIndex {
      * @param prefix           Suchwert oder eines seiner Wörter ({@link TermText#words}) beginnt so, oder {@code null}
      * @param processorVersion nur Ergebnisse dieser Version des Prozessors {@code terms}
      * @param startsWith       nur der ganze Suchwert beginnt so (etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
+     * @param origin           Seiten, Dokumente oder beides (ADR 0026, AP9b)
      */
     record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion,
-                  String startsWith) {
+                  String startsWith, TermOrigin origin) {
 
         public Filter {
             sourceIds = Set.copyOf(sourceIds);
             Objects.requireNonNull(processorVersion, "processorVersion");
+            Objects.requireNonNull(origin, "origin");
         }
 
+        /** Nur Seiten, wie vor AP9b. */
+        public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
+                      String processorVersion, String startsWith) {
+            this(sourceIds, kind, normalized, prefix, processorVersion, startsWith, TermOrigin.PAGES);
+        }
+
+        /** Nur Seiten, wie vor AP9b. */
         public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
                       String processorVersion) {
-            this(sourceIds, kind, normalized, prefix, processorVersion, null);
+            this(sourceIds, kind, normalized, prefix, processorVersion, null, TermOrigin.PAGES);
         }
 
         /** Ob ein Eintrag die Auswahl erfüllt; für Ablagen ohne eigenen Index. */
         public boolean matches(TermPosting posting) {
-            if (!sourceIds.contains(posting.page().sourceId()) || kind != null && posting.kind() != kind
+            if (!sourceIds.contains(posting.page().sourceId()) || !origin.includes(posting.ofDocument())
+                    || kind != null && posting.kind() != kind
                     || normalized != null && !posting.normalized().equals(normalized)
                     || !posting.processorVersion().equals(processorVersion)
                     || startsWith != null && !posting.normalized().startsWith(startsWith)) {
@@ -75,6 +86,19 @@ public interface TermIndex {
     /** Eindeutiger Schlüssel eines Eintrags in Index-Reihenfolge. */
     static String sortKey(String normalized, TermKind kind, PageKey page) {
         return groupKey(normalized, kind) + '\u0000' + page.sourceId() + '\u0000' + page.pageId();
+    }
+
+    /**
+     * Schlüssel eines Eintrags aus einem Abschnitt eines Anhangs oder einer enthaltenen Datei: der Schlüssel der Seite,
+     * dahinter {@link DocumentKey#value()} und der Abschnitt. Für die Seite selbst {@link #sortKey(String, TermKind,
+     * PageKey)}; so liegen die Dokumente einer Seite direkt hinter ihr, und Schlüssel von Seiten ändern sich nicht.
+     */
+    static String sortKey(String normalized, TermKind kind, DocumentKey document, int section) {
+        String page = sortKey(normalized, kind, document.page());
+        if (document.isPage()) {
+            return page;
+        }
+        return page + '\u0000' + document.value() + '\u0000' + String.format("%06d", section);
     }
 
     /** Art und Suchwert; alle Schlüssel einer Gruppe beginnen mit ihm und {@code U+0000}. */

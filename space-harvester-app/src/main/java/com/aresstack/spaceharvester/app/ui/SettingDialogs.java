@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
@@ -615,86 +616,11 @@ final class SettingDialogs {
     }
 
     /**
-     * Cache und Aufbewahrung für alle Quellen, mit denselben Schlüsseln wie der Server: Zeitfenster
-     * ({@code space-harvester.cache.max-age}), in dem eine unveränderte Seite ohne Rückfrage bei der Quelle gilt,
-     * Versionsprüfung ({@code version-check}) und die Frist, nach der gesperrte Seiten endgültig aus dem Bestand gehen
-     * ({@code space-harvester.sync.withheld-retention}, ADR 0014). Die Rechte prüft der Core immer.
+     * Cache und Aufbewahrung für alle Quellen: seit die gemeinsamen Regeln in einem Dialog stehen, ist das
+     * {@link #syncRules(Component, AppContext, String, Runnable)} ohne Quelle.
      */
     static Shell cache(Component parent, AppContext context, Runnable saved) {
-        AppSettings.Cache current = context.settings() != null ? context.settings().cache() : AppSettings.Cache.DEFAULT;
-        JTextField maxAge = Comic.field(8);
-        maxAge.setText(ConfigFileEditor.duration(current.maxAge()));
-        JComboBox<String> refresh = Comic.combo();
-        for (String strategy : REFRESH_STRATEGIES) {
-            refresh.addItem(strategy);
-        }
-        refresh.setSelectedItem(refreshStrategy(current));
-        if (current.maxAge().isZero()) {
-            maxAge.setText("1d");
-        }
-        Runnable toggle = () -> maxAge.setEnabled(!ALWAYS_CHECK.equals(refresh.getSelectedItem()));
-        refresh.addActionListener(e -> toggle.run());
-        toggle.run();
-        JTextField retention = Comic.field(6);
-        // Ganze Tage als Zahl, sonst wie in der Datei (z. B. 12h): Kürzere Fristen gehen so nicht verloren.
-        java.time.Duration kept = current.withheldRetention();
-        retention.setText(kept.equals(java.time.Duration.ofDays(kept.toDays())) ? String.valueOf(kept.toDays())
-                : ConfigFileEditor.duration(kept));
-        SyncSettings sync = context.settings() != null ? context.settings().sync() : SyncSettings.DEFAULT;
-        JComboBox<String> background = choice(sync.backgroundFill() ? ON : OFF, ON, OFF);
-        javax.swing.JSpinner parallel = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
-                sync.backgroundParallelism(), 1, SyncSettings.MAX_BACKGROUND_PARALLELISM, 1));
-        background.addActionListener(e -> parallel.setEnabled(ON.equals(background.getSelectedItem())));
-        parallel.setEnabled(sync.backgroundFill());
-        Rows rows = new Rows();
-        rows.add(REFRESH_TITLE, refresh, "Immer Version prüfen: jede Anzeige fragt die Version bei der Quelle ab und "
-                + "lädt nur Geänderte neu. Zeitbasiert: innerhalb der Frist gilt die gespeicherte Seite ohne "
-                + "Rückfrage, danach ohne Versionsprüfung neu laden bzw. erst die Version vergleichen");
-        rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 30m, 6h oder 1d; höchstens 365 Tage");
-        rows.add(WITHHELD_RETENTION, retention, "Tage, die eine Seite ohne Leserecht gesperrt im Bestand bleibt, "
-                + "bevor ein Abgleich sie endgültig entfernt, oder eine Dauer wie 12h; 0 sofort");
-        rows.add(BACKGROUND_TITLE, background, "Lädt Seiten des Katalogs ohne oder mit veraltetem Inhalt, solange "
-                + "nichts anderes läuft; Suche und Aufträge haben Vorrang. Je Quelle abschaltbar unter Synchronisierung");
-        rows.add(BACKGROUND_PARALLELISM_TITLE, parallel, "Seiten, die der Hintergrund höchstens gleichzeitig lädt (1 bis "
-                + SyncSettings.MAX_BACKGROUND_PARALLELISM + "); je Quelle höchstens 3");
-        Supplier<Boolean> fill = () -> ON.equals(background.getSelectedItem());
-        Supplier<Integer> parallelism = () -> (Integer) parallel.getValue();
-        Supplier<AppSettings.Cache> draft = () -> {
-            Object chosen = refresh.getSelectedItem();
-            boolean always = ALWAYS_CHECK.equals(chosen);
-            java.time.Duration age = always ? java.time.Duration.ZERO : duration(maxAge.getText());
-            return new AppSettings.Cache(age, always || TIMED_WITH_CHECK.equals(chosen), days(retention.getText()));
-        };
-        JPanel body = new JPanel(new BorderLayout(0, 10));
-        body.setOpaque(false);
-        body.add(wrapped("Gilt für alle Quellen. Leserechte prüft der Core bei jedem Abruf, auch im Zeitfenster."),
-                BorderLayout.NORTH);
-        body.add(rows, BorderLayout.CENTER);
-        Shell shell = new Shell(parent, CACHE_TITLE, body);
-        shell.live();
-        shell.onSaveFile(() -> {
-            List<String> problems = new ArrayList<>();
-            java.time.Duration age = duration(maxAge.getText());
-            if (!ALWAYS_CHECK.equals(refresh.getSelectedItem()) && (age == null || age.isZero()
-                    || age.compareTo(java.time.Duration.ofDays(365)) > 0)) {
-                problems.add("Die Frist ist eine Dauer wie 30m, 6h oder 1d, mehr als 0 und höchstens 365 Tage.");
-            }
-            if (days(retention.getText()) == null) {
-                problems.add("Die Frist für gesperrte Seiten ist eine Zahl von Tagen ab 0 oder eine Dauer wie 12h.");
-            }
-            return problems;
-        }, () -> {
-            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
-            String text = Files.isRegularFile(context.configFile())
-                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
-            ConfigFileEditor.Draft written = editor.withCache(context.configFile(),
-                    new ConfigFileEditor.Draft(text, null), draft.get());
-            written = editor.withBackground(context.configFile(), new ConfigFileEditor.Draft(written.text(), null),
-                    fill.get(), parallelism.get());
-            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
-        }, () -> current.equals(draft.get()) && sync.backgroundFill() == fill.get()
-                && sync.backgroundParallelism() == parallelism.get(), context, saved);
-        return shell;
+        return syncRules(parent, context, null, saved);
     }
 
     static final String RETRY_TITLE = "Wiederholungen";
@@ -800,14 +726,22 @@ final class SettingDialogs {
     }
 
     static final String SYNC_RULES_TITLE = "Synchronisierung dieser Quelle";
+    static final String SYNC_ALL_TITLE = "Synchronisierung aller Quellen";
     static final String BACKGROUND_TITLE = "Hintergrundbefüllung im Leerlauf";
     static final String BACKGROUND_PARALLELISM_TITLE = "Gleichzeitig im Hintergrund";
+    static final String CHANGE_SEARCH_TITLE = "Automatische Änderungssuche";
+    static final String INVENTORY_TITLE = "Regelmäßige Bestandsinventur";
+    static final String MODE_TITLE = "Betriebsart";
+    static final String CATCH_UP_TITLE = "Nachholen beim Start";
+    static final String BEFORE_SEARCH_TITLE = "Abgleich vor jeder Suche";
     static final String AS_GLOBAL = "Wie global";
     static final String ON = "An";
     static final String OFF = "Aus";
     static final String CATALOG_ONLY = "Nur katalogisieren";
     static final String SYNC_CACHE = "Cache synchronisieren";
     static final String FULL = "Vollständig synchronisieren";
+    /** Höchste Zahl je Einheit in den Dauer-Feldern. */
+    static final int MAX_AMOUNT = 9_999;
 
     /** Beschriftung der Betriebsart. */
     static String modeLabel(SyncMode mode) {
@@ -827,105 +761,177 @@ final class SettingDialogs {
         };
     }
 
+    /** „aus“ oder „alle 6h“, für Hinweise und Übersichten. */
+    static String every(java.time.Duration interval) {
+        return interval == null ? "aus" : "alle " + ConfigFileEditor.duration(interval);
+    }
+
     /**
-     * Regeln einer Quelle ({@code space-harvester.sync.sources.<Quelle>}, {@code SourceSyncOverride}) in drei Bereichen:
-     * Erkennung, Aktualisierung, Bereinigung. Jedes Feld kann „wie global“ bleiben (leer bzw. {@link #AS_GLOBAL}); alle
-     * Änderungsquellen sind global aus, neue Seiten übernimmt die Suche immer.
+     * Erkennung, Aktualisierung und Bereinigung in einem Dialog. Ohne {@code sourceId} sind es die gemeinsamen Werte
+     * aller Quellen ({@code space-harvester.sync.*}, {@code cache.max-age}, {@code cache.version-check}); mit Quelle
+     * ihre Regeln ({@code sync.sources.<Quelle>}, {@code SourceSyncOverride}), bei denen jedes Feld „wie global“ bleiben
+     * kann. Dauern sind Zahl plus Einheit ({@link DurationField}), kein Text wie „1d“.
      */
     static Shell syncRules(Component parent, AppContext context, String sourceId, Runnable saved) {
+        boolean global = sourceId == null;
         AppSettings settings = context.settings();
-        SourceSyncOverride current = settings == null ? SourceSyncOverride.NONE : settings.syncRule(sourceId);
-        JTextField changeSearch = Comic.field(8);
-        changeSearch.setText(current.changeSearchInterval() == null ? ""
-                : ConfigFileEditor.duration(current.changeSearchInterval()));
-        JTextField inventory = Comic.field(8);
-        inventory.setText(current.inventoryInterval() == null ? ""
-                : ConfigFileEditor.duration(current.inventoryInterval()));
-        JComboBox<String> mode = choice(current.mode() == null ? AS_GLOBAL : modeLabel(current.mode()),
-                AS_GLOBAL, CATALOG_ONLY, SYNC_CACHE, FULL);
-        JComboBox<String> catchUp = tri(current.catchUpOnStart());
-        JComboBox<String> beforeSearch = tri(current.beforeSearch());
-        JComboBox<String> events = tri(current.events());
-        JComboBox<String> background = tri(current.backgroundFill());
-        JComboBox<String> refresh = choice(current.refreshStrategy() == null ? AS_GLOBAL
+        SourceSyncOverride current = global || settings == null ? SourceSyncOverride.NONE : settings.syncRule(sourceId);
+        SyncSettings sync = settings != null ? settings.sync() : SyncSettings.DEFAULT;
+        AppSettings.Cache cache = settings != null ? settings.cache() : AppSettings.Cache.DEFAULT;
+        String none = global ? OFF : AS_GLOBAL;
+        DurationField changeSearch = new DurationField(none, MAX_AMOUNT);
+        changeSearch.value(global ? sync.interval() : current.changeSearchInterval());
+        DurationField inventory = new DurationField(none, MAX_AMOUNT);
+        inventory.value(global ? sync.inventoryInterval() : current.inventoryInterval());
+        JComboBox<String> mode = global ? choice(modeLabel(sync.mode()), CATALOG_ONLY, SYNC_CACHE, FULL)
+                : choice(current.mode() == null ? AS_GLOBAL : modeLabel(current.mode()), AS_GLOBAL, CATALOG_ONLY,
+                SYNC_CACHE, FULL);
+        JComboBox<String> catchUp = global ? onOff(sync.catchUpOnStart()) : tri(current.catchUpOnStart());
+        JComboBox<String> beforeSearch = global ? onOff(sync.beforeSearch()) : tri(current.beforeSearch());
+        JComboBox<String> events = global ? onOff(sync.events()) : tri(current.events());
+        JComboBox<String> background = global ? onOff(sync.backgroundFill()) : tri(current.backgroundFill());
+        javax.swing.JSpinner parallel = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                sync.backgroundParallelism(), 1, SyncSettings.MAX_BACKGROUND_PARALLELISM, 1));
+        JComboBox<String> refresh = global ? choice(refreshStrategy(cache), ALWAYS_CHECK, TIMED_WITHOUT_CHECK,
+                TIMED_WITH_CHECK) : choice(current.refreshStrategy() == null ? AS_GLOBAL
                 : strategyLabel(current.refreshStrategy()), AS_GLOBAL, ALWAYS_CHECK, TIMED_WITHOUT_CHECK,
                 TIMED_WITH_CHECK);
-        JTextField maxAge = Comic.field(8);
-        maxAge.setText(current.maxAge() == null ? "" : ConfigFileEditor.duration(current.maxAge()));
-        JTextField retention = Comic.field(8);
-        retention.setText(current.withheldRetention() == null ? "" : ConfigFileEditor.duration(current.withheldRetention()));
+        DurationField maxAge = new DurationField(global ? null : AS_GLOBAL, MAX_AMOUNT);
+        maxAge.value(global ? cache.maxAge().isZero() ? java.time.Duration.ofDays(1) : cache.maxAge()
+                : current.maxAge());
+        DurationField retention = new DurationField(global ? null : AS_GLOBAL, MAX_AMOUNT);
+        retention.value(global ? cache.withheldRetention() : current.withheldRetention());
 
+        String globally = global ? "" : "; wie global: ";
         Rows rows = new Rows();
         rows.add("Erkennung", Comic.muted("Wie erfährt die App von neuen und geänderten Seiten?"), " ");
-        rows.add("Automatische Änderungssuche", changeSearch, "CQL-Abfrage ohne Administratorrechte, z. B. 1h; leer: "
-                + "wie global (aus)");
-        rows.add("Regelmäßige Bestandsinventur", inventory, "Nur Seitenmetadaten vergleichen, z. B. 1d; leer: wie "
-                + "global (aus)");
-        rows.add("Betriebsart", mode, "Was Zeitplan und Nachholen laden: nur den Katalog, dazu gecachte Inhalte "
-                + "aktuell halten, oder alle Inhalte");
-        rows.add("Nachholen beim Start", catchUp, "Änderungen seit dem letzten Lauf beim Start der App abfragen");
-        rows.add("Abgleich vor jeder Suche", beforeSearch, "Vor jeder Suche die Änderungen dieser Quelle abfragen");
-        rows.add("Webhooks", events, "Nur im Server; Confluence-Administratoren richten sie dort ein");
+        rows.add(CHANGE_SEARCH_TITLE, changeSearch, "Abstand der CQL-Abfrage nach Änderungen, ohne "
+                + "Administratorrechte; mindestens eine Minute" + (global ? "" : globally + every(sync.interval())));
+        rows.add(INVENTORY_TITLE, inventory, "Abstand des Vergleichs aller Seitenmetadaten; mindestens eine Minute"
+                + (global ? "" : globally + every(sync.inventoryInterval())));
+        rows.add(MODE_TITLE, mode, "Was Zeitplan und Nachholen laden: nur den Katalog, dazu gecachte Inhalte "
+                + "aktuell halten, oder alle Inhalte" + (global ? "" : globally + modeLabel(sync.mode())));
+        rows.add(CATCH_UP_TITLE, catchUp, "Änderungen seit dem letzten Lauf beim Start der App abfragen"
+                + (global ? "" : globally + onOffLabel(sync.catchUpOnStart())));
+        rows.add(BEFORE_SEARCH_TITLE, beforeSearch, "Vor jeder Suche die Änderungen "
+                + (global ? "der Quellen" : "dieser Quelle") + " abfragen"
+                + (global ? "" : globally + onOffLabel(sync.beforeSearch())));
+        rows.add("Webhooks", events, "Nur im Server; Confluence-Administratoren richten sie dort ein"
+                + (global ? "" : globally + onOffLabel(sync.events())));
         rows.add(BACKGROUND_TITLE, background, "Seiten des Katalogs ohne oder mit veraltetem Inhalt laden, solange "
-                + "nichts anderes läuft; jede Aktion hat Vorrang");
+                + "nichts anderes läuft; jede Aktion hat Vorrang" + (global ? "" : globally
+                + onOffLabel(sync.backgroundFill())));
+        rows.add(BACKGROUND_PARALLELISM_TITLE, parallel, "Seiten, die der Hintergrund höchstens gleichzeitig lädt (1 bis "
+                + SyncSettings.MAX_BACKGROUND_PARALLELISM + "); je Quelle höchstens 3");
         rows.add("Aktualisierung", Comic.muted("Wann prüft die App gespeicherte Seiten?"), " ");
-        rows.add(REFRESH_TITLE, refresh, "Wie global: wie unter Einstellungen › Cache");
-        rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 6h; leer: wie global");
+        rows.add(REFRESH_TITLE, refresh, global ? "Immer Version prüfen: jede Anzeige fragt die Version bei der Quelle "
+                + "ab und lädt nur Geänderte neu. Zeitbasiert: innerhalb der Frist gilt die gespeicherte Seite ohne "
+                + "Rückfrage, danach ohne Versionsprüfung neu laden bzw. erst die Version vergleichen"
+                : "Wie global: " + refreshStrategy(cache));
+        rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien; höchstens 365 Tage"
+                + (global ? "" : globally + (cache.maxAge().isZero() ? "keine" : ConfigFileEditor.duration(cache.maxAge()))));
         rows.add("Bereinigung", Comic.muted("Was geschieht mit Seiten, die nicht mehr gefunden werden?"), " ");
         rows.add(WITHHELD_RETENTION, retention, "Seiten ohne Leserecht verschwinden sofort aus der Suche; so lange "
-                + "bleiben die Rohdaten, z. B. 30d; leer: wie global");
-        Supplier<SourceSyncOverride> draft = () -> new SourceSyncOverride(optional(changeSearch.getText()),
-                optional(inventory.getText()), triValue(events), triValue(catchUp), triValue(beforeSearch),
-                switch ((String) mode.getSelectedItem()) {
-                    case CATALOG_ONLY -> SyncMode.CATALOG_ONLY;
-                    case SYNC_CACHE -> SyncMode.SYNC_CACHE;
-                    case FULL -> SyncMode.FULL;
-                    default -> null;
-                },
-                switch ((String) refresh.getSelectedItem()) {
-                    case ALWAYS_CHECK -> RefreshStrategy.ALWAYS_CHECK_VERSION;
-                    case TIMED_WITHOUT_CHECK -> RefreshStrategy.TIME_BASED;
-                    case TIMED_WITH_CHECK -> RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK;
-                    default -> null;
-                },
-                optional(maxAge.getText()), optional(retention.getText()), triValue(background));
+                + "bleiben die Rohdaten, 0 entfernt sie sofort" + (global ? "" : globally
+                + ConfigFileEditor.duration(cache.withheldRetention())));
+        rows.visible(parallel, global);
+        if (global) {
+            Runnable toggle = () -> maxAge.setEnabled(!ALWAYS_CHECK.equals(refresh.getSelectedItem()));
+            refresh.addActionListener(e -> toggle.run());
+            toggle.run();
+            background.addActionListener(e -> parallel.setEnabled(ON.equals(background.getSelectedItem())));
+            parallel.setEnabled(sync.backgroundFill());
+        }
+        Supplier<SyncMode> chosenMode = () -> switch ((String) mode.getSelectedItem()) {
+            case CATALOG_ONLY -> SyncMode.CATALOG_ONLY;
+            case SYNC_CACHE -> SyncMode.SYNC_CACHE;
+            case FULL -> SyncMode.FULL;
+            default -> null;
+        };
+        Supplier<RefreshStrategy> chosenStrategy = () -> switch ((String) refresh.getSelectedItem()) {
+            case ALWAYS_CHECK -> RefreshStrategy.ALWAYS_CHECK_VERSION;
+            case TIMED_WITHOUT_CHECK -> RefreshStrategy.TIME_BASED;
+            case TIMED_WITH_CHECK -> RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK;
+            default -> null;
+        };
+        Supplier<SourceSyncOverride> draft = () -> new SourceSyncOverride(changeSearch.value(), inventory.value(),
+                triValue(events), triValue(catchUp), triValue(beforeSearch), chosenMode.get(), chosenStrategy.get(),
+                maxAge.value(), retention.value(), triValue(background));
+        Supplier<AppSettings.Cache> cacheDraft = () -> {
+            boolean always = chosenStrategy.get() == RefreshStrategy.ALWAYS_CHECK_VERSION;
+            return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
+                    always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value());
+        };
+        Supplier<SyncSettings> syncDraft = () -> new SyncSettings(ON.equals(events.getSelectedItem()),
+                changeSearch.value(), sync.spaces(), ON.equals(beforeSearch.getSelectedItem()), retention.value(),
+                ON.equals(catchUp.getSelectedItem()), chosenMode.get(), inventory.value(), sync.sources(),
+                ON.equals(background.getSelectedItem()), (Integer) parallel.getValue());
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
-        body.add(wrapped("Gilt nur für diese Quelle; leere Felder und „Wie global“ nehmen die gemeinsamen Werte. Neue "
-                + "Seiten aus der Suche kommen immer in den Cache. Ein vollständiger Abgleich von Hand ist der "
-                + "Kreispfeil am Space."), BorderLayout.NORTH);
+        body.add(wrapped(global ? "Gilt für alle Quellen, soweit eine Quelle unter Wissensquellen › Synchronisierung "
+                + "nichts anderes festlegt. Neue Seiten aus der Suche kommen immer in den Cache; Leserechte prüft der "
+                + "Core bei jedem Abruf. Ein vollständiger Abgleich von Hand ist der Kreispfeil am Space."
+                : "Gilt nur für diese Quelle; „Wie global“ nimmt den gemeinsamen Wert aller Quellen (Knopf „Alle "
+                + "Quellen …“ bzw. Einstellungen › Cache). Neue Seiten aus der Suche kommen immer in den Cache. Ein "
+                + "vollständiger Abgleich von Hand ist der Kreispfeil am Space."), BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
-        Shell shell = new Shell(parent, SYNC_RULES_TITLE, body);
+        Shell shell = new Shell(parent, global ? SYNC_ALL_TITLE : SYNC_RULES_TITLE, body);
         shell.live();
         shell.onSaveFile(() -> {
             List<String> problems = new ArrayList<>();
-            for (JTextField field : List.of(changeSearch, inventory)) {
-                java.time.Duration value = optional(field.getText());
-                if (!field.getText().isBlank() && (value == null || value.compareTo(SyncSettings.MIN_INTERVAL) < 0)) {
-                    problems.add("Abstände sind Dauern wie 30m, 6h oder 1d, mindestens eine Minute.");
+            for (DurationField field : List.of(changeSearch, inventory)) {
+                java.time.Duration value = field.value();
+                if (value != null && value.compareTo(SyncSettings.MIN_INTERVAL) < 0) {
+                    problems.add("Abstände betragen mindestens eine Minute; „" + none + "“ schaltet die Suche ab.");
                     break;
                 }
             }
-            if (!maxAge.getText().isBlank() && optional(maxAge.getText()) == null
-                    || !retention.getText().isBlank() && optional(retention.getText()) == null) {
-                problems.add("Fristen sind Dauern wie 6h oder 30d.");
-            }
-            String chosen = (String) refresh.getSelectedItem();
-            AppSettings.Cache global = context.settings() != null ? context.settings().cache() : AppSettings.Cache.DEFAULT;
-            if ((TIMED_WITHOUT_CHECK.equals(chosen) || TIMED_WITH_CHECK.equals(chosen)) && maxAge.getText().isBlank()
-                    && global.maxAge().isZero()) {
-                problems.add("Die zeitbasierte Aktualisierung braucht eine Frist.");
+            if (global) {
+                java.time.Duration age = maxAge.value();
+                if (chosenStrategy.get() != RefreshStrategy.ALWAYS_CHECK_VERSION
+                        && (age.isZero() || age.compareTo(java.time.Duration.ofDays(365)) > 0)) {
+                    problems.add("Die Frist ist mehr als 0 und höchstens 365 Tage.");
+                }
+            } else {
+                RefreshStrategy strategy = chosenStrategy.get();
+                boolean timed = strategy != null ? strategy != RefreshStrategy.ALWAYS_CHECK_VERSION
+                        : !cache.maxAge().isZero();
+                java.time.Duration age = maxAge.value() != null ? maxAge.value() : cache.maxAge();
+                if (timed && age.isZero()) {
+                    problems.add("Die zeitbasierte Aktualisierung braucht eine Frist.");
+                } else if (age.compareTo(java.time.Duration.ofDays(365)) > 0) {
+                    problems.add("Die Frist ist höchstens 365 Tage.");
+                }
             }
             return problems;
         }, () -> {
             ConfigFileEditor editor = new ConfigFileEditor(context.loader());
             String text = Files.isRegularFile(context.configFile())
                     ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
-            ConfigFileEditor.Draft written = editor.withSyncRule(context.configFile(),
-                    new ConfigFileEditor.Draft(text, null), sourceId, draft.get());
+            ConfigFileEditor.Draft written;
+            if (global) {
+                SyncSettings next = syncDraft.get();
+                written = editor.withCache(context.configFile(), new ConfigFileEditor.Draft(text, null),
+                        cacheDraft.get());
+                written = editor.withBackground(context.configFile(), new ConfigFileEditor.Draft(written.text(), null),
+                        next.backgroundFill(), next.backgroundParallelism());
+                written = editor.withSync(context.configFile(), new ConfigFileEditor.Draft(written.text(), null), next);
+            } else {
+                written = editor.withSyncRule(context.configFile(), new ConfigFileEditor.Draft(text, null), sourceId,
+                        draft.get());
+            }
             editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
-        }, () -> current.equals(draft.get()), context, saved);
+        }, () -> global ? cache.equals(cacheDraft.get()) && sync.equals(syncDraft.get()) : current.equals(draft.get()),
+                context, saved);
         return shell;
+    }
+
+    private static JComboBox<String> onOff(boolean value) {
+        return choice(value ? ON : OFF, ON, OFF);
+    }
+
+    private static String onOffLabel(boolean value) {
+        return value ? ON : OFF;
     }
 
     private static JComboBox<String> choice(String selected, String... items) {

@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.ui.controls.SectionHeader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
@@ -115,10 +116,14 @@ public final class SourcesView implements View {
     private final JLabel spaceLine = Comic.muted(" ");
     /** Reiter „Synchronisierung“: was für die gewählte Quelle gilt. */
     final Facts syncFacts = new Facts();
-    final ComposerButton editSourceRules = Comic.primary("Regeln dieser Quelle …",
-            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle; leer bleibt wie global");
-    private final ComposerButton editRules = Comic.button("Gemeinsame Werte …",
-            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten für alle Quellen (Einstellungen › Cache)");
+    final ComposerButton editSourceRules = Comic.button(Glyph.PENCIL, "Diese Quelle anpassen …",
+            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle ändern; „Wie global“ nimmt den gemeinsamen "
+                    + "Wert");
+    final ComposerButton editRules = Comic.button(Glyph.PENCIL, "Alle Quellen …",
+            "Die gemeinsamen Werte aller Quellen ändern (auch unter Einstellungen › Cache)");
+    /** Über den Werten: was der Reiter zeigt und wo sich die Werte ändern lassen. */
+    private final JTextArea syncIntro = Comic.hint("So hält die App diese Quelle aktuell. Werte mit „(wie global)“ "
+            + "stammen aus den gemeinsamen Regeln aller Quellen; ändern über die Knöpfe rechts.");
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
@@ -144,12 +149,8 @@ public final class SourcesView implements View {
         cardsScroll.getViewport().setBackground(Comic.SURFACE);
         left.add(cardsScroll, BorderLayout.CENTER);
         add.addActionListener(e -> SourceForm.open(root, context, this::select));
-        JPanel south = new JPanel(new BorderLayout(0, 8));
-        south.setOpaque(false);
-        south.add(add, BorderLayout.NORTH);
-        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "die App verschlüsselt ab."), BorderLayout.SOUTH);
-        left.add(south, BorderLayout.SOUTH);
+        // Kein Hinweistext unter dem Knopf: Was Quellen speichern, erklärt das Fragezeichen im Quellenformular.
+        left.add(add, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
@@ -277,8 +278,8 @@ public final class SourcesView implements View {
                         .open();
             }
         });
-        editRules.addActionListener(e -> SettingDialogs.cache(root, context,
-                () -> feedback.success("Regeln übernommen")).open());
+        editRules.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
+                () -> feedback.success("Regeln aller Quellen übernommen")).open());
         spaces.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 updateSpaceActions();
@@ -304,8 +305,13 @@ public final class SourcesView implements View {
         // Textreiter statt Trenner: je Reiter die ganze Höhe, die Einstellungen scrollen bei Bedarf.
         JPanel syncPanel = new JPanel(new BorderLayout(0, 8));
         syncPanel.setOpaque(false);
+        // Zuerst die Knöpfe zum Ändern, rechts oben, mit dem Hinweis daneben; die Werte darunter.
+        JPanel syncHead = new JPanel(new BorderLayout(12, 0));
+        syncHead.setOpaque(false);
+        syncHead.add(syncIntro, BorderLayout.CENTER);
+        syncHead.add(Comic.row(editSourceRules, editRules), BorderLayout.EAST);
+        syncPanel.add(syncHead, BorderLayout.NORTH);
         syncPanel.add(syncFacts, BorderLayout.CENTER);
-        syncPanel.add(Comic.row(editSourceRules, editRules), BorderLayout.SOUTH);
         tabs.tab(SPACES, spacesPanel)
                 .tab(SYNC, flush(Comic.column(syncPanel)))
                 .tab(SETTINGS, flush(Comic.column(settings)))
@@ -344,9 +350,38 @@ public final class SourcesView implements View {
             selected = sourceId;
             filter.setText("");
         }
+        // Eine gewählte Quelle in einer zugeklappten Gruppe klappt die Gruppe auf.
+        String type = cards.get(sourceId).entry.config().type();
+        if (collapsedTypes.remove(type)) {
+            typeHeaders().stream().filter(h -> h.title().equals(Texts.sourceType(type))).forEach(h -> h.open(true));
+            showGroups();
+        }
         cards.values().forEach(SourceCard::update);
         cards.get(sourceId).scrollRectToVisible(new Rectangle(cards.get(sourceId).getSize()));
         showSelected();
+    }
+
+    /** Quellentypen, deren Gruppe zugeklappt ist; gilt für die Sitzung. */
+    private final java.util.Set<String> collapsedTypes = new java.util.HashSet<>();
+
+    /** Für Tests: die Gruppenüberschriften in Reihenfolge. */
+    List<SectionHeader> typeHeaders() {
+        List<SectionHeader> headers = new ArrayList<>();
+        for (Component c : cardsPanel.getComponents()) {
+            if (c instanceof SectionHeader header) {
+                headers.add(header);
+            }
+        }
+        return headers;
+    }
+
+    /** Zeigt die Karten offener Gruppen und versteckt die zugeklappten. */
+    private void showGroups() {
+        for (SourceCard card : cards.values()) {
+            card.setVisible(!collapsedTypes.contains(card.entry.config().type()));
+        }
+        cardsPanel.revalidate();
+        cardsPanel.repaint();
     }
 
     private void refresh() {
@@ -357,13 +392,34 @@ public final class SourcesView implements View {
             sources.addAll(entries);
             cards.clear();
             cardsPanel.removeAll();
+            // Je Quellentyp eine aufklappbare Gruppe, in der Reihenfolge der Datei; nur Typen mit Quellen.
+            Map<String, List<AppSettings.SourceEntry>> byType = new LinkedHashMap<>();
             for (AppSettings.SourceEntry entry : entries) {
-                SourceCard card = new SourceCard(entry);
-                cards.put(entry.id(), card);
-                cardsPanel.add(card);
+                byType.computeIfAbsent(entry.config().type(), t -> new ArrayList<>()).add(entry);
             }
-            cardsPanel.revalidate();
-            cardsPanel.repaint();
+            byType.forEach((type, group) -> {
+                boolean open = !collapsedTypes.contains(type);
+                SectionHeader header = new SectionHeader(Texts.sourceType(type), open, null) {
+                    @Override
+                    public void toggle() {
+                        super.toggle();
+                        if (isOpen()) {
+                            collapsedTypes.remove(type);
+                        } else {
+                            collapsedTypes.add(type);
+                        }
+                        showGroups();
+                    }
+                };
+                header.count(group.size());
+                cardsPanel.add(header);
+                for (AppSettings.SourceEntry entry : group) {
+                    SourceCard card = new SourceCard(entry);
+                    cards.put(entry.id(), card);
+                    cardsPanel.add(card);
+                }
+            });
+            showGroups();
         }
         if (selected == null || !cards.containsKey(selected)) {
             selected = sources.isEmpty() ? null : sources.get(0).id();
@@ -386,14 +442,15 @@ public final class SourcesView implements View {
         SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
                 .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
-                .add("Automatische Änderungssuche", interval(effective.interval(), "CQL, ohne "
+                .add(SettingDialogs.CHANGE_SEARCH_TITLE, interval(effective.interval(), "CQL, ohne "
                         + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
-                .add("Regelmäßige Bestandsinventur", interval(effective.inventoryInterval(), "nur Seitenmetadaten")
+                .add(SettingDialogs.INVENTORY_TITLE, interval(effective.inventoryInterval(), "nur Seitenmetadaten")
                         + origin(rule.inventoryInterval()), tone(rule.inventoryInterval()))
-                .add("Betriebsart", SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()), tone(rule.mode()))
-                .add("Nachholen beim Start", onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
+                .add(SettingDialogs.MODE_TITLE, SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()),
+                        tone(rule.mode()))
+                .add(SettingDialogs.CATCH_UP_TITLE, onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
                         tone(rule.catchUpOnStart()))
-                .add("Abgleich vor jeder Suche", onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
+                .add(SettingDialogs.BEFORE_SEARCH_TITLE, onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
                         tone(rule.beforeSearch()))
                 .add("Webhooks", onOff(effective.events()) + origin(rule.events())
                         + " · nur im Server, Einrichtung in Confluence", tone(rule.events()))
@@ -1046,6 +1103,96 @@ public final class SourcesView implements View {
      * Startet für die angehakten Spaces, sonst den gewählten, je einen Auftrag: Kreispfeil (vollständiger Abgleich),
      * Initialisieren oder Änderungen prüfen. Ohne Auswahl startet nichts, auch nicht der erste Space der Liste.
      */
+    static final String SYNC_CARD_TOOLTIP = "Änderungen seit dem letzten Lauf nachholen: je Space dieser Quelle ein "
+            + "Auftrag im Hintergrund; die Kreispfeile bleiben grau, bis alle durch sind";
+
+    /** Quellen, deren Nachholen läuft; so lange bleiben die Kreispfeile ihrer Karte ausgegraut. */
+    private final java.util.Set<String> catchingUp = new java.util.HashSet<>();
+
+    /** Für Tests: die Kreispfeile an der Karte dieser Quelle. */
+    IconButton syncButton(String sourceId) {
+        SourceCard card = cards.get(sourceId);
+        return card == null ? null : card.sync;
+    }
+
+    /**
+     * Kreispfeile an der Quellenkarte: je Space der Quelle die Änderungen seit dem letzten bestätigten Stand nachholen
+     * ({@link Workspace#catchUp}), in der Betriebsart der Quelle; Spaces ohne bestätigten Stand bekommen einen ersten.
+     * Der Knopf bleibt ausgegraut, bis jeder gestartete Auftrag beendet ist, auch gescheitert; das Ergebnis steht in
+     * der Statuszeile und unter Aufträge.
+     */
+    private void catchUp(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        AppRuntime runtime = context.runtime();
+        List<String> keys = context.connection(id).spaces().stream().map(Partition::key).toList();
+        if (runtime == null || keys.isEmpty()) {
+            feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
+                    + "die Änderungen nach.");
+            return;
+        }
+        if (!catchingUp.add(id)) {
+            return;
+        }
+        cards.values().forEach(SourceCard::update);
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
+                : SyncMode.CATALOG_ONLY;
+        feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
+        Background.run(() -> {
+            List<String> jobs = new ArrayList<>();
+            Map<String, Exception> failed = new LinkedHashMap<>();
+            for (String key : keys) {
+                try {
+                    jobs.add(runtime.workspace().catchUp(id, key, mode).id());
+                } catch (RuntimeException e) {
+                    failed.put(key, e);
+                }
+            }
+            int broken = 0;
+            while (true) {
+                boolean running = false;
+                broken = 0;
+                for (String job : jobs) {
+                    JobStatus status = runtime.workspace().job(job);
+                    if (status == null || status.state().terminal()) {
+                        if (status != null && status.state() != com.aresstack.spaceharvester.application.jobs.JobState
+                                .COMPLETED) {
+                            broken++;
+                        }
+                    } else {
+                        running = true;
+                    }
+                }
+                if (!running) {
+                    break;
+                }
+                Thread.sleep(1000);
+            }
+            return new CatchUpResult(jobs.size(), broken, failed);
+        }, result -> {
+            catchingUp.remove(id);
+            cards.values().forEach(SourceCard::update);
+            String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
+            if (result.failed().isEmpty() && result.broken() == 0) {
+                feedback.success(done);
+            } else {
+                int notOk = result.failed().size() + result.broken();
+                feedback.warning(Texts.count(result.started() - result.broken(), "Space", "Spaces") + " nachgeholt, "
+                        + Texts.count(notOk, "Space", "Spaces") + " nicht",
+                        result.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                .collect(java.util.stream.Collectors.joining("\n"))
+                                + (result.broken() == 0 ? "" : "\nEinzelheiten unter Aufträge"));
+            }
+        }, error -> {
+            catchingUp.remove(id);
+            cards.values().forEach(SourceCard::update);
+            feedback.problem(error);
+        });
+    }
+
+    private record CatchUpResult(int started, int broken, Map<String, Exception> failed) {
+    }
+
     private void startSpaces(String one, String many, SpaceStart action) {
         List<String> keys = spaceTargets();
         String id = selectedId();
@@ -1220,16 +1367,27 @@ public final class SourcesView implements View {
         /** Höhen aus der tatsächlichen Breite: umbrechende Namen kennen ihre Höhe erst mit der Breite. */
         @Override
         public void doLayout() {
-            int y = 0;
-            for (Component c : getComponents()) {
-                int h = ((SourceCard) c).heightFor(getWidth());
-                c.setBounds(0, y, getWidth(), h);
-                y += h + GAP;
-            }
+            int y = place(getWidth(), true);
             if (y != lastHeight) {
                 lastHeight = y;
                 revalidate();
             }
+        }
+
+        /** Überschriften mit ihrer festen Höhe, Karten mit ihrer Höhe bei dieser Breite; versteckte Karten fehlen. */
+        private int place(int width, boolean apply) {
+            int y = 0;
+            for (Component c : getComponents()) {
+                if (!c.isVisible()) {
+                    continue;
+                }
+                int h = c instanceof SourceCard card ? card.heightFor(width) : c.getPreferredSize().height;
+                if (apply) {
+                    c.setBounds(0, y, width, h);
+                }
+                y += h + (c instanceof SourceCard ? GAP : 2);
+            }
+            return y;
         }
 
         private int lastHeight = -1;
@@ -1238,11 +1396,7 @@ public final class SourcesView implements View {
         public Dimension getPreferredSize() {
             int width = getWidth() > 0 ? getWidth() : getParent() != null && getParent().getWidth() > 0
                     ? getParent().getWidth() : 220;
-            int y = 0;
-            for (Component c : getComponents()) {
-                y += ((SourceCard) c).heightFor(width) + GAP;
-            }
-            return new Dimension(width, y);
+            return new Dimension(width, place(width, false));
         }
 
         @Override
@@ -1285,6 +1439,8 @@ public final class SourcesView implements View {
         private final IconButton edit = new IconButton(Glyph.PENCIL, "Einstellungen der Quelle öffnen");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
+        /** Kreispfeile vor den drei Punkten: Änderungen seit dem letzten bestätigten Stand je Space nachholen. */
+        final IconButton sync = new IconButton(Glyph.REFRESH, SYNC_CARD_TOOLTIP);
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
 
         private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
@@ -1309,6 +1465,7 @@ public final class SourcesView implements View {
             actions.setOpaque(false);
             actions.add(edit);
             actions.add(remove);
+            actions.add(sync);
             actions.add(more);
             add(actions);
 
@@ -1319,6 +1476,10 @@ public final class SourcesView implements View {
             remove.addActionListener(e -> {
                 select(entry.id());
                 SourcesView.this.remove(entry);
+            });
+            sync.addActionListener(e -> {
+                select(entry.id());
+                SourcesView.this.catchUp(entry);
             });
             more.addActionListener(e -> {
                 select(entry.id());
@@ -1429,6 +1590,9 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
+            // Ausgegraut, bis alle gestarteten Aufträge durch oder gescheitert sind, wie die Knöpfe beim Export.
+            sync.setEnabled(!disabled(entry) && !waiting && connection.state() == AppContext.Connection.State.CONNECTED
+                    && !catchingUp.contains(entry.id()));
             revalidate();
             repaint();
         }

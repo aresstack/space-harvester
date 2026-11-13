@@ -66,6 +66,15 @@ public class AcronymProcessor implements EnrichmentProcessor {
     }
 
     /** {@code 4;sentences=…}: Ein anderer Satz-Segmentierer ergibt andere Ausschreibungen und veraltet die Ergebnisse. */
+    /**
+     * Auch je Abschnitt eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9b); rechnet lokal, ohne Netz. Die
+     * Version bleibt: dieselbe Logik auf dem Lesetext des Dokuments.
+     */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
     @Override
     public String version() {
         return "4;sentences=" + sentences();

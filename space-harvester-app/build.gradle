@@ -80,6 +80,11 @@ tasks.named('jar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
+    // Fehlgeschlagene Tests mit Meldung im Konsolenprotokoll, damit CI-Fehler ohne Berichts-Download lesbar sind.
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
 }
 
 // Startet das fertige JAR wie ein Benutzer (#103): --version und --screenshot mit einer Dateiquelle, ohne Bildschirm.
