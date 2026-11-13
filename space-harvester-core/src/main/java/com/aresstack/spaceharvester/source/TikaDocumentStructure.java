@@ -1734,6 +1734,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     } else if (cls.equals("slide") && legacyPowerPoint()) {
                         // .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit).
                         slide++;
+                    } else if ((cls.equals("slide-master") || cls.equals("slide-handout-master")) && powerPoint()) {
+                        // Folienmaster und Handzettelmaster gibt Tika nach allen Folien aus: gehören zu keiner Folie.
+                        slide = 0;
                     } else if (cls.equals("slide-content") && powerPoint()) {
                         // .pptx (AP10): Tika gibt die Folien nicht in Folienreihenfolge aus; die Nummer kommt aus
                         // PptxSlideOrder, sonst bleibt sie leer. Notizen danach gehören zu dieser Folie.

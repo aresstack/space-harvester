@@ -98,7 +98,12 @@ final class PptxSlideOrder {
         // Folienbeziehungen nach Kennung als Text, wie POI sie Tika gibt.
         TreeMap<String, String> slides = new TreeMap<>();
         Set<String> targets = new HashSet<>();
+        Set<String> ids = new HashSet<>();
         for (Relationship relationship : relationships(zip, directory + "_rels/" + name + ".rels")) {
+            // POI überschreibt Beziehungen gleicher Kennung, bevor es nach Typ filtert: jede Kennung nur einmal.
+            if (!ids.add(relationship.id())) {
+                return Optional.empty();
+            }
             if (!SLIDE.equals(relationship.type()) && !STRICT_SLIDE.equals(relationship.type())) {
                 continue;
             }

@@ -90,6 +90,10 @@ class PptxSlideOrderTest {
         assertThat(PptxSlideOrder.of(edited(pptx, "ppt/presentation.xml",
                 xml -> xml.replaceFirst("(<p:sldId [^>]*/>)", "$1$1")))).isEmpty();
         assertThat(PptxSlideOrder.of(edited(pptx, "ppt/presentation.xml", null))).isEmpty();
+        assertThat(PptxSlideOrder.of(edited(pptx, "ppt/_rels/presentation.xml.rels",
+                xml -> xml.replace("</Relationships>", "<Relationship Id=\"rId6\" Type=\"http://schemas."
+                        + "openxmlformats.org/officeDocument/2006/relationships/theme\" Target=\"theme/theme1.xml\"/>"
+                        + "</Relationships>")))).as("Kennung doppelt, auch bei anderem Typ").isEmpty();
         assertThat(PptxSlideOrder.of(edited(pptx, "ppt/presentation.xml",
                 xml -> xml.replaceFirst("^(<\\?xml[^>]*\\?>)",
                                 "$1<!DOCTYPE p [<!ENTITY x SYSTEM \"file:///etc/hostname\">]>")
@@ -139,6 +143,56 @@ class PptxSlideOrderTest {
         assertThat(marks).hasSize(SLIDES - 1).doesNotHaveDuplicates();
         assertThat(blocks).allSatisfy(block -> assertThat(block.location().flatMap(Location::slide)).isEmpty());
         assertThat(stored.blocks()).isEqualTo(blocks.size());
+    }
+
+    @Test
+    void masterTextAfterTheSlidesBelongsToNoSlide() throws Exception {
+        Path pptx = renamed(presentation(directory.resolve("roh.pptx")), directory.resolve("folien.pptx"));
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        new TikaDocumentStructure(1, 4096, new MasterParser()).extract(pptx, "folien.pptx", PPTX,
+                ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(sink.blocks).filteredOn(block -> DocumentExtractions.plain(block).contains("MASTERTEXT"))
+                .hasSize(2).allSatisfy(block -> assertThat(block.location().flatMap(Location::slide)).isEmpty());
+        assertThat(sink.blocks).filteredOn(block -> DocumentExtractions.plain(block).startsWith("MARKE-"))
+                .allSatisfy(block -> assertThat(block.location().flatMap(Location::slide)).isPresent());
+    }
+
+    /** Tika, dazu Folienmaster und Handzettelmaster nach allen Folien, wie Tikas SAX-Weg sie ausgibt. */
+    private static final class MasterParser extends org.apache.tika.parser.AbstractParser {
+
+        private final org.apache.tika.parser.AutoDetectParser tika = new org.apache.tika.parser.AutoDetectParser();
+
+        @Override
+        public java.util.Set<org.apache.tika.mime.MediaType> getSupportedTypes(
+                org.apache.tika.parser.ParseContext context) {
+            return tika.getSupportedTypes(context);
+        }
+
+        @Override
+        public void parse(InputStream stream, org.xml.sax.ContentHandler handler,
+                          org.apache.tika.metadata.Metadata metadata, org.apache.tika.parser.ParseContext context)
+                throws IOException, org.xml.sax.SAXException, org.apache.tika.exception.TikaException {
+            tika.parse(stream, new org.apache.tika.sax.ContentHandlerDecorator(handler) {
+                @Override
+                public void endElement(String uri, String local, String name) throws org.xml.sax.SAXException {
+                    if ("body".equals(local)) {
+                        for (String cls : new String[] {"slide-master", "slide-handout-master"}) {
+                            org.xml.sax.helpers.AttributesImpl attributes = new org.xml.sax.helpers.AttributesImpl();
+                            attributes.addAttribute("", "class", "class", "CDATA", cls);
+                            super.startElement(uri, "div", "div", attributes);
+                            super.startElement(uri, "p", "p", new org.xml.sax.helpers.AttributesImpl());
+                            char[] text = ("MASTERTEXT " + cls).toCharArray();
+                            super.characters(text, 0, text.length);
+                            super.endElement(uri, "p", "p");
+                            super.endElement(uri, "div", "div");
+                        }
+                    }
+                    super.endElement(uri, local, name);
+                }
+            }, metadata, context);
+        }
     }
 
     /** Tika, aber die zweite Folie fehlt in der Ausgabe (ein Parser, der eine Folie überspringt). */
