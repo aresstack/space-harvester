@@ -197,6 +197,42 @@ class WorkspaceTest {
     }
 
     @Test
+    void jobChangesArriveWithoutAskingAgain() throws Exception {
+        Workspace workspace = start().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        java.util.List<com.aresstack.spaceharvester.application.jobs.JobEvent> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        changes.add(status);
+                    }
+
+                    @Override
+                    public void event(com.aresstack.spaceharvester.application.jobs.JobEvent event) {
+                        events.add(event);
+                    }
+                })) {
+            JobStatus started = workspace.startSync("handbuch", space);
+
+            JobStatus finished = null;
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            while (finished == null && System.nanoTime() < until) {
+                JobStatus next = changes.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null && next.id().equals(started.id()) && next.state() == JobState.COMPLETED) {
+                    finished = next;
+                }
+            }
+            assertThat(finished).as("Ende des Abgleichs gemeldet").isNotNull();
+            assertThat(finished.progress().processed()).isPositive();
+            assertThat(events).extracting(com.aresstack.spaceharvester.application.jobs.JobEvent::jobId)
+                    .contains(started.id());
+        }
+    }
+
+    @Test
     void theActivityListSurvivesARestart() throws Exception {
         Workspace first = start().workspace();
         String id = await(first, first.startSync("wiki", "DEV")).id();
