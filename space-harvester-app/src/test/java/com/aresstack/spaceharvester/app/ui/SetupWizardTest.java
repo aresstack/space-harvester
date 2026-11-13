@@ -275,6 +275,7 @@ class SetupWizardTest {
             wizard[0].ai.chatModel.setText("chat-z");
             assertThat(wizard[0].ai.judgedPairs()).as("Standard: Chat-Prüfung aus").isZero();
             wizard[0].ai.judgedPairs.setValue(30);
+            assertThat(wizard[0].ai.changed()).as("nur das Budget geändert zählt als Änderung").isTrue();
             wizard[0].next.doClick();
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
         });

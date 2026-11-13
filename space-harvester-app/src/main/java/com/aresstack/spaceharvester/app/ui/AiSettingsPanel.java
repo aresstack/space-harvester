@@ -621,7 +621,8 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess);
+        return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
+                || judgedPairs() != savedBudget(settings).maxJudgedPairs();
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
