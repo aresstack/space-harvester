@@ -14,6 +14,8 @@ import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentSto
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.export.SelectionDataset;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -26,6 +28,7 @@ import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -77,6 +80,7 @@ class ExportAssetsFromHoldingsTest {
     private final ReadingViewStore views = new ReadingViewStore(enrichments);
     private final Source source = new Source();
     private ExportSettings settings = ExportSettings.DEFAULT;
+    private List<PageSnapshot> stored = List.of();
     /** Wie die Voreinstellung, aber ohne PDF: das Handbuch steht dann als ausgeschlossen im Manifest. */
     private static final ExportSettings NO_PDF = new ExportSettings(true, List.of("text/plain"),
             ExportSettings.DEFAULT_MAX_SIZE);
@@ -178,6 +182,84 @@ class ExportAssetsFromHoldingsTest {
     }
 
     @Test
+    void collectingASelectionFillsTheHoldingsWithoutAnExportAndLaterOnlyAddsWhatIsMissing() {
+        setUp(true);
+
+        List<JobStatus> started = images.collect("client-a", Selection.Root.space("confluence", "DEV"));
+        run(started.get(0));
+
+        assertThat(started).extracting(JobStatus::type).containsExactly(JobType.ASSETS, JobType.ATTACHMENTS);
+        assertThat(jobs.list("client-a", JobType.EXPORT)).as("kein Export-Auftrag").isEmpty();
+        for (JobStatus job : started) {
+            JobStatus done = jobs.status(job.id(), "client-a");
+            assertThat(done.state()).as(String.valueOf(done)).isEqualTo(JobState.COMPLETED);
+            assertThat(done.incomplete()).isFalse();
+            assertThat(done.parameter(ExportAssetCollection.SELECTION)).isEqualTo("true");
+            assertThat(done.parameter(ExportAssetCollection.EXPORT_ID)).isNull();
+        }
+        assertThat(holdings.find(new PageKey("confluence", "100"), "3")).hasValueSatisfying(page -> {
+            assertThat(page.complete()).isTrue();
+            assertThat(page.assets()).extracting(ExportAssetManifest.Entry::title)
+                    .containsExactlyInAnyOrder("bild.png", "handbuch.pdf");
+        });
+        assertThat(views.find(new PageKey("confluence", "100"))).isPresent();
+
+        // Ein zweiter Lauf fragt die Quelle nicht: alles liegt schon im Bestand.
+        source.down = true;
+        List<JobStatus> again = images.collect("client-a", Selection.Root.space("confluence", "DEV"));
+        run(again.get(0));
+        assertThat(again).extracting(JobStatus::id).containsExactlyElementsOf(started.stream().map(JobStatus::id)
+                .toList());
+        assertThat(source.callsWhileDown).isZero();
+        assertThat(again).allSatisfy(job -> assertThat(jobs.status(job.id(), "client-a").state())
+                .isEqualTo(JobState.COMPLETED));
+
+        // Danach findet eine Ausgabe aus dem Bestand die Dateien ohne Quelle.
+        String exportId = run(exports.start(ExportRequest.fromHoldings("confluence", "DEV", "client-a",
+                List.of("json"))));
+        ExportAssetManifest manifest = writer.assets(exportId).orElseThrow();
+        assertThat(manifest.complete()).isTrue();
+        assertThat(manifest.documents()).extracting(ExportAssetManifest.Entry::title).containsExactly("handbuch.pdf");
+
+        // „Neu erzwingen“ auf dem Auftrag einer Auswahl lädt wieder von der Quelle, im selben Eintrag.
+        source.down = false;
+        JobStatus forced = images.forceRefresh(started.get(0).id(), "client-a");
+        run(forced);
+        assertThat(jobs.status(forced.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(forced.id()).isEqualTo(started.get(0).id());
+    }
+
+    @Test
+    void aPageUpdatedBeforeASelectionRunIsResumedIsCheckedAgainInItsNewVersion() {
+        setUp(true);
+        source.brokenOn101 = true;
+
+        JobStatus collecting = images.collect("client-a", Selection.Root.space("confluence", "DEV")).get(0);
+        run(collecting);
+        JobStatus first = jobs.status(collecting.id(), "client-a");
+        assertThat(first.state()).as(String.valueOf(first)).isEqualTo(JobState.PAUSED);
+        assertThat(holdings.find(new PageKey("confluence", "100"), "3")).isPresent();
+
+        // Ein Abgleich erneuert Seite 100 um ein neues Bild, bevor der Auftrag im selben Eintrag weiterläuft.
+        source.brokenOn101 = false;
+        source.version = "4";
+        stored = List.of(withVersion(stored.get(0), "4"), stored.get(1));
+        run(images.resume(collecting.id(), "client-a"));
+
+        assertThat(jobs.status(collecting.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(holdings.find(new PageKey("confluence", "100"), "4")).as("die neue Version im Bestand")
+                .hasValueSatisfying(page -> assertThat(page.assets()).extracting(ExportAssetManifest.Entry::title)
+                        .contains("bild.png", "neu.png"));
+    }
+
+    private static PageSnapshot withVersion(PageSnapshot page, String version) {
+        PageMetadata m = page.metadata();
+        return PageSnapshot.of(page.key().sourceId(), new PageMetadata(m.pageId(), m.resourceId(), m.title(),
+                m.partitionKey(), m.parentPageId(), version, m.modifiedAt(), m.url(), m.attributes()),
+                page.payload(), page.retrievedAt());
+    }
+
+    @Test
     void aCollectionWithoutAccessToTheWholeSourceLeavesNothingInTheHoldings() {
         setUp(false);
         run(exports.start("confluence", "DEV", "client-a", List.of("json")));
@@ -226,9 +308,13 @@ class ExportAssetsFromHoldingsTest {
         exports = new Exports(jobs, cache, writer, converters, clock);
         exports.onSubmitted(images::announce);
         exports.onPublished(images::start);
-        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
-                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
-                page("confluence", "DEV", "101", "100")));
+        stored = List.of(page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100"));
+        cache.publish("confluence", "DEV", confirmed("g1"), stored);
+        // Wie im Core: die lokal gespeicherten Seiten der Wurzel aus dem Cache.
+        images.selections((owner, root) -> Optional.of(new SelectionDataset(root.sourceId(), root.spaceKey(),
+                root.pageId(), stored.stream().map(PageSnapshot::header).toList(),
+                key -> stored.stream().filter(page -> page.key().equals(key)).findFirst())));
     }
 
     private String run(JobStatus export) {
@@ -249,6 +335,9 @@ class ExportAssetsFromHoldingsTest {
 
         boolean down;
         int callsWhileDown;
+        /** Das Bild auf Seite 101 lässt sich nicht laden, weil das Netz weg ist; der Auftrag hält an. */
+        boolean brokenOn101;
+        String version = "3";
 
         private void reachable() {
             if (down) {
@@ -286,17 +375,21 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             reachable();
-            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, "3",
+            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, version,
                     null, null, PageMetadata.sorted(Map.of()));
         }
 
         @Override
         public PageAttachments attachments(String pageId) {
             reachable();
-            List<PageAttachment> list = "100".equals(pageId)
+            List<PageAttachment> list = "100".equals(pageId) && "4".equals(version)
+                    ? List.of(attachment("att1", "bild.png", "image/png", PNG.length),
+                    attachment("att2", "handbuch.pdf", "application/pdf", PDF.length),
+                    attachment("att4", "neu.png", "image/png", PNG.length))
+                    : "100".equals(pageId)
                     ? List.of(attachment("att1", "bild.png", "image/png", PNG.length),
                     attachment("att2", "handbuch.pdf", "application/pdf", PDF.length))
-                    : List.of();
+                    : brokenOn101 ? List.of(attachment("att3", "kaputt.png", "image/png", PNG.length)) : List.of();
             return new PageAttachments(pageId, list, List.of(), "application/json", "test", List.of(),
                     Instant.parse("2026-11-12T01:00:00Z"));
         }
@@ -308,7 +401,10 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
             reachable();
-            byte[] content = "att1".equals(attachment.attachmentId()) ? PNG : PDF;
+            if ("att3".equals(attachment.attachmentId())) {
+                throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "kein Netz", null);
+            }
+            byte[] content = "att2".equals(attachment.attachmentId()) ? PDF : PNG;
             return new AttachmentFile(attachment, content, Instant.parse("2026-11-12T01:00:00Z"));
         }
 
@@ -321,7 +417,7 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public ReadingPage readingPage(String pageId) {
             reachable();
-            return new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
+            return new ReadingPage(version, "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
                     "Bild Eingebunden", List.of());
         }
 
