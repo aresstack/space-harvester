@@ -7,13 +7,11 @@ import com.vladsch.flexmark.ext.tables.TablesExtension;
 import com.vladsch.flexmark.parser.Parser;
 import com.vladsch.flexmark.util.ast.Document;
 import com.vladsch.flexmark.util.ast.Node;
-import com.vladsch.flexmark.util.data.MutableDataSet;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -72,9 +70,7 @@ public final class MarkdownExportWriter {
         }
         this.graphics = graphics;
         this.links = links;
-        MutableDataSet options = new MutableDataSet();
-        options.set(Parser.EXTENSIONS, Collections.singletonList(TablesExtension.create()));
-        this.parser = Parser.builder(options).build();
+        this.parser = ExportMarkdownParser.create(TablesExtension.create());
     }
 
     /**

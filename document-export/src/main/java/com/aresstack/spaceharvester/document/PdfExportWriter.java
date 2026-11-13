@@ -33,7 +33,6 @@ import com.vladsch.flexmark.ext.tables.TableSeparator;
 import com.vladsch.flexmark.ext.tables.TablesExtension;
 import com.vladsch.flexmark.parser.Parser;
 import com.vladsch.flexmark.util.ast.Node;
-import com.vladsch.flexmark.util.data.MutableDataSet;
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSString;
@@ -160,10 +159,8 @@ public final class PdfExportWriter {
         this.font = font;
         this.maxPages = maxPages;
         this.creator = creator == null ? "" : creator;
-        MutableDataSet options = new MutableDataSet();
-        options.set(Parser.EXTENSIONS, Arrays.asList(TablesExtension.create(), StrikethroughExtension.create(),
-                AutolinkExtension.create()));
-        this.parser = Parser.builder(options).build();
+        this.parser = ExportMarkdownParser.create(TablesExtension.create(), StrikethroughExtension.create(),
+                AutolinkExtension.create());
     }
 
     public void write(ExportDocumentNode root, OutputStream out) throws IOException {

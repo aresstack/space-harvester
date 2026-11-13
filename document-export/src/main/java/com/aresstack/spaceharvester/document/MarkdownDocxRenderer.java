@@ -36,7 +36,6 @@ import com.vladsch.flexmark.ext.tables.TableSeparator;
 import com.vladsch.flexmark.ext.tables.TablesExtension;
 import com.vladsch.flexmark.parser.Parser;
 import com.vladsch.flexmark.util.ast.Node;
-import com.vladsch.flexmark.util.data.MutableDataSet;
 import org.apache.poi.xwpf.usermodel.Borders;
 import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFAbstractNum;
@@ -136,10 +135,8 @@ public final class MarkdownDocxRenderer {
     public MarkdownDocxRenderer(XWPFDocument document, ExportGraphics graphics) {
         this.document = document;
         this.graphics = graphics;
-        MutableDataSet options = new MutableDataSet();
-        options.set(Parser.EXTENSIONS, Arrays.asList(TablesExtension.create(), StrikethroughExtension.create(),
-                AutolinkExtension.create()));
-        this.parser = Parser.builder(options).build();
+        this.parser = ExportMarkdownParser.create(TablesExtension.create(), StrikethroughExtension.create(),
+                AutolinkExtension.create());
         defineStyles(document);
         this.numbering = document.createNumbering();
         BigInteger bulletAbstract = numbering.addAbstractNum(new XWPFAbstractNum(listDefinition(0, true)));
