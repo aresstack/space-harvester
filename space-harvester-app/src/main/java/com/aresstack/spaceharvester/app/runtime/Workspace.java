@@ -372,6 +372,16 @@ public final class Workspace {
     }
 
     /**
+     * Meldet einen Empfänger für den Stand der Hintergrundbefüllung an (ADR 0027), statt {@link #acquisition()} in
+     * Abständen zu lesen: nach jeder Änderung von Warteschlange, Abrufen, Zählern, Schalter oder Pause der jüngste Stand,
+     * gebündelt, auf dem Zustell-Thread des Core (nie auf dem EDT). Erst anmelden, dann {@link #acquisition()} lesen.
+     */
+    public Subscription subscribeAcquisition(java.util.function.Consumer<Acquisition> listener) {
+        Objects.requireNonNull(listener, "listener");
+        return harvester.subscribeAcquisition(status -> listener.accept(Acquisition.of(status)));
+    }
+
+    /**
      * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
      * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
      */
@@ -712,6 +722,16 @@ public final class Workspace {
     /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
     public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
         return harvester.keywordSearch().progress(id);
+    }
+
+    /**
+     * Meldet einen Empfänger für den Ladestand eines Stapels der Suche an (ADR 0027), statt
+     * {@link #keywordSearchProgress} in Abständen zu lesen: nach jeder geladenen oder gescheiterten Seite und nach einem
+     * Abbruch der jüngste Stand, zuletzt mit {@link KeywordSearch.Progress#done()}; auf dem Zustell-Thread des Core.
+     * Erst anmelden, dann {@link #keywordSearchProgress} lesen.
+     */
+    public Subscription subscribeSearchProgress(String id, java.util.function.Consumer<KeywordSearch.Progress> listener) {
+        return harvester.keywordSearch().subscribe(id, listener);
     }
 
     /** Bricht das Laden eines Stapels ab; Geladenes bleibt im Cache. */

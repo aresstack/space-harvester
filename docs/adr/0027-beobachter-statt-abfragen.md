@@ -62,8 +62,8 @@ Paket `com.aresstack.spaceharvester.application.observe`:
 |---|---|---|---|
 | Aufträge | `Jobs.subscribe(owner, JobListener)` | `changed(JobStatus)` bei Zustand, Zählern, Phase und Grund einer Pause; `removed(JobStatus)` mit dem letzten Stand (für die Rechteprüfung); `event(JobEvent)` je neuem Diagnoseereignis | Aufträge, Statuszeile, Glossar, Synonymsuche, Diagnose |
 | Bestand | `Holdings.subscribe(sourceId, spaceKey, HoldingsListener)`, `spaceKey` leer = alle Spaces der Quelle | `pagesChanged(sourceId, spaceKey, pageIds)`; `spaceChanged(sourceId, spaceKey)`; `loading(sourceId, spaceKey, pageIds)` | neu: Baum-Symbole, Export-Reiter |
-| Beschaffungsplaner | `AcquisitionScheduler.subscribe(listener)` | jüngster `Status` | Hintergrundladen |
-| Suchfortschritt | `KeywordSearch.subscribe(progressId, listener)` | jüngster `Progress`, zuletzt mit Ende | Suche |
+| Beschaffungsplaner | `AcquisitionScheduler.subscribe(listener)`; mit Hintergrundfüllung `BackgroundFill.subscribe(listener)`, für die App `Harvester.subscribeAcquisition` bzw. `Workspace.subscribeAcquisition` | jüngster `Status` bzw. `AcquisitionStatus`, auch das Ende der Wartezeit nach dem Vordergrund | Hintergrundladen |
+| Suchfortschritt | `KeywordSearch.subscribe(progressId, listener)`, für die App `Workspace.subscribeSearchProgress` | jüngster `Progress` nach jeder Seite und nach einem Abbruch, zuletzt mit Ende | Suche |
 
 Das Glossar meldet seine eigenen Änderungen schon (`Glossary.subscribe`) und bleibt so. Die Verbindungsprüfungen in
 der Diagnose sind Zustand der App (`AppContext.Connection`) und werden dort gemeldet, nicht im Core.

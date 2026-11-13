@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.UserCredential;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
@@ -16,8 +17,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -119,6 +122,46 @@ class BackgroundFillTest {
     @org.junit.jupiter.api.BeforeEach
     void wikiIsEligible() {
         eligible.add("wiki");
+    }
+
+    /** Wartet auf eine passende Meldung (ADR 0027). */
+    private static AcquisitionStatus next(BlockingQueue<AcquisitionStatus> seen, Predicate<AcquisitionStatus> wanted)
+            throws InterruptedException {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < until) {
+            AcquisitionStatus next = seen.poll(until - System.nanoTime(), TimeUnit.NANOSECONDS);
+            if (next != null && wanted.test(next)) {
+                return next;
+            }
+        }
+        throw new AssertionError("Keine passende Meldung");
+    }
+
+    @Test
+    void theStatusOfFillAndPlannerArrivesWithoutAnyQueryUntilTheSubscriptionIsClosed() throws Exception {
+        gates.put("new-1", new CountDownLatch(1));
+        gates.put("old-1", new CountDownLatch(1));
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill fill = new BackgroundFill(scheduler(1), queue, catalog(GAPS), SERVER, eligible::contains, NOW,
+                true);
+        open.add(fill);
+        BlockingQueue<AcquisitionStatus> seen = new LinkedBlockingQueue<>();
+        Subscription subscription = fill.subscribe(seen::add);
+        fill.start();
+
+        AcquisitionStatus loading = next(seen, status -> status.backgroundRunning() == 1 && status.queued() == 2);
+        assertThat(loading.pause()).isEqualTo(AcquisitionStatus.Pause.NONE);
+        gates.values().forEach(CountDownLatch::countDown);
+        AcquisitionStatus idle = next(seen, status -> status.loaded() == 2 && status.queued() == 0
+                && status.inFlight() == 0);
+        assertThat(idle.pause()).isEqualTo(AcquisitionStatus.Pause.IDLE);
+
+        fill.enabled(false);
+        assertThat(next(seen, status -> status.pause() == AcquisitionStatus.Pause.DISABLED)).isNotNull();
+
+        subscription.close();
+        fill.enabled(true);
+        assertThat(seen.poll(500, TimeUnit.MILLISECONDS)).as("abgemeldet").isNull();
     }
 
     @Test
