@@ -567,7 +567,9 @@ in Archiven und als Mail-Anhang; der HTML-Textteil einer Mail bleibt Text der Ma
 wie bei jedem Tika-Lauf. An den HTML-Proben sind die Ereignisse gleich denen von Tika, auch bei kaputtem HTML. Einzige
 gewollte Abweichung: `data:`-Inhalte werden nicht als enthaltene Dateien gelesen und ergeben keinen Text; Skripte
 ergeben wie bisher keinen Text. Extraktor bleibt `tika`, die Version steigt (`3.3-s11`), „Neu lesen“ holt den Bestand
-nach.
+nach. Der Strom nutzt zwei nicht öffentliche Tika-Klassen (`HtmlHandler`, `XHTMLDowngradeHandler`); ein Test prüft
+sie und ihre Konstruktoren, bei jeder Tika-Anhebung zu prüfen. Fehlen sie zur Laufzeit, liest wieder Tikas `JSoupParser`
+und für HTML gilt die Schranke `*` (20 MiB); das steht einmal mit dem Code `html-stream-unavailable` im Log.
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein

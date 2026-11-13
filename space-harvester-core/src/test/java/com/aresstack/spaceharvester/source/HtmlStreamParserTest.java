@@ -79,6 +79,22 @@ class HtmlStreamParserTest {
     }
 
     @Test
+    void tikasHtmlChainStillHasTheClassesAndConstructorsTheStreamUses() throws Exception {
+        // Benannte Kopplung (AT): Eine Tika-Anhebung, die eine der beiden Klassen ändert, wird hier rot.
+        Class.forName("org.apache.tika.parser.html.HtmlHandler").getConstructor(
+                org.apache.tika.parser.html.HtmlMapper.class, org.xml.sax.ContentHandler.class, Metadata.class,
+                ParseContext.class, boolean.class);
+        Class.forName("org.apache.tika.parser.html.XHTMLDowngradeHandler")
+                .getConstructor(org.xml.sax.ContentHandler.class);
+        assertThat(HtmlStreamParser.available()).isTrue();
+        assertThat(TikaDocumentStructure.config()).contains(HtmlStreamParser.class.getName())
+                .contains("parser-exclude class=\"org.apache.tika.parser.html.JSoupParser\"")
+                .doesNotContain("HTML_");
+        assertThat(TikaDocumentStructure.memoryLimit(ExtractionLimits.DEFAULTS, "text/html; charset=utf-8"))
+                .as("mit Strom ohne Schranke").isZero();
+    }
+
+    @Test
     void theSamplesGiveExactlyTheEventsOfTikasJsoupParser() throws Exception {
         for (String html : List.of(SEITE, HINWEISE, NESTED, BROKEN)) {
             assertThat(xhtml(new HtmlStreamParser(), html)).isEqualTo(xhtml(new JSoupParser(), html));

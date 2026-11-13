@@ -49,6 +49,13 @@ import org.xml.sax.helpers.AttributesImpl;
  *
  * <p>Abweichung von Tika: {@code data:}-Inhalte werden nicht als enthaltene Dateien gelesen, sie ergeben keinen Text
  * (Vorgabe AT). Eingebettete Skripte ergeben wie bei Tika keinen Text.
+ *
+ * <p><b>Benannte Kopplung an Tika, bei jeder Tika-Anhebung zu prüfen:</b> die nicht öffentlichen Klassen
+ * {@code org.apache.tika.parser.html.HtmlHandler} (Konstruktor {@code (HtmlMapper, ContentHandler, Metadata,
+ * ParseContext, boolean)}) und {@code org.apache.tika.parser.html.XHTMLDowngradeHandler} (Konstruktor
+ * {@code (ContentHandler)}), per Reflection angesprochen; {@code HtmlStreamParserTest} prüft beide. Fehlen sie, gilt
+ * {@link #available()} nicht: Der Adapter liest HTML dann mit Tikas {@link JSoupParser} und der Schranke von 20 MiB,
+ * einmal im Log mit dem Code {@value #UNAVAILABLE}.
  */
 public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
 
@@ -63,22 +70,45 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
             "section", "article", "main", "header", "footer", "nav", "aside", "form", "address", "figure",
             "figcaption", "fieldset", "details", "summary", "hr", "head", "title", "body");
 
-    private static final TagSet SELF_CLOSEABLE = selfCloseable();
+    /** Fester Code im Log, wenn der Strom nicht verfügbar ist. */
+    static final String UNAVAILABLE = "html-stream-unavailable";
+
+    private static final System.Logger LOG = System.getLogger(HtmlStreamParser.class.getName());
+    private static final TagSet SELF_CLOSEABLE;
     private static final Constructor<?> HTML_HANDLER;
     private static final Constructor<?> DOWNGRADE;
 
     static {
+        TagSet tags = null;
+        Constructor<?> html = null;
+        Constructor<?> downgrade = null;
         try {
-            Class<?> handler = Class.forName("org.apache.tika.parser.html.HtmlHandler");
-            HTML_HANDLER = handler.getConstructor(HtmlMapper.class, ContentHandler.class, Metadata.class,
-                    ParseContext.class, boolean.class);
-            HTML_HANDLER.setAccessible(true);
-            Class<?> downgrade = Class.forName("org.apache.tika.parser.html.XHTMLDowngradeHandler");
-            DOWNGRADE = downgrade.getConstructor(ContentHandler.class);
-            DOWNGRADE.setAccessible(true);
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            throw new ExceptionInInitializerError(e);
+            Class.forName("org.jsoup.parser.StreamParser");
+            Constructor<?> foundHtml = Class.forName("org.apache.tika.parser.html.HtmlHandler").getConstructor(
+                    HtmlMapper.class, ContentHandler.class, Metadata.class, ParseContext.class, boolean.class);
+            foundHtml.setAccessible(true);
+            Constructor<?> foundDowngrade = Class.forName("org.apache.tika.parser.html.XHTMLDowngradeHandler")
+                    .getConstructor(ContentHandler.class);
+            foundDowngrade.setAccessible(true);
+            tags = selfCloseable();
+            html = foundHtml;
+            downgrade = foundDowngrade;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            // Einmal je Prozess, ohne Inhalte; HTML liest dann Tikas JSoupParser mit Schranke.
+            LOG.log(System.Logger.Level.WARNING, "HTML als Strom nicht verfügbar ({0}, {1})", UNAVAILABLE,
+                    e.getClass().getName());
         }
+        SELF_CLOSEABLE = tags;
+        HTML_HANDLER = html;
+        DOWNGRADE = downgrade;
+    }
+
+    /**
+     * Ob Tikas HTML-Kette und jsoups {@code StreamParser} in dieser Fassung vorliegen; sonst liest Tikas
+     * {@link JSoupParser} mit der Schranke von 20 MiB.
+     */
+    public static boolean available() {
+        return HTML_HANDLER != null && DOWNGRADE != null && SELF_CLOSEABLE != null;
     }
 
     /** Mit Tikas Standard-Erkennung des Zeichensatzes. */
@@ -141,6 +171,9 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
 
     private static ContentHandler chain(HtmlMapper mapper, ContentHandler handler, Metadata metadata,
                                         ParseContext context) throws TikaException {
+        if (!available()) {
+            throw new TikaException("HTML als Strom nicht verfügbar (" + UNAVAILABLE + ")");
+        }
         try {
             Object html = HTML_HANDLER.newInstance(mapper, handler, metadata, context, false);
             return (ContentHandler) DOWNGRADE.newInstance(html);
