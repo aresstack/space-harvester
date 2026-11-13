@@ -81,4 +81,20 @@ class ReferenceReadersTest {
         assertThat(md.imageNotes()).isEqualTo(1);
         assertThat(md.tables()).containsExactly(new Table(2, 2, true));
     }
+
+    @Test
+    void aDrawioSourceBlockCountsAsFigureAndIsNotReadingText() {
+        DocumentOutline md = MarkdownReader.parse("""
+                # Eins
+
+                ```drawio
+                <mxfile><diagram name="Ablauf"/></mxfile>
+                ```
+
+                Danach
+                """, null);
+
+        assertThat(md.images()).isEqualTo(1);
+        assertThat(md.text()).contains("Danach").doesNotContain("mxfile");
+    }
 }

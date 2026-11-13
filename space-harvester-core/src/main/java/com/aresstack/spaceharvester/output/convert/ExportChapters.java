@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.document.ExportGraphics;
 import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -163,13 +164,31 @@ final class ExportChapters {
      * bleibt der Hinweis, gemeldet als {@link ConversionNotice.Kind#OMITTED_CONTENT}.
      */
     static Figures figures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
-        return figures(page, parser, input.assets(), input.readingView(page.pageId()));
+        return figures(page, parser, input.assets(), input.readingView(page.pageId()), false);
+    }
+
+    /**
+     * Für Markdown: Wie {@link #figures(ConvertiblePage, StorageParser, ConversionInput)}, ein draw.io-Diagramm mit
+     * abgelegten Quelldaten aber als Codeblock {@code ```drawio} mit seinem XML statt als gezeichnetes Bild (ADR 0012:
+     * Textform vor Bild; Angelo 13.11.2026). Betrachter mit draw.io-Viewer (TinyMD) zeichnen ihn beim Anzeigen. Nur
+     * ohne lesbare Quelldaten oder mitten in einer Zeile (Tabelle, Liste) bleibt es eine Abbildung.
+     */
+    static Figures markdownFigures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
+        return figures(page, parser, input.assets(), input.readingView(page.pageId()), true);
     }
 
     private static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets,
                                    Optional<ExportReadingView> view) {
+        return figures(page, parser, assets, view, false);
+    }
+
+    private static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets,
+                                   Optional<ExportReadingView> view, boolean drawioSource) {
         List<ConversionNotice> omitted = new ArrayList<>();
         String markdown = markdown(page, parser, view, omitted);
+        if (drawioSource) {
+            markdown = drawioSources(markdown, page.pageId(), assets);
+        }
         List<ExportImage> images = new ArrayList<>();
         Map<String, String> codes = new HashMap<>();
         for (Entry entry : assets.forPage(page.pageId())) {
@@ -288,6 +307,95 @@ final class ExportChapters {
             case EXCLUDED -> "excluded";
             case STORED -> "not-collected";
         };
+    }
+
+    /** Ein draw.io-Bildverweis allein auf seiner Zeile, davor höchstens Einrückung oder Zitatzeichen. */
+    private static final Pattern DRAWIO_LINE = Pattern.compile(
+            "(?m)^([ \\t>]*)!\\[(?:[^\\]\\\\\\n]|\\\\.)*\\]\\(<?drawio:(?:(\\d+)/)?([^)>\\n]*)>?\\)[ \\t]*$");
+
+    /** Ersetzt draw.io-Bildverweise, deren Quelldaten abgelegt und lesbar sind, durch einen {@code ```drawio}-Block. */
+    static String drawioSources(String markdown, String pageId, ExportAssets assets) {
+        Matcher line = DRAWIO_LINE.matcher(markdown);
+        StringBuilder out = new StringBuilder();
+        while (line.find()) {
+            String xml = drawioXml(line.group(2) == null ? pageId : line.group(2), line.group(3), assets);
+            line.appendReplacement(out, Matcher.quoteReplacement(xml == null ? line.group()
+                    : fenced(line.group(1), "drawio", xml)));
+        }
+        line.appendTail(out);
+        return out.toString();
+    }
+
+    /** Das XML der abgelegten Quelldaten eines draw.io-Diagramms; {@code null} ohne oder bei unlesbaren Daten. */
+    private static String drawioXml(String pageId, String name, ExportAssets assets) {
+        for (Entry entry : assets.forPage(pageId)) {
+            if (entry.reference().kind() == Kind.ATTACHMENT && entry.reference().filename() != null
+                    && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename())
+                    && Diagrams.drawioName(entry.reference().filename()).equals(name)) {
+                Optional<byte[]> content = entry.stored() ? assets.content(entry) : Optional.empty();
+                if (content.isEmpty()) {
+                    return null;
+                }
+                String xml = new String(content.get(), StandardCharsets.UTF_8).replace("\r\n", "\n");
+                if (xml.startsWith("\uFEFF")) {
+                    xml = xml.substring(1);
+                }
+                return isDiagramXml(xml) ? xml.strip() : null;
+            }
+        }
+        return null;
+    }
+
+    /** Ob das Wurzelelement {@code mxfile} oder {@code mxGraphModel} ist (Deklaration und Kommentare davor erlaubt). */
+    static boolean isDiagramXml(String xml) {
+        int at = 0;
+        while (true) {
+            while (at < xml.length() && Character.isWhitespace(xml.charAt(at))) {
+                at++;
+            }
+            if (xml.startsWith("<?", at)) {
+                at = end(xml, at, "?>");
+            } else if (xml.startsWith("<!--", at)) {
+                at = end(xml, at, "-->");
+            } else if (xml.startsWith("<!DOCTYPE", at)) {
+                at = end(xml, at, ">");
+            } else {
+                break;
+            }
+            if (at < 0) {
+                return false;
+            }
+        }
+        for (String root : new String[] {"<mxfile", "<mxGraphModel"}) {
+            if (xml.startsWith(root, at) && xml.length() > at + root.length()) {
+                char next = xml.charAt(at + root.length());
+                if (next == '>' || next == '/' || Character.isWhitespace(next)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static int end(String text, int from, String marker) {
+        int found = text.indexOf(marker, from);
+        return found < 0 ? -1 : found + marker.length();
+    }
+
+    /** Codeblock mit {@code info}; der Zaun ist länger als jede Backtick-Folge im Inhalt, {@code prefix} vor jeder Zeile. */
+    static String fenced(String prefix, String info, String content) {
+        int longest = 0;
+        int run = 0;
+        for (int i = 0; i < content.length(); i++) {
+            run = content.charAt(i) == '`' ? run + 1 : 0;
+            longest = Math.max(longest, run);
+        }
+        String fence = "`".repeat(Math.max(3, longest + 1));
+        StringBuilder out = new StringBuilder(prefix).append(fence).append(info).append('\n');
+        for (String line : content.split("\n", -1)) {
+            out.append(line.isEmpty() ? prefix.stripTrailing() : prefix + line).append('\n');
+        }
+        return out.append(prefix).append(fence).toString();
     }
 
     /** Ein draw.io-Diagramm aus dem Datenbestand: gezeichnet, sonst die Vorschau, sonst mit Grund als fehlend. */

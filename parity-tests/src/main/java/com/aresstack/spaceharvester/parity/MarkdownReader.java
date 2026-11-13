@@ -48,14 +48,27 @@ public final class MarkdownReader {
         int mermaid = 0;
         int tocEntries = 0;
         boolean fence = false;
+        boolean drawio = false;
         for (int index = 0; index < lines.length; index++) {
             String line = lines[index];
             String trimmed = line.strip();
             if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-                if (!fence && trimmed.substring(3).strip().toLowerCase().startsWith("mermaid")) {
+                String info = trimmed.replaceFirst("^(`{3,}|~{3,})", "").strip().toLowerCase();
+                if (!fence && info.startsWith("mermaid")) {
                     mermaid++;
                 }
+                // draw.io als Quelltext (Core seit markdown/8): der Betrachter zeichnet es, zählt als Abbildung;
+                // das XML ist kein Lesetext
+                if (!fence && info.equals("drawio")) {
+                    images++;
+                    drawio = true;
+                } else if (fence) {
+                    drawio = false;
+                }
                 fence = !fence;
+                continue;
+            }
+            if (drawio) {
                 continue;
             }
             if (fence) {
