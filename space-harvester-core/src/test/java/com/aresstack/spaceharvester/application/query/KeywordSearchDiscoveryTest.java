@@ -442,6 +442,20 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void withASelectionOnlyItsFindingsGoToTheCatalogSoThatTheFillLoadsNothingOutsideIt() {
+        wiki.results("Hashicorp Vault", "1", "2", "3");
+        List<String> offered = Collections.synchronizedList(new ArrayList<>());
+        FindingCatalog findings = (finder, sourceId, found) -> found.forEach(finding -> offered.add(finding.pageId()));
+
+        new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.sourceOrder(), SearchRunLog.NONE, findings)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault")
+                        .within(PageSet.of(Map.of("wiki", List.of("2")))), null, 50);
+
+        assertThat(offered).containsExactly("2");
+    }
+
+    @Test
     void aFailingCatalogNeverFailsTheSearch() {
         wiki.results("Hashicorp Vault", "1");
         FindingCatalog failing = (finder, sourceId, found) -> {

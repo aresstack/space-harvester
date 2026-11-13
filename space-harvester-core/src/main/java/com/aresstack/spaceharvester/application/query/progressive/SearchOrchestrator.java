@@ -371,8 +371,9 @@ public final class SearchOrchestrator implements AutoCloseable {
         private CompletableFuture<VariantSearch.Outcome> start(int index) {
             states.set(index, Status.RUNNING);
             searches++;
+            // Jede Variante sucht im selben Umfang wie das Original, auch nur auf den Seiten seiner Auswahl.
             KeywordSearch.Query variant = index == 0 ? query : new KeywordSearch.Query(variants.get(index).text(),
-                    query.sourceId(), query.sourceIds(), query.spaceKeys(), query.excludedSpaceKeys());
+                    query.sourceId(), query.sourceIds(), query.spaceKeys(), query.excludedSpaceKeys(), query.pages());
             CompletableFuture<VariantSearch.Outcome> future = CompletableFuture.supplyAsync(() -> {
                 slots.acquireUninterruptibly();
                 try {

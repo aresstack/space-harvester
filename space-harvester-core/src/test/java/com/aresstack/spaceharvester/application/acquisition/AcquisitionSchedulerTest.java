@@ -131,6 +131,20 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void aListenerSubscribingDuringTheWaitAfterTheForegroundStillHearsItsEnd() throws Exception {
+        AcquisitionScheduler planner = scheduler(4, 1, 4, Duration.ofMillis(800));
+        assertThat(planner.request(APP, key("f1"), AcquisitionScheduler.Priority.FOREGROUND).done()
+                .get(10, TimeUnit.SECONDS)).isTrue();
+        BlockingQueue<AcquisitionScheduler.Status> seen = new LinkedBlockingQueue<>();
+
+        // Wie die App: erst anmelden, dann lesen; danach geschieht nichts mehr.
+        planner.subscribe(seen::add);
+        assertThat(planner.status().pause()).isEqualTo(AcquisitionStatus.Pause.COOLDOWN);
+
+        assertThat(next(seen, status -> status.pause() == AcquisitionStatus.Pause.NONE)).isNotNull();
+    }
+
+    @Test
     void aForegroundRequestPromotesAWaitingBackgroundPageInsteadOfLoadingItTwice() throws Exception {
         AcquisitionScheduler planner = scheduler(4, 1, 4);
         AutoCloseable pause = planner.pauseBackground();

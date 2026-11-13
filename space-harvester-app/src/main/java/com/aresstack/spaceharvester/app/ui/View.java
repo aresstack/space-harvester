@@ -28,8 +28,9 @@ public interface View {
     }
 
     /**
-     * Umschalter des Bereichs mittig in der Werkzeugleiste unten (etwa die Seitenreiter der Leseansicht als
-     * Symbolknöpfe); die Lupe links klappt über sie auf. {@code null}, wenn der Bereich keine hat.
+     * Umschalter des Bereichs mittig in der Werkzeugleiste unten; die Lupe links klappt über sie auf. {@code null},
+     * wenn der Bereich keine hat. Die Seitenreiter der Leseansicht stehen seit dem 13.11.2026 nicht mehr hier,
+     * sondern in der Icon-Leiste oben ({@code ContentView.tabBar()}).
      */
     default JComponent tools() {
         return null;

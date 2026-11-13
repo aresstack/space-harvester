@@ -623,7 +623,7 @@ public class KeywordSearch {
             }
         }
 
-        catalogFindings(caller, pending);
+        catalogFindings(caller, query, pending);
 
         Map<String, Integer> next = new LinkedHashMap<>();
         for (String sourceId : pending.keySet()) {
@@ -773,12 +773,15 @@ public class KeywordSearch {
 
     /**
      * Bietet die Funde dieses Stapels zum Katalogisieren als Kopfdaten an (ADR 0016). Das reiht nur ein; ob ein Fund in
-     * den Katalog kommt, entscheiden Aufrufer und Richtlinie dort. Ein Fehler lässt die Suche nie scheitern.
+     * den Katalog kommt, entscheiden Aufrufer und Richtlinie dort. Ein Fehler lässt die Suche nie scheitern. Mit einer
+     * Seitenmenge nur ihre Funde (ADR 0029): Die Hintergrundfüllung lädt angebotene Funde, und außerhalb der Auswahl
+     * soll nichts geladen werden.
      */
-    private void catalogFindings(AccessContext caller, Map<String, List<SourceSearchMatch>> found) {
+    private void catalogFindings(AccessContext caller, Query query, Map<String, List<SourceSearchMatch>> found) {
         found.forEach((sourceId, matches) -> {
             try {
                 findings.offer(caller, sourceId, matches.stream()
+                        .filter(match -> query.admits(sourceId, match.pageId()))
                         .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList());
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Funde aus {0} nicht katalogisiert ({1})", sourceId,
