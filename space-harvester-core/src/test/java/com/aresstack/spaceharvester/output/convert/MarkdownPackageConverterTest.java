@@ -87,6 +87,16 @@ class MarkdownPackageConverterTest {
                         + " Weg *(Anhang nicht im Paket)* [Web](https://example.org)");
     }
 
+    @Test
+    void relinkLeavesCodeBlocksAndCodeSpansAsWritten() {
+        MarkdownConverter.AttachmentLinks links = (page, file) -> file.equals("a.pdf") ? "attachments/1/a.pdf" : null;
+        String code = "`[B](attachment:a.pdf)` und ``x ` [C](attachment:weg.pdf)``\n\n```\n[D](attachment:weg.pdf)\n```"
+                + "\n\n> ```sql\n> [E](attachment:weg.pdf)\n> ```\n\n";
+
+        assertThat(MarkdownConverter.relink(code + "[A](attachment:a.pdf) \\`[F](attachment:weg.pdf)", "1", links))
+                .isEqualTo(code + "[A](attachments/1/a.pdf) \\`F *(Anhang nicht im Paket)*");
+    }
+
     private static byte[] convert(ExportAssets assets) throws Exception {
         byte[] payload = JSON.writeValueAsBytes(JSON.createObjectNode().put("id", "100").set("body",
                 JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", STORAGE))));

@@ -134,11 +134,18 @@ public final class MarkdownConverter implements ExportConverter {
         writer.flush();
     }
 
-    /** Die Anhangslinks von {@code markdown} auf die Dateien im Paket; Bilder bleiben für den Writer. */
+    /**
+     * Die Anhangslinks von {@code markdown} auf die Dateien im Paket; Bilder bleiben für den Writer, Codeblöcke und
+     * Code-Spannen bleiben wörtlich.
+     */
     static String relink(String markdown, String pageId, AttachmentLinks attachments) {
+        boolean[] code = codeMask(markdown);
         Matcher link = ATTACHMENT_LINK.matcher(markdown);
         StringBuilder out = new StringBuilder();
         while (link.find()) {
+            if (code[link.start()]) {
+                continue; // ein Beispiel im Code: der nächste Ersatz übernimmt den Text unverändert
+            }
             String file = link.group(2) != null ? link.group(2).replace("%3C", "<").replace("%3E", ">")
                     : link.group(3);
             String path = attachments.path(pageId, file);
@@ -149,6 +156,67 @@ public final class MarkdownConverter implements ExportConverter {
         }
         link.appendTail(out);
         return out.toString();
+    }
+
+    /** Zaunzeile eines Codeblocks, auch in Zitaten und Listen (eingerückt oder mit {@code >} davor). */
+    private static final Pattern FENCE = Pattern.compile("^[ \\t>]*(`{3,})(.*)$");
+
+    /** Welche Zeichen in einem Codeblock oder einer Code-Spanne liegen. */
+    static boolean[] codeMask(String text) {
+        boolean[] mask = new boolean[text.length() + 1];
+        int fence = 0;
+        int start = 0;
+        while (start < text.length()) {
+            int end = text.indexOf('\n', start);
+            end = end < 0 ? text.length() : end + 1;
+            Matcher line = FENCE.matcher(text.substring(start, end).stripTrailing());
+            boolean isFence = line.find();
+            if (fence > 0 || isFence) {
+                java.util.Arrays.fill(mask, start, end, true);
+                if (fence == 0) {
+                    fence = line.group(1).length();
+                } else if (isFence && line.group(1).length() >= fence && line.group(2).isBlank()) {
+                    fence = 0;
+                }
+            }
+            start = end;
+        }
+        int i = 0;
+        while (i < text.length()) {
+            if (mask[i] || text.charAt(i) != '`' || (i > 0 && text.charAt(i - 1) == '\\')) {
+                i++;
+                continue;
+            }
+            int run = tickRun(text, i);
+            int close = -1;
+            for (int j = i + run; j < text.length() && !mask[j]; ) {
+                if (text.charAt(j) == '`') {
+                    int other = tickRun(text, j);
+                    if (other == run) {
+                        close = j + other;
+                        break;
+                    }
+                    j += other;
+                } else {
+                    j++;
+                }
+            }
+            if (close < 0) {
+                i += run;
+            } else {
+                java.util.Arrays.fill(mask, i, close, true);
+                i = close;
+            }
+        }
+        return mask;
+    }
+
+    private static int tickRun(String text, int from) {
+        int end = from;
+        while (end < text.length() && text.charAt(end) == '`') {
+            end++;
+        }
+        return end - from;
     }
 
     /** Blöcke, durch Leerzeilen getrennt; Überschriften im Inhalt liegen unter der Seitenüberschrift. */
