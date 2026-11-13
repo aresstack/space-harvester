@@ -21,6 +21,23 @@ public sealed interface PartId {
     /** Die Teilkennung als Zeichenkette, z. B. {@code sha256:<hex>:1} oder {@code pos:<hex>:/1/3}. */
     String value();
 
+    /**
+     * Pfadsicherer Name für Export und Dateiablage (ADR 0026, Abnahme 3): nur {@code [0-9a-z-]}, nie der Anzeigename;
+     * {@code <sha256>-<n>} oder {@code pos-<sha256 des Behälters>-1-3}.
+     */
+    String fileName();
+
+    /**
+     * Schlüssel der Ablage eines Teils im Stand seines Behälters (ADR 0026, AP7b): inhaltsgleiche Teile teilen sich
+     * die Ablage (der SHA-256), Teile ohne vollständig gelesene Bytes liegen unter ihrer Position.
+     */
+    default String storageKey() {
+        return switch (this) {
+            case Content content -> content.sha256();
+            case Position position -> position.fileName();
+        };
+    }
+
     /** Liest eine Teilkennung aus {@link #value()}. */
     static PartId parse(String value) {
         Objects.requireNonNull(value, "value");
@@ -62,6 +79,11 @@ public sealed interface PartId {
         }
 
         @Override
+        public String fileName() {
+            return sha256 + '-' + ordinal;
+        }
+
+        @Override
         public String toString() {
             return value();
         }
@@ -94,6 +116,11 @@ public sealed interface PartId {
         @Override
         public String value() {
             return PREFIX + ':' + containerSha256 + ':' + path;
+        }
+
+        @Override
+        public String fileName() {
+            return PREFIX + '-' + containerSha256 + path.replace('/', '-');
         }
 
         @Override

@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -155,6 +156,106 @@ class DocumentExtractionsTest {
         assertThat(markdown).hasToString("eins \\*fett\\*\n\nzwei\n");
         assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK);
         assertThat(structure.calls).as("einmal gelesen, zwei Ansichten").hasValue(1);
+    }
+
+    @Test
+    void partsHaveTheirOwnStorageTheTextStillContainsThemOnceAndMarkdownShowsOnlyTheDocument() {
+        String sha = "cd".repeat(32);
+        DocumentStructure withParts = new DocumentStructure() {
+            @Override
+            public String id() {
+                return "teile";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                              StructureSink sink) {
+                try (BlockSink document = sink.document()) {
+                    document.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Mailtext"));
+                }
+                List<EmbeddedEntry> entries = new java.util.ArrayList<>();
+                for (int ordinal = 1; ordinal <= 2; ordinal++) {
+                    EmbeddedEntry entry = new EmbeddedEntry(new PartId.Content(sha, ordinal), Optional.of(sha),
+                            Optional.of("kopie-" + ordinal + ".txt"), Optional.of("text/plain"), "/" + ordinal,
+                            Optional.empty(), 1, Optional.of(7L), Outcome.ok(new ReadExtent(7, 7)));
+                    entries.add(entry);
+                    try (PartSink part = sink.part(entry)) {
+                        part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Anhang"));
+                        part.head(new DocumentHead(Optional.of("Anhang"), Optional.empty(), Optional.empty(),
+                                List.of(), Optional.empty()));
+                    }
+                }
+                return new StructuredDocument(DocumentHead.EMPTY, Outcome.ok(new ReadExtent(10, 8)), entries, 1, 8);
+            }
+        };
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "egal\n");
+        FileSystemExtractionStore stored = new FileSystemExtractionStore(directory);
+        DocumentExtractions extractions = new DocumentExtractions(withParts, stored, ExtractionLimits.DEFAULTS);
+
+        AssetText text = extractions.text(asset, store, NOW);
+        StringBuilder markdown = new StringBuilder();
+        extractions.markdown(asset, store, markdown);
+
+        assertThat(text.text()).isEqualTo("Mailtext\n\nAnhang");
+        assertThat(markdown).hasToString("Mailtext\n");
+        StoredExtraction extraction = extractions.stored(asset.sha256()).orElseThrow();
+        assertThat(extraction.chars()).as("nur das Dokument selbst").isEqualTo(8);
+        assertThat(stored.parts(extraction.key())).singleElement().satisfies(part -> {
+            assertThat(part.key()).isEqualTo(sha);
+            assertThat(part.blocks()).as("Blöcke nicht doppelt").isEqualTo(1);
+            assertThat(part.head().title()).contains("Anhang");
+        });
+    }
+
+    /** Codex #715: Ein abgewiesener erster Teil belegt die Ablage nicht; der lesbare gleiche Teil füllt sie. */
+    @Test
+    void aRefusedPartLeavesTheStorageToAReadableCopy() {
+        String sha = "ef".repeat(32);
+        DocumentStructure refusedFirst = new DocumentStructure() {
+            @Override
+            public String id() {
+                return "teile";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                              StructureSink sink) {
+                try (BlockSink document = sink.document()) {
+                    document.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Mailtext"));
+                }
+                EmbeddedEntry refused = new EmbeddedEntry(new PartId.Content(sha, 1), Optional.of(sha),
+                        Optional.of("gross.bin"), Optional.of("application/octet-stream"), "/1", Optional.empty(), 1,
+                        Optional.of(7L), Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
+                try (PartSink part = sink.part(refused)) {
+                    Objects.requireNonNull(part);
+                }
+                EmbeddedEntry readable = new EmbeddedEntry(new PartId.Content(sha, 2), Optional.of(sha),
+                        Optional.of("gross.pdf"), Optional.of("application/pdf"), "/2", Optional.empty(), 1,
+                        Optional.of(7L), Outcome.ok(new ReadExtent(7, 7)));
+                try (PartSink part = sink.part(readable)) {
+                    part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Anhang"));
+                }
+                return new StructuredDocument(DocumentHead.EMPTY, Outcome.ok(new ReadExtent(10, 8)),
+                        List.of(refused, readable), 1, 8);
+            }
+        };
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "egal\n");
+        DocumentExtractions extractions = new DocumentExtractions(refusedFirst,
+                new FileSystemExtractionStore(directory), ExtractionLimits.DEFAULTS);
+
+        assertThat(extractions.text(asset, store, NOW).text()).isEqualTo("Mailtext\n\nAnhang");
     }
 
     @Test

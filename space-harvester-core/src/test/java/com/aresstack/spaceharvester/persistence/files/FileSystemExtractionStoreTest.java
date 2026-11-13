@@ -14,6 +14,8 @@ import com.aresstack.spaceharvester.application.assets.Link;
 import com.aresstack.spaceharvester.application.assets.Location;
 import com.aresstack.spaceharvester.application.assets.Outcome;
 import com.aresstack.spaceharvester.application.assets.PartId;
+import com.aresstack.spaceharvester.application.assets.PartWriter;
+import com.aresstack.spaceharvester.application.assets.StoredPart;
 import com.aresstack.spaceharvester.application.assets.ReadExtent;
 import com.aresstack.spaceharvester.application.assets.StatusReason;
 import com.aresstack.spaceharvester.application.assets.StoredExtraction;
@@ -223,6 +225,89 @@ class FileSystemExtractionStoreTest {
         } finally {
             java.util.Locale.setDefault(before);
         }
+    }
+
+    @Test
+    void partsLieInTheStateOfTheContainerAndBecomeValidTogetherWithIt() {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        String child = "cd".repeat(32);
+        String position = new PartId.Position(HEX, "/1/1").storageKey();
+        DocumentHead mailHead = new DocumentHead(Optional.empty(), Optional.of("Weitergeleitet"),
+                Optional.of("x@y"), List.of("z@y"), Optional.empty());
+
+        try (ExtractionWriter writer = store.writer(KEY, 5)) {
+            writer.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "außen"));
+            PartWriter outer = writer.part(child).orElseThrow();
+            outer.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "teil1"));
+            // gestapelt: das Kind läuft, während der Elternteil offen ist
+            try (PartWriter inner = writer.part(position).orElseThrow()) {
+                inner.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "kind"));
+            }
+            outer.accept(new Block.Paragraph(1, Optional.empty(), List.of(), "teil2"));
+            outer.head(mailHead);
+            outer.close();
+            assertThat(writer.part(child)).as("inhaltsgleich: schon abgelegt").isEmpty();
+            assertThat(store.parts(KEY)).as("vor dem Bestätigen unsichtbar").isEmpty();
+            writer.commit(document(1, 5));
+        }
+
+        assertThat(store.find(KEY)).isPresent();
+        assertThat(store.parts(KEY)).extracting(StoredPart::key).containsExactly(child, position);
+        StoredPart first = store.parts(KEY).getFirst();
+        assertThat(first.head()).isEqualTo(mailHead);
+        assertThat(first.blocks()).isEqualTo(2);
+        assertThat(first.chars()).isEqualTo(10);
+        assertThat(first.sections()).isEqualTo(2);
+        try (Stream<TextSection> sections = store.partSections(KEY, child)) {
+            assertThat(sections.flatMap(section -> section.blocks().stream())
+                    .map(block -> ((Block.Paragraph) block).text())).containsExactly("teil1", "teil2");
+        }
+        try (Stream<TextSection> sections = store.partSections(KEY, "ef".repeat(32))) {
+            assertThat(sections).isEmpty();
+        }
+        assertThat(position).isEqualTo("pos-" + HEX + "-1-1").matches("[0-9a-z-]+");
+        assertThatThrownBy(() -> store.partSections(KEY, "../x")).isInstanceOf(IllegalArgumentException.class);
+
+        // Neulesen ersetzt alles zusammen: ohne Teile keine Teile mehr.
+        write(store, "neu");
+        assertThat(store.parts(KEY)).isEmpty();
+    }
+
+    @Test
+    void aMissingPartSectionDiscardsTheWholeState() throws Exception {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        String child = "cd".repeat(32);
+        try (ExtractionWriter writer = store.writer(KEY)) {
+            writer.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "text"));
+            try (PartWriter part = writer.part(child).orElseThrow()) {
+                part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "teil"));
+            }
+            writer.commit(document(1, 4));
+        }
+        Files.delete(section().resolveSibling("parts").resolve(child).resolve("s000000.ndjson"));
+
+        assertThat(store.find(KEY)).isEmpty();
+        assertThat(store.parts(KEY)).isEmpty();
+    }
+
+    @Test
+    void aStateWithoutCommitLeavesNoParts() {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        try (ExtractionWriter writer = store.writer(KEY)) {
+            try (PartWriter part = writer.part("cd".repeat(32)).orElseThrow()) {
+                part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "teil"));
+            }
+        }
+        assertThat(store.find(KEY)).isEmpty();
+        assertThat(store.parts(KEY)).isEmpty();
+    }
+
+    @Test
+    void partIdsHavePathSafeFileNames() {
+        String child = "cd".repeat(32);
+        assertThat(new PartId.Content(child, 2).fileName()).isEqualTo(child + "-2");
+        assertThat(new PartId.Content(child, 2).storageKey()).isEqualTo(child);
+        assertThat(new PartId.Position(HEX, "/1/3").fileName()).isEqualTo("pos-" + HEX + "-1-3");
     }
 
     private Path section() throws java.io.IOException {

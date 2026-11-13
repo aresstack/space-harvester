@@ -92,12 +92,12 @@ public final class DocumentExtractions {
         try (ExtractionWriter writer = extractions.writer(key)) {
             Target target = new Target(writer);
             StructuredDocument document = read(asset, store, target);
-            // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Teile haben bis AP7b keine eigene
-            // Ablage und würden sonst nie erneut gelesen.
+            // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Behälter und Teile werden nur
+            // zusammen neu gelesen (Punkt 5, Verzeichnis als Ganzes), der Teil würde sonst nie erneut gelesen.
             if (transientFailure(document).isPresent()) {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
-            // Bis AP7b/AP4 stehen die Blöcke der Teile hinter denen des Behälters in seiner Ablage (siehe Target).
+            // Behälter und Teile werden zusammen gültig (AP7b).
             return writer.commit(new StructuredDocument(document.head(), document.outcome(), document.directory(),
                     target.blocks, target.chars));
         } catch (UncheckedIOException e) {
@@ -157,14 +157,7 @@ public final class DocumentExtractions {
             throw failure(outcome);
         }
         TextCollector text = new TextCollector(maxTextChars);
-        if (extraction.sections() > 0) {
-            try (Stream<TextSection> sections = extractions.sections(extraction.key())) {
-                var iterator = sections.iterator();
-                while (iterator.hasNext() && text.open()) {
-                    iterator.next().blocks().forEach(text::accept);
-                }
-            }
-        }
+        collect(extraction, text);
         AssetText result = text.result(asset, id(), version(), outcome, now);
         store.putText(result);
         return result;
@@ -182,14 +175,7 @@ public final class DocumentExtractions {
                 throw failure(outcome);
             }
             TextCollector text = new TextCollector(maxTextChars);
-            if (known.get().sections() > 0) {
-                try (Stream<TextSection> sections = extractions.sections(known.get().key())) {
-                    var iterator = sections.iterator();
-                    while (iterator.hasNext() && text.open()) {
-                        iterator.next().blocks().forEach(text::accept);
-                    }
-                }
-            }
+            collect(known.get(), text);
             return text.result(asset, id(), version(), outcome, now);
         }
         TextCollector text = new TextCollector(maxTextChars);
@@ -215,7 +201,8 @@ public final class DocumentExtractions {
     /**
      * Die Markdown-Ansicht eines abgelegten Dokuments ({@link MarkdownView}), fortlaufend aus den Abschnitten der
      * Extraktion geschrieben, ohne Längengrenze: aus derselben Extraktion wie {@link #text}. Liest das Original nur,
-     * wenn noch keine Extraktion abgelegt ist.
+     * wenn noch keine Extraktion abgelegt ist. Nur das Dokument selbst; enthaltene Dateien sind eigene Dokumente mit
+     * eigener Ansicht (AP4).
      *
      * @return der Status der Extraktion ({@code PARTIAL}: die Ansicht ist gekürzt)
      * @throws DocumentTextException wenn das Dokument keinen Text hat, wie bei {@link #text}
@@ -240,8 +227,30 @@ public final class DocumentExtractions {
         return outcome;
     }
 
-    private static boolean usable(Outcome outcome) {
-        return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
+    /**
+     * Sammelt den Text des Behälters und danach den seiner Teile in der Reihenfolge des Verzeichnisses; inhaltsgleiche
+     * Teile einmal. Übergang bis AP4 (Architekt 13.11.2026): Bis Index und Export die Teile als eigene Einträge
+     * führen, enthält der Text des Behälters den Text seiner Teile, damit die Suche nichts verliert.
+     */
+    private void collect(StoredExtraction extraction, TextCollector text) {
+        if (extraction.sections() > 0) {
+            try (Stream<TextSection> sections = extractions.sections(extraction.key())) {
+                var iterator = sections.iterator();
+                while (iterator.hasNext() && text.open()) {
+                    iterator.next().blocks().forEach(text::accept);
+                }
+            }
+        }
+        if (extraction.document().directory().isEmpty() || !text.open()) {
+            return;
+        }
+        // Die Teile stehen im Stand in Verzeichnisreihenfolge, inhaltsgleiche nur einmal; der Stand wird einmal gelesen.
+        try (Stream<TextSection> sections = extractions.allPartSections(extraction.key())) {
+            var iterator = sections.iterator();
+            while (iterator.hasNext() && text.open()) {
+                iterator.next().blocks().forEach(text::accept);
+            }
+        }
     }
 
     /** Sammelt reinen Text bis zur Grenze. */
@@ -342,12 +351,10 @@ public final class DocumentExtractions {
     }
 
     /**
-     * Der Strom des äußeren Dokuments geht in die Ablage; schließen bestätigt nicht (das macht {@link #extract}).
-     *
-     * <p>Übergang (ADR 0026, AP7a, Architekt 13.11.2026): Bis die Teile eigene Abschnitte haben (AP7b) und Index und
-     * Export sie als eigene Einträge führen (AP4), gehen ihre Blöcke neu nummeriert in die Ablage des Behälters, damit
-     * der Text des Behälters wie bisher den Text seiner Teile enthält und die Suche nichts verliert. Dateinamen gehen
-     * nie als Text hinein; das Verzeichnis trägt Kennung und Status jedes Teils.
+     * Der Strom des äußeren Dokuments geht in die Ablage, jeder Teil in seine eigene Ablage im selben Stand (AP7b);
+     * schließen bestätigt nicht (das macht {@link #extract}). Inhaltsgleiche Teile desselben Behälters teilen sich die
+     * Ablage: Der zweite wird gelesen (seine Kinder brauchen eigene Einträge), seine Blöcke werden nicht ein zweites
+     * Mal geschrieben.
      */
     private static final class Target implements StructureSink {
 
@@ -359,21 +366,45 @@ public final class DocumentExtractions {
             this.writer = writer;
         }
 
-        private void write(Block block) {
-            Block numbered = renumbered(block, blocks);
-            writer.accept(numbered);
-            blocks++;
-            chars += numbered.chars();
-        }
-
         @Override
         public BlockSink document() {
-            return this::write;
+            return block -> {
+                Block numbered = renumbered(block, blocks);
+                writer.accept(numbered);
+                blocks++;
+                chars += numbered.chars();
+            };
         }
 
         @Override
         public PartSink part(EmbeddedEntry entry) {
-            return this::write;
+            // Ein abgewiesener Teil (Status schon am Eintrag) belegt keine Ablage; ein lesbarer gleicher Teil füllt sie.
+            Optional<PartWriter> part = usable(entry.outcome()) ? writer.part(entry.id().storageKey())
+                    : Optional.empty();
+            if (part.isEmpty()) {
+                return block -> {
+                    // inhaltsgleich: schon abgelegt
+                };
+            }
+            PartWriter target = part.get();
+            return new PartSink() {
+                private long index;
+
+                @Override
+                public void accept(Block block) {
+                    target.accept(renumbered(block, index++));
+                }
+
+                @Override
+                public void head(DocumentHead head) {
+                    target.head(head);
+                }
+
+                @Override
+                public void close() {
+                    target.close();
+                }
+            };
         }
     }
 
@@ -390,5 +421,9 @@ public final class DocumentExtractions {
             case Block.Code b -> new Block.Code(index, b.location(), b.links(), b.text(), b.language());
             case Block.Table b -> new Block.Table(index, b.location(), b.links(), b.cells(), b.continued());
         };
+    }
+
+    private static boolean usable(Outcome outcome) {
+        return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
     }
 }
