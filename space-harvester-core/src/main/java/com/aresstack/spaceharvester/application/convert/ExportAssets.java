@@ -86,11 +86,19 @@ public interface ExportAssets {
      *
      * @param truncated ob beim Einlesen gekürzt wurde
      * @param bytesRead gelesene Bytes (UTF-8)
+     * @param extractor Extraktion laut Paket ({@code attachments/v2}: {@code extraction.extractor} des Behälters) oder
+     *                  {@code null}
+     * @param version   Version der Extraktion laut Paket oder {@code null}
      */
-    record DocumentText(String text, boolean truncated, long bytesRead) {
+    record DocumentText(String text, boolean truncated, long bytesRead, String extractor, String version) {
 
         public DocumentText {
             java.util.Objects.requireNonNull(text, "text");
+        }
+
+        /** Ohne Angabe der Extraktion ({@code attachments/v1}). */
+        public DocumentText(String text, boolean truncated, long bytesRead) {
+            this(text, truncated, bytesRead, null, null);
         }
     }
 

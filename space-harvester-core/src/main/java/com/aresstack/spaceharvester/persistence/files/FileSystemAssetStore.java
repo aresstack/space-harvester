@@ -319,8 +319,52 @@ public class FileSystemAssetStore implements AssetStore {
         if (!HEX_SHA.matcher(sha256).matches()) {
             return Optional.empty();
         }
+        return readText(textFile(sha256, extractor, version)).filter(text -> text.sha256().equals(sha256)
+                && text.extractor().equals(extractor) && text.version().equals(version));
+    }
+
+    /**
+     * Der jüngste Text dieser Bytes über alle Extraktionen und Versionen unter {@code texts/<sha256-hex>/}, nach
+     * {@code createdAt}; beschädigte oder fremd abgelegte Dateien zählen nicht.
+     */
+    @Override
+    public Optional<AssetText> latestText(String sha256) {
+        if (!HEX_SHA.matcher(sha256).matches()) {
+            return Optional.empty();
+        }
+        Path dir = root.resolve("texts").resolve(sha256.substring("sha256:".length()));
+        java.util.List<Path> files;
+        try (Stream<Path> paths = Files.walk(dir, 2)) {
+            files = paths.filter(path -> dir.relativize(path).getNameCount() == 2)
+                    .filter(path -> path.getFileName().toString().endsWith(".properties"))
+                    .filter(path -> !path.getFileName().toString().startsWith(".")).toList();
+        } catch (NoSuchFileException e) {
+            return Optional.empty();
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Dokumenttext nicht lesbar", e);
+        }
+        AssetText latest = null;
+        for (Path file : files) {
+            Optional<AssetText> text;
+            try {
+                text = readText(file);
+            } catch (AssetStoreException e) {
+                continue;
+            }
+            if (text.isEmpty() || !text.get().sha256().equals(sha256)
+                    || !file.equals(textFile(sha256, text.get().extractor(), text.get().version()))) {
+                continue;
+            }
+            if (latest == null || text.get().createdAt().isAfter(latest.createdAt())) {
+                latest = text.get();
+            }
+        }
+        return Optional.ofNullable(latest);
+    }
+
+    private static Optional<AssetText> readText(Path file) {
         Properties p = new Properties();
-        try (var in = Files.newBufferedReader(textFile(sha256, extractor, version), StandardCharsets.UTF_8)) {
+        try (var in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             p.load(in);
         } catch (NoSuchFileException e) {
             return Optional.empty();
@@ -328,11 +372,9 @@ public class FileSystemAssetStore implements AssetStore {
             throw new AssetStoreException("Dokumenttext nicht lesbar", e);
         }
         try {
-            AssetText text = new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),
+            return Optional.of(new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),
                     p.getProperty("version"), p.getProperty("text"), Boolean.parseBoolean(p.getProperty("truncated")),
-                    Instant.parse(p.getProperty("createdAt")), outcome(p));
-            return text.sha256().equals(sha256) && text.extractor().equals(extractor)
-                    && text.version().equals(version) ? Optional.of(text) : Optional.empty();
+                    Instant.parse(p.getProperty("createdAt")), outcome(p)));
         } catch (RuntimeException e) {
             throw new AssetStoreException("Dokumenttext beschädigt", null);
         }

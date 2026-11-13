@@ -101,6 +101,59 @@ public class FileSystemExtractionStore implements ExtractionStore {
         return Optional.of(manifest.get().stored());
     }
 
+    /**
+     * Alle gültigen Extraktionen dieser Bytes über alle Extraktionen, Versionen und Strukturmodelle unter
+     * {@code extractions/<sha256-hex>/}, die jüngste zuerst nach {@code createdAt}. Der Schlüssel kommt aus
+     * {@code document.json} und muss zum Verzeichnis passen; beschädigte Stände zählen nicht.
+     */
+    @Override
+    public List<StoredExtraction> all(String sha256) {
+        if (sha256 == null || !sha256.matches("sha256:[0-9a-f]{64}")) {
+            return List.of();
+        }
+        Path dir = root.resolve(sha256.substring("sha256:".length()));
+        List<Path> bases;
+        try (Stream<Path> paths = Files.walk(dir, 4)) {
+            bases = paths.filter(path -> dir.relativize(path).getNameCount() == 4)
+                    .filter(path -> path.getFileName().toString().equals(CURRENT)).map(Path::getParent).toList();
+        } catch (NoSuchFileException e) {
+            return List.of();
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Extraktion nicht lesbar", e);
+        }
+        List<StoredExtraction> found = new ArrayList<>();
+        for (Path base : bases) {
+            try {
+                keyAt(sha256, base).flatMap(this::find).ifPresent(found::add);
+            } catch (AssetStoreException e) {
+                // nichts weiter: ein nicht lesbarer Stand zählt nicht
+            }
+        }
+        found.sort(Comparator.comparing(StoredExtraction::createdAt).reversed());
+        return List.copyOf(found);
+    }
+
+    /** Der Schlüssel des gültigen Stands in {@code base}, wenn {@code document.json} genau dorthin gehört. */
+    private Optional<ExtractionKey> keyAt(String sha256, Path base) {
+        try {
+            String name = Files.readString(base.resolve(CURRENT), StandardCharsets.UTF_8).strip();
+            if (!GENERATION.matcher(name).matches()) {
+                return Optional.empty();
+            }
+            JsonNode node = ExtractionJson.JSON.readTree(Files.readString(base.resolve(name).resolve(DOCUMENT),
+                    StandardCharsets.UTF_8));
+            ExtractionKey key = new ExtractionKey(node.path("sha256").asString(""), node.path("extractor").asString(""),
+                    node.path("version").asString(""), node.path("model").asString(""));
+            return key.sha256().equals(sha256) && base(key).equals(base) ? Optional.of(key) : Optional.empty();
+        } catch (NoSuchFileException e) {
+            return Optional.empty();
+        } catch (IOException e) {
+            throw new AssetStoreException("Extraktion nicht lesbar", e);
+        } catch (JacksonException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
     @Override
     public ExtractionWriter writer(ExtractionKey key, int sectionChars) {
         Objects.requireNonNull(key, "key");

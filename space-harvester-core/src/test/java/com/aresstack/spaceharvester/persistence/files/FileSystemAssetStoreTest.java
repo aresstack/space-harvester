@@ -30,6 +30,33 @@ class FileSystemAssetStoreTest {
     @TempDir
     Path root;
 
+    /** ADR 0026, Punkt 11: Bis zum Neulesen bleibt der jüngste Text anderer Extraktion oder Version lieferbar. */
+    @Test
+    void theLatestTextIsTheNewestOfAnyExtractionAndVersionOfTheSameBytes() throws Exception {
+        FileSystemAssetStore store = new FileSystemAssetStore(root);
+        String sha = "sha256:" + "ab".repeat(32);
+        store.putText(new AssetText(sha, "tika", "3.3-1", "alt", false, Instant.parse("2026-11-01T00:00:00Z")));
+        store.putText(new AssetText(sha, "import", "unbekannt", "mitgebracht", true,
+                Instant.parse("2026-11-02T00:00:00Z")));
+        store.putText(new AssetText("sha256:" + "cd".repeat(32), "tika", "3.3-2", "fremd", false,
+                Instant.parse("2026-11-03T00:00:00Z")));
+
+        AssetText latest = store.latestText(sha).orElseThrow();
+        assertThat(latest.text()).isEqualTo("mitgebracht");
+        assertThat(latest.extractor()).isEqualTo("import");
+        assertThat(latest.truncated()).isTrue();
+        assertThat(store.latestText("sha256:" + "ef".repeat(32))).isEmpty();
+        assertThat(store.latestText("kein Hash")).isEmpty();
+
+        // Eine beschädigte Datei zählt nicht; der nächstjüngere Text bleibt.
+        try (Stream<Path> files = Files.walk(root.resolve("texts"))) {
+            Path imported = files.filter(path -> path.toString().contains("pimport")).filter(Files::isRegularFile)
+                    .findFirst().orElseThrow();
+            Files.writeString(imported, "createdAt=kaputt\n");
+        }
+        assertThat(store.latestText(sha)).map(AssetText::text).contains("alt");
+    }
+
     @Test
     void storesFindsAndReadsByVersion() {
         FileSystemAssetStore store = new FileSystemAssetStore(root);
