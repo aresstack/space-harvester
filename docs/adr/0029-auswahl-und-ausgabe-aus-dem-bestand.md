@@ -82,8 +82,9 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   (`Exports.startFromHoldings`): gleiche Startseite, Tiefe und Formate, und je Seite des Umfangs dieselbe
   Elternseite, gespeicherte Version, Version der Kopfdaten und dieselbe Markierung als veraltet oder gesperrt wie beim
   Start der fertigen Ausgabe, dazu dieselben Kopfdaten (Titel, Labels, Attribute), derselbe gespeicherte Inhalt und
-  dieselben für den Auftraggeber lesbaren Seiten. Dann kommt deren Auftrag zurück, ohne neuen Lauf; gilt die Freigabe
-  des Auftraggebers nicht mehr, wird nichts wiederverwendet.
+  dieselben für den Auftraggeber lesbaren Seiten, außerdem dieselben Verzeichnisse der Bilder und Anhänge und dieselbe
+  Lese-Ansicht zur gespeicherten Version (Abschnitt 4). Dann kommt deren Auftrag zurück, ohne neuen Lauf; gilt die
+  Freigabe des Auftraggebers nicht mehr oder ist der Bestand nicht lesbar, wird nichts wiederverwendet.
 - Der bisherige Export-Auftrag mit Beschaffung (ADR 0010, auch über REST) bleibt; er entscheidet über das Neuladen
   künftig nach der Abdeckung seines Teilbaums im Bestand statt nach der bestätigten Generation: Sind alle Seiten des
   Teilbaums gespeichert und aktuell (dieselbe Regel wie die Zustände der Bestandsübersicht, nur nach einer Inventur
@@ -99,6 +100,18 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   `assets.json` und `attachments.json` aus diesen Verzeichnissen und kopiert die Dateien; nichts wird für eine Ausgabe
   neu geladen.
 - Ein Mechanismus für alle Bildzugriffe: Auch der bisherige Export-Auftrag liest und schreibt dieselben Verzeichnisse.
+  Das Verzeichnis ist die schon vorhandene Ablage der mitgebrachten Dateien eines Imports (`ImportedAssets`, in der
+  Lucene-Ablage der Anreicherungen, mit der Seite entfernt); jede Beschaffung, deren Auftraggeber die ganze Quelle
+  lesen darf, legt dort ihre fertig geprüften Seiten ab, die Lese-Ansicht zur Version daneben (`ReadingViewStore`).
+  Läufe ohne dieses Recht legen nichts ab, damit gesperrte Einträge niemandem fehlen.
+- Ein Ausschluss nach den Einstellungen eines Exports (`export.attachments.*`, Status `EXCLUDED`) ersetzt im
+  Verzeichnis nie einen schon abgelegten Eintrag; der Ausschluss gilt nur für das Manifest dieses Exports. Eine Ausgabe
+  aus dem Bestand filtert nach den heutigen Einstellungen: Was damals ausgeschlossen und nie abgelegt wurde, heute aber
+  zugelassen ist, liegt nicht im Bestand (`UNAVAILABLE`, Grund `not-in-holdings`), und der Auftrag endet
+  unvollständig.
+- Die Folgeaufträge einer Ausgabe aus dem Bestand tragen `holdings=true` und lesen nur die Verzeichnisse, nie die
+  Quelle; Seiten ohne Verzeichnis zu ihrer Version nennt der Auftrag mit ihrer Zahl (`NOT_IN_HOLDINGS`) und endet
+  unvollständig statt anzuhalten. „Neu erzwingen“ gibt es für sie nicht.
 - Eine neue Version der Seite macht ihr Verzeichnis veraltet; der nächste Lauf von „Bilder beschaffen“ bzw. „Anhänge
   beschaffen“ für die Auswahl ergänzt nur, was fehlt.
 
@@ -118,7 +131,8 @@ Je ein kleiner Pull Request, Core zuerst:
 3. Begriffe und Vorkommen.
 4. Aussagen und Graph.
 5. Ausgabe aus dem Bestand samt Wiederverwendung; Export-Auftrag entscheidet nach Abdeckung.
-6. Verzeichnis der Bilder und Anhänge je Seite und Version; Beschaffen auf einer Auswahl; Export daraus.
+6. Verzeichnis der Bilder und Anhänge je Seite und Version, Folgeaufträge der Ausgabe aus dem Bestand daraus.
+7. Beschaffen auf einer Auswahl ohne Export-Auftrag.
 
 ## Folgen
 

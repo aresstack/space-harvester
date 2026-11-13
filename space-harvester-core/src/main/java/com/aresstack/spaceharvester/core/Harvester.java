@@ -827,7 +827,10 @@ public final class Harvester implements AutoCloseable {
                     // Dokument-Anhänge (ADR 0023): je Lauf die gerade wirksame Einstellung (ADR 0015).
                     exportSettings(manager));
             images.connections(connections);
-            images.imported(importedAssets, new ReadingViewStore(enrichmentStore));
+            ReadingViewStore readingViews = new ReadingViewStore(enrichmentStore);
+            images.imported(importedAssets, readingViews);
+            // Ihr Stand gehört zum Fingerabdruck einer Ausgabe aus dem Bestand (ADR 0029).
+            exports.imported(importedAssets, readingViews);
             // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);

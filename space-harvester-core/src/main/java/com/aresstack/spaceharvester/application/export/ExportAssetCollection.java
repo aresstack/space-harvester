@@ -204,9 +204,11 @@ public class ExportAssetCollection {
     }
 
     /**
-     * Was ein Import mitgebracht hat ({@link ExportPackageImport}): Ist die Quelle nicht erreichbar und hat jede Seite
-     * des Exports zu ihrer Version mitgebrachte Bilder und Anhänge, schreibt der Lauf das Manifest daraus, statt
-     * anzuhalten (Angelo 11.11.2026); Lese-Ansichten kommen dann aus {@code views}. {@code null} ohne.
+     * Bilder, Anhänge und Lese-Ansichten je Seite im Bestand: was ein Import mitgebracht hat
+     * ({@link ExportPackageImport}) und was eine Beschaffung mit Leserecht auf die ganze Quelle abgelegt hat. Ist die
+     * Quelle nicht erreichbar und hat jede Seite des Exports zu ihrer Version etwas abgelegt, schreibt der Lauf das
+     * Manifest daraus, statt anzuhalten (Angelo 11.11.2026); eine Ausgabe aus dem Bestand liest nur hier (ADR 0029).
+     * Lese-Ansichten kommen dann aus {@code views}. {@code null} ohne.
      */
     public void imported(ImportedAssets imported, ReadingViewStore views) {
         this.imported = imported;
@@ -245,7 +247,8 @@ public class ExportAssetCollection {
     private boolean hold(Scope scope, JobStatus export, AssetTask task) {
         try {
             jobs.submitAwaiting(scope.type, export.sourceId(), export.partitionKey(), null, export.owner(),
-                    Map.of(EXPORT_ID, export.id()), task, export.id());
+                    parameters(export.id(), Boolean.parseBoolean(export.parameter(Exports.HOLDINGS))), task,
+                    export.id());
             return true;
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "{0} für Export {1} nicht vorab angelegt ({2})", scope.label,
@@ -320,7 +323,7 @@ public class ExportAssetCollection {
             }
             JobStatus status = earlier.isPresent() ? jobs.rerun(earlier.get().id(), owner, task)
                     : jobs.submit(scope.type, dataset.sourceId(), dataset.spaceKey(), null, owner,
-                    Map.of(EXPORT_ID, exportId), task);
+                    parameters(exportId, holdingsExport(exportId, owner)), task);
             running.put(scope.key(exportId), status.id());
             return Optional.of(status);
         } catch (JobCapacityExceededException | JobNotResumableException | IllegalStateException e) {
@@ -344,6 +347,32 @@ public class ExportAssetCollection {
 
     /** Wiederanlauf-Angabe: der Export, dessen Bilder der Auftrag beschafft ({@link JobStatus#parameters()}). */
     public static final String EXPORT_ID = "exportId";
+
+    /**
+     * Die Angaben eines Folgeauftrags: sein Export und, bei einer Ausgabe aus dem Bestand, {@link Exports#HOLDINGS};
+     * dann liest er nur, was je Seite im Bestand liegt, nie die Quelle (ADR 0029).
+     */
+    private static Map<String, String> parameters(String exportId, boolean holdings) {
+        return holdings ? Map.of(EXPORT_ID, exportId, Exports.HOLDINGS, "true") : Map.of(EXPORT_ID, exportId);
+    }
+
+    /** Ob der Export eine Ausgabe aus dem Bestand ist; ein gelöschter Exportauftrag gilt als gewöhnlicher Export. */
+    private boolean holdingsExport(String exportId, String owner) {
+        try {
+            return Boolean.parseBoolean(jobs.status(exportId, owner).parameter(Exports.HOLDINGS));
+        } catch (UnknownJobException e) {
+            return false;
+        }
+    }
+
+    /** Ob dieser Folgeauftrag zu einer Ausgabe aus dem Bestand gehört ({@link #parameters}). */
+    private boolean fromHoldings(JobContext context) {
+        try {
+            return Boolean.parseBoolean(jobs.status(context.jobId(), context.owner()).parameter(Exports.HOLDINGS));
+        } catch (UnknownJobException e) {
+            return false;
+        }
+    }
 
     /**
      * Setzt den eigenen angehaltenen, gescheiterten, abgebrochenen oder unvollständig fertigen Bilder- oder
@@ -416,6 +445,9 @@ public class ExportAssetCollection {
         if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         }
+        if (Boolean.parseBoolean(status.parameter(Exports.HOLDINGS))) {
+            throw new JobNotResumableException(jobId, "eine Ausgabe aus dem Bestand liest die Quelle nicht");
+        }
         Map<String, String> parameters = new java.util.HashMap<>(status.parameters());
         parameters.put(RERUN, FORCE_REFRESH);
         JobStatus rerun = jobs.rerun(jobId, owner, parameters, new AssetTask(exportId, scope,
@@ -476,7 +508,8 @@ public class ExportAssetCollection {
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
             running.put(scope.key(exportId), context.jobId());
             return JobTask.blocking(job -> collect(job, scope, new Share(scope == Scope.MEDIA,
-                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked, fresh)).start(context);
+                    scope == Scope.DOCUMENTS || withDocuments.join()), exportId, checked, fresh, fromHoldings(job)))
+                    .start(context);
         }
     }
 
@@ -685,7 +718,7 @@ public class ExportAssetCollection {
     }
 
     private void collect(JobContext job, Scope scope, Share share, String exportId, Map<String, CheckedPage> done,
-                         boolean fresh) {
+                         boolean fresh, boolean holdings) {
         Tally context = new Tally(job);
         List<ExportAssetManifest.Entry> entries = java.util.Collections.synchronizedList(new ArrayList<>());
         Set<String> checked = ConcurrentHashMap.newKeySet();
@@ -696,6 +729,11 @@ public class ExportAssetCollection {
             context.phase(COMPONENT, scope.phase);
             run = new Run(context, scope, share, dataset.sourceId(), settings.get(), fresh);
             Run current = run;
+            if (holdings) {
+                // Ausgabe aus dem Bestand (ADR 0029): nur was je Seite abgelegt ist, nie die Quelle.
+                fromStore(current, exportId, dataset, true);
+                return;
+            }
             boolean[] complete = {true};
             // Erst vorbereiten: alle Verweise aller Seiten zählen, ohne zu laden; danach steht die Gesamtzahl fest
             // (Angelo 11.11.2026). Vor dem Anhalten schon vollständig geladene Seiten zählen ohne Abruf mit.
@@ -707,7 +745,7 @@ public class ExportAssetCollection {
             try {
                 catalog = catalog(context, dataset, done.keySet());
             } catch (SourceUnreachable e) {
-                if (offline(current, exportId, dataset)) {
+                if (fromStore(current, exportId, dataset, false)) {
                     return;
                 }
                 LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
@@ -739,7 +777,7 @@ public class ExportAssetCollection {
             } catch (SourceUnreachable e) {
                 // Nicht erreichbar oder gedrosselt: die übrigen Seiten nicht mehr anfragen und nicht als Fehler zählen;
                 // der Auftrag hält an, ▶ macht später weiter. Nach einem Import geht es ohne Quelle weiter.
-                if (offline(current, exportId, dataset)) {
+                if (fromStore(current, exportId, dataset, false)) {
                     return;
                 }
                 LOG.log(System.Logger.Level.INFO, "{0} für Export {1} angehalten: Quelle {2}", scope.label,
@@ -873,6 +911,7 @@ public class ExportAssetCollection {
         try {
             Loaded result = load(run.with(page, run.lease), exportId, dataset, plan, snapshot, pageEntries);
             if (result.checked()) {
+                remember(run, dataset.sourceId(), snapshot, pageEntries);
                 checked.add(pageId);
                 done.put(pageId, new CheckedPage(List.copyOf(pageEntries), result.discovered(), page.processed,
                         page.written, page.failed));
@@ -995,21 +1034,30 @@ public class ExportAssetCollection {
                 + reference.src() + "\u0000" + reference.index();
     }
 
-    /** Eine Seite des Exports mit ihren mitgebrachten Bildern und Anhängen. */
+    /**
+     * Eine Seite des Exports mit ihren Bildern und Anhängen aus dem Bestand; {@code assets} ist {@code null}, wenn zu
+     * ihrer Version nichts abgelegt ist.
+     */
     private record ImportedPage(String pageId, String version, boolean view, ExportAssetManifest assets) {
     }
 
     /**
-     * Ohne erreichbare Quelle nach einem Import (Angelo 11.11.2026): Hat jede Seite des Exports zu ihrer Version
-     * mitgebrachte Bilder und Anhänge ({@link ImportedAssets}), schreibt der Lauf das Manifest daraus, statt anzuhalten;
-     * die Dateien liegen schon in der Ablage, Lese-Ansichten kommen aus ihrer Ablage. Rechte wie beim Laden: Wer nicht
-     * die ganze Quelle lesen darf, bekommt Fremdes nicht ({@code RESTRICTED}, {@code FORBIDDEN}).
+     * Schreibt das Manifest aus dem, was je Seite und Version im Bestand liegt ({@link ImportedAssets}: aus einem
+     * Import oder einer früheren Beschaffung), ohne die Quelle zu fragen; die Dateien liegen schon in der Ablage,
+     * Lese-Ansichten kommen aus ihrer Ablage. Rechte wie beim Laden: Wer nicht die ganze Quelle lesen darf, bekommt
+     * Fremdes nicht ({@code RESTRICTED}, {@code FORBIDDEN}).
+     * <ul>
+     *     <li>Quelle nicht erreichbar ({@code partial = false}, Angelo 11.11.2026): nur wenn jede Seite etwas abgelegt
+     *     hat; sonst {@code false}, und der Lauf hält an wie bisher.</li>
+     *     <li>Ausgabe aus dem Bestand ({@code partial = true}, ADR 0029): immer; Seiten ohne Abgelegtes nennt der
+     *     Auftrag mit ihrer Zahl und endet unvollständig.</li>
+     * </ul>
      *
-     * @return {@code false}, wenn nicht jede Seite etwas mitgebracht hat; dann hält der Lauf an wie bisher
+     * @return ob das Manifest geschrieben wurde
      */
-    private boolean offline(Run run, String exportId, ConversionInput dataset) {
+    private boolean fromStore(Run run, String exportId, ConversionInput dataset, boolean partial) {
         ImportedAssets source = imported;
-        if (source == null) {
+        if (source == null && !partial) {
             return false;
         }
         String sourceId = dataset.sourceId();
@@ -1020,29 +1068,38 @@ public class ExportAssetCollection {
                 return;
             }
             PageSnapshot snapshot = page.snapshot();
-            Optional<ExportAssetManifest> assets = source.find(snapshot.key(), snapshot.metadata().version());
-            if (assets.isEmpty()) {
+            String version = snapshot.metadata().version();
+            Optional<ExportAssetManifest> assets = source == null || version == null ? Optional.empty()
+                    : source.find(snapshot.key(), version);
+            if (assets.isEmpty() && !partial) {
                 covered[0] = false;
                 return;
             }
-            pages.add(new ImportedPage(snapshot.key().pageId(), snapshot.metadata().version(),
-                    needsReadingView(snapshot), assets.get()));
+            pages.add(new ImportedPage(snapshot.key().pageId(), version, needsReadingView(snapshot),
+                    assets.orElse(null)));
         });
-        if (!covered[0] || pages.isEmpty()) {
+        if (!partial && (!covered[0] || pages.isEmpty())) {
             return false;
         }
         JobContext context = run.context;
         boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
         boolean complete = true;
+        long missing = 0;
         List<ExportAssetManifest.Entry> entries = new ArrayList<>();
         Set<String> checked = new HashSet<>();
         for (ImportedPage page : pages) {
             context.checkpoint();
-            complete &= (!run.share.images() || page.assets().imagesComplete())
-                    && (!run.share.documents() || page.assets().documentsComplete());
             if (run.share.images() && page.view()) {
                 putView(exportId, importedView(sourceId, page, mayShowForeign));
             }
+            if (page.assets() == null) {
+                // Nur in der Ausgabe aus dem Bestand: zu dieser Version liegt nichts; der Lauf fragt die Quelle nie.
+                missing++;
+                complete = false;
+                continue;
+            }
+            complete &= (!run.share.images() || page.assets().imagesComplete())
+                    && (!run.share.documents() || page.assets().documentsComplete());
             for (ExportAssetManifest.Entry entry : page.assets().assets()) {
                 if (!run.share.owns(entry) || entry.document() && !run.settings.attachments()) {
                     continue;
@@ -1070,25 +1127,116 @@ public class ExportAssetCollection {
         if (!(complete && own.stream().allMatch(ExportAssetManifest.Entry::present))) {
             context.incomplete();
         }
-        context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info(COMPONENT,
-                "Quelle nicht erreichbar: " + own.size() + " Einträge aus dem Import übernommen"));
-        LOG.log(System.Logger.Level.INFO, "{0} für Export {1} ohne Quelle aus dem Import: {2} Referenzen",
-                run.scope.label, exportId, own.size());
+        if (partial) {
+            context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info(COMPONENT,
+                    "Aus dem Bestand: " + own.size() + " Einträge übernommen, die Quelle nicht gefragt"));
+            if (missing > 0) {
+                context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                        com.aresstack.spaceharvester.application.jobs.JobEvent.Category.STORAGE, COMPONENT,
+                        "NOT_IN_HOLDINGS", missing + " Seiten haben zu ihrem gespeicherten Stand keine Bilder "
+                                + "und Anhänge im Bestand; eine Ausgabe aus dem Bestand lädt sie nicht nach"));
+            }
+        } else {
+            context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info(COMPONENT,
+                    "Quelle nicht erreichbar: " + own.size() + " Einträge aus dem Import übernommen"));
+        }
+        LOG.log(System.Logger.Level.INFO, "{0} für Export {1} ohne Quelle aus dem Bestand: {2} Referenzen, {3} "
+                + "Seiten ohne", run.scope.label, exportId, own.size(), missing);
         return true;
     }
 
-    /** Ein mitgebrachter Dokument-Anhang nach den heutigen Einstellungen gefiltert, wie {@link #document} es tut. */
-    private static ExportAssetManifest.Entry filtered(ExportSettings settings, ExportAssetManifest.Entry entry) {
+    /**
+     * Legt die Einträge einer vollständig geprüften Seite je Seite und Version im Bestand ab
+     * ({@link ImportedAssets}), damit eine Ausgabe aus dem Bestand sie ohne Quelle findet (ADR 0029). Gemischt wie
+     * {@link #write}: die eigenen Arten wie {@link #merged}, die andere Art bleibt, wie ihr Auftrag sie abgelegt hat.
+     * Nur Läufe, deren Auftraggeber die ganze Quelle lesen darf, legen ab: sonst fehlten Fremdes und gesperrte Bilder
+     * für alle anderen. Ein Ausschluss nach den Einstellungen dieses Exports ({@code EXCLUDED}) ersetzt nie einen schon
+     * abgelegten Eintrag: Die Datei liegt weiter in der Ablage, und eine Ausgabe mit weiteren Einstellungen soll sie
+     * finden.
+     */
+    private void remember(Run run, String sourceId, PageSnapshot snapshot, List<ExportAssetManifest.Entry> entries) {
+        ImportedAssets directory = imported;
+        String version = snapshot.metadata().version();
+        if (directory == null || version == null || !sourceWide.test(run.context.owner(), sourceId)) {
+            return;
+        }
+        PageKey key = snapshot.key();
+        try {
+            synchronized (directoryLock) {
+                Optional<ExportAssetManifest> before = directory.find(key, version);
+                List<ExportAssetManifest.Entry> own = merged(before.map(manifest -> new ExportAssetManifest(false,
+                        manifest.assets().stream().filter(run.share::owns).toList())), keptStored(before, entries),
+                        Set.of(key.pageId()));
+                List<ExportAssetManifest.Entry> all = new ArrayList<>(own);
+                before.ifPresent(manifest -> manifest.assets().stream().filter(entry -> !run.share.owns(entry))
+                        .forEach(all::add));
+                boolean images = run.share.images() ? own.stream().filter(entry -> !entry.document())
+                        .allMatch(ExportAssetManifest.Entry::present)
+                        : before.map(ExportAssetManifest::imagesComplete).orElse(false);
+                boolean documents = run.share.documents() ? own.stream().filter(ExportAssetManifest.Entry::document)
+                        .allMatch(ExportAssetManifest.Entry::present)
+                        : before.map(ExportAssetManifest::documentsComplete).orElse(false);
+                directory.save(key, version, new ExportAssetManifest(images, documents, all));
+            }
+        } catch (RuntimeException e) {
+            // Ablegen im Bestand darf die Beschaffung nie verhindern; der Export hat sein eigenes Manifest.
+            LOG.log(System.Logger.Level.WARNING, "Bilder und Anhänge einer Seite nicht im Bestand abgelegt ({0})",
+                    e.getClass().getName());
+        }
+    }
+
+    /**
+     * Die Einträge eines Laufs für den Bestand: Wo dieser Export nach seinen Einstellungen ausschließt, was der Bestand
+     * schon abgelegt hat, bleibt der abgelegte Eintrag.
+     */
+    static List<ExportAssetManifest.Entry> keptStored(Optional<ExportAssetManifest> before,
+                                                      List<ExportAssetManifest.Entry> entries) {
+        if (before.isEmpty()) {
+            return entries;
+        }
+        Map<String, ExportAssetManifest.Entry> stored = new HashMap<>();
+        for (ExportAssetManifest.Entry entry : before.get().assets()) {
+            if (entry.stored()) {
+                stored.putIfAbsent(key(entry), entry);
+            }
+        }
+        List<ExportAssetManifest.Entry> kept = new ArrayList<>(entries.size());
+        for (ExportAssetManifest.Entry entry : entries) {
+            ExportAssetManifest.Entry earlier = entry.status() == ExportAssetManifest.Status.EXCLUDED
+                    ? stored.get(key(entry)) : null;
+            kept.add(earlier != null ? earlier : entry);
+        }
+        return kept;
+    }
+
+    /** Hält Lesen und Schreiben des Bestands je Seite zusammen, wenn Bilder- und Anhängeauftrag zugleich ablegen. */
+    private final Object directoryLock = new Object();
+
+    /**
+     * Ein mitgebrachter Dokument-Anhang nach den heutigen Einstellungen gefiltert, wie {@link #document} es tut. War er
+     * beim Ablegen nach damaligen Einstellungen ausgeschlossen und ist heute zugelassen, liegt er nicht im Bestand:
+     * {@code UNAVAILABLE} mit Grund {@value #NOT_IN_HOLDINGS}, der Auftrag endet unvollständig.
+     */
+    static ExportAssetManifest.Entry filtered(ExportSettings settings, ExportAssetManifest.Entry entry) {
+        boolean excludedBefore = entry.status() == ExportAssetManifest.Status.EXCLUDED;
         String excluded = null;
         if (!settings.permits(entry.mediaType())) {
             excluded = "media-type-excluded";
-        } else if (entry.stored() && settings.tooLarge(entry.size())) {
+        } else if ((entry.stored() || excludedBefore && entry.size() > 0) && settings.tooLarge(entry.size())) {
             excluded = "too-large";
+        }
+        if (excluded == null && excludedBefore) {
+            return new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), entry.attachmentId(),
+                    entry.version(), entry.title(), entry.mediaType(), entry.size(), null,
+                    ExportAssetManifest.Status.UNAVAILABLE, NOT_IN_HOLDINGS);
         }
         return excluded == null ? entry : new ExportAssetManifest.Entry(entry.pageId(), entry.reference(),
                 entry.attachmentId(), entry.version(), entry.title(), entry.mediaType(), entry.size(), null,
                 ExportAssetManifest.Status.EXCLUDED, excluded);
     }
+
+    /** Grund eines Anhangs, der heute zugelassen ist, aber nie abgelegt wurde (ADR 0029). */
+    static final String NOT_IN_HOLDINGS = "not-in-holdings";
 
     /** Die abgelegte Lese-Ansicht zur exportierten Version, sonst als nicht verfügbar. */
     private ExportReadingView importedView(String sourceId, ImportedPage page, boolean mayShowForeign) {
@@ -1414,9 +1562,29 @@ public class ExportAssetCollection {
             view = ExportReadingView.without(pageId, version, ExportReadingView.Status.UNAVAILABLE, "page-changed");
         } else {
             view = ExportReadingView.available(pageId, version, live.html(), live.baseUri(), live.text());
+            keepView(snapshot, live);
         }
         putView(exportId, view);
         return live.images();
+    }
+
+    /**
+     * Legt die Lese-Ansicht zur exportierten Version auch je Seite ab ({@link ReadingViewStore}), damit eine Ausgabe
+     * aus dem Bestand sie ohne Quelle findet (ADR 0029). Nur ungesperrte Ansichten kommen hierher.
+     */
+    private void keepView(PageSnapshot snapshot, HarvestSource.ReadingPage live) {
+        ReadingViewStore views = importedViews;
+        if (views == null) {
+            return;
+        }
+        try {
+            views.save(new StoredReadingView(snapshot.key(), snapshot.payload().rawSha256(),
+                    snapshot.metadata().version(), live.html(), live.baseUri(), live.text(), live.images(),
+                    Instant.now()));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Lese-Ansicht einer Seite nicht im Bestand abgelegt ({0})",
+                    e.getClass().getName());
+        }
     }
 
     /**
