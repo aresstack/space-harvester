@@ -246,6 +246,8 @@ class ExportImagesTest {
         assertThat(ExportChapters.drawioSources(unreadable, "100", stored)).isEqualTo(unreadable);
         assertThat(ExportChapters.drawioSources("![Diagramm (draw.io) „fremd“](drawio:200/fremd)", "100", stored))
                 .startsWith("```drawio\n<mxfile>");
+        String example = "```\n![Diagramm (draw.io) „ablauf“](drawio:ablauf)\n```\n";
+        assertThat(ExportChapters.drawioSources(example, "100", stored)).isEqualTo(example);
     }
 
     @Test
@@ -255,6 +257,10 @@ class ExportImagesTest {
         assertThat(ExportChapters.isDiagramXml("<mxfileX/>")).isFalse();
         assertThat(ExportChapters.isDiagramXml("kein Diagramm")).isFalse();
         assertThat(ExportChapters.isDiagramXml("<?xml version=\"1.0\"")).isFalse();
+        // abgeschnitten oder kaputt: die Abbildung (Vorschau) bleibt
+        assertThat(ExportChapters.isDiagramXml("<mxfile><diagram>")).isFalse();
+        assertThat(ExportChapters.isDiagramXml("<!DOCTYPE mxfile [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><mxfile>&x;</mxfile>"))
+                .isFalse();
     }
 
     @Test

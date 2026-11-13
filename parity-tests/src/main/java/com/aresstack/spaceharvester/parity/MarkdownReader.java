@@ -52,23 +52,25 @@ public final class MarkdownReader {
         for (int index = 0; index < lines.length; index++) {
             String line = lines[index];
             String trimmed = line.strip();
-            if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-                String info = trimmed.replaceFirst("^(`{3,}|~{3,})", "").strip().toLowerCase();
-                if (!fence && info.startsWith("mermaid")) {
-                    mermaid++;
-                }
-                // draw.io als Quelltext (Core seit markdown/8): der Betrachter zeichnet es, zählt als Abbildung;
-                // das XML ist kein Lesetext
-                if (!fence && info.equals("drawio")) {
-                    images++;
-                    drawio = true;
-                } else if (fence) {
-                    drawio = false;
-                }
-                fence = !fence;
+            // draw.io als Quelltext (Core seit markdown/8), auch in Zitaten (Info-Kästen, „> ```drawio“): der
+            // Betrachter zeichnet es, zählt als Abbildung; das XML ist kein Lesetext
+            String unquoted = trimmed.replaceFirst("^(>\\s*)+", "");
+            boolean fenceLine = unquoted.startsWith("```") || unquoted.startsWith("~~~");
+            String info = fenceLine ? unquoted.replaceFirst("^(`{3,}|~{3,})", "").strip().toLowerCase() : "";
+            if (drawio) {
+                drawio = !(fenceLine && info.isEmpty());
                 continue;
             }
-            if (drawio) {
+            if (!fence && fenceLine && info.equals("drawio")) {
+                images++;
+                drawio = true;
+                continue;
+            }
+            if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+                if (!fence && trimmed.substring(3).strip().toLowerCase().startsWith("mermaid")) {
+                    mermaid++;
+                }
+                fence = !fence;
                 continue;
             }
             if (fence) {

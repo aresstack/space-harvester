@@ -315,9 +315,13 @@ final class ExportChapters {
 
     /** Ersetzt draw.io-Bildverweise, deren Quelldaten abgelegt und lesbar sind, durch einen {@code ```drawio}-Block. */
     static String drawioSources(String markdown, String pageId, ExportAssets assets) {
+        boolean[] code = MarkdownConverter.codeMask(markdown);
         Matcher line = DRAWIO_LINE.matcher(markdown);
         StringBuilder out = new StringBuilder();
         while (line.find()) {
+            if (code[line.start()]) {
+                continue; // ein Beispiel im Code bleibt wörtlich
+            }
             String xml = drawioXml(line.group(2) == null ? pageId : line.group(2), line.group(3), assets);
             line.appendReplacement(out, Matcher.quoteReplacement(xml == null ? line.group()
                     : fenced(line.group(1), "drawio", xml)));
@@ -346,40 +350,28 @@ final class ExportChapters {
         return null;
     }
 
-    /** Ob das Wurzelelement {@code mxfile} oder {@code mxGraphModel} ist (Deklaration und Kommentare davor erlaubt). */
+    /**
+     * Ob {@code xml} wohlgeformtes XML mit dem Wurzelelement {@code mxfile} oder {@code mxGraphModel} ist. Ohne DOCTYPE
+     * und ohne externe Entitäten (Diagrammdaten kommen vom Server); kaputte Daten behalten die Bild-Rückfallebene.
+     */
     static boolean isDiagramXml(String xml) {
-        int at = 0;
-        while (true) {
-            while (at < xml.length() && Character.isWhitespace(xml.charAt(at))) {
-                at++;
-            }
-            if (xml.startsWith("<?", at)) {
-                at = end(xml, at, "?>");
-            } else if (xml.startsWith("<!--", at)) {
-                at = end(xml, at, "-->");
-            } else if (xml.startsWith("<!DOCTYPE", at)) {
-                at = end(xml, at, ">");
-            } else {
-                break;
-            }
-            if (at < 0) {
-                return false;
-            }
+        if (xml.toUpperCase(Locale.ROOT).contains("<!DOCTYPE")) {
+            return false;
         }
-        for (String root : new String[] {"<mxfile", "<mxGraphModel"}) {
-            if (xml.startsWith(root, at) && xml.length() > at + root.length()) {
-                char next = xml.charAt(at + root.length());
-                if (next == '>' || next == '/' || Character.isWhitespace(next)) {
-                    return true;
-                }
-            }
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            javax.xml.parsers.DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new org.xml.sax.helpers.DefaultHandler()); // nichts auf stderr
+            String root = builder.parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)))
+                    .getDocumentElement().getNodeName();
+            return root.equals("mxfile") || root.equals("mxGraphModel");
+        } catch (Exception e) {
+            return false;
         }
-        return false;
-    }
-
-    private static int end(String text, int from, String marker) {
-        int found = text.indexOf(marker, from);
-        return found < 0 ? -1 : found + marker.length();
     }
 
     /** Codeblock mit {@code info}; der Zaun ist länger als jede Backtick-Folge im Inhalt, {@code prefix} vor jeder Zeile. */

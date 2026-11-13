@@ -91,10 +91,16 @@ class ReferenceReadersTest {
                 <mxfile><diagram name="Ablauf"/></mxfile>
                 ```
 
+                > **Info**
+                >
+                > ```drawio
+                > <mxfile><diagram name="Zitat"/></mxfile>
+                > ```
+
                 Danach
                 """, null);
 
-        assertThat(md.images()).isEqualTo(1);
+        assertThat(md.images()).isEqualTo(2);
         assertThat(md.text()).contains("Danach").doesNotContain("mxfile");
     }
 }
