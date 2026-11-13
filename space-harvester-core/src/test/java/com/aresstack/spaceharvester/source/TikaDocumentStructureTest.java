@@ -266,6 +266,51 @@ class TikaDocumentStructureTest {
         assertThat(sink.entries).hasSize(1);
     }
 
+    @Test
+    void withoutTikasKindOnlyImagesOfAnOfficeDocumentBelongToIt() throws Exception {
+        Path file = Files.write(directory.resolve("bericht.docx"), DocumentFixtures.docx("Bericht"));
+        java.util.concurrent.atomic.AtomicBoolean root = new java.util.concurrent.atomic.AtomicBoolean(true);
+        Parser office = new Parser() {
+            @Override
+            public Set<MediaType> getSupportedTypes(ParseContext context) {
+                return Set.of(MediaType.parse(DocumentFixtures.DOCX));
+            }
+
+            @Override
+            public void parse(InputStream stream, ContentHandler handler, Metadata metadata, ParseContext context)
+                    throws org.xml.sax.SAXException, java.io.IOException {
+                stream.readAllBytes();
+                handler.startDocument();
+                if (!root.getAndSet(false)) {
+                    // Die Teile selbst haben keine weiteren Teile.
+                    handler.endDocument();
+                    return;
+                }
+                var extractor = context.get(org.apache.tika.extractor.EmbeddedDocumentExtractor.class);
+                // Ohne Art (EMBEDDED_RESOURCE_TYPE): eine eingebettete Mappe mit Beziehungskennung und ein Bild.
+                Metadata workbook = new Metadata();
+                workbook.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, "Mappe1.xlsx");
+                workbook.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID, "rId7");
+                workbook.set(Metadata.CONTENT_TYPE, DocumentFixtures.XLSX);
+                extractor.parseEmbedded(new java.io.ByteArrayInputStream(DocumentFixtures.xlsx("Zahlen")), handler,
+                        workbook, true);
+                Metadata image = new Metadata();
+                image.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, "image1.png");
+                image.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID, "rId8");
+                image.set(Metadata.CONTENT_TYPE, "image/png");
+                extractor.parseEmbedded(new java.io.ByteArrayInputStream(DocumentFixtures.pngSignature()), handler,
+                        image, true);
+                handler.endDocument();
+            }
+        };
+
+        StructuredDocument result = new TikaDocumentStructure(1, 1_000, office).extract(file, "bericht.docx",
+                DocumentFixtures.DOCX, ExtractionLimits.DEFAULTS, new Recording());
+
+        assertThat(result.directory()).singleElement().satisfies(entry ->
+                assertThat(entry.displayName()).contains("Mappe1.xlsx"));
+    }
+
     private static ExtractionLimits ratio(long ratio, long fromBytes) {
         return new ExtractionLimits(0, 0, ratio, fromBytes, 10, 1000, 10, 10_000, Duration.ofSeconds(30),
                 Duration.ofMinutes(5), 0, 2, Map.of());
