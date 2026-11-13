@@ -32,6 +32,10 @@ class DurationFieldTest {
             assertThat(field.isNone()).isFalse();
             field.value(Duration.ofMillis(1_600));
             assertThat(field.value()).as("auf ganze Sekunden gerundet").isEqualTo(Duration.ofSeconds(2));
+            Duration odd = Duration.ofDays(7).plusSeconds(1);
+            field.value(odd);
+            assertThat(field.value()).as("über dem Maximum: nicht gekappt, sondern erhalten").isEqualTo(odd);
+            assertThat(field.units().getSelectedItem()).isEqualTo("Sekunden");
         });
     }
 

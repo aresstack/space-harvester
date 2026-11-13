@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
+import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
@@ -1346,7 +1347,16 @@ final class SettingDialogs {
             this.parent = parent;
             this.title = title;
             body.setOpaque(false);
-            body.add(content, BorderLayout.CENTER);
+            // Der Inhalt scrollt senkrecht, wenn der Bildschirm niedriger ist als das Formular (Dialogs.present kappt
+            // das Fenster auf den nutzbaren Bildschirm); Meldung und Knöpfe bleiben außerhalb stehen.
+            ScrollColumn column = new ScrollColumn(new BorderLayout());
+            column.add(content, BorderLayout.NORTH);
+            javax.swing.JScrollPane scroll = Comic.scroll(column);
+            scroll.setBorder(javax.swing.BorderFactory.createEmptyBorder());
+            scroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+            scroll.getViewport().setOpaque(false);
+            scroll.setOpaque(false);
+            body.add(scroll, BorderLayout.CENTER);
             body.add(feedback, BorderLayout.SOUTH);
             save.addActionListener(e -> action.run());
             cancel.addActionListener(e -> close.run());
