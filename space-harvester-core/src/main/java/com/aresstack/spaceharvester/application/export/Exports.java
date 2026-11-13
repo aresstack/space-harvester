@@ -6,6 +6,9 @@ import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.convert.SpaceNames;
+import com.aresstack.spaceharvester.application.holdings.HoldingState;
+import com.aresstack.spaceharvester.application.holdings.Holdings;
+import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -76,6 +79,12 @@ import java.util.function.Consumer;
  * vorliegt. Eingelesen wird bei Bedarf trotzdem der ganze Space; die Zähler „gefunden“ und „beschafft“ des Einlesens
  * gelten dann für ihn.
  *
+ * <p>Eine Ausgabe aus dem Bestand ({@link ExportRequest#holdingsOnly()}, ADR 0029) liest nur den Seiten-Cache, nie
+ * die Quelle, in der aktuellen Generation des Space, wie sie ist: gespeicherte Seiten des Umfangs, veraltete im
+ * gespeicherten Stand; nur aus dem Katalog bekannte Seiten fehlen und stehen mit ihrer Zahl in den Warnungen. Ein
+ * Teilbaum-Export mit Beschaffung liest ebenfalls nur den Cache, wenn laut Bestand alle Seiten seines Teilbaums
+ * gespeichert und aktuell sind.
+ *
  * <p>Angefragte Formate (#30) entstehen ganz am Ende aus denselben Seiten: nach dem Raw-First-Artefakt liest jeder
  * {@link ExportConverter} die exportierten Seiten noch einmal einzeln aus dem Cache, in Baumreihenfolge, und prüft
  * dabei, dass jede unverändert ist. Quelldaten und Cache bleiben unberührt.
@@ -98,6 +107,7 @@ public class Exports {
     private final ExportArtifactWriter writer;
     private final ExportConverters converters;
     private final SpaceProvisioning provisioning;
+    private final HoldingsCatalog holdings;
     private final Clock clock;
 
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, Clock clock) {
@@ -112,7 +122,17 @@ public class Exports {
     /** @param provisioning liest fehlende oder veraltete Spaces im Exportauftrag ein */
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, ExportConverters converters,
                    SpaceProvisioning provisioning, Clock clock) {
+        this(jobs, cache, writer, converters, provisioning, HoldingsCatalog.EMPTY, clock);
+    }
+
+    /**
+     * @param holdings Rohstand des Bestands (ADR 0029): Danach entscheidet ein Teilbaum-Export, ob er die Quelle
+     *                 braucht, und eine Ausgabe aus dem Bestand zählt ihre veralteten Seiten
+     */
+    public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, ExportConverters converters,
+                   SpaceProvisioning provisioning, HoldingsCatalog holdings, Clock clock) {
         this.provisioning = Objects.requireNonNull(provisioning, "provisioning");
+        this.holdings = Objects.requireNonNull(holdings, "holdings");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.cache = Objects.requireNonNull(cache, "cache");
         this.writer = Objects.requireNonNull(writer, "writer");
@@ -187,11 +207,124 @@ public class Exports {
      */
     public JobStatus start(ExportRequest request) {
         Objects.requireNonNull(request, "request");
+        return start(request, null);
+    }
+
+    /**
+     * Startet eine Ausgabe aus dem Bestand oder gibt eine fertige zurück (ADR 0029): Das Artefakt eines beendeten
+     * Auftrags desselben Auftraggebers wird wiederverwendet, wenn Quelle, Space, Startseite, Tiefe und Formate gleich
+     * sind und die Seiten im Bestand denselben Stand haben wie bei seinem Start (Kopfdaten-Version, gespeicherte
+     * Version, Elternseite, gesperrt oder veraltet, Titel, Labels und Attribute, gespeicherter Inhalt) und der
+     * Auftraggeber dieselben Seiten lesen darf. Gilt seine Freigabe nicht mehr ({@link ExportRequest#authorized()}),
+     * wird nichts wiederverwendet. Sonst wie {@link #start(ExportRequest)}.
+     *
+     * @throws IllegalArgumentException wenn {@code request} keine Ausgabe aus dem Bestand ist
+     * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format
+     */
+    public JobStatus startFromHoldings(ExportRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (!request.holdingsOnly()) {
+            throw new IllegalArgumentException("Nur eine Ausgabe aus dem Bestand wird wiederverwendet");
+        }
+        converters.select(request.formats());
+        String state = holdingsState(request);
+        // Nur bei weiter gültiger Freigabe; sonst läuft der Auftrag und scheitert dort mit ACCESS_REVOKED.
+        if (state != null && request.authorized().getAsBoolean()) {
+            for (JobStatus job : jobs.list(request.owner(), JobType.EXPORT)) {
+                if (job.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
+                        && state.equals(job.parameter(HOLDINGS_STATE)) && sameOutput(job, request)
+                        && writer.find(job.id()).isPresent()) {
+                    return job;
+                }
+            }
+        }
+        return start(request, state);
+    }
+
+    /** Ob ein beendeter Auftrag dieselbe Ausgabe aus dem Bestand ist: gleicher Umfang, gleiche Formate. */
+    private static boolean sameOutput(JobStatus job, ExportRequest request) {
+        if (!job.sourceId().equals(request.sourceId()) || !request.spaceKey().equals(job.partitionKey())) {
+            return false;
+        }
+        ExportRequest previous = request(job);
+        return previous.holdingsOnly() && Objects.equals(previous.rootPageId(), request.rootPageId())
+                && Objects.equals(previous.depth(), request.depth())
+                && Set.copyOf(previous.formats()).equals(Set.copyOf(request.formats()));
+    }
+
+    /**
+     * Fingerabdruck des Stands der Seiten einer Ausgabe aus dem Bestand: je Seite des Umfangs Elternseite, ob und in
+     * welcher Version ihr Inhalt gespeichert ist, die Version der Kopfdaten und ob sie veraltet ist, dazu gesperrte
+     * Seiten; außerdem die Hashes von Kopfdaten und Attributen, der gespeicherte Inhalt und ob der Auftraggeber die
+     * Seite lesen darf. {@code null}, wenn der Bestand den Space nicht kennt; dann wird nichts wiederverwendet.
+     */
+    private String holdingsState(ExportRequest request) {
+        Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
+        if (found.isEmpty()) {
+            return null;
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, String> parents = new HashMap<>();
+        stock.pages().forEach(page -> parents.put(page.pageId(), page.parentPageId()));
+        stock.locked().forEach(page -> parents.putIfAbsent(page.pageId(), page.parentPageId()));
+        Set<String> scope = request.rootPageId() == null ? parents.keySet()
+                : subtreeOf(parents, request.rootPageId(), request.depth());
+        java.util.TreeMap<String, String> entries = new java.util.TreeMap<>();
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            if (scope.contains(page.pageId())) {
+                entries.put(page.pageId(), page.parentPageId() + "\u0000" + page.loaded() + "\u0000" + page.version()
+                        + "\u0000" + page.loadedVersion() + "\u0000" + stock.stale().contains(page.pageId()));
+            }
+        }
+        for (HoldingsCatalog.LockedPage page : stock.locked()) {
+            if (scope.contains(page.pageId())) {
+                entries.putIfAbsent(page.pageId(), page.parentPageId() + "\u0000locked");
+            }
+        }
+        // Dazu je Seite, wie der Lauf sie liest: Kopfdaten (Titel, Labels, Attribute), gespeicherter Inhalt und ob der
+        // Auftraggeber sie lesen darf. Ändert sich eins davon, entsteht die Ausgabe neu.
+        Optional<CacheGeneration> generation = cache.currentGeneration(request.sourceId(), request.spaceKey());
+        if (generation.isEmpty()) {
+            return null;
+        }
+        String after = null;
+        List<ListedPage> batch;
+        do {
+            batch = cache.pages(request.sourceId(), request.spaceKey(), generation.get().id(), after, BATCH_SIZE);
+            for (ListedPage listed : batch) {
+                after = listed.pageId();
+                if (scope.contains(listed.pageId())) {
+                    PageHeader header = listed.header();
+                    entries.merge(listed.pageId(), "\u0000" + header.metadataHash() + "\u0000"
+                            + header.attributesHash() + "\u0000" + listed.rawSha256() + "\u0000"
+                            + request.visible().test(header), String::concat);
+                }
+            }
+        } while (batch.size() == BATCH_SIZE);
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            entries.forEach((pageId, entry) -> {
+                digest.update(pageId.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 1);
+                digest.update(entry.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 2);
+            });
+            return HexFormat.of().formatHex(digest.digest(), 0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+    }
+
+    /** @param holdingsState Fingerabdruck des Stands einer Ausgabe aus dem Bestand oder {@code null} */
+    private JobStatus start(ExportRequest request, String holdingsState) {
         List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
         java.util.function.Consumer<JobStatus> announce = submitted;
         Map<String, String> parameters = parameters(request);
+        if (holdingsState != null) {
+            parameters.put(HOLDINGS_STATE, holdingsState);
+        }
         if (announce == null) {
             return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
                     request.owner(), parameters, new ExportTask(request, selected));
@@ -230,6 +363,10 @@ public class Exports {
     static final String REFRESH = "refresh";
     /** Wiederanlauf-Angabe: abgeleitete Formate, durch Komma getrennt ({@link ExportRequest#formats()}). */
     static final String FORMATS = "formats";
+    /** Angabe am Auftrag: Ausgabe aus dem Bestand ({@link ExportRequest#holdingsOnly()}), nur der Cache. */
+    public static final String HOLDINGS = com.aresstack.spaceharvester.application.jobs.JobLifecycleState.HOLDINGS;
+    /** Angabe an einer Ausgabe aus dem Bestand: Fingerabdruck des Stands ihrer Seiten beim Start. */
+    static final String HOLDINGS_STATE = "holdings-state";
 
     /** Was ein Wiederanlauf braucht, um denselben Umfang zu bearbeiten ({@link JobStatus#parameters()}). */
     static Map<String, String> parameters(ExportRequest request) {
@@ -242,6 +379,9 @@ public class Exports {
         }
         if (!request.formats().isEmpty()) {
             parameters.put(FORMATS, String.join(",", request.formats()));
+        }
+        if (request.holdingsOnly()) {
+            parameters.put(HOLDINGS, "true");
         }
         return parameters;
     }
@@ -256,6 +396,7 @@ public class Exports {
         return ExportRequest.of(status.sourceId(), status.partitionKey(), status.owner(),
                         formats == null || formats.isBlank() ? List.of() : List.of(formats.split(",")))
                 .withRefresh(Boolean.parseBoolean(status.parameter(REFRESH)))
+                .withHoldingsOnly(Boolean.parseBoolean(status.parameter(HOLDINGS)))
                 .withRoot(status.rootPageId())
                 .withDepth(status.rootPageId() == null || depth == null ? null : Integer.valueOf(depth));
     }
@@ -306,6 +447,9 @@ public class Exports {
         JobStatus status = jobs.status(exportId, owner);
         if (status.type() != JobType.EXPORT) {
             throw new UnknownJobException(exportId);
+        }
+        if (Boolean.parseBoolean(status.parameter(HOLDINGS))) {
+            throw new JobNotResumableException(exportId, "eine Ausgabe aus dem Bestand liest die Quelle nicht");
         }
         if (!status.state().terminal()) {
             throw new JobNotResumableException(exportId, "der Export wartet oder läuft noch");
@@ -513,7 +657,9 @@ public class Exports {
                         Set<String> retry, boolean reloadAll) {
         try {
             requireAuthorized(request);
-            Prepared prepared = retry != null ? prepareRetry(context, request, retry)
+            // Eine Ausgabe aus dem Bestand liest nie die Quelle, auch nicht bei „Nur Fehler neu versuchen“.
+            Prepared prepared = request.holdingsOnly() ? fromHoldings(context, request)
+                    : retry != null ? prepareRetry(context, request, retry)
                     : prepare(context, request, reloadAll);
             exportGeneration(context, request, prepared, selected);
         } catch (UnknownSourceException e) {
@@ -606,11 +752,17 @@ public class Exports {
         String spaceKey = request.spaceKey();
         Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
         // Fehlen der Generation Inhalte (nur katalogisiert oder veraltet, etwa nach einem Teilbaum-Export), ist sie
-        // nicht CONFIRMED, und der Export liest neu ein; geladene Seiten bleiben dabei liegen (ADR 0025).
+        // nicht CONFIRMED, und der Export liest neu ein; geladene Seiten bleiben dabei liegen (ADR 0025). Ein Teilbaum
+        // braucht nur seine eigenen Seiten (ADR 0029).
         boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
         if (reusable && !request.refresh()) {
             context.record(JobEvent.Draft.info(COMPONENT, "Bestätigte Generation " + current.get().id()
                     + " wird wiederverwendet"));
+            return new Prepared(startedAt, current.get(), List.of(), List.of(), false);
+        }
+        if (current.isPresent() && !request.refresh() && held(request)) {
+            context.record(JobEvent.Draft.info(COMPONENT, "Alle Seiten des Teilbaums sind gespeichert und aktuell; "
+                    + "Generation " + current.get().id() + " wird ohne Einlesen gelesen"));
             return new Prepared(startedAt, current.get(), List.of(), List.of(), false);
         }
         if (!provisioning.available()) {
@@ -648,6 +800,22 @@ public class Exports {
         return new Prepared(startedAt, generation, provisioned.failedPages(), warnings, true);
     }
 
+    /**
+     * Bestand für eine Ausgabe aus dem Bestand (ADR 0029): die aktuelle Generation des Space, wie sie ist, ohne
+     * Einlesen und ohne Zugriff auf die Quelle.
+     */
+    private Prepared fromHoldings(JobContext context, ExportRequest request) {
+        context.phase(COMPONENT, "Bestand prüfen");
+        Instant startedAt = clock.instant();
+        CacheGeneration generation = cache.currentGeneration(request.sourceId(), request.spaceKey())
+                .orElseThrow(() -> new JobFailedException("NO_HOLDINGS", "Für Space " + request.spaceKey()
+                        + " der Quelle " + request.sourceId() + " liegt nichts im Bestand; es entstand keine "
+                        + "Ausgabe"));
+        context.record(JobEvent.Draft.info(COMPONENT, "Ausgabe aus dem Bestand: Generation " + generation.id()
+                + " wird gelesen, die Quelle nicht"));
+        return new Prepared(startedAt, generation, List.of(), List.of(), false);
+    }
+
     private void exportGeneration(JobContext context, ExportRequest request, Prepared prepared,
                                   List<ExportConverter> selected) {
         String sourceId = request.sourceId();
@@ -674,6 +842,11 @@ public class Exports {
         unfetched.addAll(prepared.unchecked());
         failedIds.addAll(prepared.unchecked());
         int unrefreshed = unfetched.size();
+        // Nur bei einer Ausgabe aus dem Bestand: Seiten des Umfangs, die nur der Katalog kennt, und die Zustände des
+        // Bestands, um veraltete Seiten zu zählen.
+        int notHeld = 0;
+        int outdated = 0;
+        Map<String, HoldingState> states = request.holdingsOnly() ? states(request) : Map.of();
         context.phase(COMPONENT, "Seiten exportieren");
         // Ein schon veröffentlichtes Artefakt (Nachladen) bleibt sichtbar, bis das neue fertig ist.
         boolean replacing = writer.find(context.jobId()).isPresent();
@@ -707,6 +880,14 @@ public class Exports {
                         hidden.add(listed.pageId());
                         continue;
                     }
+                    if (request.holdingsOnly() && listed.rawSha256() == null) {
+                        // Nur aus dem Katalog bekannt: gehört zum Umfang, liegt aber nicht im Bestand. Die Ausgabe
+                        // nennt nur die Zahl und lädt nichts nach.
+                        notHeld++;
+                        context.discovered(1);
+                        context.processed(1);
+                        continue;
+                    }
                     if (!prepared.counted()) {
                         context.discovered(1);
                     }
@@ -721,6 +902,9 @@ public class Exports {
                                 ? null : listed.parentPageId(), positions.get(listed.pageId()),
                                 listed.header().metadata().title()));
                         exported.put(listed.pageId(), listed);
+                        if (states.get(listed.pageId()) == HoldingState.OUTDATED) {
+                            outdated++;
+                        }
                         context.written(1);
                     } else {
                         failures.add(failure);
@@ -742,6 +926,14 @@ public class Exports {
                 warnings.add(unrefreshed + " Seiten ließen sich beim Einlesen nicht abrufen; sie fehlen oder sind auf "
                         + "altem Stand");
             }
+            if (notHeld > 0) {
+                warnings.add(notHeld + " Seiten des Umfangs liegen nicht im Bestand, nur ihre Kopfdaten im Katalog; "
+                        + "sie fehlen in der Ausgabe");
+            }
+            if (outdated > 0) {
+                warnings.add(outdated + " Seiten stehen im gespeicherten, älteren Stand in der Ausgabe; die Quelle "
+                        + "hat eine neuere Version (veraltet)");
+            }
             for (PageTree.Anomaly anomaly : tree.anomalies()) {
                 ListedPage page = exported.get(anomaly.pageId());
                 if (anomaly.kind() == PageTree.Kind.MISSING_PARENT && page != null
@@ -754,7 +946,8 @@ public class Exports {
                     case CYCLE -> "Zyklus in der Elternbeziehung aufgebrochen";
                 });
             }
-            if (!covers(request, generation, subtree)) {
+            boolean covered = covers(request, generation, subtree);
+            if (!covered) {
                 warnings.add("Cache-Generation " + generation.id() + " ist " + generation.state()
                         + "; das Artefakt ist kein bestätigter vollständiger Stand");
             }
@@ -775,8 +968,9 @@ public class Exports {
                         failures.size() + " Seiten fehlen im Export, etwa Seite " + failures.get(0).pageId() + ": "
                                 + failures.get(0).message()));
             }
-            // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
-            boolean complete = covers(request, generation, subtree) && failures.isEmpty() && unrefreshed == 0;
+            // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation, im
+            // aktuellen Stand (eine Ausgabe aus dem Bestand mit veralteten Seiten ist es nicht).
+            boolean complete = covered && failures.isEmpty() && unrefreshed == 0 && notHeld == 0 && outdated == 0;
             if (!complete) {
                 context.incomplete();
             }
@@ -807,9 +1001,55 @@ public class Exports {
         if (subtree == null) {
             return false;
         }
-        // Ohne bestätigte Generation gibt es keine Lückenliste; dann bleibt es unvollständig.
+        // Ohne bestätigte Generation gibt es keine Lückenliste; dann entscheidet der Bestand.
         Set<String> gaps = provisioning.unloaded(request.sourceId(), request.spaceKey());
-        return !gaps.isEmpty() && java.util.Collections.disjoint(subtree, gaps);
+        return !gaps.isEmpty() && java.util.Collections.disjoint(subtree, gaps) || held(request);
+    }
+
+    /**
+     * Ob laut Bestand alle Seiten des Teilbaums gespeichert und aktuell sind (ADR 0029), nach derselben Regel wie die
+     * Zustände der Bestandsübersicht ({@link Holdings#state}). Nur nach einer Inventur des Space: sonst kennt der
+     * Katalog den Teilbaum vielleicht nicht ganz. Ohne Startseite immer {@code false}; der ganze Space braucht
+     * weiter eine bestätigte Generation.
+     */
+    private boolean held(ExportRequest request) {
+        if (request.rootPageId() == null) {
+            return false;
+        }
+        Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
+        if (found.isEmpty() || found.get().generation().syncedAt() == null) {
+            return false;
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, String> parents = new HashMap<>();
+        Map<String, HoldingsCatalog.CatalogPage> pages = new HashMap<>();
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            parents.put(page.pageId(), page.parentPageId());
+            pages.put(page.pageId(), page);
+        }
+        Set<String> subtree = subtreeOf(parents, request.rootPageId(), request.depth());
+        if (subtree.isEmpty()) {
+            return false;
+        }
+        for (String pageId : subtree) {
+            if (Holdings.state(pages.get(pageId), stock.stale()) != HoldingState.LOCAL) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Zustände der Seiten des Space laut Bestand, um veraltete zu zählen; leer, wenn ihn der Bestand nicht kennt. */
+    private Map<String, HoldingState> states(ExportRequest request) {
+        Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
+        if (found.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, HoldingState> states = new HashMap<>();
+        for (HoldingsCatalog.CatalogPage page : found.get().pages()) {
+            states.put(page.pageId(), Holdings.state(page, found.get().stale()));
+        }
+        return states;
     }
 
     /**
