@@ -1033,6 +1033,12 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private boolean dropping;
                 /** Offene dl-Elemente des Kopfblocks einer Outlook-Mail (Von, An): Kopfdaten, kein Inhalt. */
                 private int headerList;
+                /**
+                 * Stand des Kopfblocks einer Outlook-Mail: 0 vor dem Betreff, 1 nach dem Betreff (Von/An können folgen),
+                 * 2 vorbei. Danach sind {@code h1} und {@code dl} Inhalt.
+                 */
+                private int outlookStage;
+                private boolean subject;
                 private boolean sheetTitle;
                 private boolean sheetHeading;
                 private int page;
@@ -1060,7 +1066,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                             ignored++;
                             return;
                         }
-                        if (name.equals("dl") && (headerList > 0 || outlookHeader())) {
+                        if (name.equals("dl") && (headerList > 0 || outlookStage <= 1 && outlookHeader(outlookStage))) {
                             headerList++;
                             ignored++;
                             return;
@@ -1081,9 +1087,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 if (entryTitle && name.equals("h1")) {
                                     // Name des Paketeintrags (etwa image1.png): von Tika, nicht aus der Quelle.
                                     dropping = true;
-                                } else if (name.equals("h1") && outlookHeader()) {
-                                    // Betreff einer Outlook-Mail: steht in den Kopfdaten (ADR 0026, Punkte 3 und 7).
-                                    dropping = true;
+                                } else if (name.equals("h1") && outlookHeader(0)) {
+                                    // Betreff einer Outlook-Mail: steht in den Kopfdaten (ADR 0026, Punkte 3 und 7);
+                                    // geprüft am Ende gegen den Betreff, eine Überschrift des Inhalts bleibt.
+                                    subject = true;
+                                    outlookStage = 1;
                                 } else if (sheetTitle && name.equals("h1")) {
                                     sheetHeading = true;
                                 }
@@ -1117,6 +1125,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 if (BLOCK_ELEMENTS.contains(name)) {
                                     flushText();
                                     resetKind();
+                                    if (headerList == 0 && !name.equals("body")) {
+                                        // Anderer Inhalt beginnt: Der Kopfblock ist vorbei.
+                                        outlookStage = 2;
+                                    }
                                 }
                             }
                         }
@@ -1134,6 +1146,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         }
                         if (name.equals("dl") && headerList > 0) {
                             headerList--;
+                            if (headerList == 0) {
+                                outlookStage = 2;
+                            }
                             ignored = Math.max(0, ignored - 1);
                             return;
                         }
@@ -1157,6 +1172,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 resetKind();
                             }
                             case "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                                if (subject) {
+                                    subject = false;
+                                    String title = metadata == null ? null : metadata.get(TikaCoreProperties.TITLE);
+                                    if (title != null && normalize(buffer.toString()).equals(normalize(title))) {
+                                        buffer.setLength(0);
+                                        links.clear();
+                                    } else {
+                                        outlookStage = 2;
+                                    }
+                                }
                                 if (dropping) {
                                     buffer.setLength(0);
                                     links.clear();
@@ -1275,9 +1300,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
                  * Noch vor dem Inhalt einer Outlook-Mail: Tika schreibt dort Betreff ({@code h1}) und Von/An
                  * ({@code dl}), die schon in den Kopfdaten stehen.
                  */
-                private boolean outlookHeader() {
-                    return Doc.this.blocks == 0 && buffer.toString().isBlank() && embedded == 0
-                            && "application/vnd.ms-outlook".equals(detectedType());
+                private boolean outlookHeader(int stage) {
+                    if (outlookStage != stage) {
+                        return false;
+                    }
+                    if (Doc.this.blocks == 0 && buffer.toString().isBlank() && embedded == 0
+                            && "application/vnd.ms-outlook".equals(detectedType())) {
+                        return true;
+                    }
+                    outlookStage = 2;
+                    return false;
                 }
 
                 private boolean legacyPowerPoint() {
