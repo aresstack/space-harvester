@@ -149,12 +149,8 @@ public final class SourcesView implements View {
         cardsScroll.getViewport().setBackground(Comic.SURFACE);
         left.add(cardsScroll, BorderLayout.CENTER);
         add.addActionListener(e -> SourceForm.open(root, context, this::select));
-        JPanel south = new JPanel(new BorderLayout(0, 8));
-        south.setOpaque(false);
-        south.add(add, BorderLayout.NORTH);
-        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "die App verschlüsselt ab."), BorderLayout.SOUTH);
-        left.add(south, BorderLayout.SOUTH);
+        // Kein Hinweistext unter dem Knopf: Was Quellen speichern, erklärt das Fragezeichen im Quellenformular.
+        left.add(add, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);

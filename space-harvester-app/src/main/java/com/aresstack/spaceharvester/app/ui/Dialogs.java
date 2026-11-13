@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
 import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 
@@ -161,13 +162,23 @@ public final class Dialogs {
      * {@code body}. Escape und ✕ rufen {@code cancel}; der Rand lässt sich zum Vergrößern ziehen.
      */
     static JPanel frame(JDialog dialog, String title, JComponent body, Runnable cancel) {
-        JPanel content = surface(title, body, cancel);
+        return frame(dialog, title, body, cancel, null);
+    }
+
+    /** Wie {@link #frame(JDialog, String, JComponent, Runnable)}, mit dem Fragezeichen links neben dem ✕. */
+    static JPanel frame(JDialog dialog, String title, JComponent body, Runnable cancel, HelpButton help) {
+        JPanel content = surface(title, body, cancel, help);
         dialog.setContentPane(content);
         return content;
     }
 
     /** Der Inhalt von {@link #frame} ohne Fenster (auch ohne Bildschirm prüfbar). */
     static JPanel surface(String title, JComponent body, Runnable cancel) {
+        return surface(title, body, cancel, null);
+    }
+
+    /** Wie {@link #surface(String, JComponent, Runnable)}; {@code help} steht links neben dem ✕, {@code null} entfällt. */
+    static JPanel surface(String title, JComponent body, Runnable cancel, HelpButton help) {
         // Der Tintenrand gehört allein der äußeren Fläche: ComicWindowShape ersetzt ihn beim Anzeigen (rund oder
         // eckig). Der Innenabstand sitzt deshalb auf einer eigenen Fläche darin und bleibt erhalten.
         JPanel content = new JPanel(new BorderLayout());
@@ -183,8 +194,13 @@ public final class Dialogs {
         heading.setFont(Comic.semiBold(16f));
         heading.setForeground(Comic.INK);
         header.add(heading, BorderLayout.CENTER);
-        header.add(closeButton(new ComicWindowCloseButton(Comic.PALETTE, cancel, "Schließen (Esc)", CLOSE_SIZE)),
-                BorderLayout.EAST);
+        JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+        chips.setOpaque(false);
+        if (help != null) {
+            chips.add(closeButton(help));
+        }
+        chips.add(closeButton(new ComicWindowCloseButton(Comic.PALETTE, cancel, "Schließen (Esc)", CLOSE_SIZE)));
+        header.add(chips, BorderLayout.EAST);
         ComicWindowDragger.install(header);
         JPanel inner = new JPanel(new BorderLayout());
         inner.setOpaque(false);
