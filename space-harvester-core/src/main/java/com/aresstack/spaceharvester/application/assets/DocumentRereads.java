@@ -43,8 +43,9 @@ import java.util.stream.Stream;
  * <p>Von selbst ({@link #afterChange}, AP5c): Beim Start vergleicht der Dienst je Quelle den eingestellten Stand der
  * Extraktion ({@link ReadState}) mit dem zuletzt vollständig gelesenen ({@link ReadStates}). Nach einem Wechsel von
  * Extraktion, Version oder Strukturmodell liest er alle veralteten Stände neu, nach geänderten Grenzen nur Dokumente,
- * die an einer Grenze enden konnten ({@link #LIMITED}). Den neuen Stand merkt er sich erst, wenn der Auftrag
- * durchgelaufen ist; ein unterbrochener Lauf setzt beim nächsten Start fort.
+ * die an einer Grenze enden konnten ({@link #LIMITED}, auch in enthaltenen Dateien). Den neuen Stand merkt er sich
+ * erst, wenn der Auftrag durchgelaufen ist; ein unterbrochener oder abgebrochener Lauf setzt beim nächsten Start im
+ * selben Eintrag fort, mit dem dann eingestellten Stand.
  *
  * <p>Rechte prüft der Aufrufer, wie bei {@code SourceDataPurge}. Meldungen nennen nie Dateinamen oder Inhalte.
  */
@@ -70,8 +71,6 @@ public final class DocumentRereads {
     /** So viele neu gelesene Dokumente, dann wird der Volltextindex gesichert. */
     static final int FLUSH_EVERY = 50;
     private static final System.Logger LOG = System.getLogger(DocumentRereads.class.getName());
-    /** Fehlercode eines Auftrags, den ein Neustart unterbrach ({@code Jobs}). */
-    private static final String INTERRUPTED = "INTERRUPTED";
 
     private final Jobs jobs;
     private final Assets assets;
@@ -122,6 +121,11 @@ public final class DocumentRereads {
             throw new UnknownSourceException(sourceId);
         }
         Instant since = clock.instant();
+        return jobs.submit(JobType.REREAD, sourceId, null, null, owner, parameters(statuses, since, auto),
+                task(sourceId, copy(statuses), since, auto));
+    }
+
+    private static Map<String, String> parameters(Set<ExtractionStatus> statuses, Instant since, String auto) {
         Map<String, String> parameters = new LinkedHashMap<>();
         if (!statuses.isEmpty()) {
             parameters.put(STATUSES, statuses.stream().map(Enum::name).sorted().collect(Collectors.joining(",")));
@@ -130,9 +134,11 @@ public final class DocumentRereads {
         if (auto != null) {
             parameters.put(AUTO, auto);
         }
-        Set<ExtractionStatus> copy = statuses.isEmpty() ? Set.of() : EnumSet.copyOf(statuses);
-        return jobs.submit(JobType.REREAD, sourceId, null, null, owner, parameters,
-                task(sourceId, copy, since, auto));
+        return parameters;
+    }
+
+    private static Set<ExtractionStatus> copy(Set<ExtractionStatus> statuses) {
+        return statuses.isEmpty() ? Set.of() : EnumSet.copyOf(statuses);
     }
 
     /**
@@ -140,9 +146,10 @@ public final class DocumentRereads {
      * Extraktion gelesen sind (AP5c, beim Start des Dienstes): nach einem Wechsel von Extraktion, Version oder
      * Strukturmodell ohne Beschränkung, nach geänderten Grenzen beschränkt auf {@link #LIMITED}. Ohne gemerkten Stand
      * gilt der eingestellte, wenn die Quelle noch keine Dokumente abgelegt hat; sonst wird neu gelesen. Läuft für eine
-     * Quelle schon ein solcher Auftrag oder hat der Benutzer ihn angehalten oder abgebrochen, startet kein zweiter; einen
-     * durch einen Neustart unterbrochenen setzt er im selben Eintrag fort. Wirft nie: Eine Quelle, für die das nicht
-     * gelingt, versucht der nächste Start erneut.
+     * Quelle schon ein solcher Auftrag oder hat der Benutzer ihn angehalten, startet kein zweiter. Einen abgebrochenen
+     * (auch beim Beenden des Dienstes) oder gescheiterten (auch durch einen Neustart unterbrochenen) setzt er im selben
+     * Eintrag fort; galt er einem anderen Stand, mit dem Umfang und Ziel des eingestellten. Wirft nie: Eine Quelle, für
+     * die das nicht gelingt, versucht der nächste Start erneut.
      *
      * @return die gestarteten oder fortgesetzten Aufträge
      */
@@ -169,28 +176,44 @@ public final class DocumentRereads {
         if (known.filter(wanted::equals).isPresent() || !configured.test(sourceId)) {
             return Optional.empty();
         }
+        Set<ExtractionStatus> scope = known.isEmpty() || !known.get().extraction().equals(wanted.extraction())
+                ? Set.of() : LIMITED;
+        // Der jüngste offene Auftrag dieser Quelle, der von selbst startete (list liefert den jüngsten zuerst).
         Optional<JobStatus> open = jobs.list(owner, JobType.REREAD).stream()
                 .filter(job -> sourceId.equals(job.sourceId()) && job.parameter(AUTO) != null
                         && job.state() != JobState.COMPLETED)
                 .findFirst();
-        if (open.isPresent()) {
-            JobStatus job = open.get();
-            boolean interrupted = job.state() == JobState.FAILED && job.error() != null
-                    && INTERRUPTED.equals(job.error().code());
-            return interrupted ? Optional.of(resume(job.id(), owner)) : Optional.empty();
-        }
-        if (known.isEmpty() && !hasDocuments(sourceId)) {
-            states.put(sourceId, current);
-            return Optional.empty();
-        }
-        boolean extractionChanged = known.isEmpty() || !known.get().extraction().equals(wanted.extraction());
         try {
-            return Optional.of(start(sourceId, owner, extractionChanged ? Set.of() : LIMITED, current));
+            if (open.isPresent()) {
+                return continued(open.get(), owner, scope, current);
+            }
+            if (known.isEmpty() && !hasDocuments(sourceId)) {
+                states.put(sourceId, current);
+                return Optional.empty();
+            }
+            return Optional.of(start(sourceId, owner, scope, current));
         } catch (JobCapacityExceededException e) {
             LOG.log(System.Logger.Level.INFO, "„Neu lesen“ für {0} wartet auf den nächsten Start (kein Platz)",
                     sourceId);
             return Optional.empty();
         }
+    }
+
+    /**
+     * Ein offener Auftrag von selbst: Angehalten hält ihn der Benutzer an, wartend oder laufend ist er unterwegs; sonst
+     * (abgebrochen, auch beim Beenden des Dienstes, oder gescheitert, auch durch einen Neustart unterbrochen) läuft er
+     * im selben Eintrag weiter, nach einem inzwischen geänderten Stand mit dessen Umfang und Ziel.
+     */
+    private Optional<JobStatus> continued(JobStatus job, String owner, Set<ExtractionStatus> scope, String current) {
+        if (job.state() == JobState.PAUSED || !job.state().terminal()) {
+            return Optional.empty();
+        }
+        if (current.equals(job.parameter(AUTO))) {
+            return Optional.of(resume(job.id(), owner));
+        }
+        Instant since = clock.instant();
+        return Optional.of(jobs.rerun(job.id(), owner, parameters(scope, since, current),
+                task(job.sourceId(), copy(scope), since, current)));
     }
 
     private boolean hasDocuments(String sourceId) {

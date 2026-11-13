@@ -396,10 +396,113 @@ class DocumentRereadsTest {
         assertThat(restarted.list(OWNER, JobType.REREAD)).hasSize(2);
     }
 
+    @Test
+    void anAutomaticRereadCancelledWhenTheServiceEndsContinuesInTheSameEntryAtTheNextStart() {
+        ReadStates states = new FileReadStates(directory.resolve("assets"));
+        Jobs before = jobs();
+        rereads(before, assets(new TikaDocumentStructure()), states).afterChange(List.of("wiki"), OWNER);
+        files.put("att1", DocumentFixtures.docx("Abnahme der Schleuse"));
+        assets(new TikaDocumentStructure()).harvest(list(attachment("att1", "protokoll.docx", DocumentFixtures.DOCX)));
+        Versioned next = new Versioned(title -> false);
+        Assets upgraded = assets(next);
+
+        // Der Dienst endet gewöhnlich, als der Auftrag gerade anläuft: Jobs.close() fordert den Abbruch an, am ersten
+        // Prüfpunkt endet er als abgebrochen.
+        List<Runnable> pending = new ArrayList<>();
+        Jobs stopping = new Jobs(jobStore, pending::add, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        opened.add(stopping);
+        String id = rereads(stopping, upgraded, states).afterChange(List.of("wiki"), OWNER).getFirst().id();
+        stopping.close();
+        pending.forEach(Runnable::run);
+        assertThat(next.titles).isEmpty();
+
+        Jobs restarted = jobs();
+        assertThat(restarted.status(id, OWNER).state()).isEqualTo(JobState.CANCELLED);
+        List<JobStatus> resumed = rereads(restarted, upgraded, states).afterChange(List.of("wiki"), OWNER);
+
+        assertThat(resumed).extracting(JobStatus::id).containsExactly(id);
+        assertThat(restarted.status(id, OWNER).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(next.titles).containsExactly("protokoll.docx");
+        assertThat(states.get("wiki")).hasValueSatisfying(state -> assertThat(state)
+                .startsWith("tika/" + NEXT_VERSION + "/"));
+        assertThat(restarted.list(OWNER, JobType.REREAD)).hasSize(1);
+    }
+
+    @Test
+    void anInterruptedAutomaticRereadTakesOverAVersionChangeMadeBeforeTheNextStart() {
+        ReadStates states = new FileReadStates(directory.resolve("assets"));
+        ExtractionLimits tight = limits(1_000, 0);
+        Jobs before = jobs();
+        rereads(before, assets(new TikaDocumentStructure(), tight), states).afterChange(List.of("wiki"), OWNER);
+        files.put("att1", DocumentFixtures.rtf("Kurz"));
+        files.put("att2", DocumentFixtures.rtf("Lang ".repeat(1_000) + "Schleusenkammer"));
+        assets(new TikaDocumentStructure(), tight).harvest(list(attachment("att1", "kurz.rtf", DocumentFixtures.RTF),
+                attachment("att2", "lang.rtf", DocumentFixtures.RTF)));
+
+        // Grenzen angehoben; der beschränkte Auftrag wartet noch, als der Dienst endet.
+        List<Runnable> pending = new ArrayList<>();
+        Jobs stopping = new Jobs(jobStore, pending::add, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        opened.add(stopping);
+        clock.advance();
+        String id = rereads(stopping, assets(new TikaDocumentStructure(), ExtractionLimits.DEFAULTS), states)
+                .afterChange(List.of("wiki"), OWNER).getFirst().id();
+        assertThat(DocumentRereads.statuses(stopping.status(id, OWNER))).isEqualTo(DocumentRereads.LIMITED);
+
+        // Bis zum nächsten Start wechselt auch die Version.
+        Versioned next = new Versioned(title -> false);
+        Assets upgraded = assets(next, ExtractionLimits.DEFAULTS);
+        Jobs restarted = jobs();
+        clock.advance();
+        List<JobStatus> resumed = rereads(restarted, upgraded, states).afterChange(List.of("wiki"), OWNER);
+
+        assertThat(resumed).extracting(JobStatus::id).as("im selben Eintrag").containsExactly(id);
+        JobStatus done = restarted.status(id, OWNER);
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(DocumentRereads.statuses(done)).as("ohne Beschränkung").isEmpty();
+        assertThat(next.titles).containsExactlyInAnyOrder("kurz.rtf", "lang.rtf");
+        assertThat(states.get("wiki")).hasValueSatisfying(state -> assertThat(state)
+                .startsWith("tika/" + NEXT_VERSION + "/"));
+        assertThat(restarted.list(OWNER, JobType.REREAD)).hasSize(1);
+        assertThat(rereads(restarted, upgraded, states).afterChange(List.of("wiki"), OWNER)).isEmpty();
+    }
+
+    @Test
+    void afterChangedLimitsAContainerWhoseEmbeddedFilesEndedAtALimitIsReadAgain() {
+        ReadStates states = new FileReadStates(directory.resolve("assets"));
+        ExtractionLimits d = ExtractionLimits.DEFAULTS;
+        ExtractionLimits shallow = limits(d.maxFileBytes(), d.maxChars(), 1);
+        Jobs jobs = jobs();
+        rereads(jobs, assets(new TikaDocumentStructure(), shallow), states).afterChange(List.of("wiki"), OWNER);
+        files.put("att1", Archives.nested(3));
+        String sha = Assets.sha256(files.get("att1"));
+        assets(new TikaDocumentStructure(), shallow).harvest(list(attachment("att1", "archiv.zip", Archives.ZIP)));
+        StructuredDocument before = extractions().all(sha).getFirst().document();
+        assertThat(before.outcome().status()).as("der Behälter selbst ist vollständig").isEqualTo(ExtractionStatus.OK);
+        assertThat(before.directory()).anySatisfy(entry -> assertThat(entry.outcome().reason())
+                .contains(StatusReason.TOO_DEEP));
+
+        Versioned counting = new Versioned(TikaDocumentStructure.VERSION, title -> false);
+        Assets deeper = assets(counting, ExtractionLimits.DEFAULTS);
+        clock.advance();
+        List<JobStatus> started = rereads(jobs, deeper, states).afterChange(List.of("wiki"), OWNER);
+
+        assertThat(started).hasSize(1);
+        assertThat(DocumentRereads.statuses(jobs.status(started.getFirst().id(), OWNER)))
+                .isEqualTo(DocumentRereads.LIMITED);
+        assertThat(counting.titles).containsExactly("archiv.zip");
+        assertThat(extractions().all(sha)).singleElement().satisfies(stored -> assertThat(stored.document()
+                .directory()).noneSatisfy(entry -> assertThat(entry.outcome().reason())
+                .contains(StatusReason.TOO_DEEP)));
+    }
+
     private static ExtractionLimits limits(long maxFileBytes, long maxChars) {
+        return limits(maxFileBytes, maxChars, ExtractionLimits.DEFAULTS.maxDepth());
+    }
+
+    private static ExtractionLimits limits(long maxFileBytes, long maxChars, int maxDepth) {
         ExtractionLimits d = ExtractionLimits.DEFAULTS;
         return new ExtractionLimits(maxFileBytes, maxChars, d.unpackRatio(), d.unpackRatioFromBytes(),
-                d.textRatio(), d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(),
+                d.textRatio(), d.textRatioFromChars(), maxDepth, d.maxEmbeddedFiles(), d.idleTimeout(),
                 d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
     }
 
