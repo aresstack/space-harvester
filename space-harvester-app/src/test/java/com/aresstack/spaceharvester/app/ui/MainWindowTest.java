@@ -126,6 +126,9 @@ class MainWindowTest {
             window[0].show(AppContext.Section.SETTINGS);
         });
         assertThat(shown[0]).as("Seite gewählt, Bereich erneut sichtbar").isEqualTo(2);
+        // „Zu den Einstellungen“ aus der Diagnose führt zur Seite Allgemein, nicht zurück auf die Diagnose.
+        SwingUtilities.invokeAndWait(() -> window[0].showGeneralSettings());
+        assertThat(window[0].settings().selected()).isEqualTo(SettingsView.GENERAL);
 
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         String job = context.runtime().workspace().startSync("handbuch", space).id();

@@ -92,6 +92,14 @@ public final class AppContext {
         void showJob(String jobId);
 
         /**
+         * Einstellungen mit der Seite „Allgemein“ (Konfigurationsdatei, Hinweise, abgewiesene Quellen), auch wenn
+         * zuletzt eine andere Seite der Einstellungen, etwa die Diagnose, offen war.
+         */
+        default void showGeneralSettings() {
+            show(Section.SETTINGS);
+        }
+
+        /**
          * Ein Auftrag wurde außerhalb von „Aufträge“ gestartet und läuft im Hintergrund weiter: die Auftragsliste und
          * der Balken der Statusleiste folgen ihm, ohne dass die Ansicht wechselt.
          */

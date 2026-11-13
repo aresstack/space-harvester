@@ -347,6 +347,12 @@ public final class MainWindow implements AppContext.Navigator {
         });
     }
 
+    @Override
+    public void showGeneralSettings() {
+        show(AppContext.Section.SETTINGS);
+        settings.select(SettingsView.GENERAL);
+    }
+
     /** Einstellungen mit dem Bereich „KI-Dienst“. */
     public void showAiSettings() {
         show(AppContext.Section.SETTINGS);
