@@ -79,10 +79,15 @@ class JobStepTest {
 
     @Test
     void theCardCountsStoredMissingSignInAndDeliberatelySkippedMediaInPlainWords() {
-        ExportDatasetInfo.Media media = new ExportDatasetInfo.Media(7, 2, 1, 3);
+        // Bewusst Ausgelassenes getrennt nach Grund (Angelo 13.11.2026): Diagramm-Vorschauen und nach Einstellung.
+        ExportDatasetInfo.Media media = new ExportDatasetInfo.Media(7, 2, 1, 3, 4);
         assertThat(ActivitiesView.media(media)).isEqualTo("7 gesichert · 2 fehlen · 1 Anmeldung erforderlich · "
-                + "3 bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+                + "3 Diagramm-Vorschauen nicht verwendet (aus Quelle gezeichnet) · 4 nach Einstellung ausgelassen");
         assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(1, 1, 0, 0))).isEqualTo("1 gesichert · 1 fehlt");
+        assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(0, 0, 0, 1)))
+                .isEqualTo("1 Diagramm-Vorschau nicht verwendet (aus Quelle gezeichnet)");
+        assertThat(media.total()).isEqualTo(17);
+        assertThat(media.skipped()).isEqualTo(7);
         assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE, media))
                 .startsWith("Bilder: unvollständig").endsWith("\nMedien: " + ActivitiesView.media(media));
         assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED, ExportDatasetInfo.Media.NONE))

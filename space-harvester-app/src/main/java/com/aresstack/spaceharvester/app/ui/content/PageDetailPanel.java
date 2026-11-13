@@ -149,7 +149,7 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
-    /** Die Hauptreiter als quadratische Symbolknöpfe für die Werkzeugleiste unten ({@link #tabIcons()}). */
+    /** Die Hauptreiter als quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters ({@link #tabIcons()}). */
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
@@ -312,7 +312,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
                 .tab(ADVANCED, advanced);
-        // Die Hauptreiter wandern als Symbolknöpfe mittig in die Werkzeugleiste unten (wie die Kopfzeile in AskAI);
+        // Die Hauptreiter wandern als Symbolknöpfe in die Icon-Leiste oben (Angelo, 13.11.2026);
         // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
         icons.put(READING, PageTabIcons.reading());
@@ -457,7 +457,6 @@ public final class PageDetailPanel extends JPanel {
         feedback.clear();
         setActionsEnabled(false);
         cards.show(deck, EMPTY);
-        tabIcons.setVisible(false);
     }
 
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
@@ -516,7 +515,6 @@ public final class PageDetailPanel extends JPanel {
         references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
-        tabIcons.setVisible(true);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
@@ -1796,7 +1794,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Die Hauptreiter (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als quadratische Symbolknöpfe;
-     * das Hauptfenster setzt sie mittig in die Werkzeugleiste unten. Sichtbar nur, solange eine Seite gezeigt wird.
+     * das Hauptfenster setzt sie in die Icon-Leiste oben, wo sie die Mitte umschalten. Immer sichtbar, auch ohne
+     * Seite (dann zeigt die Mitte den Hinweis, eine Seite im Explorer zu wählen).
      */
     public JComponent tabIcons() {
         return tabIcons;
