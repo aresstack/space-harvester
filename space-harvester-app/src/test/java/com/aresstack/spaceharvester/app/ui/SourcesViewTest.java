@@ -121,11 +121,15 @@ class SourcesViewTest {
         // Im selben EDT-Durchlauf wie der Klick prüfen: Ordner-Aufträge enden in Millisekunden, und das Wieder-
         // freigeben kommt per invokeLater – von außen gelesen wäre der Knopf sonst manchmal schon wieder aktiv.
         boolean[] greyWhileRunning = new boolean[1];
+        String[] why = new String[1];
         SwingUtilities.invokeAndWait(() -> {
             arrow.doClick();
             greyWhileRunning[0] = !arrow.isEnabled();
+            why[0] = "Verbindung=" + context.connection("kurz") + " · Laufzeit=" + (context.runtime() != null)
+                    + " · Knopf aktuell=" + (view[0].syncButton("kurz") == arrow) + " · Meldung="
+                    + find(root, Feedback.class).get(0).text();
         });
-        assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen").isTrue();
+        assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen: " + why[0]).isTrue();
         await(() -> !context.runtime().workspace().jobs().isEmpty());
         assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()))
                 .as("Betriebsart der Quelle, hier die Vorgabe").allMatch(job -> "CATALOG_ONLY".equals(
