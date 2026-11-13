@@ -10,11 +10,14 @@ import org.springframework.util.unit.DataSize;
 
 /**
  * Schutzgrenzen beim Lesen von Dokumenten unter {@code space-harvester.assets.extraction} (ADR 0026, Punkt 8); was
- * fehlt, kommt aus {@link ExtractionLimits#DEFAULTS}. {@code 0} heißt ohne Grenze. Die Grenzen für enthaltene Dateien
- * (Tiefe, Anzahl, Auspack-Verhältnis) kommen mit deren Umsetzung (AP7) dazu; bis dahin gelten die Standards.
+ * fehlt, kommt aus {@link ExtractionLimits#DEFAULTS}. {@code 0} heißt ohne Grenze.
  *
  * @param maxFileSize        Größe je Datei ({@code too-large}, Standard 0)
  * @param maxChars           Zeichen je Dokument (Standard 0)
+ * @param unpackRatio        Ausgepacktes zu Gepacktem je äußerem Behälter (Standard 100)
+ * @param unpackRatioFromSize geprüft ab so viel Ausgepacktem (Standard 100MB)
+ * @param maxDepth           Tiefe enthaltener Dateien ({@code too-deep}, Standard 10)
+ * @param maxEmbeddedFiles   Einträge je äußerem Behälter ({@code too-many-files}, Standard 10 000)
  * @param textRatio          Zeichen zu Dateigröße (Standard 100)
  * @param textRatioFromChars geprüft ab so vielen Zeichen (Standard 1 000 000)
  * @param idleTimeout        Laufzeit ohne Fortschritt (Standard 30s)
@@ -24,7 +27,8 @@ import org.springframework.util.unit.DataSize;
  * @param memoryLimits       Schranke {@code memory-limit} je Medientyp, über den Standards
  */
 @ConfigurationProperties("space-harvester.assets.extraction")
-public record ExtractionProperties(DataSize maxFileSize, Long maxChars, Long textRatio, Long textRatioFromChars,
+public record ExtractionProperties(DataSize maxFileSize, Long maxChars, Long unpackRatio,
+        DataSize unpackRatioFromSize, Integer maxDepth, Integer maxEmbeddedFiles, Long textRatio, Long textRatioFromChars,
         Duration idleTimeout, Duration totalTimeout, DataSize tempSpaceReserve, Integer parallel,
         List<MemoryLimit> memoryLimits) {
 
@@ -51,12 +55,12 @@ public record ExtractionProperties(DataSize maxFileSize, Long maxChars, Long tex
         return new ExtractionLimits(
                 maxFileSize == null ? d.maxFileBytes() : maxFileSize.toBytes(),
                 maxChars == null ? d.maxChars() : maxChars,
-                d.unpackRatio(),
-                d.unpackRatioFromBytes(),
+                unpackRatio == null ? d.unpackRatio() : unpackRatio,
+                unpackRatioFromSize == null ? d.unpackRatioFromBytes() : unpackRatioFromSize.toBytes(),
                 textRatio == null ? d.textRatio() : textRatio,
                 textRatioFromChars == null ? d.textRatioFromChars() : textRatioFromChars,
-                d.maxDepth(),
-                d.maxEmbeddedFiles(),
+                maxDepth == null ? d.maxDepth() : maxDepth,
+                maxEmbeddedFiles == null ? d.maxEmbeddedFiles() : maxEmbeddedFiles,
                 idleTimeout == null ? d.idleTimeout() : idleTimeout,
                 totalTimeout == null ? d.totalTimeout() : totalTimeout,
                 tempSpaceReserve == null ? d.tempSpaceReserve() : tempSpaceReserve.toBytes(),
