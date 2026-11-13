@@ -878,6 +878,8 @@ public final class Harvester implements AutoCloseable {
                 opened.add(fill);
                 this.backgroundFill = fill;
                 filling.set(fill);
+                // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
+                cache.changes(holdings.andThen(fill::wake));
             } else {
                 this.backgroundFill = null;
             }
