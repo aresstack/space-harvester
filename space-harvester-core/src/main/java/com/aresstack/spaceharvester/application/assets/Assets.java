@@ -221,6 +221,7 @@ public class Assets implements DocumentInventory {
         this.extractions = extractions;
     }
 
+    /** Die angeschlossene strukturierte Extraktion; leer ohne. */
     @Override
     public Optional<DocumentExtractions> documentExtractions() {
         return Optional.ofNullable(extractions);
@@ -1263,8 +1264,9 @@ public class Assets implements DocumentInventory {
     /**
      * Liest ein abgelegtes Dokument ohne Download neu („Neu lesen“, ADR 0026, Punkt 11, Abnahme 8), wenn es betroffen
      * ist: ohne {@code statuses} jedes Dokument ohne Extraktion der eingestellten Version (Versionswechsel, Import,
-     * vorübergehend gescheitert), mit {@code statuses} nur Dokumente, deren aktuelle Extraktion einen dieser Status hat
-     * (etwa nach geänderten Grenzen), sofern sie nicht nach {@code since} entstand. Der bisherige Stand gilt, bis das
+     * vorübergehend gescheitert), mit {@code statuses} nur Dokumente, deren aktuelle Extraktion für das Dokument selbst
+     * oder eine enthaltene Datei einen dieser Status hat (etwa nach geänderten Grenzen), sofern sie nicht nach
+     * {@code since} entstand. Der bisherige Stand gilt, bis das
      * Lesen Text liefert; erst dann werden Texte und Extraktionen anderer Versionen derselben Bytes entfernt. Ein
      * gescheitertes Lesen lässt ihn stehen. Den Volltextindex ersetzt {@link #reindexStored}.
      *
@@ -1282,7 +1284,7 @@ public class Assets implements DocumentInventory {
         }
         Optional<StoredExtraction> current = structured.stored(asset.sha256());
         boolean fresh = !statuses.isEmpty();
-        if (fresh ? current.isEmpty() || !statuses.contains(current.get().document().outcome().status())
+        if (fresh ? current.isEmpty() || !matches(current.get().document(), statuses)
                 || !current.get().createdAt().isBefore(since) : current.isPresent()) {
             return Reread.SKIPPED;
         }
@@ -1303,6 +1305,15 @@ public class Assets implements DocumentInventory {
         } catch (SourceAccessException e) {
             return new Reread(false, false, code(e.reason()));
         }
+    }
+
+    /**
+     * Ob das Dokument selbst oder eine enthaltene Datei einen dieser Status hat: Ein Behälter bleibt {@code OK}, wenn
+     * nur enthaltene Dateien an einer Grenze enden (zu tief, zu groß, gekürzt).
+     */
+    private static boolean matches(StructuredDocument document, Set<ExtractionStatus> statuses) {
+        return statuses.contains(document.outcome().status())
+                || document.directory().stream().anyMatch(entry -> statuses.contains(entry.outcome().status()));
     }
 
     /**
