@@ -61,6 +61,9 @@ final class TreeStates {
     /** Spaces, deren Übersicht gerade gelesen wird; eine Meldung währenddessen merkt den Space als veraltet. */
     private final Set<String> reading = new HashSet<>();
     private final Set<String> stale = new HashSet<>();
+    /** Quellen, deren Stand je Space gerade gelesen wird; Meldungen währenddessen führen zu genau einem Nachlesen. */
+    private final Set<String> readingSources = new HashSet<>();
+    private final Set<String> staleSources = new HashSet<>();
     private AppRuntime subscribed;
 
     TreeStates(AppContext context, Runnable changed) {
@@ -87,10 +90,6 @@ final class TreeStates {
         if (runtime == null) {
             return;
         }
-        for (String key : open) {
-            int cut = key.indexOf('\u0000');
-            readSpace(runtime, key.substring(0, cut), key.substring(cut + 1));
-        }
         for (String sourceId : sourceIds) {
             if (subscriptions.containsKey(sourceId)) {
                 continue;
@@ -113,6 +112,11 @@ final class TreeStates {
             }));
             readSummaries(runtime, sourceId);
         }
+        // Erst anmelden, dann lesen: die aufgeklappten Spaces der alten Laufzeit erst nach den Anmeldungen.
+        for (String key : open) {
+            int cut = key.indexOf('\u0000');
+            readSpace(runtime, key.substring(0, cut), key.substring(cut + 1));
+        }
     }
 
     /** Ein Space wird aufgeklappt: seine Übersicht einmal lesen. EDT. */
@@ -132,13 +136,21 @@ final class TreeStates {
         spaces.clear();
         reading.clear();
         stale.clear();
+        readingSources.clear();
+        staleSources.clear();
         summaries.clear();
         loading.clear();
         loadingAbove.clear();
     }
 
     private void readSummaries(AppRuntime runtime, String sourceId) {
+        if (!readingSources.add(sourceId)) {
+            // Der Stand aller Spaces der Quelle wird gerade gerechnet: danach genau einmal nachlesen.
+            staleSources.add(sourceId);
+            return;
+        }
         Background.run(() -> runtime.workspace().holdingSpaces(sourceId), list -> {
+            readingSources.remove(sourceId);
             if (runtime != subscribed) {
                 return;
             }
@@ -154,8 +166,13 @@ final class TreeStates {
                 summaries.put(key(sourceId, summary.spaceKey()), summary);
             }
             changed.run();
+            if (staleSources.remove(sourceId)) {
+                readSummaries(runtime, sourceId);
+            }
         }, error -> {
             // Ohne Zugriff auf die Metadaten der Quelle bleibt der Baum ohne Zeichen.
+            readingSources.remove(sourceId);
+            staleSources.remove(sourceId);
         });
     }
 
