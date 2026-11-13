@@ -727,10 +727,7 @@ public final class Harvester implements AutoCloseable {
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
             assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
                     builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
-                    new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits)
-                    // Welche enthaltenen Dateien eigene Dokumente werden: export.attachments.media-types, je Lesen
-                    // aus der wirksamen Konfiguration (ADR 0026, Punkt 13).
-                    .documentTypes(type -> exportSettings(manager).get().permits(type)));
+                    new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);

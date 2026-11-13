@@ -214,8 +214,8 @@ Schutzgrenzen beim Lesen von Dokumenten (ADR 0026, Punkt 8) unter `space-harvest
 Grenze, nicht genannte Schlüssel behalten den Standard. Gleich in Dienst und App, in der Bibliothek
 `Harvester.builder().extractionLimits(…)`; Codes und Schranken je Format in [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md).
 Die Grenzen wirken beim Lesen: Bereits gelesene Dokumente behalten ihr Ergebnis, bis das Neulesen abgelegter Originale
-(eigener Auftrag, ADR 0026 Punkt 11) sie neu liest. Welche enthaltenen Dateien eigene Dokumente werden, folgt
-`export.attachments.media-types` (andere: `media-type-excluded`; Archive und Mails werden trotzdem geöffnet).
+(eigener Auftrag, ADR 0026 Punkt 11) sie neu liest. Enthaltene Dateien werden bis AP4 unabhängig von
+`export.attachments.media-types` gelesen.
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
