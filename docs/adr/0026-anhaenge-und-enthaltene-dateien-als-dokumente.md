@@ -1,8 +1,8 @@
 # ADR 0026: Anhänge und enthaltene Dateien als eigene Dokumente
 
-- Status: **Entwurf zur Abnahme durch Angelo** (Strang „Anhänge für Analyse und KI aufbereiten“, 13.11.2026).
-  Schon entschieden (Angelo, 13.11.2026): „Anhänge sollen auch in die Analyse“; die Lösung gilt für alle Quellen
-  („Dieses Programm ist nicht nur auf Confluence als Quelle beschränkt“); Mails, deren Anhänge nicht gelesen werden,
+- Status: **Angenommen** (Angelo, 13.11.2026, PR #696). Stufen 1 bis 5 umgesetzt, siehe Nachtrag. Stufe 6 nicht
+  bestellt. Vor der Abnahme schon entschieden (Angelo, 13.11.2026): „Anhänge sollen auch in die Analyse“; die
+  Lösung gilt für alle Quellen („Dieses Programm ist nicht nur auf Confluence als Quelle beschränkt“); Mails, deren Anhänge nicht gelesen werden,
   sind „eine gravierende Lücke“; Anhänge sollen nicht fehlen, weil sie zu groß sind (für den Download seit dem
   11.11.2026, ADR 0023). Alle übrigen Punkte, auch der Weg für die Outlook-Quelle, sind Vorschlag und gelten mit der
   Abnahme.
@@ -11,7 +11,7 @@
   [ADR 0019](0019-begriffsindex-und-begriffsbeziehungen.md) (Begriffe), [ADR 0020](0020-semantische-absaetze.md)
   (Absätze) und [ADR 0024](0024-aussagenanalyse-und-globaler-knowledge-graph.md) (Aussagen). Bilder bleiben bei
   [ADR 0021](0021-bildanalyse.md).
-- Umsetzung offen, in sechs Stufen (unten), jede in kleinen Pull Requests und erst auf Bestellung.
+- Umsetzung in sechs Stufen (unten), jede in kleinen Pull Requests und erst auf Bestellung; Stand im Nachtrag.
 - Bezüge: #183, #328, #385; corenth #36 (Mail-Anhänge als Kindressourcen) und #42 (Extraktoren je Format vor
   Tika); Messungen vom 13.11.2026 mit Apache Tika 3.3.2 (unten); Gegenprüfung der Analyse und dieses Entwurfs durch
   GPT. Keine neue Bibliothek.
@@ -321,3 +321,72 @@ Dateien sowie verschlüsselte und gescannte Dokumente. Die großen Prüfdateien 
   Tabelle können über 100 Mio. Zeichen werden.
 - Die Unterstützung für Tika 3 endet laut Apache je nach Stelle sechs Monate nach Tika 4.0.0 (erschienen am
   18.08.2026, also im Februar 2027) oder im März 2027. Stufe 6 sollte vorher erledigt sein.
+
+## Nachtrag vom 13.11.2026: Stand nach der Umsetzung der Stufen 1 bis 5
+
+Die Stufen 1 bis 5 sind umgesetzt (PRs #700 bis #742, Enterprise AI Client #220 und #221). Dieser Nachtrag hält fest,
+wo die Umsetzung von der Entscheidung abweicht oder sie genauer fasst. Alles Übrige gilt wie beschlossen.
+
+### Abweichungen
+
+1. **Enthaltene Dateien liegen im Stand ihres Behälters.** Die Extraktion eines Teils wird nicht unter einem eigenen
+   Schlüssel abgelegt, sondern in der Generation des äußeren Behälters, und wird mit ihm gültig und ersetzt. Derselbe
+   Inhalt in zwei Behältern wird deshalb zweimal gelesen. Grund: Ein Behälter ist so immer als Ganzes gültig oder
+   nicht; Kennungen nach Position gelten ohnehin nur für einen Stand.
+2. **Speicherschranke je Medientyp.** Statt einer allgemeinen Grenze gibt es eine Schranke `memory-limit` je Typ. Sie
+   ist nur für Typen aufgehoben, deren vollständiges Lesen einer Datei über 300 MiB bei 256 MiB Heap im Test
+   nachgewiesen ist: PDF, `.docx`, `.xlsx`, `.pptx`, Mail (`.eml`), Text, CSV, HTML und XHTML, ZIP, GZIP, TAR. Für
+   alle anderen Typen bleibt sie bei 20 MiB, namentlich `.doc`, `.xls`, `.ppt`, `.msg` und `.pst`, weil deren Leser
+   die Datei im Speicher halten, aber auch `.xlsm` und andere Office-Varianten mit Makros, für die kein eigener
+   Nachweis vorliegt. Ein neuer Typ wird nur mit Nachweis freigegeben.
+3. **Verhältnis von Ausgepacktem zu Gepacktem.** Am Verhältnis endet nur der betroffene Teil; seine Bytes zählen
+   danach nicht weiter, die folgenden Teile werden gelesen, der Behälter wird `PARTIAL/unpacked-too-large`.
+4. **Laufzeit.** Die Grenze ohne Fortschritt gilt für den ganzen Lauf, die Gesamtgrenze je Dokument und Teil.
+5. **Weitere Gründe am Status:** `text-ratio-exceeded`, `temp-space-low`, `entries-not-readable`,
+   `unsupported-format`, `no-text`. Ein leerer Anhang ist `UNSUPPORTED/empty`, Bytes ohne Text `UNSUPPORTED/no-text`;
+   ein Behälter ohne eigenen Text, aber mit Einträgen, ist `OK`.
+
+### Genauer gefasst
+
+6. **Outlook.** Ein angehängtes Outlook-Element liefert die Quelle als erzeugte Mail (`message/rfc822`) bis zur
+   Tiefe 8; tiefere stehen in der Liste und sind nicht abrufbar. Teile ohne Datei meldet die Quelle mit der Warnung
+   `entries-not-readable;id=…;count=…`; der Anhang wird dann `PARTIAL/entries-not-readable`. java-libpst entpackt
+   Anhänge, die mit einem zlib-Kopf beginnen, von selbst; Größe und Hash weichen dann vom Original ab (#706).
+7. **Fundstellen.** PDF: laufende physische Seite. `.ppt`: Folie in Folienreihenfolge. `.pptx`: Tika gibt die Folien
+   in der Reihenfolge der Beziehungskennungen aus; die Foliennummer kommt deshalb aus `p:sldIdLst` des Originals und
+   wird nur gesetzt, wenn die Zuordnung belegt ist, die Blöcke bleiben in Tikas Reihenfolge. `.xlsx` und `.xlsm`:
+   Zellbezug (`C3`) aus dem Blatt-XML des Originals, je Zeile gegen Tikas Ausgabe belegt; nicht für `.xls`, `.xlsb`,
+   ODS und CSV. Mappen und Präsentationen, die als eigene Teile aus Mails und Archiven gelesen werden, bekommen
+   Zellbezug und Foliennummer ebenso, aus ihrer temporären Datei; ohne bleiben nur Dateien, die Tika innerhalb eines
+   anderen Dokuments ausgibt (etwa eine Mappe als eingebettetes Objekt in Word). Beide Zuordnungen sind an die
+   geprüfte Fassung von Tika und POI gebunden; mit einer anderen Fassung bleiben die Felder leer, bis die Tests dort
+   bestanden sind.
+8. **Word-Listen bleiben Absätze.** Tika setzt die berechnete Marke in den Text, liefert aber weder Ebene noch
+   Listenart. Eine Zuordnung über das Original wäre nur nach Wahrscheinlichkeit möglich und wird nicht gebaut.
+9. **HTML** liest ein eigener Strom-Parser in Tikas Konfiguration (jsoup `StreamParser` aus der Version, die Tika
+   mitbringt), weil Tikas Weg den ganzen DOM-Baum hält. Er benutzt zwei nicht öffentliche Klassen von Tika
+   (`HtmlHandler`, `XHTMLDowngradeHandler`); fehlen sie nach einer Anhebung, gilt wieder Tikas Weg mit der Schranke
+   von 20 MiB. Bei jeder Tika-Anhebung zu prüfen.
+10. **Schlüsselform.** `DocumentKey` liefert `value()`, `fileName()`, `storagePath()` und `hash()`; alle Ablagen der
+    Analysen benutzen nur diese Methoden. In Daten stehen `pageId`, `attachmentId` und `partId` immer getrennt.
+11. **Analysen sind aktuell,** wenn der Hash des Lesetextes, die Ansicht (`document-text/v1`) und die Version des
+    Prozessors gleich sind; die Version des Extraktors gehört nicht dazu. Der Lauf bestimmt seine Arbeit aus dem
+    Zustand und holt den Bestand nach.
+12. **Embeddings je Dokument** sind durch `space-harvester.enrichment.documents.embedding-max-chars` begrenzt
+    (Standard 2 000 000 Zeichen, `0` = ohne Grenze); eine Kürzung steht als Daten am Ergebnis. Absätze und Navigation
+    laufen lokal und ohne diese Grenze. Abschalten: `space-harvester.enrichment.documents.enabled`.
+13. **Export** `attachments/v2` in `json-package/5`: je Dokument und Teil ein Eintrag mit Status, Umfang und
+    Versionen (`extraction` mit Extraktor, Version und Modell). Enthaltene Dateien liegen nach Kennung
+    (`parts/<Anhang>/<Kennung>.<Endung>`), ihr Anzeigename steht nur im Feld `title`; das Original eines
+    Seitenanhangs behält wie bisher seinen bereinigten Dateinamen. Importierter Text gilt als veraltet, bis das
+    Original neu gelesen ist (`stale`).
+14. **Medientypen enthaltener Dateien.** Bis zu einer anderen Entscheidung wird in Mails und Archiven alles Lesbare
+    gelesen; die Liste `export.attachments.media-types` gilt nur für Anhänge der Seite. Die Möglichkeit, sie auch auf
+    Teile anzuwenden, ist im Adapter vorhanden (`PartRules`), aber nicht angeschlossen.
+
+### Benannte Möglichkeiten, nicht bestellt
+
+- Eigener SAX-Leser für `.pptx` (echte Folienreihenfolge der Blöcke).
+- Zellbezug und Foliennummer für Dateien, die Tika innerhalb eines anderen Dokuments ausgibt.
+- Oberflächen: Herkunft anzeigen, nach Anhang filtern, Status sichtbar.
+- Stufe 6 (Tika-Modul im Enterprise AI Client, Tika 4).
