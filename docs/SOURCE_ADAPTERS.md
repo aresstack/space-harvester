@@ -356,7 +356,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ein einzelnes Dokument ersetzt `replaceDocument` (Anhang + Teilkennung); `Assets#reindex` legt einen abgelegten
   Anhang ohne Download neu in den Index (für „Neu lesen“). Je Seite bleibt ein Treffer; ein Treffer in einer
   enthaltenen Datei nennt zusätzlich `attachment.partId` und `attachment.partTitle` (sonst `null`). Der Text unter
-  `…/text` und im Export `attachments/v1` bleibt bis AP4c der Gesamttext aus Behälter und Teilen.
+  `…/text` bleibt der Gesamttext aus Behälter und Teilen; der Export (`attachments/v2`, AP4c) trennt ihn: eigener
+  Text und Markdown des Behälters, jede enthaltene Datei als eigener Eintrag mit Status (`DocumentExport`).
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle

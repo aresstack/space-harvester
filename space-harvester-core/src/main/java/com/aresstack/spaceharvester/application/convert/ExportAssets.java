@@ -71,4 +71,13 @@ public interface ExportAssets {
     default Optional<String> text(ExportAssetManifest.Entry entry) {
         return Optional.empty();
     }
+
+    /**
+     * Ein abgelegter Dokument-Anhang mit seinen enthaltenen Dateien als Struktur (ADR 0026, AP4c,
+     * {@code attachments/v2}); leer ohne strukturierte Extraktion, dann gilt {@link #text}.
+     */
+    default Optional<com.aresstack.spaceharvester.application.assets.DocumentExport> document(
+            ExportAssetManifest.Entry entry) {
+        return Optional.empty();
+    }
 }

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
@@ -433,6 +434,23 @@ class AttachmentTextSearchTest {
 
     private KeywordSearch search(AccessPolicy policy) {
         return search(new AccessGuard(policy));
+    }
+
+    @Test
+    void anAdoptedTextNeverPretendsToBeAStructuredExtraction() {
+        // Import eines JSON-Pakets (attachments/v1 und v2): der Text wird abgelegt, eine strukturierte Extraktion
+        // mit Teilen entsteht dabei nie (ADR 0026, AP4c); sie entsteht erst beim Lesen des Originals.
+        maxBytes = 16_000_000;
+        Assets assets = assets();
+        DocumentExtractions extractions = new DocumentExtractions(new TikaDocumentStructure(),
+                new FileSystemExtractionStore(directory.resolve("assets")), ExtractionLimits.DEFAULTS);
+        assets.documentExtractions(extractions);
+        String sha = Assets.sha256("Bericht".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        assertThat(assets.adoptText(sha, "Bericht über alles\n\nAnlage eins")).isTrue();
+
+        assertThat(assets.storedText(sha)).map(AssetText::text).contains("Bericht über alles\n\nAnlage eins");
+        assertThat(extractions.stored(sha)).isEmpty();
     }
 
     private Assets assets() {

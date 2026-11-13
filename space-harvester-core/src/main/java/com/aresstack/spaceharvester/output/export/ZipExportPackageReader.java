@@ -285,7 +285,7 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
             }
             Map<String, String> files = new HashMap<>();
             Map<String, String> renditions = new HashMap<>();
-            Map<String, String> textFiles = new HashMap<>();
+            Map<String, List<String>> textFiles = new HashMap<>();
             if (zip.getEntry("assets.json") != null) {
                 for (JsonNode asset : tree("assets.json", MAX_JSON_BYTES).path("assets")) {
                     if (asset.hasNonNull("path") && asset.hasNonNull("sha256")) {
@@ -299,12 +299,27 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                 }
             }
             if (zip.getEntry("attachments.json") != null) {
+                // attachments/v1 und v2: in v2 folgen einem Behälter seine enthaltenen Dateien (mit partId); sein Text
+                // ist dann der eigene und danach der seiner Teile in Verzeichnisreihenfolge (ADR 0026, AP4c). Teile
+                // werden nie zu eigenen Assets; eine strukturierte Extraktion entsteht beim Einlesen nicht.
+                List<String> container = null;
                 for (JsonNode attachment : tree("attachments.json", MAX_JSON_BYTES).path("attachments")) {
+                    if (attachment.hasNonNull("partId")) {
+                        if (container != null && attachment.hasNonNull("textPath")) {
+                            container.add(attachment.path("textPath").asString());
+                        }
+                        continue;
+                    }
+                    container = null;
                     if (attachment.hasNonNull("path") && attachment.hasNonNull("sha256")) {
                         String sha = attachment.path("sha256").asString();
                         files.putIfAbsent(sha, attachment.path("path").asString());
-                        if (attachment.hasNonNull("textPath")) {
-                            textFiles.putIfAbsent(sha, attachment.path("textPath").asString());
+                        if (!textFiles.containsKey(sha)) {
+                            container = new ArrayList<>();
+                            textFiles.put(sha, container);
+                            if (attachment.hasNonNull("textPath")) {
+                                container.add(attachment.path("textPath").asString());
+                            }
                         }
                     }
                 }
@@ -346,11 +361,27 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
 
                 @Override
                 public Optional<String> text(ExportAssetManifest.Entry entry) {
-                    String path = entry.stored() ? textFiles.get(entry.sha256()) : null;
-                    if (path == null || zip.getEntry(path) == null) {
+                    List<String> paths = entry.stored() ? textFiles.get(entry.sha256()) : null;
+                    if (paths == null) {
                         return Optional.empty();
                     }
-                    return Optional.of(new String(read(path, MAX_JSON_BYTES), StandardCharsets.UTF_8));
+                    List<String> texts = new ArrayList<>();
+                    long total = 0;
+                    for (String path : paths) {
+                        if (zip.getEntry(path) == null) {
+                            continue;
+                        }
+                        String text = new String(read(path, MAX_JSON_BYTES), StandardCharsets.UTF_8);
+                        total += text.length();
+                        if (total > MAX_JSON_BYTES) {
+                            throw new ExportPackageException(ExportPackageException.DAMAGED,
+                                    "Anhangstexte in attachments.json sind zu groß");
+                        }
+                        if (!text.isBlank()) {
+                            texts.add(text);
+                        }
+                    }
+                    return texts.isEmpty() ? Optional.empty() : Optional.of(String.join("\n\n", texts));
                 }
             };
         }
