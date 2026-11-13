@@ -394,7 +394,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s3`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s5`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -405,19 +405,44 @@ die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckt
 Seiten. Bei PowerPoint (`.pptx`) bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
 liefert, nicht in Folienreihenfolge; ausgeblendete Folien sind enthalten, Notizen und Mastertext stehen als Absätze
 (Korrektur der Reihenfolge erst mit AP10 über POI). Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
-geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien folgen mit AP7
-als eigene Dokumente; bis dahin stehen sie wie bisher im Text des Behälters, ohne Fundstelle. Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
+geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien siehe unten
+(AP7a). Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
 `TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
 ohne Fortschritt und insgesamt; nach einer Zeitgrenze nimmt der Empfänger keinen Block mehr an, auch das Warten auf
 einen freien Lauf endet dort. Bis zum Abbruch gesammelter Text bleibt (`PARTIAL`); meldet Tika unlesbare enthaltene
 Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
+
+**Enthaltene Dateien (AP7a).** Ein eigener `EmbeddedDocumentExtractor` entscheidet je Teil, den Tika übergibt:
+
+- Zum Dokument gehört ein Teil, den Tika `INLINE` nennt (Bilder in Word, ausgenommen Mails), oder, ohne diese Angabe,
+  ein Bild oder Paketteil in einem Office-Dokument oder PDF. Er wird kein Eintrag und liefert seinen Text (meist
+  keinen) in das Elterndokument. Textfassungen einer Mail (`multipart/alternative`) wählt Tika selbst; ihr Text steht
+  genau einmal in der Mail.
+- Jeder andere Teil wird ein Eintrag im Verzeichnis (`StructuredDocument.directory`), auch defekt, leer, zu tief oder
+  ausgeschlossen. Er wird zählend und hashend in eine temporäre Datei geschrieben (nach jedem Teil gelöscht, auch bei
+  Fehler und Abbruch) und daraus mit eigenem Handler, eigenem Status und eigenem Kopf gelesen
+  (`StructureSink.part` → `PartSink`). Vollständig gelesen trägt er `sha256:<hex>:<n>`, sonst `pos:<Behälter>:/1/3`.
+  Der Zählerpfad zählt jeden übergebenen Teil, auch die, die zum Dokument gehören.
+- Grenzen je äußerem Behälter: Tiefe 10 (darüber Eintrag `EXCLUDED`/`too-deep`, nicht geöffnet), 10 000 Einträge
+  (darüber keine weiteren; Behälter `PARTIAL`/`too-many-files`, das Auspacken endet), Verhältnis 100:1 ab 100 MiB
+  (Teil `FAILED`/`unpacked-too-large`, das Auspacken endet), Platzreserve (`FAILED`/`temp-space-low`). Je Teil gelten
+  Speicherschranke nach erkanntem und gemeldetem Typ (`EXCLUDED`/`memory-limit`), leere Datei (`EXCLUDED`/`empty`),
+  Zeichengrenze und Gesamtlaufzeit; endet ein Teil an seiner Grenze, endet nur dieser Teil. Die Grenze ohne Fortschritt
+  gilt für den ganzen Lauf (Behälter `PARTIAL`/`timeout`, gelesene Teile bleiben).
+- Welche Typen eigene Dokumente werden, erfährt der Adapter beim Aufruf (`PartRules.documentTypes`); andere Teile
+  stehen mit `EXCLUDED`/`media-type-excluded` im Verzeichnis, Archive und Mails werden trotzdem geöffnet.
+- Ein Archiv hat keinen eigenen Text (Namen der Einträge sind Tika-Artefakte). Erreicht eine Mail ihre Zeichengrenze,
+  bleibt sie gekürzt, ihre Anhänge werden weiter gelesen.
+- Übergang bis AP4: `DocumentExtractions` legt die Blöcke der Teile in Lesereihenfolge mit in die Extraktion des
+  Behälters, damit Suche, Index und Export nichts verlieren (Suchtest über den Korpus: `CorpusSearchParityTest`). Ein
+  Archiv mit Einträgen gilt dafür trotz `no-text` als lesbar. Eigene Ablage der Teile folgt mit AP7b.
 
 Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablegen, beim Nachholen und auf Abruf liest
 `Assets` Dokumente aus der abgelegten Datei mit diesem Adapter und legt die Extraktion unter `extractions/` ab; die
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s3`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s5`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
@@ -433,10 +458,8 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
-gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Ist ein Container größer als die Standardschranke (`*`), liest
-das Lesen eingebettete Dateien nur, wenn ihr Format ohne Schranke nachgewiesen ist oder es ein Bild ist; alle anderen
-eingebetteten Teile bleiben ungelesen, der Container wird `PARTIAL` mit `entries-not-readable`. Bis zur
-Standardschranke liest es eingebettete Dateien wie bisher.
+gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein
+Teil über seiner Schranke wird `EXCLUDED`/`memory-limit`, die übrigen Teile werden gelesen.
 
 ## Einen Adapter ergänzen
 

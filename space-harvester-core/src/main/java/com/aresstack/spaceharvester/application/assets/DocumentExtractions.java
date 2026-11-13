@@ -31,6 +31,7 @@ public final class DocumentExtractions {
     private final ExtractionStore extractions;
     private final ExtractionLimits limits;
     private final int maxTextChars;
+    private volatile PartRules rules = PartRules.ALL;
 
     public DocumentExtractions(DocumentStructure structure, ExtractionStore extractions, ExtractionLimits limits) {
         this(structure, extractions, limits, DEFAULT_MAX_TEXT_CHARS);
@@ -45,6 +46,15 @@ public final class DocumentExtractions {
             throw new IllegalArgumentException("maxTextChars muss positiv sein");
         }
         this.maxTextChars = maxTextChars;
+    }
+
+    /**
+     * Welche am Inhalt erkannten Typen enthaltener Dateien eigene Dokumente werden ({@code export.attachments.
+     * media-types}); ohne Angabe alle.
+     */
+    public DocumentExtractions documentTypes(java.util.function.Predicate<String> documentTypes) {
+        this.rules = new PartRules(java.util.Optional.empty(), documentTypes);
+        return this;
     }
 
     /** Kennung der Extraktion, unter der auch der {@link AssetText} liegt. */
@@ -80,11 +90,14 @@ public final class DocumentExtractions {
             return known.get();
         }
         try (ExtractionWriter writer = extractions.writer(key)) {
-            StructuredDocument document = read(asset, store, new Target(writer));
+            Target target = new Target(writer);
+            StructuredDocument document = read(asset, store, target);
             if (transientFailure(document.outcome())) {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
-            return writer.commit(document);
+            // Bis AP7b/AP4 stehen die Blöcke der Teile hinter denen des Behälters in seiner Ablage (siehe Target).
+            return writer.commit(new StructuredDocument(document.head(), document.outcome(), document.directory(),
+                    target.blocks, target.chars));
         } catch (UncheckedIOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
         }
@@ -92,6 +105,7 @@ public final class DocumentExtractions {
 
     /** Liest das Original aus der abgelegten Datei oder einer temporären Kopie. */
     private StructuredDocument read(Asset asset, AssetStore store, StructureSink sink) {
+        PartRules forAsset = rules.forContainer(asset.sha256());
         Optional<Path> file = store.file(asset);
         Path temporary = null;
         try {
@@ -105,7 +119,7 @@ public final class DocumentExtractions {
                 }
                 original = temporary;
             }
-            return structure.extract(original, asset.title(), asset.mediaType(), limits, sink);
+            return structure.extract(original, asset.title(), asset.mediaType(), limits, sink, forAsset);
         } catch (IOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e);
         } catch (UncheckedIOException e) {
@@ -133,7 +147,7 @@ public final class DocumentExtractions {
         StoredExtraction extraction = extract(asset, store);
         Outcome outcome = extraction.document().outcome();
         // Vorher prüfen: Eine nicht abgelegte Extraktion hat keine Abschnitte, ihr Text wäre leer.
-        if (transientFailure(outcome) || !usable(outcome)) {
+        if (transientFailure(outcome) || !usable(extraction.document(), extraction.chars())) {
             throw failure(outcome);
         }
         TextCollector text = new TextCollector(maxTextChars);
@@ -158,7 +172,7 @@ public final class DocumentExtractions {
         Optional<StoredExtraction> known = stored(asset.sha256());
         if (known.isPresent()) {
             Outcome outcome = known.get().document().outcome();
-            if (!usable(outcome)) {
+            if (!usable(known.get().document(), known.get().chars())) {
                 throw failure(outcome);
             }
             TextCollector text = new TextCollector(maxTextChars);
@@ -181,11 +195,12 @@ public final class DocumentExtractions {
 
             @Override
             public PartSink part(EmbeddedEntry entry) {
-                return block -> {
-                };
+                // Bis AP4 gehört der Text der Teile zum Text des Behälters (Suche wie bisher).
+                return text::accept;
             }
         });
-        if (transientFailure(document.outcome()) && document.chars() == 0 || !usable(document.outcome())) {
+        if (transientFailure(document.outcome()) && document.chars() == 0
+                || !usable(document, text.length())) {
             throw failure(document.outcome());
         }
         return text.result(asset, id(), version(), document.outcome(), now);
@@ -193,6 +208,16 @@ public final class DocumentExtractions {
 
     private static boolean usable(Outcome outcome) {
         return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
+    }
+
+    /**
+     * Wie {@link #usable(Outcome)}; dazu ein Behälter ohne eigenen Text (Archiv) mit Einträgen, deren Text bis AP4 in
+     * seine Ablage geht.
+     */
+    private static boolean usable(StructuredDocument document, long chars) {
+        Outcome outcome = document.outcome();
+        return usable(outcome) || chars > 0 && !document.directory().isEmpty()
+                && outcome.reason().filter(StatusReason.NO_TEXT::equals).isPresent();
     }
 
     /** Sammelt reinen Text bis zur Grenze. */
@@ -208,6 +233,10 @@ public final class DocumentExtractions {
 
         boolean open() {
             return !cut;
+        }
+
+        int length() {
+            return text.length();
         }
 
         void accept(Block block) {
@@ -279,19 +308,54 @@ public final class DocumentExtractions {
         return new DocumentTextException(old, "Kein Text (" + reason.code() + ")", null);
     }
 
-    /** Der Strom des äußeren Dokuments geht in die Ablage; schließen bestätigt nicht (das macht {@link #extract}). */
-    private record Target(ExtractionWriter writer) implements StructureSink {
+    /**
+     * Der Strom des äußeren Dokuments geht in die Ablage; schließen bestätigt nicht (das macht {@link #extract}).
+     *
+     * <p>Übergang (ADR 0026, AP7a, Architekt 13.11.2026): Bis die Teile eigene Abschnitte haben (AP7b) und Index und
+     * Export sie als eigene Einträge führen (AP4), gehen ihre Blöcke neu nummeriert in die Ablage des Behälters, damit
+     * der Text des Behälters wie bisher den Text seiner Teile enthält und die Suche nichts verliert. Dateinamen gehen
+     * nie als Text hinein; das Verzeichnis trägt Kennung und Status jedes Teils.
+     */
+    private static final class Target implements StructureSink {
+
+        private final ExtractionWriter writer;
+        private long blocks;
+        private long chars;
+
+        Target(ExtractionWriter writer) {
+            this.writer = writer;
+        }
+
+        private void write(Block block) {
+            Block numbered = renumbered(block, blocks);
+            writer.accept(numbered);
+            blocks++;
+            chars += numbered.chars();
+        }
 
         @Override
         public BlockSink document() {
-            return writer::accept;
+            return this::write;
         }
 
         @Override
         public PartSink part(EmbeddedEntry entry) {
-            // Enthaltene Dateien liefert der Adapter erst mit AP7.
-            return block -> {
-            };
+            return this::write;
         }
+    }
+
+    /** Derselbe Block an anderer Position. */
+    static Block renumbered(Block block, long index) {
+        if (block.index() == index) {
+            return block;
+        }
+        return switch (block) {
+            case Block.Heading b -> new Block.Heading(index, b.location(), b.links(), b.level(), b.text());
+            case Block.Paragraph b -> new Block.Paragraph(index, b.location(), b.links(), b.text());
+            case Block.ListItem b -> new Block.ListItem(index, b.location(), b.links(), b.ordered(), b.level(),
+                    b.text());
+            case Block.Code b -> new Block.Code(index, b.location(), b.links(), b.text(), b.language());
+            case Block.Table b -> new Block.Table(index, b.location(), b.links(), b.cells(), b.continued());
+        };
     }
 }

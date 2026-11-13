@@ -35,4 +35,13 @@ public interface DocumentStructure {
      */
     StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                StructureSink sink);
+
+    /**
+     * Wie {@link #extract(Path, String, String, ExtractionLimits, StructureSink)}, mit den Regeln für enthaltene
+     * Dateien (AP7): Hash des Behälters und zugelassene Typen. Ein Adapter ohne enthaltene Dateien übergeht sie.
+     */
+    default StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                       StructureSink sink, PartRules rules) {
+        return extract(original, title, mediaType, limits, sink);
+    }
 }

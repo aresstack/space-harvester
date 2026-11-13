@@ -4,12 +4,17 @@ import com.aresstack.spaceharvester.application.assets.Block;
 import com.aresstack.spaceharvester.application.assets.BlockSink;
 import com.aresstack.spaceharvester.application.assets.DocumentHead;
 import com.aresstack.spaceharvester.application.assets.DocumentStructure;
+import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.Link;
 import com.aresstack.spaceharvester.application.assets.Location;
 import com.aresstack.spaceharvester.application.assets.Outcome;
+import com.aresstack.spaceharvester.application.assets.PartId;
+import com.aresstack.spaceharvester.application.assets.PartIdNumbering;
+import com.aresstack.spaceharvester.application.assets.PartRules;
+import com.aresstack.spaceharvester.application.assets.PartSink;
 import com.aresstack.spaceharvester.application.assets.ReadExtent;
 import com.aresstack.spaceharvester.application.assets.StatusReason;
 import com.aresstack.spaceharvester.application.assets.StructureSink;
@@ -77,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s3";
+    public static final String VERSION = "3.3-s5";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -93,6 +98,13 @@ public final class TikaDocumentStructure implements DocumentStructure {
     private static final Set<String> BLOCK_ELEMENTS = Set.of("p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li",
             "dt", "dd", "tr", "pre", "blockquote", "table", "ul", "ol", "dl", "section", "article", "body");
     private static final Set<String> MAIL_TYPES = Set.of("message/rfc822", "application/vnd.ms-outlook");
+    /** Mails und Archive werden geöffnet, auch wenn ihr Typ kein eigenes Dokument wird. */
+    private static final Set<String> CONTAINER_TYPES = Set.of("message/rfc822", "application/vnd.ms-outlook",
+            "application/zip", "application/x-zip-compressed", "application/x-tar", "application/gzip",
+            "application/x-gzip", "application/x-7z-compressed", "application/x-rar-compressed", "application/vnd.rar",
+            "application/x-bzip2", "application/x-xz", "application/x-compress", "application/java-archive");
+    /** So oft prüft das Auspacken die Platzreserve. */
+    private static final long SPACE_CHECK_BYTES = 8L * 1024 * 1024;
     private static final long POLL_MILLIS = 50;
     private static final int MAX_LINKS = 1_000;
     private static final int MAX_TABLE_CELLS = 10_000;
@@ -140,7 +152,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
     @Override
     public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                       StructureSink sink) {
+        return extract(original, title, mediaType, limits, sink, PartRules.ALL);
+    }
+
+    @Override
+    public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                      StructureSink sink, PartRules rules) {
         Objects.requireNonNull(original, "original");
+        Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
         Objects.requireNonNull(sink, "sink");
         BlockSink target = sink.document();
@@ -185,16 +204,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 Thread.currentThread().interrupt();
                 return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.TIMEOUT));
             }
-            return run(tika, original, title, mediaType, size, limits, target);
+            return run(new Reader(tika, original, title, mediaType, size, limits, sink, target, rules), limits);
         } finally {
             target.close();
         }
     }
 
     /** Liest in einem eigenen Thread und wacht über Laufzeit und Fortschritt. */
-    private StructuredDocument run(AutoDetectParser tika, Path original, String title, String mediaType, long size,
-                                   ExtractionLimits limits, BlockSink target) {
-        Reader reader = new Reader(tika, original, title, mediaType, size, limits, target);
+    private StructuredDocument run(Reader reader, ExtractionLimits limits) {
         Thread worker = new Thread(() -> {
             try {
                 reader.read();
@@ -209,7 +226,6 @@ public final class TikaDocumentStructure implements DocumentStructure {
             slots.release();
             return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.MEMORY_LIMIT));
         }
-        long started = System.nanoTime();
         long idle = limits.idleTimeout().toNanos();
         long total = limits.totalTimeout().toNanos();
         try {
@@ -219,7 +235,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     return reader.result();
                 }
                 long now = System.nanoTime();
-                if (idle > 0 && now - reader.lastProgress.get() > idle || total > 0 && now - started > total) {
+                if (idle > 0 && now - reader.lastProgress.get() > idle || reader.overTime(now, total)) {
                     StructuredDocument stopped = reader.stop(StatusReason.TIMEOUT);
                     worker.interrupt();
                     LOG.log(System.Logger.Level.INFO, "Extraktion an der Zeitgrenze beendet ({0})",
@@ -303,7 +319,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
         return current;
     }
 
-    /** Ein Lauf: Tika im Arbeitsthread, Ergebnis und Abbruch unter einer Sperre. */
+    /**
+     * Ein Lauf: Tika im Arbeitsthread, Ergebnis und Abbruch unter einer Sperre. Der äußere Behälter und jede enthaltene
+     * Datei sind je ein {@link Doc} mit eigenem Blockstrom, eigenen Zählern und eigenem Status (AP7).
+     */
     private final class Reader {
 
         private final AutoDetectParser tika;
@@ -312,25 +331,35 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private final String mediaType;
         private final long size;
         private final ExtractionLimits limits;
-        private final BlockSink target;
+        private final StructureSink sink;
+        private final PartRules rules;
         final AtomicLong lastProgress = new AtomicLong(System.nanoTime());
-        private volatile TikaInputStream stream;
-        private final Handler handler = new Handler();
-        private long blocks;
-        private long chars;
+        private final Doc root;
+        /** Offene Dokumente, innen oben: der Behälter und die gerade gelesenen Teile. */
+        private final ArrayDeque<Doc> open = new ArrayDeque<>();
+        /** Verzeichnis in Lesereihenfolge; ein Platz wird beim Beginn eines Teils belegt. */
+        private final List<EmbeddedEntry> directory = new ArrayList<>();
+        private PartIdNumbering numbering;
+        private int entries;
+        private long unpacked;
+        /** Erster Grund, aus dem dem Behälter Teile fehlen (zu viele, zu weit ausgepackt). */
+        private StatusReason missing;
+        private boolean unpackingEnded;
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
 
         Reader(AutoDetectParser tika, Path original, String title, String mediaType, long size,
-               ExtractionLimits limits, BlockSink target) {
+               ExtractionLimits limits, StructureSink sink, BlockSink target, PartRules rules) {
             this.tika = tika;
             this.original = original;
             this.title = title;
             this.mediaType = mediaType;
             this.size = size;
             this.limits = limits;
-            this.target = target;
+            this.sink = sink;
+            this.rules = rules;
+            this.root = new Doc(target, size, mediaType, null, "", 0);
         }
 
         void read() {
@@ -355,47 +384,457 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 metadata.set(TikaCoreProperties.CONTENT_TYPE_HINT, mediaType);
             }
             ParseContext context = new ParseContext();
-            // Enthaltene Dateien wie bisher im Text des Behälters (eigene Dokumente erst mit AP7).
             context.set(Parser.class, tika);
-            // Bis AP7 (Grenze je Teil): Ist der Behälter größer als die Standardschranke, bleiben enthaltene Teile
-            // nicht nachgewiesener Formate ungelesen, sonst umginge eine große eingebettete Mail die Schranke.
-            long standard = limits.memoryLimits().getOrDefault(ExtractionLimits.ANY_TYPE, 0L);
-            GuardedEmbedded guard = null;
-            if (ExtractionLimits.exceeds(size, standard)) {
-                guard = new GuardedEmbedded(context);
-                context.set(EmbeddedDocumentExtractor.class, guard);
+            // Enthaltene Dateien werden eigene Dokumente (AP7); was zum Dokument selbst gehört, bleibt in seinem Text.
+            context.set(EmbeddedDocumentExtractor.class, new PartExtractor(context));
+            synchronized (this) {
+                open.push(root);
             }
             Outcome outcome;
             try (TikaInputStream in = TikaInputStream.get(original, metadata)) {
-                stream = in;
-                handler.metadata = metadata;
-                (parseWith == null ? tika : parseWith).parse(in, handler, metadata, context);
-                handler.flush();
-                outcome = embeddedFailure(metadata) || guard != null && guard.skipped > 0
-                        ? partial(StatusReason.ENTRIES_NOT_READABLE) : null;
-            } catch (Stop e) {
-                outcome = truncatedOrFailed(e.reason);
-            } catch (EncryptedDocumentException e) {
-                outcome = truncatedOrFailed(StatusReason.ENCRYPTED);
-            } catch (OutOfMemoryError e) {
-                outcome = truncatedOrFailed(StatusReason.MEMORY_LIMIT);
-            } catch (Exception | LinkageError e) {
-                Throwable stop = cause(e, Stop.class);
-                if (stop != null) {
-                    outcome = truncatedOrFailed(((Stop) stop).reason);
-                } else if (cause(e, EncryptedDocumentException.class) != null) {
-                    outcome = truncatedOrFailed(StatusReason.ENCRYPTED);
-                } else if (zipBomb(e)) {
-                    outcome = truncatedOrFailed(StatusReason.UNPACKED_TOO_LARGE);
-                } else {
-                    LOG.log(System.Logger.Level.INFO, "Extraktion gescheitert ({0})", e.getClass().getName());
-                    outcome = truncatedOrFailed(StatusReason.CORRUPT);
-                }
+                root.stream = in;
+                root.handler.metadata = metadata;
+                (parseWith == null ? tika : parseWith).parse(in, root.handler, metadata, context);
+                root.handler.flush();
+                outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
+                        : missing != null ? root.partial(missing)
+                        : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
+            } catch (Exception | LinkageError | OutOfMemoryError e) {
+                outcome = aborted(root, e);
             }
             synchronized (this) {
                 if (stopped) {
                     return;
                 }
+                outcome = root.finish(outcome);
+                result = new StructuredDocument(root.head(metadata), outcome, entries(), root.blocks, root.chars);
+                stopped = true;
+            }
+        }
+
+        /** Übersetzt einen Abbruch beim Lesen eines Dokuments in seinen Status. */
+        private Outcome aborted(Doc doc, Throwable e) {
+            if (e instanceof Stop stop) {
+                return doc.truncatedOrFailed(stop.reason);
+            }
+            if (e instanceof EncryptedDocumentException) {
+                return doc.truncatedOrFailed(StatusReason.ENCRYPTED);
+            }
+            if (e instanceof OutOfMemoryError) {
+                return doc.truncatedOrFailed(StatusReason.MEMORY_LIMIT);
+            }
+            Throwable stop = cause(e, Stop.class);
+            if (stop != null) {
+                return doc.truncatedOrFailed(((Stop) stop).reason);
+            }
+            if (cause(e, EncryptedDocumentException.class) != null) {
+                return doc.truncatedOrFailed(StatusReason.ENCRYPTED);
+            }
+            if (zipBomb(e)) {
+                return doc.truncatedOrFailed(StatusReason.UNPACKED_TOO_LARGE);
+            }
+            LOG.log(System.Logger.Level.INFO, "Extraktion gescheitert ({0})", e.getClass().getName());
+            return doc.truncatedOrFailed(StatusReason.CORRUPT);
+        }
+
+        /** Das Verzeichnis ohne noch freie Plätze (unter der Sperre). */
+        private List<EmbeddedEntry> entries() {
+            return directory.stream().filter(Objects::nonNull).toList();
+        }
+
+        /** Bricht von außen ab; danach nimmt kein Empfänger mehr einen Block an. */
+        synchronized StructuredDocument stop(StatusReason reason) {
+            if (result != null) {
+                return result;
+            }
+            for (Doc doc : open) {
+                doc.drain();
+                if (doc != root && doc.entry != null) {
+                    // Ein offener Teil endet mit dem Lauf; sein Eintrag bleibt mit Status.
+                    directory.set(doc.slot, withOutcome(doc.entry, doc.truncatedOrFailed(reason)));
+                }
+            }
+            stopped = true;
+            stopReason = reason;
+            result = new StructuredDocument(DocumentHead.EMPTY, root.truncatedOrFailed(reason), entries(),
+                    root.blocks, root.chars);
+            return result;
+        }
+
+        /**
+         * Prüft die Gesamtlaufzeit des innersten offenen Dokuments: Beim Behälter endet der Lauf ({@code true}), bei
+         * einem Teil nur dieser Teil (er endet an seinem nächsten Fortschritt).
+         */
+        synchronized boolean overTime(long now, long total) {
+            Doc current = open.isEmpty() ? root : open.peek();
+            if (total <= 0 || now - current.started <= total) {
+                return false;
+            }
+            if (current == root) {
+                return true;
+            }
+            current.expired = true;
+            return false;
+        }
+
+        synchronized StructuredDocument result() {
+            if (result == null) {
+                // Der Thread endete ohne Ergebnis (etwa durch einen Fehler außerhalb von Tika).
+                result = new StructuredDocument(DocumentHead.EMPTY, root.truncatedOrFailed(StatusReason.CORRUPT),
+                        entries(), root.blocks, root.chars);
+                stopped = true;
+            }
+            return result;
+        }
+
+        private void checkRunning() throws Stop {
+            if (stopped) {
+                throw new Stop(stopReason == null ? StatusReason.TIMEOUT : stopReason);
+            }
+        }
+
+        /** Enthaltene Dateien, die Tika nicht lesen konnte, meldet es nur in den Metadaten des Behälters. */
+        private static boolean embeddedFailure(Metadata metadata) {
+            return metadata.get(TikaCoreProperties.EMBEDDED_EXCEPTION) != null
+                    || metadata.get(TikaCoreProperties.EMBEDDED_BYTES_EXCEPTION) != null
+                    || metadata.get(TikaCoreProperties.TIKA_META_EXCEPTION_EMBEDDED_STREAM) != null;
+        }
+
+        /** Kennungen dieses Behälters; den Hash bildet der Adapter selbst, wenn ihn der Aufruf nicht nennt. */
+        private PartIdNumbering numbering() throws IOException {
+            if (numbering == null) {
+                String sha = rules.containerSha256().orElse(null);
+                if (sha == null) {
+                    try (InputStream in = Files.newInputStream(original)) {
+                        sha = sha256(in);
+                    }
+                }
+                numbering = new PartIdNumbering(sha);
+            }
+            return numbering;
+        }
+
+        /** Belegt den nächsten Platz im Verzeichnis. */
+        private synchronized int reserve() {
+            directory.add(null);
+            return directory.size() - 1;
+        }
+
+        /** Setzt einen Eintrag und meldet ihn mit leerem Strom (Teil ohne gelesenen Text). */
+        private void record(int slot, EmbeddedEntry entry) throws Stop {
+            synchronized (this) {
+                checkRunning();
+                directory.set(slot, entry);
+            }
+            try (PartSink part = sink.part(entry)) {
+                // leer: Status steht am Eintrag
+                Objects.requireNonNull(part);
+            }
+        }
+
+        private void endUnpacking(StatusReason reason) {
+            synchronized (this) {
+                unpackingEnded = true;
+                if (missing == null) {
+                    missing = reason;
+                }
+            }
+        }
+
+        /**
+         * Nimmt jede Datei an, die Tika aus einem Behälter übergibt (ADR 0026, Punkte 5, 8 und 13). Was zum Dokument
+         * selbst gehört (Inline-Bilder, Vorschaubilder, Makros), läuft wie bisher in dessen Text; jede andere Datei
+         * wird ein Eintrag mit eigener Kennung und eigenem Status und wird aus einer temporären Datei gelesen.
+         */
+        private final class PartExtractor extends ParsingEmbeddedDocumentExtractor {
+
+            private final ParseContext context;
+
+            PartExtractor(ParseContext context) {
+                super(context);
+                this.context = context;
+            }
+
+            @Override
+            public boolean shouldParseEmbedded(Metadata metadata) {
+                return true;
+            }
+
+            @Override
+            public void parseEmbedded(InputStream stream, ContentHandler handler, Metadata metadata,
+                                      boolean outputHtml) throws SAXException, IOException {
+                Doc parent;
+                String path;
+                synchronized (Reader.this) {
+                    checkRunning();
+                    parent = open.peek();
+                    // Die Position zählt jeden übergebenen Teil, auch die, die kein Eintrag werden (Architekt).
+                    path = parent.path + "/" + ++parent.parts;
+                    if (unpackingEnded) {
+                        return;
+                    }
+                }
+                if (belongsToDocument(metadata, parent)) {
+                    super.parseEmbedded(stream, handler, metadata, outputHtml);
+                    return;
+                }
+                if (limits.maxEmbeddedFiles() > 0 && entries >= limits.maxEmbeddedFiles()) {
+                    // Über der Grenze entstehen keine weiteren Einträge; das Auspacken endet.
+                    endUnpacking(StatusReason.TOO_MANY_FILES);
+                    return;
+                }
+                entries++;
+                readPart(stream, metadata, parent, path, context);
+            }
+        }
+
+        /**
+         * Ob ein Teil zum Dokument selbst gehört (ADR 0026, Punkt 13): zuerst Tikas Angabe am Teil ({@code INLINE},
+         * Makro, Vorschaubild gehören dazu, {@code ATTACHMENT} nicht); fehlt sie, gehören Bilder und Paketteile eines
+         * Office-Dokuments oder PDF dazu. Mails sind immer eigene Einträge, auch weitergeleitete ohne Dateinamen.
+         */
+        private boolean belongsToDocument(Metadata metadata, Doc parent) {
+            String declared = baseType(metadata.get(Metadata.CONTENT_TYPE));
+            if (MAIL_TYPES.contains(declared)) {
+                return false;
+            }
+            String kind = metadata.get(TikaCoreProperties.EMBEDDED_RESOURCE_TYPE);
+            if (kind != null && !kind.isBlank()) {
+                return !kind.strip().equalsIgnoreCase("ATTACHMENT");
+            }
+            String parentType = parent.handler.detectedType();
+            boolean office = parentType.equals("application/pdf") || parentType.equals("application/rtf")
+                    || parentType.equals("application/msword") || parentType.startsWith("application/vnd.ms-excel")
+                    || parentType.startsWith("application/vnd.ms-powerpoint")
+                    || parentType.startsWith("application/vnd.ms-word")
+                    || parentType.startsWith("application/vnd.openxmlformats-officedocument.")
+                    || parentType.startsWith("application/vnd.oasis.opendocument.");
+            return office && (declared.startsWith("image/")
+                    || metadata.get(TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID) != null);
+        }
+
+        /** Schreibt den Teil zählend in eine temporäre Datei und liest ihn von dort als eigenes Dokument. */
+        private void readPart(InputStream stream, Metadata metadata, Doc parent, String path, ParseContext context)
+                throws SAXException, IOException {
+            int depth = parent.depth + 1;
+            Optional<String> name = Optional.ofNullable(metadata.get(TikaCoreProperties.RESOURCE_NAME_KEY))
+                    .map(String::strip).filter(value -> !value.isEmpty());
+            Optional<String> declared = Optional.of(baseType(metadata.get(Metadata.CONTENT_TYPE)))
+                    .filter(value -> !value.isEmpty());
+            Optional<PartId> parentId = Optional.ofNullable(parent.id);
+            int slot = reserve();
+            if (limits.maxDepth() > 0 && depth > limits.maxDepth()) {
+                // Zu tief: ein Eintrag mit Status, sein Inhalt wird nicht geöffnet.
+                record(slot, new EmbeddedEntry(numbering().position(path), Optional.empty(), name, declared, path,
+                        parentId, depth, Optional.empty(), Outcome.of(ExtractionStatus.EXCLUDED,
+                        StatusReason.TOO_DEEP)));
+                return;
+            }
+            Path temp = null;
+            try {
+                temp = Files.createTempFile("teil-", ".tmp");
+                Spooled spooled = spool(stream, temp);
+                if (spooled.failure() != null) {
+                    record(slot, new EmbeddedEntry(numbering().position(path), Optional.empty(), name, declared, path,
+                            parentId, depth, Optional.of(spooled.bytes()), spooled.failure()));
+                    return;
+                }
+                PartId id = numbering().content(spooled.sha256());
+                Optional<String> sha = Optional.of(spooled.sha256());
+                String type = detectedType(temp, metadata, declared.orElse(""));
+                Optional<String> typeValue = Optional.of(type).filter(value -> !value.isEmpty()).or(() -> declared);
+                Outcome refusal = refusal(type, declared.orElse(""), spooled.bytes());
+                if (refusal != null) {
+                    record(slot, new EmbeddedEntry(id, sha, name, typeValue, path, parentId, depth,
+                            Optional.of(spooled.bytes()), refusal));
+                    return;
+                }
+                EmbeddedEntry preliminary = new EmbeddedEntry(id, sha, name, typeValue, path, parentId, depth,
+                        Optional.of(spooled.bytes()), Outcome.ok(new ReadExtent(spooled.bytes(), 0)));
+                parsePart(temp, type, name, preliminary, slot, parent, context);
+            } catch (IOException e) {
+                // Lesefehler beim Auspacken: Eintrag nach Position, die übrigen Teile werden gelesen.
+                record(slot, new EmbeddedEntry(numbering().position(path), Optional.empty(), name, declared, path,
+                        parentId, depth, Optional.empty(), Outcome.of(ExtractionStatus.FAILED,
+                        StatusReason.CORRUPT)));
+            } finally {
+                if (temp != null) {
+                    Files.deleteIfExists(temp);
+                }
+            }
+        }
+
+        /** Warum ein vollständig ausgepackter Teil nicht gelesen wird; {@code null}, wenn er gelesen wird. */
+        private Outcome refusal(String type, String declared, long bytes) {
+            if (bytes == 0) {
+                return Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.EMPTY);
+            }
+            if (!CONTAINER_TYPES.contains(type) && !rules.documentTypes().test(type)) {
+                return Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEDIA_TYPE_EXCLUDED);
+            }
+            long limit = limits.memoryLimit(type);
+            if (!declared.isEmpty()) {
+                long other = limits.memoryLimit(declared);
+                limit = limit == 0 ? other : other == 0 ? limit : Math.min(limit, other);
+            }
+            if (ExtractionLimits.exceeds(bytes, limit)) {
+                return Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT);
+            }
+            if (ExtractionLimits.exceeds(bytes, limits.maxFileBytes())) {
+                return Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.TOO_LARGE);
+            }
+            return null;
+        }
+
+        /** Liest einen ausgepackten Teil mit eigenem Handler; nur dieser Teil endet an seinen Grenzen. */
+        private void parsePart(Path temp, String type, Optional<String> name, EmbeddedEntry preliminary, int slot,
+                               Doc parent, ParseContext context) throws SAXException, IOException {
+            PartSink partSink = sink.part(preliminary);
+            Doc child = new Doc(partSink, preliminary.size().orElse(0L), type, preliminary.id(),
+                    preliminary.position(), preliminary.depth());
+            child.entry = preliminary;
+            child.slot = slot;
+            synchronized (Reader.this) {
+                checkRunning();
+                directory.set(slot, preliminary);
+                open.push(child);
+            }
+            Metadata metadata = new Metadata();
+            name.ifPresent(value -> metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, value));
+            if (!type.isEmpty()) {
+                metadata.set(TikaCoreProperties.CONTENT_TYPE_HINT, type);
+            }
+            Outcome outcome;
+            try {
+                try (TikaInputStream in = TikaInputStream.get(temp, metadata)) {
+                    child.stream = in;
+                    child.handler.metadata = metadata;
+                    tika.parse(in, child.handler, metadata, context);
+                    child.handler.flush();
+                    outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
+                            : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
+                } catch (Exception | LinkageError | OutOfMemoryError e) {
+                    synchronized (Reader.this) {
+                        // Ein Abbruch von außen beendet den ganzen Lauf, nicht nur diesen Teil.
+                        checkRunning();
+                    }
+                    outcome = aborted(child, e);
+                }
+                synchronized (Reader.this) {
+                    checkRunning();
+                    outcome = child.finish(outcome);
+                    directory.set(slot, withOutcome(preliminary, outcome));
+                }
+                partSink.head(child.head(metadata));
+            } finally {
+                synchronized (Reader.this) {
+                    open.remove(child);
+                    // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
+                    parent.started += System.nanoTime() - child.started;
+                }
+                partSink.close();
+            }
+        }
+
+        /**
+         * Schreibt einen Teil in die temporäre Datei und bildet dabei Hash und Größe; endet am Verhältnis von
+         * Ausgepacktem zu Gepacktem, an der Platzreserve, einem Lesefehler oder einem Abbruch des Laufs.
+         */
+        private Spooled spool(InputStream stream, Path temp) throws IOException, SAXException {
+            java.security.MessageDigest digest = sha256Digest();
+            long bytes = 0;
+            long nextSpaceCheck = SPACE_CHECK_BYTES;
+            byte[] buffer = new byte[64 * 1024];
+            try (var out = Files.newOutputStream(temp)) {
+                while (true) {
+                    int read;
+                    try {
+                        read = stream.read(buffer);
+                    } catch (IOException e) {
+                        return new Spooled(null, bytes, Outcome.of(ExtractionStatus.FAILED, StatusReason.CORRUPT));
+                    }
+                    if (read < 0) {
+                        break;
+                    }
+                    lastProgress.set(System.nanoTime());
+                    synchronized (Reader.this) {
+                        checkRunning();
+                    }
+                    bytes += read;
+                    unpacked += read;
+                    if (limits.unpackRatio() > 0 && unpacked > limits.unpackRatioFromBytes()
+                            && unpacked > (size > Long.MAX_VALUE / limits.unpackRatio() ? Long.MAX_VALUE
+                            : limits.unpackRatio() * size)) {
+                        endUnpacking(StatusReason.UNPACKED_TOO_LARGE);
+                        return new Spooled(null, bytes, Outcome.of(ExtractionStatus.FAILED,
+                                StatusReason.UNPACKED_TOO_LARGE));
+                    }
+                    if (bytes >= nextSpaceCheck) {
+                        nextSpaceCheck += SPACE_CHECK_BYTES;
+                        if (limits.tempSpaceReserve() > 0 && usableTempSpace() < limits.tempSpaceReserve()) {
+                            return new Spooled(null, bytes, Outcome.of(ExtractionStatus.FAILED,
+                                    StatusReason.TEMP_SPACE_LOW));
+                        }
+                    }
+                    digest.update(buffer, 0, read);
+                    out.write(buffer, 0, read);
+                }
+            }
+            return new Spooled(java.util.HexFormat.of().formatHex(digest.digest()), bytes, null);
+        }
+
+        /** Der am Teil erkannte Typ ohne Parameter; sonst der gemeldete. */
+        private String detectedType(Path temp, Metadata metadata, String declared) {
+            Metadata probe = new Metadata();
+            String name = metadata.get(TikaCoreProperties.RESOURCE_NAME_KEY);
+            if (name != null) {
+                probe.set(TikaCoreProperties.RESOURCE_NAME_KEY, name);
+            }
+            try (TikaInputStream in = TikaInputStream.get(temp)) {
+                return baseType(tika.getDetector().detect(in, probe).toString());
+            } catch (IOException | RuntimeException e) {
+                return declared;
+            }
+        }
+
+        /** Ein Dokument dieses Laufs: der Behälter oder eine enthaltene Datei. */
+        private final class Doc {
+
+            private final BlockSink target;
+            private final long size;
+            private final String mediaType;
+            private final PartId id;
+            private final String path;
+            private final int depth;
+            private final Handler handler = new Handler();
+            private volatile TikaInputStream stream;
+            private long blocks;
+            private long chars;
+            /** Beginn der eigenen Laufzeit; die Zeit in Teilen wird hinzugerechnet (nicht mitgezählt). */
+            private long started = System.nanoTime();
+            /** Gesamtlaufzeit erreicht (nur Teile): endet am nächsten Fortschritt. */
+            private volatile boolean expired;
+            /**
+             * Zeichengrenze einer Mail erreicht: Ihr weiterer Text fällt weg, ihre Anhänge werden noch gelesen (eine
+             * Grenze beendet nur den betroffenen Teil).
+             */
+            private boolean full;
+            /** Teile, die Tika aus diesem Dokument übergeben hat (Zählerpfad). */
+            private int parts;
+            private EmbeddedEntry entry;
+            private int slot = -1;
+
+            Doc(BlockSink target, long size, String mediaType, PartId id, String path, int depth) {
+                this.target = target;
+                this.size = size;
+                this.mediaType = mediaType;
+                this.id = id;
+                this.path = path;
+                this.depth = depth;
+            }
+
+            /** Status am Ende: Abbruch mit gesammeltem Text, sonst vollständig oder ohne Text (unter der Sperre). */
+            private Outcome finish(Outcome outcome) {
                 // Nach vollständigem Lesen ist der Puffer leer; drain betrifft nur Abbrüche.
                 StatusReason abort = outcome == null ? null : outcome.reason().orElse(StatusReason.CORRUPT);
                 if (abort != null && abort != StatusReason.TOO_LARGE && abort != StatusReason.TEXT_RATIO_EXCEEDED
@@ -407,687 +846,698 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     outcome = chars == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
                             : Outcome.ok(new ReadExtent(size, chars));
                 }
-                result = new StructuredDocument(head(metadata), outcome, List.of(), blocks, chars);
-                stopped = true;
-            }
-        }
-
-        /** Bricht von außen ab; danach nimmt der Empfänger keinen Block mehr an. */
-        synchronized StructuredDocument stop(StatusReason reason) {
-            if (result != null) {
-                return result;
-            }
-            drain();
-            stopped = true;
-            stopReason = reason;
-            result = new StructuredDocument(DocumentHead.EMPTY, truncatedOrFailed(reason), List.of(), blocks, chars);
-            return result;
-        }
-
-        /** Gibt den noch gepufferten Text aus (unter der Sperre); true, wenn dabei Zeichen dazukamen. */
-        private synchronized boolean drain() {
-            long before = chars;
-            try {
-                handler.flush();
-            } catch (SAXException | RuntimeException e) {
-                // Grenze erreicht: Der angenommene Teil bleibt.
-            }
-            return chars > before;
-        }
-
-        /** Liest enthaltene Teile nur in nachgewiesenen Formaten (ohne Schranke) und Bilder; zählt die übrigen. */
-        private final class GuardedEmbedded extends ParsingEmbeddedDocumentExtractor {
-
-            volatile int skipped;
-
-            GuardedEmbedded(ParseContext context) {
-                super(context);
+                return outcome;
             }
 
-            @Override
-            public void parseEmbedded(InputStream stream, ContentHandler handler, Metadata metadata,
-                                      boolean outputHtml) throws SAXException, IOException {
-                TikaInputStream in = TikaInputStream.get(stream);
-                MediaType type = tika.getDetector().detect(in, metadata).getBaseType();
-                if (type.getType().equals("image") || limits.memoryLimit(type.toString()) == 0) {
-                    super.parseEmbedded(in, handler, metadata, outputHtml);
-                } else {
-                    skipped++;
-                }
-            }
-        }
-
-        /** Enthaltene Dateien, die Tika nicht lesen konnte, meldet es nur in den Metadaten des Behälters. */
-        private static boolean embeddedFailure(Metadata metadata) {
-            return metadata.get(TikaCoreProperties.EMBEDDED_EXCEPTION) != null
-                    || metadata.get(TikaCoreProperties.EMBEDDED_BYTES_EXCEPTION) != null;
-        }
-
-        /** Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text gescheitert. */
-        private Outcome partial(StatusReason reason) {
-            return chars == 0 ? Outcome.of(ExtractionStatus.FAILED, reason)
-                    : Outcome.truncated(reason, new ReadExtent(size, chars));
-        }
-
-        synchronized StructuredDocument result() {
-            if (result == null) {
-                // Der Thread endete ohne Ergebnis (etwa durch einen Fehler außerhalb von Tika).
-                result = new StructuredDocument(DocumentHead.EMPTY, truncatedOrFailed(StatusReason.CORRUPT),
-                        List.of(), blocks, chars);
-                stopped = true;
-            }
-            return result;
-        }
-
-        /**
-         * Ohne Text gescheitert, sonst gekürzt mit Umfang: gelesene Bytes laut Strom (Parser, die die Datei direkt
-         * lesen, melden hier weniger) und erzeugte Zeichen.
-         */
-        private Outcome truncatedOrFailed(StatusReason reason) {
-            if (chars == 0) {
-                return Outcome.of(ExtractionStatus.FAILED, reason);
-            }
-            TikaInputStream in = stream;
-            long read = in == null ? 0 : Math.min(size, Math.max(0, in.getPosition()));
-            return Outcome.truncated(reason, new ReadExtent(read, chars));
-        }
-
-        /** Nimmt einen Textblock an, solange der Lauf nicht beendet ist, und prüft dabei die Zeichengrenzen. */
-        private synchronized void emitText(TextKind kind, int level, boolean ordered, String text, List<Link> links,
-                                           Optional<Location> location) throws Stop {
-            checkRunning();
-            long room = room();
-            boolean cut = text.length() > room;
-            String accepted = cut ? text.substring(0, (int) Math.max(0, room)) : text;
-            if (!accepted.isEmpty()) {
-                long index = blocks;
-                Block block = switch (kind) {
-                    case HEADING -> new Block.Heading(index, location, links, level, accepted);
-                    case ITEM -> new Block.ListItem(index, location, links, ordered, level, accepted);
-                    case CODE -> new Block.Code(index, location, links, accepted, Optional.empty());
-                    case PARAGRAPH -> new Block.Paragraph(index, location, links, accepted);
-                };
-                accept(block);
-            }
-            if (cut) {
-                throw new Stop(StatusReason.TOO_LARGE);
-            }
-            checkRatio();
-        }
-
-        /** Nimmt ein Tabellenstück an; an der Zeichengrenze nur die Zellen bis dahin. */
-        private synchronized void emitTable(List<Block.Cell> cells, boolean continued, List<Link> links,
-                                            Optional<Location> location) throws Stop {
-            checkRunning();
-            long room = room();
-            List<Block.Cell> accepted = new ArrayList<>();
-            long total = 0;
-            boolean cut = false;
-            for (Block.Cell cell : cells) {
-                if (total + cell.text().length() > room) {
-                    int left = (int) Math.max(0, room - total);
-                    if (left > 0) {
-                        accepted.add(new Block.Cell(cell.row(), cell.column(), cell.text().substring(0, left),
-                                cell.header(), cell.cellRef()));
-                        total += left;
-                    }
-                    cut = true;
-                    break;
-                }
-                accepted.add(cell);
-                total += cell.text().length();
-            }
-            if (total > 0) {
-                accept(new Block.Table(blocks, location, links, accepted, continued));
-            }
-            if (cut) {
-                throw new Stop(StatusReason.TOO_LARGE);
-            }
-            checkRatio();
-        }
-
-        private void checkRunning() throws Stop {
-            if (stopped) {
-                throw new Stop(stopReason == null ? StatusReason.TIMEOUT : stopReason);
-            }
-        }
-
-        private long room() {
-            return limits.maxChars() > 0 ? limits.maxChars() - chars : Long.MAX_VALUE;
-        }
-
-        private void accept(Block block) {
-            target.accept(block);
-            blocks++;
-            chars += block.chars();
-        }
-
-        private void checkRatio() throws Stop {
-            if (limits.textRatio() > 0 && chars > limits.textRatioFromChars()
-                    && chars > (size > Long.MAX_VALUE / limits.textRatio() ? Long.MAX_VALUE
-                    : limits.textRatio() * size)) {
-                throw new Stop(StatusReason.TEXT_RATIO_EXCEEDED);
-            }
-        }
-
-        private DocumentHead head(Metadata metadata) {
-            boolean mail = mediaType != null && MAIL_TYPES.contains(mediaType.split(";", 2)[0].strip()
-                    .toLowerCase(Locale.ROOT));
-            Optional<String> titleValue = Optional.ofNullable(metadata.get(TikaCoreProperties.TITLE));
-            Optional<Instant> date = Optional.ofNullable(metadata.getDate(TikaCoreProperties.CREATED))
-                    .map(java.util.Date::toInstant);
-            List<String> to = Arrays.stream(metadata.getValues(Message.MESSAGE_TO)).filter(v -> !v.isBlank())
-                    .toList();
-            return new DocumentHead(mail ? Optional.empty() : titleValue, mail ? titleValue : Optional.empty(),
-                    Optional.ofNullable(metadata.get(Message.MESSAGE_FROM)), to, date);
-        }
-
-        /**
-         * Baut Blöcke aus Tikas XHTML (ADR 0026, Punkte 3 und 4): Überschriften, Listenpunkte, Tabellen (an Zeilen in
-         * Stücke bis zur Blockgröße geteilt), vorformatierter Text als Code, sonst Absätze; Verweisziele am Block.
-         * Fundstellen nur, wo Tika sie liefert: PDF-Seite als laufende Nummer der Seitenelemente (physische Seite ab
-         * 1), Excel-Blatt aus dem Blattnamen. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten, Namen der Einträge
-         * eines Pakets (etwa {@code image1.png}) und Verweise ohne Ziel.
-         */
-        private final class Handler extends DefaultHandler {
-
-            private final StringBuilder buffer = new StringBuilder();
-            private TextKind kind = TextKind.PARAGRAPH;
-            private int headingLevel = 1;
-            private final ArrayDeque<Boolean> lists = new ArrayDeque<>();
-            private int items;
-            private int pre;
-            private int ignored;
-            private final List<Link> links = new ArrayList<>();
-            /** Verweise der offenen Zelle; sie gehen mit der Zelle in ihr Tabellenstück. */
-            private final List<Link> cellLinks = new ArrayList<>();
-            private String anchor;
-            private final StringBuilder label = new StringBuilder();
-            /** Klassen der offenen div-Elemente. */
-            private final ArrayDeque<String> divs = new ArrayDeque<>();
-            private int embedded;
-            private boolean entryTitle;
-            private boolean dropping;
-            private boolean sheetTitle;
-            private boolean sheetHeading;
-            private int page;
-            private String sheet;
-            private int tables;
-            private final List<Block.Cell> cells = new ArrayList<>();
-            private final StringBuilder cell = new StringBuilder();
-            private long cellChars;
-            private long row;
-            private int column;
-            private boolean cellOpen;
-            private boolean header;
-            private boolean continued;
-            private Optional<Location> tableLocation = Optional.empty();
-            Metadata metadata = new Metadata();
-
-            @Override
-            public void startElement(String uri, String localName, String qName, Attributes attributes)
-                    throws SAXException {
-                progress();
-                String name = name(localName, qName);
+            /** Gibt den noch gepufferten Text aus (unter der Sperre); true, wenn dabei Zeichen dazukamen. */
+            private boolean drain() {
                 synchronized (Reader.this) {
-                    if (name.equals("head") || name.equals("script") || name.equals("style")) {
-                        ignored++;
+                    long before = chars;
+                    try {
+                        handler.flush();
+                    } catch (SAXException | RuntimeException e) {
+                        // Grenze erreicht: Der angenommene Teil bleibt.
+                    }
+                    return chars > before;
+                }
+            }
+
+            /**
+             * Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text gescheitert, außer bei einem
+             * Archiv, das nie eigenen Text hat.
+             */
+            private Outcome partial(StatusReason reason) {
+                return chars == 0 && !archive() ? Outcome.of(ExtractionStatus.FAILED, reason)
+                        : Outcome.truncated(reason, new ReadExtent(size, chars));
+            }
+
+            /**
+             * Ein Archiv hat keinen eigenen Text: Was Tika dort schreibt, sind Namen der Einträge (etwa eines
+             * verschlüsselten), also Artefakte. Mails sind keine Archive.
+             */
+            private boolean archive() {
+                String type = handler.detectedType();
+                return CONTAINER_TYPES.contains(type) && !MAIL_TYPES.contains(type);
+            }
+
+            /**
+             * Ohne Text gescheitert, sonst gekürzt mit Umfang: gelesene Bytes laut Strom (Parser, die die Datei direkt
+             * lesen, melden hier weniger) und erzeugte Zeichen.
+             */
+            private Outcome truncatedOrFailed(StatusReason reason) {
+                if (chars == 0) {
+                    return Outcome.of(ExtractionStatus.FAILED, reason);
+                }
+                TikaInputStream in = stream;
+                long read = in == null ? 0 : Math.min(size, Math.max(0, in.getPosition()));
+                return Outcome.truncated(reason, new ReadExtent(read, chars));
+            }
+
+            /** Nimmt einen Textblock an, solange der Lauf nicht beendet ist, und prüft dabei die Zeichengrenzen. */
+            private void emitText(TextKind kind, int level, boolean ordered, String text, List<Link> links,
+                                  Optional<Location> location) throws Stop {
+                synchronized (Reader.this) {
+                    checkRunning();
+                    if (archive() || full) {
                         return;
                     }
-                    if (ignored > 0) {
+                    long room = room();
+                    boolean cut = text.length() > room;
+                    String accepted = cut ? text.substring(0, (int) Math.max(0, room)) : text;
+                    if (!accepted.isEmpty()) {
+                        long index = blocks;
+                        Block block = switch (kind) {
+                            case HEADING -> new Block.Heading(index, location, links, level, accepted);
+                            case ITEM -> new Block.ListItem(index, location, links, ordered, level, accepted);
+                            case CODE -> new Block.Code(index, location, links, accepted, Optional.empty());
+                            case PARAGRAPH -> new Block.Paragraph(index, location, links, accepted);
+                        };
+                        accept(block);
+                    }
+                    if (cut) {
+                        limitReached();
                         return;
                     }
-                    if (tables > 0) {
-                        startInTable(name, attributes);
+                    checkRatio();
+                }
+            }
+
+            /** Nimmt ein Tabellenstück an; an der Zeichengrenze nur die Zellen bis dahin. */
+            private void emitTable(List<Block.Cell> cells, boolean continued, List<Link> links,
+                                   Optional<Location> location) throws Stop {
+                synchronized (Reader.this) {
+                    checkRunning();
+                    if (archive() || full) {
                         return;
                     }
-                    switch (name) {
-                        case "div" -> startDiv(attributes.getValue("class"));
-                        case "h1", "h2", "h3", "h4", "h5", "h6" -> {
-                            flushText();
-                            kind = TextKind.HEADING;
-                            headingLevel = name.charAt(1) - '0';
-                            if (entryTitle && name.equals("h1")) {
-                                // Name des Paketeintrags (etwa image1.png): von Tika, nicht aus der Quelle.
-                                dropping = true;
-                            } else if (sheetTitle && name.equals("h1")) {
-                                sheetHeading = true;
+                    long room = room();
+                    List<Block.Cell> accepted = new ArrayList<>();
+                    long total = 0;
+                    boolean cut = false;
+                    for (Block.Cell cell : cells) {
+                        if (total + cell.text().length() > room) {
+                            int left = (int) Math.max(0, room - total);
+                            if (left > 0) {
+                                accepted.add(new Block.Cell(cell.row(), cell.column(), cell.text().substring(0, left),
+                                        cell.header(), cell.cellRef()));
+                                total += left;
                             }
-                            entryTitle = false;
-                            sheetTitle = false;
+                            cut = true;
+                            break;
                         }
-                        case "ul", "ol" -> {
-                            flushText();
-                            lists.push(name.equals("ol"));
+                        accepted.add(cell);
+                        total += cell.text().length();
+                    }
+                    if (total > 0) {
+                        accept(new Block.Table(blocks, location, links, accepted, continued));
+                    }
+                    if (cut) {
+                        limitReached();
+                        return;
+                    }
+                    checkRatio();
+                }
+            }
+
+            /** An der Zeichengrenze: Eine Mail liest ihre Anhänge weiter, jedes andere Dokument endet. */
+            private void limitReached() throws Stop {
+                if (MAIL_TYPES.contains(handler.detectedType())) {
+                    full = true;
+                    return;
+                }
+                throw new Stop(StatusReason.TOO_LARGE);
+            }
+
+            private long room() {
+                return limits.maxChars() > 0 ? limits.maxChars() - chars : Long.MAX_VALUE;
+            }
+
+            private void accept(Block block) {
+                target.accept(block);
+                blocks++;
+                chars += block.chars();
+            }
+
+            private void checkRatio() throws Stop {
+                if (limits.textRatio() > 0 && chars > limits.textRatioFromChars()
+                        && chars > (size > Long.MAX_VALUE / limits.textRatio() ? Long.MAX_VALUE
+                        : limits.textRatio() * size)) {
+                    throw new Stop(StatusReason.TEXT_RATIO_EXCEEDED);
+                }
+            }
+
+            private DocumentHead head(Metadata metadata) {
+                boolean mail = MAIL_TYPES.contains(handler.detectedType());
+                Optional<String> titleValue = Optional.ofNullable(metadata.get(TikaCoreProperties.TITLE));
+                Optional<Instant> date = Optional.ofNullable(metadata.getDate(TikaCoreProperties.CREATED))
+                        .map(java.util.Date::toInstant);
+                List<String> to = Arrays.stream(metadata.getValues(Message.MESSAGE_TO)).filter(v -> !v.isBlank())
+                        .toList();
+                return new DocumentHead(mail ? Optional.empty() : titleValue, mail ? titleValue : Optional.empty(),
+                        Optional.ofNullable(metadata.get(Message.MESSAGE_FROM)), to, date);
+            }
+
+            /**
+             * Baut Blöcke aus Tikas XHTML (ADR 0026, Punkte 3 und 4): Überschriften, Listenpunkte, Tabellen (an Zeilen in
+             * Stücke bis zur Blockgröße geteilt), vorformatierter Text als Code, sonst Absätze; Verweisziele am Block.
+             * Fundstellen nur, wo Tika sie liefert: PDF-Seite als laufende Nummer der Seitenelemente (physische Seite ab
+             * 1), Excel-Blatt aus dem Blattnamen. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten, Namen der Einträge
+             * eines Pakets (etwa {@code image1.png}) und Verweise ohne Ziel.
+             */
+            private final class Handler extends DefaultHandler {
+
+                private final StringBuilder buffer = new StringBuilder();
+                private TextKind kind = TextKind.PARAGRAPH;
+                private int headingLevel = 1;
+                private final ArrayDeque<Boolean> lists = new ArrayDeque<>();
+                private int items;
+                private int pre;
+                private int ignored;
+                private final List<Link> links = new ArrayList<>();
+                /** Verweise der offenen Zelle; sie gehen mit der Zelle in ihr Tabellenstück. */
+                private final List<Link> cellLinks = new ArrayList<>();
+                private String anchor;
+                private final StringBuilder label = new StringBuilder();
+                /** Klassen der offenen div-Elemente. */
+                private final ArrayDeque<String> divs = new ArrayDeque<>();
+                private int embedded;
+                private boolean entryTitle;
+                private boolean dropping;
+                private boolean sheetTitle;
+                private boolean sheetHeading;
+                private int page;
+                private String sheet;
+                private int tables;
+                private final List<Block.Cell> cells = new ArrayList<>();
+                private final StringBuilder cell = new StringBuilder();
+                private long cellChars;
+                private long row;
+                private int column;
+                private boolean cellOpen;
+                private boolean header;
+                private boolean continued;
+                private Optional<Location> tableLocation = Optional.empty();
+                Metadata metadata = new Metadata();
+
+                @Override
+                public void startElement(String uri, String localName, String qName, Attributes attributes)
+                        throws SAXException {
+                    progress();
+                    String name = name(localName, qName);
+                    synchronized (Reader.this) {
+                        if (name.equals("head") || name.equals("script") || name.equals("style")) {
+                            ignored++;
+                            return;
                         }
-                        case "li" -> {
-                            flushText();
-                            items++;
-                            kind = TextKind.ITEM;
+                        if (ignored > 0) {
+                            return;
                         }
-                        case "pre" -> {
-                            flushText();
-                            pre++;
-                            kind = TextKind.CODE;
+                        if (tables > 0) {
+                            startInTable(name, attributes);
+                            return;
                         }
+                        switch (name) {
+                            case "div" -> startDiv(attributes.getValue("class"));
+                            case "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                                flushText();
+                                kind = TextKind.HEADING;
+                                headingLevel = name.charAt(1) - '0';
+                                if (entryTitle && name.equals("h1")) {
+                                    // Name des Paketeintrags (etwa image1.png): von Tika, nicht aus der Quelle.
+                                    dropping = true;
+                                } else if (sheetTitle && name.equals("h1")) {
+                                    sheetHeading = true;
+                                }
+                                entryTitle = false;
+                                sheetTitle = false;
+                            }
+                            case "ul", "ol" -> {
+                                flushText();
+                                lists.push(name.equals("ol"));
+                            }
+                            case "li" -> {
+                                flushText();
+                                items++;
+                                kind = TextKind.ITEM;
+                            }
+                            case "pre" -> {
+                                flushText();
+                                pre++;
+                                kind = TextKind.CODE;
+                            }
+                            case "table" -> {
+                                flushText();
+                                tables = 1;
+                                tableLocation = location();
+                                row = 0;
+                                continued = false;
+                            }
+                            case "br" -> append('\n');
+                            case "a" -> startAnchor(attributes.getValue("href"));
+                            default -> {
+                                if (BLOCK_ELEMENTS.contains(name)) {
+                                    flushText();
+                                    resetKind();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public void endElement(String uri, String localName, String qName) throws SAXException {
+                    progress();
+                    String name = name(localName, qName);
+                    synchronized (Reader.this) {
+                        if (name.equals("head") || name.equals("script") || name.equals("style")) {
+                            ignored = Math.max(0, ignored - 1);
+                            return;
+                        }
+                        if (ignored > 0) {
+                            return;
+                        }
+                        if (tables > 0) {
+                            endInTable(name);
+                            return;
+                        }
+                        switch (name) {
+                            case "div" -> {
+                                flushText();
+                                String cls = divs.isEmpty() ? "" : divs.pop();
+                                if (cls.equals("embedded") || cls.equals("package-entry")) {
+                                    embedded = Math.max(0, embedded - 1);
+                                    entryTitle = false;
+                                } else if (embedded == 0 && isSheet(cls)) {
+                                    sheet = null;
+                                }
+                                resetKind();
+                            }
+                            case "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                                if (dropping) {
+                                    buffer.setLength(0);
+                                    links.clear();
+                                    dropping = false;
+                                } else if (sheetHeading) {
+                                    String title = normalize(buffer.toString());
+                                    sheet = title.isEmpty() ? null : title;
+                                    sheetHeading = false;
+                                }
+                                flushText();
+                                resetKind();
+                            }
+                            case "ul", "ol" -> {
+                                flushText();
+                                if (!lists.isEmpty()) {
+                                    lists.pop();
+                                }
+                                resetKind();
+                            }
+                            case "li" -> {
+                                flushText();
+                                items = Math.max(0, items - 1);
+                                resetKind();
+                            }
+                            case "pre" -> {
+                                flushText();
+                                pre = Math.max(0, pre - 1);
+                                resetKind();
+                            }
+                            case "a" -> endAnchor();
+                            default -> {
+                                if (BLOCK_ELEMENTS.contains(name)) {
+                                    flushText();
+                                    resetKind();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public void characters(char[] ch, int start, int length) throws SAXException {
+                    progress();
+                    // Unter der Sperre des Laufs, damit ein Abbruch von außen den Puffer ausgeben kann.
+                    synchronized (Reader.this) {
+                        if (ignored > 0) {
+                            return;
+                        }
+                        if (anchor != null && label.length() < MAX_LABEL_CHARS) {
+                            label.append(ch, start, Math.min(length, MAX_LABEL_CHARS - label.length()));
+                        }
+                        if (tables > 0) {
+                            if (cellOpen) {
+                                appendCell(ch, start, length);
+                                return;
+                            }
+                            if (new String(ch, start, length).isBlank()) {
+                                // Leerraum zwischen Zellen setzt Tika selbst.
+                                return;
+                            }
+                        }
+                        int offset = start;
+                        int end = start + length;
+                        while (offset < end) {
+                            // Nie mehr als eine Blockgröße auf einmal anhängen: Der Puffer bleibt unter zwei Blockgrößen.
+                            int take = Math.min(end - offset, maxBlockChars);
+                            buffer.append(ch, offset, take);
+                            offset += take;
+                            while (buffer.length() > maxBlockChars) {
+                                splitLong();
+                            }
+                        }
+                    }
+                }
+
+                @Override
+                public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
+                    characters(ch, start, length);
+                }
+
+                private void startDiv(String value) throws SAXException {
+                    flushText();
+                    String cls = value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
+                    divs.push(cls);
+                    if (cls.equals("embedded") || cls.equals("package-entry")) {
+                        embedded++;
+                        entryTitle = cls.equals("package-entry");
+                        return;
+                    }
+                    if (embedded > 0) {
+                        return;
+                    }
+                    if (isSheet(cls)) {
+                        sheetTitle = true;
+                        sheet = null;
+                    } else if (cls.equals("page") && pdf()) {
+                        page++;
+                    }
+                    resetKind();
+                }
+
+                /** Blätter: in .xlsx div class=sheet, in .xls div class=page; der Name steht im ersten h1. */
+                private boolean isSheet(String cls) {
+                    return cls.equals("sheet") || cls.equals("page") && spreadsheet();
+                }
+
+                private boolean pdf() {
+                    return "application/pdf".equals(detectedType());
+                }
+
+                private boolean spreadsheet() {
+                    String type = detectedType();
+                    return type.equals("application/vnd.ms-excel") || type.startsWith(
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml")
+                            || type.startsWith("application/vnd.ms-excel.sheet");
+                }
+
+                private String detectedType() {
+                    String type = metadata.get(Metadata.CONTENT_TYPE);
+                    if (type == null || type.isBlank()) {
+                        type = mediaType == null ? "" : mediaType;
+                    }
+                    return type.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
+                }
+
+                private Optional<Location> location() {
+                    if (embedded > 0) {
+                        return Optional.empty();
+                    }
+                    if (sheet != null) {
+                        return Optional.of(new Location(Optional.empty(), Optional.empty(), Optional.of(sheet)));
+                    }
+                    return page > 0 ? Optional.of(Location.page(page)) : Optional.empty();
+                }
+
+                private void resetKind() {
+                    if (pre > 0) {
+                        kind = TextKind.CODE;
+                    } else if (items > 0) {
+                        kind = TextKind.ITEM;
+                    } else {
+                        kind = TextKind.PARAGRAPH;
+                    }
+                }
+
+                private void startAnchor(String href) {
+                    anchor = href == null ? "" : href.strip();
+                    label.setLength(0);
+                }
+
+                private void endAnchor() {
+                    // Verweise ohne Ziel sind Artefakte (leere Anker aus Word).
+                    List<Link> into = tables > 0 && cellOpen ? cellLinks : links;
+                    if (anchor != null && !anchor.isEmpty() && links.size() + cellLinks.size() < MAX_LINKS) {
+                        into.add(new Link(anchor, Optional.of(normalize(label.toString()))));
+                    }
+                    anchor = null;
+                    label.setLength(0);
+                }
+
+                private void startInTable(String name, Attributes attributes) throws SAXException {
+                    switch (name) {
                         case "table" -> {
-                            flushText();
-                            tables = 1;
-                            tableLocation = location();
-                            row = 0;
-                            continued = false;
+                            tables++;
+                            appendCell(" ");
                         }
-                        case "br" -> append('\n');
+                        case "tr" -> {
+                            if (tables == 1) {
+                                // Text vor den Zeilen (etwa eine Beschriftung) steht vor der Tabelle.
+                                if (row == 0 && cells.isEmpty() && !continued && !buffer.isEmpty()) {
+                                    flushText();
+                                }
+                                column = 0;
+                            } else {
+                                appendCell("\n");
+                            }
+                        }
+                        case "td", "th" -> {
+                            if (tables == 1) {
+                                closeCell();
+                                cellOpen = true;
+                                header = name.equals("th");
+                            } else {
+                                appendCell("\t");
+                            }
+                        }
+                        case "br" -> appendCell("\n");
                         case "a" -> startAnchor(attributes.getValue("href"));
                         default -> {
-                            if (BLOCK_ELEMENTS.contains(name)) {
+                            if (cellOpen && BLOCK_ELEMENTS.contains(name)) {
+                                appendCell(" ");
+                            }
+                        }
+                    }
+                }
+
+                private void endInTable(String name) throws SAXException {
+                    switch (name) {
+                        case "table" -> {
+                            tables--;
+                            if (tables == 0) {
+                                closeCell();
+                                emitTablePiece();
+                                // Text in der Tabelle außerhalb der Zellen (etwa eine Beschriftung) als Absatz.
                                 flushText();
                                 resetKind();
                             }
                         }
-                    }
-                }
-            }
-
-            @Override
-            public void endElement(String uri, String localName, String qName) throws SAXException {
-                progress();
-                String name = name(localName, qName);
-                synchronized (Reader.this) {
-                    if (name.equals("head") || name.equals("script") || name.equals("style")) {
-                        ignored = Math.max(0, ignored - 1);
-                        return;
-                    }
-                    if (ignored > 0) {
-                        return;
-                    }
-                    if (tables > 0) {
-                        endInTable(name);
-                        return;
-                    }
-                    switch (name) {
-                        case "div" -> {
-                            flushText();
-                            String cls = divs.isEmpty() ? "" : divs.pop();
-                            if (cls.equals("embedded") || cls.equals("package-entry")) {
-                                embedded = Math.max(0, embedded - 1);
-                                entryTitle = false;
-                            } else if (embedded == 0 && isSheet(cls)) {
-                                sheet = null;
+                        case "tr" -> {
+                            if (tables == 1) {
+                                closeCell();
+                                row++;
+                                if (cellChars >= maxBlockChars / 2) {
+                                    emitTablePiece();
+                                }
                             }
-                            resetKind();
                         }
-                        case "h1", "h2", "h3", "h4", "h5", "h6" -> {
-                            if (dropping) {
-                                buffer.setLength(0);
-                                links.clear();
-                                dropping = false;
-                            } else if (sheetHeading) {
-                                String title = normalize(buffer.toString());
-                                sheet = title.isEmpty() ? null : title;
-                                sheetHeading = false;
+                        case "td", "th" -> {
+                            if (tables == 1) {
+                                closeCell();
                             }
-                            flushText();
-                            resetKind();
-                        }
-                        case "ul", "ol" -> {
-                            flushText();
-                            if (!lists.isEmpty()) {
-                                lists.pop();
-                            }
-                            resetKind();
-                        }
-                        case "li" -> {
-                            flushText();
-                            items = Math.max(0, items - 1);
-                            resetKind();
-                        }
-                        case "pre" -> {
-                            flushText();
-                            pre = Math.max(0, pre - 1);
-                            resetKind();
                         }
                         case "a" -> endAnchor();
                         default -> {
-                            if (BLOCK_ELEMENTS.contains(name)) {
-                                flushText();
-                                resetKind();
+                            if (cellOpen && BLOCK_ELEMENTS.contains(name)) {
+                                appendCell(" ");
                             }
                         }
                     }
                 }
-            }
 
-            @Override
-            public void characters(char[] ch, int start, int length) throws SAXException {
-                progress();
-                // Unter der Sperre des Laufs, damit ein Abbruch von außen den Puffer ausgeben kann.
-                synchronized (Reader.this) {
-                    if (ignored > 0) {
+                private void appendCell(String text) throws SAXException {
+                    appendCell(text.toCharArray(), 0, text.length());
+                }
+
+                /** Hängt Text an die offene Zelle; das Stück bleibt unter der Blockgröße, notfalls mitten in der Zelle. */
+                private void appendCell(char[] ch, int start, int length) throws SAXException {
+                    if (!cellOpen) {
                         return;
-                    }
-                    if (anchor != null && label.length() < MAX_LABEL_CHARS) {
-                        label.append(ch, start, Math.min(length, MAX_LABEL_CHARS - label.length()));
-                    }
-                    if (tables > 0) {
-                        if (cellOpen) {
-                            appendCell(ch, start, length);
-                            return;
-                        }
-                        if (new String(ch, start, length).isBlank()) {
-                            // Leerraum zwischen Zellen setzt Tika selbst.
-                            return;
-                        }
                     }
                     int offset = start;
                     int end = start + length;
                     while (offset < end) {
-                        // Nie mehr als eine Blockgröße auf einmal anhängen: Der Puffer bleibt unter zwei Blockgrößen.
                         int take = Math.min(end - offset, maxBlockChars);
-                        buffer.append(ch, offset, take);
+                        cell.append(ch, offset, take);
                         offset += take;
-                        while (buffer.length() > maxBlockChars) {
-                            splitLong();
-                        }
-                    }
-                }
-            }
-
-            @Override
-            public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
-                characters(ch, start, length);
-            }
-
-            private void startDiv(String value) throws SAXException {
-                flushText();
-                String cls = value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
-                divs.push(cls);
-                if (cls.equals("embedded") || cls.equals("package-entry")) {
-                    embedded++;
-                    entryTitle = cls.equals("package-entry");
-                    return;
-                }
-                if (embedded > 0) {
-                    return;
-                }
-                if (isSheet(cls)) {
-                    sheetTitle = true;
-                    sheet = null;
-                } else if (cls.equals("page") && pdf()) {
-                    page++;
-                }
-                resetKind();
-            }
-
-            /** Blätter: in .xlsx div class=sheet, in .xls div class=page; der Name steht im ersten h1. */
-            private boolean isSheet(String cls) {
-                return cls.equals("sheet") || cls.equals("page") && spreadsheet();
-            }
-
-            private boolean pdf() {
-                return "application/pdf".equals(detectedType());
-            }
-
-            private boolean spreadsheet() {
-                String type = detectedType();
-                return type.equals("application/vnd.ms-excel") || type.startsWith(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml")
-                        || type.startsWith("application/vnd.ms-excel.sheet");
-            }
-
-            private String detectedType() {
-                String type = metadata.get(Metadata.CONTENT_TYPE);
-                if (type == null || type.isBlank()) {
-                    type = mediaType == null ? "" : mediaType;
-                }
-                return type.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
-            }
-
-            private Optional<Location> location() {
-                if (embedded > 0) {
-                    return Optional.empty();
-                }
-                if (sheet != null) {
-                    return Optional.of(new Location(Optional.empty(), Optional.empty(), Optional.of(sheet)));
-                }
-                return page > 0 ? Optional.of(Location.page(page)) : Optional.empty();
-            }
-
-            private void resetKind() {
-                if (pre > 0) {
-                    kind = TextKind.CODE;
-                } else if (items > 0) {
-                    kind = TextKind.ITEM;
-                } else {
-                    kind = TextKind.PARAGRAPH;
-                }
-            }
-
-            private void startAnchor(String href) {
-                anchor = href == null ? "" : href.strip();
-                label.setLength(0);
-            }
-
-            private void endAnchor() {
-                // Verweise ohne Ziel sind Artefakte (leere Anker aus Word).
-                List<Link> into = tables > 0 && cellOpen ? cellLinks : links;
-                if (anchor != null && !anchor.isEmpty() && links.size() + cellLinks.size() < MAX_LINKS) {
-                    into.add(new Link(anchor, Optional.of(normalize(label.toString()))));
-                }
-                anchor = null;
-                label.setLength(0);
-            }
-
-            private void startInTable(String name, Attributes attributes) throws SAXException {
-                switch (name) {
-                    case "table" -> {
-                        tables++;
-                        appendCell(" ");
-                    }
-                    case "tr" -> {
-                        if (tables == 1) {
-                            // Text vor den Zeilen (etwa eine Beschriftung) steht vor der Tabelle.
-                            if (row == 0 && cells.isEmpty() && !continued && !buffer.isEmpty()) {
-                                flushText();
-                            }
-                            column = 0;
-                        } else {
-                            appendCell("\n");
-                        }
-                    }
-                    case "td", "th" -> {
-                        if (tables == 1) {
-                            closeCell();
-                            cellOpen = true;
-                            header = name.equals("th");
-                        } else {
-                            appendCell("\t");
-                        }
-                    }
-                    case "br" -> appendCell("\n");
-                    case "a" -> startAnchor(attributes.getValue("href"));
-                    default -> {
-                        if (cellOpen && BLOCK_ELEMENTS.contains(name)) {
-                            appendCell(" ");
-                        }
-                    }
-                }
-            }
-
-            private void endInTable(String name) throws SAXException {
-                switch (name) {
-                    case "table" -> {
-                        tables--;
-                        if (tables == 0) {
-                            closeCell();
-                            emitTablePiece();
-                            // Text in der Tabelle außerhalb der Zellen (etwa eine Beschriftung) als Absatz.
-                            flushText();
-                            resetKind();
-                        }
-                    }
-                    case "tr" -> {
-                        if (tables == 1) {
-                            closeCell();
-                            row++;
-                            if (cellChars >= maxBlockChars / 2) {
+                        while (cellChars + cell.length() > maxBlockChars) {
+                            if (!cells.isEmpty()) {
                                 emitTablePiece();
+                                continue;
                             }
-                        }
-                    }
-                    case "td", "th" -> {
-                        if (tables == 1) {
-                            closeCell();
-                        }
-                    }
-                    case "a" -> endAnchor();
-                    default -> {
-                        if (cellOpen && BLOCK_ELEMENTS.contains(name)) {
-                            appendCell(" ");
-                        }
-                    }
-                }
-            }
-
-            private void appendCell(String text) throws SAXException {
-                appendCell(text.toCharArray(), 0, text.length());
-            }
-
-            /** Hängt Text an die offene Zelle; das Stück bleibt unter der Blockgröße, notfalls mitten in der Zelle. */
-            private void appendCell(char[] ch, int start, int length) throws SAXException {
-                if (!cellOpen) {
-                    return;
-                }
-                int offset = start;
-                int end = start + length;
-                while (offset < end) {
-                    int take = Math.min(end - offset, maxBlockChars);
-                    cell.append(ch, offset, take);
-                    offset += take;
-                    while (cellChars + cell.length() > maxBlockChars) {
-                        if (!cells.isEmpty()) {
+                            int cut = Math.min(cell.length(), maxBlockChars);
+                            if (Character.isHighSurrogate(cell.charAt(cut - 1))) {
+                                cut--;
+                            }
+                            String part = cell.substring(0, cut);
+                            cell.delete(0, cut);
+                            links.addAll(cellLinks);
+                            cellLinks.clear();
+                            cells.add(new Block.Cell(row, column, part, header, Optional.empty()));
+                            cellChars += part.length();
                             emitTablePiece();
-                            continue;
                         }
-                        int cut = Math.min(cell.length(), maxBlockChars);
-                        if (Character.isHighSurrogate(cell.charAt(cut - 1))) {
-                            cut--;
-                        }
-                        String part = cell.substring(0, cut);
-                        cell.delete(0, cut);
-                        links.addAll(cellLinks);
-                        cellLinks.clear();
-                        cells.add(new Block.Cell(row, column, part, header, Optional.empty()));
-                        cellChars += part.length();
-                        emitTablePiece();
                     }
                 }
-            }
 
-            private void closeCell() throws SAXException {
-                if (!cellOpen) {
-                    return;
-                }
-                String text = normalize(cell.toString());
-                cell.setLength(0);
-                cellOpen = false;
-                if (cellChars + text.length() > maxBlockChars && !cells.isEmpty()) {
-                    emitTablePiece();
-                }
-                cells.add(new Block.Cell(row, column, text, header, Optional.empty()));
-                cellChars += text.length();
-                links.addAll(cellLinks);
-                cellLinks.clear();
-                column++;
-                // Auch viele leere Zellen bleiben in begrenzten Stücken.
-                if (cells.size() >= MAX_TABLE_CELLS) {
-                    emitTablePiece();
-                }
-            }
-
-            private void emitTablePiece() throws SAXException {
-                if (cells.isEmpty()) {
-                    return;
-                }
-                List<Block.Cell> piece = List.copyOf(cells);
-                boolean empty = cellChars == 0;
-                cells.clear();
-                cellChars = 0;
-                List<Link> pieceLinks = List.copyOf(links);
-                links.clear();
-                if (!empty) {
-                    emitTable(piece, continued, pieceLinks, tableLocation);
-                    continued = true;
-                }
-            }
-
-            /** Trennzeichen zählen zur Blockgröße wie Text. */
-            private void append(char separator) throws SAXException {
-                buffer.append(separator);
-                while (buffer.length() > maxBlockChars) {
-                    splitLong();
-                }
-            }
-
-            /** Gibt einen zu langen Block bis zum letzten Leerraum vor der Grenze aus, notfalls genau an der Grenze. */
-            private void splitLong() throws SAXException {
-                int cut = maxBlockChars;
-                for (int i = maxBlockChars; i > maxBlockChars / 2; i--) {
-                    if (Character.isWhitespace(buffer.charAt(i - 1))) {
-                        cut = i;
-                        break;
-                    }
-                }
-                if (Character.isHighSurrogate(buffer.charAt(cut - 1))) {
-                    cut--;
-                }
-                String part = buffer.substring(0, cut);
-                buffer.delete(0, cut);
-                emitPending(part);
-            }
-
-            /** Gibt den gepufferten Text als Block der aktuellen Art aus. */
-            void flushText() throws SAXException {
-                synchronized (Reader.this) {
-                    if (buffer.isEmpty()) {
-                        links.clear();
+                private void closeCell() throws SAXException {
+                    if (!cellOpen) {
                         return;
                     }
-                    String text = buffer.toString();
-                    buffer.setLength(0);
-                    emitPending(text);
-                }
-            }
-
-            /** Am Ende oder bei einem Abbruch: auch eine offene Tabelle ausgeben. */
-            void flush() throws SAXException {
-                synchronized (Reader.this) {
-                    if (tables > 0) {
-                        closeCell();
+                    String text = normalize(cell.toString());
+                    cell.setLength(0);
+                    cellOpen = false;
+                    if (cellChars + text.length() > maxBlockChars && !cells.isEmpty()) {
                         emitTablePiece();
-                        tables = 0;
                     }
-                    flushText();
+                    cells.add(new Block.Cell(row, column, text, header, Optional.empty()));
+                    cellChars += text.length();
+                    links.addAll(cellLinks);
+                    cellLinks.clear();
+                    column++;
+                    // Auch viele leere Zellen bleiben in begrenzten Stücken.
+                    if (cells.size() >= MAX_TABLE_CELLS) {
+                        emitTablePiece();
+                    }
                 }
-            }
 
-            private void emitPending(String raw) throws SAXException {
-                String text = kind == TextKind.CODE ? raw.replace("\r\n", "\n").replace('\r', '\n').strip()
-                        : normalize(raw);
-                List<Link> blockLinks = List.copyOf(links);
-                links.clear();
-                if (text.isEmpty()) {
-                    return;
+                private void emitTablePiece() throws SAXException {
+                    if (cells.isEmpty()) {
+                        return;
+                    }
+                    List<Block.Cell> piece = List.copyOf(cells);
+                    boolean empty = cellChars == 0;
+                    cells.clear();
+                    cellChars = 0;
+                    List<Link> pieceLinks = List.copyOf(links);
+                    links.clear();
+                    if (!empty) {
+                        emitTable(piece, continued, pieceLinks, tableLocation);
+                        continued = true;
+                    }
                 }
-                boolean ordered = !lists.isEmpty() && lists.peek();
-                int level = kind == TextKind.HEADING ? headingLevel : Math.max(1, lists.size());
-                emitText(kind, level, ordered, text, blockLinks, location());
-            }
 
-            private void progress() {
-                lastProgress.set(System.nanoTime());
+                /** Trennzeichen zählen zur Blockgröße wie Text. */
+                private void append(char separator) throws SAXException {
+                    buffer.append(separator);
+                    while (buffer.length() > maxBlockChars) {
+                        splitLong();
+                    }
+                }
+
+                /** Gibt einen zu langen Block bis zum letzten Leerraum vor der Grenze aus, notfalls genau an der Grenze. */
+                private void splitLong() throws SAXException {
+                    int cut = maxBlockChars;
+                    for (int i = maxBlockChars; i > maxBlockChars / 2; i--) {
+                        if (Character.isWhitespace(buffer.charAt(i - 1))) {
+                            cut = i;
+                            break;
+                        }
+                    }
+                    if (Character.isHighSurrogate(buffer.charAt(cut - 1))) {
+                        cut--;
+                    }
+                    String part = buffer.substring(0, cut);
+                    buffer.delete(0, cut);
+                    emitPending(part);
+                }
+
+                /** Gibt den gepufferten Text als Block der aktuellen Art aus. */
+                void flushText() throws SAXException {
+                    synchronized (Reader.this) {
+                        if (buffer.isEmpty()) {
+                            links.clear();
+                            return;
+                        }
+                        String text = buffer.toString();
+                        buffer.setLength(0);
+                        emitPending(text);
+                    }
+                }
+
+                /** Am Ende oder bei einem Abbruch: auch eine offene Tabelle ausgeben. */
+                void flush() throws SAXException {
+                    synchronized (Reader.this) {
+                        if (tables > 0) {
+                            closeCell();
+                            emitTablePiece();
+                            tables = 0;
+                        }
+                        flushText();
+                    }
+                }
+
+                private void emitPending(String raw) throws SAXException {
+                    String text = kind == TextKind.CODE ? raw.replace("\r\n", "\n").replace('\r', '\n').strip()
+                            : normalize(raw);
+                    List<Link> blockLinks = List.copyOf(links);
+                    links.clear();
+                    if (text.isEmpty()) {
+                        return;
+                    }
+                    boolean ordered = !lists.isEmpty() && lists.peek();
+                    int level = kind == TextKind.HEADING ? headingLevel : Math.max(1, lists.size());
+                    emitText(kind, level, ordered, text, blockLinks, location());
+                }
+
+                private void progress() throws Stop {
+                    lastProgress.set(System.nanoTime());
+                    if (expired) {
+                        // Gesamtlaufzeit dieses Teils erreicht: nur dieser Teil endet.
+                        throw new Stop(StatusReason.TIMEOUT);
+                    }
+                }
             }
         }
+    }
+
+    /** Hash und Größe eines ausgepackten Teils; mit {@code failure}, wenn er nicht vollständig gelesen ist. */
+    private record Spooled(String sha256, long bytes, Outcome failure) {
+    }
+
+    private static EmbeddedEntry withOutcome(EmbeddedEntry entry, Outcome outcome) {
+        return new EmbeddedEntry(entry.id(), entry.sha256(), entry.displayName(), entry.mediaType(), entry.position(),
+                entry.parent(), entry.depth(), entry.size(), outcome);
+    }
+
+    private static String baseType(String type) {
+        return type == null ? "" : type.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
+    }
+
+    private static java.security.MessageDigest sha256Digest() {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String sha256(InputStream in) throws IOException {
+        java.security.MessageDigest digest = sha256Digest();
+        byte[] buffer = new byte[64 * 1024];
+        for (int read; (read = in.read(buffer)) >= 0; ) {
+            digest.update(buffer, 0, read);
+        }
+        return java.util.HexFormat.of().formatHex(digest.digest());
     }
 
     /** Art des Textblocks, den der Puffer gerade sammelt. */
