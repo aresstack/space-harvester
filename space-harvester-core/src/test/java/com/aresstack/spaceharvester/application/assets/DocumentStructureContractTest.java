@@ -225,12 +225,17 @@ class DocumentStructureContractTest {
             }
 
             @Override
-            public BlockSink part(EmbeddedEntry entry) {
+            public PartSink part(EmbeddedEntry entry) {
                 return stream(entry.id().value());
             }
 
-            private BlockSink stream(String name) {
-                return new BlockSink() {
+            private PartSink stream(String name) {
+                return new PartSink() {
+                    @Override
+                    public void head(DocumentHead head) {
+                        events.add(name + ":head:" + head.subject().orElse(""));
+                    }
+
                     @Override
                     public void accept(Block block) {
                         events.add(name + ":" + ((Block.Paragraph) block).text());
@@ -262,7 +267,9 @@ class DocumentStructureContractTest {
                 EmbeddedEntry entry = new EmbeddedEntry(new PartId.Content(A, 1), Optional.of(A), Optional.empty(),
                         Optional.of("text/plain"), "/1", Optional.empty(), 1, Optional.of(6L),
                         Outcome.ok(new ReadExtent(6, 6)));
-                try (BlockSink part = target.part(entry)) {
+                try (PartSink part = target.part(entry)) {
+                    part.head(new DocumentHead(Optional.empty(), Optional.of("Weitergeleitet"), Optional.empty(),
+                            List.of(), Optional.empty()));
                     part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Anhang"));
                 }
                 outer.accept(new Block.Paragraph(1, Optional.empty(), List.of(), "Gruß"));
@@ -277,7 +284,7 @@ class DocumentStructureContractTest {
 
         String part = "sha256:" + A + ":1";
         assertThat(DocumentStructure.MODEL_VERSION).isEqualTo("structured-document/v1");
-        assertThat(events).containsExactly("document:Mail", part + ":Anhang", part + ":close", "document:Gruß",
+        assertThat(events).containsExactly("document:Mail", part + ":head:Weitergeleitet", part + ":Anhang", part + ":close", "document:Gruß",
                 "document:close");
         assertThat(result.blocks()).isEqualTo(2);
         assertThat(result.directory()).hasSize(1);

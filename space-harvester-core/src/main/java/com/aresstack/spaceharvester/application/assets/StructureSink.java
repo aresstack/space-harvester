@@ -20,6 +20,7 @@ public interface StructureSink {
      * bleibt dann leer.
      *
      * @param entry Eintrag im Verzeichnis, mit Kennung und vorläufigem Status
+     * @return Strom des Teils, der auch seine eigenen Kopfdaten annimmt
      */
-    BlockSink part(EmbeddedEntry entry);
+    PartSink part(EmbeddedEntry entry);
 }

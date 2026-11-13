@@ -327,7 +327,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 Vertrag der strukturierten Extraktion im Paket `application.assets` (Stufe 1, noch ohne Umsetzung; bis Stufe 2 gilt
 der Weg oben): Port `DocumentStructure` liest ein Original aus einer Datei (`Path`, nie Byte-Array) mit
 `ExtractionLimits` und gibt Blöcke (`Heading`, `Paragraph`, `ListItem`, `Table`, `Code`) als Strom an einen
-`StructureSink`: einen Strom für das äußere Dokument, je enthaltener Datei einen eigenen. Kopfdaten (`DocumentHead`)
+`StructureSink`: einen Strom für das äußere Dokument, je enthaltener Datei einen eigenen (`PartSink`, nimmt auch die
+eigenen Kopfdaten des Teils an, etwa einer weitergeleiteten Mail). Kopfdaten (`DocumentHead`)
 gehen nie in den Lesetext. Fundstellen (`Location`: Seite, Folie, Blatt; Zellbezug an der Zelle) stehen nur, wenn
 der Extraktor sie aus der Datei liest. Dokumentkennung `DocumentKey` = Seite, Anhangskennung der Quelle und für
 enthaltene Dateien eine Teilkennung `PartId` im äußeren Behälter: `sha256:<hex>:<n>` (laufende Nummer unter
