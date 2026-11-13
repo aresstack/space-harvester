@@ -553,13 +553,20 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
             return List.of();
         }
         BooleanQuery.Builder query = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(TERM_SOURCE, filter.sourceIds().stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(TERM_VERSION, filter.processorVersion())), BooleanClause.Occur.FILTER);
+        if (filter.pages() != null) {
+            // Seite samt Unterseiten (ADR 0029): Begriffe der Dokumente tragen die Seite, zu der sie gehören.
+            List<BytesRef> pages = new ArrayList<>(filter.pages().size());
+            filter.pages().asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    pages.add(new BytesRef(page(new PageKey(sourceId, pageId))))));
+            query.add(new TermInSetQuery(TERM_PAGE, pages), BooleanClause.Occur.FILTER);
+        }
         if (filter.origin() != TermOrigin.ALL) {
             query.add(new TermQuery(new Term(TERM_DOCUMENT, "1")), filter.origin() == TermOrigin.DOCUMENTS
                     ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT);

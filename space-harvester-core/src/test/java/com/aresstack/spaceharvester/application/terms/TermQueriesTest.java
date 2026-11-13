@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -179,6 +180,26 @@ class TermQueriesTest {
                 .isEqualTo(2);
         assertThat(only(list(null, "OPS", TermKind.ACRONYM, null, 50, null), "rsl", TermKind.ACRONYM).pages())
                 .isEqualTo(1);
+    }
+
+    @Test
+    void aPageSetLimitsTermsAndOccurrencesToItsPagesAndBindsTheCursor() {
+        // ADR 0029: Seite samt Unterseiten, hier die beiden Seiten von wiki-b.
+        PageSet subtree = PageSet.ofKeys(List.of(new PageKey("wiki-b", "1"), new PageKey("wiki-b", "2")));
+
+        TermQueries.TermSummary rsl = only(terms.terms(CALLER, new TermQueries.TermSearch(null, null,
+                TermKind.ACRONYM, null, false, 50, null).within(subtree)), "rsl", TermKind.ACRONYM);
+        assertThat(rsl.pages()).isEqualTo(2);
+        assertThat(rsl.sources()).isEqualTo(1);
+        assertThat(terms.occurrences(CALLER, new TermQueries.OccurrenceSearch("rsl", TermKind.ACRONYM, null, null,
+                50, null, 0).within(PageSet.ofKeys(List.of(new PageKey("wiki-b", "2"))))).occurrences())
+                .extracting(o -> o.sourceId() + "/" + o.pageId() + "@" + o.start()).containsExactly("wiki-b/2@15");
+        assertThat(terms.terms(CALLER, new TermQueries.TermSearch(null, null, null, null, false, 50, null)
+                .within(PageSet.EMPTY)).terms()).isEmpty();
+
+        String cursor = list(null, null, null, null, 1, null).nextCursor();
+        assertThatThrownBy(() -> terms.terms(CALLER, new TermQueries.TermSearch(null, null, null, null, false, 1,
+                cursor).within(subtree))).as("Cursor ohne Auswahl").isInstanceOf(InvalidQueryException.class);
     }
 
     @Test
