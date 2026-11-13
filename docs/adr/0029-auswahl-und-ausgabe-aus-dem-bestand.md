@@ -99,6 +99,13 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   `assets.json` und `attachments.json` aus diesen Verzeichnissen und kopiert die Dateien; nichts wird für eine Ausgabe
   neu geladen.
 - Ein Mechanismus für alle Bildzugriffe: Auch der bisherige Export-Auftrag liest und schreibt dieselben Verzeichnisse.
+  Das Verzeichnis ist die schon vorhandene Ablage der mitgebrachten Dateien eines Imports (`ImportedAssets`, in der
+  Lucene-Ablage der Anreicherungen, mit der Seite entfernt); jede Beschaffung, deren Auftraggeber die ganze Quelle
+  lesen darf, legt dort ihre fertig geprüften Seiten ab, die Lese-Ansicht zur Version daneben (`ReadingViewStore`).
+  Läufe ohne dieses Recht legen nichts ab, damit gesperrte Einträge niemandem fehlen.
+- Die Folgeaufträge einer Ausgabe aus dem Bestand tragen `holdings=true` und lesen nur die Verzeichnisse, nie die
+  Quelle; Seiten ohne Verzeichnis zu ihrer Version nennt der Auftrag mit ihrer Zahl (`NOT_IN_HOLDINGS`) und endet
+  unvollständig statt anzuhalten. „Neu erzwingen“ gibt es für sie nicht.
 - Eine neue Version der Seite macht ihr Verzeichnis veraltet; der nächste Lauf von „Bilder beschaffen“ bzw. „Anhänge
   beschaffen“ für die Auswahl ergänzt nur, was fehlt.
 
@@ -118,7 +125,8 @@ Je ein kleiner Pull Request, Core zuerst:
 3. Begriffe und Vorkommen.
 4. Aussagen und Graph.
 5. Ausgabe aus dem Bestand samt Wiederverwendung; Export-Auftrag entscheidet nach Abdeckung.
-6. Verzeichnis der Bilder und Anhänge je Seite und Version; Beschaffen auf einer Auswahl; Export daraus.
+6. Verzeichnis der Bilder und Anhänge je Seite und Version, Folgeaufträge der Ausgabe aus dem Bestand daraus.
+7. Beschaffen auf einer Auswahl ohne Export-Auftrag.
 
 ## Folgen
 
