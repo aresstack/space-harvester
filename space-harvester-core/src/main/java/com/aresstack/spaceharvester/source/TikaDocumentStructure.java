@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s12";
+    public static final String VERSION = "3.3-s13";
 
     /**
      * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
@@ -574,6 +574,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 outcome = aborted(root, e);
             } finally {
                 discardMailBody(root);
+                // Auch nach Abbruch oder Fehler: Mappe und Blattleser sind eigene Dateizugriffe.
+                root.handler.closeWorkbook();
             }
             synchronized (this) {
                 if (stopped) {
@@ -1192,6 +1194,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 partSink.head(child.head(metadata));
             } finally {
                 discardMailBody(child);
+                child.handler.closeWorkbook();
                 synchronized (Reader.this) {
                     open.remove(child);
                     // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
@@ -1526,6 +1529,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 /** Folien von Tika in einem .pptx bisher und ihre Nummern ({@link PptxSlideOrder}). */
                 private int slides;
                 private int[] slideNumbers;
+                /** Zellbezüge bei .xlsx/.xlsm ({@link XlsxCellRefs}): Mappe, mitgelesenes Blatt, erwartete Zeile. */
+                private Optional<XlsxCellRefs.Workbook> workbook;
+                private XlsxCellRefs.Sheet sheetRows;
+                private XlsxCellRefs.Row expectedRow;
+                /** Vor der Sperre gelesene Zeile zum beginnenden {@code tr}. */
+                private XlsxCellRefs.Row aheadRow;
+                /** Die Zuordnung ist für dieses Blatt beendet (nicht belegt). */
+                private boolean sheetUnmatched;
+                /** Erste Zelle der laufenden Zeile in {@code cells}. */
+                private int rowCellsStart;
                 private String sheet;
                 private int tables;
                 private final List<Block.Cell> cells = new ArrayList<>();
@@ -1544,6 +1557,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         throws SAXException {
                     progress();
                     String name = name(localName, qName);
+                    // Die Zeile des Blatt-XML außerhalb der Sperre lesen: Die Wache braucht sie für Zeitgrenze und
+                    // Abbruch. Den Zustand des Handlers ändert nur dieser Thread.
+                    aheadRow = name.equals("tr") && tables == 1 && ignored == 0 ? nextSheetRow() : null;
                     synchronized (Reader.this) {
                         if (name.equals("head") || name.equals("script") || name.equals("style")) {
                             ignored++;
@@ -1651,6 +1667,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                     entryTitle = false;
                                 } else if (embedded == 0 && isSheet(cls)) {
                                     sheet = null;
+                                    startSheetRows();
                                 }
                                 resetKind();
                             }
@@ -1760,6 +1777,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     if (isSheet(cls)) {
                         sheetTitle = true;
                         sheet = null;
+                        startSheetRows();
                     } else if (cls.equals("page") && pdf()) {
                         page++;
                     } else if (cls.equals("slide") && legacyPowerPoint()) {
@@ -1799,6 +1817,103 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     outlookStage = 2;
                     return false;
+                }
+
+                private boolean workbookType() {
+                    String type = detectedType();
+                    return type.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            || type.equals("application/vnd.ms-excel.sheet.macroenabled.12");
+                }
+
+                /** Beginn oder Ende eines Blatts: Das mitgelesene Blatt endet, das nächste beginnt mit Belegung. */
+                private void startSheetRows() {
+                    if (sheetRows != null) {
+                        sheetRows.close();
+                        sheetRows = null;
+                    }
+                    expectedRow = null;
+                    sheetUnmatched = false;
+                }
+
+                /** Die Zeile des Blatt-XML zum nächsten {@code tr}; {@code null} ohne Zuordnung. */
+                private XlsxCellRefs.Row nextSheetRow() {
+                    if (!slideOrder || sheetUnmatched || embedded > 0 || sheet == null || !workbookType()) {
+                        return null;
+                    }
+                    if (sheetRows == null) {
+                        if (workbook == null) {
+                            TikaInputStream in = stream;
+                            Path file;
+                            try {
+                                file = in != null && in.hasFile() ? in.getPath() : null;
+                            } catch (IOException e) {
+                                file = null;
+                            }
+                            workbook = XlsxCellRefs.open(file, TikaDocumentStructure::normalize);
+                        }
+                        sheetRows = workbook.flatMap(book -> book.sheet(sheet)).orElse(null);
+                        if (sheetRows == null) {
+                            unmatchedSheet();
+                            return null;
+                        }
+                    }
+                    XlsxCellRefs.Row next = sheetRows.next().orElse(null);
+                    if (next == null) {
+                        unmatchedSheet();
+                    }
+                    return next;
+                }
+
+                /**
+                 * Ende einer Zeile: Passen Tikas Zellen zu den belegten Spalten des Blatt-XML (Zahl bis zur letzten
+                 * belegten Spalte, Text nur in belegten Spalten), bekommen ihre Zellen den Zellbezug; sonst endet die
+                 * Zuordnung für dieses Blatt.
+                 */
+                private void referenceRow() {
+                    XlsxCellRefs.Row expected = expectedRow;
+                    expectedRow = null;
+                    if (expected == null || sheetUnmatched) {
+                        return;
+                    }
+                    boolean matches = column == expected.cells();
+                    for (int i = rowCellsStart; matches && i < cells.size(); i++) {
+                        Block.Cell cell = cells.get(i);
+                        if (!cell.text().isEmpty() && !expected.values().get(cell.column())) {
+                            matches = false;
+                        }
+                    }
+                    if (!matches) {
+                        unmatchedSheet();
+                        return;
+                    }
+                    for (int i = rowCellsStart; i < cells.size(); i++) {
+                        Block.Cell cell = cells.get(i);
+                        if (cell.row() == row) {
+                            cells.set(i, new Block.Cell(cell.row(), cell.column(), cell.text(), cell.header(),
+                                    Optional.of(XlsxCellRefs.ref(cell.column(), expected.number()))));
+                        }
+                    }
+                }
+
+                private void unmatchedSheet() {
+                    if (!sheetUnmatched) {
+                        sheetUnmatched = true;
+                        // Einmal je Blatt, ohne Dokumentdaten (Architekt 13.11.2026).
+                        LOG.log(System.Logger.Level.INFO, "Zellbezüge nicht belegt ({0})", "xlsx-cellref-unmatched");
+                    }
+                    if (sheetRows != null) {
+                        sheetRows.close();
+                        sheetRows = null;
+                    }
+                }
+
+                /** Am Ende eines Dokuments: die Mappe schließen. */
+                void closeWorkbook() {
+                    startSheetRows();
+                    if (workbook != null) {
+                        workbook.ifPresent(XlsxCellRefs.Workbook::close);
+                        workbook = null;
+                    }
                 }
 
                 private boolean powerPoint() {
@@ -1909,6 +2024,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                     flushText();
                                 }
                                 column = 0;
+                                rowCellsStart = cells.size();
+                                expectedRow = aheadRow;
+                                aheadRow = null;
                             } else {
                                 appendCell("\n");
                             }
@@ -1947,6 +2065,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         case "tr" -> {
                             if (tables == 1) {
                                 closeCell();
+                                referenceRow();
                                 row++;
                                 if (cellChars >= maxBlockChars / 2) {
                                     emitTablePiece();
@@ -2030,6 +2149,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     List<Block.Cell> piece = List.copyOf(cells);
                     boolean empty = cellChars == 0;
                     cells.clear();
+                    // Zellen der laufenden Zeile, die schon hinausgingen, bleiben ohne Bezug (noch nicht belegt).
+                    rowCellsStart = 0;
                     cellChars = 0;
                     List<Link> pieceLinks = List.copyOf(links);
                     links.clear();
