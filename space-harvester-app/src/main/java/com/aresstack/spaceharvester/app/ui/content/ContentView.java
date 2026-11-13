@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.SignInSlot;
+import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.View;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -179,9 +180,17 @@ public final class ContentView implements View {
         return statusInfo;
     }
 
-    @Override
-    public JComponent tools() {
+    /**
+     * Die Reiter der Seitenansicht als Symbolknöpfe für die Icon-Leiste des Hauptfensters; sie schalten die Mitte um
+     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste steht deshalb nichts mehr ({@link #tools()} bleibt leer).
+     */
+    public JComponent tabBar() {
         return detail.tabIcons();
+    }
+
+    /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
+    public void tabsActive(boolean active) {
+        detail.tabs().showSelection(active);
     }
 
     PageDetailPanel detail() {
