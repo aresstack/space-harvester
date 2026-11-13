@@ -25,6 +25,12 @@ import java.util.regex.Pattern;
  *       jede neue Berechnungsart die ID, nicht nur ein neuer Modellname.</li>
  * </ul>
  * Ändert sich eines davon, ändert sich die ID: Ein Beleg zeigt nie still auf einen anderen Absatz oder neuen Text.
+ * <p>
+ * Ein Absatz eines Anhangs oder einer enthaltenen Datei (ADR 0026, Punkt 10) trägt hinter der Capture
+ * {@code ~<DocumentKey#fileName()>} (nur {@code [0-9a-z-]}): {@code <sourceId>:<pageId>@<capture>~a-…#p3@…}. Die
+ * Seiten-ID bleibt byte-gleich und darf weiter jedes Zeichen enthalten; weil die Capture genau 64 Hex-Zeichen hat und
+ * der Dokumentteil weder {@code @} noch {@code #} enthält, bleibt das Lesen von hinten eindeutig. IDs ohne Dokumentteil
+ * sind Absätze der Seite selbst.
  */
 public final class PassageId {
 
@@ -38,6 +44,9 @@ public final class PassageId {
     private static final String POSITION = "#p";
     private static final String VERSION = "@";
     private static final String SEPARATOR = "-";
+    private static final String DOCUMENT = "~";
+    /** {@link com.aresstack.spaceharvester.application.assets.DocumentKey#fileName()}: nur Kleinbuchstaben, Ziffern, -. */
+    private static final Pattern DOCUMENT_NAME = Pattern.compile("[0-9a-z][0-9a-z-]{0,511}");
     private static final String SHA256_PREFIX = "sha256:";
     private static final Pattern HEX = Pattern.compile("[0-9a-f]+");
     private static final Pattern TAG = Pattern.compile("[a-z0-9]{1,32}");
@@ -50,18 +59,20 @@ public final class PassageId {
     private final int position;
     private final String segmentation;
     private final String embedding;
+    private final String document;
     private final String value;
 
-    private PassageId(String sourceId, String pageId, String capture, int position, String segmentation,
-                      String embedding) {
+    private PassageId(String sourceId, String pageId, String capture, String document, int position,
+                      String segmentation, String embedding) {
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.capture = capture;
         this.position = position;
         this.segmentation = segmentation;
         this.embedding = embedding;
-        this.value = sourceId + RESOURCE + pageId + CAPTURE + capture + POSITION + position + VERSION + segmentation
-                + SEPARATOR + embedding;
+        this.document = document;
+        this.value = sourceId + RESOURCE + pageId + CAPTURE + capture + (document == null ? "" : DOCUMENT + document)
+                + POSITION + position + VERSION + segmentation + SEPARATOR + embedding;
     }
 
     /**
@@ -70,6 +81,23 @@ public final class PassageId {
      */
     public static PassageId of(String sourceId, String pageId, String capture, int position, String segmentation,
                                String embedding) {
+        return of(sourceId, pageId, capture, null, position, segmentation, embedding);
+    }
+
+    /**
+     * Wie oben, für einen Absatz eines Anhangs oder einer enthaltenen Datei.
+     *
+     * @param document {@link com.aresstack.spaceharvester.application.assets.DocumentKey#fileName()}, {@code null}
+     *                 oder leer für die Seite selbst
+     */
+    public static PassageId of(String sourceId, String pageId, String capture, String document, int position,
+                               String segmentation, String embedding) {
+        if (document != null && document.isEmpty()) {
+            document = null;
+        }
+        if (document != null && !DOCUMENT_NAME.matcher(document).matches()) {
+            throw new IllegalArgumentException("Dokumentteil muss [0-9a-z-] sein");
+        }
         if (sourceId == null || sourceId.isEmpty() || sourceId.contains(RESOURCE) || pageId == null
                 || pageId.isEmpty()) {
             throw new IllegalArgumentException("Seite fehlt oder ist ungültig");
@@ -83,7 +111,7 @@ public final class PassageId {
         if (!isTag(segmentation) || !isTag(embedding)) {
             throw new IllegalArgumentException("Versionskennungen müssen [a-z0-9] sein");
         }
-        return new PassageId(sourceId, pageId, capture, position, segmentation, embedding);
+        return new PassageId(sourceId, pageId, capture, document, position, segmentation, embedding);
     }
 
     /**
@@ -132,9 +160,22 @@ public final class PassageId {
         if (!DIGITS.matcher(position).matches() || separator <= 0) {
             throw new IllegalArgumentException("Ungültige Passage-ID");
         }
-        return of(value.substring(0, resource), value.substring(resource + RESOURCE.length(), captureAt),
-                value.substring(captureAt + CAPTURE.length(), hash), Integer.parseInt(position),
-                versions.substring(0, separator), versions.substring(separator + 1));
+        // Zwischen @ und #p: die Capture, bei einem Dokument dahinter ~ und sein Name (beide ohne @ und #).
+        String capture = value.substring(captureAt + CAPTURE.length(), hash);
+        String document = null;
+        if (capture.length() > CAPTURE_LENGTH) {
+            if (!capture.startsWith(DOCUMENT, CAPTURE_LENGTH)) {
+                throw new IllegalArgumentException("Ungültige Passage-ID");
+            }
+            document = capture.substring(CAPTURE_LENGTH + DOCUMENT.length());
+            capture = capture.substring(0, CAPTURE_LENGTH);
+            if (document.isEmpty()) {
+                throw new IllegalArgumentException("Ungültige Passage-ID");
+            }
+        }
+        return of(value.substring(0, resource), value.substring(resource + RESOURCE.length(), captureAt), capture,
+                document, Integer.parseInt(position), versions.substring(0, separator),
+                versions.substring(separator + 1));
     }
 
     /** Kurzform (8 Hex-Zeichen aus SHA-256) eines Fingerabdrucks für die Versionsteile der ID. */
@@ -182,6 +223,14 @@ public final class PassageId {
 
     public int position() {
         return position;
+    }
+
+    /**
+     * Der Dokumentteil ({@link com.aresstack.spaceharvester.application.assets.DocumentKey#fileName()}), leer für einen
+     * Absatz der Seite selbst.
+     */
+    public java.util.Optional<String> document() {
+        return java.util.Optional.ofNullable(document);
     }
 
     public String segmentation() {

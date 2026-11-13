@@ -134,7 +134,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   Passage-IDs“), lesbar über `GET /api/v1/passages?id=<passageId>` (ID URL-kodiert, sie enthält `#`). Ohne
   `content`-Freigabe gibt es weder `relevance` noch die ID. Sie fehlt (`null`), wenn die Absätze der Seite nicht aus
   derselben Fassung (Text und Gliederung) stammen wie das Embedding, kein Absatz das Stück ganz enthält oder sich
-  Absätze im gespeicherten Ergebnis überlappen (kaputtes Ergebnis).
+  Absätze im gespeicherten Ergebnis überlappen (kaputtes Ergebnis). Ein Absatz eines Anhangs oder einer enthaltenen
+  Datei (ADR 0026, AP9a) trägt hinter der Capture `~<DocumentKey#fileName()>`, etwa `…@<capture>~a-<hex>#p3@…`; die
+  Seiten-ID bleibt byte-gleich, IDs ohne diesen Teil sind Absätze der Seite. Ergebnisse von Dokumenten liegen in der
+  Anreicherungsablage neben denen der Seite (Anhang, Teil und Abschnitt als eigene Felder) und erscheinen nicht in der
+  Seitensuche.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

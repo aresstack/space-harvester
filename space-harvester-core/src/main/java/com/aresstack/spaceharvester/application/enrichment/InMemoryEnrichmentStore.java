@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
@@ -28,10 +29,44 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     private static final String EMBEDDING = "embedding";
 
     private final Map<PageKey, TreeMap<String, Enrichment>> results = new ConcurrentHashMap<>();
+    /**
+     * Ergebnisse von Anhängen und enthaltenen Dateien (ADR 0026), getrennt von denen der Seiten: Begriffe, Fakten und
+     * Vektorsuche lesen sie nicht. Schlüssel {@link DocumentKey#value()}, darin Abschnitt und Prozessor.
+     */
+    private final Map<DocumentKey, TreeMap<String, Enrichment>> documents = new ConcurrentHashMap<>();
 
     @Override
     public synchronized void save(Enrichment enrichment) {
+        if (enrichment.ofDocument()) {
+            documents.computeIfAbsent(enrichment.document(), key -> new TreeMap<>())
+                    .put(documentEntry(enrichment.section(), enrichment.processorId()), enrichment);
+            return;
+        }
         results.computeIfAbsent(enrichment.key(), key -> new TreeMap<>()).put(enrichment.processorId(), enrichment);
+    }
+
+    @Override
+    public synchronized List<Enrichment> find(DocumentKey document) {
+        if (Objects.requireNonNull(document, "document").isPage()) {
+            return find(document.page());
+        }
+        TreeMap<String, Enrichment> found = documents.get(document);
+        return found == null ? List.of() : List.copyOf(new ArrayList<>(found.values()));
+    }
+
+    @Override
+    public synchronized void removeDocument(DocumentKey document) {
+        if (Objects.requireNonNull(document, "document").isPage()) {
+            results.remove(document.page());
+            return;
+        }
+        documents.keySet().removeIf(key -> key.equals(document) || !document.isEmbedded()
+                && key.page().equals(document.page()) && key.attachmentId().equals(document.attachmentId()));
+    }
+
+    /** Abschnitt (sortierbar) und Prozessor: Ergebnisse aufsteigend nach Abschnitt, darin nach Prozessor. */
+    private static String documentEntry(int section, String processorId) {
+        return String.format("%010d", section) + '\u0000' + processorId;
     }
 
     @Override
@@ -43,6 +78,7 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     @Override
     public synchronized void removeAll(PageKey key) {
         results.remove(key);
+        documents.keySet().removeIf(document -> document.page().equals(key));
     }
 
     @Override
@@ -51,6 +87,12 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
         if (found != null) {
             found.remove(processorId);
         }
+        // Bearbeitet der Prozessor die Seite nicht mehr, gilt das auch für ihre Dokumente.
+        documents.forEach((document, entries) -> {
+            if (document.page().equals(key)) {
+                entries.values().removeIf(result -> result.processorId().equals(processorId));
+            }
+        });
     }
 
     @Override

@@ -1,15 +1,17 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
 /**
- * Gespeichertes Ergebnis eines Prozessors für eine Seite. Je Seite und Prozessor gibt es höchstens eines; ein neuer
- * Lauf ersetzt es.
+ * Gespeichertes Ergebnis eines Prozessors für ein Dokument: eine Seite, einen Anhang oder eine enthaltene Datei (ADR
+ * 0026, Punkt 10). Je Dokument, Abschnitt und Prozessor gibt es höchstens eines; ein neuer Lauf ersetzt es. Für Seiten
+ * ändert sich nichts: {@code document} ist die Seite selbst, {@code section} 0.
  *
- * @param key              Seite
+ * @param key              Seite, unter der das Dokument steht (und deren Rechte es hat)
  * @param processorId      {@link EnrichmentProcessor#id()}
  * @param processorVersion Version, mit der das Ergebnis berechnet wurde
  * @param inputSha256      {@link PageText#inputSha256()} der Eingabe
@@ -19,10 +21,12 @@ import java.util.Objects;
  * @param warnings         Hinweise des Prozessors
  * @param errorCode        nur bei {@link Status#FAILED}: fester Code, keine Inhalte
  * @param computedAt       Zeitpunkt der Berechnung
+ * @param document         das Dokument; {@link DocumentKey#page()} ist {@code key}
+ * @param section          Abschnitt eines großen Dokuments ab 0, sonst 0
  */
 public record Enrichment(PageKey key, String processorId, String processorVersion, String inputSha256,
                          String revision, Status status, String payloadJson, List<String> warnings, String errorCode,
-                         Instant computedAt) {
+                         Instant computedAt, DocumentKey document, int section) {
 
     public enum Status {
         OK,
@@ -41,6 +45,25 @@ public record Enrichment(PageKey key, String processorId, String processorVersio
         if ((status == Status.FAILED) != (errorCode != null)) {
             throw new IllegalArgumentException("errorCode genau dann, wenn status FAILED ist");
         }
+        document = document == null ? DocumentKey.page(key) : document;
+        if (!document.page().equals(key)) {
+            throw new IllegalArgumentException("Das Dokument gehört zu einer anderen Seite");
+        }
+        if (section < 0) {
+            throw new IllegalArgumentException("section darf nicht negativ sein");
+        }
+    }
+
+    /** Ergebnis für die Seite selbst (wie vor ADR 0026). */
+    public Enrichment(PageKey key, String processorId, String processorVersion, String inputSha256, String revision,
+                      Status status, String payloadJson, List<String> warnings, String errorCode, Instant computedAt) {
+        this(key, processorId, processorVersion, inputSha256, revision, status, payloadJson, warnings, errorCode,
+                computedAt, null, 0);
+    }
+
+    /** Ob das Ergebnis zu einem Anhang oder einer enthaltenen Datei gehört, nicht zur Seite selbst. */
+    public boolean ofDocument() {
+        return !document.isPage();
     }
 
     /**
