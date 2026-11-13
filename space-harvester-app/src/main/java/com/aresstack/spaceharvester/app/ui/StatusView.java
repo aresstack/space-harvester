@@ -251,7 +251,11 @@ public final class StatusView implements View {
         JPanel board = new JPanel(new BorderLayout(0, 12));
         board.setBackground(Comic.SURFACE);
         board.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
-        background = new BackgroundPlate(() -> acquisition(context.runtime()));
+        background = new BackgroundPlate(() -> acquisition(context.runtime()), listener -> {
+            AppRuntime runtime = context.runtime();
+            return runtime == null ? com.aresstack.spaceharvester.application.observe.Subscription.NONE
+                    : runtime.workspace().subscribeAcquisition(listener);
+        });
         JPanel top = new JPanel(new BorderLayout(0, 12));
         top.setOpaque(false);
         top.add(attentionPlate, BorderLayout.NORTH);
