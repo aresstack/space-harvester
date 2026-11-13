@@ -69,6 +69,8 @@ public final class SettingsView implements View {
     final KeePassPairingPanel keePass;
     /** Meldungen im Abschnitt „Tresor“ (gelöschte Zugangsdaten). */
     final Feedback securityFeedback = new Feedback();
+    /** Reiter „Sicherheit“, Platte „Für KI freigegebene Seiten“ (ADR 0028). */
+    final PageReleasesPanel releases;
     /** Die Löschknöpfe des Reiters „Sicherheit“ in Zeilenreihenfolge, für Tests. */
     final java.util.List<IconButton> deleteButtons = new java.util.ArrayList<>();
     private final java.util.Map<IconButton, Runnable> deletions = new java.util.HashMap<>();
@@ -129,6 +131,7 @@ public final class SettingsView implements View {
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.keePass = new KeePassPairingPanel(context);
+        this.releases = new PageReleasesPanel(context);
         keePass.onChange(() -> {
             ai.refreshPairing();
             render();
@@ -217,7 +220,8 @@ public final class SettingsView implements View {
                 + "Proxy.", Comic.TEXT, 12.5f), BorderLayout.NORTH);
         vault.add(security, BorderLayout.CENTER);
         vault.add(securityFeedback, BorderLayout.SOUTH);
-        page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
+        page(SECURITY, Comic.column(Comic.plate(PageReleasesPanel.HEADING, Comic.PETROL, releases.component()),
+                Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
                 Comic.plate("Tresor", Comic.RED, vault)));
         page(DIAGNOSIS, diagnosisHolder);
         page(LIBRARIES, Comic.column(Comic.plate(LibrariesView.HEADING, Comic.DARK, libraries.component())),
