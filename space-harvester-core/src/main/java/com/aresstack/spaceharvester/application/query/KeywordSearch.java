@@ -713,7 +713,8 @@ public class KeywordSearch {
                                 .orElse(null);
                     }
                     fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
-                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle()) : null,
+                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle(), match.partId(),
+                                    match.partTitle()) : null,
                             match.passageId()));
                 }
             } catch (RuntimeException e) {
@@ -1357,13 +1358,22 @@ public class KeywordSearch {
     /**
      * Der Anhang eines Anhangstreffers. Sichtbar nur mit der Seite, deren Rechte er trägt.
      *
-     * @param title Dateiname
+     * @param title     Dateiname
+     * @param partId    Teilkennung der enthaltenen Datei des Anhangs, in der der Treffer liegt (ADR 0026), oder
+     *                  {@code null} für das Dokument selbst
+     * @param partTitle Anzeigename dieser enthaltenen Datei oder {@code null}
      */
-    public record AttachmentMatch(String attachmentId, String title) {
+    public record AttachmentMatch(String attachmentId, String title, String partId, String partTitle) {
 
         public AttachmentMatch {
             Objects.requireNonNull(attachmentId, "attachmentId");
             title = title == null ? "" : title;
+            partId = partId == null || partId.isEmpty() ? null : partId;
+            partTitle = partId == null ? null : partTitle == null ? "" : partTitle;
+        }
+
+        public AttachmentMatch(String attachmentId, String title) {
+            this(attachmentId, title, null, null);
         }
     }
 

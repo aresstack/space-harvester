@@ -370,13 +370,18 @@ public class SearchController {
      * Der Anhang eines Anhangstreffers; Text unter
      * {@code GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/text}.
      *
-     * @param title Dateiname
+     * @param title     Dateiname
+     * @param partId    Teilkennung der enthaltenen Datei des Anhangs, in der der Treffer liegt (ADR 0026, etwa ein
+     *                  Anhang einer Mail), leer für das Dokument selbst
+     * @param partTitle Anzeigename dieser enthaltenen Datei, leer für das Dokument selbst
      */
-    public record AttachmentMatchResponse(String attachmentId, String title) {
+    public record AttachmentMatchResponse(String attachmentId, String title,
+                                          @Schema(nullable = true, example = "sha256:9f2c…:1") String partId,
+                                          @Schema(nullable = true, example = "bericht.pdf") String partTitle) {
 
         static AttachmentMatchResponse of(KeywordSearch.AttachmentMatch attachment) {
             return attachment == null ? null : new AttachmentMatchResponse(attachment.attachmentId(),
-                    attachment.title());
+                    attachment.title(), attachment.partId(), attachment.partTitle());
         }
     }
 

@@ -994,7 +994,7 @@ public class Assets {
                 }
             }
         }
-        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), textKey())) {
+        if ((mayStore || existing.isPresent()) && indexDocument(list, asset, text.text())) {
             flushIndex();
         }
         return text;
@@ -1070,7 +1070,11 @@ public class Assets {
             return false;
         }
         try {
-            if (asset.kind() == AssetKind.OTHER && documents != null) {
+            if (asset.kind() == AssetKind.OTHER && (documents != null || extractions != null)) {
+                Optional<Boolean> sections = indexSections(list, asset);
+                if (sections.isPresent()) {
+                    return sections.get();
+                }
                 String text = store.text(asset.sha256(), textExtractor(), textVersion()).map(AssetText::text)
                         .orElse("");
                 return indexText(list, asset, text, text.isEmpty() ? "" : textKey());
@@ -1130,6 +1134,95 @@ public class Assets {
     }
 
     /**
+     * Legt einen abgelegten Dokument-Anhang aus seiner abgelegten Extraktion neu in den Volltextindex, ohne Download
+     * und ohne die übrigen Einträge der Seite zu berühren (ADR 0026, AP4b; für „Neu lesen“, Punkt 11). Gibt es keine
+     * abgelegte Extraktion mit Text, bleibt der Eintrag, wie er ist.
+     *
+     * @return ob der Index geändert wurde
+     */
+    public boolean reindex(PageAttachmentList list, String attachmentId) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
+        if (stored.isEmpty()) {
+            return false;
+        }
+        boolean changed = indexSections(list, stored.get()).orElse(false);
+        if (changed) {
+            flushIndex();
+        }
+        return changed;
+    }
+
+    /** Ein Dokument mit Text: aus den Abschnitten der abgelegten Extraktion, sonst sein bisheriger Text. */
+    private boolean indexDocument(PageAttachmentList list, Asset asset, String text) {
+        Optional<Boolean> sections = indexSections(list, asset);
+        return sections.isPresent() ? sections.get() : indexText(list, asset, text, textKey());
+    }
+
+    /**
+     * Legt ein Dokument mit seinen enthaltenen Dateien je Abschnitt der abgelegten Extraktion im Volltextindex ab
+     * (ADR 0026, AP4b): alle Einträge des Anhangs in einem Schritt ersetzt, abschnittsweise aus der Ablage gelesen.
+     * Ohne abgelegte Extraktion mit Text bleibt der Index unberührt; scheitert das Lesen, gilt der alte Stand.
+     *
+     * @return leer, wenn es keine abgelegte Extraktion mit Text gibt; sonst ob der Index geändert wurde
+     */
+    private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset) {
+        DocumentExtractions structured = extractions;
+        if (texts == null || structured == null || asset.kind() != AssetKind.OTHER) {
+            return Optional.empty();
+        }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        String title = asset.title() == null ? "" : asset.title();
+        String input = inputSha256(list, asset, title, textKey() + ":sections");
+        try {
+            Optional<java.util.stream.Stream<DocumentExtractions.IndexSection>> sections =
+                    structured.indexSections(asset);
+            if (sections.isEmpty()) {
+                return Optional.empty();
+            }
+            try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream = sections.get()) {
+                if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+                    return Optional.of(false);
+                }
+                java.util.Iterator<DocumentExtractions.IndexSection> found = stream.iterator();
+                if (!found.hasNext()) {
+                    // Kein Abschnitt mit Text (etwa ein Behälter ohne eigenen Text und ohne lesbare Teile): wie
+                    // bisher nur der Dateiname.
+                    texts.replaceAttachment(page, asset.attachmentId(), List.of(new PageTextIndex.AttachmentEntry(
+                            page, list.spaceKey(), asset.attachmentId(), title, "", input)));
+                    return Optional.of(true);
+                }
+                Iterable<PageTextIndex.AttachmentEntry> entries = () -> new java.util.Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return found.hasNext();
+                    }
+
+                    @Override
+                    public PageTextIndex.AttachmentEntry next() {
+                        DocumentExtractions.IndexSection section = found.next();
+                        return new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
+                                section.text(), input, section.partId(), section.partTitle(), section.section());
+                    }
+                };
+                texts.replaceAttachment(page, asset.attachmentId(), entries);
+                return Optional.of(true);
+            }
+        } catch (RuntimeException e) {
+            // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Dokuments in {0} nicht aktualisiert ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return Optional.of(false);
+        }
+    }
+
+    /** Stand eines Indexeintrags: Inhalt, Herkunft des Textes, Space und Dateiname. */
+    private static String inputSha256(PageAttachmentList list, Asset asset, String title, String origin) {
+        return sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
      * Legt den Text eines Anhangs mit Seite und Space der Anhangsliste im Volltextindex ab, wenn er dort nicht schon in
      * diesem Stand liegt. Fehler bleiben hier; der Index ist neu aufbaubar.
      *
@@ -1142,8 +1235,7 @@ public class Assets {
         }
         PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
         String title = asset.title() == null ? "" : asset.title();
-        String input = sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
-                .getBytes(StandardCharsets.UTF_8));
+        String input = inputSha256(list, asset, title, origin);
         try {
             if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
                 return false;

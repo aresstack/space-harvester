@@ -328,7 +328,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `GET …/assets/{attachmentId}/preview?kind=…` mit derselben Rechteprüfung wie `…/content`.
 - **Anhangstexte im Volltextindex:** wie im Enterprise AI Client (`SourceAttachmentReader` mit
   `DocumentSourceFileTextExtractor`, Composition Root): Jeder Anhang ist ein eigenes Dokument mit der Seite als Eltern
-  im `LucenePageTextIndex` (Schema `page-text-index/v2`; ein v1-Index wird leer neu angelegt und füllt sich wieder),
+  im `LucenePageTextIndex` (Schema `page-text-index/v3`; ein älterer Index wird leer neu angelegt und füllt sich
+  wieder),
   Dateiname als Titel, Text aus `DocumentText` bzw. bei Bildern eine vorhandene Beschreibung; ohne lesbaren Text steht
   nur der Dateiname darin (EAC: `# Titel`). Text gibt es bis 20 MiB (Grenze der Extraktion), auch ohne Grenze für
   Anhänge (`space-harvester.assets.max-size`, Standard `0`). In den Index kommt
@@ -342,6 +343,20 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
   auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
   darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
+- **Index je Dokument und Abschnitt (ADR 0026, AP4b, `page-text-index/v3`):** Ist die strukturierte Extraktion
+  abgelegt, bekommt ein Dokument-Anhang je abgelegtem Abschnitt einen Eintrag, jede lesbare enthaltene Datei
+  (Anhang einer Mail, Eintrag eines Archivs) ebenso mit ihrer Teilkennung (`PartId#value`) und ihrem Anzeigenamen;
+  inhaltsgleiche Teile einmal. Gelesen wird abschnittsweise aus der Ablage, ohne Zeichengrenze
+  (`DocumentExtractions#indexSections`). Ein Behälter ohne eigenen Text hat nur Einträge seiner Teile; ohne jeden
+  Abschnitt mit Text steht der Anhang wie bisher mit seinem Dateinamen darin. Teile mit `FAILED`, `UNSUPPORTED` oder
+  `EXCLUDED` haben keinen Text, nur einen Namenseintrag (Anzeigename durchsuchbar, nie erzeugter Text), `PARTIAL` den
+  gelesenen Text. Alle Einträge eines Anhangs werden in einem Schritt
+  des IndexWriters ersetzt (`PageTextIndex#replaceAttachment`, `updateDocuments`): Leser sehen den alten oder den
+  neuen Stand, überzählige Abschnitte und weggefallene Teile verschwinden, scheitert das Lesen, bleibt der alte Stand.
+  Ein einzelnes Dokument ersetzt `replaceDocument` (Anhang + Teilkennung); `Assets#reindex` legt einen abgelegten
+  Anhang ohne Download neu in den Index (für „Neu lesen“). Je Seite bleibt ein Treffer; ein Treffer in einer
+  enthaltenen Datei nennt zusätzlich `attachment.partId` und `attachment.partTitle` (sonst `null`). Der Text unter
+  `…/text` und im Export `attachments/v1` bleibt bis AP4c der Gesamttext aus Behälter und Teilen.
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle

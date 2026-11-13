@@ -201,6 +201,136 @@ public final class DocumentExtractions {
     }
 
     /**
+     * Ein abgelegter Abschnitt eines Dokuments für den Volltextindex (ADR 0026, AP4b).
+     *
+     * @param partId    Teilkennung ({@link PartId#value()}) der enthaltenen Datei, leer für das Dokument selbst
+     * @param partTitle Anzeigename der enthaltenen Datei, leer für das Dokument selbst oder ohne Namen
+     * @param section   Nummer des Abschnitts im Dokument ab 0
+     * @param text      reiner Text des Abschnitts, Absätze mit Leerzeile getrennt
+     */
+    public record IndexSection(String partId, String partTitle, int section, String text) {
+
+        public IndexSection {
+            Objects.requireNonNull(partId, "partId");
+            Objects.requireNonNull(partTitle, "partTitle");
+            Objects.requireNonNull(text, "text");
+        }
+
+        @Override
+        public String toString() {
+            return "IndexSection[part=" + !partId.isEmpty() + ", section=" + section + ", chars=" + text.length() + "]";
+        }
+    }
+
+    /**
+     * Die abgelegten Abschnitte eines Dokuments und seiner lesbaren enthaltenen Dateien für den Volltextindex
+     * (ADR 0026, AP4b, Punkte 8 und 12): zuerst die des Dokuments, dann je Teil in Verzeichnisreihenfolge,
+     * inhaltsgleiche Teile einmal. Einzeln aus der Ablage gelesen, solange der Strom läuft, ohne Zeichengrenze; der
+     * Strom muss geschlossen werden. Ein Teil mit Status {@code FAILED}, {@code UNSUPPORTED} oder {@code EXCLUDED}
+     * hat keinen Text, nur einen Namenseintrag (Abschnitt 0, leerer Text), wenn er einen Anzeigenamen hat;
+     * {@code PARTIAL} hat den gelesenen Text.
+     *
+     * @return leer, wenn keine Extraktion abgelegt ist oder das Dokument keinen Text hat
+     */
+    public Optional<Stream<IndexSection>> indexSections(Asset asset) {
+        Optional<StoredExtraction> known = stored(asset.sha256());
+        if (known.isEmpty() || !usable(known.get().document().outcome())
+                || transientFailure(known.get().document()).isPresent()) {
+            return Optional.empty();
+        }
+        StoredExtraction extraction = known.get();
+        Stream<IndexSection> own = extraction.sections() > 0
+                ? extractions.sections(extraction.key()).map(section -> section("", "", section))
+                        .filter(section -> !section.text().isBlank())
+                : Stream.empty();
+        Stream<IndexSection> parts = partSections(extraction);
+        return Optional.of(Stream.concat(own, parts));
+    }
+
+    /**
+     * Die Abschnitte der Teile, einer nach dem anderen gelesen: ohne {@code flatMap}, dessen Iterator alle Abschnitte
+     * eines Elements puffern würde; das Manifest wird einmal gelesen.
+     */
+    private Stream<IndexSection> partSections(StoredExtraction extraction) {
+        java.util.List<EmbeddedEntry> directory = extraction.document().directory();
+        if (directory.isEmpty()) {
+            return Stream.empty();
+        }
+        Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        java.util.List<Stream<TextSection>> opened = new java.util.ArrayList<>();
+        java.util.Iterator<IndexSection> sections = new java.util.Iterator<>() {
+            private int entry;
+            private IndexSection next;
+            private java.util.Iterator<TextSection> current;
+            private EmbeddedEntry currentEntry;
+
+            @Override
+            public boolean hasNext() {
+                while (next == null) {
+                    if (current != null && current.hasNext()) {
+                        IndexSection section = section(currentEntry.id().value(),
+                                currentEntry.displayName().orElse(""), current.next());
+                        if (!section.text().isBlank()) {
+                            next = section;
+                        }
+                        continue;
+                    }
+                    current = null;
+                    if (entry >= directory.size()) {
+                        return false;
+                    }
+                    EmbeddedEntry candidate = directory.get(entry++);
+                    String name = candidate.displayName().orElse("");
+                    if (!usable(candidate.outcome())) {
+                        // Ohne Text nur über den Namen auffindbar, nie mit erzeugtem Text (Status, Hinweis).
+                        if (!name.isBlank()) {
+                            next = new IndexSection(candidate.id().value(), name, 0, "");
+                        }
+                        continue;
+                    }
+                    String key = candidate.id().storageKey();
+                    if (reader.isPresent() && reader.get().keys().contains(key) && seen.add(key)) {
+                        Stream<TextSection> stream = reader.get().sections(key);
+                        opened.add(stream);
+                        current = stream.iterator();
+                        currentEntry = candidate;
+                    }
+                }
+                return true;
+            }
+
+            @Override
+            public IndexSection next() {
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                IndexSection result = next;
+                next = null;
+                return result;
+            }
+        };
+        return java.util.stream.StreamSupport.stream(java.util.Spliterators.spliteratorUnknownSize(sections,
+                java.util.Spliterator.ORDERED | java.util.Spliterator.NONNULL), false)
+                .onClose(() -> opened.forEach(Stream::close));
+    }
+
+    private static IndexSection section(String partId, String partTitle, TextSection section) {
+        StringBuilder text = new StringBuilder();
+        for (Block block : section.blocks()) {
+            String piece = plain(block);
+            if (piece.isBlank()) {
+                continue;
+            }
+            if (!text.isEmpty()) {
+                text.append(PARAGRAPH_BREAK);
+            }
+            text.append(piece);
+        }
+        return new IndexSection(partId, partTitle, section.index(), text.toString());
+    }
+
+    /**
      * Hat die Quelle beim Erzeugen der Datei Teile ausgelassen (ADR 0026, AP7c), ist ein vollständig gelesenes Dokument
      * {@code PARTIAL/entries-not-readable}, Umfang wie gelesen, gekürzt. Ein schon schlechterer Status behält seinen
      * ersten Grund (ein Grund je Status). Steht nicht in der Extraktion, die nach dem Hash geteilt wird.
