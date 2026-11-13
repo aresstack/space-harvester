@@ -78,4 +78,12 @@ public interface EnrichmentProcessor {
     default EnrichmentOutput process(DocumentKey document, PageText text) {
         return process(document.page(), text);
     }
+
+    /**
+     * Wie {@link #process(DocumentKey, PageText)} mit der Stelle des Abschnitts im Dokument und der Grenze für das
+     * Embedding-Modell; Vorgabe ohne beides.
+     */
+    default EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
+        return process(document, text);
+    }
 }

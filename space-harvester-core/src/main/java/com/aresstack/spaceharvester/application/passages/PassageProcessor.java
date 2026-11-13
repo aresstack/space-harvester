@@ -79,6 +79,15 @@ public class PassageProcessor implements EnrichmentProcessor {
         return background() && embedding.covers(key.sourceId());
     }
 
+    /**
+     * Auch Anhänge und enthaltene Dateien (ADR 0026, AP9a): je Abschnitt aus dem Lesetext ({@code document-text/v1}),
+     * eine Zeile je Block, Tabellenzeilen eigene Blöcke; ohne Grenze, die Freigabe gilt über die Seite.
+     */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
     /** Ohne Seite weiß der Prozessor nicht, ob die Quelle freigegeben ist: nur nach Struktur. */
     @Override
     public EnrichmentOutput process(PageText text) {

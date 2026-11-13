@@ -187,6 +187,14 @@ public class Enrichments {
      */
     public Run refreshDocument(DocumentKey document, int section, String revision, String extraction, PageText text,
                                List<Enrichment> stored, String only) {
+        return refreshDocument(document, section, revision, extraction, text, stored, only,
+                DocumentPosition.UNLIMITED);
+    }
+
+    /** Wie oben mit der Stelle des Abschnitts im Dokument und der Grenze für das Embedding-Modell. */
+    public Run refreshDocument(DocumentKey document, int section, String revision, String extraction, PageText text,
+                               List<Enrichment> stored, String only, DocumentPosition position) {
+        Objects.requireNonNull(position, "position");
         Objects.requireNonNull(document, "document");
         if (document.isPage()) {
             throw new IllegalArgumentException("Seiten über refresh(PageSnapshot)");
@@ -211,7 +219,7 @@ public class Enrichments {
                 current++;
                 continue;
             }
-            Enrichment result = compute(processor, document, section, revision, extraction, text, input);
+            Enrichment result = compute(processor, document, section, revision, extraction, text, input, position);
             if (!saveWhileApplies(processor, result)) {
                 continue;
             }
@@ -225,10 +233,10 @@ public class Enrichments {
 
     /** @return das Ergebnis oder {@code null}, wenn der Prozessor das Dokument nicht bearbeiten darf */
     private Enrichment compute(EnrichmentProcessor processor, DocumentKey document, int section, String revision,
-                               String extraction, PageText text, String input) {
+                               String extraction, PageText text, String input, DocumentPosition position) {
         PageKey key = document.page();
         try {
-            EnrichmentOutput output = processor.process(document, text);
+            EnrichmentOutput output = processor.process(document, text, position);
             String version = output.version() != null ? output.version() : processor.version();
             return new Enrichment(key, processor.id(), version, input, revision, Enrichment.Status.OK,
                     output.payloadJson(), output.warnings(), null, clock.instant(), document, section, extraction);

@@ -33,7 +33,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
@@ -67,6 +69,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private final Enrichments enrichments;
     private final Jobs jobs;
     private final BooleanSupplier enabled;
+    private final Supplier<EnrichmentSettings> settings;
     /** Gemeldete Anhänge nach {@link DocumentKey#value()}, in Meldereihenfolge; bewacht von {@code this}. */
     private final Map<String, Pending> pending = new LinkedHashMap<>();
     /**
@@ -85,9 +88,24 @@ public final class DocumentEnrichments implements IndexedDocuments {
      * @param enabled ob Analysen je Dokument entstehen ({@code space-harvester.enrichment.documents.enabled})
      */
     public DocumentEnrichments(Enrichments enrichments, Jobs jobs, BooleanSupplier enabled) {
+        this(enrichments, jobs, enabled, () -> EnrichmentSettings.DEFAULT);
+    }
+
+    /**
+     * @param jobs     Auftragsverwaltung oder {@code null}, dann im aufrufenden Thread
+     * @param settings die wirksamen Einstellungen {@code space-harvester.enrichment.documents.*}, beim nächsten Lauf
+     *                 wirksam
+     */
+    public DocumentEnrichments(Enrichments enrichments, Jobs jobs, Supplier<EnrichmentSettings> settings) {
+        this(enrichments, jobs, () -> settings.get().documents(), settings);
+    }
+
+    private DocumentEnrichments(Enrichments enrichments, Jobs jobs, BooleanSupplier enabled,
+                                Supplier<EnrichmentSettings> settings) {
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.jobs = jobs;
         this.enabled = Objects.requireNonNull(enabled, "enabled");
+        this.settings = Objects.requireNonNull(settings, "settings");
     }
 
     /** Schließt die Anhänge an, aus deren Ablage {@link #catchUp} den Bestand nachholt. */
@@ -338,16 +356,22 @@ public final class DocumentEnrichments implements IndexedDocuments {
         }
         // Zweiter Durchgang: nur die Dokumente mit anderem Text oder fehlenden Ständen.
         if (!work.isEmpty()) {
+            // Grenze für das Embedding-Modell je Dokument, fest für diesen Lauf; gezählt über die Abschnitte davor.
+            long embeddingMaxChars = settings.get().documentEmbeddingMaxChars();
+            Map<DocumentKey, Long> offsets = new HashMap<>();
             forEachSection(item, extraction.get(), context, (document, index, text) -> {
                 if (!work.contains(document)) {
                     return;
                 }
+                long offset = offsets.getOrDefault(document, 0L);
+                offsets.put(document, offset + text.text().length());
                 if (context != null) {
                     context.discovered(1);
                 }
                 // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
                 Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
-                        stored.getOrDefault(document, List.of()), null);
+                        stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
+                                embeddingMaxChars));
                 if (context != null) {
                     context.written(run.computed() - run.failed());
                     context.failed(run.failed());

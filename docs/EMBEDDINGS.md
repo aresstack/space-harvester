@@ -142,7 +142,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Analysen je Dokument (ADR 0026, AP9a): Liegt ein Dokument-Anhang neu oder geändert im Volltextindex, plant
   `DocumentEnrichments` einen Auftrag `ENRICHMENT` der Quelle und des Space ein (sichtbar, anhaltbar, abbrechbar wie
   die Anreicherung der Seiten). Er rechnet je abgelegtem Abschnitt des Anhangs und seiner lesbaren Teile (`OK`,
-  `PARTIAL`) die Prozessoren mit `documents()`, derzeit `outline`. Eingabe ist `DocumentSectionText`
+  `PARTIAL`) die Prozessoren mit `documents()`: `outline`, `embedding`, `passages` und `navigation`. Eingabe ist `DocumentSectionText`
   (`document-text/v1`): je Block eine Zeile, Tabellenzeilen mit ` | ` wie bei der Projektion einer Seite, kein Kopf,
   kein Status, kein Name. Extraktor und Version gehören nicht zur Eingabe: Gleiche Blöcke bleiben aktuell (Abnahme 8).
   Die Freigabe gilt über die Seite. Weggefallene Teile und Abschnitte verlieren ihre Ergebnisse erst nach dem
@@ -156,7 +156,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   `space-harvester.enrichment.documents.enabled` (Standard `true`) schaltet das ab: Es entsteht nichts Neues,
   Vorhandenes bleibt lesbar. `space-harvester.enrichment.documents.embedding-max-chars` (Standard 2 000 000, `0` ohne
   Grenze) begrenzt, was je Dokument an das Embedding-Modell geht; Absätze und Navigation gelten ohne Grenze. Beide
-  Schlüssel lesen Dienst und App gleich, wirksam beim nächsten Lauf.
+  Schlüssel lesen Dienst und App gleich, wirksam beim nächsten Lauf. Gezählt wird über die Abschnitte des Dokuments
+  in Lesereihenfolge (`DocumentPosition`); eine Kürzung steht im Ergebnis von `embedding` als
+  `"cut":{"maxChars","offset","embeddedChars","chars"}` und als Warnung. Absätze zerlegen den Lesetext wie die
+  Projektion einer Seite zeilenweise: Jede Tabellenzeile ist ein eigener Absatz, keiner reicht über eine Tabelle. Die
+  Navigation nutzt die Embeddings je Absatz desselben Abschnitts; der Anzeigename des Dokuments geht nie an das
+  Chat-Modell. Gesucht wird in den Vektoren der Dokumente noch nicht (folgt).
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.
