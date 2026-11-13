@@ -158,6 +158,12 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
   entscheidet der Core. Im Core (OL2): `attachments(pageId)` übersetzt bei Quellen über `discover` die Seiten-ID
   (Base64url) zurück in die Ressourcen-ID, bevor es `storedAttachments` aufruft. `ATTACHMENT_PREVIEWS` meldet nur
   eine Quelle, die `loadAttachmentPreview` selbst umsetzt, Outlook also nicht. Test: `OutlookAttachmentsTest`.
+  **Bekannte Grenze (java-libpst 0.9.3):** Beginnen die gespeicherten Bytes eines Anhangs mit dem zlib-Kopf
+  `78 9C`, entpackt java-libpst sie beim Lesen (`PSTNodeInputStream.detectZlib`, gedacht für komprimierte Blöcke).
+  Ist der Inhalt ein gültiger zlib-Strom, kommt der entpackte Inhalt statt der Originalbytes, ganz im Speicher und
+  mit anderem Hash; sonst scheitert der Abruf mit `INVALID_RESPONSE`. Das betrifft nur Dateien, die selbst mit diesen
+  zwei Bytes beginnen (rohe zlib-Daten), auch als Anhang in einem angehängten Element; PDF, Office, ZIP und Bilder
+  beginnen anders. Geprüft mit einem im Test erzeugten Postfach (13.11.2026).
 
 Die Rechte je Seite gelten wie bei jeder Quelle über die `AccessPolicy`; nicht lesbare Seiten fehlen in Listen,
 Suche und Export.
