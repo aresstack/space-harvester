@@ -250,18 +250,26 @@ public final class ExportPanel extends JPanel {
         subscription = runtime.workspace().subscribeJobs(new JobListener() {
             @Override
             public void changed(JobStatus status) {
-                if (status.type() == JobType.EXPORT) {
+                if (affects(status)) {
                     scheduleRefresh();
                 }
             }
 
             @Override
             public void removed(JobStatus last) {
-                if (last.type() == JobType.EXPORT) {
+                if (affects(last)) {
                     scheduleRefresh();
                 }
             }
         });
+    }
+
+    /**
+     * Ob ein Auftrag den Stand ändern kann: Exporte und ihre Folgeaufträge (Bilder, Anhänge), deren Stand und Zähler
+     * der Datensatz aus den Aufträgen ableitet.
+     */
+    static boolean affects(JobStatus status) {
+        return status.type() == JobType.EXPORT || status.type().download();
     }
 
     /** Vom Zustell-Thread des Core: einmal auf dem EDT auffrischen, auch bei mehreren Meldungen hintereinander. */
@@ -286,11 +294,12 @@ public final class ExportPanel extends JPanel {
         subscribe();
         AppRuntime runtime = context.runtime();
         Selection current = selection;
+        // Jede Anfrage entwertet die vorige, auch die leere: ein noch laufender Abruf darf die Auswahl nicht zurückholen.
+        int ticket = ++request;
         if (runtime == null || current == null) {
             render(Data.NONE);
             return;
         }
-        int ticket = ++request;
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Background.run(() -> gather(runtime, current, directory), data -> {
             if (ticket == request) {

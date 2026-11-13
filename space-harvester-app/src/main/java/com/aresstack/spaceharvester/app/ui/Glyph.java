@@ -27,9 +27,16 @@ public enum Glyph implements Icon {
 
     REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
     GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE, EXPAND_ALL, PULSE,
+    /** Stern-Umriss: kein Favorit bzw. „alle Knoten“; nachgezeichnet nach {@code SidebarIcons.star} des EAC. */
+    STAR,
+    /** Gelb gefüllter Stern: Favorit bzw. „nur Favoriten“. */
+    STAR_FILLED,
     CLOUD, CHECK_CIRCLE, SYNC, WARNING, LOCK, CIRCLE_FULL, CIRCLE_HALF, CIRCLE_EMPTY;
 
     private static final int SIZE = 16;
+    /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
+    static final Color FAVORITE = new Color(0xFFC800);
+    static final Color FAVORITE_EDGE = new Color(0xC99A00);
 
     @Override
     public void paintIcon(Component c, Graphics graphics, int x, int y) {
@@ -111,6 +118,28 @@ public enum Glyph implements Icon {
                 case CANCEL -> {
                     g.draw(new Line2D.Double(4, 4, 12, 12));
                     g.draw(new Line2D.Double(12, 4, 4, 12));
+                }
+                case STAR, STAR_FILLED -> {
+                    Path2D star = new Path2D.Double();
+                    for (int i = 0; i < 10; i++) {
+                        double radius = i % 2 == 0 ? 7.0 : 2.9;
+                        double angle = Math.toRadians(-90 + i * 36);
+                        double px = 8 + radius * Math.cos(angle);
+                        double py = 8.6 + radius * Math.sin(angle);
+                        if (i == 0) {
+                            star.moveTo(px, py);
+                        } else {
+                            star.lineTo(px, py);
+                        }
+                    }
+                    star.closePath();
+                    g.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    if (this == STAR_FILLED) {
+                        g.setColor(FAVORITE);
+                        g.fill(star);
+                        g.setColor(FAVORITE_EDGE);
+                    }
+                    g.draw(star);
                 }
                 case EXPORT -> {
                     // Ablage mit Pfeil nach oben: etwas verlässt die App.

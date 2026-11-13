@@ -72,6 +72,11 @@ public final class Explorer {
     static final String MORE = "Weitere laden …";
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
+    private static final String FAVORITES = "favorites";
+    static final String FAVORITE = "Favorit";
+    static final String UNFAVORITE = "Favorit entfernen";
+    static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
+    static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int TREE_LIMIT = 5_000;
     private static final int BATCH = 100;
@@ -202,6 +207,11 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
+    /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
+    private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
+    private boolean onlyFavorites;
+    private final DefaultListModel<Favorites.Favorite> favoriteModel = new DefaultListModel<>();
+    private final JList<Favorites.Favorite> favorites = new JList<>(favoriteModel);
     /** Die zuletzt in der Leseansicht gezeigte Seite; Ziel von „Aktuelles Dokument im Baum zeigen“. */
     private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
@@ -313,6 +323,10 @@ public final class Explorer {
                 if (onAction(path, event.getPoint())) {
                     if (single) {
                         download(((Node) path.getLastPathComponent()).item());
+                    }
+                } else if (onStar(path, event.getPoint())) {
+                    if (single) {
+                        toggleFavorite(((Node) path.getLastPathComponent()).item());
                     }
                 } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
                     if (single) {
@@ -427,6 +441,40 @@ public final class Explorer {
         deck.setOpaque(false);
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
+        favorites.setFont(Comic.regular(13f));
+        favorites.setOpaque(false);
+        favorites.setSelectionBackground(Comic.YELLOW);
+        favorites.setSelectionForeground(Comic.INK);
+        favorites.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                                   boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof Favorites.Favorite favorite) {
+                    // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
+                    setText("<html>" + escape(favorite.title()) + "<br><font color='#7a7a7a'>"
+                            + escape(favorite.where()) + "</font></html>");
+                    setIcon(favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
+                }
+                setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
+                setOpaque(selected);
+                return this;
+            }
+        });
+        favorites.getAccessibleContext().setAccessibleName("Favoriten");
+        favorites.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    openFavorite();
+                }
+            }
+        });
+        bindEnter(favorites, this::openFavorite);
+        javax.swing.JScrollPane favoriteScroll = Comic.scroll(favorites);
+        favoriteScroll.setBorder(BorderFactory.createEmptyBorder());
+        deck.add(favoriteScroll, FAVORITES);
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
         JPanel head = new JPanel(new BorderLayout(0, 6));
@@ -448,6 +496,8 @@ public final class Explorer {
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
         foot.add(note, BorderLayout.CENTER);
+        favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
+        foot.add(favoritesOnly, BorderLayout.EAST);
         root.add(foot, BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -563,11 +613,31 @@ public final class Explorer {
     }
 
     private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
-        Runnable next = () -> {
+        Runnable next = () -> step(node, steps, index, ticket);
+        TreePath path = new TreePath(node.getPath());
+        if (node.loaded) {
+            tree.expandPath(path);
+            next.run();
+        } else {
+            node.then = next;
+            tree.expandPath(path);
+        }
+    }
+
+    /** Ein Schritt des Abstiegs; liegt das Kind in einem noch nicht geladenen Stapel, lädt er ihn nach und sucht erneut. */
+    private void step(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
+        {
             if (ticket != revealRequest) {
                 return;
             }
             Node child = index < steps.size() ? child(node, steps.get(index)) : null;
+            if (child == null) {
+                Node moreNode = child(node, item -> item instanceof MoreItem);
+                if (moreNode != null && moreNode.item() instanceof MoreItem more) {
+                    loadMore(node, moreNode, more, () -> step(node, steps, index, ticket));
+                    return;
+                }
+            }
             if (child == null && index < steps.size() - 1 && node.item() instanceof SpaceItem) {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
                 child = child(node, steps.get(steps.size() - 1));
@@ -581,14 +651,6 @@ public final class Explorer {
             } else {
                 descend(child, steps, index + 1, ticket);
             }
-        };
-        TreePath path = new TreePath(node.getPath());
-        if (node.loaded) {
-            tree.expandPath(path);
-            next.run();
-        } else {
-            node.then = next;
-            tree.expandPath(path);
         }
     }
 
@@ -704,15 +766,15 @@ public final class Explorer {
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
-            case MoreItem more -> loadMore(node, more);
+            case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
         }
     }
 
-    private void loadMore(Node moreNode, MoreItem more) {
+    /** Lädt den nächsten Stapel Kinder von {@code parent}; {@code then} läuft danach auf dem EDT (etwa der Abstieg). */
+    private void loadMore(Node parent, Node moreNode, MoreItem more, Runnable then) {
         AppRuntime runtime = context.runtime();
-        Node parent = (Node) moreNode.getParent();
         if (runtime == null || parent == null || parent.loading) {
             return;
         }
@@ -724,6 +786,9 @@ public final class Explorer {
             parent.remove(moreNode);
             append(parent, batch);
             model.nodeStructureChanged(parent);
+            if (then != null) {
+                then.run();
+            }
         }, error -> {
             parent.loading = false;
             moreNode.setUserObject(more);
@@ -835,7 +900,7 @@ public final class Explorer {
         String text = filter.getText().trim();
         int id = ++filterRequest;
         if (text.isEmpty()) {
-            cards.show(deck, TREE);
+            cards.show(deck, onlyFavorites ? FAVORITES : TREE);
             note.setText(" ");
             return;
         }
@@ -962,6 +1027,9 @@ public final class Explorer {
 
         private final javax.swing.Icon download = ComposerIcons.download();
         private boolean action;
+        /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
+        private boolean starred;
+        private boolean favorite;
         private int row = -1;
         private int width;
 
@@ -995,10 +1063,12 @@ public final class Explorer {
                 }
             }
             action = downloadable(item);
+            starred = starrable(item);
+            favorite = starred && isFavorite(item);
             this.row = row;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             int text = super.getPreferredSize().width;
-            width = Math.max(text + (action ? ACTION_WIDTH : 0),
+            width = Math.max(text + (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH : 0),
                     tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
             return this;
         }
@@ -1024,6 +1094,13 @@ public final class Explorer {
                 g.setColor(Comic.INK);
                 download.paintIcon(this, g, x + (ACTION_WIDTH - download.getIconWidth()) / 2,
                         (getHeight() - download.getIconHeight()) / 2);
+                // Der Stern links daneben: als Favorit immer gefüllt, sonst nur als Umriss beim Darüberfahren.
+                if (starred && (favorite || row == hoverRow)) {
+                    Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                    int sx = x - ACTION_WIDTH;
+                    star.paintIcon(this, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
+                            (getHeight() - star.getIconHeight()) / 2);
+                }
             } finally {
                 g.dispose();
             }
@@ -1061,6 +1138,135 @@ public final class Explorer {
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
     }
 
+    /** Ob der Punkt auf dem Stern der Zeile liegt (links vom Download-Symbol). */
+    private boolean onStar(TreePath path, java.awt.Point point) {
+        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
+        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH
+                && point.x < bounds.x + bounds.width - ACTION_WIDTH;
+    }
+
+    // ------------------------------------------------------------------ Favoriten
+
+    /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026). */
+    static boolean starrable(Item item) {
+        return item instanceof SpaceItem || item instanceof PageItem;
+    }
+
+    boolean isFavorite(Item item) {
+        return switch (item) {
+            case SpaceItem space -> context.favorites().contains(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.favorites().contains(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> false;
+        };
+    }
+
+    /**
+     * Setzt den Favoriten des Knotens oder nimmt ihn zurück. Eine Seite merkt sich dabei ihren Pfad (Space und
+     * Vorfahren aus {@code PageNavigation.position}, im Hintergrund); ein Space nur seine Quelle.
+     */
+    void toggleFavorite(Item item) {
+        Favorites store = context.favorites();
+        switch (item) {
+            case SpaceItem space -> store.toggle(Favorites.Favorite.space(space.sourceId(), space.spaceKey(),
+                    space.name(), sourceTitle(space.sourceId())));
+            case PageItem page -> {
+                if (store.contains(page.sourceId(), page.spaceKey(), page.pageId())) {
+                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
+                            List.of(), List.of()));
+                    return;
+                }
+                AppRuntime runtime = context.runtime();
+                String source = sourceTitle(page.sourceId());
+                if (runtime == null) {
+                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
+                            List.of(source, page.spaceKey()), List.of()));
+                    return;
+                }
+                Background.run(() -> runtime.workspace().position(page.sourceId(), page.pageId()), position ->
+                        store.toggle(favorite(position, source, page)), error ->
+                        store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(),
+                                page.title(), List.of(source, page.spaceKey()), List.of())));
+            }
+            default -> {
+            }
+        }
+    }
+
+    /** Ein Seiten-Favorit aus dem Pfad der Seite: Quelle › Space › Vorfahren, dazu die IDs der Vorfahren. */
+    static Favorites.Favorite favorite(PageNavigation.Position position, String sourceTitle, PageItem page) {
+        List<String> path = new ArrayList<>();
+        List<String> ancestors = new ArrayList<>();
+        path.add(sourceTitle);
+        if (position == null || position.page() == null) {
+            path.add(page.spaceKey());
+            return new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(), path,
+                    ancestors);
+        }
+        path.add(position.spaceName() == null || position.spaceName().isBlank() ? position.spaceKey()
+                : position.spaceName());
+        for (HarvestSource.PageNode ancestor : position.ancestors()) {
+            path.add(ancestor.title());
+            ancestors.add(ancestor.pageId());
+        }
+        return new Favorites.Favorite(page.sourceId(), position.spaceKey() == null ? page.spaceKey()
+                : position.spaceKey(), page.pageId(), position.page().title() == null ? page.title()
+                : position.page().title(), path, ancestors);
+    }
+
+    private String sourceTitle(String sourceId) {
+        return where(sourceId, null);
+    }
+
+    /** Umschalter unten rechts: nur die Favoriten als Liste (Stern gefüllt) oder der ganze Baum (Umriss). */
+    void showOnlyFavorites(boolean only) {
+        onlyFavorites = only;
+        favoritesOnly.setIcon(only ? Glyph.STAR_FILLED : Glyph.STAR);
+        favoritesOnly.setToolTipText(only ? ALL_NODES : ONLY_FAVORITES);
+        favoritesOnly.getAccessibleContext().setAccessibleName(only ? ALL_NODES : ONLY_FAVORITES);
+        favoritesChanged();
+        if (filter.getText().trim().isEmpty()) {
+            cards.show(deck, only ? FAVORITES : TREE);
+            note.setText(only && favoriteModel.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+        }
+    }
+
+    boolean onlyFavorites() {
+        return onlyFavorites;
+    }
+
+    private void favoritesChanged() {
+        List<Favorites.Favorite> all = context.favorites().all();
+        favoriteModel.clear();
+        all.forEach(favoriteModel::addElement);
+        if (onlyFavorites && filter.getText().trim().isEmpty()) {
+            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+        }
+        tree.repaint();
+    }
+
+    /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
+    private void openFavorite() {
+        Favorites.Favorite favorite = favorites.getSelectedValue();
+        if (favorite == null) {
+            return;
+        }
+        if (favorite.pageId() == null) {
+            context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
+        } else {
+            context.navigator().openPage(favorite.sourceId(), favorite.pageId());
+        }
+    }
+
+    /** Für Tests: die Favoritenliste und ihr Umschalter. */
+    JList<Favorites.Favorite> favoriteList() {
+        return favorites;
+    }
+
+    IconButton favoritesButton() {
+        return favoritesOnly;
+    }
+
     private void popup(MouseEvent event) {
         TreePath path = tree.getPathForLocation(event.getX(), event.getY());
         if (path == null || !(path.getLastPathComponent() instanceof Node node)) {
@@ -1088,6 +1294,12 @@ public final class Explorer {
             download.setToolTipText(DOWNLOAD_TIP);
             download.addActionListener(e -> download(item));
             menu.add(download);
+        }
+        if (starrable(item)) {
+            javax.swing.JMenuItem star = new javax.swing.JMenuItem(isFavorite(item) ? UNFAVORITE : FAVORITE);
+            star.setIcon(isFavorite(item) ? Glyph.STAR_FILLED : Glyph.STAR);
+            star.addActionListener(e -> toggleFavorite(item));
+            menu.add(star);
         }
         if (analysisScope(item, false) != null) {
             String unavailable = analyses.unavailable();
