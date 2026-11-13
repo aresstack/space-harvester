@@ -227,6 +227,38 @@ class TikaDocumentPartsTest {
         assertThat(sink.text().split("MARKE-ALT", -1)).hasSize(2);
     }
 
+    /**
+     * Tikas Mail-Parser reicht alle Teile als Strom durch (ADR 0026, Punkt 6); die Textteile ordnet der Adapter der
+     * Mail zu (Punkt 13): von den Alternativen das HTML, ohne Position, und der Anhang behält Position 1.
+     */
+    @Test
+    void theTextPartsOfAMailStayItsTextAndTakeNoPosition() throws IOException {
+        String mixed = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Gemischt\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/mixed; boundary=\"M\"\r\n\r\n"
+                + "--M\r\nContent-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nMARKE-TEXTFASSUNG Grüße\r\n"
+                + "--A\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
+                + "<html><body><h2>MARKE-HTML</h2><p>Grüße</p></body></html>\r\n"
+                + "--A--\r\n"
+                + "--M\r\nContent-Type: text/plain; charset=UTF-8\r\n"
+                + "Content-Disposition: attachment; filename=\"notiz.txt\"\r\n\r\nMARKE-ANHANG\r\n"
+                + "--M\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nMARKE-NACHSATZ\r\n"
+                + "--M--\r\n";
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        StructuredDocument mail = read("gemischt.eml", mixed.getBytes(StandardCharsets.UTF_8),
+                ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(mail.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(mail.directory()).singleElement().satisfies(entry -> {
+            assertThat(entry.displayName()).contains("notiz.txt");
+            assertThat(entry.position()).isEqualTo("/1");
+        });
+        assertThat(sink.text()).contains("MARKE-HTML", "Grüße", "MARKE-NACHSATZ")
+                .doesNotContain("MARKE-TEXTFASSUNG", "MARKE-ANHANG");
+        assertThat(sink.partText()).contains("MARKE-ANHANG");
+    }
+
     @Test
     void temporaryFilesAreRemovedAfterEveryPart() throws IOException {
         Path temp = Path.of(System.getProperty("java.io.tmpdir"));
