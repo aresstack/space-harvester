@@ -394,8 +394,18 @@ Kein Block ist größer als ein Abschnitt der Ablage (100 000 Zeichen); längere
 Überschriften, Listen, Tabellen und Fundstellen folgen mit AP6, eigene Dokumente für enthaltene Dateien mit AP7; bis
 dahin stehen sie wie bisher im Text des Behälters. Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
 `TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
-ohne Fortschritt und insgesamt; nach einer Zeitgrenze nimmt der Empfänger keinen Block mehr an. Noch nicht
-angeschlossen: Die Umstellung von `Assets` auf diesen Adapter folgt im nächsten Schritt.
+ohne Fortschritt und insgesamt; nach einer Zeitgrenze nimmt der Empfänger keinen Block mehr an, auch das Warten auf
+einen freien Lauf endet dort. Bis zum Abbruch gesammelter Text bleibt (`PARTIAL`); meldet Tika unlesbare enthaltene
+Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
+
+Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablegen, beim Nachholen und auf Abruf liest
+`Assets` Dokumente aus der abgelegten Datei mit diesem Adapter und legt die Extraktion unter `extractions/` ab; die
+bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
+oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
+vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s1`: Absätze mit
+Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
+(Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
 Schranke `memory-limit` (`ExtractionLimits.memoryLimits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
 gelesen, deren Lesen die Testgruppe `largeFileTest` (eigene JVM mit 256 MiB Heap) als speicherunabhängig nachweist.

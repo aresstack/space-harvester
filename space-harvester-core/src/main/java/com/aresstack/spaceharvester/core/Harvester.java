@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.assets.DownloadDurations;
+import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
@@ -146,6 +148,7 @@ import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileGlossaryStore;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
@@ -169,6 +172,7 @@ import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.TikaDocumentStructure;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
@@ -719,6 +723,9 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, assetStore, maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
+            // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
+            assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(),
+                    new FileSystemExtractionStore(builder.assetDirectory()), ExtractionLimits.DEFAULTS));
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);

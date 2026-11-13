@@ -225,6 +225,15 @@ public class FileSystemAssetStore implements AssetStore {
     }
 
     @Override
+    public Optional<Path> file(Asset asset) {
+        if (!HEX_SHA.matcher(asset.sha256()).matches()) {
+            return Optional.empty();
+        }
+        Path blob = blob(asset.sha256());
+        return Files.isRegularFile(blob) ? Optional.of(blob) : Optional.empty();
+    }
+
+    @Override
     public byte[] read(Asset asset) {
         if (!HEX_SHA.matcher(asset.sha256()).matches()) {
             throw new AssetStoreException("Ungültiger Hash", null);

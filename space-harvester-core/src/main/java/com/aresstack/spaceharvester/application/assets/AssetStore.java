@@ -62,6 +62,16 @@ public interface AssetStore {
         return new ByteArrayInputStream(read(asset));
     }
 
+    /**
+     * Die abgelegte Datei eines Anhangs zum Lesen, ohne Kopie und ohne die Bytes in den Speicher zu laden (ADR 0026:
+     * Extraktion aus der Datei). Der Hash wird dabei nicht geprüft; die Datei darf nicht verändert werden.
+     *
+     * @return leer, wenn die Ablage keine Dateien hat oder der Inhalt fehlt; dann bleibt {@link #open}
+     */
+    default Optional<java.nio.file.Path> file(Asset asset) {
+        return Optional.empty();
+    }
+
     /** Die Beschreibung genau dieser Bildbytes durch genau diesen Beschreiber und dieses Modell. */
     Optional<ImageDescription> description(String imageSha256, String describer, String modelVersion);
 

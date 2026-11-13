@@ -2,12 +2,16 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
+import com.aresstack.spaceharvester.source.TikaDocumentStructure;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -52,12 +56,16 @@ class AssetConfiguration {
                   @Value("${space-harvester.assets.max-concurrent-large-files:"
                           + LargeFileGate.DEFAULT_MAX_CONCURRENT + "}") int maxConcurrentLargeFiles,
                   @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait,
-                  ObjectProvider<JobsProperties> jobs) {
+                  ObjectProvider<JobsProperties> jobs,
+                  @Value("${space-harvester.assets.directory:data/assets}") Path directory) {
         LargeFileGate gate = new LargeFileGate(largeFileThreshold.toBytes(), maxConcurrentLargeFiles, largeFileWait);
         // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
         Assets assets = new Assets(catalog, store, Assets.maxBytes(maxSize.toBytes()), Clock.systemUTC(),
                 describer.getIfAvailable(), TikaDocumentText.shared(), texts.getIfAvailable(), gate,
                 signIns.getIfAvailable());
+        // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
+        assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(),
+                new FileSystemExtractionStore(directory), ExtractionLimits.DEFAULTS));
         // Genug Plätze für die Dateien aller gleichzeitig ladenden Aufträge (jobs.parallel-downloads).
         JobsProperties limits = jobs.getIfAvailable();
         if (limits != null) {

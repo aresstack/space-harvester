@@ -174,6 +174,8 @@ public class Assets {
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
     private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
+    /** Strukturierte Extraktion aus der Datei (ADR 0026, AP3b); ohne sie gilt der bisherige Weg über Byte-Arrays. */
+    private volatile DocumentExtractions extractions;
 
     /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
     private static final class Downloads extends Semaphore {
@@ -204,6 +206,27 @@ public class Assets {
     /** Durchschnittliche Dauer je tatsächlich von der Quelle geladener Datei, getrennt für Bilder und Anhänge. */
     public DownloadDurations durations() {
         return durations;
+    }
+
+    /**
+     * Schließt die strukturierte Extraktion an (ADR 0026, AP3b): Dokumente werden aus der abgelegten Datei gelesen,
+     * ohne die Grenze von {@link #IN_MEMORY_BYTES}, und ihr Text liegt unter dieser Extraktion. Typerkennung und
+     * Dokumente, die nicht abgelegt werden dürfen, bleiben beim bisherigen {@link DocumentText}.
+     */
+    public void documentExtractions(DocumentExtractions extractions) {
+        this.extractions = extractions;
+    }
+
+    /** Kennung der Extraktion, unter der Texte liegen. */
+    private String textExtractor() {
+        DocumentExtractions current = extractions;
+        return current != null ? current.id() : documents.id();
+    }
+
+    /** Version der Extraktion, unter der Texte liegen. */
+    private String textVersion() {
+        DocumentExtractions current = extractions;
+        return current != null ? current.version() : documents.version();
     }
 
     public synchronized void downloadLimit(int jobDownloads) {
@@ -938,9 +961,18 @@ public class Assets {
         Optional<AssetText> existing = stored.isPresent() ? storedText(extraction, stored.get()) : Optional.empty();
         Asset asset;
         AssetText text;
+        DocumentExtractions structured = extractions;
         if (existing.isPresent()) {
             asset = stored.get();
             text = existing.get();
+        } else if (structured != null && stored.isPresent()) {
+            // Aus der abgelegten Datei, ohne Größengrenze (ADR 0026); die Schranke für große Dateien gilt weiter.
+            try (LargeFileGate.Permit permit = gate.enter(list.sourceId(), stored.get().size())) {
+                asset = stored.get();
+                // Ohne Recht zum Ablegen nur gelesen, wie bisher.
+                text = mayStore ? structured.text(asset, store, clock.instant())
+                        : structured.peek(asset, store, clock.instant());
+            }
         } else if (stored.isPresent() && stored.get().size() > IN_MEMORY_BYTES) {
             // Über der Grenze der Textextraktion bleibt die Datei ungelesen (Dateien beliebiger Größe, Angelo
             // 11.11.2026); sie hat wie bisher keinen Text.
@@ -953,10 +985,16 @@ public class Assets {
                         : download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore, false);
                 asset = content.asset();
                 existing = storedText(extraction, asset);
-                text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
+                if (existing.isPresent()) {
+                    text = existing.get();
+                } else if (structured != null && mayStore) {
+                    text = structured.text(asset, store, clock.instant());
+                } else {
+                    text = extract(extraction, content, mayStore);
+                }
             }
         }
-        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), extractionKey(extraction))) {
+        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), textKey())) {
             flushIndex();
         }
         return text;
@@ -971,7 +1009,7 @@ public class Assets {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        return store.text(asset.sha256(), extraction.id(), extraction.version());
+        return store.text(asset.sha256(), textExtractor(), textVersion());
     }
 
     /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
@@ -1013,9 +1051,9 @@ public class Assets {
         }
         try {
             if (asset.kind() == AssetKind.OTHER && documents != null) {
-                String text = store.text(asset.sha256(), documents.id(), documents.version()).map(AssetText::text)
+                String text = store.text(asset.sha256(), textExtractor(), textVersion()).map(AssetText::text)
                         .orElse("");
-                return indexText(list, asset, text, text.isEmpty() ? "" : extractionKey(documents));
+                return indexText(list, asset, text, text.isEmpty() ? "" : textKey());
             }
             if (asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR) {
                 // Wie im EAC (DocumentSourceFileTextExtractor → describe), aber ohne Modellaufruf: nur die vorhandene
@@ -1067,8 +1105,8 @@ public class Assets {
                 "describer:" + description.describer() + ":" + description.modelVersion());
     }
 
-    private static String extractionKey(DocumentText extraction) {
-        return "text:" + extraction.id() + ":" + extraction.version();
+    private String textKey() {
+        return "text:" + textExtractor() + ":" + textVersion();
     }
 
     /**
@@ -1138,7 +1176,9 @@ public class Assets {
      * nicht im Speicher und hat wie bisher keinen Text.
      */
     private void harvestText(Downloaded downloaded) {
-        if (downloaded.content() != null) {
+        if (extractions != null && documents != null && downloaded.asset().kind() == AssetKind.OTHER) {
+            harvestStructured(downloaded.asset());
+        } else if (downloaded.content() != null) {
             harvestText(new AssetContent(downloaded.asset(), downloaded.content()));
         } else if (documents != null && downloaded.asset().kind() == AssetKind.OTHER) {
             LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
@@ -1168,6 +1208,24 @@ public class Assets {
         }
     }
 
+    /** Wie {@link #harvestText(AssetContent)}, aber aus der abgelegten Datei und ohne Größengrenze (ADR 0026). */
+    private void harvestStructured(Asset asset) {
+        DocumentExtractions structured = extractions;
+        try {
+            if (store.text(asset.sha256(), structured.id(), structured.version()).isEmpty()) {
+                structured.text(asset, store, clock.instant());
+            }
+        } catch (DocumentTextException e) {
+            if (e.reason() != DocumentTextException.Reason.UNSUPPORTED) {
+                LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
+                        asset.sourceId(), e.reason().code());
+            }
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Dokumenttext nicht ablegbar: source={0} ({1})",
+                    asset.sourceId(), e.getClass().getName());
+        }
+    }
+
     /**
      * Holt den Text eines schon abgelegten Dokuments aus der Ablage nach, etwa für Ablagen von vor #183, ohne den
      * Anhang neu zu laden. Je Laufzeit nur ein Versuch je Inhalt, damit ein nicht lesbares Dokument nicht bei jeder
@@ -1175,13 +1233,23 @@ public class Assets {
      */
     private void backfillText(Asset asset) {
         if (documents == null || asset.kind() != AssetKind.OTHER
-                || store.text(asset.sha256(), documents.id(), documents.version()).isPresent()) {
+                || store.text(asset.sha256(), textExtractor(), textVersion()).isPresent()) {
             return;
         }
         if (backfilled.size() > MAX_BACKFILLED) {
             backfilled.clear();
         }
         if (!backfilled.add(asset.sha256())) {
+            return;
+        }
+        if (extractions != null) {
+            try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+                harvestStructured(asset);
+            } catch (SourceAccessException e) {
+                backfilled.remove(asset.sha256());
+                LOG.log(System.Logger.Level.INFO, "Dokumenttext später nachholen: source={0}, code={1}",
+                        asset.sourceId(), code(e.reason()));
+            }
             return;
         }
         if (asset.size() > IN_MEMORY_BYTES) {
@@ -1523,7 +1591,7 @@ public class Assets {
         if (documents == null || sha256 == null) {
             return Optional.empty();
         }
-        return store.text(sha256, documents.id(), documents.version());
+        return store.text(sha256, textExtractor(), textVersion());
     }
 
     /**
@@ -1536,7 +1604,7 @@ public class Assets {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
-        store.putText(new AssetText(sha256, documents.id(), documents.version(), text, false, clock.instant()));
+        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, false, clock.instant()));
         return true;
     }
 
