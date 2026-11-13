@@ -424,9 +424,25 @@ public final class SourcesView implements View {
         if (selected == null || !cards.containsKey(selected)) {
             selected = sources.isEmpty() ? null : sources.get(0).id();
         }
+        dropStaleWatches();
         cards.values().forEach(SourceCard::update);
         showSelected();
         updateSpaceActions();
+    }
+
+    /**
+     * Ein Neustart der Laufzeit beendet die alten Aufträge ohne Meldung an die Wartenden; eine Wache auf eine
+     * geschlossene Laufzeit würde nie fertig und ließe die Kreispfeile grau. Sie gibt deshalb auf, und die Statuszeile
+     * sagt es.
+     */
+    private void dropStaleWatches() {
+        AppRuntime current = context.runtime();
+        for (CatchUpWatch watch : new ArrayList<>(watches.values())) {
+            if (watch.runtime != current && watch.abandon()) {
+                feedback.warning("Nachholen abgebrochen", "Die Verbindungen wurden neu gestartet; die Aufträge dazu "
+                        + "stehen unter Aufträge.");
+            }
+        }
     }
 
     /** Reiter „Synchronisierung“: Erkennung, Aktualisierung, Bereinigung, wie sie für die gewählte Quelle gelten. */
@@ -1108,6 +1124,8 @@ public final class SourcesView implements View {
 
     /** Quellen, deren Nachholen läuft; so lange bleiben die Kreispfeile ihrer Karte ausgegraut. */
     private final java.util.Set<String> catchingUp = new java.util.HashSet<>();
+    /** Laufende Wachen auf die Nachhol-Aufträge, je Quelle eine; bei Neustart der Laufzeit geben sie auf. */
+    private final Map<String, CatchUpWatch> watches = new java.util.HashMap<>();
 
     /** Für Tests: die Kreispfeile an der Karte dieser Quelle. */
     IconButton syncButton(String sourceId) {
@@ -1154,11 +1172,19 @@ public final class SourcesView implements View {
                 finishCatchUp(id, new CatchUpResult(0, 0, started.failed()));
                 return;
             }
-            new CatchUpWatch(runtime, id, started).begin();
+            if (context.runtime() != runtime) {
+                // Die Laufzeit wurde zwischen Start und Rückkehr neu gestartet; ihre Aufträge sind beendet.
+                finishCatchUp(id, new CatchUpResult(started.jobs().size(), started.jobs().size(), started.failed()));
+                return;
+            }
+            CatchUpWatch watch = new CatchUpWatch(runtime, id, started);
+            watches.put(id, watch);
+            watch.begin();
         }, error -> finishCatchUp(id, error));
     }
 
     private void finishCatchUp(String id, CatchUpResult result) {
+        watches.remove(id);
         catchingUp.remove(id);
         cards.values().forEach(SourceCard::update);
         String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
@@ -1175,6 +1201,7 @@ public final class SourcesView implements View {
     }
 
     private void finishCatchUp(String id, Throwable error) {
+        watches.remove(id);
         catchingUp.remove(id);
         cards.values().forEach(SourceCard::update);
         feedback.problem(error);
@@ -1235,6 +1262,24 @@ public final class SourcesView implements View {
                 }
                 finishCatchUp(sourceId, error);
             });
+        }
+
+        /**
+         * Gibt die Wache auf, ohne ein Ergebnis zu melden (EDT); die Kreispfeile werden wieder frei.
+         *
+         * @return ob sie noch lief
+         */
+        boolean abandon() {
+            synchronized (this) {
+                if (finished) {
+                    return false;
+                }
+                finished = true;
+            }
+            subscription.close();
+            watches.remove(sourceId);
+            catchingUp.remove(sourceId);
+            return true;
         }
 
         @Override
