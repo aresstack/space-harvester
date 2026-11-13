@@ -112,6 +112,14 @@ class TikaDocumentPartsTest {
         assertThat(entry(mail, "notiz.txt").parent()).contains(msg.id());
         assertThat(sink.partText("anlage.docx")).contains("MARKE-MSG-DOCX");
         assertThat(sink.partText("weiter.msg")).contains("MARKE-MSG-TEXT").doesNotContain("MARKE-MSG-DOCX");
+        assertThat(sink.partText("weiter.msg")).as("Kopfblock steht in den Kopfdaten, nicht im Text")
+                .doesNotContain("Abstimmung Wartung", "From", "Absender Test", "Empfaenger Test");
+        assertThat(sink.heads.entrySet()).filteredOn(e -> e.getKey().displayName().filter("weiter.msg"::equals)
+                .isPresent()).singleElement().satisfies(e -> {
+                    assertThat(e.getValue().subject()).contains("Abstimmung Wartung");
+                    assertThat(e.getValue().from()).contains("Absender Test");
+                    assertThat(e.getValue().to()).containsExactly("Empfaenger Test");
+                });
     }
 
     @Test
@@ -219,6 +227,38 @@ class TikaDocumentPartsTest {
         assertThat(sink.text().split("MARKE-ALT", -1)).hasSize(2);
     }
 
+    /**
+     * Tikas Mail-Parser reicht alle Teile als Strom durch (ADR 0026, Punkt 6); die Textteile ordnet der Adapter der
+     * Mail zu (Punkt 13): von den Alternativen das HTML, ohne Position, und der Anhang behält Position 1.
+     */
+    @Test
+    void theTextPartsOfAMailStayItsTextAndTakeNoPosition() throws IOException {
+        String mixed = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Gemischt\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/mixed; boundary=\"M\"\r\n\r\n"
+                + "--M\r\nContent-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nMARKE-TEXTFASSUNG Grüße\r\n"
+                + "--A\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"
+                + "<html><body><h2>MARKE-HTML</h2><p>Grüße</p></body></html>\r\n"
+                + "--A--\r\n"
+                + "--M\r\nContent-Type: text/plain; charset=UTF-8\r\n"
+                + "Content-Disposition: attachment; filename=\"notiz.txt\"\r\n\r\nMARKE-ANHANG\r\n"
+                + "--M\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nMARKE-NACHSATZ\r\n"
+                + "--M--\r\n";
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        StructuredDocument mail = read("gemischt.eml", mixed.getBytes(StandardCharsets.UTF_8),
+                ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(mail.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(mail.directory()).singleElement().satisfies(entry -> {
+            assertThat(entry.displayName()).contains("notiz.txt");
+            assertThat(entry.position()).isEqualTo("/1");
+        });
+        assertThat(sink.text()).contains("MARKE-HTML", "Grüße", "MARKE-NACHSATZ")
+                .doesNotContain("MARKE-TEXTFASSUNG", "MARKE-ANHANG");
+        assertThat(sink.partText()).contains("MARKE-ANHANG");
+    }
+
     @Test
     void temporaryFilesAreRemovedAfterEveryPart() throws IOException {
         Path temp = Path.of(System.getProperty("java.io.tmpdir"));
@@ -258,6 +298,30 @@ class TikaDocumentPartsTest {
             assertThat(entry.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
             assertThat(entry.outcome().reason()).contains(StatusReason.TOO_LARGE);
         });
+    }
+
+    @Test
+    void aContainerWithoutOwnTextButWithEntriesIsReadOnlyAnEmptyOneHasNoText() throws IOException {
+        Path archive = Files.write(directory.resolve("archiv.zip"), Archives.nested(2));
+        StructuredDocument read = structure.extract(archive, "archiv.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording());
+
+        assertThat(read.chars()).isZero();
+        assertThat(read.directory()).isNotEmpty();
+        assertThat(read.outcome().status()).isEqualTo(ExtractionStatus.OK);
+
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("leer/"));
+            zip.closeEntry();
+        }
+        Path empty = Files.write(directory.resolve("leer.zip"), bytes.toByteArray());
+        StructuredDocument none = structure.extract(empty, "leer.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording());
+
+        assertThat(none.directory()).isEmpty();
+        assertThat(none.outcome().status()).isEqualTo(ExtractionStatus.UNSUPPORTED);
+        assertThat(none.outcome().reason()).contains(StatusReason.NO_TEXT);
     }
 
     private static List<Path> parts(Path temp) throws IOException {

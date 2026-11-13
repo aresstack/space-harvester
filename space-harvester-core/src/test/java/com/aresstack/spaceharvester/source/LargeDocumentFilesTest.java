@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.StructuredDocument;
 import com.aresstack.spaceharvester.testcorpus.LargeFiles;
+import com.aresstack.spaceharvester.testcorpus.Mail;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
@@ -78,6 +79,33 @@ class LargeDocumentFilesTest {
         Path docx = LargeFiles.docx(directory.resolve("lang.docx"), paragraphs, 15);
 
         assertComplete(docx, DOCX, LargeFiles.paragraphMark(1), LargeFiles.paragraphMark(paragraphs - 1));
+    }
+
+    /**
+     * Abnahme 5: Eine Mail mit einem Anhang über 300 MiB wird als Strom gelesen (AP7a); der Anhang geht zählend in eine
+     * temporäre Datei, nie als Byte-Array. Danach entfällt die Schranke für {@code .eml}.
+     */
+    @Test
+    void mailWithAnAttachmentOver300MiBIsReadCompletely() throws IOException {
+        Path pdf = LargeFiles.pdfWithImages(directory.resolve("anhang.pdf"), LargeFiles.PDF_OVER_300_MIB_PAGES);
+        Path eml = Mail.of("Großer Anhang", "MARKE-GROSSE-MAIL Text der Mail")
+                .attach("anhang.pdf", "application/pdf", pdf)
+                .attach("notiz.txt", "text/plain", "MARKE-NACH-DEM-PDF".getBytes(StandardCharsets.UTF_8))
+                .write(directory.resolve("gross.eml"));
+        Files.delete(pdf);
+        assertThat(Files.size(eml)).isGreaterThan(LargeFiles.MIB_300);
+        String first = LargeFiles.pageMark(1);
+        String last = LargeFiles.pageMark(LargeFiles.PDF_OVER_300_MIB_PAGES);
+        TikaDocumentStructureTest.Counting sink = new TikaDocumentStructureTest.Counting("MARKE-GROSSE-MAIL", first,
+                last, "MARKE-NACH-DEM-PDF");
+
+        StructuredDocument result = structure.extract(eml, "gross.eml", "message/rfc822", ExtractionLimits.DEFAULTS,
+                sink);
+
+        assertThat(result.outcome().status()).as("Status der Mail").isEqualTo(ExtractionStatus.OK);
+        assertThat(result.directory()).hasSize(2).allSatisfy(entry -> assertThat(entry.outcome().status())
+                .as(entry.displayName().orElse("?")).isEqualTo(ExtractionStatus.OK));
+        assertThat(sink.found).containsExactlyInAnyOrder("MARKE-GROSSE-MAIL", first, last, "MARKE-NACH-DEM-PDF");
     }
 
     private void assertComplete(Path file, String mediaType, String firstMark, String lastMark) {

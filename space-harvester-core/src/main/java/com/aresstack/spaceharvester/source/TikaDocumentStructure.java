@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s5";
+    public static final String VERSION = "3.3-s6";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -91,6 +91,12 @@ public final class TikaDocumentStructure implements DocumentStructure {
               <parsers>
                 <parser class="org.apache.tika.parser.DefaultParser">
                   <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
+                  <parser-exclude class="org.apache.tika.parser.mail.RFC822Parser"/>
+                </parser>
+                <parser class="org.apache.tika.parser.mail.RFC822Parser">
+                  <params>
+                    <param name="extractAllAlternatives" type="bool">true</param>
+                  </params>
                 </parser>
               </parsers>
             </properties>
@@ -334,6 +340,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private final StructureSink sink;
         private final PartRules rules;
         final AtomicLong lastProgress = new AtomicLong(System.nanoTime());
+        /** Kontext des Laufs, für Textteile einer Mail. */
+        private ParseContext parseContext;
         private final Doc root;
         /** Offene Dokumente, innen oben: der Behälter und die gerade gelesenen Teile. */
         private final ArrayDeque<Doc> open = new ArrayDeque<>();
@@ -385,6 +393,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
             ParseContext context = new ParseContext();
             context.set(Parser.class, tika);
+            parseContext = context;
             // Enthaltene Dateien werden eigene Dokumente (AP7); was zum Dokument selbst gehört, bleibt in seinem Text.
             context.set(EmbeddedDocumentExtractor.class, new PartExtractor(context));
             synchronized (this) {
@@ -395,12 +404,15 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 root.stream = in;
                 root.handler.metadata = metadata;
                 (parseWith == null ? tika : parseWith).parse(in, root.handler, metadata, context);
+                flushMailBody(root);
                 root.handler.flush();
                 outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
                         : missing != null ? root.partial(missing)
                         : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
             } catch (Exception | LinkageError | OutOfMemoryError e) {
                 outcome = aborted(root, e);
+            } finally {
+                discardMailBody(root);
             }
             synchronized (this) {
                 if (stopped) {
@@ -568,6 +580,15 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 synchronized (Reader.this) {
                     checkRunning();
                     parent = open.peek();
+                }
+                if (mailText(metadata, parent)) {
+                    // Textteil der Mail: kein Teil, keine Position (wie früher, als Tika ihn selbst einfügte).
+                    mailBody(stream, metadata, parent);
+                    return;
+                }
+                flushMailBody(parent);
+                synchronized (Reader.this) {
+                    checkRunning();
                     // Die Position zählt jeden übergebenen Teil, auch die, die kein Eintrag werden (Architekt).
                     path = parent.path + "/" + ++parent.parts;
                     if (unpackingEnded) {
@@ -586,6 +607,112 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 entries++;
                 readPart(stream, metadata, parent, path, context);
             }
+        }
+
+        /**
+         * Ob ein Teil ein namenloser Textteil einer Mail ist (ADR 0026, Punkte 6 und 13): Tikas Mail-Parser reicht alle
+         * Teile als Strom durch ({@code extractAllAlternatives}), statt die der ersten Ebene als Byte-Array zu
+         * kopieren; die Textteile ordnet der Adapter selbst der Mail zu.
+         */
+        private boolean mailText(Metadata metadata, Doc parent) {
+            if (!parent.handler.detectedType().equals("message/rfc822")) {
+                return false;
+            }
+            String type = baseType(metadata.get(Metadata.CONTENT_TYPE));
+            if (!type.equals("text/plain") && !type.equals("text/html")) {
+                return false;
+            }
+            String disposition = metadata.get(Metadata.CONTENT_DISPOSITION);
+            if (disposition != null && disposition.strip().toLowerCase(Locale.ROOT).startsWith("attachment")) {
+                return false;
+            }
+            String name = metadata.get(TikaCoreProperties.RESOURCE_NAME_KEY);
+            return name == null || name.isBlank();
+        }
+
+        /**
+         * Nimmt einen Textteil der Mail an. Von Alternativen (gleiche Grenze in {@code multipart/alternative}) zählt
+         * wie bei Tika die beste, HTML vor Text, bei Gleichstand die spätere (RFC 2046); sie wartet in einer
+         * temporären Datei, bis die Gruppe endet.
+         */
+        private void mailBody(InputStream stream, Metadata metadata, Doc parent) throws SAXException, IOException {
+            boolean alternative = "alternative".equalsIgnoreCase(metadata.get(Message.MULTIPART_SUBTYPE));
+            String group = alternative ? Objects.toString(metadata.get(Message.MULTIPART_BOUNDARY), "") : null;
+            MailBody pending = parent.mailBody;
+            if (pending != null && (group == null || !group.equals(pending.group()))) {
+                flushMailBody(parent);
+                pending = null;
+            }
+            Path temp = Files.createTempFile("teil-text-", ".tmp");
+            MailBody body = new MailBody(temp, metadata, group,
+                    baseType(metadata.get(Metadata.CONTENT_TYPE)).equals("text/html") ? 2 : 1);
+            try {
+                byte[] buffer = new byte[64 * 1024];
+                try (var out = Files.newOutputStream(temp)) {
+                    int read;
+                    while ((read = stream.read(buffer)) >= 0) {
+                        lastProgress.set(System.nanoTime());
+                        synchronized (Reader.this) {
+                            checkRunning();
+                        }
+                        out.write(buffer, 0, read);
+                    }
+                }
+            } catch (IOException | SAXException | RuntimeException e) {
+                Files.deleteIfExists(temp);
+                throw e;
+            }
+            if (pending != null && pending.score() > body.score()) {
+                Files.deleteIfExists(temp);
+                return;
+            }
+            if (pending != null) {
+                Files.deleteIfExists(pending.temp());
+            }
+            parent.mailBody = body;
+            if (group == null) {
+                flushMailBody(parent);
+            }
+        }
+
+        /** Liest den wartenden Textteil der Mail in ihren eigenen Text; danach ist er gelöscht. */
+        private void flushMailBody(Doc doc) throws SAXException, IOException {
+            MailBody body = doc.mailBody;
+            if (body == null) {
+                return;
+            }
+            doc.mailBody = null;
+            try (TikaInputStream in = TikaInputStream.get(body.temp())) {
+                Metadata inline = new Metadata();
+                String type = baseType(body.metadata().get(Metadata.CONTENT_TYPE));
+                inline.set(TikaCoreProperties.CONTENT_TYPE_PARSER_OVERRIDE, type);
+                String charset = body.metadata().get(Metadata.CONTENT_ENCODING);
+                inline.set(Metadata.CONTENT_TYPE, charset == null || charset.isBlank() ? type
+                        : type + "; charset=" + charset.strip());
+                tika.parse(in, new org.apache.tika.sax.EmbeddedContentHandler(
+                        new org.apache.tika.sax.BodyContentHandler(doc.handler)), inline, parseContext);
+            } catch (org.apache.tika.exception.TikaException e) {
+                throw new IOException("Textteil der Mail nicht lesbar", e);
+            } finally {
+                Files.deleteIfExists(body.temp());
+            }
+        }
+
+        /** Nach einem Abbruch: Der wartende Textteil wird nicht mehr gelesen, seine temporäre Datei fällt weg. */
+        private void discardMailBody(Doc doc) {
+            MailBody body = doc.mailBody;
+            doc.mailBody = null;
+            if (body != null) {
+                try {
+                    Files.deleteIfExists(body.temp());
+                } catch (IOException e) {
+                    LOG.log(System.Logger.Level.DEBUG, "Temporäre Datei nicht gelöscht");
+                }
+            }
+        }
+
+        /** Ein Textteil der Mail, der auf das Ende seiner Alternativen wartet. */
+        private record MailBody(Path temp, Metadata metadata, String group, int score) {
         }
 
         /**
@@ -623,6 +750,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     .filter(value -> !value.isEmpty());
             Optional<PartId> parentId = Optional.ofNullable(parent.id);
             int slot = reserve();
+            parent.entries++;
             if (limits.maxDepth() > 0 && depth > limits.maxDepth()) {
                 // Zu tief: ein Eintrag mit Status, sein Inhalt wird nicht geöffnet.
                 record(slot, new EmbeddedEntry(numbering().position(path), Optional.empty(), name, declared, path,
@@ -709,7 +837,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 try (TikaInputStream in = TikaInputStream.get(temp, metadata)) {
                     child.stream = in;
                     child.handler.metadata = metadata;
-                    tika.parse(in, child.handler, metadata, context);
+                    (parseWith == null ? tika : parseWith).parse(in, child.handler, metadata, context);
+                    flushMailBody(child);
                     child.handler.flush();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -727,6 +856,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 }
                 partSink.head(child.head(metadata));
             } finally {
+                discardMailBody(child);
                 synchronized (Reader.this) {
                     open.remove(child);
                     // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
@@ -824,8 +954,12 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private boolean full;
             /** Teile, die Tika aus diesem Dokument übergeben hat (Zählerpfad). */
             private int parts;
+            /** Einträge im Verzeichnis, deren Eltern dieses Dokument ist. */
+            private int entries;
             private EmbeddedEntry entry;
             private int slot = -1;
+            /** Textteil einer Mail, der auf das Ende seiner Alternativen wartet. */
+            private MailBody mailBody;
 
             Doc(BlockSink target, long size, String mediaType, PartId id, String path, int depth) {
                 this.target = target;
@@ -846,7 +980,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     outcome = truncatedOrFailed(abort);
                 }
                 if (outcome == null) {
-                    outcome = chars == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
+                    // Ohne eigenen Text, aber mit Einträgen (Archiv, Mail nur mit Anhängen) ist das Dokument gelesen;
+                    // no-text gilt nur, wenn weder Text noch Einträge da sind (Architekt 13.11.2026).
+                    outcome = chars == 0 && entries == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
                             : Outcome.ok(new ReadExtent(size, chars));
                 }
                 return outcome;
@@ -866,11 +1002,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
 
             /**
-             * Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text gescheitert, außer bei einem
-             * Archiv, das nie eigenen Text hat.
+             * Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text und ohne Einträge gescheitert,
+             * außer bei einem Archiv, das nie eigenen Text hat.
              */
             private Outcome partial(StatusReason reason) {
-                return chars == 0 && !archive() ? Outcome.of(ExtractionStatus.FAILED, reason)
+                return chars == 0 && entries == 0 && !archive() ? Outcome.of(ExtractionStatus.FAILED, reason)
                         : Outcome.truncated(reason, new ReadExtent(size, chars));
             }
 
@@ -1026,6 +1162,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private int embedded;
                 private boolean entryTitle;
                 private boolean dropping;
+                /** Offene dl-Elemente des Kopfblocks einer Outlook-Mail (Von, An): Kopfdaten, kein Inhalt. */
+                private int headerList;
+                /**
+                 * Stand des Kopfblocks einer Outlook-Mail: 0 vor dem Betreff, 1 nach dem Betreff (Von/An können folgen),
+                 * 2 vorbei. Danach sind {@code h1} und {@code dl} Inhalt.
+                 */
+                private int outlookStage;
+                private boolean subject;
                 private boolean sheetTitle;
                 private boolean sheetHeading;
                 private int page;
@@ -1053,6 +1197,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                             ignored++;
                             return;
                         }
+                        if (name.equals("dl") && (headerList > 0 || outlookStage <= 1 && outlookHeader(outlookStage))) {
+                            headerList++;
+                            ignored++;
+                            return;
+                        }
                         if (ignored > 0) {
                             return;
                         }
@@ -1069,6 +1218,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 if (entryTitle && name.equals("h1")) {
                                     // Name des Paketeintrags (etwa image1.png): von Tika, nicht aus der Quelle.
                                     dropping = true;
+                                } else if (name.equals("h1") && outlookHeader(0)) {
+                                    // Betreff einer Outlook-Mail: steht in den Kopfdaten (ADR 0026, Punkte 3 und 7);
+                                    // geprüft am Ende gegen den Betreff, eine Überschrift des Inhalts bleibt.
+                                    subject = true;
+                                    outlookStage = 1;
                                 } else if (sheetTitle && name.equals("h1")) {
                                     sheetHeading = true;
                                 }
@@ -1102,6 +1256,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 if (BLOCK_ELEMENTS.contains(name)) {
                                     flushText();
                                     resetKind();
+                                    if (headerList == 0 && !name.equals("body")) {
+                                        // Anderer Inhalt beginnt: Der Kopfblock ist vorbei.
+                                        outlookStage = 2;
+                                    }
                                 }
                             }
                         }
@@ -1114,6 +1272,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     String name = name(localName, qName);
                     synchronized (Reader.this) {
                         if (name.equals("head") || name.equals("script") || name.equals("style")) {
+                            ignored = Math.max(0, ignored - 1);
+                            return;
+                        }
+                        if (name.equals("dl") && headerList > 0) {
+                            headerList--;
+                            if (headerList == 0) {
+                                outlookStage = 2;
+                            }
                             ignored = Math.max(0, ignored - 1);
                             return;
                         }
@@ -1137,6 +1303,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 resetKind();
                             }
                             case "h1", "h2", "h3", "h4", "h5", "h6" -> {
+                                if (subject) {
+                                    subject = false;
+                                    String title = metadata == null ? null : metadata.get(TikaCoreProperties.TITLE);
+                                    if (title != null && normalize(buffer.toString()).equals(normalize(title))) {
+                                        buffer.setLength(0);
+                                        links.clear();
+                                    } else {
+                                        outlookStage = 2;
+                                    }
+                                }
                                 if (dropping) {
                                     buffer.setLength(0);
                                     links.clear();
@@ -1249,6 +1425,22 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
                 private boolean pdf() {
                     return "application/pdf".equals(detectedType());
+                }
+
+                    /**
+                 * Noch vor dem Inhalt einer Outlook-Mail: Tika schreibt dort Betreff ({@code h1}) und Von/An
+                 * ({@code dl}), die schon in den Kopfdaten stehen.
+                 */
+                private boolean outlookHeader(int stage) {
+                    if (outlookStage != stage) {
+                        return false;
+                    }
+                    if (Doc.this.blocks == 0 && buffer.toString().isBlank() && embedded == 0
+                            && "application/vnd.ms-outlook".equals(detectedType())) {
+                        return true;
+                    }
+                    outlookStage = 2;
+                    return false;
                 }
 
                 private boolean legacyPowerPoint() {

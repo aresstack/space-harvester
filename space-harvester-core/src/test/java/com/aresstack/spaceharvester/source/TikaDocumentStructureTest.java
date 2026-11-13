@@ -117,7 +117,8 @@ class TikaDocumentStructureTest {
         Path mail = Files.writeString(directory.resolve("m.eml"), "Subject: x\r\n\r\n" + "Text ".repeat(100));
         ExtractionLimits small = limits(Map.of(ExtractionLimits.ANY_TYPE, 100L), 0, 0);
 
-        StructuredDocument limited = structure.extract(mail, "m.eml", "message/rfc822", small, new Recording());
+        StructuredDocument limited = structure.extract(mail, "m.msg", "application/vnd.ms-outlook", small,
+                new Recording());
         StructuredDocument tooLarge = structure.extract(mail, "m.eml", "message/rfc822",
                 limits(Map.of(), 0, 10), new Recording());
 
@@ -125,7 +126,8 @@ class TikaDocumentStructureTest {
         assertThat(limited.outcome().reason()).contains(StatusReason.MEMORY_LIMIT);
         assertThat(tooLarge.outcome().status()).isEqualTo(ExtractionStatus.EXCLUDED);
         assertThat(tooLarge.outcome().reason()).contains(StatusReason.TOO_LARGE);
-        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("message/rfc822")).isEqualTo(20L * 1024 * 1024);
+        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("application/vnd.ms-outlook")).isEqualTo(20L * 1024 * 1024);
+        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("message/rfc822")).as("Nachweis in largeFileTest").isZero();
         assertThat(ExtractionLimits.DEFAULTS.memoryLimit("application/pdf")).isZero();
     }
 
@@ -226,6 +228,75 @@ class TikaDocumentStructureTest {
     }
 
     @Test
+    void aPartEndsAtItsOwnTotalLimitTheContainerAndTheNextPartGoOn() throws Exception {
+        Path file = Files.writeString(directory.resolve("w.txt"), "wurzel");
+        Parser parts = new Parser() {
+            @Override
+            public Set<MediaType> getSupportedTypes(ParseContext context) {
+                return Set.of(MediaType.TEXT_PLAIN);
+            }
+
+            @Override
+            public void parse(InputStream stream, ContentHandler handler, Metadata metadata, ParseContext context)
+                    throws org.xml.sax.SAXException, java.io.IOException {
+                String content = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                handler.startDocument();
+                if (content.equals("wurzel")) {
+                    paragraph(handler, "Text der Wurzel");
+                    var extractor = context.get(org.apache.tika.extractor.EmbeddedDocumentExtractor.class);
+                    for (String name : List.of("langsam", "schnell")) {
+                        Metadata part = new Metadata();
+                        part.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, name + ".txt");
+                        part.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RESOURCE_TYPE, "ATTACHMENT");
+                        extractor.parseEmbedded(new java.io.ByteArrayInputStream(
+                                name.getBytes(java.nio.charset.StandardCharsets.UTF_8)), handler, part, true);
+                    }
+                    paragraph(handler, "Ende der Wurzel");
+                } else if (content.equals("langsam")) {
+                    // Fortschritt alle 50 ms, also nie die Grenze ohne Fortschritt, aber über der Gesamtgrenze.
+                    for (int i = 0; i < 40; i++) {
+                        paragraph(handler, "Stück " + i);
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                } else {
+                    paragraph(handler, "schnell gelesen");
+                }
+                handler.endDocument();
+            }
+
+            private void paragraph(ContentHandler handler, String text) throws org.xml.sax.SAXException {
+                handler.startElement("", "p", "p", new org.xml.sax.helpers.AttributesImpl());
+                characters(handler, text);
+                handler.endElement("", "p", "p");
+            }
+        };
+        TikaDocumentStructure reading = new TikaDocumentStructure(1, 1_000, parts);
+        ExtractionLimits total = new ExtractionLimits(0, 0, 0, 0, 0, 0, 10, 10_000, Duration.ofMillis(400),
+                Duration.ofMillis(500), 0, 1, Map.of());
+        Recording sink = new Recording();
+
+        StructuredDocument result = reading.extract(file, "w.txt", "text/plain", total, sink);
+
+        assertThat(result.outcome().status()).as("die Zeit im Teil zählt nicht zur Wurzel")
+                .isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.text()).contains("Text der Wurzel", "Ende der Wurzel");
+        EmbeddedEntry slow = result.directory().stream()
+                .filter(e -> e.displayName().filter("langsam.txt"::equals).isPresent()).findFirst().orElseThrow();
+        assertThat(slow.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
+        assertThat(slow.outcome().reason()).contains(StatusReason.TIMEOUT);
+        assertThat(sink.partText("langsam.txt")).contains("Stück 0").doesNotContain("Stück 39");
+        EmbeddedEntry fast = result.directory().stream()
+                .filter(e -> e.displayName().filter("schnell.txt"::equals).isPresent()).findFirst().orElseThrow();
+        assertThat(fast.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.partText("schnell.txt")).contains("schnell gelesen");
+    }
+
+    @Test
     void textOfAnOpenParagraphSurvivesAParserFailure() throws Exception {
         Path file = Files.writeString(directory.resolve("f.txt"), "egal");
         TikaDocumentStructure failing = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
@@ -270,6 +341,45 @@ class TikaDocumentStructureTest {
         assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.OK);
         assertThat(sink.blocks).allSatisfy(block -> assertThat(block.chars()).isLessThanOrEqualTo(100));
         assertThat(sink.text()).contains("Anfang", "Ende", "Zelle");
+    }
+
+    @Test
+    void onlyTheGeneratedOutlookHeaderLeavesTheTextHeadingsAndListsOfTheBodyStay() throws Exception {
+        Path file = Files.writeString(directory.resolve("o.msg"), "egal");
+        org.xml.sax.helpers.AttributesImpl none = new org.xml.sax.helpers.AttributesImpl();
+        TikaDocumentStructure outlook = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            metadata.set(Metadata.CONTENT_TYPE, "application/vnd.ms-outlook");
+            metadata.set(org.apache.tika.metadata.TikaCoreProperties.TITLE, "Betreff");
+            for (String[] element : new String[][]{{"h1", "Betreff"}, {"dl", null}, {"dt", "From"}, {"dd", "A"},
+                    {"/dl", null}, {"h1", "Überschrift im Inhalt"}, {"dl", null}, {"dt", "Begriff"},
+                    {"dd", "Erklärung"}, {"/dl", null}}) {
+                if (element[0].startsWith("/")) {
+                    handler.endElement("", element[0].substring(1), element[0].substring(1));
+                } else if (element[1] == null) {
+                    handler.startElement("", element[0], element[0], none);
+                } else {
+                    handler.startElement("", element[0], element[0], none);
+                    characters(handler, element[1]);
+                    handler.endElement("", element[0], element[0]);
+                }
+            }
+        }));
+        Recording sink = new Recording();
+
+        outlook.extract(file, "o.msg", "application/vnd.ms-outlook", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(sink.text()).doesNotContain("From").startsWith("Überschrift im Inhalt")
+                .contains("Begriff", "Erklärung");
+
+        Recording noSubject = new Recording();
+        new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            metadata.set(Metadata.CONTENT_TYPE, "application/vnd.ms-outlook");
+            handler.startElement("", "h1", "h1", none);
+            characters(handler, "Kapitel 1");
+            handler.endElement("", "h1", "h1");
+        })).extract(file, "o.msg", "application/vnd.ms-outlook", ExtractionLimits.DEFAULTS, noSubject);
+
+        assertThat(noSubject.text()).as("ohne Betreff bleibt die Überschrift").isEqualTo("Kapitel 1");
     }
 
     @Test
@@ -574,7 +684,15 @@ class TikaDocumentStructureTest {
         @Override
         public PartSink part(EmbeddedEntry entry) {
             entries.add(entry);
-            return block -> partChars += block.chars();
+            return block -> {
+                partChars += block.chars();
+                String text = DocumentExtractions.plain(block);
+                for (String mark : marks) {
+                    if (text.contains(mark)) {
+                        found.add(mark);
+                    }
+                }
+            };
         }
     }
 

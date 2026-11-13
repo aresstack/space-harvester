@@ -394,7 +394,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s5`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s6`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -445,7 +445,7 @@ Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablege
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s5`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s6`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
@@ -466,11 +466,18 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | PDF (`application/pdf`) | keine | PDF über 300 MiB mit Bildern, PDF mit 4 000 Textseiten |
 | Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
 | Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
-| alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
+| Mail (`.eml`, `message/rfc822`) | keine | Mail mit PDF-Anhang über 300 MiB und weiterem Anhang |
+| alle übrigen (Outlook `.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – |
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein
 Teil über seiner Schranke wird `EXCLUDED`/`memory-limit`, die übrigen Teile werden gelesen.
+
+Mails (`.eml`): Tikas Mail-Parser kopiert von sich aus jeden Teil der ersten Ebene in ein Byte-Array. Er ist deshalb so
+eingestellt, dass er alle Teile als Strom durchreicht (`extractAllAlternatives`); Anhänge gehen zählend in eine
+temporäre Datei. Namenlose Textteile (`text/plain`, `text/html` ohne `attachment`) ordnet der Adapter selbst der Mail
+zu: Sie bekommen keine Position, von Alternativen zählt die beste (HTML vor Text, bei Gleichstand die spätere), und der
+angegebene Zeichensatz gilt.
 
 ## Einen Adapter ergänzen
 
