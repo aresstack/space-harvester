@@ -197,6 +197,10 @@ public final class PageDetailPanel extends JPanel {
     private boolean readingLoaded;
     private boolean referencesLoaded;
     private boolean imagesLoaded;
+    /** Anmeldung bei der Liste freigegebener Seiten (ADR 0028), damit „Bilder“ eine neue Freigabe der Seite zeigt. */
+    private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
+            com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+    private AppRuntime releaseRuntime;
     private final ReadingPane readingPane = new ReadingPane();
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
@@ -1315,11 +1319,13 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || page == null || imagesLoaded) {
             return;
         }
+        watchReleases(runtime);
         imagesLoaded = true;
         images.loading();
         String source = sourceId;
         DeliveredPage shown = page;
-        Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
+        Background.run(() -> imageRows(runtime, source, shown.snapshot().key().pageId(),
+                runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
                 images.released(found.released());
@@ -1348,7 +1354,7 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
-        Background.run(() -> imageRows(runtime, source, once ? runtime.workspace().describeImagesOnce(source, id)
+        Background.run(() -> imageRows(runtime, source, id, once ? runtime.workspace().describeImagesOnce(source, id)
                 : runtime.workspace().describeImages(source, id)), found -> {
             // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
             images.describing(false);
@@ -1394,8 +1400,33 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /**
+     * Meldet sich je Laufzeit einmal bei der Liste freigegebener Seiten an: Kommt die gezeigte Seite dazu oder geht sie
+     * weg (etwa durch Senden im Chat), gilt der geladene Stand der Bilder nicht mehr; ist „Bilder“ offen, lädt er neu.
+     */
+    private void watchReleases(AppRuntime runtime) {
+        if (runtime == releaseRuntime) {
+            return;
+        }
+        releaseSubscription.close();
+        releaseRuntime = runtime;
+        releaseSubscription = runtime.workspace().subscribePageReleases(change -> {
+            boolean mine = java.util.stream.Stream.concat(change.added().stream(), change.removed().stream())
+                    .anyMatch(entry -> entry.key().sourceId().equals(sourceId)
+                            && entry.key().pageId().equals(pageId));
+            if (mine) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    imagesLoaded = false;
+                    if (IMAGES.equals(selectedTab())) {
+                        loadImages();
+                    }
+                });
+            }
+        });
+    }
+
     /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
-    private static ImageRows imageRows(AppRuntime runtime, String sourceId, PageImages found) {
+    private static ImageRows imageRows(AppRuntime runtime, String sourceId, String pageId, PageImages found) {
         List<ImagesTab.Image> rows = new ArrayList<>();
         java.util.Map<String, String> versions;
         try {
@@ -1413,7 +1444,8 @@ public final class PageDetailPanel extends JPanel {
                     entry.reason(), preview));
         }
         return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
-                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId));
+                // Freigegeben ist die Quelle oder die Seite selbst (Liste freigegebener Seiten, ADR 0028).
+                List.copyOf(rows), found.describedCount(), runtime.workspace().imagesReleased(sourceId, pageId));
     }
 
     /**
