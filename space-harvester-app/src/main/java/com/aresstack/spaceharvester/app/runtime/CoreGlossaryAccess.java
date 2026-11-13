@@ -154,6 +154,18 @@ final class CoreGlossaryAccess implements GlossaryAccess {
         return harvester.glossary().subscribe(onChange);
     }
 
+    @Override
+    public Runnable observeJobs(java.util.function.Consumer<JobStatus> onChange) {
+        com.aresstack.spaceharvester.application.observe.Subscription subscription = jobs().subscribe(
+                Harvester.OWNER, new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        onChange.accept(status);
+                    }
+                });
+        return subscription::close;
+    }
+
     private Jobs jobs() {
         return harvester.jobs();
     }

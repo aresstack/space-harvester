@@ -22,7 +22,9 @@ import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
-import javax.swing.Timer;
+import javax.swing.SwingUtilities;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
@@ -122,7 +124,10 @@ public final class StatusView implements View {
     final ComposerButton delete = Comic.button("Löschen", "Das gewählte Ereignis aus dem Protokoll löschen");
     final ComposerButton clean = Comic.button("Protokoll bereinigen …",
             "Ereignisse beendeter Aufträge vor einem Zeitpunkt löschen");
-    private final Timer timer = new Timer(3000, e -> load());
+    /** Anmeldung bei den Aufträgen, solange die Ansicht zu sehen ist (ADR 0027, kein Zeitgeber). */
+    private Subscription subscription = Subscription.NONE;
+    private AppRuntime subscribed;
+    private boolean loadPending;
     /** Ausgeblendete Verbindungsprüfungen (Quelle und Zeitpunkt); sie stehen nirgends sonst, nur in dieser Sitzung. */
     private final java.util.Set<String> hiddenChecks = new java.util.HashSet<>();
     private Instant checksBefore = Instant.MIN;
@@ -266,6 +271,17 @@ public final class StatusView implements View {
         welcome = Comic.column(welcomePlate(), welcomeAttention);
         root.add(dashboard, BorderLayout.CENTER);
         context.onChange(ignored -> render());
+        root.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) == 0) {
+                return;
+            }
+            if (root.isShowing()) {
+                subscribe();
+                scheduleLoad();
+            } else {
+                unsubscribe();
+            }
+        });
         render();
         showJob(null);
     }
@@ -279,7 +295,53 @@ public final class StatusView implements View {
     public void shown() {
         render();
         load();
-        timer.start();
+    }
+
+    /** Erst anmelden, dann lesen: jedes neue Diagnoseereignis lädt die Liste einmal gebündelt neu. */
+    private void subscribe() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == subscribed) {
+            return;
+        }
+        unsubscribe();
+        subscribed = runtime;
+        if (runtime == null) {
+            return;
+        }
+        subscription = runtime.workspace().subscribeJobs(new JobListener() {
+            @Override
+            public void changed(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+            }
+
+            @Override
+            public void event(JobEvent event) {
+                scheduleLoad();
+            }
+        });
+    }
+
+    private void unsubscribe() {
+        subscription.close();
+        subscription = Subscription.NONE;
+        subscribed = null;
+    }
+
+    /** Vom Zustell-Thread des Core: einmal auf dem EDT laden, auch bei vielen Ereignissen hintereinander. */
+    private void scheduleLoad() {
+        synchronized (this) {
+            if (loadPending) {
+                return;
+            }
+            loadPending = true;
+        }
+        SwingUtilities.invokeLater(() -> {
+            synchronized (this) {
+                loadPending = false;
+            }
+            if (root.isShowing()) {
+                load();
+            }
+        });
     }
 
     /** Zeigt die Diagnose genau eines Auftrags, z. B. aus Aufträge; {@code null} zeigt wieder alle. */
@@ -404,6 +466,9 @@ public final class StatusView implements View {
     // ------------------------------------------------------------------ Laden
 
     private void load() {
+        if (root.isShowing()) {
+            subscribe();
+        }
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             loaded = List.of();
@@ -431,9 +496,6 @@ public final class StatusView implements View {
                     feedback.problem(error);
                     apply();
                 });
-        if (!root.isShowing()) {
-            timer.stop();
-        }
     }
 
     /** Die letzte Verbindungsprüfung je Quelle als Eintrag; Fehler mit Code und technischem Befund. */
