@@ -225,7 +225,7 @@ kommen mit deren Umsetzung dazu.
 | `idle-timeout` / `total-timeout` | `30s` / `30m` | Laufzeit ohne Fortschritt / insgesamt je Dokument (`timeout`) |
 | `temp-space-reserve` | `1GB` | Freier Platz für temporäre Dateien (`temp-space-low`) |
 | `parallel` | `2` | Gleichzeitige Läufe |
-| `memory-limits` | `*`: `20MB`; PDF, `.docx`, `.xlsx`: `0` | Liste aus `type` (Medientyp oder `*`) und `limit`; Einträge ersetzen nur den genannten Typ (`memory-limit`, `EXCLUDED`) |
+| `memory-limits` | `*`: `20MB`; PDF, `.docx`, `.xlsx`, `.eml`: `0` | Liste aus `type` (Medientyp oder `*`) und `limit`; Einträge ersetzen nur den genannten Typ (`memory-limit`, `EXCLUDED`) |
 
 ```yaml
 space-harvester:

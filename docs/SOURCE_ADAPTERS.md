@@ -466,7 +466,8 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | PDF (`application/pdf`) | keine | PDF über 300 MiB mit Bildern, PDF mit 4 000 Textseiten |
 | Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
 | Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
-| alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
+| Mail (`.eml`, `message/rfc822`) | keine | Mail mit PDF-Anhang über 300 MiB und weiterem Anhang |
+| alle übrigen (Outlook `.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – |
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein

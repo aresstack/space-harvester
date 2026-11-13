@@ -44,7 +44,9 @@ public record ExtractionLimits(long maxFileBytes, long maxChars, long unpackRati
             ANY_TYPE, 20 * MIB,
             "application/pdf", 0L,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 0L,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 0L);
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 0L,
+            // Mail mit Anhang über 300 MiB bei 256 MiB Heap (AP7a): Anhänge laufen als Strom über eine temporäre Datei.
+            "message/rfc822", 0L);
 
     /** Die vorgeschlagenen Standardwerte der ADR. */
     public static final ExtractionLimits DEFAULTS = new ExtractionLimits(0, 0, 100, 100 * MIB, 100, 1_000_000, 10,

@@ -117,7 +117,8 @@ class TikaDocumentStructureTest {
         Path mail = Files.writeString(directory.resolve("m.eml"), "Subject: x\r\n\r\n" + "Text ".repeat(100));
         ExtractionLimits small = limits(Map.of(ExtractionLimits.ANY_TYPE, 100L), 0, 0);
 
-        StructuredDocument limited = structure.extract(mail, "m.eml", "message/rfc822", small, new Recording());
+        StructuredDocument limited = structure.extract(mail, "m.msg", "application/vnd.ms-outlook", small,
+                new Recording());
         StructuredDocument tooLarge = structure.extract(mail, "m.eml", "message/rfc822",
                 limits(Map.of(), 0, 10), new Recording());
 
@@ -125,7 +126,8 @@ class TikaDocumentStructureTest {
         assertThat(limited.outcome().reason()).contains(StatusReason.MEMORY_LIMIT);
         assertThat(tooLarge.outcome().status()).isEqualTo(ExtractionStatus.EXCLUDED);
         assertThat(tooLarge.outcome().reason()).contains(StatusReason.TOO_LARGE);
-        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("message/rfc822")).isEqualTo(20L * 1024 * 1024);
+        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("application/vnd.ms-outlook")).isEqualTo(20L * 1024 * 1024);
+        assertThat(ExtractionLimits.DEFAULTS.memoryLimit("message/rfc822")).as("Nachweis in largeFileTest").isZero();
         assertThat(ExtractionLimits.DEFAULTS.memoryLimit("application/pdf")).isZero();
     }
 
@@ -643,7 +645,15 @@ class TikaDocumentStructureTest {
         @Override
         public PartSink part(EmbeddedEntry entry) {
             entries.add(entry);
-            return block -> partChars += block.chars();
+            return block -> {
+                partChars += block.chars();
+                String text = DocumentExtractions.plain(block);
+                for (String mark : marks) {
+                    if (text.contains(mark)) {
+                        found.add(mark);
+                    }
+                }
+            };
         }
     }
 
