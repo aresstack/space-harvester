@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -70,6 +71,33 @@ class KnowledgeGraphExportUseCaseTest {
         String text = doc.toString();
         assertThat(text).contains("sh:Statement").contains("sh:Mention").contains("prov:wasDerivedFrom")
                 .contains("Sachbearbeiter").doesNotContain("Buchhaltung");
+    }
+
+    @Test
+    void anAttachmentIsExportedAsItsOwnDocumentWithSeparateIdentifiers() throws Exception {
+        // ADR 0026, Punkt 10 und Schlüsselform Punkt 1 (AP9c)
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        DocumentKey attachment = DocumentKey.attachment(new PageKey("wiki", "1"), "42");
+        String input = "sha256:" + "e".repeat(64);
+        store.replace(new PageStatementAnalysis(attachment.page(), null, "Anhang", "sha256:" + "c".repeat(64), input,
+                parser.id(), parser.version(), java.time.Instant.parse("2026-11-13T12:00:00Z"),
+                parser.analyze(PageStatementAnalysis.documentId(attachment, input), "Die Buchhaltung prüft den Antrag.",
+                        () -> false), attachment));
+
+        // Ohne Lesetext des Anhangs gilt seine Analyse als veraltet; der Export nimmt Veraltete hier mit.
+        jobs.status(export.start(CALLER, new KnowledgeGraphExportUseCase.Request(new Scope.Page("wiki", "1"), true,
+                out)).id());
+        JsonNode doc = read();
+
+        assertThat(nodes(doc, "Document")).singleElement().satisfies(node -> {
+            assertThat(node.path("attachmentId").asString()).isEqualTo("42");
+            assertThat(node.has("partId")).isFalse();
+            assertThat(node.path("documentOf").toString()).contains("page:wiki:1");
+            assertThat(node.path("@id").asString()).contains(attachment.fileName());
+        });
+        assertThat(nodes(doc, "Mention")).extracting(node -> node.path("@id").asString())
+                .doesNotHaveDuplicates().anySatisfy(id -> assertThat(id).contains(attachment.fileName()));
+        assertThat(doc.toString()).contains("Buchhaltung").contains("Sachbearbeiter");
     }
 
     @Test

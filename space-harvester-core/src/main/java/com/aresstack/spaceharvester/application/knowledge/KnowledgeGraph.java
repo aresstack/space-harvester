@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -64,8 +65,24 @@ public class KnowledgeGraph {
      * @param title    Titel beim Analysieren
      * @param state    {@link PageStatements.State#CURRENT} oder {@link PageStatements.State#STALE}
      * @param reason   Grund bei {@link PageStatements.State#STALE}, sonst {@code null}
+     * @param document das analysierte Dokument (ADR 0026, Punkt 10): die Seite selbst, ein Anhang oder eine
+     *                 enthaltene Datei; {@link DocumentKey#page()} ist {@code key}
      */
-    public record PageRef(PageKey key, String spaceKey, String title, PageStatements.State state, String reason) {
+    public record PageRef(PageKey key, String spaceKey, String title, PageStatements.State state, String reason,
+                          DocumentKey document) {
+
+        public PageRef {
+            Objects.requireNonNull(key, "key");
+            document = document == null ? DocumentKey.page(key) : document;
+            if (!document.page().equals(key)) {
+                throw new IllegalArgumentException("Das Dokument gehört zu einer anderen Seite");
+            }
+        }
+
+        /** Die Seite selbst (wie vor ADR 0026). */
+        public PageRef(PageKey key, String spaceKey, String title, PageStatements.State state, String reason) {
+            this(key, spaceKey, title, state, reason, null);
+        }
     }
 
     /** Eine analysierte Seite mit ihrer Analyse und Projektion. */
@@ -145,6 +162,8 @@ public class KnowledgeGraph {
     private final Predicate<String> activeSources;
     /** Eingabe-Hash je Seite und Payload, damit nicht jede Abfrage jede Seite neu projiziert. */
     private final Map<PageKey, InputMemo> inputs = new ConcurrentHashMap<>();
+    /** {@code PageText#inputSha256()} eines Anhangs oder einer enthaltenen Datei; leer, solange keiner vorliegt. */
+    private final Function<DocumentKey, Optional<String>> documentInputs;
 
     /**
      * @param snapshots  Seite im Bestand; leer, wenn sie dort nicht (mehr) liegt
@@ -166,6 +185,20 @@ public class KnowledgeGraph {
                           Function<PageKey, Optional<PageSnapshot>> snapshots,
                           Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
                           TermExpansion expansions, Predicate<String> activeSources) {
+        this(store, access, snapshots, texts, statements, expansions, activeSources, document -> Optional.empty());
+    }
+
+    /**
+     * Wie oben, mit {@code documentInputs} für Anhänge und enthaltene Dateien (ADR 0026, Punkt 10): der Eingabe-Hash
+     * ihres Lesetexts, gegen den ihre Analysen als aktuell oder veraltet gelten. Ohne ihn gelten sie als veraltet
+     * ({@link PageStatements#NO_TEXT}), nie stillschweigend als aktuell.
+     */
+    public KnowledgeGraph(KnowledgeGraphStore store, AccessGuard access,
+                          Function<PageKey, Optional<PageSnapshot>> snapshots,
+                          Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
+                          TermExpansion expansions, Predicate<String> activeSources,
+                          Function<DocumentKey, Optional<String>> documentInputs) {
+        this.documentInputs = Objects.requireNonNull(documentInputs, "documentInputs");
         this.activeSources = Objects.requireNonNull(activeSources, "activeSources");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -175,7 +208,10 @@ public class KnowledgeGraph {
         this.expansions = Objects.requireNonNull(expansions, "expansions");
     }
 
-    /** Alle sichtbaren analysierten Seiten, nach Quelle und Seite geordnet. */
+    /**
+     * Alle sichtbaren analysierten Seiten, nach Quelle und Seite geordnet; Anhänge und enthaltene Dateien mit eigener
+     * Analyse folgen ihrer Seite ({@link PageRef#document()}).
+     */
     public List<PageRef> pages(AccessContext caller) {
         return visible(caller).stream().map(AnalysedPage::page).toList();
     }
@@ -190,7 +226,26 @@ public class KnowledgeGraph {
 
     /** Eine sichtbare analysierte Seite; leer ohne Analyse oder ohne Leserecht (nicht unterscheidbar). */
     public Optional<AnalysedPage> page(AccessContext caller, PageKey key) {
-        return store.find(key).flatMap(analysis -> visible(caller, analysis));
+        return page(caller, DocumentKey.page(key));
+    }
+
+    /**
+     * Ein sichtbares analysiertes Dokument: Seite, Anhang oder enthaltene Datei (ADR 0026, Punkt 10). Leer ohne Analyse
+     * oder ohne Leserecht auf die Seite (nicht unterscheidbar); ein Dokument hat die Rechte seiner Seite.
+     */
+    public Optional<AnalysedPage> page(AccessContext caller, DocumentKey document) {
+        return store.find(document).flatMap(analysis -> visible(caller, analysis));
+    }
+
+    /**
+     * Ein sichtbares analysiertes Dokument der Seite nach {@link DocumentKey#fileName()}, für Knoten-IDs, die nur
+     * diesen pfadsicheren Namen tragen ({@link PageStatementAnalysis#documentId(DocumentKey, String)}). Der Name wird nur
+     * verglichen, nie zerlegt.
+     */
+    Optional<AnalysedPage> document(AccessContext caller, PageKey key, String fileName) {
+        return store.documents().stream()
+                .filter(analysis -> analysis.key().equals(key) && analysis.document().fileName().equals(fileName))
+                .findFirst().flatMap(analysis -> visible(caller, analysis));
     }
 
     /**
@@ -257,7 +312,13 @@ public class KnowledgeGraph {
      * oder ohne Leserecht auf diese Seite. Je Begriff und Zielseite eine Verbindung.
      */
     public List<Link> links(AccessContext caller, PageKey key) {
-        Optional<AnalysedPage> origin = page(caller, key);
+        return links(caller, DocumentKey.page(key));
+    }
+
+    /** Wie oben für ein Dokument; Ziele sind alle anderen sichtbaren Dokumente, auch die derselben Seite. */
+    public List<Link> links(AccessContext caller, DocumentKey document) {
+        PageKey key = document.page();
+        Optional<AnalysedPage> origin = page(caller, document);
         if (origin.isEmpty()) {
             return List.of();
         }
@@ -286,7 +347,7 @@ public class KnowledgeGraph {
         });
         List<Link> links = new ArrayList<>();
         for (AnalysedPage target : visible(caller)) {
-            if (target.page().key().equals(key)) {
+            if (target.page().document().equals(document)) {
                 continue;
             }
             Map<String, List<String>> there = keys(target.analysis());
@@ -304,17 +365,20 @@ public class KnowledgeGraph {
     /**
      * Löscht alle gespeicherten Aussagenanalysen, die der Aufrufer lesen darf, über alle Quellen, auch abgeschaltete
      * und veraltete (Knopf „Alle Aussagen löschen“). Danach ist der Graph für ihn leer; neue Aussagen entstehen nur
-     * durch erneutes Analysieren auf Klick. Synchron; Seiten ohne Leserecht bleiben unberührt.
+     * durch erneutes Analysieren auf Klick. Synchron; Seiten ohne Leserecht bleiben unberührt. Analysen von Anhängen
+     * und enthaltenen Dateien gehen mit, sie haben die Rechte ihrer Seite.
      *
-     * @return Zahl der gelöschten Seiten
+     * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
      */
     public int deleteAll(AccessContext caller) {
         int deleted = 0;
-        for (PageStatementAnalysis analysis : store.all()) {
+        List<PageStatementAnalysis> all = new ArrayList<>(store.all());
+        all.addAll(store.documents());
+        for (PageStatementAnalysis analysis : all) {
             PageKey key = analysis.key();
             String spaceKey = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(analysis.spaceKey());
             if (access.canRead(caller, key.sourceId(), spaceKey, key.pageId())) {
-                store.remove(key);
+                store.removeDocument(analysis.document());
                 inputs.remove(key);
                 deleted++;
             }
@@ -332,8 +396,13 @@ public class KnowledgeGraph {
         for (PageStatementAnalysis analysis : store.all()) {
             visible(caller, analysis).ifPresent(pages::add);
         }
+        for (PageStatementAnalysis analysis : store.documents()) {
+            visible(caller, analysis).ifPresent(pages::add);
+        }
+        // Die Seite vor ihren Dokumenten: ihr Schlüssel ist ein Präfix der Schlüssel ihrer Dokumente.
         pages.sort(Comparator.comparing((AnalysedPage page) -> page.page().key().sourceId())
-                .thenComparing(page -> page.page().key().pageId()));
+                .thenComparing(page -> page.page().key().pageId())
+                .thenComparing(page -> page.page().document().value()));
         return pages;
     }
 
@@ -349,9 +418,11 @@ public class KnowledgeGraph {
             return Optional.empty();
         }
         String reason = snapshot.isEmpty() ? PageStatements.PAGE_MISSING
-                : statements.reason(analysis, input(snapshot.get()));
+                : statements.reason(analysis, analysis.ofDocument() ? documentInputs.apply(analysis.document())
+                : input(snapshot.get()));
         PageRef ref = new PageRef(key, spaceKey, analysis.title(),
-                reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason);
+                reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
+                analysis.document());
         return Optional.of(new AnalysedPage(ref, analysis));
     }
 
