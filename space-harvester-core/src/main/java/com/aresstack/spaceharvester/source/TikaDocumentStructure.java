@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s8";
+    public static final String VERSION = "3.3-s9";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -604,6 +604,15 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
         }
 
+        /** Dem Behälter fehlt ein Teil, das Auspacken geht weiter. */
+        private void partMissing(StatusReason reason) {
+            synchronized (this) {
+                if (missing == null) {
+                    missing = reason;
+                }
+            }
+        }
+
         private void endUnpacking(StatusReason reason) {
             synchronized (this) {
                 unpackingEnded = true;
@@ -879,8 +888,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
         /**
          * Ob ein Teil zum Dokument selbst gehört (ADR 0026, Punkt 13): zuerst Tikas Angabe am Teil ({@code INLINE},
-         * Makro, Vorschaubild gehören dazu, {@code ATTACHMENT} nicht); fehlt sie, gehören Bilder und Paketteile eines
-         * Office-Dokuments oder PDF dazu. Mails sind immer eigene Einträge, auch weitergeleitete ohne Dateinamen.
+         * Makro, Vorschaubild gehören dazu, {@code ATTACHMENT} nicht); fehlt sie, gehören nur Bilder eines
+         * Office-Dokuments oder PDF dazu. Eine eingebettete Datei (etwa eine Excel-Mappe oder ein PDF in Word) ist eine
+         * enthaltene Datei und wird ein Eintrag, auch mit Beziehungskennung. Mails sind immer eigene Einträge, auch
+         * weitergeleitete ohne Dateinamen.
          */
         private boolean belongsToDocument(Metadata metadata, Doc parent) {
             String declared = baseType(metadata.get(Metadata.CONTENT_TYPE));
@@ -898,8 +909,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     || parentType.startsWith("application/vnd.ms-word")
                     || parentType.startsWith("application/vnd.openxmlformats-officedocument.")
                     || parentType.startsWith("application/vnd.oasis.opendocument.");
-            return office && (declared.startsWith("image/")
-                    || metadata.get(TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID) != null);
+            return office && declared.startsWith("image/");
         }
 
         /** Schreibt den Teil zählend in eine temporäre Datei und liest ihn von dort als eigenes Dokument. */
@@ -1075,7 +1085,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     if (limits.unpackRatio() > 0 && unpacked > limits.unpackRatioFromBytes()
                             && unpacked > (size > Long.MAX_VALUE / limits.unpackRatio() ? Long.MAX_VALUE
                             : limits.unpackRatio() * size)) {
-                        endUnpacking(StatusReason.UNPACKED_TOO_LARGE);
+                        // Nur dieser Teil endet (ADR 0026, Abnahme 4): seine Bytes zählen nicht weiter, die
+                        // temporäre Datei fällt weg, die übrigen Teile werden gelesen; der Behälter ist PARTIAL.
+                        unpacked -= bytes;
+                        partMissing(StatusReason.UNPACKED_TOO_LARGE);
                         return new Spooled(null, bytes, Outcome.of(ExtractionStatus.FAILED,
                                 StatusReason.UNPACKED_TOO_LARGE));
                     }

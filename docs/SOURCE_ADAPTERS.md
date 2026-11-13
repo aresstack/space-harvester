@@ -398,7 +398,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s8`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s9`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -422,7 +422,8 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
 **Enthaltene Dateien (AP7a).** Ein eigener `EmbeddedDocumentExtractor` entscheidet je Teil, den Tika übergibt:
 
 - Zum Dokument gehört ein Teil, den Tika `INLINE` nennt (Bilder in Word, ausgenommen Mails), oder, ohne diese Angabe,
-  ein Bild oder Paketteil in einem Office-Dokument oder PDF. Er wird kein Eintrag und liefert seinen Text (meist
+  ein Bild in einem Office-Dokument oder PDF (eine eingebettete Datei wie eine Excel-Mappe in Word ist ein Eintrag,
+  auch mit Beziehungskennung). Er wird kein Eintrag und liefert seinen Text (meist
   keinen) in das Elterndokument. Textfassungen einer Mail (`multipart/alternative`) wählt Tika selbst; ihr Text steht
   genau einmal in der Mail.
 - Jeder andere Teil wird ein Eintrag im Verzeichnis (`StructuredDocument.directory`), auch defekt, leer, zu tief oder
@@ -432,7 +433,8 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   Der Zählerpfad zählt jeden übergebenen Teil, auch die, die zum Dokument gehören.
 - Grenzen je äußerem Behälter: Tiefe 10 (darüber Eintrag `EXCLUDED`/`too-deep`, nicht geöffnet), 10 000 Einträge
   (darüber keine weiteren; Behälter `PARTIAL`/`too-many-files`, das Auspacken endet), Verhältnis 100:1 ab 100 MiB
-  (Teil `FAILED`/`unpacked-too-large`, das Auspacken endet), Platzreserve (`FAILED`/`temp-space-low`). Je Teil gelten
+  (nur dieser Teil endet `FAILED`/`unpacked-too-large`, seine Bytes zählen nicht weiter, die übrigen Teile werden
+  gelesen, Behälter `PARTIAL`/`unpacked-too-large`), Platzreserve (`FAILED`/`temp-space-low`). Je Teil gelten
   Speicherschranke nach erkanntem und gemeldetem Typ (`EXCLUDED`/`memory-limit`), leere Datei (`EXCLUDED`/`empty`),
   Zeichengrenze und Gesamtlaufzeit; endet ein Teil an seiner Grenze, endet nur dieser Teil. Die Grenze ohne Fortschritt
   gilt für den ganzen Lauf (Behälter `PARTIAL`/`timeout`, gelesene Teile bleiben).
@@ -468,7 +470,7 @@ Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablege
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s8`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s9`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
