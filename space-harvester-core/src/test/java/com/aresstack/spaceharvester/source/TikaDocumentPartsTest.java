@@ -112,6 +112,14 @@ class TikaDocumentPartsTest {
         assertThat(entry(mail, "notiz.txt").parent()).contains(msg.id());
         assertThat(sink.partText("anlage.docx")).contains("MARKE-MSG-DOCX");
         assertThat(sink.partText("weiter.msg")).contains("MARKE-MSG-TEXT").doesNotContain("MARKE-MSG-DOCX");
+        assertThat(sink.partText("weiter.msg")).as("Kopfblock steht in den Kopfdaten, nicht im Text")
+                .doesNotContain("Abstimmung Wartung", "From", "Absender Test", "Empfaenger Test");
+        assertThat(sink.heads.entrySet()).filteredOn(e -> e.getKey().displayName().filter("weiter.msg"::equals)
+                .isPresent()).singleElement().satisfies(e -> {
+                    assertThat(e.getValue().subject()).contains("Abstimmung Wartung");
+                    assertThat(e.getValue().from()).contains("Absender Test");
+                    assertThat(e.getValue().to()).containsExactly("Empfaenger Test");
+                });
     }
 
     @Test

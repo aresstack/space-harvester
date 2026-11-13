@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s5";
+    public static final String VERSION = "3.3-s6";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -1031,6 +1031,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private int embedded;
                 private boolean entryTitle;
                 private boolean dropping;
+                /** Offene dl-Elemente des Kopfblocks einer Outlook-Mail (Von, An): Kopfdaten, kein Inhalt. */
+                private int headerList;
                 private boolean sheetTitle;
                 private boolean sheetHeading;
                 private int page;
@@ -1058,6 +1060,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                             ignored++;
                             return;
                         }
+                        if (name.equals("dl") && (headerList > 0 || outlookHeader())) {
+                            headerList++;
+                            ignored++;
+                            return;
+                        }
                         if (ignored > 0) {
                             return;
                         }
@@ -1073,6 +1080,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 headingLevel = name.charAt(1) - '0';
                                 if (entryTitle && name.equals("h1")) {
                                     // Name des Paketeintrags (etwa image1.png): von Tika, nicht aus der Quelle.
+                                    dropping = true;
+                                } else if (name.equals("h1") && outlookHeader()) {
+                                    // Betreff einer Outlook-Mail: steht in den Kopfdaten (ADR 0026, Punkte 3 und 7).
                                     dropping = true;
                                 } else if (sheetTitle && name.equals("h1")) {
                                     sheetHeading = true;
@@ -1119,6 +1129,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     String name = name(localName, qName);
                     synchronized (Reader.this) {
                         if (name.equals("head") || name.equals("script") || name.equals("style")) {
+                            ignored = Math.max(0, ignored - 1);
+                            return;
+                        }
+                        if (name.equals("dl") && headerList > 0) {
+                            headerList--;
                             ignored = Math.max(0, ignored - 1);
                             return;
                         }
@@ -1254,6 +1269,15 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
                 private boolean pdf() {
                     return "application/pdf".equals(detectedType());
+                }
+
+                    /**
+                 * Noch vor dem Inhalt einer Outlook-Mail: Tika schreibt dort Betreff ({@code h1}) und Von/An
+                 * ({@code dl}), die schon in den Kopfdaten stehen.
+                 */
+                private boolean outlookHeader() {
+                    return Doc.this.blocks == 0 && buffer.toString().isBlank() && embedded == 0
+                            && "application/vnd.ms-outlook".equals(detectedType());
                 }
 
                 private boolean legacyPowerPoint() {
