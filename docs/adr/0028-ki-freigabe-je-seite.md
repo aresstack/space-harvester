@@ -109,6 +109,12 @@ Startabgleich entscheidet je Quelle.
 - Liste gebündelt nach Quelle, Space und Knoten mit Anzahl, je Seite Titel aus dem Cache, Zeitpunkt und ob sie
   indexiert ist (Embedding vorhanden); Entfernen je Seite, Gruppe oder Space; Anzahl neuer Seiten einer Auswahl. Alles
   über `Workspace`, mit Meldung bei jeder Änderung.
+- Im Core `PageReleaseService` (über `Holdings.storedPages`), in der App `Workspace`: `releasePagesForChat` und
+  `newPageReleases` (Auswahl), `pageReleaseGroups` und `releasedPages` (Liste), `removePageReleases`,
+  `removePageReleaseGroup` und `removePageReleaseSpace` (Entfernen), `subscribePageReleases` (Meldungen) und
+  `imagesReleased(sourceId, pageId)` für den Reiter „Bilder“. Nur Seiten, die der Aufrufer sehen darf (`metadata` auf
+  die Seite, wie im Bestand), erscheinen, lassen sich entfernen und stehen in seinen Meldungen; den Titel eines Knotens
+  nennt die Liste nur, wenn er den Knoten sehen darf.
 - Die Tabelle unter Einstellungen › Sicherheit und die Statuszeile des Chats bauen die Oberflächen-Stränge.
 
 ### 7. Nicht Teil dieser Entscheidung

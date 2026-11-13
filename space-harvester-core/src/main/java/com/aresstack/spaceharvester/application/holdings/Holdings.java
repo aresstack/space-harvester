@@ -212,16 +212,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         HoldingCounts counts = HoldingCounts.ZERO;
         boolean complete = true;
         for (Selection.Root root : selection.roots()) {
-            List<String> spaceKeys;
-            if (root.spaceKey() == null) {
-                access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
-                requireSource(root.sourceId());
-                spaceKeys = catalog.spaceKeys(root.sourceId()).stream().filter(spaceKey -> access.permits(caller,
-                        ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)).toList();
-            } else {
-                spaceKeys = List.of(root.spaceKey());
-            }
-            for (String spaceKey : spaceKeys) {
+            for (String spaceKey : spaceKeys(caller, root)) {
                 Resolved resolved = resolve(caller, root.sourceId(), spaceKey, root.pageId());
                 spaces.putIfAbsent(new Space(root.sourceId(), spaceKey), resolved.summary());
                 complete &= resolved.summary().inventoried() && resolved.found();
@@ -234,6 +225,62 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
             }
         }
         return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
+    }
+
+    /** Die Spaces einer Wurzel: ihr eigener oder alle der Quelle, die der Aufrufer sehen darf. */
+    private List<String> spaceKeys(AccessContext caller, Selection.Root root) {
+        if (root.spaceKey() != null) {
+            return List.of(root.spaceKey());
+        }
+        access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
+        requireSource(root.sourceId());
+        return catalog.spaceKeys(root.sourceId()).stream().filter(spaceKey -> access.permits(caller,
+                ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)).toList();
+    }
+
+    /**
+     * Eine lokal gespeicherte Seite einer Auswahl.
+     *
+     * @param key        Quelle und Seite
+     * @param spaceKey   ihr Space
+     * @param rootPageId die Seite der Wurzel, über die sie zur Auswahl gehört, {@code null} für einen ganzen Space bzw.
+     *                   eine ganze Quelle
+     */
+    public record StoredPage(PageKey key, String spaceKey, String rootPageId) {
+
+        public StoredPage {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(spaceKey, "spaceKey");
+        }
+    }
+
+    /**
+     * Die lokal gespeicherten Seiten einer Auswahl (lokal oder veraltet, nie nur aus der Quelle bekannte oder
+     * gesperrte), je mit Space und der Wurzel, über die sie dazugehört; liegt eine Seite unter mehreren Wurzeln, gilt
+     * die erste. Für die Liste freigegebener Seiten (ADR 0028: der Chat trägt beim Senden nur Lokales ein). Wie
+     * {@link #resolve} ohne Quellenzugriff, Seiten ohne Leserecht fehlen.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
+     * @throws UnknownSourceException wie {@link #resolve}
+     */
+    public List<StoredPage> storedPages(AccessContext caller, Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        Set<PageKey> seen = new HashSet<>();
+        List<StoredPage> stored = new ArrayList<>();
+        for (Selection.Root root : selection.roots()) {
+            for (String spaceKey : spaceKeys(caller, root)) {
+                for (Map.Entry<String, HoldingState> page : resolve(caller, root.sourceId(), spaceKey, root.pageId())
+                        .pages().entrySet()) {
+                    HoldingState state = page.getValue();
+                    PageKey key = new PageKey(root.sourceId(), page.getKey());
+                    if ((state == HoldingState.LOCAL || state == HoldingState.OUTDATED) && seen.add(key)) {
+                        stored.add(new StoredPage(key, spaceKey, root.pageId()));
+                    }
+                }
+            }
+        }
+        return List.copyOf(stored);
     }
 
     /**

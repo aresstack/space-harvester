@@ -68,6 +68,8 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     private volatile boolean closed;
     private volatile Withdrawal withdrawal = pages -> {
     };
+    /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
+    private volatile Predicate<PageKey> pageReleases = key -> false;
     /** So viele Seiten gibt ein Lauf höchstens auf einmal an die {@link Withdrawal}. */
     static final int WITHDRAWAL_BATCH = 100;
 
@@ -101,6 +103,14 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     public interface Withdrawal {
 
         void withdrawn(List<PageSnapshot> pages);
+    }
+
+    /**
+     * Schließt die Liste freigegebener Seiten an (ADR 0028, Abschnitt 5): Der Abgleich beim Start behandelt eine Seite
+     * darauf wie eine Seite einer freigegebenen Quelle. Gefragt wird je Seite bei der Ausführung.
+     */
+    public void pageReleases(Predicate<PageKey> released) {
+        this.pageReleases = Objects.requireNonNull(released, "released");
     }
 
     /** Schließt die Rücknahme an; ohne sie bleibt außerhalb der Ergebnisse alles stehen. */
@@ -259,8 +269,9 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     }
 
     /**
-     * Gleicht beim Start einmal ab, ohne gespeicherten Freigabestand: Je Quelle gilt die Freigabe, wie
-     * {@code released} sie jetzt sieht, und nur Seiten, deren gespeicherte Ergebnisse nicht dazu passen, rechnen
+     * Gleicht beim Start einmal ab, ohne gespeicherten Freigabestand: Je Seite gilt die Freigabe, wie
+     * {@code released} sie jetzt für ihre Quelle sieht oder die Liste freigegebener Seiten für sie selbst
+     * ({@link #pageReleases}, ADR 0028), und nur Seiten, deren gespeicherte Ergebnisse nicht dazu passen, rechnen
      * erzwungen neu, und nur die Prozessoren, deren Ergebnis nicht passt, im selben Hintergrund wie die Läufe nach
      * einem Wechsel:
      *
@@ -326,7 +337,8 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
                         batch.clear();
                     }
                 }
-                List<String> due = onStart ? outdated(snapshot.key(), release, notApproved) : processorIds;
+                List<String> due = onStart ? outdated(snapshot.key(), release
+                        || pageReleases.test(snapshot.key()), notApproved) : processorIds;
                 if (due.isEmpty()) {
                     continue;
                 }

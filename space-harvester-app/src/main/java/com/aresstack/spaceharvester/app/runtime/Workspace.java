@@ -580,6 +580,14 @@ public final class Workspace {
     }
 
     /**
+     * Ob die Bilder dieser Seite an das Vision-Modell dürfen: ihre Quelle ist freigegeben oder sie steht auf der Liste
+     * freigegebener Seiten (ADR 0028).
+     */
+    public boolean imagesReleased(String sourceId, String pageId) {
+        return harvester.imageAnalysis().released(new PageKey(sourceId, pageId));
+    }
+
+    /**
      * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
      * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
      */
@@ -1228,6 +1236,70 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
             com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return harvester.holdings().resolve(caller, selection);
+    }
+
+    // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------
+
+    /**
+     * Trägt die lokal gespeicherten Seiten der links gewählten Auswahl in die Liste freigegebener Seiten ein, mit der
+     * Wurzel der Auswahl als Knoten; so beim Senden im Chat. Was nicht lokal ist, kommt nicht auf die Liste. Die
+     * KI-Auswertungen der neuen Seiten laufen danach im gedrosselten Hintergrund. Schreibt in die Ablage: nie auf dem
+     * EDT aufrufen.
+     *
+     * @return die neu eingetragenen Seiten
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.pageReleaseService().release(caller, selection);
+    }
+
+    /** Wie viele Seiten der Auswahl neu auf die Liste freigegebener Seiten kämen, für den Hinweis vor dem Senden. */
+    public int newPageReleases(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.pageReleaseService().newPages(caller, selection);
+    }
+
+    /**
+     * Die Liste freigegebener Seiten gebündelt nach Quelle, Space und Knoten, für die Tabelle unter Einstellungen ›
+     * Sicherheit. Einmal lesen, danach nur nach Meldungen von {@link #subscribePageReleases}.
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleaseService.Group> pageReleaseGroups() {
+        return harvester.pageReleaseService().groups(caller);
+    }
+
+    /**
+     * Die Seiten einer Gruppe mit Titel, Zeitpunkt und ob sie indexiert sind.
+     *
+     * @param node Seite des Knotens oder {@code null} für den ganzen Space
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleaseService.ReleasedPage> releasedPages(
+            String sourceId, String spaceKey, String node) {
+        return harvester.pageReleaseService().pages(caller, sourceId, spaceKey, node);
+    }
+
+    /** Entfernt Seiten von der Liste; ihre KI-Ergebnisse entfallen im Hintergrund. Nie auf dem EDT. */
+    public int removePageReleases(java.util.Collection<PageKey> pages) {
+        return harvester.pageReleaseService().remove(caller, pages).size();
+    }
+
+    /** Entfernt eine Gruppe der Liste ({@code node} wie bei {@link #releasedPages}). Nie auf dem EDT. */
+    public int removePageReleaseGroup(String sourceId, String spaceKey, String node) {
+        return harvester.pageReleaseService().removeGroup(caller, sourceId, spaceKey, node).size();
+    }
+
+    /** Entfernt alle Seiten eines Space von der Liste. Nie auf dem EDT. */
+    public int removePageReleaseSpace(String sourceId, String spaceKey) {
+        return harvester.pageReleaseService().removeSpace(caller, sourceId, spaceKey).size();
+    }
+
+    /**
+     * Meldet einen Empfänger für jede Änderung der Liste freigegebener Seiten an (ADR 0027): neu eingetragene und
+     * entfernte Seiten, die diese App sehen darf, nach dem Speichern, auf dem Thread, der die Liste änderte (nie über
+     * den EDT gereicht).
+     */
+    public Subscription subscribePageReleases(
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.release.PageReleases.Change>
+                    listener) {
+        return harvester.pageReleaseService().subscribe(caller, listener);
     }
 
     /**

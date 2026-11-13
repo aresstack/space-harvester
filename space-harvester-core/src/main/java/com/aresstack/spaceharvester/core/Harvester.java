@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
@@ -118,6 +119,7 @@ import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleaseService;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -286,6 +288,7 @@ public final class Harvester implements AutoCloseable {
     private final PageQueries pages;
     private final Holdings holdings;
     private final AiRelease aiRelease;
+    private final PageReleaseService pageReleaseService;
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
@@ -527,6 +530,8 @@ public final class Harvester implements AutoCloseable {
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
+                // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
+                recomputation.pageReleases(pageReleases::contains);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
                 // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
                 // Chat-Modell.
@@ -559,6 +564,10 @@ public final class Harvester implements AutoCloseable {
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
             opened.add(holdings);
             cache.changes(holdings);
+            // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
+            this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
+                    key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
+                            && found.status() == Enrichment.Status.OK), clock);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
@@ -1262,6 +1271,11 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Bestand je Space mit Zählern je Teilbaum und Meldungen bei jeder Änderung (ADR 0027). */
+    /** Die Liste freigegebener Seiten für die Oberfläche (ADR 0028): Eintragen, Liste, Entfernen. */
+    public PageReleaseService pageReleaseService() {
+        return pageReleaseService;
+    }
+
     public Holdings holdings() {
         return holdings;
     }
