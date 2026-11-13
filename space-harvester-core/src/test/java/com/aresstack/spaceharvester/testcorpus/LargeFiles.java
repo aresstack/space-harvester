@@ -227,6 +227,42 @@ public final class LargeFiles {
         }
     }
 
+    /**
+     * HTML mit Überschriften, Absätzen, Listen und Tabellen bis mindestens {@code bytes} Bytes, ohne umschließendes
+     * Element außer body, dazwischen ein langer Abschnitt nur aus span und br; erster und letzter Absatz Marken.
+     */
+    public static Path html(Path target, long bytes) {
+        try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {
+            Random random = new Random(SEED);
+            long written = write(out, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Gross</title>"
+                    + "</head><body><p>" + FIRST_MARK + "</p>\n");
+            for (long i = 1; written < bytes; i++) {
+                StringBuilder block = new StringBuilder();
+                if (i % 50 == 0) {
+                    block.append("<h2>Kapitel ").append(i).append("</h2>");
+                }
+                if (i % 20 == 0) {
+                    block.append("<table><tr><td>").append(line(random, 10)).append("</td><td>")
+                            .append(line(random, 10)).append("</td></tr></table>");
+                }
+                if (i % 30 == 0) {
+                    block.append("<ul><li>").append(line(random, 20)).append("</li></ul>");
+                }
+                if (written > bytes / 3 && written < bytes / 2) {
+                    // Ein Drittel bis zur Hälfte nur Inline-Text ohne Block: auch der bleibt nicht im Speicher.
+                    block.append("<span>").append(line(random, 100)).append("</span><br>\n");
+                } else {
+                    block.append("<p>").append(line(random, 100)).append("</p>\n");
+                }
+                written += write(out, block.toString());
+            }
+            write(out, "<p>" + LAST_MARK + "</p></body></html>\n");
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     /** CSV mit Kopfzeile und vier Spalten bis mindestens {@code bytes} Bytes; erste und letzte Datenzeile Marken. */
     public static Path csv(Path target, long bytes) {
         try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {

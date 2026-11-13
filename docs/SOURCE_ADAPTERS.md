@@ -557,8 +557,19 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | Text (`text/plain`), CSV (`text/csv`) | keine | je Datei über 300 MiB (AP3e) |
 | PowerPoint (`.pptx`) | keine | 310 Folien mit je einem Bild, über 300 MiB (AP3e) |
 | ZIP, GZIP, TAR | keine | je Hülle über 300 MiB mit einer Textdatei über 300 MiB (AP3e) |
-| HTML (`text/html`) | 20 MiB | gemessen (AP3e): Tikas `JSoupParser` baut den ganzen DOM-Baum, HTML über 300 MiB endet bei 256 MiB Heap mit `FAILED`/`memory-limit` |
+| HTML (`text/html`, `application/xhtml+xml`) | keine | HTML über 300 MiB (AP10): `HtmlStreamParser` liest als Strom statt Tikas DOM-Baum |
 | alle übrigen (Outlook `.msg`, `.pst`, alte Office-Formate `.doc`, `.xls`, `.ppt` …) | 20 MiB | benannte Grenze (ADR 0026, Nachtrag) |
+
+HTML als Strom (AP10): Statt Tikas `JSoupParser` liest `HtmlStreamParser` mit jsoups `StreamParser` (die Fassung, die
+Tika mitbringt) und gibt jedes Element in Dokumentreihenfolge an dieselbe Kette wie Tika (Tikas HTML-Abbildung, Titel,
+Kopfdaten, Verweise), danach verlässt es den Speicher. Er steht in derselben Tika-Konfiguration, gilt also auch für HTML
+in Archiven und als Mail-Anhang; der HTML-Textteil einer Mail bleibt Text der Mail. Schutzgrenzen, Status und Umfang
+wie bei jedem Tika-Lauf. An den HTML-Proben sind die Ereignisse gleich denen von Tika, auch bei kaputtem HTML. Einzige
+gewollte Abweichung: `data:`-Inhalte werden nicht als enthaltene Dateien gelesen und ergeben keinen Text; Skripte
+ergeben wie bisher keinen Text. Extraktor bleibt `tika`, die Version steigt (`3.3-s11`), „Neu lesen“ holt den Bestand
+nach. Der Strom nutzt zwei nicht öffentliche Tika-Klassen (`HtmlHandler`, `XHTMLDowngradeHandler`); ein Test prüft
+sie und ihre Konstruktoren, bei jeder Tika-Anhebung zu prüfen. Fehlen sie zur Laufzeit, liest wieder Tikas `JSoupParser`
+und für HTML gilt die Schranke `*` (20 MiB); das steht einmal mit dem Code `html-stream-unavailable` im Log.
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein

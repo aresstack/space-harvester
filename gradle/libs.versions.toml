@@ -74,6 +74,8 @@ commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
 java-libpst = { module = "com.pff:java-libpst", version.ref = "javaLibpst" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+# HTML als Strom (ADR 0026, AP10): Tikas HTML-Modul zum Übersetzen; jsoup kommt darüber in Tikas Fassung (StreamParser)
+tika-parser-html = { module = "org.apache.tika:tika-parser-html-module", version.ref = "tika" }
 tika-parsers-standard = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
 win-proxy-java = { module = "com.aresstack:win-proxy-java", version.ref = "winProxy" }
 win-trust-java = { module = "com.aresstack:win-trust-java", version.ref = "winTrust" }
