@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s11";
+    public static final String VERSION = "3.3-s12";
 
     /**
      * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
@@ -267,6 +267,22 @@ public final class TikaDocumentStructure implements DocumentStructure {
     private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                        StructureSink sink, PartRules rules, PartId.Content wanted,
                                        java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery) {
+        boolean[] broken = new boolean[1];
+        StructuredDocument first = extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery,
+                true, broken);
+        // Foliennummern ohne Beleg (Tika gab andere Folien aus als zugeordnet): Dieser Stand darf nicht gültig werden;
+        // verworfen und einmal ohne Zuordnung neu gelesen (Architekt 13.11.2026).
+        if (broken[0] && sink.restart()) {
+            return extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery, false,
+                    new boolean[1]);
+        }
+        return first;
+    }
+
+    private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                       StructureSink sink, PartRules rules, PartId.Content wanted,
+                                       java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery,
+                                       boolean slideOrder, boolean[] slideOrderBroken) {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
@@ -317,7 +333,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
             reader.wanted = wanted;
             reader.found = found;
             reader.delivery = delivery;
-            return run(reader, limits);
+            reader.slideOrder = slideOrder;
+            StructuredDocument result = run(reader, limits);
+            slideOrderBroken[0] = reader.slideOrderBroken;
+            return result;
         } finally {
             target.close();
         }
@@ -493,6 +512,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
+        /** Foliennummern bei .pptx zuordnen ({@link PptxSlideOrder}); aus beim zweiten Lauf. */
+        private boolean slideOrder = true;
+        /** Tika gab andere Folien aus als zugeordnet: Die Nummern dieses Laufs sind nicht belegt. */
+        private volatile boolean slideOrderBroken;
 
         Reader(AutoDetectParser tika, Path original, String title, String mediaType, long size,
                ExtractionLimits limits, StructureSink sink, BlockSink target, PartRules rules) {
@@ -543,6 +566,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 (parseWith == null ? tika : parseWith).parse(in, root.handler, metadata, context);
                 flushMailBody(root);
                 root.handler.flush();
+                root.handler.checkSlides();
                 outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
                         : missing != null ? root.partial(missing)
                         : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -1150,6 +1174,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     (parseWith == null ? tika : parseWith).parse(in, child.handler, metadata, context);
                     flushMailBody(child);
                     child.handler.flush();
+                    child.handler.checkSlides();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
                 } catch (Exception | LinkageError | OutOfMemoryError e) {
@@ -1498,6 +1523,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private boolean sheetHeading;
                 private int page;
                 private int slide;
+                /** Folien von Tika in einem .pptx bisher und ihre Nummern ({@link PptxSlideOrder}). */
+                private int slides;
+                private int[] slideNumbers;
                 private String sheet;
                 private int tables;
                 private final List<Block.Cell> cells = new ArrayList<>();
@@ -1735,9 +1763,15 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     } else if (cls.equals("page") && pdf()) {
                         page++;
                     } else if (cls.equals("slide") && legacyPowerPoint()) {
-                        // Nur .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit). Bei
-                        // .pptx stimmt die Reihenfolge nicht, dort bleibt die Folie leer (Architekt 13.11.2026).
+                        // .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit).
                         slide++;
+                    } else if ((cls.equals("slide-master") || cls.equals("slide-handout-master")) && powerPoint()) {
+                        // Folienmaster und Handzettelmaster gibt Tika nach allen Folien aus: gehören zu keiner Folie.
+                        slide = 0;
+                    } else if (cls.equals("slide-content") && powerPoint()) {
+                        // .pptx (AP10): Tika gibt die Folien nicht in Folienreihenfolge aus; die Nummer kommt aus
+                        // PptxSlideOrder, sonst bleibt sie leer. Notizen danach gehören zu dieser Folie.
+                        slide = nextSlide();
                     }
                     resetKind();
                 }
@@ -1765,6 +1799,44 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     outlookStage = 2;
                     return false;
+                }
+
+                private boolean powerPoint() {
+                    String type = detectedType();
+                    return type.startsWith("application/vnd.openxmlformats-officedocument.presentationml.")
+                            || type.startsWith("application/vnd.ms-powerpoint.presentation.macroenabled")
+                            || type.startsWith("application/vnd.ms-powerpoint.slideshow.macroenabled");
+                }
+
+                /** Die Foliennummer der nächsten Folie von Tika; 0, wenn die Zuordnung fehlt oder nicht mehr passt. */
+                private int nextSlide() {
+                    if (!slideOrder) {
+                        return 0;
+                    }
+                    if (slideNumbers == null) {
+                        TikaInputStream in = stream;
+                        Path file = null;
+                        try {
+                            file = in != null && in.hasFile() ? in.getPath() : null;
+                        } catch (IOException e) {
+                            file = null;
+                        }
+                        slideNumbers = PptxSlideOrder.of(file).orElse(new int[0]);
+                    }
+                    slides++;
+                    if (slides > slideNumbers.length) {
+                        // Mehr Folien als zugeordnet: auch die Nummern davor sind nicht belegt.
+                        slideOrderBroken |= slideNumbers.length > 0;
+                        return 0;
+                    }
+                    return slideNumbers[slides - 1];
+                }
+
+                /** Am Ende eines Dokuments: Weniger Folien als zugeordnet heißt, die Nummern sind nicht belegt. */
+                void checkSlides() {
+                    if (slideNumbers != null && slideNumbers.length > 0 && slides != slideNumbers.length) {
+                        slideOrderBroken = true;
+                    }
                 }
 
                 private boolean legacyPowerPoint() {
