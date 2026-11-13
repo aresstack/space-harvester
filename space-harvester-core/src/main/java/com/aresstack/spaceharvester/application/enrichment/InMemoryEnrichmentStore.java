@@ -55,6 +55,32 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
+    public synchronized List<Enrichment> findDocuments(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        List<Enrichment> found = new ArrayList<>();
+        documents.forEach((document, entries) -> {
+            if (document.page().equals(key)) {
+                found.addAll(entries.values());
+            }
+        });
+        return List.copyOf(found);
+    }
+
+    @Override
+    public synchronized void removeSection(DocumentKey document, int section) {
+        if (Objects.requireNonNull(document, "document").isPage()) {
+            throw new IllegalArgumentException("Seiten haben keine Abschnitte");
+        }
+        TreeMap<String, Enrichment> entries = documents.get(document);
+        if (entries != null) {
+            entries.values().removeIf(result -> result.section() == section);
+            if (entries.isEmpty()) {
+                documents.remove(document);
+            }
+        }
+    }
+
+    @Override
     public synchronized void removeDocument(DocumentKey document) {
         if (Objects.requireNonNull(document, "document").isPage()) {
             results.remove(document.page());
