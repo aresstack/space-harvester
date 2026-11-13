@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import java.awt.Component;
 import java.awt.Container;
 import java.nio.file.Files;
@@ -131,11 +133,16 @@ class SourcesViewTest {
         });
         assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen: " + why[0]).isTrue();
         await(() -> !context.runtime().workspace().jobs().isEmpty());
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()))
-                .as("Betriebsart der Quelle, hier die Vorgabe").allMatch(job -> "CATALOG_ONLY".equals(
-                        job.parameters().get("mode")));
+        // Der Core hängt an einen Abgleich eigene Folgeaufträge (Anreicherung) ohne Parameter; geprüft wird der
+        // Abgleich selbst, den die Kreispfeile gestartet haben.
+        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()));
+        List<JobStatus> syncs = context.runtime().workspace().jobs().stream()
+                .filter(job -> job.type() == JobType.SYNC).toList();
+        assertThat(syncs).hasSize(1);
+        assertThat(syncs.get(0).parameters()).as("Betriebsart der Quelle, hier die Vorgabe")
+                .containsEntry("mode", "CATALOG_ONLY");
         await(arrow::isEnabled);
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> job.state().terminal());
+        assertThat(context.runtime().workspace().job(syncs.get(0).id()).state().terminal()).isTrue();
     }
 
     @Test
