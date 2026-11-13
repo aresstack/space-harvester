@@ -154,6 +154,8 @@ class AttachmentTextApiTest {
         assertThat(body.get("text").asString()).contains("Quartalsplanung");
         assertThat(body.get("sha256").asString()).startsWith("sha256:");
         assertThat(body.get("truncated").asBoolean()).isFalse();
+        // Nur gelesen, nicht abgelegt: ohne strukturierte Extraktion kein Status (AP4a).
+        assertThat(body.get("status").isNull()).isTrue();
         // Ohne sync nicht abgelegt: ein zweiter Leser lädt erneut.
         send("/api/v1/sources/wiki/pages/101/assets/att7/text", READER_TOKEN);
         assertThat(downloads()).isEqualTo(before + 2);
@@ -165,6 +167,15 @@ class AttachmentTextApiTest {
         assertThat(again.statusCode()).isEqualTo(200);
         assertThat(json.readTree(again.body()).get("text").asString()).contains("Quartalsplanung");
         assertThat(downloads()).isEqualTo(before + 3);
+        // Abgelegt: Status, Grund und Umfang der Extraktion (ADR 0026, AP4a), auch für den Leser ohne sync.
+        for (HttpResponse<String> response : List.of(stored, again)) {
+            JsonNode extracted = json.readTree(response.body());
+            assertThat(extracted.get("status").asString()).isEqualTo("OK");
+            assertThat(extracted.get("reason").isNull()).isTrue();
+            assertThat(extracted.get("truncated").asBoolean()).isFalse();
+            assertThat(extracted.get("bytesRead").asLong()).isPositive();
+            assertThat(extracted.get("charsRead").asLong()).isPositive();
+        }
     }
 
     @Test

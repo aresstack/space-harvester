@@ -342,7 +342,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
   auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
   darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
-- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated`; Rechte wie
+- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
+  Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
+  (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle
+  auslassen musste; ein nur gelesener, nicht abgelegter Text (ohne `sync`) hat diese Felder leer. Rechte wie
   `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
   `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
 

@@ -42,7 +42,12 @@ class DocumentExtractionsTest {
         assertThat(text.truncated()).isFalse();
         assertThat(text.text()).startsWith(line + "\n\n" + line).endsWith(line);
         assertThat(text.extractor()).isEqualTo(structure.id());
-        assertThat(store.text(asset.sha256(), structure.id(), structure.version())).hasValue(text);
+        // Abgelegt wird der Text ohne Status; der Status steht in der Extraktion (AP4a).
+        assertThat(store.text(asset.sha256(), structure.id(), structure.version()))
+                .hasValue(new AssetText(text.sha256(), text.extractor(), text.version(), text.text(),
+                        text.truncated(), text.createdAt()));
+        assertThat(text.outcome()).hasValueSatisfying(outcome ->
+                assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK));
     }
 
     @Test
@@ -76,6 +81,12 @@ class DocumentExtractionsTest {
         AssetText text = extractions.text(shortened, store, NOW);
 
         assertThat(text.truncated()).isTrue();
+        // Der Text trägt den Status für REST (AP4a), mit dem, was die Quelle auslassen musste.
+        assertThat(text.outcome()).hasValueSatisfying(outcome -> {
+            assertThat(outcome.status()).isEqualTo(ExtractionStatus.PARTIAL);
+            assertThat(outcome.reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
+            assertThat(outcome.extent()).isPresent();
+        });
         assertThat(extractions.outcome(shortened)).hasValueSatisfying(outcome -> {
             assertThat(outcome.status()).isEqualTo(ExtractionStatus.PARTIAL);
             assertThat(outcome.reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
@@ -83,7 +94,12 @@ class DocumentExtractionsTest {
         });
         assertThat(extractions.outcome(complete)).hasValueSatisfying(outcome ->
                 assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK));
-        assertThat(extractions.text(complete, store, NOW).truncated()).isFalse();
+        AssetText completeText = extractions.text(complete, store, NOW);
+        assertThat(completeText.truncated()).isFalse();
+        assertThat(completeText.outcome()).hasValueSatisfying(outcome -> {
+            assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK);
+            assertThat(outcome.reason()).isEmpty();
+        });
         assertThat(store.find("wiki", "att2", "1")).hasValueSatisfying(asset ->
                 assertThat(asset.partsWithoutFile()).isEqualTo(2));
         assertThat(DocumentExtractions.withSource(Outcome.of(ExtractionStatus.FAILED, StatusReason.CORRUPT),
