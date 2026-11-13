@@ -18,7 +18,10 @@ import java.awt.geom.RoundRectangle2D;
  * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
  * Übernehmen (Haken), Verwerfen (Kreuz),
  * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen), Einpassen (Ecken), Tabelle (Raster),
- * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus), Puls (Diagnose). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
+ * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus), Puls (Diagnose).
+ * Bestandszeichen des Explorers wie bei OneDrive (Angelo, 13.11.2026): Wolke (nur in der Quelle), Haken im Kreis
+ * (lokal und aktuell), Kreispfeile (wird geladen), Warndreieck (veraltet), Schloss (gesperrt), voller, halber und
+ * leerer Kreis (Knoten mit Kindern, Spaces). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
  */
 public enum Glyph implements Icon {
 
@@ -27,7 +30,8 @@ public enum Glyph implements Icon {
     /** Stern-Umriss: kein Favorit bzw. „alle Knoten“; nachgezeichnet nach {@code SidebarIcons.star} des EAC. */
     STAR,
     /** Gelb gefüllter Stern: Favorit bzw. „nur Favoriten“. */
-    STAR_FILLED;
+    STAR_FILLED,
+    CLOUD, CHECK_CIRCLE, SYNC, WARNING, LOCK, CIRCLE_FULL, CIRCLE_HALF, CIRCLE_EMPTY;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -247,6 +251,63 @@ public enum Glyph implements Icon {
                         g.fill(new Ellipse2D.Double(cx - 1.4, 6.6, 2.8, 2.8));
                     }
                 }
+                case CLOUD -> {
+                    Path2D cloud = new Path2D.Double();
+                    cloud.moveTo(4.5, 12.5);
+                    cloud.lineTo(11.5, 12.5);
+                    cloud.curveTo(14.6, 12.5, 14.6, 7.8, 11.5, 7.8);
+                    cloud.curveTo(11.2, 4.2, 6.2, 3.6, 5.4, 7.2);
+                    cloud.curveTo(2.2, 7.2, 2.0, 12.5, 4.5, 12.5);
+                    cloud.closePath();
+                    g.draw(cloud);
+                }
+                case CHECK_CIRCLE -> {
+                    g.draw(new Ellipse2D.Double(1.5, 1.5, 13, 13));
+                    Path2D tick = new Path2D.Double();
+                    tick.moveTo(4.6, 8.3);
+                    tick.lineTo(7.1, 10.8);
+                    tick.lineTo(11.6, 5.6);
+                    g.draw(tick);
+                }
+                case SYNC -> {
+                    // Zwei Kreispfeile gegeneinander.
+                    g.draw(new Arc2D.Double(2.5, 2.5, 11, 11, 20, 140, Arc2D.OPEN));
+                    g.draw(new Arc2D.Double(2.5, 2.5, 11, 11, 200, 140, Arc2D.OPEN));
+                    Path2D top = new Path2D.Double();
+                    top.moveTo(1.6, 6.6);
+                    top.lineTo(2.9, 3.2);
+                    top.lineTo(6.0, 4.9);
+                    g.draw(top);
+                    Path2D bottom = new Path2D.Double();
+                    bottom.moveTo(14.4, 9.4);
+                    bottom.lineTo(13.1, 12.8);
+                    bottom.lineTo(10.0, 11.1);
+                    g.draw(bottom);
+                }
+                case WARNING -> {
+                    Path2D triangle = new Path2D.Double();
+                    triangle.moveTo(8, 2);
+                    triangle.lineTo(14.5, 13.5);
+                    triangle.lineTo(1.5, 13.5);
+                    triangle.closePath();
+                    g.draw(triangle);
+                    g.draw(new Line2D.Double(8, 6.2, 8, 9.4));
+                    g.fill(new Ellipse2D.Double(7.1, 10.6, 1.8, 1.8));
+                }
+                case LOCK -> {
+                    g.draw(new RoundRectangle2D.Double(3, 7, 10, 7.5, 2.5, 2.5));
+                    g.draw(new Arc2D.Double(5, 2, 6, 8, 0, 180, Arc2D.OPEN));
+                    g.fill(new Ellipse2D.Double(7.1, 9.8, 1.8, 1.8));
+                }
+                case CIRCLE_FULL -> {
+                    g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
+                    g.fill(new Ellipse2D.Double(4.3, 4.3, 7.4, 7.4));
+                }
+                case CIRCLE_HALF -> {
+                    g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
+                    g.fill(new Arc2D.Double(4.3, 4.3, 7.4, 7.4, 90, 180, Arc2D.PIE));
+                }
+                case CIRCLE_EMPTY -> g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
             }
         } finally {
             g.dispose();
