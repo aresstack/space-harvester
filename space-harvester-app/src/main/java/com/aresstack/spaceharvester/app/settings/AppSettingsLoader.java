@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -33,8 +34,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -202,7 +203,8 @@ public final class AppSettingsLoader {
         Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
-                maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont);
+                maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont,
+                extraction(map(get(map(get(root, "assets")), "extraction")), problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
@@ -893,6 +895,64 @@ public final class AppSettingsLoader {
         }
         try {
             return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            problems.add(key + " ist keine ganze Zahl: " + value);
+            return fallback;
+        }
+    }
+
+    /** Wie {@code ExtractionProperties} des Dienstes: {@code space-harvester.assets.extraction.*} (ADR 0026). */
+    private ExtractionLimits extraction(Map<?, ?> node, List<String> problems) {
+        ExtractionLimits d = ExtractionLimits.DEFAULTS;
+        String prefix = "space-harvester.assets.extraction.";
+        Map<String, Long> memory = new LinkedHashMap<>();
+        Object entries = get(node, "memory-limits");
+        if (entries instanceof List<?> list) {
+            for (Object item : list) {
+                Map<?, ?> entry = map(item);
+                String type = text(get(entry, "type"), problems);
+                Object limit = get(entry, "limit");
+                if (type == null || type.isBlank() || limit == null) {
+                    problems.add(prefix + "memory-limits braucht type und limit");
+                    continue;
+                }
+                memory.put(type.trim(), size(limit, 0, prefix + "memory-limits", problems));
+            }
+        } else if (entries != null) {
+            problems.add(prefix + "memory-limits muss eine Liste sein");
+        }
+        try {
+            return new ExtractionLimits(
+                    size(get(node, "max-file-size"), d.maxFileBytes(), prefix + "max-file-size", problems),
+                    longNumber(get(node, "max-chars"), d.maxChars(), prefix + "max-chars", problems),
+                    longNumber(get(node, "unpack-ratio"), d.unpackRatio(), prefix + "unpack-ratio", problems),
+                    size(get(node, "unpack-ratio-from"), d.unpackRatioFromBytes(), prefix + "unpack-ratio-from",
+                            problems),
+                    longNumber(get(node, "text-ratio"), d.textRatio(), prefix + "text-ratio", problems),
+                    longNumber(get(node, "text-ratio-from-chars"), d.textRatioFromChars(),
+                            prefix + "text-ratio-from-chars", problems),
+                    integer(get(node, "max-depth"), d.maxDepth(), prefix + "max-depth", problems),
+                    integer(get(node, "max-embedded-files"), d.maxEmbeddedFiles(), prefix + "max-embedded-files",
+                            problems),
+                    duration(get(node, "idle-timeout"), d.idleTimeout(), prefix + "idle-timeout", problems),
+                    duration(get(node, "total-timeout"), d.totalTimeout(), prefix + "total-timeout", problems),
+                    size(get(node, "temp-space-reserve"), d.tempSpaceReserve(), prefix + "temp-space-reserve",
+                            problems),
+                    integer(get(node, "parallel"), d.parallel(), prefix + "parallel", problems),
+                    ExtractionLimits.memoryLimits(memory));
+        } catch (IllegalArgumentException e) {
+            problems.add("space-harvester.assets.extraction: " + e.getMessage());
+            return d;
+        }
+    }
+
+    private long longNumber(Object raw, long fallback, String key, List<String> problems) {
+        String value = text(raw, problems);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value.trim());
         } catch (NumberFormatException e) {
             problems.add(key + " ist keine ganze Zahl: " + value);
             return fallback;

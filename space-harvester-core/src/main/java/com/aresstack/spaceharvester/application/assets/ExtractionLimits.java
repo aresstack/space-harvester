@@ -77,6 +77,20 @@ public record ExtractionLimits(long maxFileBytes, long maxChars, long unpackRati
         return limit != null ? limit : memoryLimits.getOrDefault(ANY_TYPE, 0L);
     }
 
+    /**
+     * Die Standard-Schranken mit den Einträgen der Konfiguration darüber (Medientyp ohne Parameter, klein geschrieben;
+     * {@code *} für alle übrigen); so bleiben die nachgewiesenen Formate ohne Schranke, wenn nur {@code *} geändert
+     * wird.
+     */
+    public static java.util.Map<String, Long> memoryLimits(java.util.Map<String, Long> overrides) {
+        java.util.Map<String, Long> merged = new java.util.HashMap<>(DEFAULT_MEMORY_LIMITS);
+        if (overrides != null) {
+            overrides.forEach((type, limit) -> merged.put(
+                    type.split(";", 2)[0].strip().toLowerCase(java.util.Locale.ROOT), limit));
+        }
+        return java.util.Map.copyOf(merged);
+    }
+
     /** Ob ein Wert die Grenze überschreitet; {@code 0} als Grenze heißt nie. */
     public static boolean exceeds(long value, long limit) {
         return limit > 0 && value > limit;

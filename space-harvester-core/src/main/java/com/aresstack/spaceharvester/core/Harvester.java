@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
@@ -724,8 +725,9 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
-            assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(),
-                    new FileSystemExtractionStore(builder.assetDirectory()), ExtractionLimits.DEFAULTS));
+            assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
+                    builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
+                    new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
@@ -1928,6 +1930,7 @@ public final class Harvester implements AutoCloseable {
         private Path assetDirectory;
         private long maxAssetBytes;
         private long largeAssetThresholdBytes = LargeFileGate.DEFAULT_THRESHOLD_BYTES;
+        private ExtractionLimits extractionLimits = ExtractionLimits.DEFAULTS;
         private int maxConcurrentLargeAssets = LargeFileGate.DEFAULT_MAX_CONCURRENT;
         private Duration signInWait = Duration.ZERO;
         private boolean changeEvents;
@@ -2139,6 +2142,15 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalArgumentException("maxAssetBytes darf nicht negativ sein");
             }
             this.maxAssetBytes = maxAssetBytes;
+            return this;
+        }
+
+        /**
+         * Schutzgrenzen beim Lesen von Dokumenten (ADR 0026, {@code space-harvester.assets.extraction.*}); Standard
+         * {@link ExtractionLimits#DEFAULTS}. {@code parallel} bestimmt die gleichzeitigen Läufe.
+         */
+        public Builder extractionLimits(ExtractionLimits extractionLimits) {
+            this.extractionLimits = Objects.requireNonNull(extractionLimits, "extractionLimits");
             return this;
         }
 

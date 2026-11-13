@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -268,16 +269,26 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param searchTimeout   Zeitgrenze einer Suche
      * @param maxTreeNodes    größter Seitenbaum
      * @param pdfFont         TrueType-Schrift für PDF-Exporte oder {@code null}
+     * @param extraction      Schutzgrenzen beim Lesen von Dokumenten ({@code assets.extraction.*}, ADR 0026)
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
-                          Path pdfFont) {
+                          Path pdfFont, ExtractionLimits extraction) {
 
         public Storage {
             Objects.requireNonNull(dataDirectory, "dataDirectory");
             Objects.requireNonNull(exportDirectory, "exportDirectory");
             Objects.requireNonNull(assetDirectory, "assetDirectory");
             Objects.requireNonNull(searchTimeout, "searchTimeout");
+            extraction = extraction == null ? ExtractionLimits.DEFAULTS : extraction;
+        }
+
+        /** Mit den Standardgrenzen der Extraktion. */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, ExtractionLimits.DEFAULTS);
         }
     }
 
