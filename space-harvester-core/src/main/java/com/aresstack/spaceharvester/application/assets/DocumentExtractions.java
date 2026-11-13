@@ -212,6 +212,34 @@ public final class DocumentExtractions {
         return text.result(asset, id(), version(), document.outcome(), now);
     }
 
+    /**
+     * Die Markdown-Ansicht eines abgelegten Dokuments ({@link MarkdownView}), fortlaufend aus den Abschnitten der
+     * Extraktion geschrieben, ohne Längengrenze: aus derselben Extraktion wie {@link #text}. Liest das Original nur,
+     * wenn noch keine Extraktion abgelegt ist.
+     *
+     * @return der Status der Extraktion ({@code PARTIAL}: die Ansicht ist gekürzt)
+     * @throws DocumentTextException wenn das Dokument keinen Text hat, wie bei {@link #text}
+     */
+    public Outcome markdown(Asset asset, AssetStore store, Appendable out) {
+        StoredExtraction extraction = extract(asset, store);
+        Outcome outcome = extraction.document().outcome();
+        Optional<Outcome> transientPart = transientFailure(extraction.document());
+        if (transientPart.isPresent()) {
+            throw failure(transientPart.get());
+        }
+        if (!usable(extraction.document(), extraction.chars())) {
+            throw failure(outcome);
+        }
+        MarkdownView view = new MarkdownView(out);
+        if (extraction.sections() > 0) {
+            try (Stream<TextSection> sections = extractions.sections(extraction.key())) {
+                sections.forEach(section -> section.blocks().forEach(view::accept));
+            }
+        }
+        view.finish();
+        return outcome;
+    }
+
     private static boolean usable(Outcome outcome) {
         return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
     }

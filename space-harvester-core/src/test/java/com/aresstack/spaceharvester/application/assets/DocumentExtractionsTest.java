@@ -141,6 +141,23 @@ class DocumentExtractionsTest {
     }
 
     @Test
+    void markdownComesFromTheSameExtractionAsTheText() {
+        Lines structure = new Lines();
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "eins *fett*\nzwei\n");
+        DocumentExtractions extractions = new DocumentExtractions(structure, new FileSystemExtractionStore(directory),
+                ExtractionLimits.DEFAULTS);
+        StringBuilder markdown = new StringBuilder();
+
+        extractions.text(asset, store, NOW);
+        Outcome outcome = extractions.markdown(asset, store, markdown);
+
+        assertThat(markdown).hasToString("eins \\*fett\\*\n\nzwei\n");
+        assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(structure.calls).as("einmal gelesen, zwei Ansichten").hasValue(1);
+    }
+
+    @Test
     void aDocumentWithoutTextIsStoredWithItsStatusAndNotReadAgain() {
         Lines structure = new Lines().ending(Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT));
         FileSystemAssetStore store = new FileSystemAssetStore(directory);
