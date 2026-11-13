@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -60,8 +61,14 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private final BooleanSupplier enabled;
     /** Gemeldete Anhänge nach {@link DocumentKey#value()}, in Meldereihenfolge; bewacht von {@code this}. */
     private final Map<String, Pending> pending = new LinkedHashMap<>();
-    /** Partitionen ({@code Quelle \0 Space}) mit eingeplantem Auftrag; bewacht von {@code this}. */
-    private final Set<String> scheduled = new HashSet<>();
+    /**
+     * Partitionen ({@code Quelle \0 Space}) mit dem zuletzt eingeplanten Auftrag; bewacht von {@code this}. Ob er noch
+     * wartet oder läuft, fragt {@link #alive} die Auftragsverwaltung: Ein vor dem Start abgebrochener Auftrag läuft nie
+     * und hält so keine spätere Meldung auf.
+     */
+    private final Map<String, String> scheduled = new HashMap<>();
+    /** Wie oft die Ergebnisse eines Anhangs entfernt wurden, nach {@link DocumentKey#value()}; bewacht von {@code this}. */
+    private final Map<String, Integer> removals = new HashMap<>();
 
     /**
      * @param jobs    Auftragsverwaltung oder {@code null}, dann im aufrufenden Thread
@@ -86,50 +93,68 @@ public final class DocumentEnrichments implements IndexedDocuments {
         Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
                 asset.sha256(), Objects.requireNonNull(extractions, "extractions"));
         String partition = partition(list.sourceId(), list.spaceKey());
+        String job;
         synchronized (this) {
             // Ein erneut gemeldeter Anhang rückt nach hinten und rechnet mit seinem neuesten Stand.
             pending.remove(item.attachment().value());
             pending.put(item.attachment().value(), item);
-            if (jobs != null && !scheduled.add(partition)) {
-                return;
-            }
+            job = scheduled.get(partition);
         }
         if (jobs == null) {
             drain(list.sourceId(), list.spaceKey(), null);
             return;
         }
+        if (job != null && alive(job)) {
+            return;
+        }
         try {
-            jobs.submit(JobType.ENRICHMENT, list.sourceId(), list.spaceKey(), null,
-                    JobTask.blocking(context -> run(list.sourceId(), list.spaceKey(), context)));
-        } catch (JobCapacityExceededException | IllegalStateException e) {
+            String id = jobs.submit(JobType.ENRICHMENT, list.sourceId(), list.spaceKey(), null,
+                    JobTask.blocking(context -> drain(list.sourceId(), list.spaceKey(), context))).id();
             synchronized (this) {
-                scheduled.remove(partition);
+                scheduled.put(partition, id);
             }
+        } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
                     + "Meldung holt sie nach", list.sourceId(), e.getClass().getSimpleName());
+        }
+    }
+
+    /** Ob der Auftrag noch wartet oder läuft; angehalten, beendet oder unbekannt zählt nicht. */
+    private boolean alive(String jobId) {
+        try {
+            return !jobs.status(jobId).state().terminal();
+        } catch (UnknownJobException e) {
+            return false;
         }
     }
 
     @Override
     public void retained(PageKey page, Set<String> attachmentIds) {
         Set<String> gone = new HashSet<>();
+        synchronized (this) {
+            // Gemeldete, aber entfernte Anhänge rechnen nicht mehr; ein laufender bemerkt es über removals.
+            Iterator<Pending> iterator = pending.values().iterator();
+            while (iterator.hasNext()) {
+                DocumentKey attachment = iterator.next().attachment();
+                if (attachment.page().equals(page) && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
+                    iterator.remove();
+                    removals.merge(attachment.value(), 1, Integer::sum);
+                }
+            }
+        }
         for (Enrichment enrichment : enrichments.store().findDocuments(page)) {
             enrichment.document().attachmentId().filter(id -> !attachmentIds.contains(id)).ifPresent(gone::add);
         }
         for (String attachmentId : gone) {
-            enrichments.store().removeDocument(DocumentKey.attachment(page, attachmentId));
+            DocumentKey attachment = DocumentKey.attachment(page, attachmentId);
+            synchronized (this) {
+                removals.merge(attachment.value(), 1, Integer::sum);
+            }
+            enrichments.store().removeDocument(attachment);
         }
         if (!gone.isEmpty()) {
             enrichments.flush();
         }
-    }
-
-    private void run(String sourceId, String spaceKey, JobContext context) {
-        synchronized (this) {
-            // Auch nach dem Fortsetzen eines angehaltenen Auftrags: weitere Meldungen warten auf diesen.
-            scheduled.add(partition(sourceId, spaceKey));
-        }
-        drain(sourceId, spaceKey, context);
     }
 
     /** Rechnet die gemeldeten Anhänge der Partition, bis keiner mehr wartet. */
@@ -142,6 +167,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
         try {
             Pending item;
             while ((item = take(sourceId, spaceKey, partition)) != null) {
+                int removed = removals(item);
                 try {
                     process(item, context);
                 } catch (JobCancelledException | JobFailedException e) {
@@ -153,6 +179,8 @@ public final class DocumentEnrichments implements IndexedDocuments {
                     // Ein Anhang, der sich nicht lesen oder ablegen lässt, hält die übrigen nicht auf.
                     LOG.log(System.Logger.Level.WARNING, "Analysen eines Anhangs in {0} übersprungen ({1})",
                             sourceId, e.getClass().getName());
+                } finally {
+                    forgetIfRemoved(item, removed);
                 }
             }
             finished = true;
@@ -183,6 +211,17 @@ public final class DocumentEnrichments implements IndexedDocuments {
 
     private synchronized void requeue(Pending item) {
         pending.putIfAbsent(item.attachment().value(), item);
+    }
+
+    private synchronized int removals(Pending item) {
+        return removals.getOrDefault(item.attachment().value(), 0);
+    }
+
+    /** Wurde der Anhang entfernt, während er rechnete, fällt auch das eben Gespeicherte wieder weg. */
+    private void forgetIfRemoved(Pending item, int before) {
+        if (removals(item) != before) {
+            enrichments.store().removeDocument(item.attachment());
+        }
     }
 
     private void process(Pending item, JobContext context) {

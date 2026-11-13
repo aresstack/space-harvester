@@ -16,6 +16,13 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
@@ -25,6 +32,7 @@ import com.aresstack.spaceharvester.testcorpus.Archives;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -68,9 +76,13 @@ class DocumentEnrichmentsTest {
     }
 
     private DocumentEnrichments documents(boolean enabled) {
+        return documents(enabled, null);
+    }
+
+    private DocumentEnrichments documents(boolean enabled, Jobs jobs) {
         Enrichments enrichments = new Enrichments(snapshot -> Optional.empty(),
                 List.of(new OutlineProcessor(), recording, pageOnly), results, Clock.fixed(NOW, ZoneOffset.UTC));
-        return new DocumentEnrichments(enrichments, null, () -> enabled);
+        return new DocumentEnrichments(enrichments, jobs, () -> enabled);
     }
 
     @Test
@@ -146,6 +158,43 @@ class DocumentEnrichmentsTest {
                 .isNotEqualTo(asset.sha256()));
 
         documents.retained(PAGE, Set.of("a2"));
+        assertThat(results.findDocuments(PAGE)).isEmpty();
+    }
+
+    @Test
+    void aJobCancelledBeforeItStartsDoesNotHoldUpLaterReports() {
+        List<Runnable> held = new ArrayList<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        // Belegt den einzigen Platz: der Auftrag der Anhänge wartet.
+        jobs.submit(JobType.EXPORT, "wiki", "DEV", null, JobTask.blocking(context -> { }));
+        DocumentEnrichments documents = documents(true, jobs);
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+
+        documents.indexed(list(), asset, extractions);
+        List<JobStatus> queued = jobs.list(null, JobType.ENRICHMENT);
+        assertThat(queued).singleElement().extracting(JobStatus::state).isEqualTo(JobState.QUEUED);
+        jobs.cancel(queued.getFirst().id());
+
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(jobs.list(null, JobType.ENRICHMENT)).extracting(JobStatus::state)
+                .containsExactlyInAnyOrder(JobState.CANCELLED, JobState.QUEUED);
+    }
+
+    @Test
+    void anAttachmentRemovedWhileQueuedIsNotComputedLater() {
+        List<Runnable> held = new ArrayList<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = documents(true, jobs);
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+        documents.indexed(list(), asset, extractions);
+
+        documents.retained(PAGE, Set.of());
+        new ArrayList<>(held).forEach(Runnable::run);
+
+        assertThat(recording.inputs).isEmpty();
         assertThat(results.findDocuments(PAGE)).isEmpty();
     }
 
