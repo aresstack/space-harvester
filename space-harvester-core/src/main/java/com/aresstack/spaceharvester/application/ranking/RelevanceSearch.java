@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -655,12 +656,16 @@ public class RelevanceSearch {
     private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, Set<String> excluded,
                                                SearchScope scope, SearchIndexState state,
                                                EmbeddingProcessor.Generation model, float[] vector) {
-        List<EmbeddingIndex.ChunkHit> chunks = vectors.nearest(scope.sourceIds(), model.version(), vector,
-                MAX_CHUNKS);
+        // Mit Seitenmenge (ADR 0029) sucht die Ablage nur unter ihren Stücken, sonst fielen die meisten Nachbarn weg.
+        PageSet within = query.pages();
+        List<EmbeddingIndex.ChunkHit> chunks = within == null
+                ? vectors.nearest(scope.sourceIds(), model.version(), vector, MAX_CHUNKS)
+                : vectors.nearest(scope.sourceIds(), model.version(), vector, MAX_CHUNKS, within);
         if (documents.getAsBoolean()) {
             // Getrennt gesucht, damit die Stücke der Seiten dieselben bleiben; zusammen nach Ähnlichkeit geordnet.
-            List<EmbeddingIndex.ChunkHit> fromDocuments = vectors.nearestDocuments(scope.sourceIds(),
-                    model.version(), vector, MAX_CHUNKS);
+            List<EmbeddingIndex.ChunkHit> fromDocuments = within == null
+                    ? vectors.nearestDocuments(scope.sourceIds(), model.version(), vector, MAX_CHUNKS)
+                    : vectors.nearestDocuments(scope.sourceIds(), model.version(), vector, MAX_CHUNKS, within);
             if (!fromDocuments.isEmpty()) {
                 List<EmbeddingIndex.ChunkHit> merged = new ArrayList<>(chunks);
                 merged.addAll(fromDocuments);

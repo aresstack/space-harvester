@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -241,6 +242,13 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         }
         for (String word : query.titleTerms()) {
             filter.add(term(PageCacheSchema.TITLE_WORD, word), BooleanClause.Occur.FILTER);
+        }
+        if (query.pages() != null) {
+            // Seite samt Unterseiten (ADR 0029): die IDs der Seitendokumente, vor Sortierung und Blättern.
+            List<BytesRef> ids = new ArrayList<>(query.pages().size());
+            query.pages().asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    ids.add(new BytesRef(PageCacheSchema.pageTerm(new PageKey(sourceId, pageId)).text()))));
+            filter.add(new TermInSetQuery(PageCacheSchema.ID, ids), BooleanClause.Occur.FILTER);
         }
         if (query.pageId() != null) {
             filter.add(term(PageCacheSchema.PAGE_ID, query.pageId()), BooleanClause.Occur.FILTER);

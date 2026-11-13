@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.terms;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -47,14 +48,20 @@ public interface TermIndex {
      * @param processorVersion nur Ergebnisse dieser Version des Prozessors {@code terms}
      * @param startsWith       nur der ganze Suchwert beginnt so (etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
      * @param origin           Seiten, Dokumente oder beides (ADR 0026, AP9b)
+     * @param pages            nur diese Seiten samt ihren Dokumenten (ADR 0029) oder {@code null} ohne diese Grenze
      */
     record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion,
-                  String startsWith, TermOrigin origin) {
+                  String startsWith, TermOrigin origin, PageSet pages) {
 
         public Filter {
             sourceIds = Set.copyOf(sourceIds);
             Objects.requireNonNull(processorVersion, "processorVersion");
             Objects.requireNonNull(origin, "origin");
+        }
+
+        public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
+                      String processorVersion, String startsWith, TermOrigin origin) {
+            this(sourceIds, kind, normalized, prefix, processorVersion, startsWith, origin, null);
         }
 
         /** Nur Seiten, wie vor AP9b. */
@@ -72,6 +79,7 @@ public interface TermIndex {
         /** Ob ein Eintrag die Auswahl erfüllt; für Ablagen ohne eigenen Index. */
         public boolean matches(TermPosting posting) {
             if (!sourceIds.contains(posting.page().sourceId()) || !origin.includes(posting.ofDocument())
+                    || pages != null && !pages.contains(posting.page())
                     || kind != null && posting.kind() != kind
                     || normalized != null && !posting.normalized().equals(normalized)
                     || !posting.processorVersion().equals(processorVersion)

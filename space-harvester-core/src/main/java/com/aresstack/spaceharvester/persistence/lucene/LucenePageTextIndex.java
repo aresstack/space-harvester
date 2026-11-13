@@ -2,10 +2,12 @@ package com.aresstack.spaceharvester.persistence.lucene;
 
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -413,6 +415,11 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
     @Override
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit) {
+        return search(text, sourceIds, spaces, null, limit);
+    }
+
+    @Override
+    public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within, int limit) {
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(spaces, "spaces");
@@ -421,12 +428,19 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         }
         requireOpen();
         List<String> terms = terms(text.length() > MAX_QUERY_LENGTH ? text.substring(0, MAX_QUERY_LENGTH) : text);
-        if (terms.isEmpty() || sourceIds.isEmpty()) {
+        if (terms.isEmpty() || sourceIds.isEmpty() || within != null && within.isEmpty()) {
             return List.of();
         }
         BooleanQuery.Builder query = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(SOURCE_ID, sourceIds.stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER);
+        if (within != null) {
+            // Seite samt Unterseiten (ADR 0029): vor der Rangfolge, Anhänge tragen das Seitenfeld ihrer Seite.
+            List<BytesRef> ids = new ArrayList<>(within.size());
+            within.asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    ids.add(new BytesRef(id(new PageKey(sourceId, pageId))))));
+            query.add(new TermInSetQuery(PAGE, ids), BooleanClause.Occur.FILTER);
+        }
         if (!spaces.only().isEmpty()) {
             query.add(new TermInSetQuery(SPACE_KEY, spaces.only().stream().map(BytesRef::new).toList()),
                     BooleanClause.Occur.FILTER);

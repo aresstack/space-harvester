@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -213,6 +214,54 @@ class HoldingsTest {
 
         assertThat(recorder.next()).isEqualTo("loading:wiki/DEV:[1]");
         assertThat(recorder.next()).isEqualTo("changed:wiki/DEV:[1]");
+    }
+
+    @Test
+    void aSelectionResolvesToThePagesOfItsSubtreesEachCountedOnce() {
+        dev();
+        Holdings holdings = holdings(ALLOW_ALL, 100);
+
+        PageSelection subtree = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
+        assertThat(subtree.pagesOf("wiki")).containsExactlyInAnyOrder("3", "4", "6");
+        assertThat(subtree.counts()).isEqualTo(new HoldingCounts(3, 0, 2, 1));
+        assertThat(subtree.complete()).isTrue();
+        assertThat(subtree.contains(new PageKey("wiki", "4"))).isTrue();
+        assertThat(subtree.contains("wiki", "2")).isFalse();
+
+        PageSelection overlapping = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "1"),
+                Selection.Root.subtree("wiki", "DEV", "3")));
+        assertThat(overlapping.pagesOf("wiki")).containsExactlyInAnyOrder("1", "2", "3", "4", "6");
+        assertThat(overlapping.counts()).isEqualTo(new HoldingCounts(5, 1, 2, 1));
+        assertThat(overlapping.spaces()).hasSize(1);
+
+        PageSelection space = holdings.resolve(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")));
+        assertThat(space.size()).isEqualTo(7);
+        assertThat(space.counts().stored()).isEqualTo(4);
+
+        assertThat(holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3"),
+                Selection.Root.subtree("wiki", "DEV", "1"))).pages().fingerprint())
+                .as("gleiche Seiten, andere Reihenfolge").isEqualTo(overlapping.pages().fingerprint());
+        assertThat(subtree.pages().fingerprint()).isNotEqualTo(overlapping.pages().fingerprint());
+    }
+
+    @Test
+    void aSelectionWithoutInventoryOrWithAnUnknownPageIsMarkedIncompleteAndHiddenPagesAreLeftOut() {
+        dev();
+        stocks.put("wiki/OPS", new Stock(INITIAL, List.of(new CatalogPage("o1", "fehlt", true, "1", "1")), Set.of(),
+                List.of()));
+        AccessPolicy withoutFour = (context, scope, kind) -> "4".equals(scope.pageId())
+                ? AccessDecision.DENY : AccessDecision.ALLOW;
+        Holdings holdings = holdings(withoutFour, 100);
+
+        PageSelection source = holdings.resolve(CALLER, Selection.of(Selection.Root.source("wiki")));
+        assertThat(source.pagesOf("wiki")).contains("o1", "3").doesNotContain("4");
+        assertThat(source.complete()).as("OPS ohne Inventur").isFalse();
+        assertThat(source.spaces()).extracting(SpaceSummary::spaceKey).containsExactly("DEV", "OPS");
+
+        PageSelection unknown = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "x")));
+        assertThat(unknown.size()).isZero();
+        assertThat(unknown.complete()).isFalse();
+        assertThat(unknown.pages()).isEqualTo(PageSet.EMPTY);
     }
 
     @Test

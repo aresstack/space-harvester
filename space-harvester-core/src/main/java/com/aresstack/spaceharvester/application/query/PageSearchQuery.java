@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.query;
 
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.time.Instant;
 import java.util.List;
@@ -32,10 +33,12 @@ import java.util.regex.Pattern;
  * @param modifiedFrom   Änderungszeit ab einschließlich oder {@code null}
  * @param modifiedBefore Änderungszeit vor ausschließlich oder {@code null}; Seiten ohne Änderungszeit treffen bei
  *                       einer gesetzten Zeitgrenze nie
+ * @param pages          nur diese Seiten, etwa eine Seite samt Unterseiten aus der Auswahl im Baum (ADR 0029), oder
+ *                       {@code null} ohne diese Grenze
  */
 public record PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String> spaceKeys, List<String> titleTerms, String pageId,
                               String parentPageId, String version, Instant modifiedFrom, Instant modifiedBefore,
-                              SearchSort sort) {
+                              SearchSort sort, PageSet pages) {
 
     public static final int MAX_TITLE_LENGTH = 200;
     public static final int MAX_TITLE_TERMS = 8;
@@ -56,6 +59,19 @@ public record PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String
         spaceKeys = Set.copyOf(new TreeSet<>(spaceKeys));
         titleTerms = List.copyOf(titleTerms);
         Objects.requireNonNull(sort, "sort");
+    }
+
+    public PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String> spaceKeys, List<String> titleTerms,
+                           String pageId, String parentPageId, String version, Instant modifiedFrom,
+                           Instant modifiedBefore, SearchSort sort) {
+        this(sourceId, sourceIds, spaceKeys, titleTerms, pageId, parentPageId, version, modifiedFrom, modifiedBefore,
+                sort, null);
+    }
+
+    /** Dieselbe Anfrage, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
+    public PageSearchQuery within(PageSet pages) {
+        return new PageSearchQuery(sourceId, sourceIds, spaceKeys, titleTerms, pageId, parentPageId, version,
+                modifiedFrom, modifiedBefore, sort, pages);
     }
 
     /** Wie {@link #of(String, List, List, String, String, String, String, Instant, Instant, SearchSort)} ohne Quellenliste. */
@@ -122,7 +138,7 @@ public record PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String
      */
     public PageSearchQuery with(String sourceId, String pageId, SearchSort sort) {
         return new PageSearchQuery(sourceId, sourceId == null ? sourceIds : Set.of(), spaceKeys, titleTerms, pageId, parentPageId, version, modifiedFrom,
-                modifiedBefore, sort);
+                modifiedBefore, sort, pages);
     }
 
     /** Zerlegt einen Text wie einen Titel in klein geschriebene Wörter; Maßstab für jede Umsetzung des Index. */
@@ -133,7 +149,8 @@ public record PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String
     /** Trifft die Anfrage diese Kopfdaten? Referenz der Semantik für Fakes und Tests des Index. */
     public boolean matches(ListedPage page) {
         var metadata = page.header().metadata();
-        return (sourceId == null || page.header().key().sourceId().equals(sourceId))
+        return (pages == null || pages.contains(page.header().key()))
+                && (sourceId == null || page.header().key().sourceId().equals(sourceId))
                 && (sourceIds.isEmpty() || sourceIds.contains(page.header().key().sourceId()))
                 && (spaceKeys.isEmpty() || spaceKeys.contains(metadata.partitionKey()))
                 && (titleTerms.isEmpty() || words(metadata.title()).containsAll(titleTerms))
@@ -163,6 +180,10 @@ public record PageSearchQuery(String sourceId, Set<String> sourceIds, Set<String
         titleTerms.forEach(term -> field(canonical, term));
         for (Object value : new Object[]{pageId, parentPageId, version, modifiedFrom, modifiedBefore, sort}) {
             field(canonical, value == null ? null : value.toString());
+        }
+        if (pages != null) {
+            // Nur mit Grenze ("P", nie eine Ziffer oder "-"), damit Cursor ohne sie ihren Fingerabdruck behalten.
+            canonical.append('P').append(pages.fingerprint());
         }
         return canonical.toString();
     }

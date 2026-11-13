@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -110,6 +111,12 @@ class LucenePageSearchIndexTest {
             queries.add(query("wiki", List.of(), null, null, null, null, null, T0.plusNanos(2), sort));
             queries.add(query("other", List.of(), "api", null, null, null, null, null, sort));
             queries.add(query("wiki", List.of(), "fehlt", null, null, null, null, null, sort));
+            // Seite samt Unterseiten (ADR 0029): nur Seiten der Menge, auch mit weiteren Bedingungen.
+            PageSet subtree = PageSet.of(Map.of("wiki", List.of("101", "103", "105", "107"), "other", List.of("101")));
+            queries.add(query("wiki", List.of(), null, null, null, null, null, null, sort).within(subtree));
+            queries.add(query("wiki", List.of("OPS"), null, null, null, null, null, null, sort).within(subtree));
+            queries.add(query("wiki", List.of(), "api", null, null, null, null, null, sort).within(subtree));
+            queries.add(query("wiki", List.of(), null, null, null, null, null, null, sort).within(PageSet.EMPTY));
         }
 
         for (PageSearchQuery query : queries) {
@@ -236,6 +243,9 @@ class LucenePageSearchIndexTest {
                     null, sort));
             queries.add(PageSearchQuery.of(null, List.of("other", "fehlt"), List.of(), "api", null, null, null, null,
                     null, sort));
+            // Dieselbe ID in zwei Quellen: Die Menge nennt die Quelle mit.
+            queries.add(query(null, List.of(), null, null, null, null, null, null, sort)
+                    .within(PageSet.of(Map.of("third", List.of("101"), "wiki", List.of("100", "101")))));
         }
         String generation = index.state(scope).orElseThrow().generation();
 

@@ -647,6 +647,15 @@ public final class Workspace {
         return harvester.knowledgeGraph().search(caller, term, limit);
     }
 
+    /**
+     * Wie {@link #searchKnowledgeGraph(String, int)}, nur auf diesen Seiten samt ihren Dokumenten, etwa einer Seite samt
+     * Unterseiten aus {@link #resolveSelection} (ADR 0029); Treffer und Zähler beziehen sich nur auf sie.
+     */
+    public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit,
+                                                      com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.knowledgeGraph().search(caller, term, limit, page -> pages.contains(page.key()));
+    }
+
     /** Ob „Analysieren“ im Baum angeboten werden kann (Analysator eingerichtet); lädt kein Modell. */
     public boolean statementAnalysisJobsAvailable() {
         return harvester.statementAnalysisJobs().available();
@@ -1181,6 +1190,17 @@ public final class Workspace {
     /** Je Space der Quelle, den der Cache kennt, Zähler und Stand vom, ohne Seitenliste (Zeilen einer Quelle). */
     public List<com.aresstack.spaceharvester.application.holdings.SpaceSummary> holdingSpaces(String sourceId) {
         return harvester.holdings().spaces(caller, sourceId);
+    }
+
+    /**
+     * Löst die Auswahl im Baum zu Seiten auf (ADR 0029): eine Seite samt allen Unterseiten, ein Space oder eine Quelle,
+     * auch mehrere zugleich. Liefert die Seiten, die Abdeckung („n von m Seiten lokal“) und ob die Auflösung lückenhaft
+     * ist, weil ein Space keine Inventur hat; ohne Quellenzugriff. Nach Meldungen von {@link #subscribeHoldings} für
+     * einen berührten Space neu auflösen.
+     */
+    public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.holdings().resolve(caller, selection);
     }
 
     /**

@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -122,12 +123,24 @@ public class TermQueries {
      * @param startsWith nur Begriffe, deren Suchwert so beginnt (normalisiert, etwa ein Buchstabe der A–Z-Leiste),
      *                 oder {@code null}; anders als {@code q} nie ein Wort mitten im Begriff
      * @param origin   Seiten (Vorgabe), Dokumente oder beides (ADR 0026, AP9b)
+     * @param pages    nur Begriffe dieser Seiten samt ihren Dokumenten, etwa einer Seite samt Unterseiten aus der
+     *                 Auswahl im Baum (ADR 0029), oder {@code null} ohne diese Grenze
      */
     public record TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
-                             String cursor, String startsWith, TermOrigin origin) {
+                             String cursor, String startsWith, TermOrigin origin, PageSet pages) {
 
         public TermSearch {
             origin = origin == null ? TermOrigin.PAGES : origin;
+        }
+
+        public TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
+                          String cursor, String startsWith, TermOrigin origin) {
+            this(sourceId, spaceKey, kind, q, exact, limit, cursor, startsWith, origin, null);
+        }
+
+        /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
+        public TermSearch within(PageSet pages) {
+            return new TermSearch(sourceId, spaceKey, kind, q, exact, limit, cursor, startsWith, origin, pages);
         }
 
         public TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
@@ -195,12 +208,23 @@ public class TermQueries {
      * @param cursor       {@code nextCursor} der vorigen Antwort oder {@code null}
      * @param snippetChars 0 für keine Snippets, sonst Zeichen Kontext je Seite, höchstens {@link #MAX_SNIPPET_CHARS}
      * @param origin       Seiten (Vorgabe), Dokumente oder beides (ADR 0026, AP9b)
+     * @param pages        nur Fundstellen dieser Seiten samt ihren Dokumenten (ADR 0029) oder {@code null}
      */
     public record OccurrenceSearch(String term, TermKind kind, String sourceId, String spaceKey, int limit,
-                                   String cursor, int snippetChars, TermOrigin origin) {
+                                   String cursor, int snippetChars, TermOrigin origin, PageSet pages) {
 
         public OccurrenceSearch {
             origin = origin == null ? TermOrigin.PAGES : origin;
+        }
+
+        public OccurrenceSearch(String term, TermKind kind, String sourceId, String spaceKey, int limit,
+                                String cursor, int snippetChars, TermOrigin origin) {
+            this(term, kind, sourceId, spaceKey, limit, cursor, snippetChars, origin, null);
+        }
+
+        /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
+        public OccurrenceSearch within(PageSet pages) {
+            return new OccurrenceSearch(term, kind, sourceId, spaceKey, limit, cursor, snippetChars, origin, pages);
         }
 
         public OccurrenceSearch(String term, TermKind kind, String sourceId, String spaceKey, int limit,
@@ -274,13 +298,13 @@ public class TermQueries {
         String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
         String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
                 : TermText.normalize(search.startsWith());
-        String fingerprint = fingerprint("terms", search.sourceId(), search.spaceKey(),
+        String fingerprint = within(fingerprint("terms", search.sourceId(), search.spaceKey(),
                 search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()), startsWith,
-                search.origin() == TermOrigin.PAGES ? null : search.origin().id());
+                search.origin() == TermOrigin.PAGES ? null : search.origin().id()), search.pages());
         String after = search.cursor() == null ? null : decode(search.cursor(), fingerprint);
-        Set<String> sourceIds = scope(caller, search.sourceId(), search.spaceKey());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
-                search.exact() ? null : q, processorVersion, startsWith, search.origin());
+                search.exact() ? null : q, processorVersion, startsWith, search.origin(), search.pages());
         Visibility visibility = new Visibility(caller, search.spaceKey());
 
         List<TermSummary> found = new ArrayList<>();
@@ -342,8 +366,9 @@ public class TermQueries {
             throw new InvalidQueryException("snippetChars muss zwischen 0 und " + MAX_SNIPPET_CHARS + " liegen");
         }
         String normalized = TermText.normalize(search.term());
-        String fingerprint = fingerprint("occurrences", normalized, search.kind() == null ? null : search.kind().id(),
-                search.sourceId(), search.spaceKey(), search.origin() == TermOrigin.PAGES ? null : search.origin().id());
+        String fingerprint = within(fingerprint("occurrences", normalized,
+                search.kind() == null ? null : search.kind().id(), search.sourceId(), search.spaceKey(),
+                search.origin() == TermOrigin.PAGES ? null : search.origin().id()), search.pages());
         String fromKey = null;
         int afterStart = -1;
         if (search.cursor() != null) {
@@ -359,9 +384,9 @@ public class TermQueries {
                 throw new InvalidQueryException("cursor ist beschädigt");
             }
         }
-        Set<String> sourceIds = scope(caller, search.sourceId(), search.spaceKey());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), normalized, null, processorVersion,
-                null, search.origin());
+                null, search.origin(), search.pages());
         Visibility visibility = new Visibility(caller, search.spaceKey());
         Map<PageKey, Optional<PageText>> texts = new HashMap<>();
         Map<String, Optional<PageText>> sectionTexts = new HashMap<>();
@@ -512,6 +537,21 @@ public class TermQueries {
             }
         }
         return visible;
+    }
+
+    /** Nur Quellen, in denen die Seitenmenge Seiten hat (ADR 0029); ohne Menge alle. */
+    private static Set<String> within(Set<String> sourceIds, PageSet pages) {
+        if (pages == null) {
+            return sourceIds;
+        }
+        Set<String> within = new TreeSet<>(sourceIds);
+        within.retainAll(pages.sourceIds());
+        return within;
+    }
+
+    /** Der Fingerabdruck des Cursors samt Seitenmenge; ohne Menge unverändert, damit alte Cursor gültig bleiben. */
+    private static String within(String fingerprint, PageSet pages) {
+        return pages == null ? fingerprint : fingerprint(fingerprint, "p", pages.fingerprint());
     }
 
     private static void requireLimit(int limit) {

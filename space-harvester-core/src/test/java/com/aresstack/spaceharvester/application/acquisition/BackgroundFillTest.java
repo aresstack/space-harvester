@@ -378,9 +378,9 @@ class BackgroundFillTest {
 
         fill(scheduler(1), queue, catalog(List.of()), true);
 
-        eventually(() -> loaded.contains("dahinter"));
+        // Der Lader meldet die Seite, bevor ihr Abruf endet und den Eintrag aus der Schlange nimmt: auf beides warten.
+        eventually(() -> loaded.contains("dahinter") && queue.size() == 0);
         assertThat(loaded).containsExactly("dahinter");
-        assertThat(queue.size()).isZero();
     }
 
     @Test
