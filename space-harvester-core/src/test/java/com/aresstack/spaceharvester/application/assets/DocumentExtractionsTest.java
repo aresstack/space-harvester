@@ -90,6 +90,41 @@ class DocumentExtractionsTest {
     }
 
     @Test
+    void aPartialTimeoutLeavesNoEmptyTextBehind() {
+        Lines structure = new Lines().ending(Outcome.truncated(StatusReason.TIMEOUT, new ReadExtent(2, 4)));
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "eins\n");
+        DocumentExtractions extractions = new DocumentExtractions(structure, new FileSystemExtractionStore(directory),
+                ExtractionLimits.DEFAULTS);
+
+        assertThatThrownBy(() -> extractions.text(asset, store, NOW))
+                .isInstanceOfSatisfying(DocumentTextException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentTextException.Reason.TIMEOUT));
+
+        assertThat(store.text(asset.sha256(), structure.id(), structure.version())).isEmpty();
+        assertThat(extractions.stored(asset.sha256())).isEmpty();
+    }
+
+    @Test
+    void peekReadsWithoutStoringAnything() {
+        Lines structure = new Lines();
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "eins\nzwei\n");
+        DocumentExtractions extractions = new DocumentExtractions(structure, new FileSystemExtractionStore(directory),
+                ExtractionLimits.DEFAULTS);
+
+        AssetText text = extractions.peek(asset, store, NOW);
+
+        assertThat(text.text()).isEqualTo("eins\n\nzwei");
+        assertThat(extractions.stored(asset.sha256())).isEmpty();
+        assertThat(store.text(asset.sha256(), structure.id(), structure.version())).isEmpty();
+
+        extractions.text(asset, store, NOW);
+        assertThat(extractions.peek(asset, store, NOW).text()).as("aus der Ablage").isEqualTo("eins\n\nzwei");
+        assertThat(structure.calls).hasValue(2);
+    }
+
+    @Test
     void aDocumentWithoutTextIsStoredWithItsStatusAndNotReadAgain() {
         Lines structure = new Lines().ending(Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT));
         FileSystemAssetStore store = new FileSystemAssetStore(directory);

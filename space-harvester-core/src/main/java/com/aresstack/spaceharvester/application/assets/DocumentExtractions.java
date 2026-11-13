@@ -79,6 +79,19 @@ public final class DocumentExtractions {
         if (known.isPresent()) {
             return known.get();
         }
+        try (ExtractionWriter writer = extractions.writer(key)) {
+            StructuredDocument document = read(asset, store, new Target(writer));
+            if (transientFailure(document.outcome())) {
+                return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
+            }
+            return writer.commit(document);
+        } catch (UncheckedIOException e) {
+            throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
+        }
+    }
+
+    /** Liest das Original aus der abgelegten Datei oder einer temporären Kopie. */
+    private StructuredDocument read(Asset asset, AssetStore store, StructureSink sink) {
         Optional<Path> file = store.file(asset);
         Path temporary = null;
         try {
@@ -92,15 +105,7 @@ public final class DocumentExtractions {
                 }
                 original = temporary;
             }
-            try (ExtractionWriter writer = extractions.writer(key)) {
-                StructuredDocument document = structure.extract(original, asset.title(), asset.mediaType(), limits,
-                        new Target(writer));
-                if (transientFailure(document.outcome())) {
-                    return new StoredExtraction(key, document, 0, document.blocks(), document.chars(),
-                            Instant.now());
-                }
-                return writer.commit(document);
-            }
+            return structure.extract(original, asset.title(), asset.mediaType(), limits, sink);
         } catch (IOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e);
         } catch (UncheckedIOException e) {
@@ -118,52 +123,117 @@ public final class DocumentExtractions {
 
     /**
      * Der Text eines abgelegten Dokuments für die heutigen Verbraucher: Absätze mit Leerzeile getrennt, höchstens
-     * {@code maxTextChars} Zeichen; gekürzt, wenn die Extraktion gekürzt ist oder mehr Text hat.
+     * {@code maxTextChars} Zeichen; gekürzt, wenn die Extraktion gekürzt ist oder mehr Text hat. Legt Extraktion und
+     * Text ab.
      *
-     * @throws DocumentTextException wenn das Dokument keinen Text hat, mit dem passenden bisherigen Grund
+     * @throws DocumentTextException wenn das Dokument keinen Text hat, mit dem passenden bisherigen Grund; an einer
+     *                               vorübergehenden Grenze {@code TIMEOUT}, ohne etwas abzulegen
      */
     public AssetText text(Asset asset, AssetStore store, Instant now) {
         StoredExtraction extraction = extract(asset, store);
         Outcome outcome = extraction.document().outcome();
-        if (outcome.status() != ExtractionStatus.OK && outcome.status() != ExtractionStatus.PARTIAL) {
+        // Vorher prüfen: Eine nicht abgelegte Extraktion hat keine Abschnitte, ihr Text wäre leer.
+        if (transientFailure(outcome) || !usable(outcome)) {
             throw failure(outcome);
         }
-        StringBuilder text = new StringBuilder();
-        boolean cut = false;
+        TextCollector text = new TextCollector(maxTextChars);
         if (extraction.sections() > 0) {
             try (Stream<TextSection> sections = extractions.sections(extraction.key())) {
                 var iterator = sections.iterator();
-                outer:
-                while (iterator.hasNext()) {
-                    for (Block block : iterator.next().blocks()) {
-                        String piece = plain(block);
-                        if (piece.isEmpty()) {
-                            continue;
-                        }
-                        int needed = (text.isEmpty() ? 0 : PARAGRAPH_BREAK.length()) + piece.length();
-                        if (text.length() + needed > maxTextChars) {
-                            int room = maxTextChars - text.length() - (text.isEmpty() ? 0 : PARAGRAPH_BREAK.length());
-                            if (room > 0) {
-                                if (!text.isEmpty()) {
-                                    text.append(PARAGRAPH_BREAK);
-                                }
-                                text.append(piece, 0, room);
-                            }
-                            cut = true;
-                            break outer;
-                        }
-                        if (!text.isEmpty()) {
-                            text.append(PARAGRAPH_BREAK);
-                        }
-                        text.append(piece);
-                    }
+                while (iterator.hasNext() && text.open()) {
+                    iterator.next().blocks().forEach(text::accept);
                 }
             }
         }
-        AssetText result = new AssetText(asset.sha256(), id(), version(), text.toString(),
-                cut || outcome.truncated(), now);
+        AssetText result = text.result(asset, id(), version(), outcome, now);
         store.putText(result);
         return result;
+    }
+
+    /**
+     * Wie {@link #text}, legt aber nichts ab (Abruf ohne Recht zum Ablegen): eine abgelegte Extraktion wird gelesen,
+     * sonst wird die Datei gelesen und der Text nur gesammelt.
+     */
+    public AssetText peek(Asset asset, AssetStore store, Instant now) {
+        Optional<StoredExtraction> known = stored(asset.sha256());
+        if (known.isPresent()) {
+            Outcome outcome = known.get().document().outcome();
+            if (!usable(outcome)) {
+                throw failure(outcome);
+            }
+            TextCollector text = new TextCollector(maxTextChars);
+            if (known.get().sections() > 0) {
+                try (Stream<TextSection> sections = extractions.sections(known.get().key())) {
+                    var iterator = sections.iterator();
+                    while (iterator.hasNext() && text.open()) {
+                        iterator.next().blocks().forEach(text::accept);
+                    }
+                }
+            }
+            return text.result(asset, id(), version(), outcome, now);
+        }
+        TextCollector text = new TextCollector(maxTextChars);
+        StructuredDocument document = read(asset, store, new StructureSink() {
+            @Override
+            public BlockSink document() {
+                return text::accept;
+            }
+
+            @Override
+            public PartSink part(EmbeddedEntry entry) {
+                return block -> {
+                };
+            }
+        });
+        if (transientFailure(document.outcome()) && document.chars() == 0 || !usable(document.outcome())) {
+            throw failure(document.outcome());
+        }
+        return text.result(asset, id(), version(), document.outcome(), now);
+    }
+
+    private static boolean usable(Outcome outcome) {
+        return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
+    }
+
+    /** Sammelt reinen Text bis zur Grenze. */
+    private static final class TextCollector {
+
+        private final int max;
+        private final StringBuilder text = new StringBuilder();
+        private boolean cut;
+
+        TextCollector(int max) {
+            this.max = max;
+        }
+
+        boolean open() {
+            return !cut;
+        }
+
+        void accept(Block block) {
+            if (cut) {
+                return;
+            }
+            String piece = plain(block);
+            if (piece.isEmpty()) {
+                return;
+            }
+            int separator = text.isEmpty() ? 0 : PARAGRAPH_BREAK.length();
+            if (text.length() + separator + piece.length() > max) {
+                int room = max - text.length() - separator;
+                if (room > 0) {
+                    text.append(separator > 0 ? PARAGRAPH_BREAK : "").append(piece, 0, room);
+                }
+                cut = true;
+                return;
+            }
+            text.append(separator > 0 ? PARAGRAPH_BREAK : "").append(piece);
+        }
+
+        AssetText result(Asset asset, String extractor, String version, Outcome outcome, Instant now) {
+            return new AssetText(asset.sha256(), extractor, version, text.toString(), cut || outcome.truncated(),
+                    now);
+        }
     }
 
     /** Reiner Text eines Blocks; Tabellenzellen je Zeile mit Tabulator. */

@@ -969,7 +969,9 @@ public class Assets {
             // Aus der abgelegten Datei, ohne Größengrenze (ADR 0026); die Schranke für große Dateien gilt weiter.
             try (LargeFileGate.Permit permit = gate.enter(list.sourceId(), stored.get().size())) {
                 asset = stored.get();
-                text = structured.text(asset, store, clock.instant());
+                // Ohne Recht zum Ablegen nur gelesen, wie bisher.
+                text = mayStore ? structured.text(asset, store, clock.instant())
+                        : structured.peek(asset, store, clock.instant());
             }
         } else if (stored.isPresent() && stored.get().size() > IN_MEMORY_BYTES) {
             // Über der Grenze der Textextraktion bleibt die Datei ungelesen (Dateien beliebiger Größe, Angelo
