@@ -27,6 +27,7 @@ import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -297,7 +298,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
             return;
         }
         DocumentKey attachment = item.attachment();
-        String basis = basis(extraction.get().key());
+        String basis = basis(extraction.get());
         Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
@@ -307,8 +308,10 @@ public final class DocumentEnrichments implements IndexedDocuments {
         }
         List<DocumentKey> expected = item.extractions().documents(extraction.get()).stream()
                 .map(part -> part.map(entry -> attachment.child(entry.id())).orElse(attachment)).toList();
+        // Die Extraktion steht erst am Stand, wenn das Dokument vollständig durchlief; ein abgebrochener Lauf genügt
+        // dieser Abkürzung also nie.
         if (!expected.isEmpty() && expected.stream().allMatch(document -> current(stored.get(document), versions,
-                null, basis))) {
+                basis))) {
             return;
         }
         // Erster Durchgang: Hash des Lesetextes je Dokument und die Abschnitte mit Text.
@@ -324,7 +327,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 + HexFormat.of().formatHex(digest.digest())));
         Set<DocumentKey> work = new HashSet<>();
         for (Map.Entry<DocumentKey, String> hash : hashes.entrySet()) {
-            if (!current(stored.get(hash.getKey()), versions, hash.getValue(), null)) {
+            if (!covered(stored.get(hash.getKey()), versions, hash.getValue(), seen.get(hash.getKey()))) {
                 work.add(hash.getKey());
             }
         }
@@ -337,7 +340,8 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 if (context != null) {
                     context.discovered(1);
                 }
-                Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), basis, text,
+                // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
+                Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
                         stored.getOrDefault(document, List.of()), null);
                 if (context != null) {
                     context.written(run.computed() - run.failed());
@@ -346,11 +350,16 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 }
             });
         }
-        // Gleicher Text: Hash und Extraktion am Stand nachtragen, ohne zu rechnen; Weggefallenes fällt weg.
-        stored.forEach((document, results) -> {
+        // Alle Abschnitte durchliefen: Hash und Extraktion am Stand nachtragen, ohne zu rechnen; Weggefallenes fällt
+        // weg. Ein Abbruch kommt nicht hierher, ein halb gerechnetes Dokument trägt also nie die Extraktion.
+        Set<DocumentKey> documents = new LinkedHashSet<>(seen.keySet());
+        documents.addAll(stored.keySet());
+        for (DocumentKey document : documents) {
             Set<Integer> current = seen.getOrDefault(document, Set.of());
             String hash = hashes.get(document);
+            Set<Integer> sections = new HashSet<>();
             for (Enrichment result : enrichments.store().find(document)) {
+                sections.add(result.section());
                 if (!current.contains(result.section())) {
                     continue;
                 }
@@ -358,17 +367,17 @@ public final class DocumentEnrichments implements IndexedDocuments {
                     enrichments.store().save(result.withBasis(hash, basis));
                 }
             }
-            results.stream().map(Enrichment::section).distinct().filter(section -> !current.contains(section))
+            sections.stream().filter(section -> !current.contains(section))
                     .forEach(section -> enrichments.store().removeSection(document, section));
-        });
+        }
         enrichments.flush();
     }
 
     /**
-     * Ob der Analysestand eines Dokuments aktuell ist: je zuständigem Prozessor ein Stand in seiner Version, alle für
-     * diesen Hash des Lesetextes ({@code hash}) bzw. diese Extraktion ({@code basis}).
+     * Ob der Analysestand eines Dokuments zu dieser Extraktion ({@code basis}) gehört: je zuständigem Prozessor Stände in
+     * seiner Version, alle mit dieser Extraktion.
      */
-    private static boolean current(List<Enrichment> stored, Map<String, String> versions, String hash, String basis) {
+    private static boolean current(List<Enrichment> stored, Map<String, String> versions, String basis) {
         if (stored == null || stored.isEmpty()) {
             return versions.isEmpty();
         }
@@ -376,8 +385,31 @@ public final class DocumentEnrichments implements IndexedDocuments {
             List<Enrichment> results = stored.stream()
                     .filter(result -> result.processorId().equals(processor.getKey())).toList();
             if (results.isEmpty() || results.stream().anyMatch(result -> !result.processorVersion()
-                    .equals(processor.getValue()) || hash != null && !hash.equals(result.revision())
-                    || basis != null && !basis.equals(result.extraction()))) {
+                    .equals(processor.getValue()) || !basis.equals(result.extraction()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Ob jeder Abschnitt mit Text ({@code sections}) je zuständigem Prozessor einen Stand in seiner Version für diesen
+     * Hash des Lesetextes hat; fehlt einer, etwa nach einem Abbruch mitten im Dokument, wird das Dokument gerechnet.
+     */
+    private static boolean covered(List<Enrichment> stored, Map<String, String> versions, String hash,
+                                   Set<Integer> sections) {
+        for (Map.Entry<String, String> processor : versions.entrySet()) {
+            Set<Integer> done = new HashSet<>();
+            if (stored != null) {
+                for (Enrichment result : stored) {
+                    if (result.processorId().equals(processor.getKey())
+                            && result.processorVersion().equals(processor.getValue())
+                            && hash.equals(result.revision())) {
+                        done.add(result.section());
+                    }
+                }
+            }
+            if (!done.containsAll(sections)) {
                 return false;
             }
         }
@@ -410,9 +442,15 @@ public final class DocumentEnrichments implements IndexedDocuments {
         }
     }
 
-    /** Undurchsichtige Kennung einer Extraktion; nur verglichen, nie zerlegt. */
-    private static String basis(ExtractionKey key) {
-        return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model();
+    /**
+     * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
+     * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
+     */
+    private static String basis(StoredExtraction extraction) {
+        ExtractionKey key = extraction.key();
+        return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
+                + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"
+                + extraction.chars();
     }
 
     private static MessageDigest sha256() {

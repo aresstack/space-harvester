@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.TextSection;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.assets.ExtractionWriter;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
@@ -273,6 +274,61 @@ class DocumentEnrichmentsTest {
                 "Erster Teil, geändert.");
     }
 
+    @Test
+    void aRunCancelledInsideADocumentIsCaughtUpLater() {
+        reads.sectionChars = 30;
+        List<Runnable> held = new ArrayList<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        Asset asset = stored("teile.zip", Map.of("eins.html",
+                "<html><body><p>Erster Absatz mit Text.</p><p>Zweiter Absatz mit Text.</p></body></html>"));
+        // Abbruch, sobald der erste Abschnitt gerechnet ist: der zweite bleibt offen.
+        recording.onInput = () -> jobs.cancel(jobs.list(null, JobType.ENRICHMENT).getFirst().id());
+        documents(true, jobs).indexed(list(), asset, extractions);
+        new ArrayList<>(held).forEach(Runnable::run);
+        assertThat(recording.inputs).hasSize(1);
+        recording.onInput = () -> { };
+
+        documents(true).indexed(list(), asset, extractions);
+
+        assertThat(recording.inputs).as("nur der offene Abschnitt kommt dazu").hasSize(2).doesNotHaveDuplicates();
+        assertThat(results.findDocuments(PAGE)).filteredOn(result -> result.processorId().equals("recording"))
+                .extracting(Enrichment::section).containsExactlyInAnyOrder(0, 1);
+        documents(true).indexed(list(), asset, extractions);
+        assertThat(recording.inputs).as("danach aktuell").hasSize(2);
+    }
+
+    @Test
+    void aRereadWithWiderLimitsUnderTheSameKeyComputesTheNewText() {
+        String text = "Anfang " + "Lang ".repeat(100) + "Schleusenkammer";
+        DocumentExtractions tight = new DocumentExtractions(new TikaDocumentStructure(), reads, limits(60));
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("lang.txt", text.getBytes(StandardCharsets.UTF_8));
+        byte[] zip = Archives.zip(entries);
+        Asset asset = new Asset("wiki", "101", "a1", "1", "lang.zip", Archives.ZIP, AssetKind.OTHER, zip.length,
+                Assets.sha256(zip), NOW);
+        store.put(asset, zip);
+        tight.text(asset, store, NOW);
+        DocumentEnrichments documents = documents(true);
+        documents.indexed(list(), asset, tight);
+        assertThat(recording.inputs).singleElement().satisfies(input -> assertThat(input)
+                .doesNotContain("Schleusenkammer"));
+
+        // Gleicher Extraktor, gleiche Version, weitere Grenzen: die Abschnitte werden unter demselben Schlüssel ersetzt.
+        extractions.reread(asset, store, NOW.plusSeconds(1));
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(recording.inputs).hasSize(2).last().satisfies(input -> assertThat(input)
+                .contains("Schleusenkammer"));
+    }
+
+    private static ExtractionLimits limits(long maxChars) {
+        ExtractionLimits d = ExtractionLimits.DEFAULTS;
+        return new ExtractionLimits(d.maxFileBytes(), maxChars, d.unpackRatio(), d.unpackRatioFromBytes(),
+                d.textRatio(), d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(),
+                d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
+    }
+
     private Asset stored(String title, Map<String, String> files) {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         files.entrySet().stream().sorted(Map.Entry.comparingByKey())
@@ -295,6 +351,7 @@ class DocumentEnrichmentsTest {
         private final String id;
         private final boolean documents;
         private final List<String> inputs = new ArrayList<>();
+        private Runnable onInput = () -> { };
 
         Recording(String id, boolean documents) {
             this.id = id;
@@ -324,6 +381,7 @@ class DocumentEnrichmentsTest {
         @Override
         public EnrichmentOutput process(PageText text) {
             inputs.add(text.text());
+            onInput.run();
             return EnrichmentOutput.of("{}");
         }
     }
@@ -331,9 +389,15 @@ class DocumentEnrichmentsTest {
     /** Zählt gelesene Abschnitte, des Dokuments und seiner Teile. */
     private static final class Counting extends FileSystemExtractionStore {
         private final AtomicInteger sections = new AtomicInteger();
+        private int sectionChars = DEFAULT_SECTION_CHARS;
 
         Counting(Path root) {
             super(root);
+        }
+
+        @Override
+        public ExtractionWriter writer(ExtractionKey key) {
+            return writer(key, sectionChars);
         }
 
         @Override
