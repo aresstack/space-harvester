@@ -185,18 +185,69 @@ public class FileSystemExtractionStore implements ExtractionStore {
         if (manifest.isEmpty()) {
             return Stream.empty();
         }
-        return manifest.get().parts().stream().flatMap(part -> {
-            Path partDir = partDir(dir.get(), part.stored().key());
-            List<SectionInfo> infos = part.sections();
-            return IntStream.range(0, infos.size()).mapToObj(i -> {
-                try {
-                    return read(partDir, i, infos.get(i));
-                } catch (DamagedSection e) {
-                    invalidate(key, dir.get());
-                    throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
+        // Kein flatMap: dessen Iterator puffert alle Abschnitte eines Teils; hier wird je Abschnitt gelesen.
+        List<PartInfo> parts = manifest.get().parts();
+        java.util.Iterator<TextSection> sections = new java.util.Iterator<>() {
+            private int part;
+            private int section;
+
+            @Override
+            public boolean hasNext() {
+                while (part < parts.size() && section >= parts.get(part).sections().size()) {
+                    part++;
+                    section = 0;
                 }
-            });
+                return part < parts.size();
+            }
+
+            @Override
+            public TextSection next() {
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                PartInfo current = parts.get(part);
+                int index = section++;
+                return readPart(key, dir.get(), current, index);
+            }
+        };
+        return java.util.stream.StreamSupport.stream(java.util.Spliterators.spliteratorUnknownSize(sections,
+                java.util.Spliterator.ORDERED | java.util.Spliterator.NONNULL), false);
+    }
+
+    @Override
+    public Optional<PartSections> partSections(ExtractionKey key) {
+        Optional<Path> dir = generation(key);
+        Optional<Manifest> manifest = dir.flatMap(path -> manifest(key, path));
+        if (manifest.isEmpty()) {
+            return Optional.empty();
+        }
+        java.util.Map<String, PartInfo> parts = new java.util.LinkedHashMap<>();
+        manifest.get().parts().forEach(part -> parts.put(part.stored().key(), part));
+        return Optional.of(new PartSections() {
+            @Override
+            public java.util.Set<String> keys() {
+                return java.util.Collections.unmodifiableSet(parts.keySet());
+            }
+
+            @Override
+            public Stream<TextSection> sections(String partKey) {
+                PartInfo part = parts.get(partKey);
+                if (part == null) {
+                    return Stream.empty();
+                }
+                return IntStream.range(0, part.sections().size())
+                        .mapToObj(i -> readPart(key, dir.get(), part, i));
+            }
         });
+    }
+
+    private TextSection readPart(ExtractionKey key, Path generation, PartInfo part, int index) {
+        try {
+            return read(partDir(generation, part.stored().key()), index, part.sections().get(index));
+        } catch (DamagedSection e) {
+            invalidate(key, generation);
+            throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
+        }
     }
 
     private static Path partDir(Path generation, String partKey) {

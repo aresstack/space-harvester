@@ -51,4 +51,34 @@ public interface ExtractionStore {
      * Strom muss geschlossen werden. Leer, wenn die Extraktion fehlt.
      */
     Stream<TextSection> allPartSections(ExtractionKey key);
+
+    /**
+     * Die Teile eines Stands mit einmal gelesenem Manifest (ADR 0026, AP4b): je Teil seine Abschnitte, einzeln gelesen.
+     * Leer, wenn die Extraktion fehlt.
+     */
+    default Optional<PartSections> partSections(ExtractionKey key) {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        parts(key).forEach(part -> keys.add(part.key()));
+        return find(key).map(found -> new PartSections() {
+            @Override
+            public java.util.Set<String> keys() {
+                return keys;
+            }
+
+            @Override
+            public Stream<TextSection> sections(String partKey) {
+                return partSections(key, partKey);
+            }
+        });
+    }
+
+    /** Die Teile eines Stands; {@link #sections} liest die Abschnitte eines Teils einzeln, solange der Strom läuft. */
+    interface PartSections {
+
+        /** Schlüssel der abgelegten Teile in der Reihenfolge ihres Beginns. */
+        java.util.Set<String> keys();
+
+        /** Die Abschnitte eines Teils; leer für einen unbekannten Teil. Der Strom muss geschlossen werden. */
+        Stream<TextSection> sections(String partKey);
+    }
 }
