@@ -113,7 +113,7 @@ public final class JsonPackageConverter implements ExportConverter {
         zip.closeEntry();
 
         ExportAssets assets = input.assets();
-        Optional<ExportAssetManifest> manifest = assets.manifest().map(JsonPackageConverter::withoutDrawioRenditions);
+        Optional<ExportAssetManifest> manifest = assets.manifest();
         List<Entry> entries = manifest.map(ExportAssetManifest::images).orElse(List.of());
         Set<String> used = new HashSet<>();
         entry(zip, "assets.json");
@@ -163,7 +163,9 @@ public final class JsonPackageConverter implements ExportConverter {
             } else {
                 generator.writeNullProperty("path");
             }
-            Optional<byte[]> rendition = entry.rendition() == null ? Optional.empty() : assets.rendition(entry);
+            // draw.io nur als Text (json-package/4): keine gezeichnete Grafik
+            Optional<byte[]> rendition = entry.rendition() == null || drawio(entry) ? Optional.empty()
+                    : assets.rendition(entry);
             if (rendition.isPresent()) {
                 String extension = "image/svg+xml".equals(entry.rendition().mediaType()) ? ".svg" : ".png";
                 String path = unique(base + stem(name) + extension, used);
@@ -187,7 +189,7 @@ public final class JsonPackageConverter implements ExportConverter {
         } catch (UncheckedIOException e) {
             throw e.getCause();
         }
-        snapshots(zip, input, manifest.orElse(null));
+        snapshots(zip, input, manifest.map(JsonPackageConverter::withoutDrawioRenditions).orElse(null));
         zip.finish();
         zip.flush();
     }
@@ -298,10 +300,13 @@ public final class JsonPackageConverter implements ExportConverter {
     /** Der Datenbestand ohne gezeichnete Grafiken von draw.io-Diagrammen; Mermaid behält seine. */
     static ExportAssetManifest withoutDrawioRenditions(ExportAssetManifest manifest) {
         return new ExportAssetManifest(manifest.imagesComplete(), manifest.documentsComplete(),
-                manifest.assets().stream().map(entry -> entry.rendition() != null
-                        && entry.reference().kind() == Kind.ATTACHMENT && entry.reference().filename() != null
-                        && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename())
+                manifest.assets().stream().map(entry -> entry.rendition() != null && drawio(entry)
                         ? entry.withRendition(null) : entry).toList());
+    }
+
+    private static boolean drawio(Entry entry) {
+        return entry.reference().kind() == Kind.ATTACHMENT && entry.reference().filename() != null
+                && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename());
     }
 
     /** Angaben einer Seite für {@code manifest.json}; ohne Payload. */
