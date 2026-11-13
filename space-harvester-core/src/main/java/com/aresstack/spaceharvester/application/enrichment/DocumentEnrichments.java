@@ -113,6 +113,43 @@ public final class DocumentEnrichments implements IndexedDocuments {
         this.assets = assets;
     }
 
+    /**
+     * Der Lesetext eines Abschnitts ({@link DocumentSectionText}) aus der abgelegten Extraktion des Anhangs, aber nur,
+     * wenn er genau der Text ist, aus dem ein Ergebnis entstand ({@code inputSha256}); sonst leer, ebenso ohne
+     * angeschlossene Anhänge, ohne lesbare Extraktion oder für die Seite selbst. Für Ausschnitte von Treffern der
+     * semantischen Suche in einem Dokument (ADR 0026, AP9a): Stellen gelten nur in genau diesem Text.
+     */
+    public Optional<PageText> sectionText(DocumentKey document, int section, String inputSha256) {
+        Objects.requireNonNull(document, "document");
+        DocumentInventory source = assets;
+        if (source == null || document.attachmentId().isEmpty() || inputSha256 == null) {
+            return Optional.empty();
+        }
+        Optional<DocumentExtractions> structured = source.documentExtractions();
+        if (structured.isEmpty()) {
+            return Optional.empty();
+        }
+        PageKey page = document.page();
+        Asset asset = source.indexedDocuments(page.sourceId(), List.of(page.pageId())).stream()
+                .filter(candidate -> candidate.attachmentId().equals(document.attachmentId().get()))
+                .findFirst().orElse(null);
+        if (asset == null) {
+            return Optional.empty();
+        }
+        Optional<StoredExtraction> extraction = structured.get().readable(asset.sha256());
+        if (extraction.isEmpty()) {
+            return Optional.empty();
+        }
+        try (Stream<DocumentExtractions.DocumentSection> sections =
+                     structured.get().documentSections(extraction.get())) {
+            return sections.filter(candidate -> candidate.section().index() == section
+                            && candidate.part().map(part -> part.id()).equals(document.part()))
+                    .findFirst()
+                    .map(candidate -> DocumentSectionText.project(candidate.section()))
+                    .filter(text -> inputSha256.equals(text.inputSha256()));
+        }
+    }
+
     /** Ein gemeldeter Anhang. */
     private record Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions) {
     }

@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.DocumentInventory;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -191,6 +193,40 @@ class DocumentPassagesTest {
                 .containsExactlyInAnyOrder("embedding", "passages", "navigation");
         assertThat(processor(found, "passages").payloadJson()).contains("\"mode\":\"semantic\"");
         assertThat(processor(found, "navigation").payloadJson()).doesNotContain("source-not-approved");
+    }
+
+    @Test
+    void theSectionTextForAnExcerptIsExactlyTheTextTheResultCameFrom() {
+        Asset asset = stored(Map.of("bericht.html", HTML));
+        DocumentEnrichments documents = documents(0);
+        documents.indexed(list(), asset, extractions);
+        Enrichment vectors = processor(results.findDocuments(PAGE), "embedding");
+
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256()))
+                .as("ohne angeschlossene Anhänge").isEmpty();
+        documents.assets(new DocumentInventory() {
+            @Override
+            public Optional<DocumentExtractions> documentExtractions() {
+                return Optional.of(extractions);
+            }
+
+            @Override
+            public List<Asset> indexedDocuments(String sourceId, java.util.Collection<String> pageIds) {
+                return List.of(asset);
+            }
+        });
+
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256()))
+                .hasValueSatisfying(text -> {
+                    assertThat(text.inputSha256()).isEqualTo(vectors.inputSha256());
+                    assertThat(text.text()).contains("Danach ergeht der Bescheid.");
+                });
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), "sha256:" + "0".repeat(64)))
+                .as("anderer Text").isEmpty();
+        assertThat(documents.sectionText(vectors.document(), vectors.section() + 1, vectors.inputSha256()))
+                .as("anderer Abschnitt").isEmpty();
+        assertThat(documents.sectionText(DocumentKey.attachment(PAGE, "a2"), vectors.section(),
+                vectors.inputSha256())).as("anderer Anhang").isEmpty();
     }
 
     private static Enrichment processor(List<Enrichment> found, String id) {

@@ -89,10 +89,17 @@ public final class SemanticVariantSearch implements VariantSearch {
                 continue;
             }
             PageKey key = header.key();
+            RelevanceSearch.Relevance best = ranked.relevance();
+            boolean inDocument = best != null && best.attachmentId() != null;
+            // Liegt das ähnlichste Stück in einem Anhang (ADR 0026, AP9a): Ausschnitt aus dessen Abschnitt und der
+            // Anhang wie bei Treffern der Volltextsuche (#723).
             hits.add(new KeywordSearch.Hit(key.sourceId(), key.pageId(), metadata.partitionKey(), metadata.title(),
-                    snippet(key, ranked.relevance()), metadata.url(), metadata.version(), metadata.modifiedAt(),
-                    metadata.parentPageId(), null,
-                    ranked.relevance() == null ? null : ranked.relevance().passageId()));
+                    inDocument ? relevance.documentExcerpt(ranked, MAX_SNIPPET_CHARS).replaceAll("\\s+", " ").strip()
+                            : snippet(key, best), metadata.url(), metadata.version(), metadata.modifiedAt(),
+                    metadata.parentPageId(),
+                    inDocument ? new KeywordSearch.AttachmentMatch(best.attachmentId(), best.attachmentTitle(),
+                            best.partId(), best.partTitle()) : null,
+                    best == null ? null : best.passageId()));
             if (ranked.relevance() != null) {
                 scores.put(key, ranked.relevance().similarity());
             }

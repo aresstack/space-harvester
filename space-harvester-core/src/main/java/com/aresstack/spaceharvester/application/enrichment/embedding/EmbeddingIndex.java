@@ -31,6 +31,16 @@ public interface EmbeddingIndex {
     }
 
     /**
+     * Die {@code k} ähnlichsten Stücke aus Anhängen und enthaltenen Dateien dieser Quellen (ADR 0026, AP9a), getrennt
+     * von {@link #nearest(Set, String, float[], int)}, damit die Kandidaten aus Seiten unverändert bleiben. Ein Treffer
+     * nennt die Seite, unter der das Dokument steht; {@code charStart}/{@code charEnd} beziehen sich auf den Lesetext
+     * eines Abschnitts. Ohne eigene Umsetzung keine.
+     */
+    default List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return List.of();
+    }
+
+    /**
      * Ein ähnliches Stück.
      *
      * @param page        Seite

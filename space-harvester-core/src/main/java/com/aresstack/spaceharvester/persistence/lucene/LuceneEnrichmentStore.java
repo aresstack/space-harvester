@@ -149,7 +149,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String PART_ID = "documentPartId";
     private static final String SECTION = "documentSection";
     private static final String DOCUMENT_EXTRACTION = "documentExtraction";
-    /** Vektoren eines Dokuments: die Seitensuche ({@link #nearest}) findet sie nicht. */
+    /** Vektoren eines Dokuments: nur {@link #nearestDocuments} findet sie, die Seitensuche nicht. */
     private static final String VECTOR_DOCUMENT = "vectorDocument";
     private static final String VECTOR_DOCUMENT_KEY = "vectorDocumentKey";
     private static final String VECTOR_DOCUMENT_ATTACHMENT = "vectorDocumentAttachment";
@@ -474,6 +474,16 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     @Override
     public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, false);
+    }
+
+    @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, true);
+    }
+
+    private List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                   boolean documents) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         Objects.requireNonNull(query, "query");
@@ -489,8 +499,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 .add(new TermInSetQuery(VECTOR_SOURCE, sourceIds.stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
-                // Nur Seiten: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026, eigene Suche).
-                .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.MUST_NOT)
+                // Seiten und Dokumente getrennt: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026).
+                .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")),
+                        documents ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT)
                 .build();
         try {
             IndexSearcher searcher = searchers.acquire();

@@ -132,6 +132,12 @@ class LucenePageTextIndexTest {
             assertThat(index.search("Bugstrahl", Set.of("wiki"), SearchSpaces.all(), 10))
                     .singleElement().satisfies(match -> assertThat(match.partId()).isNull());
             assertThat(index.attachmentInputSha256(page, "a1")).contains("s1");
+            // Namen für Treffer der semantischen Suche in einem Dokument (ADR 0026, AP9a).
+            assertThat(index.documentTitles(page, "a1", "sha256:x:1"))
+                    .contains(new PageTextIndex.DocumentTitles("akte.zip", "teil.txt"));
+            assertThat(index.documentTitles(page, "a2", "")).contains(new PageTextIndex.DocumentTitles("andere.pdf",
+                    ""));
+            assertThat(index.documentTitles(page, "a3", "")).isEmpty();
 
             // Kürzer geworden, ein Teil weniger: überzählige Abschnitte und Teile verschwinden, der andere Anhang
             // und die Seite bleiben.

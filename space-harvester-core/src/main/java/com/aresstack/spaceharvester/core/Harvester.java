@@ -674,8 +674,15 @@ public final class Harvester implements AutoCloseable {
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
+            // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
+            EnrichmentSettings searchEnrichment = builder.enrichment;
+            java.util.concurrent.atomic.AtomicReference<DocumentEnrichments> sectionTexts =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex, preparation, runLog);
+                    renewal, reranker, textIndex, preparation, runLog,
+                    () -> (this.settings != null ? this.settings.enrichment() : searchEnrichment).documents(),
+                    (document, section, inputSha256) -> sectionTexts.get() == null ? Optional.empty()
+                            : sectionTexts.get().sectionText(document, section, inputSha256));
             // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
             // Seite an ihrem Space im Cache.
             FileFactEditStore factEditStore = new FileFactEditStore(builder.dataDirectory.resolve("facts"));
@@ -698,6 +705,7 @@ public final class Harvester implements AutoCloseable {
             EnrichmentSettings startEnrichment = builder.enrichment;
             DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
                     () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
+            sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     List.of(acronymRelationRule::refresh), documentEnrichments);
