@@ -475,8 +475,10 @@ ordnet jeder ausgegebenen Folie ihre Nummer zu. Die Zuordnung gilt nur für die 
 Teile fehlen oder sind zu groß, eine Folie fehlt in `p:sldIdLst`, doppelte Kennungen oder Ziele. Gibt Tika am Ende
 mehr oder weniger Folien aus als zugeordnet, sind die schon geschriebenen Nummern nicht belegt: Der Lauf wird verworfen
 (`StructureSink.restart`) und einmal ohne Zuordnung gelesen, abgelegt wird nie ein Stand mit unbelegten Nummern. Benannte Grenze: Die Blöcke bleiben in Tikas Reihenfolge, nicht in Folienreihenfolge; ein eigener SAX-Leser
-in Folienreihenfolge wird erst gebaut, wenn echte Dateien es brauchen. Version `3.3-s12`, „Neu lesen“ holt den Bestand nach. Word-Listen bleiben Absätze: Tika gibt Listenpunkte aus Word als Absatz mit vorangestelltem Zeichen aus, ohne
-eindeutige Auszeichnung. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
+in Folienreihenfolge wird erst gebaut, wenn echte Dateien es brauchen. Version `3.3-s12`, „Neu lesen“ holt den Bestand nach. Word-Listen bleiben Absätze (benannte Qualitätsgrenze, AP10 gemessen): Tika setzt die berechnete Marke in den Text
+(„· Punkt A“, „1. Schritt eins“), Suche und Analysen verlieren also nichts; es fehlen nur Ebene und Listenart. Eine
+Zuordnung über einen zweiten Durchlauf durch `document.xml` wäre eine Zuordnung nach Wahrscheinlichkeit und wird nicht
+gebaut. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
 geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien siehe unten
 (AP7a). Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
 `TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
