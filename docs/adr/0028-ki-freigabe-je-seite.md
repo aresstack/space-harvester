@@ -80,9 +80,13 @@ Startabgleich entscheidet je Quelle.
 - Je Seite, je Gruppe (Knoten) oder je Space. Entfernt werden die KI-Ergebnisse der Seiten, die danach nicht mehr
   freigegeben sind (eine Seite einer freigegebenen Quelle behält ihre):
   - Embeddings samt Vektoren, Ergebnis und Fakten der Satzanalyse, auch die ihrer Anhänge (ADR 0026);
-  - Absätze und Navigation rechnen nach Struktur neu (`source-not-approved`), die Themenüberschriften entfallen damit;
+  - Absätze und Navigation rechnen nach Struktur neu (`source-not-approved`), die Themenüberschriften entfallen damit,
+    auch die der Anhänge: Ihre Stände mit Modell gelten dann als veraltet und rechnen im selben Hintergrund ohne
+    Modell neu;
   - die Bildbeschreibungen der Seite: ihr Ergebnis `images`, ihr Text im Volltextindex und die gespeicherte
-    Beschreibung selbst, sobald keine freigegebene Seite mehr ein Bild mit demselben SHA-256 trägt.
+    Beschreibung selbst, sobald keine freigegebene Seite mehr ein Bild mit demselben SHA-256 trägt. Verliert die Seite
+    die Freigabe, während das Modell beschreibt, prüft die Beschreibung nach dem Speichern erneut und nimmt zurück,
+    was sie eben ablegte.
   - Reranking speichert nichts; es fragt ab sofort nicht mehr.
 - Derselbe Weg gilt für den Entzug je Quelle: Auch dort entfallen künftig die Bildbeschreibungen. Damit gibt es eine
   Regel für beide Wege. Ist nur ein Vision-Modell eingestellt (kein Embedding- und kein Chat-Modell), läuft beim

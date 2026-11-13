@@ -1964,12 +1964,23 @@ public class Assets implements DocumentInventory {
      *                                   {@code FAILED}
      */
     public DescribedImage describe(PageAttachmentList list, String attachmentId) {
-        ImageDescriber model = describer(new PageKey(list.sourceId(), list.attachments().pageId()));
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        ImageDescriber model = describer(page);
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
         // Laden bzw. Lesen und der Modellaufruf belegen die Schranke je für sich (content, generate): Der Modellaufruf
         // kann Minuten dauern und hält einen Platz nur, wenn das Bild nach seiner bekannten Größe groß ist.
-        return indexed(list, describe(model, content(list, attachmentId)));
+        DescribedImage described = indexed(list, describe(model, content(list, attachmentId)));
+        // ADR 0028: Verlor die Seite ihre Freigabe, während das Modell beschrieb, ist die Rücknahme womöglich schon
+        // gelaufen; was eben entstand, nimmt dieser Aufruf selbst zurück. Erst nach dem Ablegen geprüft.
+        java.util.function.Predicate<PageKey> released = key -> model.mayDescribe(key.sourceId())
+                || pageReleases.test(key);
+        if (!released.test(page)) {
+            withdrawDescriptions(Map.of(page, list.spaceKey()), Set.of(described.asset().sha256()), released);
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Freigabe während der Beschreibung entzogen", null);
+        }
+        return described;
     }
 
     /**

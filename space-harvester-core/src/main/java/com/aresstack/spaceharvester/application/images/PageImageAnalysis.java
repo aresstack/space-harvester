@@ -175,6 +175,13 @@ public class PageImageAnalysis {
                 clock.instant());
         enrichments.store().save(result);
         enrichments.flush();
+        // ADR 0028: Verlor die Seite ihre Freigabe, während das Modell beschrieb, ist die Rücknahme womöglich schon
+        // gelaufen und sähe dieses Ergebnis nie. Erst nach dem Speichern geprüft, damit keine Lücke bleibt.
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            withdraw(List.of(snapshot), page -> mayDescribe(model, page));
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Freigabe während der Beschreibung entzogen", null);
+        }
         return PageImages.read(key, enrichments.view(snapshot), text.get());
     }
 

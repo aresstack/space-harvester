@@ -506,8 +506,9 @@ public final class Harvester implements AutoCloseable {
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
-            // selbst. Schließt vor dem Hintergrund.
-            if (model != null || statementsReleased != null) {
+            // selbst. Schließt vor dem Hintergrund. Auch ohne beide Modelle: Die Rücknahme der Bildbeschreibungen
+            // (ADR 0028) läuft über ihn, auch wenn nur ein Vision-Modell eingestellt ist.
+            {
                 List<String> releaseDependent = new ArrayList<>();
                 if (model != null) {
                     releaseDependent.addAll(List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
@@ -519,8 +520,10 @@ public final class Harvester implements AutoCloseable {
                 // fragt die Freigabe darum selbst.
                 EmbeddingProcessor embeddings = model != null ? embedding : null;
                 Predicate<String> statementsFollow = statementsReleased;
-                Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
-                        || statementsFollow != null && statementsFollow.test(sourceId);
+                AiRelease release = this.aiRelease;
+                Predicate<String> released = embeddings == null && statementsFollow == null ? release::sourceReleased
+                        : sourceId -> embeddings != null && embeddings.covers(sourceId)
+                                || statementsFollow != null && statementsFollow.test(sourceId);
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
@@ -534,13 +537,10 @@ public final class Harvester implements AutoCloseable {
                         PassagePayload.REASON_NOT_APPROVED);
                 // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
                 // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
-                AiRelease release = this.aiRelease;
                 opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(
                         release.outsideReleasedSources(change.added()),
                         release.outsideReleasedSources(change.removed()), cache::find)));
                 this.releaseRecomputation = recomputation;
-            } else {
-                this.releaseRecomputation = null;
             }
             // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
             // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
@@ -803,12 +803,14 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
-            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen.
-            if (releaseRecomputation != null) {
-                PageImageAnalysis images = this.imageAnalysis;
-                AiRelease release = this.aiRelease;
-                releaseRecomputation.withdrawal(pages -> images.withdraw(pages, release::mayProcess));
-            }
+            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen,
+            // und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
+            PageImageAnalysis pageImages = this.imageAnalysis;
+            AiRelease withdrawn = this.aiRelease;
+            releaseRecomputation.withdrawal(pages -> {
+                pageImages.withdraw(pages, withdrawn::mayProcess);
+                documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
+            });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
             KnowledgeGraphStore graphStore = new FileKnowledgeGraphStore(
@@ -1025,8 +1027,7 @@ public final class Harvester implements AutoCloseable {
         }
         EmbeddingGeneration nextModel = model;
         SearchReranker nextReranker = reranker;
-        ConfigurationListener.Preparation releases = releaseRecomputation == null
-                ? ConfigurationListener.Preparation.NOTHING : releaseRecomputation.prepare(change);
+        ConfigurationListener.Preparation releases = releaseRecomputation.prepare(change);
         return () -> {
             settings = next;
             if (network != null) {

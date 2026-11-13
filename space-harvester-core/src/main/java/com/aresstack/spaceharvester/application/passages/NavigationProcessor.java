@@ -118,11 +118,14 @@ public final class NavigationProcessor implements EnrichmentProcessor {
         return process(key, null, text, stored.apply(key));
     }
 
-    /** Wie bei {@code passages}: Überschriften ohne Freigabe gelten nicht mehr, sobald die Quelle freigegeben ist. */
+    /**
+     * Wie bei {@code passages}: Überschriften ohne Freigabe gelten nicht mehr, sobald die Quelle freigegeben ist, und
+     * Themenabschnitte mit Modell nicht mehr, sobald die Seite ihre Freigabe verlor (ADR 0028).
+     */
     @Override
     public boolean outdated(Enrichment stored) {
-        return !stored.document().isPage() && PassageProcessor.notApproved(stored) && embedding != null
-                && embedding.covers(stored.key());
+        return !stored.document().isPage() && embedding != null && embedding.available()
+                && PassageProcessor.notApproved(stored) == embedding.covers(stored.key());
     }
 
     /** Auch Anhänge und enthaltene Dateien, wenn ihre gespeicherten Anreicherungen erreichbar sind. */

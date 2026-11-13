@@ -294,8 +294,11 @@ class AiConfiguration {
         if (withStatements) {
             processorIds.add(StatementProcessor.ID);
         }
-        Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
-                || withStatements && live.current().ai().mayProcessExternally(sourceId);
+        // Ohne beide Modelle nur für die Rücknahme der Bildbeschreibungen (ADR 0028): die Freigabe der Quelle selbst.
+        Predicate<String> released = embeddings == null && !withStatements
+                ? sourceId -> live.current().ai().mayProcessExternally(sourceId)
+                : sourceId -> embeddings != null && embeddings.covers(sourceId)
+                        || withStatements && live.current().ai().mayProcessExternally(sourceId);
         ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
                 released, processorIds);

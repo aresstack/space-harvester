@@ -110,17 +110,25 @@ class EnrichmentConfiguration {
 
     /**
      * Bildanalyse auf Abruf (ADR 0021, #362). Verliert eine Seite die Freigabe für den KI-Dienst (Liste oder Quelle,
-     * ADR 0028), entfallen auch ihre Bildbeschreibungen.
+     * ADR 0028), entfallen auch ihre Bildbeschreibungen, und die Analysen ihrer Anhänge, die mit Modell entstanden,
+     * rechnen ohne neu.
      */
     @Bean
     PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments,
                                         ObjectProvider<ReleaseRecomputation> recomputation,
-                                        ObjectProvider<AiRelease> release) {
+                                        ObjectProvider<AiRelease> release,
+                                        ObjectProvider<DocumentEnrichments> documents) {
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
         ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
         AiRelease pages = release.getIfAvailable();
         if (withdrawals != null && pages != null) {
-            withdrawals.withdrawal(snapshots -> analysis.withdraw(snapshots, pages::mayProcess));
+            withdrawals.withdrawal(snapshots -> {
+                analysis.withdraw(snapshots, pages::mayProcess);
+                DocumentEnrichments found = documents.getIfAvailable();
+                if (found != null) {
+                    found.withdrawn(snapshots, pages::mayProcess);
+                }
+            });
         }
         return analysis;
     }

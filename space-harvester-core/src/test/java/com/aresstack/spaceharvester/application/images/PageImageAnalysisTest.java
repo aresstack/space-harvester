@@ -301,6 +301,32 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aReleaseWithdrawnWhileTheModelDescribesLeavesNothingBehind() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        describer.released = false;
+        PageKey one = new PageKey("wiki", "1");
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(one));
+        Assets assets = assets();
+        assets.pageReleases(released::contains);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+        // Die Rücknahme (ADR 0028) läuft, während das Modell noch beschreibt, und findet noch nichts.
+        describer.during = () -> {
+            released.remove(one);
+            analysis.withdraw(List.of(page("1", "Text")), released::contains);
+        };
+
+        assertThatThrownBy(() -> analysis.describe(page("1", "Text")))
+                .isInstanceOfSatisfying(ImageDescriptionException.class,
+                        e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_RELEASED));
+
+        assertThat(store.find(one)).isEmpty();
+        describer.during = () -> { };
+        released.add(one);
+        assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(describer.calls).as("die Beschreibung von eben blieb nicht liegen").isEqualTo(2);
+    }
+
+    @Test
     void diagramPreviewsAndSvgAreSkippedBecauseTheirTextualSourceCounts() {
         source.image("1", null, "ablauf.png", PNG);
         source.image("1", "att2", "skizze.svg", "<svg/>".getBytes(StandardCharsets.UTF_8));
@@ -391,6 +417,7 @@ class PageImageAnalysisTest {
         boolean available = true;
         boolean released = true;
         boolean fail;
+        Runnable during = () -> { };
 
         @Override
         public String id() {
@@ -405,6 +432,7 @@ class PageImageAnalysisTest {
         @Override
         public String describe(byte[] image, String mediaType) {
             calls++;
+            during.run();
             if (fail) {
                 throw new IllegalStateException("Modell nicht erreichbar");
             }

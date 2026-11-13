@@ -93,12 +93,13 @@ public class PassageProcessor implements EnrichmentProcessor {
 
     /**
      * Absätze eines Dokuments nach Struktur, weil die Quelle nicht freigegeben war, gelten nicht mehr, sobald sie es
-     * ist; bei Seiten erledigt das die Neuberechnung nach der Freigabe.
+     * ist, und umgekehrt Absätze, die mit Modell entstanden, nicht mehr, sobald die Seite ihre Freigabe verlor
+     * (ADR 0028); bei Seiten erledigt das die Neuberechnung nach der Freigabe.
      */
     @Override
     public boolean outdated(Enrichment stored) {
-        return !stored.document().isPage() && notApproved(stored) && embedding != null
-                && embedding.covers(stored.key());
+        return !stored.document().isPage() && embedding != null && embedding.available()
+                && notApproved(stored) == embedding.covers(stored.key());
     }
 
     /**
