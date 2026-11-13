@@ -482,6 +482,26 @@ class MainWindowTest {
             assertThat(dialog.getWidth() - corner.x - close.getWidth()).as("Abstand rechts")
                     .isGreaterThanOrEqualTo(6 + 12);
 
+            // Mit Hilfe: das Fragezeichen steht links neben dem ✕, gleich groß und rund; der Text wandert ins Popup.
+            com.aresstack.spaceharvester.app.ui.controls.HelpButton help =
+                    new com.aresstack.spaceharvester.app.ui.controls.HelpButton(Dialogs.CLOSE_SIZE,
+                            SourceForm.HELP_HEADING, SourceForm.HELP_TEXT);
+            JPanel helped = Dialogs.surface("Wissensquelle hinzufügen", new JPanel(), () -> { }, help);
+            helped.setSize(660, 560);
+            helped.doLayout();
+            layoutAll(helped);
+            Screenshots.write(helped, home.resolve("dialog-help.png"));
+            Component closeChip = find(helped, ComicWindowCloseButton.class).get(0);
+            Point helpAt = SwingUtilities.convertPoint(help.getParent(), help.getLocation(), helped);
+            Point closeAt = SwingUtilities.convertPoint(closeChip.getParent(), closeChip.getLocation(), helped);
+            assertThat(helpAt.x).isLessThan(closeAt.x);
+            assertThat(helpAt.y).isEqualTo(closeAt.y);
+            assertThat(help.getWidth()).isEqualTo(closeChip.getWidth());
+            assertThat(help.popup().bodyText()).contains("ändert nur die Konfigurationsdatei",
+                    "keinen Vorrang zwischen Datei und Dialog", "SPACE_HARVESTER_APP_CONFIG");
+            assertThat(labelTexts(surface)).as("Hinweis unter „Quelle hinzufügen …“ entfällt")
+                    .noneMatch(text -> text.contains("Quellen stehen in der Konfigurationsdatei"));
+
             CopyrightLink copyright = new CopyrightLink(opened::add);
             assertThat(find(surface, CopyrightLink.class)).hasSize(1);
             JLabel link = copyright.link();
