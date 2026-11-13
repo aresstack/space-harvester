@@ -22,6 +22,15 @@ class FileKnowledgeGraphStoreTest {
     Path directory;
 
     @Test
+    void thePageNameIsTheHashOfItsDocumentKey() {
+        // ADR 0026, Schlüsselform Punkt 7: der Graph legt Dokumente flach nach DocumentKey#hash() ab, die Seite bleibt.
+        PageKey key = new PageKey("confluence", "4711");
+
+        assertThat(FileKnowledgeGraphStore.name(key))
+                .isEqualTo(com.aresstack.spaceharvester.application.assets.DocumentKey.page(key).hash() + ".json");
+    }
+
+    @Test
     void anAnalysisSurvivesARestartAndTheSyntaxDetailsAreReadOnDemand() {
         PageStatementAnalysis analysis = analysis("wiki", "1", "Beleg");
         new FileKnowledgeGraphStore(directory).replace(analysis);
