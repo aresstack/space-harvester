@@ -105,9 +105,38 @@ public final class DocumentExtractions {
         }
     }
 
+    /**
+     * Das Original einer enthaltenen Datei als Strom (ADR 0026, Punkt 6, Abnahme 9): Der abgelegte Behälter wird unter
+     * denselben Schutzgrenzen erneut gelesen und der Teil mit passendem Hash herausgegeben; es gibt keine zweite Kopie
+     * in der Ablage. Der Strom muss geschlossen werden (er löscht seine temporäre Datei).
+     *
+     * @throws PartUnavailableException mit festem Code: Teil ohne Hash, Behälter nicht mehr vorhanden, Teil nicht
+     *                                  gefunden
+     */
+    public InputStream openPart(Asset asset, AssetStore store, PartId id) {
+        if (!(id instanceof PartId.Content content)) {
+            throw new PartUnavailableException(PartUnavailableException.Reason.PART_WITHOUT_HASH, null);
+        }
+        Optional<InputStream> part;
+        try {
+            part = withOriginal(asset, store, original -> structure.openPart(original, asset.title(),
+                    asset.mediaType(), limits, rules.forContainer(asset.sha256()), content));
+        } catch (AssetStoreException e) {
+            throw new PartUnavailableException(PartUnavailableException.Reason.CONTAINER_MISSING, e);
+        }
+        return part.orElseThrow(() -> new PartUnavailableException(PartUnavailableException.Reason.PART_NOT_FOUND,
+                null));
+    }
+
     /** Liest das Original aus der abgelegten Datei oder einer temporären Kopie. */
     private StructuredDocument read(Asset asset, AssetStore store, StructureSink sink) {
         PartRules forAsset = rules.forContainer(asset.sha256());
+        return withOriginal(asset, store, original -> structure.extract(original, asset.title(), asset.mediaType(),
+                limits, sink, forAsset));
+    }
+
+    /** Gibt die abgelegte Datei oder eine temporäre Kopie an {@code use}; die Kopie wird danach gelöscht. */
+    private <T> T withOriginal(Asset asset, AssetStore store, java.util.function.Function<Path, T> use) {
         Optional<Path> file = store.file(asset);
         Path temporary = null;
         try {
@@ -121,7 +150,7 @@ public final class DocumentExtractions {
                 }
                 original = temporary;
             }
-            return structure.extract(original, asset.title(), asset.mediaType(), limits, sink, forAsset);
+            return use.apply(original);
         } catch (IOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e);
         } catch (UncheckedIOException e) {

@@ -292,6 +292,77 @@ class TikaDocumentPartsTest {
         assertThat(none.outcome().reason()).contains(StatusReason.NO_TEXT);
     }
 
+    @Test
+    void theOriginalOfAPartComesBackAsAStreamWithItsHashAndTheTemporaryFileGoes() throws Exception {
+        byte[] bytes = Corpus.duplicateNames(false).bytes();
+        StructuredDocument mail = read("doppelt.eml", bytes, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording());
+        Path file = directory.resolve("doppelt.eml");
+        EmbeddedEntry second = entry(mail, "kopie-b.txt");
+        Path temp = Path.of(System.getProperty("java.io.tmpdir"));
+        List<Path> before = originals(temp);
+
+        try (java.io.InputStream in = structure.openPart(file, "doppelt.eml", MAIL, ExtractionLimits.DEFAULTS,
+                PartRules.ALL, (PartId.Content) second.id()).orElseThrow()) {
+            byte[] original = in.readAllBytes();
+            assertThat(com.aresstack.spaceharvester.application.assets.Assets.sha256(original))
+                    .isEqualTo("sha256:" + second.sha256().orElseThrow());
+            assertThat(original.length).isEqualTo(second.size().orElseThrow().intValue());
+        }
+        assertThat(originals(temp)).containsExactlyInAnyOrderElementsOf(before);
+        assertThat(structure.openPart(file, "doppelt.eml", MAIL, ExtractionLimits.DEFAULTS, PartRules.ALL,
+                new PartId.Content("ef".repeat(32), 1))).isEmpty();
+    }
+
+    @Test
+    void openPartReportsFixedCodes() throws Exception {
+        byte[] bytes = Corpus.zipInMail().bytes();
+        com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore store =
+                new com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore(directory.resolve("assets"));
+        com.aresstack.spaceharvester.application.assets.DocumentExtractions extractions =
+                new com.aresstack.spaceharvester.application.assets.DocumentExtractions(structure,
+                        new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                                directory.resolve("assets")), ExtractionLimits.DEFAULTS);
+        com.aresstack.spaceharvester.application.assets.Asset asset =
+                new com.aresstack.spaceharvester.application.assets.Asset("wiki", "1", "mail", "1", "zip.eml", MAIL,
+                        com.aresstack.spaceharvester.application.assets.AssetKind.OTHER, bytes.length,
+                        com.aresstack.spaceharvester.application.assets.Assets.sha256(bytes),
+                        java.time.Instant.parse("2026-11-13T06:00:00Z"));
+        store.put(asset, bytes);
+        StructuredDocument document = extractions.extract(asset, store).document();
+        EmbeddedEntry inner = entry(document, "hinweis.txt");
+
+        try (java.io.InputStream in = extractions.openPart(asset, store, inner.id())) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8)).contains("MARKE-ZIP-TXT");
+        }
+        assertThat(code(() -> extractions.openPart(asset, store, new PartId.Position("ab".repeat(32), "/1"))))
+                .isEqualTo("part-without-hash");
+        assertThat(code(() -> extractions.openPart(asset, store, new PartId.Content("ef".repeat(32), 1))))
+                .isEqualTo("part-not-found");
+        com.aresstack.spaceharvester.application.assets.Asset gone =
+                new com.aresstack.spaceharvester.application.assets.Asset("wiki", "2", "weg", "1", "weg.eml", MAIL,
+                        com.aresstack.spaceharvester.application.assets.AssetKind.OTHER, 3,
+                        "sha256:" + "12".repeat(32), java.time.Instant.parse("2026-11-13T06:00:00Z"));
+        assertThat(code(() -> extractions.openPart(gone, store, inner.id()))).isEqualTo("container-missing");
+    }
+
+    private static String code(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        try {
+            call.call();
+        } catch (com.aresstack.spaceharvester.application.assets.PartUnavailableException e) {
+            return e.reason().code();
+        } catch (Throwable e) {
+            throw new AssertionError(e);
+        }
+        throw new AssertionError("keine Ausnahme");
+    }
+
+    private static List<Path> originals(Path temp) throws IOException {
+        try (Stream<Path> files = Files.list(temp)) {
+            return files.filter(path -> path.getFileName().toString().startsWith("original-")).toList();
+        }
+    }
+
     private static List<Path> parts(Path temp) throws IOException {
         try (Stream<Path> files = Files.list(temp)) {
             return files.filter(path -> path.getFileName().toString().startsWith("teil-")).toList();
