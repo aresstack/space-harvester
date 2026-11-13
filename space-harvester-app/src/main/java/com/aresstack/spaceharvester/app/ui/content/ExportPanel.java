@@ -102,8 +102,10 @@ public final class ExportPanel extends JPanel {
     static final String REFRESH = "Aktualisieren";
     static final String LOAD_SUBTREE = "Samt Unterseiten laden";
     static final String LOAD_PAGE = "Nur diese Seite laden";
-    static final String NO_DATASET = "Für die Ausgabe erst laden: die Formate arbeiten auf dem Datenbestand des "
-            + "jüngsten fertigen Downloads dieser Auswahl.";
+    static final String NO_DATASET = "Noch nichts ausgegeben; die Format-Knöpfe geben die Auswahl aus dem Bestand "
+            + "aus, ohne die Quelle zu lesen.";
+    static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: erst laden.";
+    static final String NOT_AVAILABLE = "kein Datenbestand vorhanden";
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
@@ -153,6 +155,11 @@ public final class ExportPanel extends JPanel {
     private String holdingsKey;
     /** Eine Auffrischung ist schon angestoßen; weitere Meldungen bis dahin verfallen. */
     private boolean refreshPending;
+    /** Der Bestand der gezeigten Auswahl; {@code null} ohne Auswahl oder für eine Quelle. */
+    private PageSelection shownHoldings;
+    /** Eine Ausgabe aus dem Bestand läuft: ihr Auftrag und das Format, das danach aus dem Datenbestand entsteht. */
+    private String outputJob;
+    private String outputFormat;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
     private int request;
 
@@ -193,11 +200,7 @@ public final class ExportPanel extends JPanel {
         for (String format : FORMATS) {
             IconButton button = new IconButton(FormatIcon.of(format.equals("markdown-package") ? "markdown"
                     : format.equals("json-package") ? "json" : format), EXPORT_TIPS.get(format));
-            button.addActionListener(e -> {
-                if (shownDataset != null) {
-                    exportAs(shownDataset.exportId(), format);
-                }
-            });
+            button.addActionListener(e -> output(format));
             formatButtons.put(format, button);
             formats.add(button);
         }
@@ -243,6 +246,9 @@ public final class ExportPanel extends JPanel {
         this.selection = selection;
         feedback.clear();
         noticeList.setVisible(false);
+        // Eine laufende Ausgabe gehört zur alten Auswahl; ihr Auftrag läuft unter Aufträge weiter.
+        outputJob = null;
+        outputFormat = null;
         refresh();
     }
 
@@ -357,7 +363,8 @@ public final class ExportPanel extends JPanel {
             return;
         }
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-        Background.run(() -> gather(runtime, current, directory), data -> {
+        String pending = outputJob;
+        Background.run(() -> gather(runtime, current, directory, pending), data -> {
             if (ticket == request) {
                 render(data);
             }
@@ -370,15 +377,17 @@ public final class ExportPanel extends JPanel {
     }
 
     /** Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien; je Space einer Quelle. */
-    private static Data gather(AppRuntime runtime, Selection selection, Path directory) {
+    private static Data gather(AppRuntime runtime, Selection selection, Path directory, String pendingJob) {
         List<JobStatus> jobs = runtime.workspace().jobs();
+        JobStatus pending = pendingJob == null ? null
+                : jobs.stream().filter(job -> job.id().equals(pendingJob)).findFirst().orElse(null);
         if (selection.spaceKey() == null) {
             List<SpaceRow> rows = new ArrayList<>();
             for (Partition space : runtime.workspace().spaces(selection.sourceId())) {
                 Selection whole = new Selection(selection.sourceId(), space.key(), null, space.name());
                 rows.add(new SpaceRow(space, newest(jobs, whole), running(jobs, whole)));
             }
-            return new Data(selection, null, null, null, List.of(), rows, null);
+            return new Data(selection, null, null, null, List.of(), rows, null, pending);
         }
         JobStatus newest = newest(jobs, selection);
         ExportDatasetInfo dataset = newest == null ? null
@@ -386,7 +395,7 @@ public final class ExportPanel extends JPanel {
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, nicht nur die Startseite.
         PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore());
-        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings);
+        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings, pending);
     }
 
     /** „120 von 127 Seiten lokal“, bei lückenhafter Auflösung mit Hinweis; ohne bekannte Seiten „keine Seite bekannt“. */
@@ -413,8 +422,8 @@ public final class ExportPanel extends JPanel {
 
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
-                List<String> files, List<SpaceRow> spaces, PageSelection holdings) {
-        static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null);
+                List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus pending) {
+        static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, null);
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
@@ -423,6 +432,7 @@ public final class ExportPanel extends JPanel {
 
     private void render(Data data) {
         shown = data;
+        shownHoldings = data.holdings();
         Selection current = data.selection();
         boolean none = current == null;
         boolean source = !none && current.spaceKey() == null;
@@ -452,6 +462,7 @@ public final class ExportPanel extends JPanel {
         }
         revalidate();
         repaint();
+        finishOutput(data.pending());
     }
 
     private void renderSpaces(List<SpaceRow> rows) {
@@ -541,15 +552,12 @@ public final class ExportPanel extends JPanel {
         if (other) {
             noticeList.setVisible(false);
         }
-        for (Map.Entry<String, IconButton> entry : formatButtons.entrySet()) {
-            String blocked = exportBlocked(entry.getKey());
-            entry.getValue().setEnabled(blocked == null);
-            entry.getValue().setToolTipText(blocked == null ? EXPORT_TIPS.get(entry.getKey())
-                    : EXPORT_TIPS.get(entry.getKey()) + " · " + blocked);
-        }
+        renderButtons();
         if (dataset == null) {
             cardImages.setVisible(false);
-            files.setText(NO_DATASET);
+            files.setText(outputJob != null && outputFormat != null ? Format.title(outputFormat)
+                    + ": Ausgabe aus dem Bestand läuft …"
+                    : shownHoldings == null || shownHoldings.size() == 0 ? NO_HOLDINGS : NO_DATASET);
             files.setForeground(Comic.MUTED);
             toggleNotices.setVisible(false);
             noticeList.setVisible(false);
@@ -638,13 +646,86 @@ public final class ExportPanel extends JPanel {
 
     /** Warum dieses Format für den gezeigten Datenbestand gerade nicht geht, oder {@code null}. */
     String exportBlocked(String format) {
-        if (shownDataset == null) {
-            return "kein Datenbestand vorhanden";
+        if (outputJob != null) {
+            return Format.title(outputFormat == null ? format : outputFormat) + " wird gerade erzeugt";
         }
-        if (converting.contains(shownDataset.exportId())) {
+        if (shownDataset == null && (shownHoldings == null || shownHoldings.size() == 0)) {
+            return NOT_AVAILABLE;
+        }
+        if (shownDataset != null && converting.contains(shownDataset.exportId())) {
             return Format.title(convertingFormat.getOrDefault(shownDataset.exportId(), format)) + " wird gerade erzeugt";
         }
-        return shownDataset.formats().contains(format) ? null : "Format nicht angeboten";
+        return shownDataset == null || shownDataset.formats().contains(format) ? null : "Format nicht angeboten";
+    }
+
+    /**
+     * Ausgabe der Auswahl aus dem Bestand (ADR 0029, Angelo: „Ausgabe nur aus dem Bestand“): startet
+     * {@code Workspace.startExportFromHoldings} für Space bzw. Seite samt Unterseiten, der nur den Seiten-Cache liest;
+     * hat sich nichts geändert, kommt der fertige Auftrag zurück. Sobald er beendet ist, entsteht die Datei im Format
+     * aus seinem Datenbestand ({@link #exportAs}). Je Auswahl läuft höchstens eine Ausgabe zugleich.
+     */
+    void output(String format) {
+        AppRuntime runtime = context.runtime();
+        Selection current = selection;
+        if (runtime == null || context.settings() == null || current == null || current.spaceKey() == null
+                || outputJob != null) {
+            return;
+        }
+        outputJob = "";
+        outputFormat = format;
+        feedback.working(Format.title(format) + " wird aus dem Bestand erzeugt …");
+        renderButtons();
+        Background.run(() -> {
+            List<JobStatus> jobs = runtime.workspace().startExportFromHoldings(current.toCore(),
+                    List.of(Downloads.FORMAT));
+            if (jobs.isEmpty()) {
+                throw new IllegalStateException("Kein Space in der Auswahl");
+            }
+            return jobs.get(0);
+        }, job -> {
+            if (!Objects.equals(current, selection)) {
+                // Die Auswahl hat inzwischen gewechselt: die Ausgabe gehört zur alten, nicht mehr hier zeigen.
+                outputJob = null;
+                outputFormat = null;
+                renderButtons();
+                return;
+            }
+            outputJob = job.id();
+            finishOutput(job);
+            if (outputJob != null) {
+                refresh();
+            }
+        }, error -> {
+            outputJob = null;
+            outputFormat = null;
+            feedback.problem(error);
+            renderButtons();
+        });
+    }
+
+    /** Ist der Auftrag der laufenden Ausgabe beendet, entsteht jetzt die Datei; scheiterte er, steht hier der Grund. */
+    private void finishOutput(JobStatus job) {
+        if (job == null || outputJob == null || !job.id().equals(outputJob) || !job.state().terminal()) {
+            return;
+        }
+        String format = outputFormat;
+        outputJob = null;
+        outputFormat = null;
+        if (job.state() == JobState.COMPLETED) {
+            exportAs(job.id(), format);
+        } else {
+            feedback.warning("Ausgabe aus dem Bestand " + Texts.state(job).toLowerCase(Locale.GERMAN), null);
+            renderButtons();
+        }
+    }
+
+    private void renderButtons() {
+        for (Map.Entry<String, IconButton> entry : formatButtons.entrySet()) {
+            String blocked = exportBlocked(entry.getKey());
+            entry.getValue().setEnabled(blocked == null);
+            entry.getValue().setToolTipText(blocked == null ? EXPORT_TIPS.get(entry.getKey())
+                    : EXPORT_TIPS.get(entry.getKey()) + " · " + blocked);
+        }
     }
 
     /** Der gezeigte Datenbestand, für Tests. */
