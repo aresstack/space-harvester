@@ -322,6 +322,42 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
   `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
 
+## Dokumente als Struktur (ADR 0026)
+
+Vertrag der strukturierten Extraktion im Paket `application.assets` (Stufe 1, noch ohne Umsetzung; bis Stufe 2 gilt
+der Weg oben): Port `DocumentStructure` liest ein Original aus einer Datei (`Path`, nie Byte-Array) mit
+`ExtractionLimits` und gibt Blöcke (`Heading`, `Paragraph`, `ListItem`, `Table`, `Code`) als Strom an einen
+`StructureSink`: einen Strom für das äußere Dokument, je enthaltener Datei einen eigenen (`PartSink`, nimmt auch die
+eigenen Kopfdaten des Teils an, etwa einer weitergeleiteten Mail). Kopfdaten (`DocumentHead`)
+gehen nie in den Lesetext. Fundstellen (`Location`: Seite, Folie, Blatt; Zellbezug an der Zelle) stehen nur, wenn
+der Extraktor sie aus der Datei liest. Dokumentkennung `DocumentKey` = Seite, Anhangskennung der Quelle und für
+enthaltene Dateien eine Teilkennung `PartId` im äußeren Behälter: `sha256:<hex>:<n>` (laufende Nummer unter
+inhaltsgleichen Teilen in Lesereihenfolge über den ganzen Behälter) oder, ohne vollständig gelesene Bytes,
+`pos:<sha256 des Behälters>:/1/3`. Anzeigenamen werden nie Kennung oder Pfad.
+
+Status (`ExtractionStatus`): `OK`, `PARTIAL`, `UNSUPPORTED`, `FAILED`, `EXCLUDED`; dazu `truncated` (nur mit gelesenem
+Umfang in Bytes und Zeichen) und je Ergebnis ein fester Grund (`StatusReason`, der zuerst erreichte):
+
+| Code | Bedeutung |
+|---|---|
+| `encrypted` | verschlüsselt, nur wenn die Ausnahme es eindeutig sagt |
+| `corrupt` | defekt |
+| `empty` | ohne Inhalt |
+| `timeout` | Laufzeit ohne Fortschritt oder insgesamt erreicht |
+| `too-deep` | Verschachtelungstiefe überschritten |
+| `too-many-files` | zu viele enthaltene Dateien im äußeren Behälter |
+| `unpacked-too-large` | ausgepackt zu gepackt über dem Verhältnis |
+| `memory-limit` | Format braucht mehr Speicher als im Dienst erlaubt |
+| `media-type-excluded` | Medientyp nicht zugelassen (steht nur im Verzeichnis) |
+| `too-large` | über einer vom Betreiber gesetzten Größe |
+| `text-ratio-exceeded` | mehr Zeichen je Byte als erlaubt (Textbombe) |
+| `temp-space-low` | freier Platz für temporäre Dateien unter der Reserve |
+| `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag); Behälter `PARTIAL` |
+
+Standardgrenzen (`ExtractionLimits.DEFAULTS`, `0` = keine Grenze): Größe und Zeichen ohne Grenze, ausgepackt zu
+gepackt 100:1 ab 100 MiB, Zeichen zu Bytes 100:1 ab 1 Mio. Zeichen, Tiefe 10, 10 000 enthaltene Dateien, 30 s ohne
+Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
+
 ## Einen Adapter ergänzen
 
 1. Fehlende Fähigkeiten upstream in `source-api` als optionale Capability-Interfaces ergänzen, nicht durch
