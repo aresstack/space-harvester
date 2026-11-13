@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.source;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.Block;
+import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.BlockSink;
 import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
@@ -172,7 +173,7 @@ class TikaDocumentStructureTest {
 
         assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.OK);
         assertThat(sink.blocks).allSatisfy(block -> assertThat(block.chars()).isLessThanOrEqualTo(1_000));
-        String joined = sink.blocks.stream().map(b -> ((Block.Paragraph) b).text()).collect(Collectors.joining());
+        String joined = sink.blocks.stream().map(DocumentExtractions::plain).collect(Collectors.joining());
         assertThat(joined.replaceAll("\\s", "")).isEqualTo((longWord + words).replaceAll("\\s", ""));
     }
 
@@ -314,6 +315,43 @@ class TikaDocumentStructureTest {
         }
     }
 
+    @Test
+    void tikaArtefactsAreFilteredButSourceTextStays() throws Exception {
+        Path file = Files.writeString(directory.resolve("p.txt"), "egal");
+        org.xml.sax.helpers.AttributesImpl none = new org.xml.sax.helpers.AttributesImpl();
+        TikaDocumentStructure artefacts = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            handler.startElement("", "p", "p", none);
+            characters(handler, "Quelltext");
+            org.xml.sax.helpers.AttributesImpl empty = new org.xml.sax.helpers.AttributesImpl();
+            handler.startElement("", "a", "a", empty);
+            handler.endElement("", "a", "a");
+            handler.endElement("", "p", "p");
+            handler.startElement("", "p", "p", none);
+            handler.endElement("", "p", "p");
+            org.xml.sax.helpers.AttributesImpl entry = new org.xml.sax.helpers.AttributesImpl();
+            entry.addAttribute("", "class", "class", "CDATA", "package-entry");
+            handler.startElement("", "div", "div", entry);
+            handler.startElement("", "h1", "h1", none);
+            characters(handler, "image1.png");
+            handler.endElement("", "h1", "h1");
+            handler.endElement("", "div", "div");
+            handler.startElement("", "h1", "h1", none);
+            characters(handler, "image2.png ist auch ein echter Titel");
+            handler.endElement("", "h1", "h1");
+        }));
+        Recording sink = new Recording();
+
+        artefacts.extract(file, "p.txt", "text/plain", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(sink.blocks).hasSize(2);
+        assertThat(sink.blocks.get(0)).isInstanceOfSatisfying(Block.Paragraph.class, paragraph -> {
+            assertThat(paragraph.text()).isEqualTo("Quelltext");
+            assertThat(paragraph.links()).as("Anker ohne Ziel").isEmpty();
+        });
+        assertThat(sink.blocks.get(1)).as("Überschrift der Quelle bleibt").isInstanceOfSatisfying(
+                Block.Heading.class, heading -> assertThat(heading.text()).startsWith("image2.png"));
+    }
+
     @FunctionalInterface
     interface Script {
         void run(ContentHandler handler, Metadata metadata) throws Exception;
@@ -380,7 +418,7 @@ class TikaDocumentStructureTest {
         }
 
         String text() {
-            return blocks.stream().map(b -> ((Block.Paragraph) b).text()).collect(Collectors.joining("\n"));
+            return blocks.stream().map(DocumentExtractions::plain).collect(Collectors.joining("\n"));
         }
     }
 
@@ -403,7 +441,7 @@ class TikaDocumentStructureTest {
                 blocks++;
                 chars += block.chars();
                 largestBlock = Math.max(largestBlock, block.chars());
-                String text = ((Block.Paragraph) block).text();
+                String text = DocumentExtractions.plain(block);
                 for (String mark : marks) {
                     if (text.contains(mark)) {
                         found.add(mark);
