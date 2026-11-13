@@ -20,7 +20,9 @@ import java.util.function.BooleanSupplier;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.swing.JCheckBox;
+import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import javax.swing.JComboBox;
+import javax.swing.JSpinner;
 import javax.swing.JPasswordField;
 import javax.swing.JRadioButton;
 import javax.swing.JTable;
@@ -266,18 +268,66 @@ class SettingDialogsTest {
         CountDownLatch done = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> {
             shell[0] = SettingDialogs.syncRules(null, context, "wiki", done::countDown);
-            List<JComboBox> boxes = find(shell[0].body(), JComboBox.class);
-            assertThat(boxes).allMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
-            List<JTextField> fields = find(shell[0].body(), JTextField.class);
-            assertThat(fields).allMatch(field -> field.getText().isEmpty());
-            fields.get(1).setText("1d");
-            boxes.get(0).setSelectedItem(SettingDialogs.SYNC_CACHE);
+            assertThat(find(shell[0].body(), JComboBox.class))
+                    .allMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
+            List<DurationField> durations = find(shell[0].body(), DurationField.class);
+            assertThat(durations).as("Änderungssuche, Inventur, Frist, Sperrfrist").hasSize(4)
+                    .allMatch(DurationField::isNone);
+            assertThat(find(shell[0].body(), JSpinner.class)).as("Parallelität nur global")
+                    .allMatch(spinner -> !spinner.isShowing());
+            assertThat(texts(shell[0].body())).as("Hinweis nennt den globalen Wert")
+                    .anyMatch(text -> text.endsWith("wie global: aus"));
+            durations.get(1).spinner().setValue(1);
+            durations.get(1).units().setSelectedItem("Tage");
+            combo(shell[0].body(), SettingDialogs.SYNC_CACHE).setSelectedItem(SettingDialogs.SYNC_CACHE);
             shell[0].save();
         });
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(Files.readString(config)).contains("    sources:", "\"wiki\":", "inventory-interval: 1d",
                 "mode: sync-cache", "# Kommentar bleibt stehen").doesNotContain("        interval:");
         assertThat(context.settings().syncRule("wiki").inventoryInterval()).isEqualTo(java.time.Duration.ofDays(1));
+    }
+
+    @Test
+    void theGlobalSyncDialogWritesTheSharedKeysAndRejectsTooShortIntervals() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        String before = Files.readString(config);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.syncRules(null, context, null, done::countDown);
+            assertThat(find(shell[0].body(), JComboBox.class))
+                    .noneMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
+            List<DurationField> durations = find(shell[0].body(), DurationField.class);
+            assertThat(durations).hasSize(4);
+            assertThat(durations.get(0).isNone()).as("Änderungssuche aus").isTrue();
+            assertThat(durations.get(0).units().getItemAt(0)).isEqualTo(SettingDialogs.OFF);
+            assertThat(durations.get(3).value()).as("Sperrfrist 30 Tage").isEqualTo(java.time.Duration.ofDays(30));
+            assertThat(durations.get(3).units().getSelectedItem()).isEqualTo("Tage");
+            assertThat(durations.get(2).isEnabled()).as("Frist bei „Immer Version prüfen“ aus").isFalse();
+            durations.get(0).spinner().setValue(30);
+            durations.get(0).units().setSelectedItem("Sekunden");
+            shell[0].save();
+            assertThat(shell[0].feedback.text()).contains("mindestens eine Minute");
+        });
+        assertThat(Files.readString(config)).isEqualTo(before);
+        SwingUtilities.invokeAndWait(() -> {
+            List<DurationField> durations = find(shell[0].body(), DurationField.class);
+            durations.get(0).units().setSelectedItem("Minuten");
+            combo(shell[0].body(), SettingDialogs.TIMED_WITH_CHECK).setSelectedItem(SettingDialogs.TIMED_WITH_CHECK);
+            assertThat(durations.get(2).isEnabled()).isTrue();
+            durations.get(2).spinner().setValue(6);
+            durations.get(2).units().setSelectedItem("Stunden");
+            combo(shell[0].body(), SettingDialogs.CATALOG_ONLY).setSelectedItem(SettingDialogs.FULL);
+            shell[0].save();
+        });
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("    interval: 30m", "    mode: full", "    max-age: 6h",
+                "    version-check: true", "    withheld-retention: 30d", "# Kommentar bleibt stehen")
+                .doesNotContain("inventory-interval:", "    sources:", "\n\n    interval");
+        assertThat(context.settings().problems()).isEmpty();
+        assertThat(context.settings().sync().interval()).isEqualTo(java.time.Duration.ofMinutes(30));
+        assertThat(context.settings().sync().inventoryInterval()).isNull();
+        assertThat(context.settings().cache().maxAge()).isEqualTo(java.time.Duration.ofHours(6));
     }
 
     @Test

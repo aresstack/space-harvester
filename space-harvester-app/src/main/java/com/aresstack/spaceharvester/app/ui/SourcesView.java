@@ -115,10 +115,14 @@ public final class SourcesView implements View {
     private final JLabel spaceLine = Comic.muted(" ");
     /** Reiter „Synchronisierung“: was für die gewählte Quelle gilt. */
     final Facts syncFacts = new Facts();
-    final ComposerButton editSourceRules = Comic.primary("Regeln dieser Quelle …",
-            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle; leer bleibt wie global");
-    private final ComposerButton editRules = Comic.button("Gemeinsame Werte …",
-            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten für alle Quellen (Einstellungen › Cache)");
+    final ComposerButton editSourceRules = Comic.button(Glyph.PENCIL, "Diese Quelle anpassen …",
+            "Erkennung, Aktualisierung und Bereinigung nur für diese Quelle ändern; „Wie global“ nimmt den gemeinsamen "
+                    + "Wert");
+    final ComposerButton editRules = Comic.button(Glyph.PENCIL, "Alle Quellen …",
+            "Die gemeinsamen Werte aller Quellen ändern (auch unter Einstellungen › Cache)");
+    /** Über den Werten: was der Reiter zeigt und wo sich die Werte ändern lassen. */
+    private final JTextArea syncIntro = Comic.hint("So hält die App diese Quelle aktuell. Werte mit „(wie global)“ "
+            + "stammen aus den gemeinsamen Regeln aller Quellen; ändern über die Knöpfe rechts.");
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
@@ -277,8 +281,8 @@ public final class SourcesView implements View {
                         .open();
             }
         });
-        editRules.addActionListener(e -> SettingDialogs.cache(root, context,
-                () -> feedback.success("Regeln übernommen")).open());
+        editRules.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
+                () -> feedback.success("Regeln aller Quellen übernommen")).open());
         spaces.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 updateSpaceActions();
@@ -304,8 +308,13 @@ public final class SourcesView implements View {
         // Textreiter statt Trenner: je Reiter die ganze Höhe, die Einstellungen scrollen bei Bedarf.
         JPanel syncPanel = new JPanel(new BorderLayout(0, 8));
         syncPanel.setOpaque(false);
+        // Zuerst die Knöpfe zum Ändern, rechts oben, mit dem Hinweis daneben; die Werte darunter.
+        JPanel syncHead = new JPanel(new BorderLayout(12, 0));
+        syncHead.setOpaque(false);
+        syncHead.add(syncIntro, BorderLayout.CENTER);
+        syncHead.add(Comic.row(editSourceRules, editRules), BorderLayout.EAST);
+        syncPanel.add(syncHead, BorderLayout.NORTH);
         syncPanel.add(syncFacts, BorderLayout.CENTER);
-        syncPanel.add(Comic.row(editSourceRules, editRules), BorderLayout.SOUTH);
         tabs.tab(SPACES, spacesPanel)
                 .tab(SYNC, flush(Comic.column(syncPanel)))
                 .tab(SETTINGS, flush(Comic.column(settings)))
@@ -386,14 +395,15 @@ public final class SourcesView implements View {
         SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
                 .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
-                .add("Automatische Änderungssuche", interval(effective.interval(), "CQL, ohne "
+                .add(SettingDialogs.CHANGE_SEARCH_TITLE, interval(effective.interval(), "CQL, ohne "
                         + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
-                .add("Regelmäßige Bestandsinventur", interval(effective.inventoryInterval(), "nur Seitenmetadaten")
+                .add(SettingDialogs.INVENTORY_TITLE, interval(effective.inventoryInterval(), "nur Seitenmetadaten")
                         + origin(rule.inventoryInterval()), tone(rule.inventoryInterval()))
-                .add("Betriebsart", SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()), tone(rule.mode()))
-                .add("Nachholen beim Start", onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
+                .add(SettingDialogs.MODE_TITLE, SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()),
+                        tone(rule.mode()))
+                .add(SettingDialogs.CATCH_UP_TITLE, onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
                         tone(rule.catchUpOnStart()))
-                .add("Abgleich vor jeder Suche", onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
+                .add(SettingDialogs.BEFORE_SEARCH_TITLE, onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
                         tone(rule.beforeSearch()))
                 .add("Webhooks", onOff(effective.events()) + origin(rule.events())
                         + " · nur im Server, Einrichtung in Confluence", tone(rule.events()))

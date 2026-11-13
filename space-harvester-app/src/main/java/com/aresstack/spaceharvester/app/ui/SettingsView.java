@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -69,8 +70,9 @@ public final class SettingsView implements View {
     /** Die Löschknöpfe des Reiters „Sicherheit“ in Zeilenreihenfolge, für Tests. */
     final java.util.List<IconButton> deleteButtons = new java.util.ArrayList<>();
     private final java.util.Map<IconButton, Runnable> deletions = new java.util.HashMap<>();
-    private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
-            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
+    private final ComposerButton editCache = Comic.button(Glyph.PENCIL, "Alle Quellen anpassen …",
+            "Erkennung, Aktualisierung und Bereinigung für alle Quellen ändern; je Quelle unter Wissensquellen › "
+                    + "Synchronisierung");
     /** Rechts: der gewählte Bereich. */
     private final java.awt.CardLayout pages = new java.awt.CardLayout();
     private final JPanel pageDeck = new JPanel(pages);
@@ -165,8 +167,8 @@ public final class SettingsView implements View {
                 () -> feedback.success("Serverzertifikate übernommen")).open());
         editRetry.addActionListener(e -> SettingDialogs.retry(root, context,
                 () -> feedback.success("Wiederholungen übernommen")).open());
-        editCache.addActionListener(e -> SettingDialogs.cache(root, context,
-                () -> feedback.success("Cache-Einstellungen übernommen")).open());
+        editCache.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
+                () -> feedback.success("Regeln aller Quellen übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -202,7 +204,7 @@ public final class SettingsView implements View {
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
-        page(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
+        page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
@@ -532,6 +534,12 @@ public final class SettingsView implements View {
         cache.reset();
         if (settings != null) {
             AppSettings.Cache c = settings.cache();
+            SyncSettings sync = settings.sync();
+            cache.add(SettingDialogs.CHANGE_SEARCH_TITLE, SettingDialogs.every(sync.interval()))
+                    .add(SettingDialogs.INVENTORY_TITLE, SettingDialogs.every(sync.inventoryInterval()))
+                    .add(SettingDialogs.MODE_TITLE, SettingDialogs.modeLabel(sync.mode()))
+                    .add(SettingDialogs.CATCH_UP_TITLE, sync.catchUpOnStart() ? "an" : "aus")
+                    .add(SettingDialogs.BEFORE_SEARCH_TITLE, sync.beforeSearch() ? "an" : "aus");
             cache.add(SettingDialogs.REFRESH_TITLE, SettingDialogs.refreshStrategy(c));
             if (!c.maxAge().isZero()) {
                 cache.add(SettingDialogs.CACHE_MAX_AGE, ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage, danach "
