@@ -92,7 +92,9 @@ public final class DocumentExtractions {
         try (ExtractionWriter writer = extractions.writer(key)) {
             Target target = new Target(writer);
             StructuredDocument document = read(asset, store, target);
-            if (transientFailure(document.outcome())) {
+            // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Teile haben bis AP7b keine eigene
+            // Ablage und würden sonst nie erneut gelesen.
+            if (transientFailure(document).isPresent()) {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
             // Bis AP7b/AP4 stehen die Blöcke der Teile hinter denen des Behälters in seiner Ablage (siehe Target).
@@ -147,7 +149,11 @@ public final class DocumentExtractions {
         StoredExtraction extraction = extract(asset, store);
         Outcome outcome = extraction.document().outcome();
         // Vorher prüfen: Eine nicht abgelegte Extraktion hat keine Abschnitte, ihr Text wäre leer.
-        if (transientFailure(outcome) || !usable(extraction.document(), extraction.chars())) {
+        Optional<Outcome> transientPart = transientFailure(extraction.document());
+        if (transientPart.isPresent()) {
+            throw failure(transientPart.get());
+        }
+        if (!usable(extraction.document(), extraction.chars())) {
             throw failure(outcome);
         }
         TextCollector text = new TextCollector(maxTextChars);
@@ -289,6 +295,15 @@ public final class DocumentExtractions {
                 yield rows.toString();
             }
         };
+    }
+
+    /** Der erste Status an einer vorübergehenden Grenze: beim Behälter oder bei einem seiner Teile. */
+    private static Optional<Outcome> transientFailure(StructuredDocument document) {
+        if (transientFailure(document.outcome())) {
+            return Optional.of(document.outcome());
+        }
+        return document.directory().stream().map(EmbeddedEntry::outcome).filter(DocumentExtractions::transientFailure)
+                .findFirst();
     }
 
     private static boolean transientFailure(Outcome outcome) {

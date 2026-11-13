@@ -730,7 +730,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 synchronized (Reader.this) {
                     open.remove(child);
                     // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
-                    parent.started += System.nanoTime() - child.started;
+                    // Die ganze Wanduhrzeit des Teils samt seiner Kinder, nicht seine verschobene eigene Laufzeit.
+                    parent.started += System.nanoTime() - child.entered;
                 }
                 partSink.close();
             }
@@ -812,6 +813,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private long chars;
             /** Beginn der eigenen Laufzeit; die Zeit in Teilen wird hinzugerechnet (nicht mitgezählt). */
             private long started = System.nanoTime();
+            /** Beginn des Dokuments, unverschoben. */
+            private final long entered = started;
             /** Gesamtlaufzeit erreicht (nur Teile): endet am nächsten Fortschritt. */
             private volatile boolean expired;
             /**
