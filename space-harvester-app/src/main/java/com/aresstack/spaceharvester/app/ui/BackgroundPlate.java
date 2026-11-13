@@ -31,6 +31,8 @@ final class BackgroundPlate extends JPanel {
     private final Facts facts = new Facts();
     private Subscription subscription = Subscription.NONE;
     private boolean loading;
+    /** Zählt Abfragen und Meldungen: eine Abfrage zeigt ihr Ergebnis nur, wenn keine Meldung sie überholt hat. */
+    private int generation;
     private Acquisition shown;
 
     /**
@@ -61,10 +63,19 @@ final class BackgroundPlate extends JPanel {
         unsubscribe();
         Subscription opened = subscriber.apply(status -> SwingUtilities.invokeLater(() -> {
             if (subscription != Subscription.NONE) {
+                generation++;
                 render(status);
             }
         }));
         subscription = opened == null ? Subscription.NONE : opened;
+    }
+
+    /** Die Laufzeit hat gewechselt (Start, Neu laden): solange sichtbar neu anmelden und einmal lesen. */
+    void rebind() {
+        if (isShowing()) {
+            subscribe();
+            refresh();
+        }
     }
 
     private void unsubscribe() {
@@ -78,12 +89,17 @@ final class BackgroundPlate extends JPanel {
             return;
         }
         loading = true;
+        int ticket = ++generation;
         Background.run(source::get, current -> {
             loading = false;
-            render(current.orElse(null));
+            if (ticket == generation) {
+                render(current.orElse(null));
+            }
         }, failure -> {
             loading = false;
-            render(null);
+            if (ticket == generation) {
+                render(null);
+            }
         });
     }
 

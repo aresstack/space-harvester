@@ -265,7 +265,10 @@ public final class StatusView implements View {
         dashboard = board;
         welcome = Comic.column(welcomePlate(), welcomeAttention);
         root.add(dashboard, BorderLayout.CENTER);
-        context.onChange(ignored -> render());
+        context.onChange(ignored -> {
+            background.rebind();
+            render();
+        });
         render();
         showJob(null);
     }
