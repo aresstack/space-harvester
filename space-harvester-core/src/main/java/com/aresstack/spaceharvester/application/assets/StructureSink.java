@@ -6,9 +6,10 @@ package com.aresstack.spaceharvester.application.assets;
  * Behälters.
  *
  * <p>Ablauf: {@link #document()} liefert einmal den Strom des äußeren Dokuments; {@link #part(EmbeddedEntry)} je
- * enthaltener Datei einen eigenen Strom. Der Strom eines Teils wird geschlossen, bevor der nächste Teil beginnt; der
- * Strom des äußeren Dokuments kann dazwischen weiterlaufen (Text einer Mail nach ihren Anhängen) und wird zuletzt
- * geschlossen.
+ * enthaltener Datei einen eigenen Strom. Ströme sind gestapelt: Der Strom eines Teils bleibt offen, während seine
+ * eigenen Teile gelesen werden (Anhänge einer weitergeleiteten Mail), und wird geschlossen, bevor sein nächstes
+ * Geschwister beginnt. Der Strom des äußeren Dokuments kann dazwischen weiterlaufen (Text einer Mail nach ihren
+ * Anhängen) und wird zuletzt geschlossen.
  */
 public interface StructureSink {
 

@@ -226,6 +226,75 @@ class TikaDocumentStructureTest {
     }
 
     @Test
+    void aPartEndsAtItsOwnTotalLimitTheContainerAndTheNextPartGoOn() throws Exception {
+        Path file = Files.writeString(directory.resolve("w.txt"), "wurzel");
+        Parser parts = new Parser() {
+            @Override
+            public Set<MediaType> getSupportedTypes(ParseContext context) {
+                return Set.of(MediaType.TEXT_PLAIN);
+            }
+
+            @Override
+            public void parse(InputStream stream, ContentHandler handler, Metadata metadata, ParseContext context)
+                    throws org.xml.sax.SAXException, java.io.IOException {
+                String content = new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                handler.startDocument();
+                if (content.equals("wurzel")) {
+                    paragraph(handler, "Text der Wurzel");
+                    var extractor = context.get(org.apache.tika.extractor.EmbeddedDocumentExtractor.class);
+                    for (String name : List.of("langsam", "schnell")) {
+                        Metadata part = new Metadata();
+                        part.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, name + ".txt");
+                        part.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RESOURCE_TYPE, "ATTACHMENT");
+                        extractor.parseEmbedded(new java.io.ByteArrayInputStream(
+                                name.getBytes(java.nio.charset.StandardCharsets.UTF_8)), handler, part, true);
+                    }
+                    paragraph(handler, "Ende der Wurzel");
+                } else if (content.equals("langsam")) {
+                    // Fortschritt alle 50 ms, also nie die Grenze ohne Fortschritt, aber über der Gesamtgrenze.
+                    for (int i = 0; i < 40; i++) {
+                        paragraph(handler, "Stück " + i);
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                } else {
+                    paragraph(handler, "schnell gelesen");
+                }
+                handler.endDocument();
+            }
+
+            private void paragraph(ContentHandler handler, String text) throws org.xml.sax.SAXException {
+                handler.startElement("", "p", "p", new org.xml.sax.helpers.AttributesImpl());
+                characters(handler, text);
+                handler.endElement("", "p", "p");
+            }
+        };
+        TikaDocumentStructure reading = new TikaDocumentStructure(1, 1_000, parts);
+        ExtractionLimits total = new ExtractionLimits(0, 0, 0, 0, 0, 0, 10, 10_000, Duration.ofMillis(400),
+                Duration.ofMillis(500), 0, 1, Map.of());
+        Recording sink = new Recording();
+
+        StructuredDocument result = reading.extract(file, "w.txt", "text/plain", total, sink);
+
+        assertThat(result.outcome().status()).as("die Zeit im Teil zählt nicht zur Wurzel")
+                .isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.text()).contains("Text der Wurzel", "Ende der Wurzel");
+        EmbeddedEntry slow = result.directory().stream()
+                .filter(e -> e.displayName().filter("langsam.txt"::equals).isPresent()).findFirst().orElseThrow();
+        assertThat(slow.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
+        assertThat(slow.outcome().reason()).contains(StatusReason.TIMEOUT);
+        assertThat(sink.partText("langsam.txt")).contains("Stück 0").doesNotContain("Stück 39");
+        EmbeddedEntry fast = result.directory().stream()
+                .filter(e -> e.displayName().filter("schnell.txt"::equals).isPresent()).findFirst().orElseThrow();
+        assertThat(fast.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.partText("schnell.txt")).contains("schnell gelesen");
+    }
+
+    @Test
     void textOfAnOpenParagraphSurvivesAParserFailure() throws Exception {
         Path file = Files.writeString(directory.resolve("f.txt"), "egal");
         TikaDocumentStructure failing = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {

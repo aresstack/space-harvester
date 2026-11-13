@@ -153,7 +153,7 @@ public final class DocumentExtractions {
         if (transientPart.isPresent()) {
             throw failure(transientPart.get());
         }
-        if (!usable(extraction.document(), extraction.chars())) {
+        if (!usable(outcome)) {
             throw failure(outcome);
         }
         TextCollector text = new TextCollector(maxTextChars);
@@ -178,7 +178,7 @@ public final class DocumentExtractions {
         Optional<StoredExtraction> known = stored(asset.sha256());
         if (known.isPresent()) {
             Outcome outcome = known.get().document().outcome();
-            if (!usable(known.get().document(), known.get().chars())) {
+            if (!usable(outcome)) {
                 throw failure(outcome);
             }
             TextCollector text = new TextCollector(maxTextChars);
@@ -206,7 +206,7 @@ public final class DocumentExtractions {
             }
         });
         if (transientFailure(document.outcome()) && document.chars() == 0
-                || !usable(document, text.length())) {
+                || !usable(document.outcome())) {
             throw failure(document.outcome());
         }
         return text.result(asset, id(), version(), document.outcome(), now);
@@ -227,7 +227,7 @@ public final class DocumentExtractions {
         if (transientPart.isPresent()) {
             throw failure(transientPart.get());
         }
-        if (!usable(extraction.document(), extraction.chars())) {
+        if (!usable(outcome)) {
             throw failure(outcome);
         }
         MarkdownView view = new MarkdownView(out);
@@ -242,16 +242,6 @@ public final class DocumentExtractions {
 
     private static boolean usable(Outcome outcome) {
         return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
-    }
-
-    /**
-     * Wie {@link #usable(Outcome)}; dazu ein Behälter ohne eigenen Text (Archiv) mit Einträgen, deren Text bis AP4 in
-     * seine Ablage geht.
-     */
-    private static boolean usable(StructuredDocument document, long chars) {
-        Outcome outcome = document.outcome();
-        return usable(outcome) || chars > 0 && !document.directory().isEmpty()
-                && outcome.reason().filter(StatusReason.NO_TEXT::equals).isPresent();
     }
 
     /** Sammelt reinen Text bis zur Grenze. */

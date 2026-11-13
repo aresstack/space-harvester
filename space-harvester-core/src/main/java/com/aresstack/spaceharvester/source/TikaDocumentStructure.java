@@ -623,6 +623,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     .filter(value -> !value.isEmpty());
             Optional<PartId> parentId = Optional.ofNullable(parent.id);
             int slot = reserve();
+            parent.entries++;
             if (limits.maxDepth() > 0 && depth > limits.maxDepth()) {
                 // Zu tief: ein Eintrag mit Status, sein Inhalt wird nicht geöffnet.
                 record(slot, new EmbeddedEntry(numbering().position(path), Optional.empty(), name, declared, path,
@@ -709,7 +710,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 try (TikaInputStream in = TikaInputStream.get(temp, metadata)) {
                     child.stream = in;
                     child.handler.metadata = metadata;
-                    tika.parse(in, child.handler, metadata, context);
+                    (parseWith == null ? tika : parseWith).parse(in, child.handler, metadata, context);
                     child.handler.flush();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -824,6 +825,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private boolean full;
             /** Teile, die Tika aus diesem Dokument übergeben hat (Zählerpfad). */
             private int parts;
+            /** Einträge im Verzeichnis, deren Eltern dieses Dokument ist. */
+            private int entries;
             private EmbeddedEntry entry;
             private int slot = -1;
 
@@ -846,7 +849,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     outcome = truncatedOrFailed(abort);
                 }
                 if (outcome == null) {
-                    outcome = chars == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
+                    // Ohne eigenen Text, aber mit Einträgen (Archiv, Mail nur mit Anhängen) ist das Dokument gelesen;
+                    // no-text gilt nur, wenn weder Text noch Einträge da sind (Architekt 13.11.2026).
+                    outcome = chars == 0 && entries == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
                             : Outcome.ok(new ReadExtent(size, chars));
                 }
                 return outcome;
@@ -866,11 +871,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
 
             /**
-             * Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text gescheitert, außer bei einem
-             * Archiv, das nie eigenen Text hat.
+             * Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text und ohne Einträge gescheitert,
+             * außer bei einem Archiv, das nie eigenen Text hat.
              */
             private Outcome partial(StatusReason reason) {
-                return chars == 0 && !archive() ? Outcome.of(ExtractionStatus.FAILED, reason)
+                return chars == 0 && entries == 0 && !archive() ? Outcome.of(ExtractionStatus.FAILED, reason)
                         : Outcome.truncated(reason, new ReadExtent(size, chars));
             }
 

@@ -260,6 +260,30 @@ class TikaDocumentPartsTest {
         });
     }
 
+    @Test
+    void aContainerWithoutOwnTextButWithEntriesIsReadOnlyAnEmptyOneHasNoText() throws IOException {
+        Path archive = Files.write(directory.resolve("archiv.zip"), Archives.nested(2));
+        StructuredDocument read = structure.extract(archive, "archiv.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording());
+
+        assertThat(read.chars()).isZero();
+        assertThat(read.directory()).isNotEmpty();
+        assertThat(read.outcome().status()).isEqualTo(ExtractionStatus.OK);
+
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("leer/"));
+            zip.closeEntry();
+        }
+        Path empty = Files.write(directory.resolve("leer.zip"), bytes.toByteArray());
+        StructuredDocument none = structure.extract(empty, "leer.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording());
+
+        assertThat(none.directory()).isEmpty();
+        assertThat(none.outcome().status()).isEqualTo(ExtractionStatus.UNSUPPORTED);
+        assertThat(none.outcome().reason()).contains(StatusReason.NO_TEXT);
+    }
+
     private static List<Path> parts(Path temp) throws IOException {
         try (Stream<Path> files = Files.list(temp)) {
             return files.filter(path -> path.getFileName().toString().startsWith("teil-")).toList();
