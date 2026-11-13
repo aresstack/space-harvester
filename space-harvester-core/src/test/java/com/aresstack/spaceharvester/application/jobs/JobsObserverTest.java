@@ -144,8 +144,8 @@ class JobsObserverTest {
         }
 
         @Override
-        public void removed(String jobId) {
-            removed.add(jobId);
+        public void removed(JobStatus last) {
+            removed.add(last.id());
         }
 
         @Override

@@ -60,7 +60,7 @@ Paket `com.aresstack.spaceharvester.application.observe`:
 
 | Bereich | Anmeldung | Meldung | ersetzt |
 |---|---|---|---|
-| Aufträge | `Jobs.subscribe(owner, JobListener)` | `changed(JobStatus)` bei Zustand, Zählern, Phase und Grund einer Pause; `removed(jobId)`; `event(JobEvent)` je neuem Diagnoseereignis | Aufträge, Statuszeile, Glossar, Synonymsuche, Diagnose |
+| Aufträge | `Jobs.subscribe(owner, JobListener)` | `changed(JobStatus)` bei Zustand, Zählern, Phase und Grund einer Pause; `removed(JobStatus)` mit dem letzten Stand (für die Rechteprüfung); `event(JobEvent)` je neuem Diagnoseereignis | Aufträge, Statuszeile, Glossar, Synonymsuche, Diagnose |
 | Bestand | `Holdings.subscribe(sourceId, spaceKey, HoldingsListener)`, `spaceKey` leer = alle Spaces der Quelle | `pagesChanged(sourceId, spaceKey, pageIds)`; `spaceChanged(sourceId, spaceKey)`; `loading(sourceId, spaceKey, pageIds)` | neu: Baum-Symbole, Export-Reiter |
 | Beschaffungsplaner | `AcquisitionScheduler.subscribe(listener)` | jüngster `Status` | Hintergrundladen |
 | Suchfortschritt | `KeywordSearch.subscribe(progressId, listener)` | jüngster `Progress`, zuletzt mit Ende | Suche |

@@ -1142,8 +1142,12 @@ public final class Workspace {
             }
 
             @Override
-            public void removed(String jobId) {
-                listener.removed(jobId);
+            public void removed(JobStatus last) {
+                // Alle Aufträge der App haben denselben Eigentümer; erst die Rechte am letzten Stand verbergen eine
+                // Löschung, deren Auftrag schon unsichtbar war.
+                if (visible(last)) {
+                    listener.removed(last);
+                }
             }
 
             @Override

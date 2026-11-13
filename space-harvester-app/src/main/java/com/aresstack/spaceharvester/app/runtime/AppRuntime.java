@@ -388,6 +388,11 @@ public final class AppRuntime implements AutoCloseable {
         return workspace;
     }
 
+    /** Für Tests im Paket: der Harvester dieser Laufzeit, etwa für eine zweite Sicht mit anderen Rechten. */
+    Harvester harvester() {
+        return harvester;
+    }
+
     /** Was der Core an Quellen beanstandet hat, die deshalb fehlen; je Eintrag Position, ID und Grund. */
     public List<String> rejectedSources() {
         return rejectedSources;

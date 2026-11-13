@@ -14,8 +14,13 @@ public interface JobListener {
      */
     void changed(JobStatus status);
 
-    /** Der Auftrag ist gelöscht (vom Auftraggeber oder nach Ablauf der Aufbewahrung). */
-    default void removed(String jobId) {
+    /**
+     * Der Auftrag ist gelöscht (vom Auftraggeber oder nach Ablauf der Aufbewahrung).
+     *
+     * @param last sein letzter gespeicherter Stand, damit ein Empfänger dieselben Rechte prüfen kann wie bei
+     *             {@link #changed}
+     */
+    default void removed(JobStatus last) {
     }
 
     /** Ein neues Diagnoseereignis eines Auftrags (docs/DIAGNOSTICS.md), schon maskiert; jedes einzeln, ohne Bündeln. */

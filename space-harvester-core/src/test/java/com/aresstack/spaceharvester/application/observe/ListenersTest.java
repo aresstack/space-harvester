@@ -7,7 +7,10 @@ import java.util.List;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
-/** Empfänger eines Beobachters (ADR 0027): Filter, Abmelden, ein werfender Empfänger hält niemanden auf. */
+/**
+ * Empfänger eines Beobachters (ADR 0027): Filter, Abmelden auch mitten in einer Zustellung, ein werfender Empfänger
+ * hält niemanden auf.
+ */
 class ListenersTest {
 
     @Test
@@ -40,5 +43,21 @@ class ListenersTest {
 
         assertThat(seen).containsExactly("a:eins", "b:drei");
         assertThat(listeners.isEmpty()).isFalse();
+    }
+
+    @Test
+    void aListenerClosedDuringADeliveryIsNotCalledByThatDeliveryAnymore() {
+        Listeners<Consumer<String>> listeners = new Listeners<>("Test");
+        List<String> seen = new ArrayList<>();
+        Subscription[] second = new Subscription[1];
+        listeners.add(message -> {
+            seen.add("a:" + message);
+            second[0].close();
+        });
+        second[0] = listeners.add(message -> seen.add("b:" + message));
+
+        listeners.deliver(null, listener -> listener.accept("eins"));
+
+        assertThat(seen).containsExactly("a:eins");
     }
 }

@@ -80,7 +80,7 @@ public class Jobs implements AutoCloseable {
     /** Angemeldete Empfänger der Auftragsmeldungen (ADR 0027). */
     private final Listeners<JobListener> listeners = new Listeners<>("Aufträge");
     /** Gebündelte Zustellung je Auftrag; die Werte sind die Eigentümer, für die Meldung einer Löschung. */
-    private final Coalescer<String, Owner> notifier = new Coalescer<>("jobs", this::deliver);
+    private final Coalescer<String, Mark> notifier = new Coalescer<>("jobs", this::deliver);
     /** Wann nach einem angeforderten Abbruch oder Anhalten selbst geprüft wird; in Tests kürzer. */
     private volatile Duration stopWatch = STOP_GRACE.plusSeconds(1);
     private final RouteLookup routes;
@@ -347,25 +347,31 @@ public class Jobs implements AutoCloseable {
     }
 
     /** Auftraggeber eines Auftrags für die Meldung einer Löschung; {@code null} ohne Auftraggeber. */
-    private record Owner(String value) {
+    /**
+     * Eine Vormerkung: der Auftraggeber und, bei einer Löschung, der letzte Stand des Auftrags, den es danach nicht mehr
+     * zu lesen gibt.
+     */
+    private record Mark(String owner, JobStatus gone) {
     }
 
     /** Merkt einen Auftrag zur Meldung vor; ohne Empfänger nichts. */
     private void changed(String jobId, String owner) {
         if (!listeners.isEmpty()) {
-            notifier.mark(jobId, Set.of(new Owner(owner)));
+            notifier.mark(jobId, Set.of(new Mark(owner, null)));
         }
     }
 
     /** Auf dem Zustell-Thread: der jüngste Stand, oder die Löschung, wenn es den Auftrag nicht mehr gibt. */
-    private void deliver(String jobId, Set<Owner> owners) {
+    private void deliver(String jobId, Set<Mark> marks) {
         JobStatus status;
         try {
             // Liest wie eine Abfrage, koppelt also auch einen nach STOP_GRACE hängenden Schritt ab.
             status = status(jobId);
         } catch (UnknownJobException e) {
-            for (Owner owner : owners) {
-                listeners.deliver(owner.value(), listener -> listener.removed(jobId));
+            for (Mark mark : marks) {
+                if (mark.gone() != null) {
+                    listeners.deliver(mark.owner(), listener -> listener.removed(mark.gone()));
+                }
             }
             return;
         }
@@ -378,7 +384,7 @@ public class Jobs implements AutoCloseable {
      */
     private void watchStop(Job job) {
         if (job.state == JobState.RUNNING) {
-            notifier.markLater(job.id, Set.of(new Owner(job.owner)), stopWatch);
+            notifier.markLater(job.id, Set.of(new Mark(job.owner, null)), stopWatch);
         }
     }
 
@@ -2005,7 +2011,7 @@ public class Jobs implements AutoCloseable {
         public void delete(String jobId) {
             Optional<JobStatus> gone = listeners.isEmpty() ? Optional.empty() : delegate.find(jobId);
             delegate.delete(jobId);
-            gone.ifPresent(status -> changed(jobId, status.owner()));
+            gone.ifPresent(status -> notifier.mark(jobId, Set.of(new Mark(status.owner(), status))));
         }
     }
 }

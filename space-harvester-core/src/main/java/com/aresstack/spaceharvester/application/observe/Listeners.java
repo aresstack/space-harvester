@@ -34,11 +34,11 @@ public final class Listeners<L> {
      */
     public Subscription add(L listener, Predicate<Object> filter) {
         Entry<L> entry = new Entry<>(Objects.requireNonNull(listener, "listener"),
-                Objects.requireNonNull(filter, "filter"));
+                Objects.requireNonNull(filter, "filter"), new AtomicBoolean(true));
         entries.add(entry);
-        AtomicBoolean open = new AtomicBoolean(true);
         return () -> {
-            if (open.compareAndSet(true, false)) {
+            // Erst sperren, dann austragen: eine Zustellung, die schon über die Liste läuft, ruft ihn danach nicht mehr.
+            if (entry.open().compareAndSet(true, false)) {
                 entries.remove(entry);
             }
         };
@@ -55,14 +55,15 @@ public final class Listeners<L> {
     }
 
     /**
-     * Stellt allen Empfängern zu, deren Filter das Merkmal annimmt.
+     * Stellt allen Empfängern zu, deren Filter das Merkmal annimmt. Ein Empfänger, der vor seinem Aufruf abgemeldet
+     * wurde, auch während dieser Zustellung, wird nicht mehr gerufen.
      *
      * @param subject Merkmal der Meldung für die Filter, etwa der Eigentümer; darf {@code null} sein
      */
     public void deliver(Object subject, Consumer<? super L> call) {
         for (Entry<L> entry : entries) {
             try {
-                if (entry.filter().test(subject)) {
+                if (entry.open().get() && entry.filter().test(subject)) {
                     call.accept(entry.listener());
                 }
             } catch (RuntimeException e) {
@@ -72,6 +73,6 @@ public final class Listeners<L> {
         }
     }
 
-    private record Entry<L>(L listener, Predicate<Object> filter) {
+    private record Entry<L>(L listener, Predicate<Object> filter, AtomicBoolean open) {
     }
 }
