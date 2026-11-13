@@ -324,7 +324,7 @@ Dateien sowie verschlüsselte und gescannte Dokumente. Die großen Prüfdateien 
 
 ## Nachtrag vom 13.11.2026: Stand nach der Umsetzung der Stufen 1 bis 5
 
-Die Stufen 1 bis 5 sind umgesetzt (PRs #700 bis #742, Enterprise AI Client #220 und #221). Dieser Nachtrag hält fest,
+Die Stufen 1 bis 5 sind umgesetzt (PRs #700 bis #744, Enterprise AI Client #220 und #221). Dieser Nachtrag hält fest,
 wo die Umsetzung von der Entscheidung abweicht oder sie genauer fasst. Alles Übrige gilt wie beschlossen.
 
 ### Abweichungen
@@ -338,7 +338,9 @@ wo die Umsetzung von der Entscheidung abweicht oder sie genauer fasst. Alles Üb
    nachgewiesen ist: PDF, `.docx`, `.xlsx`, `.pptx`, Mail (`.eml`), Text, CSV, HTML und XHTML, ZIP, GZIP, TAR. Für
    alle anderen Typen bleibt sie bei 20 MiB, namentlich `.doc`, `.xls`, `.ppt`, `.msg` und `.pst`, weil deren Leser
    die Datei im Speicher halten, aber auch `.xlsm` und andere Office-Varianten mit Makros, für die kein eigener
-   Nachweis vorliegt. Ein neuer Typ wird nur mit Nachweis freigegeben.
+   Nachweis vorliegt. Ein neuer Typ wird nur mit Nachweis freigegeben. Die Schranke von 20 MiB bei `.msg`, `.pst`
+   und den älteren Office-Formaten ist eine benannte Qualitätsgrenze der Leser, kein gewollter Ausschluss großer
+   Dokumente (Angelo, 13.11.2026).
 3. **Verhältnis von Ausgepacktem zu Gepacktem.** Am Verhältnis endet nur der betroffene Teil; seine Bytes zählen
    danach nicht weiter, die folgenden Teile werden gelesen, der Behälter wird `PARTIAL/unpacked-too-large`.
 4. **Laufzeit.** Die Grenze ohne Fortschritt gilt für den ganzen Lauf, die Gesamtgrenze je Dokument und Teil.
@@ -380,13 +382,17 @@ wo die Umsetzung von der Entscheidung abweicht oder sie genauer fasst. Alles Üb
     (`parts/<Anhang>/<Kennung>.<Endung>`), ihr Anzeigename steht nur im Feld `title`; das Original eines
     Seitenanhangs behält wie bisher seinen bereinigten Dateinamen. Importierter Text gilt als veraltet, bis das
     Original neu gelesen ist (`stale`).
-14. **Medientypen enthaltener Dateien.** Bis zu einer anderen Entscheidung wird in Mails und Archiven alles Lesbare
-    gelesen; die Liste `export.attachments.media-types` gilt nur für Anhänge der Seite. Die Möglichkeit, sie auch auf
-    Teile anzuwenden, ist im Adapter vorhanden (`PartRules`), aber nicht angeschlossen.
+14. **Medientypen enthaltener Dateien.** Entschieden (Angelo, 13.11.2026): In Mails und Archiven werden
+    standardmäßig alle technisch unterstützten, lesbaren Dateitypen verarbeitet, damit nichts nur wegen seines Formats
+    verloren geht. Die Liste `export.attachments.media-types` gilt nur für Anhänge der Seite und wird nicht auf
+    enthaltene Dateien übertragen. Die Schutzgrenzen gegen Archivbomben und Überlastung gelten weiter, Dateien werden
+    nie ausgeführt, nicht Lesbares und Begrenztes trägt einen sichtbaren Status. Im Code bleibt `PartRules.ALL` der
+    Standard; eine Filterung über `PartRules` ist im Adapter vorbereitet, aber nicht angeschlossen.
 
 ### Benannte Möglichkeiten, nicht bestellt
 
 - Eigener SAX-Leser für `.pptx` (echte Folienreihenfolge der Blöcke).
 - Zellbezug und Foliennummer für Dateien, die Tika innerhalb eines anderen Dokuments ausgibt.
+- Eigene, einstellbare Filterung enthaltener Dateien nach Medientyp über `PartRules`.
 - Oberflächen: Herkunft anzeigen, nach Anhang filtern, Status sichtbar.
 - Stufe 6 (Tika-Modul im Enterprise AI Client, Tika 4).
