@@ -56,8 +56,9 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 | Aussagen und Graph | Prüfung je Seite an der einen Stelle, die Fokusseiten, Ziele und Begriffssuche zulässt | `GraphNeighbourhood.Options` |
 | Chat | dieselbe `PageSelection` begrenzt Suche und Absätze als Kontext des Chats | über Suche und Absätze |
 
-- Jede gefilterte Antwort nennt die Abdeckung der Auswahl (`counts`, `complete`); gezählt wird über die Auflösung, nicht
-  über die Treffer.
+- Die Anfragen bekommen nur die Seitenmenge (`Query.within(PageSet)`, `PageSearchQuery.within(PageSet)`). Die
+  Abdeckung (`counts`, `complete`) kommt aus der Auflösung, die die Ansicht zu ihrer Anfrage hält, und steht neben jeder
+  gefilterten Antwort; gezählt wird über die Auflösung, nicht über die Treffer.
 - Der Fingerabdruck des Cursors enthält den Fingerabdruck der Menge: Wer mit anderer Auswahl weiterblättert, bekommt
   einen ungültigen Cursor statt gemischter Seiten.
 - Filtern geht als Lucene-Klausel, wo es einen Index gibt, damit Grenzen wie die höchstens gelesenen Dokumente nicht

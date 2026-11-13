@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,7 +52,16 @@ public final class PassageSnippets implements PageTextIndex {
 
     @Override
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit) {
-        List<Match> matches = index.search(text, sourceIds, spaces, limit);
+        return refine(text, index.search(text, sourceIds, spaces, limit));
+    }
+
+    @Override
+    public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages, int limit) {
+        return pages == null ? search(text, sourceIds, spaces, limit)
+                : refine(text, index.search(text, sourceIds, spaces, pages, limit));
+    }
+
+    private List<Match> refine(String text, List<Match> matches) {
         Set<String> terms = words(text);
         if (terms.isEmpty() || matches.isEmpty()) {
             return matches;

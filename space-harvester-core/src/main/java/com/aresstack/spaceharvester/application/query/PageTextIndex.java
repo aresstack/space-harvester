@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import java.util.List;
 import java.util.Objects;
@@ -111,6 +112,26 @@ public interface PageTextIndex {
      * @param limit höchstens so viele
      */
     List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit);
+
+    /**
+     * Wie {@link #search(String, Set, SearchSpaces, int)}, aber nur Seiten dieser Menge samt ihren Anhängen (ADR 0029);
+     * mit {@code null} ohne diese Grenze. Ein Index filtert vor der Rangfolge, damit seine Grenze gelesener Dokumente
+     * nicht vor dem Filter greift; diese Vorgabe für Indizes ohne Seitenfeld filtert nur nach.
+     *
+     * @param pages nur diese Seiten oder {@code null}
+     */
+    default List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages, int limit) {
+        if (pages == null) {
+            return search(text, sourceIds, spaces, limit);
+        }
+        Set<String> within = new java.util.TreeSet<>(sourceIds);
+        within.retainAll(pages.sourceIds());
+        if (within.isEmpty()) {
+            return List.of();
+        }
+        return search(text, within, spaces, limit).stream()
+                .filter(match -> pages.contains(match.sourceId(), match.pageId())).toList();
+    }
 
     /** Macht Änderungen dauerhaft. */
     void flush();
