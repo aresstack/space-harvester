@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 
@@ -59,5 +60,22 @@ public interface EnrichmentProcessor {
      */
     default boolean background(PageKey key) {
         return background();
+    }
+
+    /**
+     * Ob der Prozessor auch Anhänge und enthaltene Dateien bearbeitet (ADR 0026, AP9a): je abgelegtem Abschnitt eines
+     * Dokuments, Eingabe {@link DocumentSectionText}. Ob er es darf, entscheidet {@link #appliesTo(PageKey)} für die
+     * Seite des Dokuments: Ein Dokument hat die Rechte und die Freigabe seiner Seite.
+     */
+    default boolean documents() {
+        return false;
+    }
+
+    /**
+     * Wie {@link #process(PageKey, PageText)} für einen Abschnitt eines Anhangs oder einer enthaltenen Datei; Vorgabe
+     * mit der Seite des Dokuments.
+     */
+    default EnrichmentOutput process(DocumentKey document, PageText text) {
+        return process(document.page(), text);
     }
 }

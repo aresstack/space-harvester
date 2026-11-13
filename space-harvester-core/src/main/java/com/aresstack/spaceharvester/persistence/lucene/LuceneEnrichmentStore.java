@@ -345,6 +345,48 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     @Override
+    public List<Enrichment> findDocuments(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        requireOpen();
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(new TermQuery(new Term(DOCUMENT_PAGE, page(key))), Integer.MAX_VALUE);
+                StoredFields stored = searcher.storedFields();
+                List<Enrichment> found = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    found.add(enrichment(stored.document(hit.doc)));
+                }
+                return found;
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    @Override
+    public synchronized void removeSection(DocumentKey document, int section) {
+        Objects.requireNonNull(document, "document");
+        if (document.isPage()) {
+            throw new IllegalArgumentException("Seiten haben keine Abschnitte");
+        }
+        requireOpen();
+        try {
+            for (Enrichment enrichment : find(document)) {
+                if (enrichment.section() == section) {
+                    String id = id(enrichment);
+                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id));
+                }
+            }
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    @Override
     public synchronized void removeDocument(DocumentKey document) {
         Objects.requireNonNull(document, "document");
         requireOpen();

@@ -16,6 +16,12 @@ public class OutlineProcessor implements EnrichmentProcessor {
         return "1";
     }
 
+    /** Auch je Abschnitt eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9a); rechnet ohne Netz. */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
     @Override
     public EnrichmentOutput process(PageText text) {
         StringBuilder json = new StringBuilder("{\"words\":").append(words(text.text())).append(",\"sections\":[");

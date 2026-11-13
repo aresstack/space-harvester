@@ -487,15 +487,62 @@ public final class DocumentExtractions {
                 ? extractions.sections(extraction.key()).map(section -> section("", "", section))
                         .filter(section -> !section.text().isBlank())
                 : Stream.empty();
-        Stream<IndexSection> parts = partSections(extraction);
+        Stream<IndexSection> parts = pieces(extraction).map(DocumentExtractions::indexSection)
+                .filter(Objects::nonNull);
         return Stream.concat(own, parts);
+    }
+
+    /** Ein Teil ohne Text ist nur über seinen Namen auffindbar, nie mit erzeugtem Text (Status, Hinweis). */
+    private static IndexSection indexSection(Piece piece) {
+        String name = piece.entry().displayName().orElse("");
+        if (piece.section() == null) {
+            return name.isBlank() ? null : new IndexSection(piece.entry().id().value(), name, 0, "");
+        }
+        IndexSection section = section(piece.entry().id().value(), name, piece.section());
+        return section.text().isBlank() ? null : section;
+    }
+
+    /**
+     * Ein abgelegter Abschnitt eines Dokuments für die Analysen (ADR 0026, AP9a), mit seinen Blöcken.
+     *
+     * @param part    die enthaltene Datei, leer für das Dokument selbst
+     * @param section der Abschnitt aus der Ablage
+     */
+    public record DocumentSection(Optional<EmbeddedEntry> part, TextSection section) {
+
+        public DocumentSection {
+            Objects.requireNonNull(part, "part");
+            Objects.requireNonNull(section, "section");
+        }
+    }
+
+    /**
+     * Die abgelegten Abschnitte eines Dokuments und seiner lesbaren enthaltenen Dateien für die Analysen (ADR 0026,
+     * AP9a; Schlüsselform Punkt 6): wie {@link #indexSections(StoredExtraction)} zuerst die des Dokuments, dann je Teil
+     * in Verzeichnisreihenfolge, inhaltsgleiche Teile einmal, einzeln gelesen. Teile mit Status {@code FAILED},
+     * {@code UNSUPPORTED} oder {@code EXCLUDED} fehlen ganz, {@code PARTIAL} hat den gelesenen Text. Der Strom muss
+     * geschlossen werden.
+     */
+    public Stream<DocumentSection> documentSections(StoredExtraction extraction) {
+        Stream<DocumentSection> own = extraction.sections() > 0
+                ? extractions.sections(extraction.key())
+                        .map(section -> new DocumentSection(Optional.empty(), section))
+                : Stream.empty();
+        Stream<DocumentSection> parts = pieces(extraction).filter(piece -> piece.section() != null)
+                .map(piece -> new DocumentSection(Optional.of(piece.entry()), piece.section()));
+        return Stream.concat(own, parts);
+    }
+
+    /** Ein Teil mit einem seiner Abschnitte, oder ohne Abschnitt ({@code null}), wenn er keinen Text hat. */
+    private record Piece(EmbeddedEntry entry, TextSection section) {
     }
 
     /**
      * Die Abschnitte der Teile, einer nach dem anderen gelesen: ohne {@code flatMap}, dessen Iterator alle Abschnitte
-     * eines Elements puffern würde; das Manifest wird einmal gelesen.
+     * eines Elements puffern würde; das Manifest wird einmal gelesen. Ein Teil ohne lesbaren Text erscheint einmal
+     * ohne Abschnitt.
      */
-    private Stream<IndexSection> partSections(StoredExtraction extraction) {
+    private Stream<Piece> pieces(StoredExtraction extraction) {
         java.util.List<EmbeddedEntry> directory = extraction.document().directory();
         if (directory.isEmpty()) {
             return Stream.empty();
@@ -503,9 +550,9 @@ public final class DocumentExtractions {
         Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
         java.util.Set<String> seen = new java.util.HashSet<>();
         java.util.List<Stream<TextSection>> opened = new java.util.ArrayList<>();
-        java.util.Iterator<IndexSection> sections = new java.util.Iterator<>() {
+        java.util.Iterator<Piece> pieces = new java.util.Iterator<>() {
             private int entry;
-            private IndexSection next;
+            private Piece next;
             private java.util.Iterator<TextSection> current;
             private EmbeddedEntry currentEntry;
 
@@ -513,11 +560,7 @@ public final class DocumentExtractions {
             public boolean hasNext() {
                 while (next == null) {
                     if (current != null && current.hasNext()) {
-                        IndexSection section = section(currentEntry.id().value(),
-                                currentEntry.displayName().orElse(""), current.next());
-                        if (!section.text().isBlank()) {
-                            next = section;
-                        }
+                        next = new Piece(currentEntry, current.next());
                         continue;
                     }
                     current = null;
@@ -525,12 +568,8 @@ public final class DocumentExtractions {
                         return false;
                     }
                     EmbeddedEntry candidate = directory.get(entry++);
-                    String name = candidate.displayName().orElse("");
                     if (!usable(candidate.outcome())) {
-                        // Ohne Text nur über den Namen auffindbar, nie mit erzeugtem Text (Status, Hinweis).
-                        if (!name.isBlank()) {
-                            next = new IndexSection(candidate.id().value(), name, 0, "");
-                        }
+                        next = new Piece(candidate, null);
                         continue;
                     }
                     String key = candidate.id().storageKey();
@@ -545,16 +584,16 @@ public final class DocumentExtractions {
             }
 
             @Override
-            public IndexSection next() {
+            public Piece next() {
                 if (!hasNext()) {
                     throw new java.util.NoSuchElementException();
                 }
-                IndexSection result = next;
+                Piece result = next;
                 next = null;
                 return result;
             }
         };
-        return java.util.stream.StreamSupport.stream(java.util.Spliterators.spliteratorUnknownSize(sections,
+        return java.util.stream.StreamSupport.stream(java.util.Spliterators.spliteratorUnknownSize(pieces,
                 java.util.Spliterator.ORDERED | java.util.Spliterator.NONNULL), false)
                 .onClose(() -> opened.forEach(Stream::close));
     }
