@@ -481,6 +481,12 @@ Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; e
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein
 Teil über seiner Schranke wird `EXCLUDED`/`memory-limit`, die übrigen Teile werden gelesen.
 
+Mails (`.eml`): Tikas Mail-Parser kopiert von sich aus jeden Teil der ersten Ebene in ein Byte-Array. Er ist deshalb so
+eingestellt, dass er alle Teile als Strom durchreicht (`extractAllAlternatives`); Anhänge gehen zählend in eine
+temporäre Datei. Namenlose Textteile (`text/plain`, `text/html` ohne `attachment`) ordnet der Adapter selbst der Mail
+zu: Sie bekommen keine Position, von Alternativen zählt die beste (HTML vor Text, bei Gleichstand die spätere), und der
+angegebene Zeichensatz gilt.
+
 ## Einen Adapter ergänzen
 
 1. Fehlende Fähigkeiten upstream in `source-api` als optionale Capability-Interfaces ergänzen, nicht durch
