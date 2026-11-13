@@ -134,9 +134,20 @@ class ActivitiesActionsTest {
             assertThat(RowActions.wide(slots.get(0))).isTrue();
             assertThat(slots.subList(1, slots.size())).allMatch(RowActions.Action::empty);
             assertThat(RowActions.covering(slots, 4)).as("Tooltip auch am rechten Ende").isSameAs(slots.get(0));
-            assertThat(slots.get(0).tooltip()).isEqualTo("629 von 630 geprüft · 3 fehlend");
+            // Geprüft, aber weder abgelegt noch fehlgeschlagen = bewusst ausgelassen: im Balken gelb, nicht rot, und
+            // als eigene Zahl (Angelo 13.11.2026).
+            assertThat(slots.get(0).tooltip()).isEqualTo("629 von 630 geprüft · 26 bewusst ausgelassen · 3 fehlend");
+            ActivitiesView.ProgressIcon icon = (ActivitiesView.ProgressIcon) slots.get(0).icon();
+            assertThat(icon.skipped()).isEqualTo(26);
+            assertThat(icon.failed()).isEqualTo(3);
+            assertThat(ActivitiesView.progressText(job)).isEqualTo("629/630 · 26 ausgelassen · 3 Fehler");
         }
         assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+        JobStatus export = new JobStatus("j2", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
+                new JobProgress(100, 100, 90, 2), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null,
+                Map.of(), false, false, null);
+        assertThat(ActivitiesView.skipped(export)).as("nur Bilder und Anhänge zählen Ausgelassenes").isZero();
+        assertThat(ActivitiesView.progressText(export)).isEqualTo("90/100 · 2 Fehler");
     }
 
     /**
