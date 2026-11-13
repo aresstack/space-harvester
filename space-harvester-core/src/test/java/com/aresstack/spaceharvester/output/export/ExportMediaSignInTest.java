@@ -159,9 +159,10 @@ class ExportMediaSignInTest {
         while (links.find()) {
             linked.add(links.group(1));
         }
-        // Foto (zweimal verlinkt, einmal im Paket) und gezeichnetes draw.io-Diagramm.
-        assertThat(linked).hasSize(2);
-        assertThat(markdown.split("\\]\\(assets/", -1)).hasSize(4);
+        // Foto (zweimal verlinkt, einmal im Paket); draw.io als Codeblock mit seinem XML, kein Bild (markdown/8)
+        assertThat(linked).hasSize(1);
+        assertThat(markdown.split("\\]\\(assets/", -1)).hasSize(3);
+        assertThat(markdown).contains("```drawio\n" + new String(MXFILE, StandardCharsets.UTF_8) + "\n```");
         assertThat(files.keySet()).containsExactlyElementsOf(java.util.stream.Stream.concat(
                 java.util.stream.Stream.of("pages.md"), linked.stream()).toList());
         assertThat(setup.conversions.convert(setup.export.id(), "client-a", MarkdownPackageConverter.FORMAT,
