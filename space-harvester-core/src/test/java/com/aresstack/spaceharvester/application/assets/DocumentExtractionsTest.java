@@ -42,7 +42,12 @@ class DocumentExtractionsTest {
         assertThat(text.truncated()).isFalse();
         assertThat(text.text()).startsWith(line + "\n\n" + line).endsWith(line);
         assertThat(text.extractor()).isEqualTo(structure.id());
-        assertThat(store.text(asset.sha256(), structure.id(), structure.version())).hasValue(text);
+        // Abgelegt wird der Text ohne Status; der Status steht in der Extraktion (AP4a).
+        assertThat(store.text(asset.sha256(), structure.id(), structure.version()))
+                .hasValue(new AssetText(text.sha256(), text.extractor(), text.version(), text.text(),
+                        text.truncated(), text.createdAt()));
+        assertThat(text.outcome()).hasValueSatisfying(outcome ->
+                assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK));
     }
 
     @Test
