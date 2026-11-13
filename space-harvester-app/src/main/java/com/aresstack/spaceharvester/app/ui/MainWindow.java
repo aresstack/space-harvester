@@ -40,9 +40,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste in zwei Gruppen
- * (Tooltip mit Namen, Strg+1 … Strg+6): links die Arbeitsbereiche Suche, Inhalte, Begriffe und Aufträge,
- * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
+ * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
+ * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
+ * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
  * Statusleiste die feste Aktionszeile des Bereichs ({@link View#actions()}). Der Fortschritt der Aufträge füllt den
  * Hintergrund der Statuszeile ({@link StatusLine}). Navigation und
@@ -58,6 +60,10 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel deck = new JPanel(cards);
     private final Map<AppContext.Section, View> views = new EnumMap<>(AppContext.Section.class);
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
+    /** Die Bereichsknöpfe; ohne gewählten Knopf (Inhalte über die Reiter) ist keiner dunkel. */
+    private final ButtonGroup navGroup = new ButtonGroup();
+    /** Abstand zwischen der Suche und den Reitern der Seitenansicht in der Icon-Leiste. */
+    private static final int TAB_GAP = 12;
     /** Der dauerhafte Explorer links: Wissensquelle → Space → Seite → Unterseite. */
     private final Explorer explorer;
     /**
@@ -215,30 +221,42 @@ public final class MainWindow implements AppContext.Navigator {
         title.setForeground(Comic.INK);
         title.setIcon(ApplicationIcons.titleLogo());
         title.setIconTextGap(8);
-        ButtonGroup group = new ButtonGroup();
         JPanel icons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
         icons.setOpaque(false);
-        icons.setBorder(BorderFactory.createEmptyBorder(0, 28, 0, 0));
+        // Knapper als früher (28), damit das Suchfeld auch bei 960 px Fensterbreite seine Mindestbreite behält.
+        icons.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+        // Rechts: Begriffe und Aufträge, dann abgetrennt die Verwaltung (Angelo, 13.11.2026).
+        JPanel trailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+        trailing.setOpaque(false);
         JPanel administration = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
         administration.setOpaque(false);
         administration.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 1, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(0, 8, 0, 0)));
-        int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
-            if (!section.toolbar()) {
+            if (!section.button()) {
                 continue;
             }
-            ComposerToggleButton button = navButton(section, number++);
-            group.add(button);
+            ComposerToggleButton button = navButton(section, shortcutNumber(section));
+            navGroup.add(button);
             nav.put(section, button);
-            (section.administration() ? administration : icons).add(button);
+            (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
         }
+        // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
+        JComponent tabBar = content.tabBar();
+        tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
+        for (Component tab : tabBar.getComponents()) {
+            if (tab instanceof javax.swing.AbstractButton button) {
+                button.addActionListener(e -> show(AppContext.Section.CONTENT));
+            }
+        }
+        icons.add(tabBar);
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
         west.add(title, BorderLayout.WEST);
         west.add(icons, BorderLayout.CENTER);
-        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
+        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
+        east.add(trailing);
         east.add(administration);
         east.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)));
         top.setOpaque(false);
@@ -309,6 +327,20 @@ public final class MainWindow implements AppContext.Navigator {
         ComicWindowResizer.install(surface, RESIZE_GRIP);
         installShortcuts(surface);
         return surface;
+    }
+
+    /** Die Ziffer des Tastenkürzels Strg+Ziffer: fortlaufend über alle Bereiche mit Kürzel, auch ohne Knopf. */
+    static int shortcutNumber(AppContext.Section section) {
+        int number = 0;
+        for (AppContext.Section candidate : AppContext.Section.values()) {
+            if (candidate.toolbar()) {
+                number++;
+            }
+            if (candidate == section) {
+                return number;
+            }
+        }
+        return number;
     }
 
     /** Nur ein Symbol; Name als Tooltip und für Bildschirmleser, Strg+Ziffer wählt den Bereich. */
@@ -403,7 +435,11 @@ public final class MainWindow implements AppContext.Navigator {
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
+        } else {
+            navGroup.clearSelection();
         }
+        // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
+        content.tabsActive(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {
@@ -562,6 +598,7 @@ public final class MainWindow implements AppContext.Navigator {
         return switch (section) {
             case STATUS -> Glyph.PULSE;
             case SOURCES -> database();
+            // Inhalte hat keinen eigenen Knopf mehr; das Buch bleibt für Verweise (etwa „Inhalte öffnen“).
             case CONTENT -> ComposerIcons.openBook();
             case TERMS -> ComposerIcons.marker();
             case ACTIVITIES -> stack();

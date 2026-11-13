@@ -167,8 +167,8 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
-        // Die Hauptreiter sind quadratische Symbolknöpfe für die Werkzeugleiste unten; ihr Name steht im Tooltip,
-        // die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
+        // Die Hauptreiter sind quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters; ihr Name steht im
+        // Tooltip, die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
         assertThat(onEdt(() -> {
             List<String> tips = new java.util.ArrayList<>();
             for (java.awt.Component c : ((java.awt.Container) detail.tabIcons()).getComponents()) {
@@ -181,7 +181,20 @@ class ContentViewTest {
             return tips;
         })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
-        assertThat(onEdt(() -> view.tools())).isSameAs(detail.tabIcons());
+        assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
+        assertThat(onEdt(() -> view.tools())).as("unten in der Werkzeugleiste steht nichts mehr").isNull();
+        // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
+        onEdt(() -> {
+            view.tabsActive(false);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
+        assertThat(onEdt(() -> detail.tabs().button("Leseansicht").isSelected())).isFalse();
+        onEdt(() -> {
+            view.tabsActive(true);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().button("Leseansicht").isSelected())).isTrue();
         onEdt(() -> {
             detail.tabs().button("Text").doClick();
             return null;

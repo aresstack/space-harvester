@@ -89,16 +89,37 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Erst die
-        // Arbeitsbereiche, dann Verwaltung und Einstellungen.
+        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links die Suche
+        // und die Reiter der Seitenansicht, rechts Begriffe und Aufträge, dann Verwaltung und Einstellungen (Angelo,
+        // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Inhalte", "Begriffe", "Aufträge", "Wissensquellen verwalten",
-                        "Einstellungen")
+                .containsSubsequence("Suche", "Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen",
+                        "Erweitert", "Begriffe", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Inhalte (Strg+2)", "Begriffe (Strg+3)", "Wissensquellen verwalten (Strg+5)");
+                .contains("Suche (Strg+1)", "Begriffe (Strg+3)", "Aufträge (Strg+4)",
+                        "Wissensquellen verwalten (Strg+5)", "Einstellungen (Strg+6)")
+                .doesNotContain("Inhalte (Strg+2)");
+        // Ein Reiter in der Leiste schaltet die Mitte auf Inhalte; in anderen Bereichen zeigt keiner der Reiter eine
+        // Auswahl, zurück unter Inhalte ist der gewählte Reiter wieder dunkel.
+        List<AbstractButton> tabs = find(surface[0], AbstractButton.class).stream()
+                .filter(button -> "Text".equals(button.getAccessibleContext().getAccessibleName())
+                        || "Leseansicht".equals(button.getAccessibleContext().getAccessibleName())).toList();
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.SEARCH));
+        assertThat(tabs).noneMatch(AbstractButton::isSelected);
+        SwingUtilities.invokeAndWait(() -> tabs.stream().filter(b -> "Text".equals(
+                b.getAccessibleContext().getAccessibleName())).findFirst().orElseThrow().doClick());
+        assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
+        assertThat(tabs).filteredOn(AbstractButton::isSelected)
+                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.TERMS));
+        assertThat(tabs).noneMatch(AbstractButton::isSelected);
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.CONTENT));
+        assertThat(tabs).filteredOn(AbstractButton::isSelected)
+                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
         assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
                 .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
