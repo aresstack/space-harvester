@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog;
@@ -20,6 +21,7 @@ import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.io.IOException;
@@ -30,7 +32,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -313,6 +317,44 @@ class ExportFromHoldingsTest {
         assertThat(narrower).isNotEqualTo(first);
         assertThat(writer.published.get(narrower).pageIds()).containsExactly("1", "2", "3");
         assertThat(exports.startFromHoldings(fromHoldings()).id()).isEqualTo(first);
+    }
+
+    @Test
+    void imagesAndAttachmentsCollectedLaterMakeANewOutput() {
+        cache.publish("confluence", "DEV", new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null), stored());
+        stock = new HoldingsCatalog.Stock(new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null),
+                List.of(local("1", null), local("2", "1"), local("3", "1"), local("4", "2")), Set.of(), List.of());
+        Map<String, ExportAssetManifest> directory = new HashMap<>();
+        boolean[] unreadable = {false};
+        ImportedAssets collected = new ImportedAssets() {
+            @Override
+            public void save(PageKey page, String version, ExportAssetManifest assets) {
+                directory.put(page.pageId() + "@" + version, assets);
+            }
+
+            @Override
+            public Optional<ExportAssetManifest> find(PageKey page, String version) {
+                if (unreadable[0]) {
+                    throw new IllegalStateException("Ablage nicht lesbar");
+                }
+                return Optional.ofNullable(directory.get(page.pageId() + "@" + version));
+            }
+        };
+        Exports exports = exports();
+        exports.imported(collected, null);
+        collected.save(new PageKey("confluence", "2"), "3", new ExportAssetManifest(false, false, List.of()));
+        String first = exports.startFromHoldings(fromHoldings()).id();
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isEqualTo(first);
+
+        // Ein späterer Export beschafft die Bilder und Anhänge von Seite 2: die alte Ausgabe hätte sie nicht.
+        collected.save(new PageKey("confluence", "2"), "3", new ExportAssetManifest(true, true, List.of()));
+        String later = exports.startFromHoldings(fromHoldings()).id();
+        assertThat(later).isNotEqualTo(first);
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isEqualTo(later);
+
+        // Ist der Bestand nicht lesbar, wird nichts wiederverwendet.
+        unreadable[0] = true;
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isNotEqualTo(later);
     }
 
     @Test

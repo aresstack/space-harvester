@@ -1150,7 +1150,9 @@ public class ExportAssetCollection {
      * ({@link ImportedAssets}), damit eine Ausgabe aus dem Bestand sie ohne Quelle findet (ADR 0029). Gemischt wie
      * {@link #write}: die eigenen Arten wie {@link #merged}, die andere Art bleibt, wie ihr Auftrag sie abgelegt hat.
      * Nur Läufe, deren Auftraggeber die ganze Quelle lesen darf, legen ab: sonst fehlten Fremdes und gesperrte Bilder
-     * für alle anderen.
+     * für alle anderen. Ein Ausschluss nach den Einstellungen dieses Exports ({@code EXCLUDED}) ersetzt nie einen schon
+     * abgelegten Eintrag: Die Datei liegt weiter in der Ablage, und eine Ausgabe mit weiteren Einstellungen soll sie
+     * finden.
      */
     private void remember(Run run, String sourceId, PageSnapshot snapshot, List<ExportAssetManifest.Entry> entries) {
         ImportedAssets directory = imported;
@@ -1163,7 +1165,7 @@ public class ExportAssetCollection {
             synchronized (directoryLock) {
                 Optional<ExportAssetManifest> before = directory.find(key, version);
                 List<ExportAssetManifest.Entry> own = merged(before.map(manifest -> new ExportAssetManifest(false,
-                        manifest.assets().stream().filter(run.share::owns).toList())), entries,
+                        manifest.assets().stream().filter(run.share::owns).toList())), keptStored(before, entries),
                         Set.of(key.pageId()));
                 List<ExportAssetManifest.Entry> all = new ArrayList<>(own);
                 before.ifPresent(manifest -> manifest.assets().stream().filter(entry -> !run.share.owns(entry))
@@ -1183,21 +1185,58 @@ public class ExportAssetCollection {
         }
     }
 
+    /**
+     * Die Einträge eines Laufs für den Bestand: Wo dieser Export nach seinen Einstellungen ausschließt, was der Bestand
+     * schon abgelegt hat, bleibt der abgelegte Eintrag.
+     */
+    static List<ExportAssetManifest.Entry> keptStored(Optional<ExportAssetManifest> before,
+                                                      List<ExportAssetManifest.Entry> entries) {
+        if (before.isEmpty()) {
+            return entries;
+        }
+        Map<String, ExportAssetManifest.Entry> stored = new HashMap<>();
+        for (ExportAssetManifest.Entry entry : before.get().assets()) {
+            if (entry.stored()) {
+                stored.putIfAbsent(key(entry), entry);
+            }
+        }
+        List<ExportAssetManifest.Entry> kept = new ArrayList<>(entries.size());
+        for (ExportAssetManifest.Entry entry : entries) {
+            ExportAssetManifest.Entry earlier = entry.status() == ExportAssetManifest.Status.EXCLUDED
+                    ? stored.get(key(entry)) : null;
+            kept.add(earlier != null ? earlier : entry);
+        }
+        return kept;
+    }
+
     /** Hält Lesen und Schreiben des Bestands je Seite zusammen, wenn Bilder- und Anhängeauftrag zugleich ablegen. */
     private final Object directoryLock = new Object();
 
-    /** Ein mitgebrachter Dokument-Anhang nach den heutigen Einstellungen gefiltert, wie {@link #document} es tut. */
-    private static ExportAssetManifest.Entry filtered(ExportSettings settings, ExportAssetManifest.Entry entry) {
+    /**
+     * Ein mitgebrachter Dokument-Anhang nach den heutigen Einstellungen gefiltert, wie {@link #document} es tut. War er
+     * beim Ablegen nach damaligen Einstellungen ausgeschlossen und ist heute zugelassen, liegt er nicht im Bestand:
+     * {@code UNAVAILABLE} mit Grund {@value #NOT_IN_HOLDINGS}, der Auftrag endet unvollständig.
+     */
+    static ExportAssetManifest.Entry filtered(ExportSettings settings, ExportAssetManifest.Entry entry) {
+        boolean excludedBefore = entry.status() == ExportAssetManifest.Status.EXCLUDED;
         String excluded = null;
         if (!settings.permits(entry.mediaType())) {
             excluded = "media-type-excluded";
-        } else if (entry.stored() && settings.tooLarge(entry.size())) {
+        } else if ((entry.stored() || excludedBefore && entry.size() > 0) && settings.tooLarge(entry.size())) {
             excluded = "too-large";
+        }
+        if (excluded == null && excludedBefore) {
+            return new ExportAssetManifest.Entry(entry.pageId(), entry.reference(), entry.attachmentId(),
+                    entry.version(), entry.title(), entry.mediaType(), entry.size(), null,
+                    ExportAssetManifest.Status.UNAVAILABLE, NOT_IN_HOLDINGS);
         }
         return excluded == null ? entry : new ExportAssetManifest.Entry(entry.pageId(), entry.reference(),
                 entry.attachmentId(), entry.version(), entry.title(), entry.mediaType(), entry.size(), null,
                 ExportAssetManifest.Status.EXCLUDED, excluded);
     }
+
+    /** Grund eines Anhangs, der heute zugelassen ist, aber nie abgelegt wurde (ADR 0029). */
+    static final String NOT_IN_HOLDINGS = "not-in-holdings";
 
     /** Die abgelegte Lese-Ansicht zur exportierten Version, sonst als nicht verfügbar. */
     private ExportReadingView importedView(String sourceId, ImportedPage page, boolean mayShowForeign) {

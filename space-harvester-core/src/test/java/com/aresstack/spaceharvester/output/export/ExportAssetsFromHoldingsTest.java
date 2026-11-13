@@ -76,6 +76,10 @@ class ExportAssetsFromHoldingsTest {
     private final EnrichmentImportedAssets holdings = new EnrichmentImportedAssets(enrichments, clock);
     private final ReadingViewStore views = new ReadingViewStore(enrichments);
     private final Source source = new Source();
+    private ExportSettings settings = ExportSettings.DEFAULT;
+    /** Wie die Voreinstellung, aber ohne PDF: das Handbuch steht dann als ausgeschlossen im Manifest. */
+    private static final ExportSettings NO_PDF = new ExportSettings(true, List.of("text/plain"),
+            ExportSettings.DEFAULT_MAX_SIZE);
 
     @TempDir
     Path data;
@@ -128,6 +132,52 @@ class ExportAssetsFromHoldingsTest {
     }
 
     @Test
+    void aStricterExportKeepsTheCollectedAttachmentInTheHoldings() {
+        setUp(true);
+        run(exports.start("confluence", "DEV", "client-a", List.of("json")));
+        settings = NO_PDF;
+        String stricter = run(exports.start("confluence", "DEV", "client-a", List.of("json")));
+
+        assertThat(writer.assets(stricter).orElseThrow().documents()).extracting(ExportAssetManifest.Entry::status)
+                .containsExactly(ExportAssetManifest.Status.EXCLUDED);
+        assertThat(holdings.find(new PageKey("confluence", "100"), "3")).hasValueSatisfying(stored ->
+                assertThat(stored.assets()).filteredOn(ExportAssetManifest.Entry::document)
+                        .extracting(ExportAssetManifest.Entry::status)
+                        .containsExactly(ExportAssetManifest.Status.STORED));
+
+        settings = ExportSettings.DEFAULT;
+        source.down = true;
+        String exportId = run(exports.start(ExportRequest.fromHoldings("confluence", "DEV", "client-a",
+                List.of("json"))));
+
+        ExportAssetManifest manifest = writer.assets(exportId).orElseThrow();
+        assertThat(manifest.complete()).isTrue();
+        assertThat(manifest.documents()).extracting(ExportAssetManifest.Entry::title).containsExactly("handbuch.pdf");
+        assertThat(images.assets(exportId).content(manifest.documents().get(0))).hasValue(PDF);
+    }
+
+    @Test
+    void anAttachmentExcludedWhenCollectedButPermittedNowIsNotInTheHoldings() {
+        setUp(true);
+        settings = NO_PDF;
+        run(exports.start("confluence", "DEV", "client-a", List.of("json")));
+
+        settings = ExportSettings.DEFAULT;
+        source.down = true;
+        String exportId = run(exports.start(ExportRequest.fromHoldings("confluence", "DEV", "client-a",
+                List.of("json"))));
+
+        assertThat(source.callsWhileDown).isZero();
+        assertThat(follow(JobType.ATTACHMENTS, exportId).incomplete()).isTrue();
+        ExportAssetManifest manifest = writer.assets(exportId).orElseThrow();
+        assertThat(manifest.complete()).isFalse();
+        assertThat(manifest.documents()).singleElement().satisfies(entry -> {
+            assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.UNAVAILABLE);
+            assertThat(entry.reason()).isEqualTo("not-in-holdings");
+        });
+    }
+
+    @Test
     void aCollectionWithoutAccessToTheWholeSourceLeavesNothingInTheHoldings() {
         setUp(false);
         run(exports.start("confluence", "DEV", "client-a", List.of("json")));
@@ -171,7 +221,7 @@ class ExportAssetsFromHoldingsTest {
         writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog),
                 new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock),
-                (owner, sourceId) -> sourceWide, SignInRequests.none(), () -> ExportSettings.DEFAULT);
+                (owner, sourceId) -> sourceWide, SignInRequests.none(), () -> settings);
         images.imported(holdings, views);
         exports = new Exports(jobs, cache, writer, converters, clock);
         exports.onSubmitted(images::announce);

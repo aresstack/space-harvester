@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.export;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.convert.SpaceNames;
@@ -26,6 +27,7 @@ import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.SyncUnavailableException;
@@ -109,6 +111,8 @@ public class Exports {
     private final SpaceProvisioning provisioning;
     private final HoldingsCatalog holdings;
     private final Clock clock;
+    private volatile ImportedAssets collected;
+    private volatile ReadingViewStore views;
 
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, Clock clock) {
         this(jobs, cache, writer, ExportConverters.none(), clock);
@@ -139,6 +143,16 @@ public class Exports {
         this.converters = Objects.requireNonNull(converters, "converters");
         this.clock = Objects.requireNonNull(clock, "clock");
         purgeQuietly();
+    }
+
+    /**
+     * Bilder, Anhänge und Lese-Ansichten je Seite im Bestand, wie {@link ExportAssetCollection#imported} sie liest: Ihr
+     * Stand gehört zum Fingerabdruck einer Ausgabe aus dem Bestand ({@link #startFromHoldings}), damit später
+     * beschaffte Dateien eine neue Ausgabe auslösen. {@code null} ohne.
+     */
+    public void imported(ImportedAssets collected, ReadingViewStore views) {
+        this.collected = collected;
+        this.views = views;
     }
 
     /**
@@ -214,9 +228,10 @@ public class Exports {
      * Startet eine Ausgabe aus dem Bestand oder gibt eine fertige zurück (ADR 0029): Das Artefakt eines beendeten
      * Auftrags desselben Auftraggebers wird wiederverwendet, wenn Quelle, Space, Startseite, Tiefe und Formate gleich
      * sind und die Seiten im Bestand denselben Stand haben wie bei seinem Start (Kopfdaten-Version, gespeicherte
-     * Version, Elternseite, gesperrt oder veraltet, Titel, Labels und Attribute, gespeicherter Inhalt) und der
-     * Auftraggeber dieselben Seiten lesen darf. Gilt seine Freigabe nicht mehr ({@link ExportRequest#authorized()}),
-     * wird nichts wiederverwendet. Sonst wie {@link #start(ExportRequest)}.
+     * Version, Elternseite, gesperrt oder veraltet, Titel, Labels und Attribute, gespeicherter Inhalt, dazu Bilder,
+     * Anhänge und Lese-Ansicht im Bestand) und der Auftraggeber dieselben Seiten lesen darf. Gilt seine Freigabe nicht
+     * mehr ({@link ExportRequest#authorized()}) oder ist der Bestand nicht lesbar, wird nichts wiederverwendet. Sonst wie
+     * {@link #start(ExportRequest)}.
      *
      * @throws IllegalArgumentException wenn {@code request} keine Ausgabe aus dem Bestand ist
      * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format
@@ -255,8 +270,9 @@ public class Exports {
     /**
      * Fingerabdruck des Stands der Seiten einer Ausgabe aus dem Bestand: je Seite des Umfangs Elternseite, ob und in
      * welcher Version ihr Inhalt gespeichert ist, die Version der Kopfdaten und ob sie veraltet ist, dazu gesperrte
-     * Seiten; außerdem die Hashes von Kopfdaten und Attributen, der gespeicherte Inhalt und ob der Auftraggeber die
-     * Seite lesen darf. {@code null}, wenn der Bestand den Space nicht kennt; dann wird nichts wiederverwendet.
+     * Seiten; außerdem die Hashes von Kopfdaten und Attributen, der gespeicherte Inhalt, ob der Auftraggeber die
+     * Seite lesen darf und was zur gespeicherten Version an Bildern, Anhängen und Lese-Ansicht im Bestand liegt.
+     * {@code null}, wenn der Bestand den Space nicht kennt oder nicht lesbar ist; dann wird nichts wiederverwendet.
      */
     private String holdingsState(ExportRequest request) {
         Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
@@ -289,18 +305,23 @@ public class Exports {
         }
         String after = null;
         List<ListedPage> batch;
-        do {
-            batch = cache.pages(request.sourceId(), request.spaceKey(), generation.get().id(), after, BATCH_SIZE);
-            for (ListedPage listed : batch) {
-                after = listed.pageId();
-                if (scope.contains(listed.pageId())) {
-                    PageHeader header = listed.header();
-                    entries.merge(listed.pageId(), "\u0000" + header.metadataHash() + "\u0000"
-                            + header.attributesHash() + "\u0000" + listed.rawSha256() + "\u0000"
-                            + request.visible().test(header), String::concat);
+        try {
+            do {
+                batch = cache.pages(request.sourceId(), request.spaceKey(), generation.get().id(), after,
+                        BATCH_SIZE);
+                for (ListedPage listed : batch) {
+                    after = listed.pageId();
+                    if (scope.contains(listed.pageId())) {
+                        PageHeader header = listed.header();
+                        entries.merge(listed.pageId(), "\u0000" + header.metadataHash() + "\u0000"
+                                + header.attributesHash() + "\u0000" + listed.rawSha256() + "\u0000"
+                                + request.visible().test(header) + collected(header), String::concat);
+                    }
                 }
-            }
-        } while (batch.size() == BATCH_SIZE);
+            } while (batch.size() == BATCH_SIZE);
+        } catch (NotReusable e) {
+            return null;
+        }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             entries.forEach((pageId, entry) -> {
@@ -312,6 +333,53 @@ public class Exports {
             return HexFormat.of().formatHex(digest.digest(), 0, 12);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+    }
+
+    /**
+     * Was eine Ausgabe aus dem Bestand zur gespeicherten Version der Seite an Bildern, Anhängen und Lese-Ansicht
+     * findet, als Text für den Fingerabdruck: Vollständigkeit und je Eintrag Verweis, Status und Inhalts-Hash.
+     */
+    private String collected(PageHeader header) {
+        ImportedAssets directory = collected;
+        ReadingViewStore stored = views;
+        String version = header.metadata().version();
+        StringBuilder state = new StringBuilder();
+        try {
+            appendCollected(state, header, version, directory, stored);
+        } catch (RuntimeException e) {
+            // Ohne lesbaren Bestand kein verlässlicher Fingerabdruck: dann nichts wiederverwenden.
+            LOG.log(System.Logger.Level.WARNING, "Bestand für eine Ausgabe aus dem Bestand nicht lesbar ({0})",
+                    e.getClass().getName());
+            throw new NotReusable();
+        }
+        return state.toString();
+    }
+
+    /** Ein Fingerabdruck ist nicht verlässlich bestimmbar; {@link #holdingsState} liefert dann {@code null}. */
+    private static final class NotReusable extends RuntimeException {
+
+        NotReusable() {
+            super(null, null, false, false);
+        }
+    }
+
+    private static void appendCollected(StringBuilder state, PageHeader header, String version,
+                                        ImportedAssets directory, ReadingViewStore stored) {
+        if (directory != null && version != null) {
+            directory.find(header.key(), version).ifPresent(manifest -> {
+                state.append("\u0000assets\u0001").append(manifest.imagesComplete()).append('\u0001')
+                        .append(manifest.documentsComplete());
+                for (ExportAssetManifest.Entry entry : manifest.assets()) {
+                    state.append('\u0001').append(entry.reference()).append('\u0002').append(entry.attachmentId())
+                            .append('\u0002').append(entry.status()).append('\u0002').append(entry.sha256());
+                }
+            });
+        }
+        if (stored != null) {
+            stored.find(header.key()).filter(view -> Objects.equals(view.version(), version)).ifPresent(view ->
+                    state.append("\u0000view\u0001").append(view.rawSha256()).append('\u0001')
+                            .append(view.renderedAt()));
         }
     }
 
