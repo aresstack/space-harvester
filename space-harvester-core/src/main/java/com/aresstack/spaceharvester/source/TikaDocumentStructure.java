@@ -73,7 +73,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s1";
+    public static final String VERSION = "3.3-s3";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -151,11 +151,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.TOO_LARGE));
             }
             AutoDetectParser tika = parser();
-            // Gelesen wird nach dem Inhalt; die Schranke gilt deshalb auch für den an der Datei erkannten Typ, bei
-            // Abweichung der strengere Wert (Architekt 13.11.2026).
-            long memoryLimit = stricter(limits.memoryLimit(mediaType),
-                    limits.memoryLimit(detect(tika, original, title)));
-            if (ExtractionLimits.exceeds(size, memoryLimit)) {
+            // Der gemeldete Typ wird hier billig geprüft, der erkannte erst im Lauf (unter Platz- und Zeitgrenze).
+            if (ExtractionLimits.exceeds(size, limits.memoryLimit(mediaType))) {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
             }
             if (limits.tempSpaceReserve() > 0 && usableTempSpace() < limits.tempSpaceReserve()) {
@@ -268,14 +265,6 @@ public final class TikaDocumentStructure implements DocumentStructure {
         }
     }
 
-    /** Die strengere zweier Schranken; {@code 0} heißt ohne Schranke. */
-    private static long stricter(long first, long second) {
-        if (first == 0) {
-            return second;
-        }
-        return second == 0 ? first : Math.min(first, second);
-    }
-
     private static long usableTempSpace() {
         try {
             return Files.getFileStore(Path.of(System.getProperty("java.io.tmpdir"))).getUsableSpace();
@@ -338,6 +327,19 @@ public final class TikaDocumentStructure implements DocumentStructure {
         }
 
         void read() {
+            // Gelesen wird nach dem Inhalt; die Schranke gilt deshalb auch für den an der Datei erkannten Typ, bei
+            // Abweichung der strengere Wert (Architekt 13.11.2026). Die Erkennung läuft hier unter Platz- und
+            // Zeitgrenze, weil sie bei Containern (OLE2, ZIP) selbst Struktur liest.
+            if (ExtractionLimits.exceeds(size, limits.memoryLimit(detect(tika, original, title)))) {
+                synchronized (this) {
+                    if (!stopped) {
+                        result = new StructuredDocument(DocumentHead.EMPTY,
+                                Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT), List.of(), 0, 0);
+                        stopped = true;
+                    }
+                }
+                return;
+            }
             Metadata metadata = new Metadata();
             if (title != null && !title.isBlank()) {
                 metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, title);
