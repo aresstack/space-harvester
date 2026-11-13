@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveRes
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.RankedHit;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Status;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Variant;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -59,6 +60,20 @@ class SearchOrchestratorTest {
         assertThat(result.variants()).extracting(variant -> variant.query().priority()).containsExactly(0, 1, 2, 3, 4);
         assertThat(search.calls().subList(3, 5)).containsExactlyInAnyOrder("v3", "v4");
         assertThat(events.completed).isNotNull();
+    }
+
+    @Test
+    void everyVariantSearchesOnlyThePagesOfTheSelectionOfTheOriginal() throws Exception {
+        search.results(ORIGINAL, found("o"));
+        search.results("v1", found("a"));
+        PageSet selection = PageSet.of(Map.of("wiki", List.of("o", "a")));
+
+        orchestrator(List.of("v1"), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL).within(selection), profile(SearchProfile.Mode.ALL_VARIANTS, 2))
+                .result().get(10, TimeUnit.SECONDS);
+
+        assertThat(search.calls()).containsExactlyInAnyOrder(ORIGINAL, "v1");
+        assertThat(search.queries).extracting(KeywordSearch.Query::pages).containsOnly(selection);
     }
 
     @Test
@@ -569,6 +584,7 @@ class SearchOrchestratorTest {
         private final Map<String, Runnable> onCall = new ConcurrentHashMap<>();
         private final Map<String, Integer> failures = new ConcurrentHashMap<>();
         private final List<String> calls = Collections.synchronizedList(new ArrayList<>());
+        final List<KeywordSearch.Query> queries = Collections.synchronizedList(new ArrayList<>());
         final List<String> cancelledLoads = Collections.synchronizedList(new ArrayList<>());
         final java.util.concurrent.atomic.AtomicInteger returned = new java.util.concurrent.atomic.AtomicInteger();
 
@@ -611,6 +627,7 @@ class SearchOrchestratorTest {
         public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
             String text = query.text();
             calls.add(text);
+            queries.add(query);
             Runnable action = onCall.get(text);
             if (action != null) {
                 action.run();
