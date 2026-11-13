@@ -227,7 +227,8 @@ public final class DocumentExtractions {
      * (ADR 0026, AP4b, Punkte 8 und 12): zuerst die des Dokuments, dann je Teil in Verzeichnisreihenfolge,
      * inhaltsgleiche Teile einmal. Einzeln aus der Ablage gelesen, solange der Strom läuft, ohne Zeichengrenze; der
      * Strom muss geschlossen werden. Ein Teil mit Status {@code FAILED}, {@code UNSUPPORTED} oder {@code EXCLUDED}
-     * hat keinen Abschnitt, {@code PARTIAL} den gelesenen Text.
+     * hat keinen Text, nur einen Namenseintrag (Abschnitt 0, leerer Text), wenn er einen Anzeigenamen hat;
+     * {@code PARTIAL} hat den gelesenen Text.
      *
      * @return leer, wenn keine Extraktion abgelegt ist oder das Dokument keinen Text hat
      */
@@ -240,9 +241,10 @@ public final class DocumentExtractions {
         StoredExtraction extraction = known.get();
         Stream<IndexSection> own = extraction.sections() > 0
                 ? extractions.sections(extraction.key()).map(section -> section("", "", section))
+                        .filter(section -> !section.text().isBlank())
                 : Stream.empty();
         Stream<IndexSection> parts = Stream.of(extraction).flatMap(this::partSections);
-        return Optional.of(Stream.concat(own, parts).filter(section -> !section.text().isBlank()));
+        return Optional.of(Stream.concat(own, parts));
     }
 
     /** Die Abschnitte der lesbaren Teile, erst beim Lesen geöffnet. */
@@ -253,11 +255,20 @@ public final class DocumentExtractions {
         java.util.Set<String> stored = new java.util.HashSet<>();
         extractions.parts(extraction.key()).forEach(part -> stored.add(part.key()));
         java.util.Set<String> seen = new java.util.HashSet<>();
-        return extraction.document().directory().stream()
-                .filter(entry -> usable(entry.outcome()))
-                .filter(entry -> stored.contains(entry.id().storageKey()) && seen.add(entry.id().storageKey()))
-                .flatMap(entry -> extractions.partSections(extraction.key(), entry.id().storageKey())
-                        .map(section -> section(entry.id().value(), entry.displayName().orElse(""), section)));
+        return extraction.document().directory().stream().flatMap(entry -> {
+            String name = entry.displayName().orElse("");
+            if (!usable(entry.outcome())) {
+                // Ohne Text nur über den Namen auffindbar, nie mit erzeugtem Text (Status, Hinweis).
+                return name.isBlank() ? Stream.empty()
+                        : Stream.of(new IndexSection(entry.id().value(), name, 0, ""));
+            }
+            if (!stored.contains(entry.id().storageKey()) || !seen.add(entry.id().storageKey())) {
+                return Stream.empty();
+            }
+            return extractions.partSections(extraction.key(), entry.id().storageKey())
+                    .map(section -> section(entry.id().value(), name, section))
+                    .filter(section -> !section.text().isBlank());
+        });
     }
 
     private static IndexSection section(String partId, String partTitle, TextSection section) {

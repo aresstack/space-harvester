@@ -349,7 +349,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   inhaltsgleiche Teile einmal. Gelesen wird abschnittsweise aus der Ablage, ohne Zeichengrenze
   (`DocumentExtractions#indexSections`). Ein Behälter ohne eigenen Text hat nur Einträge seiner Teile; ohne jeden
   Abschnitt mit Text steht der Anhang wie bisher mit seinem Dateinamen darin. Teile mit `FAILED`, `UNSUPPORTED` oder
-  `EXCLUDED` haben keinen Eintrag, `PARTIAL` den gelesenen Text. Alle Einträge eines Anhangs werden in einem Schritt
+  `EXCLUDED` haben keinen Text, nur einen Namenseintrag (Anzeigename durchsuchbar, nie erzeugter Text), `PARTIAL` den
+  gelesenen Text. Alle Einträge eines Anhangs werden in einem Schritt
   des IndexWriters ersetzt (`PageTextIndex#replaceAttachment`, `updateDocuments`): Leser sehen den alten oder den
   neuen Stand, überzählige Abschnitte und weggefallene Teile verschwinden, scheitert das Lesen, bleibt der alte Stand.
   Ein einzelnes Dokument ersetzt `replaceDocument` (Anhang + Teilkennung); `Assets#reindex` legt einen abgelegten

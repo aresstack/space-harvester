@@ -388,12 +388,19 @@ class AttachmentTextSearchTest {
     void anUnreadableEnclosedFileLeavesNoEntry() {
         files.put("att1", Archives.zip(Map.of("lesbar.txt",
                 "Schaltplan Umspannwerk".getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                "defekt.pdf", "%PDF-1.7 kaputt Trafostation".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+                "defekt Plan.pdf", "%PDF-1.7 kaputt Trafostation".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
         Assets assets = structuredAssets();
         assets.harvest(list("101", attachment("att1", "netz.zip", Archives.ZIP)));
 
         assertThat(index.search("Umspannwerk", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
         assertThat(index.search("Trafostation", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        // Über seinen Namen bleibt der Teil auffindbar, mit Teilkennung, aber ohne erzeugten Text.
+        assertThat(index.search("defekt", Set.of("wiki"), SearchSpaces.all(), 10)).singleElement()
+                .satisfies(match -> {
+                    assertThat(match.partId()).isNotNull();
+                    assertThat(match.partTitle()).contains("defekt");
+                    assertThat(match.snippet()).isEmpty();
+                });
     }
 
     @Test

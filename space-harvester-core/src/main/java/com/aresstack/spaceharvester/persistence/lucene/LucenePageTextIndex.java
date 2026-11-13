@@ -305,7 +305,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
         if (!entry.partId().isEmpty()) {
             doc.add(new StoredField(PART_ID, entry.partId()));
-            doc.add(new StoredField(PART_TITLE, entry.partTitle()));
+            // Der Name einer enthaltenen Datei ist durchsuchbar wie der Dateiname des Anhangs.
+            doc.add(new TextField(PART_TITLE, entry.partTitle(), Field.Store.YES));
         }
         doc.add(new StoredField(SECTION, Integer.toString(entry.section())));
         return doc;
@@ -420,6 +421,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         for (String term : terms) {
             query.add(new TermQuery(new Term(TEXT, term)), BooleanClause.Occur.SHOULD);
             query.add(new BoostQuery(new TermQuery(new Term(TITLE, term)), 2f), BooleanClause.Occur.SHOULD);
+            query.add(new BoostQuery(new TermQuery(new Term(PART_TITLE, term)), 2f), BooleanClause.Occur.SHOULD);
         }
         query.setMinimumNumberShouldMatch(1);
         Set<String> wanted = Set.copyOf(terms);
