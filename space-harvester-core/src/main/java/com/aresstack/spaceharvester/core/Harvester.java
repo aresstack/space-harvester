@@ -2003,51 +2003,14 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Wartet, bis der Auftrag einen Endzustand erreicht hat. Ohne Abfrage im Takt (ADR 0027): Der Aufruf meldet sich bei
-     * den Aufträgen an und liest den Stand nur, wenn sich der Auftrag geändert hat.
+     * Wartet, bis der Auftrag einen Endzustand erreicht hat, ohne Abfrage im Takt (ADR 0027, {@link Jobs#await}).
      *
      * @return der Endzustand ({@link JobState#COMPLETED}, {@link JobState#FAILED} oder {@link JobState#CANCELLED})
      * @throws TimeoutException     wenn der Auftrag nach {@code timeout} noch läuft; er läuft weiter
      * @throws InterruptedException wenn der wartende Thread unterbrochen wird; der Auftrag läuft weiter
      */
     public JobStatus await(String jobId, Duration timeout) throws TimeoutException, InterruptedException {
-        long deadline = System.nanoTime() + timeout.toNanos();
-        java.util.concurrent.Semaphore changed = new java.util.concurrent.Semaphore(0);
-        com.aresstack.spaceharvester.application.jobs.JobListener listener =
-                new com.aresstack.spaceharvester.application.jobs.JobListener() {
-                    @Override
-                    public void changed(JobStatus status) {
-                        if (jobId.equals(status.id())) {
-                            changed.release();
-                        }
-                    }
-
-                    @Override
-                    public void removed(JobStatus last) {
-                        if (jobId.equals(last.id())) {
-                            changed.release();
-                        }
-                    }
-                };
-        // Erst anmelden, dann lesen: eine Änderung dazwischen geht so nicht verloren.
-        try (Subscription subscription = jobs.subscribe(OWNER, listener)) {
-            while (true) {
-                JobStatus status = status(jobId);
-                if (status.state().terminal()) {
-                    return status;
-                }
-                long remaining = deadline - System.nanoTime();
-                if (remaining > 0 && changed.tryAcquire(remaining, TimeUnit.NANOSECONDS)) {
-                    changed.drainPermits();
-                    continue;
-                }
-                status = status(jobId);
-                if (status.state().terminal()) {
-                    return status;
-                }
-                throw new TimeoutException("Auftrag " + jobId + " läuft nach " + timeout + " noch");
-            }
-        }
+        return jobs.await(jobId, OWNER, timeout);
     }
 
     /** Beendet Aufträge, schließt die Indizes und die Verbindungen der Quellen. */

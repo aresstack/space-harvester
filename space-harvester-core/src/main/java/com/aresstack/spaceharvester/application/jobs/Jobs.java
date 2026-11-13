@@ -346,6 +346,37 @@ public class Jobs implements AutoCloseable {
         return listeners.add(listener, subject -> Objects.equals(subject, owner));
     }
 
+    /**
+     * Wartet, bis der eigene Auftrag einen Endzustand erreicht hat ({@link JobState#terminal()}), ohne Abfrage im Takt
+     * (ADR 0027): Ein Auftrag verlässt die offenen Aufträge genau mit seinem Ende, und jedes Verlassen weckt hier. Auch
+     * {@link #close()} weckt, damit niemand nach dem Abbruch der wartenden Aufträge bis zur Frist hängt.
+     *
+     * @return der Endzustand
+     * @throws UnknownJobException  wenn es keinen eigenen Auftrag mit dieser ID gibt
+     * @throws TimeoutException     wenn der Auftrag nach {@code timeout} noch läuft oder wartet; er läuft weiter
+     * @throws InterruptedException wenn der wartende Thread unterbrochen wird; der Auftrag läuft weiter
+     */
+    public JobStatus await(String jobId, String owner, Duration timeout)
+            throws java.util.concurrent.TimeoutException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (true) {
+            JobStatus status = status(jobId, owner);
+            if (status.state().terminal()) {
+                return status;
+            }
+            synchronized (lock) {
+                if (open.containsKey(jobId)) {
+                    long left = deadline - System.nanoTime();
+                    if (left <= 0) {
+                        throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " läuft nach " + timeout
+                                + " noch");
+                    }
+                    TimeUnit.NANOSECONDS.timedWait(lock, left);
+                }
+            }
+        }
+    }
+
     /** Auftraggeber eines Auftrags für die Meldung einer Löschung; {@code null} ohne Auftraggeber. */
     /**
      * Eine Vormerkung: der Auftraggeber und, bei einer Löschung, der letzte Stand des Auftrags, den es danach nicht mehr
@@ -1062,6 +1093,8 @@ public class Jobs implements AutoCloseable {
                 store.save(job.snapshot());
             }
             queued.clear();
+            // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
+            lock.notifyAll();
             for (Job job : open.values()) {
                 job.cancelRequested = true;
                 store.save(job.snapshot());
