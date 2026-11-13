@@ -438,6 +438,9 @@ public class AssetsController {
      * @param reason    fester Grund zu {@code PARTIAL} (Codes in docs/SOURCE_ADAPTERS.md), sonst leer
      * @param bytesRead gelesene Bytes, wenn die Extraktion sie kennt
      * @param charsRead gelesene Zeichen, wenn die Extraktion sie kennt
+     * @param stale     {@code true}, wenn der Text veraltet ist (ADR 0026, Punkt 11): aus einer anderen Extraktion oder
+     *                  Version als der eingestellten oder mitgebracht ohne abgelegte Extraktion (Import). Er gilt, bis
+     *                  „Neu lesen“ das Original gelesen hat.
      */
     public record AssetTextResponse(String attachmentId, @Schema(nullable = true) String version, String title,
                                     String sha256, String extractor, String extractorVersion, boolean truncated,
@@ -445,7 +448,7 @@ public class AssetsController {
                                     @Schema(nullable = true, allowableValues = {"OK", "PARTIAL"}) String status,
                                     @Schema(nullable = true, example = "timeout") String reason,
                                     @Schema(nullable = true) Long bytesRead,
-                                    @Schema(nullable = true) Long charsRead) {
+                                    @Schema(nullable = true) Long charsRead, boolean stale) {
 
         static AssetTextResponse of(PageAttachment attachment, AssetText text) {
             Optional<Outcome> outcome = text.outcome();
@@ -454,7 +457,8 @@ public class AssetsController {
                     text.sha256(), text.extractor(), text.version(), text.truncated(), text.createdAt(), text.text(),
                     outcome.map(o -> o.status().name()).orElse(null),
                     outcome.flatMap(Outcome::reason).map(StatusReason::code).orElse(null),
-                    extent.map(ReadExtent::bytes).orElse(null), extent.map(ReadExtent::chars).orElse(null));
+                    extent.map(ReadExtent::bytes).orElse(null), extent.map(ReadExtent::chars).orElse(null),
+                    text.stale());
         }
     }
 

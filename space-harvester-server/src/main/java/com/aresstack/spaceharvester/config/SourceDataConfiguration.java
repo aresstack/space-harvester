@@ -3,9 +3,12 @@ package com.aresstack.spaceharvester.config;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
+import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sync.InventoryLog;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -19,6 +22,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import java.time.Clock;
+import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +31,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * „Daten bereinigen“ ({@link SourceDataPurge}) mit den Ablagen dieses Dienstes, in derselben Reihenfolge wie im
  * Harvester ({@link SourceDataStores}). Ohne Cache-Verzeichnis fehlen Seiten-Cache, Volltext, Anreicherungen und
- * Füllschlange; dann bleibt, was es gibt.
+ * Füllschlange; dann bleibt, was es gibt. Dazu „Neu lesen“ ({@link DocumentRereads}) der abgelegten Dokumente.
  */
 @Configuration(proxyBeanMethods = false)
 class SourceDataConfiguration {
@@ -67,5 +71,19 @@ class SourceDataConfiguration {
         return new SourceDataPurge(jobs, stores.build(), sourceId -> catalog.config(sourceId).isPresent(),
                 scheduler == null ? SourceDataPurge.Quiesce.NONE
                         : sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
+    }
+
+    /**
+     * „Neu lesen“ (ADR 0026, Punkt 11). Den Space für den Volltextindex liefert der Seiten-Cache; ohne Cache bleibt
+     * der Indexeintrag eines Dokuments bis zur nächsten Ernte, sein Text gilt trotzdem sofort.
+     */
+    @Bean
+    DocumentRereads documentRereads(Jobs jobs, Assets assets, AssetStore store, ConfiguredSourceCatalog catalog,
+                                    ObjectProvider<SnapshotRepository> snapshots) {
+        SnapshotRepository pages = snapshots.getIfAvailable();
+        return new DocumentRereads(jobs, assets, store, sourceId -> catalog.config(sourceId).isPresent(),
+                pages == null ? key -> Optional.empty()
+                        : key -> pages.findHeader(key).map(header -> header.metadata().partitionKey()),
+                Clock.systemUTC());
     }
 }

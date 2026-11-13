@@ -93,11 +93,13 @@ public final class ExportPackageImport {
 
     /**
      * Legt den mitgebrachten Text eines Anhangs zu seinem SHA-256 ab ({@link Assets#adoptText}); {@code truncated}
-     * mit gelesenem Umfang, wenn er beim Einlesen gekürzt wurde (nie still).
+     * mit gelesenem Umfang, wenn er beim Einlesen gekürzt wurde (nie still), dazu Extraktion und Version laut Paket
+     * ({@code attachments/v2}) oder {@code null}.
      */
     @FunctionalInterface
     public interface Texts {
-        boolean adopt(String sha256, String text, boolean truncated, long bytesRead);
+        boolean adopt(String sha256, String text, boolean truncated, long bytesRead, String extractor,
+                      String version);
     }
 
     private final Jobs jobs;
@@ -479,7 +481,7 @@ public final class ExportPackageImport {
                     if (entry.document() && texts != null) {
                         files.documentText(entry).filter(text -> !text.text().isBlank())
                                 .ifPresent(text -> texts.adopt(entry.sha256(), text.text(), text.truncated(),
-                                        text.bytesRead()));
+                                        text.bytesRead(), text.extractor(), text.version()));
                     }
                 }
                 if (entry.rendition() != null && entry.rendition().drawn()) {

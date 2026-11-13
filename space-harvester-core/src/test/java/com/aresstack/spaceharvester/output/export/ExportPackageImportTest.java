@@ -85,14 +85,19 @@ class ExportPackageImportTest {
     private final InMemorySyncStore store = new InMemorySyncStore(repository);
     private final MemoryAssets assets = new MemoryAssets();
     private final Map<String, String> texts = new HashMap<>();
+    /** Extraktion und Version laut Paket (attachments/v2), je SHA-256. */
+    private final Map<String, String> extractions = new HashMap<>();
     /** Beim Einlesen gekürzte Texte mit gelesenen Bytes. */
     private final Map<String, Long> cut = new HashMap<>();
     private final List<SpaceSync.SyncRun> committed = new ArrayList<>();
     private final ExportPackageImport imports = new ExportPackageImport(jobs,
             new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop", "confluence")::contains,
-            assets, (sha, text, truncated, bytes) -> {
+            assets, (sha, text, truncated, bytes, extractor, version) -> {
                 if (truncated) {
                     cut.put(sha, bytes);
+                }
+                if (extractor != null) {
+                    extractions.put(sha, extractor + "/" + version);
                 }
                 return texts.put(sha, text) == null;
             }, null, List.of(committed::add), clock);
@@ -154,6 +159,8 @@ class ExportPackageImportTest {
         // draw.io kommt seit json-package/4 nur als Text: keine gezeichnete Grafik im Paket, keine im Speicher
         assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION)).isEmpty();
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
+        // Ohne strukturierte Extraktion im Paket keine Angabe: der Text liegt dann unter „import“/„unbekannt“.
+        assertThat(extractions).doesNotContainKey(sha256(PDF));
     }
 
     @Test
@@ -169,6 +176,9 @@ class ExportPackageImportTest {
                 .isEqualTo(JobState.COMPLETED);
         // Eigener Text, danach die Teile mit Text in Verzeichnisreihenfolge; der Teil ohne Text fehlt.
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles\n\nAnlage eins");
+        // Extraktion und Version des Behälters laut Paket: der Text gilt als veraltet, bis das Original neu gelesen
+        // ist (ADR 0026, Punkt 11).
+        assertThat(extractions).containsEntry(sha256(PDF), "tika/3.3-s9");
         // Der Teil wird kein eigenes Asset: nur die drei Anhänge des Pakets liegen in der Ablage.
         assertThat(assets.content("laptop", "att-pdf", "2")).contains(PDF);
         assertThat(assets.entries).hasSize(3);
@@ -183,7 +193,7 @@ class ExportPackageImportTest {
         Map<String, Long> truncated = new HashMap<>();
         ExportPackageImport tight = new ExportPackageImport(jobs,
                 new ZipExportPackageReader(1024 * 1024, 1024 * 1024, 10), store, Set.of("laptop")::contains, assets,
-                (sha, text, cutOff, bytes) -> {
+                (sha, text, cutOff, bytes, extractor, version) -> {
                     if (cutOff) {
                         truncated.put(sha, bytes);
                     }

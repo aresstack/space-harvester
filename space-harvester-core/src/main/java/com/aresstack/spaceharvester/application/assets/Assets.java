@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeExcept
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -29,6 +30,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -1016,7 +1018,7 @@ public class Assets {
                 }
             }
         }
-        if ((mayStore || existing.isPresent()) && indexDocument(list, asset, text.text())) {
+        if ((mayStore || existing.isPresent()) && indexDocument(list, asset, text)) {
             flushIndex();
         }
         return text;
@@ -1035,23 +1037,48 @@ public class Assets {
                 .map(asset -> asset.withPartsWithoutFile(attachment.partsWithoutFile()));
     }
 
-    /** Der abgelegte Text eines Dokuments; für alles andere {@code UNSUPPORTED}. */
+    /**
+     * Der abgelegte Text eines Dokuments, auch ein veralteter ({@link #storedOrStale}); für alles andere
+     * {@code UNSUPPORTED}.
+     */
     private Optional<AssetText> storedText(DocumentText extraction, Asset asset) {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        return store.text(asset.sha256(), textExtractor(), textVersion())
-                .map(text -> DocumentExtractions.withSource(withStoredOutcome(text, asset), asset));
+        return storedOrStale(asset.sha256()).map(text -> DocumentExtractions.withSource(text, asset));
     }
 
-    /** Der abgelegte Text trägt keinen Status; er steht in der abgelegten Extraktion (AP4a). */
-    private AssetText withStoredOutcome(AssetText text, Asset asset) {
+    /**
+     * Der abgelegte Text dieser Bytes (ADR 0026, Punkt 11, Abnahme 8): der der eingestellten Extraktion, sonst der
+     * jüngste einer anderen Extraktion oder Version, als veraltet gekennzeichnet; er bleibt lieferbar, bis das Original
+     * neu gelesen ist. Ein Text der eingestellten Extraktion ohne abgelegte strukturierte Extraktion (Ablage verworfen)
+     * gilt ebenfalls als veraltet. Der Status kommt vom Text selbst (etwa beim Import gekürzt), sonst aus der
+     * zugehörigen abgelegten Extraktion (AP4a).
+     */
+    private Optional<AssetText> storedOrStale(String sha256) {
         DocumentExtractions structured = extractions;
-        if (text.outcome().isPresent() || structured == null) {
-            return text;
+        Optional<AssetText> current = store.text(sha256, textExtractor(), textVersion());
+        if (current.isPresent()) {
+            if (structured == null) {
+                return current;
+            }
+            AssetText text = current.get();
+            Optional<StoredExtraction> extraction = structured.stored(sha256);
+            if (extraction.isEmpty()) {
+                return Optional.of(text.asStale());
+            }
+            return Optional.of(text.outcome().isPresent() ? text
+                    : text.withOutcome(extraction.get().document().outcome()));
         }
-        return structured.stored(asset.sha256()).map(extraction -> text.withOutcome(extraction.document().outcome()))
-                .orElse(text);
+        Optional<AssetText> older = store.latestText(sha256).map(AssetText::asStale);
+        if (older.isEmpty() || structured == null || older.get().outcome().isPresent()) {
+            return older;
+        }
+        AssetText text = older.get();
+        return Optional.of(structured.readable(sha256)
+                .filter(found -> found.key().extractor().equals(text.extractor())
+                        && found.key().version().equals(text.version()))
+                .map(found -> text.withOutcome(found.document().outcome())).orElse(text));
     }
 
     /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
@@ -1097,9 +1124,10 @@ public class Assets {
                 if (sections.isPresent()) {
                     return sections.get();
                 }
-                String text = store.text(asset.sha256(), textExtractor(), textVersion()).map(AssetText::text)
-                        .orElse("");
-                return indexText(list, asset, text, text.isEmpty() ? "" : textKey());
+                // Auch ein veralteter Text bleibt im Index, bis das Original neu gelesen ist (ADR 0026, Punkt 11).
+                Optional<AssetText> found = storedOrStale(asset.sha256());
+                String text = found.map(AssetText::text).orElse("");
+                return indexText(list, asset, text, text.isEmpty() ? "" : textKey(found.get()));
             }
             if (asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR) {
                 // Wie im EAC (DocumentSourceFileTextExtractor → describe), aber ohne Modellaufruf: nur die vorhandene
@@ -1151,8 +1179,13 @@ public class Assets {
                 "describer:" + description.describer() + ":" + description.modelVersion());
     }
 
-    private String textKey() {
-        return "text:" + textExtractor() + ":" + textVersion();
+    /** Herkunft eines Textes im Index: Extraktion und Version, aus der er stammt. */
+    private static String textKey(AssetText text) {
+        return textKey(text.extractor(), text.version());
+    }
+
+    private static String textKey(String extractor, String version) {
+        return "text:" + extractor + ":" + version;
     }
 
     /**
@@ -1175,35 +1208,134 @@ public class Assets {
         return changed;
     }
 
+    /**
+     * Ausgang von {@link #reread}.
+     *
+     * @param read   ob das Original jetzt gelesen wurde
+     * @param text   ob die neue Extraktion Text hat und den bisherigen Stand ersetzt hat
+     * @param code   fester Code, wenn kein Text entstand ({@link DocumentTextException.Reason#code()} oder
+     *               {@code rate-limited}); sonst {@code null}
+     */
+    public record Reread(boolean read, boolean text, String code) {
+
+        /** Nichts zu tun: schon aktuell oder nicht betroffen. */
+        public static final Reread SKIPPED = new Reread(false, false, null);
+    }
+
+    /**
+     * Liest ein abgelegtes Dokument ohne Download neu („Neu lesen“, ADR 0026, Punkt 11, Abnahme 8), wenn es betroffen
+     * ist: ohne {@code statuses} jedes Dokument ohne Extraktion der eingestellten Version (Versionswechsel, Import,
+     * vorübergehend gescheitert), mit {@code statuses} nur Dokumente, deren aktuelle Extraktion einen dieser Status hat
+     * (etwa nach geänderten Grenzen), sofern sie nicht nach {@code since} entstand. Der bisherige Stand gilt, bis das
+     * Lesen Text liefert; erst dann werden Texte und Extraktionen anderer Versionen derselben Bytes entfernt. Ein
+     * gescheitertes Lesen lässt ihn stehen. Den Volltextindex ersetzt {@link #reindexStored}.
+     *
+     * @param since bei {@code statuses}: Extraktionen ab diesem Zeitpunkt gelten als schon neu gelesen; sonst egal
+     * @throws DocumentTextException {@code NOT_CONFIGURED} ohne strukturierte Extraktion
+     */
+    public Reread reread(Asset asset, Set<ExtractionStatus> statuses, Instant since) {
+        DocumentExtractions structured = extractions;
+        if (structured == null || documents == null) {
+            throw new DocumentTextException(DocumentTextException.Reason.NOT_CONFIGURED,
+                    "Keine strukturierte Extraktion konfiguriert", null);
+        }
+        if (asset.kind() != AssetKind.OTHER) {
+            return Reread.SKIPPED;
+        }
+        Optional<StoredExtraction> current = structured.stored(asset.sha256());
+        boolean fresh = !statuses.isEmpty();
+        if (fresh ? current.isEmpty() || !statuses.contains(current.get().document().outcome().status())
+                || !current.get().createdAt().isBefore(since) : current.isPresent()) {
+            return Reread.SKIPPED;
+        }
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            AssetText text = fresh ? structured.reread(asset, store, clock.instant())
+                    : structured.text(asset, store, clock.instant());
+            try {
+                store.removeOtherTexts(asset.sha256(), text.extractor(), text.version());
+                structured.removeOlderVersions(asset.sha256());
+            } catch (AssetStoreException | IllegalArgumentException e) {
+                // Der neue Stand gilt; alte Stände räumt das nächste Neulesen weg.
+                LOG.log(System.Logger.Level.WARNING, "Alte Stände eines Dokuments in {0} nicht entfernt ({1})",
+                        asset.sourceId(), e.getClass().getName());
+            }
+            return new Reread(true, true, null);
+        } catch (DocumentTextException e) {
+            return new Reread(true, false, e.reason().code());
+        } catch (SourceAccessException e) {
+            return new Reread(false, false, code(e.reason()));
+        }
+    }
+
+    /**
+     * Ersetzt die Einträge eines abgelegten Dokument-Anhangs im Volltextindex aus seiner abgelegten Extraktion, ohne
+     * Download und ohne die Quelle zu fragen (für „Neu lesen“): Seite und Anhang kommen aus dem Eintrag der Ablage, der
+     * Space vom Aufrufer. Nur ein Anhang, der schon im Index liegt, bekommt neue Einträge; einer, den eine Ernte als
+     * nicht mehr zur Seite gehörig entfernt hat, bleibt draußen. Ersetzt auch bei gleicher Extraktion und Version, denn
+     * ein Neulesen unter anderen Grenzen ändert die Abschnitte, nicht den Schlüssel. Sichert den Index nicht
+     * ({@link #flushTextIndex}).
+     *
+     * @return ob der Index geändert wurde
+     */
+    public boolean reindexStored(Asset asset, String spaceKey) {
+        if (texts == null || asset.kind() != AssetKind.OTHER) {
+            return false;
+        }
+        if (texts.attachmentInputSha256(new PageKey(asset.sourceId(), asset.pageId()), asset.attachmentId())
+                .isEmpty()) {
+            return false;
+        }
+        PageAttachmentList list = new PageAttachmentList(asset.sourceId(), spaceKey, new PageAttachments(
+                asset.pageId(), List.of(), List.of(), "application/json", "stored", List.of(), clock.instant()),
+                clock.instant());
+        return indexSections(list, asset, true).orElse(false);
+    }
+
+    /** Sichert Änderungen am Volltextindex dauerhaft, etwa nach {@link #reindexStored}. */
+    public void flushTextIndex() {
+        if (texts != null) {
+            flushIndex();
+        }
+    }
+
     /** Ein Dokument mit Text: aus den Abschnitten der abgelegten Extraktion, sonst sein bisheriger Text. */
-    private boolean indexDocument(PageAttachmentList list, Asset asset, String text) {
+    private boolean indexDocument(PageAttachmentList list, Asset asset, AssetText text) {
         Optional<Boolean> sections = indexSections(list, asset);
-        return sections.isPresent() ? sections.get() : indexText(list, asset, text, textKey());
+        return sections.isPresent() ? sections.get() : indexText(list, asset, text.text(), textKey(text));
     }
 
     /**
      * Legt ein Dokument mit seinen enthaltenen Dateien je Abschnitt der abgelegten Extraktion im Volltextindex ab
      * (ADR 0026, AP4b): alle Einträge des Anhangs in einem Schritt ersetzt, abschnittsweise aus der Ablage gelesen.
-     * Ohne abgelegte Extraktion mit Text bleibt der Index unberührt; scheitert das Lesen, gilt der alte Stand.
+     * Ohne abgelegte Extraktion mit Text bleibt der Index unberührt; scheitert das Lesen, gilt der alte Stand. Ohne
+     * aktuelle Extraktion mit Text gilt die jüngste lesbare anderer Version, bis das Original neu gelesen ist
+     * (ADR 0026, Punkt 11).
      *
      * @return leer, wenn es keine abgelegte Extraktion mit Text gibt; sonst ob der Index geändert wurde
      */
     private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset) {
+        return indexSections(list, asset, false);
+    }
+
+    /** @param replace ersetzt auch, wenn der abgelegte Stand im Index gleich aussieht (nach einem Neulesen) */
+    private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset, boolean replace) {
         DocumentExtractions structured = extractions;
         if (texts == null || structured == null || asset.kind() != AssetKind.OTHER) {
             return Optional.empty();
         }
         PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
         String title = asset.title() == null ? "" : asset.title();
-        String input = inputSha256(list, asset, title, textKey() + ":sections");
         try {
-            Optional<java.util.stream.Stream<DocumentExtractions.IndexSection>> sections =
-                    structured.indexSections(asset);
-            if (sections.isEmpty()) {
+            Optional<StoredExtraction> extraction = structured.readable(asset.sha256());
+            if (extraction.isEmpty()) {
                 return Optional.empty();
             }
-            try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream = sections.get()) {
-                if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+            ExtractionKey key = extraction.get().key();
+            String input = inputSha256(list, asset, title, textKey(key.extractor(), key.version()) + ":sections");
+            try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream =
+                         structured.indexSections(extraction.get())) {
+                if (!replace && texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals)
+                        .isPresent()) {
                     return Optional.of(false);
                 }
                 java.util.Iterator<DocumentExtractions.IndexSection> found = stream.iterator();
@@ -1717,7 +1849,8 @@ public class Assets {
 
     /**
      * Der abgelegte Text genau dieser Dokumentbytes durch die eingestellte Extraktion (ADR 0023); liest nichts und
-     * fragt die Quelle nicht.
+     * fragt die Quelle nicht. Ohne ihn der jüngste Text einer anderen Extraktion oder Version, als veraltet
+     * gekennzeichnet, bis das Original neu gelesen ist (ADR 0026, Punkt 11, Abnahme 8).
      *
      * @return leer ohne Extraktion oder wenn es (noch) keinen Text gibt
      */
@@ -1725,32 +1858,48 @@ public class Assets {
         if (documents == null || sha256 == null) {
             return Optional.empty();
         }
-        return store.text(sha256, textExtractor(), textVersion());
+        return storedOrStale(sha256);
     }
 
-    /**
-     * Legt einen mitgebrachten Text eines Dokument-Anhangs ab (Import eines JSON-Pakets), unter der eingestellten
-     * Extraktion, als hätte sie ihn gelesen; so findet {@link #storedText} ihn ohne erneutes Lesen.
-     *
-     * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
-     */
+    /** Extraktion eines mitgebrachten Textes, wenn das Paket keine nennt ({@code attachments/v1}). */
+    public static final String IMPORTED_EXTRACTOR = "import";
+    /** Version eines mitgebrachten Textes, wenn das Paket keine nennt. */
+    public static final String UNKNOWN_VERSION = "unbekannt";
+
+    /** Wie {@link #adoptText(String, String, boolean, long, String, String)}, ungekürzt und ohne Angabe im Paket. */
     public boolean adoptText(String sha256, String text) {
         return adoptText(sha256, text, false, 0);
     }
 
-    /**
-     * Wie {@link #adoptText(String, String)}; ein beim Einlesen gekürzter Text trägt das selbst: {@code truncated} und
-     * Status {@code PARTIAL} mit Grund {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
-     */
+    /** Wie {@link #adoptText(String, String, boolean, long, String, String)} ohne Angabe der Extraktion im Paket. */
     public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead) {
+        return adoptText(sha256, text, truncated, bytesRead, null, null);
+    }
+
+    /**
+     * Legt einen mitgebrachten Text eines Dokument-Anhangs ab (Import eines JSON-Pakets): unter Extraktion und Version
+     * aus dem Paket ({@code attachments/v2}), sonst unter {@value #IMPORTED_EXTRACTOR}/{@value #UNKNOWN_VERSION}; nie
+     * unter der eingestellten Extraktion, denn eine strukturierte Extraktion entsteht beim Import nicht. So liefert
+     * {@link #storedText} ihn als veraltet, bis das Original neu gelesen ist (ADR 0026, Punkt 11, Abnahme 8). Ein beim
+     * Einlesen gekürzter Text trägt das selbst: {@code truncated} und Status {@code PARTIAL} mit Grund
+     * {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
+     *
+     * @param extractor Extraktion laut Paket oder {@code null}
+     * @param version   Version laut Paket oder {@code null}
+     * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
+     */
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead, String extractor,
+                             String version) {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
+        boolean named = extractor != null && !extractor.isBlank() && version != null && !version.isBlank()
+                && !(extractor.equals(textExtractor()) && version.equals(textVersion()));
         Optional<Outcome> outcome = truncated
                 ? Optional.of(Outcome.truncated(StatusReason.TOO_LARGE, new ReadExtent(bytesRead, text.length())))
                 : Optional.empty();
-        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, truncated, clock.instant(),
-                outcome));
+        store.putText(new AssetText(sha256, named ? extractor : IMPORTED_EXTRACTOR,
+                named ? version : UNKNOWN_VERSION, text, truncated, clock.instant(), outcome));
         return true;
     }
 

@@ -298,6 +298,9 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
             Map<String, String> files = new HashMap<>();
             Map<String, String> renditions = new HashMap<>();
             Map<String, List<String>> textFiles = new HashMap<>();
+            // Extraktion und Version des Behälters laut attachments/v2 (ADR 0026, Punkt 11: der Text gilt als
+            // veraltet, bis das Original neu gelesen ist); fehlt bei v1 und ohne strukturierte Extraktion.
+            Map<String, String[]> extractions = new HashMap<>();
             if (zip.getEntry("assets.json") != null) {
                 for (JsonNode asset : tree("assets.json", MAX_JSON_BYTES).path("assets")) {
                     if (asset.hasNonNull("path") && asset.hasNonNull("sha256")) {
@@ -331,6 +334,11 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                             textFiles.put(sha, container);
                             if (attachment.hasNonNull("textPath")) {
                                 container.add(attachment.path("textPath").asString());
+                            }
+                            JsonNode extraction = attachment.path("extraction");
+                            if (extraction.hasNonNull("extractor") && extraction.hasNonNull("version")) {
+                                extractions.put(sha, new String[] {extraction.path("extractor").asString(),
+                                        extraction.path("version").asString()});
                             }
                         }
                     }
@@ -410,8 +418,10 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                             texts.add(text);
                         }
                     }
+                    String[] extraction = extractions.get(entry.sha256());
                     return texts.isEmpty() ? Optional.empty()
-                            : Optional.of(new DocumentText(String.join("\n\n", texts), truncated, read));
+                            : Optional.of(new DocumentText(String.join("\n\n", texts), truncated, read,
+                            extraction == null ? null : extraction[0], extraction == null ? null : extraction[1]));
                 }
             };
         }

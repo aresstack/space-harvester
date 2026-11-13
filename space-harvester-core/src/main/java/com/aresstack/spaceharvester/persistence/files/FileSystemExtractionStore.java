@@ -101,6 +101,59 @@ public class FileSystemExtractionStore implements ExtractionStore {
         return Optional.of(manifest.get().stored());
     }
 
+    /**
+     * Alle gültigen Extraktionen dieser Bytes über alle Extraktionen, Versionen und Strukturmodelle unter
+     * {@code extractions/<sha256-hex>/}, die jüngste zuerst nach {@code createdAt}. Der Schlüssel kommt aus
+     * {@code document.json} und muss zum Verzeichnis passen; beschädigte Stände zählen nicht.
+     */
+    @Override
+    public List<StoredExtraction> all(String sha256) {
+        if (sha256 == null || !sha256.matches("sha256:[0-9a-f]{64}")) {
+            return List.of();
+        }
+        Path dir = root.resolve(sha256.substring("sha256:".length()));
+        List<Path> bases;
+        try (Stream<Path> paths = Files.walk(dir, 4)) {
+            bases = paths.filter(path -> dir.relativize(path).getNameCount() == 4)
+                    .filter(path -> path.getFileName().toString().equals(CURRENT)).map(Path::getParent).toList();
+        } catch (NoSuchFileException e) {
+            return List.of();
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Extraktion nicht lesbar", e);
+        }
+        List<StoredExtraction> found = new ArrayList<>();
+        for (Path base : bases) {
+            try {
+                keyAt(sha256, base).flatMap(this::find).ifPresent(found::add);
+            } catch (AssetStoreException e) {
+                // nichts weiter: ein nicht lesbarer Stand zählt nicht
+            }
+        }
+        found.sort(Comparator.comparing(StoredExtraction::createdAt).reversed());
+        return List.copyOf(found);
+    }
+
+    /** Der Schlüssel des gültigen Stands in {@code base}, wenn {@code document.json} genau dorthin gehört. */
+    private Optional<ExtractionKey> keyAt(String sha256, Path base) {
+        try {
+            String name = Files.readString(base.resolve(CURRENT), StandardCharsets.UTF_8).strip();
+            if (!GENERATION.matcher(name).matches()) {
+                return Optional.empty();
+            }
+            JsonNode node = ExtractionJson.JSON.readTree(Files.readString(base.resolve(name).resolve(DOCUMENT),
+                    StandardCharsets.UTF_8));
+            ExtractionKey key = new ExtractionKey(node.path("sha256").asString(""), node.path("extractor").asString(""),
+                    node.path("version").asString(""), node.path("model").asString(""));
+            return key.sha256().equals(sha256) && base(key).equals(base) ? Optional.of(key) : Optional.empty();
+        } catch (NoSuchFileException e) {
+            return Optional.empty();
+        } catch (IOException e) {
+            throw new AssetStoreException("Extraktion nicht lesbar", e);
+        } catch (JacksonException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
     @Override
     public ExtractionWriter writer(ExtractionKey key, int sectionChars) {
         Objects.requireNonNull(key, "key");
@@ -266,6 +319,46 @@ public class FileSystemExtractionStore implements ExtractionStore {
             }
         } catch (IOException | AssetStoreException e) {
             // nichts weiter: dann bleibt der Lesefehler sichtbar
+        }
+    }
+
+    /**
+     * Löscht unter {@code extractions/<sha256-hex>/} alle Stände außer denen von {@code keep}, samt leer gewordenen
+     * Verzeichnissen. Ein Stand, den gerade ein Leser offen hat, kann unter Windows liegen bleiben; dann räumt ihn das
+     * nächste Neulesen weg.
+     */
+    @Override
+    public void removeOthers(ExtractionKey keep) {
+        Path dir = root.resolve(keep.sha256().substring("sha256:".length()));
+        Path kept = base(keep);
+        List<Path> others;
+        try (Stream<Path> paths = Files.walk(dir, 3)) {
+            others = paths.filter(path -> dir.relativize(path).getNameCount() == 3).filter(Files::isDirectory)
+                    .filter(path -> !path.equals(kept)).toList();
+        } catch (NoSuchFileException e) {
+            return;
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Alte Extraktionen nicht entfernbar", e);
+        }
+        IOException failed = null;
+        for (Path other : others) {
+            try {
+                deleteTree(other);
+                for (Path parent = other.getParent(); parent != null && !parent.equals(dir); parent =
+                        parent.getParent()) {
+                    try (Stream<Path> children = Files.list(parent)) {
+                        if (children.findAny().isPresent()) {
+                            break;
+                        }
+                    }
+                    Files.deleteIfExists(parent);
+                }
+            } catch (IOException e) {
+                failed = e;
+            }
+        }
+        if (failed != null) {
+            throw new AssetStoreException("Alte Extraktionen nicht entfernbar", failed);
         }
     }
 

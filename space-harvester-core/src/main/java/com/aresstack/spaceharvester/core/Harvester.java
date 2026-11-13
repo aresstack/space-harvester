@@ -12,7 +12,9 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
 import com.aresstack.spaceharvester.application.assets.DownloadDurations;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
@@ -304,6 +306,7 @@ public final class Harvester implements AutoCloseable {
     private final Reconciliation inventories;
     private final Exports exports;
     private final ExportConversions conversions;
+    private final DocumentRereads rereads;
     private final JobActions jobActions;
     private final Assets assets;
     private final ConnectionBudget connections;
@@ -797,7 +800,12 @@ public final class Harvester implements AutoCloseable {
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.jobActions = new JobActions(jobs, exports, syncs, conversions);
+            // ADR 0026, Punkt 11: abgelegte Dokumente ohne Download neu lesen; der Space für den Volltextindex
+            // kommt aus dem Cache.
+            this.rereads = new DocumentRereads(jobs, assets, assetStore,
+                    sourceId -> catalog.config(sourceId).isPresent(),
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()), clock);
+            this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
@@ -1473,6 +1481,20 @@ public final class Harvester implements AutoCloseable {
      */
     public ExportConversions conversions() {
         return conversions;
+    }
+
+    /**
+     * „Neu lesen“ (ADR 0026, Punkt 11): liest die abgelegten Dokumente einer Quelle ohne Download neu, als eigener,
+     * anhaltbarer Auftrag. Der bisherige Text bleibt lieferbar und durchsuchbar, bis das neue Lesen Text liefert.
+     *
+     * @param statuses leer für alle Dokumente ohne Extraktion der eingestellten Version (etwa nach einem Versionswechsel
+     *                 oder Import), sonst nur Dokumente, deren Extraktion einen dieser Status hat (etwa nach geänderten
+     *                 Grenzen)
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Leserecht auf die Quelle
+     */
+    public JobStatus reread(String sourceId, Set<ExtractionStatus> statuses) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        return rereads.start(sourceId, OWNER, statuses);
     }
 
     /**

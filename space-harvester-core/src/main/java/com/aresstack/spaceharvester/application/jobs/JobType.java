@@ -49,7 +49,14 @@ public enum JobType {
      * Import eines JSON-Pakets ({@code export.zip} ab {@code json-package/3}) in den Cache einer Quelle; bestätigt eine
      * Generation wie ein Abgleich, ohne die Quelle zu fragen.
      */
-    IMPORT;
+    IMPORT,
+    /**
+     * „Neu lesen“ (ADR 0026, Punkt 11): liest abgelegte Dokumente einer Quelle ohne Download neu, etwa nach einem
+     * Wechsel der Extraktor-Version, nach einem Import oder, beschränkt auf Dokumente mit Status, nach geänderten
+     * Grenzen. Der bisherige Stand gilt, bis das neue Lesen Text liefert. Anhaltbar; ein neuer Lauf liest nur, was noch
+     * fehlt. Eingeplant wie ein Folgeauftrag ({@link #followUp()}), damit er nie einen Abgleich oder Export aufhält.
+     */
+    REREAD;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
@@ -64,16 +71,17 @@ public enum JobType {
     }
 
     public boolean followUp() {
-        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY;
+        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD;
     }
 
     /**
      * Lässt sich anhalten und im selben Eintrag fortsetzen (ADR 0025): Einlesen und Download legen jede geladene neue
      * Seite sofort ab, ein neuer Lauf holt nur, was fehlt. Bilder ({@link #ASSETS}) legen jede Datei sofort im
      * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
-     * Anhänge ({@link #ATTACHMENTS}) ebenso.
+     * Anhänge ({@link #ATTACHMENTS}) ebenso. „Neu lesen“ ({@link #REREAD}) überspringt beim neuen Lauf, was schon neu
+     * gelesen ist.
      */
     public boolean resumable() {
-        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS;
+        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD;
     }
 }

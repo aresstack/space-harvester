@@ -17,6 +17,22 @@ public interface ExtractionStore {
     Optional<StoredExtraction> find(ExtractionKey key);
 
     /**
+     * Alle abgelegten Extraktionen dieser Bytes gleich welcher Extraktion, Version und welches Strukturmodells, die
+     * jüngste zuerst (ADR 0026, Punkt 11, Abnahme 8): Bis ein Neulesen erfolgreich ist, gilt die jüngste lesbare als
+     * veralteter Stand weiter. Leer, wenn keine abgelegt ist; der Standard kennt keine anderen Stände.
+     */
+    default java.util.List<StoredExtraction> all(String sha256) {
+        return java.util.List.of();
+    }
+
+    /**
+     * Entfernt alle Extraktionen dieser Bytes außer {@code keep}, nachdem das Original erfolgreich neu gelesen ist
+     * (ADR 0026, Punkt 11: alte Stände erst danach). Der Standard entfernt nichts.
+     */
+    default void removeOthers(ExtractionKey keep) {
+    }
+
+    /**
      * Beginnt eine neue Extraktion; die vorhandene gilt, bis sie bestätigt ist.
      *
      * @param sectionChars Höchstgröße eines Abschnitts in Zeichen, mindestens 1
