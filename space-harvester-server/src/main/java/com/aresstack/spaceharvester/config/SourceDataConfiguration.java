@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sync.InventoryLog;
@@ -19,7 +20,6 @@ import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
-import com.aresstack.spaceharvester.persistence.lucene.LucenePageReleases;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -38,7 +38,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * „Daten bereinigen“ ({@link SourceDataPurge}) mit den Ablagen dieses Dienstes, in derselben Reihenfolge wie im
  * Harvester ({@link SourceDataStores}). Ohne Cache-Verzeichnis fehlen Seiten-Cache, Volltext, Anreicherungen und
- * Füllschlange; dann bleibt, was es gibt. Dazu „Neu lesen“ ({@link DocumentRereads}) der abgelegten Dokumente.
+ * Füllschlange; dann bleibt, was es gibt. Die Liste der KI-freigegebenen Seiten ist die der Freigabeprüfung
+ * ({@link AiRelease#pages()}), mit oder ohne Cache. Dazu „Neu lesen“ ({@link DocumentRereads}) der abgelegten Dokumente.
  */
 @Configuration(proxyBeanMethods = false)
 class SourceDataConfiguration {
@@ -46,7 +47,7 @@ class SourceDataConfiguration {
     @Bean
     SourceDataPurge sourceDataPurge(Jobs jobs, ConfiguredSourceCatalog catalog,
                                     ObjectProvider<LuceneFillQueue> fillQueue,
-                                    ObjectProvider<LucenePageReleases> pageReleases,
+                                    AiRelease aiRelease,
                                     ObjectProvider<LucenePageCache> cache,
                                     ObjectProvider<LucenePageTextIndex> texts,
                                     ObjectProvider<LuceneEnrichmentStore> enrichments,
@@ -61,7 +62,7 @@ class SourceDataConfiguration {
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
         SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable())
-                .pageReleases(pageReleases.getIfAvailable());
+                .pageReleases(aiRelease.pages());
         cache.ifAvailable(stores::pageCache);
         texts.ifAvailable(stores::fullText);
         enrichments.ifAvailable(stores::enrichments);
