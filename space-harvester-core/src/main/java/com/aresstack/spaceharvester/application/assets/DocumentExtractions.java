@@ -128,8 +128,8 @@ public final class DocumentExtractions {
                 return known.get();
             }
         }
-        try (ExtractionWriter writer = extractions.writer(key)) {
-            Target target = new Target(writer);
+        Target target = new Target(() -> extractions.writer(key));
+        try (target) {
             StructuredDocument document = read(asset, store, target);
             // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Behälter und Teile werden nur
             // zusammen neu gelesen (Punkt 5, Verzeichnis als Ganzes), der Teil würde sonst nie erneut gelesen.
@@ -137,8 +137,8 @@ public final class DocumentExtractions {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
             // Behälter und Teile werden zusammen gültig (AP7b).
-            return writer.commit(new StructuredDocument(document.head(), document.outcome(), document.directory(),
-                    target.blocks, target.chars));
+            return target.writer.commit(new StructuredDocument(document.head(), document.outcome(),
+                    document.directory(), target.blocks, target.chars));
         } catch (UncheckedIOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
         }
@@ -877,14 +877,31 @@ public final class DocumentExtractions {
      * Ablage: Der zweite wird gelesen (seine Kinder brauchen eigene Einträge), seine Blöcke werden nicht ein zweites
      * Mal geschrieben.
      */
-    private static final class Target implements StructureSink {
+    private static final class Target implements StructureSink, AutoCloseable {
 
-        private final ExtractionWriter writer;
+        private final java.util.function.Supplier<ExtractionWriter> writers;
+        private ExtractionWriter writer;
         private long blocks;
         private long chars;
 
-        Target(ExtractionWriter writer) {
-            this.writer = writer;
+        Target(java.util.function.Supplier<ExtractionWriter> writers) {
+            this.writers = writers;
+            this.writer = writers.get();
+        }
+
+        /** Verwirft den unbestätigten Stand und beginnt einen neuen unter demselben Schlüssel. */
+        @Override
+        public boolean restart() {
+            writer.close();
+            writer = writers.get();
+            blocks = 0;
+            chars = 0;
+            return true;
+        }
+
+        @Override
+        public void close() {
+            writer.close();
         }
 
         @Override

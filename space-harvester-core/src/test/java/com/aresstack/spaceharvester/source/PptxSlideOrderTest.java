@@ -103,6 +103,99 @@ class PptxSlideOrderTest {
         assertThat(sink.blocks).allSatisfy(block -> assertThat(block.location().flatMap(Location::slide)).isEmpty());
     }
 
+    /**
+     * Gibt Tika eine Folie weniger aus als zugeordnet, sind die schon geschriebenen Nummern nicht belegt: Der Lauf wird
+     * verworfen und einmal ohne Zuordnung gelesen. Abgelegt wird nur der zweite Lauf, ohne Foliennummern, mit dem
+     * vollständigen Text des Ersatz-Parsers und unverändertem Status.
+     */
+    @Test
+    void whenTikaSkipsASlideTheRunIsDiscardedAndStoredWithoutSlideNumbers() throws Exception {
+        Path pptx = renamed(presentation(directory.resolve("roh.pptx")), directory.resolve("folien.pptx"));
+        byte[] bytes = Files.readAllBytes(pptx);
+        com.aresstack.spaceharvester.application.assets.Asset asset =
+                new com.aresstack.spaceharvester.application.assets.Asset("wiki", "1", "att1", "1", "folien.pptx",
+                        PPTX, com.aresstack.spaceharvester.application.assets.AssetKind.OTHER, bytes.length,
+                        com.aresstack.spaceharvester.application.assets.Assets.sha256(bytes),
+                        java.time.Instant.parse("2026-11-13T15:00:00Z"));
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore(directory.resolve("a"));
+        store.put(asset, bytes);
+        SkippingParser skipping = new SkippingParser();
+        var extractions = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(1, 4096, skipping),
+                new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(directory.resolve("x")),
+                ExtractionLimits.DEFAULTS);
+
+        var stored = extractions.extract(asset, store);
+
+        assertThat(skipping.runs).as("verworfen und einmal neu gelesen").isEqualTo(2);
+        assertThat(stored.document().outcome().status())
+                .isEqualTo(com.aresstack.spaceharvester.application.assets.ExtractionStatus.OK);
+        List<Block> blocks;
+        try (var sections = extractions.documentSections(stored)) {
+            blocks = sections.flatMap(section -> section.section().blocks().stream()).toList();
+        }
+        List<String> marks = blocks.stream().map(DocumentExtractions::plain).map(String::strip)
+                .filter(text -> text.startsWith("MARKE-")).toList();
+        assertThat(marks).hasSize(SLIDES - 1).doesNotHaveDuplicates();
+        assertThat(blocks).allSatisfy(block -> assertThat(block.location().flatMap(Location::slide)).isEmpty());
+        assertThat(stored.blocks()).isEqualTo(blocks.size());
+    }
+
+    /** Tika, aber die zweite Folie fehlt in der Ausgabe (ein Parser, der eine Folie überspringt). */
+    private static final class SkippingParser extends org.apache.tika.parser.AbstractParser {
+
+        private final org.apache.tika.parser.AutoDetectParser tika = new org.apache.tika.parser.AutoDetectParser();
+        int runs;
+
+        @Override
+        public java.util.Set<org.apache.tika.mime.MediaType> getSupportedTypes(
+                org.apache.tika.parser.ParseContext context) {
+            return tika.getSupportedTypes(context);
+        }
+
+        @Override
+        public void parse(InputStream stream, org.xml.sax.ContentHandler handler,
+                          org.apache.tika.metadata.Metadata metadata, org.apache.tika.parser.ParseContext context)
+                throws IOException, org.xml.sax.SAXException, org.apache.tika.exception.TikaException {
+            runs++;
+            tika.parse(stream, new org.apache.tika.sax.ContentHandlerDecorator(handler) {
+                private int slides;
+                private int skipping;
+
+                @Override
+                public void startElement(String uri, String local, String name, org.xml.sax.Attributes attributes)
+                        throws org.xml.sax.SAXException {
+                    if (skipping > 0) {
+                        skipping++;
+                        return;
+                    }
+                    if ("div".equals(local) && "slide-content".equals(attributes.getValue("class"))
+                            && ++slides == 2) {
+                        skipping = 1;
+                        return;
+                    }
+                    super.startElement(uri, local, name, attributes);
+                }
+
+                @Override
+                public void endElement(String uri, String local, String name) throws org.xml.sax.SAXException {
+                    if (skipping > 0) {
+                        skipping--;
+                        return;
+                    }
+                    super.endElement(uri, local, name);
+                }
+
+                @Override
+                public void characters(char[] ch, int start, int length) throws org.xml.sax.SAXException {
+                    if (skipping == 0) {
+                        super.characters(ch, start, length);
+                    }
+                }
+            }, metadata, context);
+        }
+    }
+
     /** {@value #SLIDES} Folien, umsortiert, Folie 3 ausgeblendet, Notizen an jeder dritten. */
     private static Path presentation(Path target) throws IOException {
         try (XMLSlideShow show = new XMLSlideShow()) {

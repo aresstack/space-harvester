@@ -24,4 +24,15 @@ public interface StructureSink {
      * @return Strom des Teils, der auch seine eigenen Kopfdaten annimmt
      */
     PartSink part(EmbeddedEntry entry);
+
+    /**
+     * Verwirft alles bisher Angenommene (Behälter und Teile), damit das Dokument noch einmal gelesen werden kann, etwa
+     * wenn Fundstellen sich am Ende als unbelegt erweisen ({@code .pptx}-Foliennummern, ADR 0026, AP10). Danach gibt
+     * {@link #document()} einen neuen Strom.
+     *
+     * @return {@code false}, wenn dieser Empfänger nichts verwerfen kann (der erste Lauf gilt dann)
+     */
+    default boolean restart() {
+        return false;
+    }
 }

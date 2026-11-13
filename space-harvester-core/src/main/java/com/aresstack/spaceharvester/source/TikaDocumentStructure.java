@@ -261,6 +261,22 @@ public final class TikaDocumentStructure implements DocumentStructure {
     private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                        StructureSink sink, PartRules rules, PartId.Content wanted,
                                        java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery) {
+        boolean[] broken = new boolean[1];
+        StructuredDocument first = extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery,
+                true, broken);
+        // Foliennummern ohne Beleg (Tika gab andere Folien aus als zugeordnet): Dieser Stand darf nicht gültig werden;
+        // verworfen und einmal ohne Zuordnung neu gelesen (Architekt 13.11.2026).
+        if (broken[0] && sink.restart()) {
+            return extract(original, title, mediaType, limits, sink, rules, wanted, found, delivery, false,
+                    new boolean[1]);
+        }
+        return first;
+    }
+
+    private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                       StructureSink sink, PartRules rules, PartId.Content wanted,
+                                       java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery,
+                                       boolean slideOrder, boolean[] slideOrderBroken) {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
@@ -311,7 +327,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
             reader.wanted = wanted;
             reader.found = found;
             reader.delivery = delivery;
-            return run(reader, limits);
+            reader.slideOrder = slideOrder;
+            StructuredDocument result = run(reader, limits);
+            slideOrderBroken[0] = reader.slideOrderBroken;
+            return result;
         } finally {
             target.close();
         }
@@ -462,6 +481,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
+        /** Foliennummern bei .pptx zuordnen ({@link PptxSlideOrder}); aus beim zweiten Lauf. */
+        private boolean slideOrder = true;
+        /** Tika gab andere Folien aus als zugeordnet: Die Nummern dieses Laufs sind nicht belegt. */
+        private volatile boolean slideOrderBroken;
 
         Reader(AutoDetectParser tika, Path original, String title, String mediaType, long size,
                ExtractionLimits limits, StructureSink sink, BlockSink target, PartRules rules) {
@@ -512,6 +535,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 (parseWith == null ? tika : parseWith).parse(in, root.handler, metadata, context);
                 flushMailBody(root);
                 root.handler.flush();
+                root.handler.checkSlides();
                 outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
                         : missing != null ? root.partial(missing)
                         : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -1119,6 +1143,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     (parseWith == null ? tika : parseWith).parse(in, child.handler, metadata, context);
                     flushMailBody(child);
                     child.handler.flush();
+                    child.handler.checkSlides();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
                 } catch (Exception | LinkageError | OutOfMemoryError e) {
@@ -1751,6 +1776,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
                 /** Die Foliennummer der nächsten Folie von Tika; 0, wenn die Zuordnung fehlt oder nicht mehr passt. */
                 private int nextSlide() {
+                    if (!slideOrder) {
+                        return 0;
+                    }
                     if (slideNumbers == null) {
                         TikaInputStream in = stream;
                         Path file = null;
@@ -1762,8 +1790,19 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         slideNumbers = PptxSlideOrder.of(file).orElse(new int[0]);
                     }
                     slides++;
-                    // Mehr Folien als zugeordnet: ab hier keine Nummer (lieber keine als eine falsche).
-                    return slides <= slideNumbers.length ? slideNumbers[slides - 1] : 0;
+                    if (slides > slideNumbers.length) {
+                        // Mehr Folien als zugeordnet: auch die Nummern davor sind nicht belegt.
+                        slideOrderBroken |= slideNumbers.length > 0;
+                        return 0;
+                    }
+                    return slideNumbers[slides - 1];
+                }
+
+                /** Am Ende eines Dokuments: Weniger Folien als zugeordnet heißt, die Nummern sind nicht belegt. */
+                void checkSlides() {
+                    if (slideNumbers != null && slideNumbers.length > 0 && slides != slideNumbers.length) {
+                        slideOrderBroken = true;
+                    }
                 }
 
                 private boolean legacyPowerPoint() {
