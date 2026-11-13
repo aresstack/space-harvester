@@ -357,10 +357,22 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Anhang ohne Download neu in den Index (für „Neu lesen“). Je Seite bleibt ein Treffer; ein Treffer in einer
   enthaltenen Datei nennt zusätzlich `attachment.partId` und `attachment.partTitle` (sonst `null`). Der Text unter
   `…/text` und im Export `attachments/v1` bleibt bis AP4c der Gesamttext aus Behälter und Teilen.
+- **Veralteter Stand bis zum Neulesen (ADR 0026, Punkt 11, Abnahme 8, AP5a):** Fehlt der Text der eingestellten
+  Extraktion und Version, liefern Ablage, REST, Export und Volltextindex den jüngsten abgelegten Text derselben Bytes
+  aus einer anderen Extraktion oder Version (`AssetStore#latestText`), ebenso die jüngste lesbare strukturierte
+  Extraktion (`ExtractionStore#all`, `DocumentExtractions#readable`), und kennzeichnen ihn als veraltet
+  (`AssetText#stale`, REST `stale: true`). Ein Abruf liest dafür nichts neu; der Indexeintrag bleibt, bis das Original
+  neu gelesen ist, und ein gescheitertes Lesen der neuen Version (gespeicherter Status `FAILED`) lässt den alten Stand
+  stehen. Ein mitgebrachter Text aus einem JSON-Paket (`Assets#adoptText`) liegt unter Extraktion und Version aus dem
+  Paket, ohne Angabe oder bei der eingestellten unter `import`/`unbekannt`, nie unter der eingestellten Extraktion:
+  Er hat keine strukturierte Extraktion und gilt deshalb als veraltet, bis „Neu lesen“ oder die nächste Ernte das
+  abgelegte Original liest. Ein Text der eingestellten Extraktion ohne abgelegte strukturierte Extraktion (Ablage
+  verworfen) gilt ebenso als veraltet.
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle
-  auslassen musste; ein nur gelesener, nicht abgelegter Text (ohne `sync`) hat diese Felder leer. Rechte wie
+  auslassen musste; ein nur gelesener, nicht abgelegter Text (ohne `sync`) hat diese Felder leer. Seit AP5a
+  kennzeichnet `stale: true` einen veralteten Text (unten). Rechte wie
   `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
   `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
 

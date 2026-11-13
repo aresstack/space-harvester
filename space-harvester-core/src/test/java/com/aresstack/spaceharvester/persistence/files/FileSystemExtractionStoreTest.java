@@ -129,6 +129,40 @@ class FileSystemExtractionStoreTest {
         }
     }
 
+    /** ADR 0026, Punkt 11: alle Stände eines Inhalts, der jüngste zuerst, als Rückfall bis zum Neulesen. */
+    @Test
+    void allListsEveryVersionOfOneContentNewestFirst() throws Exception {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        ExtractionKey older = new ExtractionKey(KEY.sha256(), "tika", "3.3-1", KEY.model());
+        ExtractionKey otherContent = new ExtractionKey("sha256:" + "cd".repeat(32), "tika", "3.3-2", KEY.model());
+        write(store, older, "alt");
+        Thread.sleep(20);
+        write(store, KEY, "neu");
+        write(store, otherContent, "fremd");
+
+        assertThat(store.all(KEY.sha256())).extracting(StoredExtraction::key).containsExactly(KEY, older);
+        assertThat(store.all("sha256:" + "ef".repeat(32))).isEmpty();
+        assertThat(store.all("kein Hash")).isEmpty();
+
+        // Ein beschädigter Stand zählt nicht.
+        Path base = root.resolve("extractions").resolve(HEX).resolve("ptika").resolve("x332e332d32")
+                .resolve(FileSystemAssetStore.name(KEY.model()));
+        Files.delete(base.resolve(Files.readString(base.resolve("current")).strip()).resolve("s000000.ndjson"));
+        assertThat(store.all(KEY.sha256())).extracting(StoredExtraction::key).containsExactly(older);
+    }
+
+    /** Ein Stand, dessen {@code document.json} nicht zu seinem Verzeichnis passt, zählt nicht. */
+    @Test
+    void aStateInTheWrongDirectoryIsNotListed() throws Exception {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        write(store, KEY, "neu");
+        Path versions = root.resolve("extractions").resolve(HEX).resolve("ptika");
+        Path moved = versions.resolve("p9");
+        Files.move(versions.resolve("x332e332d32"), moved);
+
+        assertThat(store.all(KEY.sha256())).isEmpty();
+    }
+
     @Test
     void rejectsGapsAndCountersThatDoNotMatch() {
         FileSystemExtractionStore store = new FileSystemExtractionStore(root);
@@ -319,7 +353,11 @@ class FileSystemExtractionStoreTest {
     }
 
     private static void write(FileSystemExtractionStore store, String text) {
-        try (ExtractionWriter writer = store.writer(KEY)) {
+        write(store, KEY, text);
+    }
+
+    private static void write(FileSystemExtractionStore store, ExtractionKey key, String text) {
+        try (ExtractionWriter writer = store.writer(key)) {
             writer.accept(new Block.Paragraph(0, Optional.empty(), List.of(), text));
             writer.commit(document(1, text.length()));
         }

@@ -175,6 +175,7 @@ class AttachmentTextApiTest {
             assertThat(extracted.get("truncated").asBoolean()).isFalse();
             assertThat(extracted.get("bytesRead").asLong()).isPositive();
             assertThat(extracted.get("charsRead").asLong()).isPositive();
+            assertThat(extracted.get("stale").asBoolean()).as("aktuelle Extraktion").isFalse();
         }
     }
 

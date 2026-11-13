@@ -84,6 +84,15 @@ public interface AssetStore {
     /** Legt einen Text ab; ein vorhandener für dieselben Bytes und dieselbe Extraktion wird ersetzt. */
     void putText(AssetText text);
 
+    /**
+     * Der jüngste abgelegte Text dieser Bytes gleich welcher Extraktion und Version (ADR 0026, Punkt 11, Abnahme 8):
+     * Bis ein Neulesen erfolgreich ist, bleibt er als veralteter Stand lieferbar. Leer, wenn keiner abgelegt ist; der
+     * Standard kennt keine anderen Stände.
+     */
+    default Optional<AssetText> latestText(String sha256) {
+        return Optional.empty();
+    }
+
     /** Ablage für einen Dienst ohne Asset-Verzeichnis: findet nichts, jedes Schreiben scheitert. */
     static AssetStore unavailable() {
         return new AssetStore() {

@@ -78,6 +78,30 @@ public final class DocumentExtractions {
     }
 
     /**
+     * Die Extraktion dieser Bytes für Leser (ADR 0026, Punkt 11, Abnahme 8): die aktuelle, wenn sie Text hat, sonst die
+     * jüngste lesbare einer anderen Extraktion, Version oder eines anderen Strukturmodells. Diese gilt als veraltet
+     * ({@link #current}), bis ein Neulesen erfolgreich ist; ein gescheitertes Neulesen lässt sie stehen. Liest nichts.
+     */
+    public Optional<StoredExtraction> readable(String sha256) {
+        Optional<StoredExtraction> current = stored(sha256);
+        if (current.isPresent() && readable(current.get())) {
+            return current;
+        }
+        ExtractionKey currentKey = key(sha256);
+        return extractions.all(sha256).stream().filter(extraction -> !extraction.key().equals(currentKey))
+                .filter(DocumentExtractions::readable).findFirst();
+    }
+
+    /** Ob die Extraktion zur eingestellten Extraktion und Version und zum aktuellen Strukturmodell gehört. */
+    public boolean current(StoredExtraction extraction) {
+        return extraction.key().equals(key(extraction.key().sha256()));
+    }
+
+    private static boolean readable(StoredExtraction extraction) {
+        return usable(extraction.document().outcome()) && transientFailure(extraction.document()).isEmpty();
+    }
+
+    /**
      * Die Extraktion eines abgelegten Dokuments: aus der Ablage oder jetzt aus der Datei gelesen.
      *
      * @return die Extraktion samt Status; bei einer vorübergehenden Grenze nicht abgelegt
@@ -230,21 +254,22 @@ public final class DocumentExtractions {
      * hat keinen Text, nur einen Namenseintrag (Abschnitt 0, leerer Text), wenn er einen Anzeigenamen hat;
      * {@code PARTIAL} hat den gelesenen Text.
      *
+     * <p>Ohne aktuelle Extraktion mit Text gilt die jüngste lesbare anderer Version ({@link #readable}).
+     *
      * @return leer, wenn keine Extraktion abgelegt ist oder das Dokument keinen Text hat
      */
     public Optional<Stream<IndexSection>> indexSections(Asset asset) {
-        Optional<StoredExtraction> known = stored(asset.sha256());
-        if (known.isEmpty() || !usable(known.get().document().outcome())
-                || transientFailure(known.get().document()).isPresent()) {
-            return Optional.empty();
-        }
-        StoredExtraction extraction = known.get();
+        return readable(asset.sha256()).map(this::indexSections);
+    }
+
+    /** Wie {@link #indexSections(Asset)} für eine Extraktion aus {@link #readable}. */
+    public Stream<IndexSection> indexSections(StoredExtraction extraction) {
         Stream<IndexSection> own = extraction.sections() > 0
                 ? extractions.sections(extraction.key()).map(section -> section("", "", section))
                         .filter(section -> !section.text().isBlank())
                 : Stream.empty();
         Stream<IndexSection> parts = partSections(extraction);
-        return Optional.of(Stream.concat(own, parts));
+        return Stream.concat(own, parts);
     }
 
     /**
@@ -349,7 +374,7 @@ public final class DocumentExtractions {
             return text;
         }
         return new AssetText(text.sha256(), text.extractor(), text.version(), text.text(), true, text.createdAt(),
-                text.outcome().map(outcome -> withSource(outcome, asset)));
+                text.outcome().map(outcome -> withSource(outcome, asset)), text.stale());
     }
 
     /**
