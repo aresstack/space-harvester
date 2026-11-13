@@ -152,20 +152,168 @@ class TikaDocumentStructureTest {
     @Test
     void thePackedArchiveStopsAtTheUnpackRatioInsteadOfFillingTheStore() {
         Path zip = Archives.packed(directory.resolve("gepackt.zip"), 4L * 1024 * 1024);
-        ExtractionLimits ratio = new ExtractionLimits(0, 0, 10, 1000, 10, 1000, 10, 10_000, Duration.ofSeconds(30),
-                Duration.ofMinutes(5), 0, 2, Map.of());
-        Counting sink = new Counting();
+        Counting sink = new Counting(Archives.AFTER_PACKED);
 
-        StructuredDocument result = structure.extract(zip, "gepackt.zip", Archives.ZIP, ratio, sink);
+        StructuredDocument result = structure.extract(zip, "gepackt.zip", Archives.ZIP, ratio(10, 1000), sink);
 
+        // Nur der Teil über dem Verhältnis endet; der Folgeeintrag wird gelesen (ADR 0026, Abnahme 4).
+        assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
         assertThat(result.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
-        assertThat(result.directory()).singleElement().satisfies(entry -> {
+        assertThat(result.directory()).hasSize(2);
+        assertThat(result.directory().get(0)).satisfies(entry -> {
             assertThat(entry.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
             assertThat(entry.id()).as("Bytes nicht vollständig gelesen").isInstanceOf(
                     com.aresstack.spaceharvester.application.assets.PartId.Position.class);
             assertThat(entry.size().orElseThrow()).isLessThan(4L * 1024 * 1024);
         });
-        assertThat(sink.chars + sink.partChars).isZero();
+        assertThat(result.directory().get(1).outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.found).contains(Archives.AFTER_PACKED);
+    }
+
+    @Test
+    void theUnpackRatioEndsOnlyThePartThatCrossesIt() {
+        Path zip = Archives.packed(directory.resolve("grenze.zip"), 64L * 1024);
+        StructuredDocument free = structure.extract(zip, "grenze.zip", Archives.ZIP, ratio(0, 0), new Counting());
+        long big = free.directory().get(0).size().orElseThrow();
+        long total = big + free.directory().get(1).size().orElseThrow();
+
+        // Verhältnis 1 : 1 liegt weit unter dem Gepackten; es entscheidet die Schwelle ab der gezählt wird.
+        StructuredDocument below = structure.extract(zip, "grenze.zip", Archives.ZIP, ratio(1, total + 1),
+                new Counting());
+        StructuredDocument exact = structure.extract(zip, "grenze.zip", Archives.ZIP, ratio(1, total),
+                new Counting());
+        StructuredDocument last = structure.extract(zip, "grenze.zip", Archives.ZIP, ratio(1, total - 1),
+                new Counting());
+        Counting afterBig = new Counting(Archives.AFTER_PACKED);
+        StructuredDocument first = structure.extract(zip, "grenze.zip", Archives.ZIP, ratio(1, big - 1), afterBig);
+
+        assertThat(below.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(exact.outcome().status()).as("genau darauf").isEqualTo(ExtractionStatus.OK);
+        assertThat(last.outcome().reason()).as("knapp darüber").contains(StatusReason.UNPACKED_TOO_LARGE);
+        assertThat(last.directory().get(0).outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(last.directory().get(1).outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+        // Der große Eintrag endet, seine Bytes zählen nicht weiter: der Folgeeintrag liegt unter der Schwelle.
+        assertThat(first.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+        assertThat(first.directory().get(0).outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+        assertThat(first.directory().get(1).outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(afterBig.found).contains(Archives.AFTER_PACKED);
+        // Abnahme 3: An der Grenze beendet trägt der Teil eine Kennung nach Position; mit höherer Grenze gelesen steht
+        // er an derselben Position als gelesener Eintrag mit Inhaltskennung.
+        EmbeddedEntry ended = first.directory().get(0);
+        EmbeddedEntry read = free.directory().get(0);
+        assertThat(ended.id()).isInstanceOf(com.aresstack.spaceharvester.application.assets.PartId.Position.class);
+        assertThat(read.id()).isInstanceOf(com.aresstack.spaceharvester.application.assets.PartId.Content.class);
+        assertThat(read.position()).isEqualTo(ended.position());
+        assertThat(read.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(read.sha256()).isPresent();
+        assertThat(ended.sha256()).isEmpty();
+    }
+
+    @Test
+    void aPackedArchiveInAMailLeavesTheFollowingAttachmentReadable() throws Exception {
+        // Aus dem Korpus: gepacktes Archiv mit Folgeeintrag, danach ein weiterer Anhang der Mail.
+        Path file = com.aresstack.spaceharvester.testcorpus.Corpus.packedArchiveMail(
+                directory.resolve("gepackt.eml"), 4L * 1024 * 1024);
+        Counting sink = new Counting(Archives.AFTER_PACKED, "MARKE-NACH-ARCHIV");
+
+        StructuredDocument result = structure.extract(file, "gepackt.eml", "message/rfc822", ratio(10, 1000), sink);
+
+        assertThat(result.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+        assertThat(result.directory()).anySatisfy(entry ->
+                assertThat(entry.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE));
+        assertThat(sink.found).contains(Archives.AFTER_PACKED, "MARKE-NACH-ARCHIV");
+    }
+
+    @Test
+    void aWorkbookEmbeddedInAWordDocumentIsAnEntry() throws Exception {
+        byte[] docx;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument document = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            document.createParagraph().createRun().setText("MARKE-HAUPTDOKUMENT");
+            // Eingebettet wie von Office: OLE-Objekt (oleObject1.bin) mit Ole10Native, darin die Mappe.
+            org.apache.poi.openxml4j.opc.PackagePartName name = org.apache.poi.openxml4j.opc.PackagingURIHelper
+                    .createPartName("/word/embeddings/oleObject1.bin");
+            org.apache.poi.openxml4j.opc.PackagePart part = document.getPackage().createPart(name,
+                    "application/vnd.openxmlformats-officedocument.oleObject");
+            try (java.io.OutputStream content = part.getOutputStream();
+                 org.apache.poi.poifs.filesystem.POIFSFileSystem ole =
+                         new org.apache.poi.poifs.filesystem.POIFSFileSystem()) {
+                org.apache.poi.poifs.filesystem.Ole10Native wrapped = new org.apache.poi.poifs.filesystem.Ole10Native(
+                        "Mappe1.xlsx", "Mappe1.xlsx", "Mappe1.xlsx", DocumentFixtures.xlsx("MARKE-EINGEBETTET"));
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                wrapped.writeOut(bytes);
+                ole.createDocument(new java.io.ByteArrayInputStream(bytes.toByteArray()),
+                        org.apache.poi.poifs.filesystem.Ole10Native.OLE10_NATIVE);
+                ole.writeFilesystem(content);
+            }
+            document.getPackagePart().addRelationship(name, org.apache.poi.openxml4j.opc.TargetMode.INTERNAL,
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject");
+            document.write(out);
+            docx = out.toByteArray();
+        }
+        Path file = Files.write(directory.resolve("bericht.docx"), docx);
+        Counting sink = new Counting("MARKE-HAUPTDOKUMENT", "MARKE-EINGEBETTET");
+
+        StructuredDocument result = structure.extract(file, "bericht.docx", DocumentFixtures.DOCX,
+                limits(Map.of(), 0, 0), sink);
+
+        // Die eingebettete Mappe ist eine enthaltene Datei: ein Eintrag mit eigenem Text, nicht Text des Dokuments.
+        assertThat(result.directory()).singleElement().satisfies(entry -> {
+            assertThat(entry.mediaType()).contains(DocumentFixtures.XLSX);
+            assertThat(entry.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        });
+        assertThat(sink.found).contains("MARKE-HAUPTDOKUMENT", "MARKE-EINGEBETTET");
+        assertThat(sink.entries).hasSize(1);
+    }
+
+    @Test
+    void withoutTikasKindOnlyImagesOfAnOfficeDocumentBelongToIt() throws Exception {
+        Path file = Files.write(directory.resolve("bericht.docx"), DocumentFixtures.docx("Bericht"));
+        java.util.concurrent.atomic.AtomicBoolean root = new java.util.concurrent.atomic.AtomicBoolean(true);
+        Parser office = new Parser() {
+            @Override
+            public Set<MediaType> getSupportedTypes(ParseContext context) {
+                return Set.of(MediaType.parse(DocumentFixtures.DOCX));
+            }
+
+            @Override
+            public void parse(InputStream stream, ContentHandler handler, Metadata metadata, ParseContext context)
+                    throws org.xml.sax.SAXException, java.io.IOException {
+                stream.readAllBytes();
+                handler.startDocument();
+                if (!root.getAndSet(false)) {
+                    // Die Teile selbst haben keine weiteren Teile.
+                    handler.endDocument();
+                    return;
+                }
+                var extractor = context.get(org.apache.tika.extractor.EmbeddedDocumentExtractor.class);
+                // Ohne Art (EMBEDDED_RESOURCE_TYPE): eine eingebettete Mappe mit Beziehungskennung und ein Bild.
+                Metadata workbook = new Metadata();
+                workbook.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, "Mappe1.xlsx");
+                workbook.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID, "rId7");
+                workbook.set(Metadata.CONTENT_TYPE, DocumentFixtures.XLSX);
+                extractor.parseEmbedded(new java.io.ByteArrayInputStream(DocumentFixtures.xlsx("Zahlen")), handler,
+                        workbook, true);
+                Metadata image = new Metadata();
+                image.set(org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY, "image1.png");
+                image.set(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_RELATIONSHIP_ID, "rId8");
+                image.set(Metadata.CONTENT_TYPE, "image/png");
+                extractor.parseEmbedded(new java.io.ByteArrayInputStream(DocumentFixtures.pngSignature()), handler,
+                        image, true);
+                handler.endDocument();
+            }
+        };
+
+        StructuredDocument result = new TikaDocumentStructure(1, 1_000, office).extract(file, "bericht.docx",
+                DocumentFixtures.DOCX, ExtractionLimits.DEFAULTS, new Recording());
+
+        assertThat(result.directory()).singleElement().satisfies(entry ->
+                assertThat(entry.displayName()).contains("Mappe1.xlsx"));
+    }
+
+    private static ExtractionLimits ratio(long ratio, long fromBytes) {
+        return new ExtractionLimits(0, 0, ratio, fromBytes, 10, 1000, 10, 10_000, Duration.ofSeconds(30),
+                Duration.ofMinutes(5), 0, 2, Map.of());
     }
 
     @Test
