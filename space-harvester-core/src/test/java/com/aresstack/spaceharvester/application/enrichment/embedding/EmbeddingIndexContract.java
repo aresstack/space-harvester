@@ -115,6 +115,25 @@ public abstract class EmbeddingIndexContract {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void vectorsOfDocumentsAreNotPageHits() {
+        // ADR 0026: Stücke eines Anhangs beziehen sich nicht auf den Seitentext; die Seitensuche findet sie nicht.
+        PageKey page = new PageKey("wiki", "dokument");
+        Enrichment pageVectors = embedding(page, "v-doc", "[0,1,0]");
+        Enrichment attachment = new Enrichment(page, "embedding", "v-doc", pageVectors.inputSha256(), null,
+                Enrichment.Status.OK, pageVectors.payloadJson().replace("[0,1,0]", "[1,0,0]"), List.of(), null,
+                pageVectors.computedAt(), com.aresstack.spaceharvester.application.assets.DocumentKey.attachment(page,
+                "a1"), 0);
+        store().save(pageVectors);
+        store().save(attachment);
+
+        assertThat(index().nearest("wiki", "v-doc", new float[] {1, 0, 0}, 5)).singleElement()
+                .satisfies(hit -> assertThat(hit.page()).isEqualTo(page));
+        assertThat(index().nearest("wiki", "v-doc", new float[] {1, 0, 0}, 5).getFirst().similarity()).isLessThan(0.5);
+        store().removeAll(page);
+        assertThat(index().nearest("wiki", "v-doc", new float[] {0, 1, 0}, 5)).isEmpty();
+    }
+
     protected static Enrichment embedding(PageKey key, String version, String... vectors) {
         return new Enrichment(key, "embedding", version, sha(key.pageId()), "2", Enrichment.Status.OK,
                 payload(vectors), List.of(), null, Instant.parse("2026-10-17T09:00:00Z"));

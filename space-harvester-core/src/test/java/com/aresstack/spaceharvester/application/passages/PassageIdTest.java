@@ -17,6 +17,41 @@ class PassageIdTest {
     static final String CAPTURE = "3fa9c2d1".repeat(8);
 
     @Test
+    void aDocumentPartParsesBackUnambiguouslyEvenWithAwkwardPageIds() {
+        // ADR 0026, AP9a: Seiten-IDs dürfen ~, @, # und : enthalten; die Seite bleibt byte-gleich.
+        String document = com.aresstack.spaceharvester.application.assets.DocumentKey.attachment(
+                new PageKey("wiki", "x"), "AAMk~@#").child(new com.aresstack.spaceharvester.application.assets
+                .PartId.Content("ab".repeat(32), 2)).fileName();
+        for (String pageId : List.of("47110815", "a~b", "seite@" + CAPTURE + "~a-1#p3", "x#p1@ab-cd", "~", "@",
+                "ns:seite~" + CAPTURE)) {
+            PassageId pageOnly = PassageId.of("confluence", pageId, CAPTURE, 3, "9f2c41ab", "5e07d1c3");
+            PassageId inDocument = PassageId.of("confluence", pageId, CAPTURE, document, 3, "9f2c41ab", "5e07d1c3");
+
+            assertThat(PassageId.parse(pageOnly.value())).isEqualTo(pageOnly).satisfies(id -> {
+                assertThat(id.pageId()).isEqualTo(pageId);
+                assertThat(id.document()).isEmpty();
+            });
+            assertThat(PassageId.parse(inDocument.value())).isEqualTo(inDocument).satisfies(id -> {
+                assertThat(id.pageId()).isEqualTo(pageId);
+                assertThat(id.capture()).isEqualTo(CAPTURE);
+                assertThat(id.document()).contains(document);
+                assertThat(id.position()).isEqualTo(3);
+            });
+            assertThat(inDocument.value()).isEqualTo("confluence:" + pageId + "@" + CAPTURE + "~" + document
+                    + "#p3@9f2c41ab-5e07d1c3");
+            assertThat(pageOnly).isNotEqualTo(inDocument);
+        }
+        // Alte IDs ohne Dokumentteil bleiben lesbar und unverändert.
+        String old = "confluence:47110815@" + CAPTURE + "#p3@9f2c41ab-5e07d1c3";
+        assertThat(PassageId.parse(old).value()).isEqualTo(old);
+        assertThat(PassageId.looksLike("confluence:1@" + CAPTURE + "~#p3@9f2c41ab-5e07d1c3")).isFalse();
+        assertThat(PassageId.looksLike("confluence:1@" + CAPTURE + "~A-1#p3@9f2c41ab-5e07d1c3")).isFalse();
+        assertThat(PassageId.looksLike("confluence:1@" + CAPTURE + "x#p3@9f2c41ab-5e07d1c3")).isFalse();
+        assertThatThrownBy(() -> PassageId.of("confluence", "1", CAPTURE, "a/b", 0, "9f2c41ab", "5e07d1c3"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void hasTheFormOfTheClientAndReadsBack() {
         PassageId id = PassageId.of("confluence", "47110815", CAPTURE, 3, "9f2c41ab", "5e07d1c3");
 

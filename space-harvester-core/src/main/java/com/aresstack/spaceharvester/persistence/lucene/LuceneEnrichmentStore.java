@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
@@ -26,6 +28,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -133,6 +136,22 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String WARNING = "warning";
     private static final String ERROR_CODE = "errorCode";
     private static final String COMPUTED_AT = "computedAt";
+    /**
+     * Ergebnisse von Anhängen und enthaltenen Dateien (ADR 0026, Punkt 10): statt {@link #PAGE} die Seite unter
+     * {@code documentPage}, damit {@link #find(PageKey)} nur die Seite selbst liefert; dazu Anhang ({@code page \0
+     * attachmentId}), das Dokument ({@link DocumentKey#value()}) und getrennt gespeichert Anhang, Teil und Abschnitt.
+     */
+    private static final String DOCUMENT_PAGE = "documentPage";
+    private static final String DOCUMENT_ATTACHMENT = "documentAttachment";
+    private static final String DOCUMENT = "documentKey";
+    private static final String DOCUMENT_PROCESSOR = "documentProcessor";
+    private static final String ATTACHMENT_ID = "documentAttachmentId";
+    private static final String PART_ID = "documentPartId";
+    private static final String SECTION = "documentSection";
+    /** Vektoren eines Dokuments: die Seitensuche ({@link #nearest}) findet sie nicht. */
+    private static final String VECTOR_DOCUMENT = "vectorDocument";
+    private static final String VECTOR_DOCUMENT_KEY = "vectorDocumentKey";
+    private static final String VECTOR_DOCUMENT_ATTACHMENT = "vectorDocumentAttachment";
     /** Ergebnis ({@link #ID}), zu dem ein Vektordokument gehört. */
     private static final String VECTOR_OF = "vectorOf";
     /** Seite eines Vektordokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
@@ -264,7 +283,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         Objects.requireNonNull(enrichment, "enrichment");
         requireOpen();
         try {
-            String id = id(enrichment.key(), enrichment.processorId());
+            String id = id(enrichment);
             writer.deleteDocuments(new Term(VECTOR_OF, id), new Term(TERM_OF, id), new Term(FACT_OF, id));
             writer.updateDocument(new Term(ID, id), document(enrichment));
             writer.addDocuments(vectors(enrichment));
@@ -300,12 +319,69 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     @Override
+    public List<Enrichment> find(DocumentKey document) {
+        Objects.requireNonNull(document, "document");
+        if (document.isPage()) {
+            return find(document.page());
+        }
+        requireOpen();
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(new TermQuery(new Term(DOCUMENT, document.value())), Integer.MAX_VALUE);
+                StoredFields stored = searcher.storedFields();
+                List<Enrichment> found = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    found.add(enrichment(stored.document(hit.doc)));
+                }
+                found.sort(Comparator.comparingInt(Enrichment::section).thenComparing(Enrichment::processorId));
+                return found;
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    @Override
+    public synchronized void removeDocument(DocumentKey document) {
+        Objects.requireNonNull(document, "document");
+        requireOpen();
+        try {
+            if (document.isPage()) {
+                // Nur die Ergebnisse der Seite selbst (ihre Vektoren, Begriffe und Fakten tragen die Kennung).
+                for (String processorId : processorIds(document.page())) {
+                    String id = id(document.page(), processorId);
+                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
+                            new Term(FACT_OF, id));
+                }
+            } else if (document.isEmbedded() || document.attachmentId().isEmpty()) {
+                writer.deleteDocuments(new Term(DOCUMENT, document.value()),
+                        new Term(VECTOR_DOCUMENT_KEY, document.value()));
+            } else {
+                // Ein Anhang samt seinen enthaltenen Dateien.
+                writer.deleteDocuments(new Term(DOCUMENT_ATTACHMENT, attachment(document)),
+                        new Term(VECTOR_DOCUMENT_ATTACHMENT, attachment(document)));
+            }
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    private List<String> processorIds(PageKey key) {
+        return find(key).stream().map(Enrichment::processorId).toList();
+    }
+
+    @Override
     public synchronized void removeAll(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
         try {
             writer.deleteDocuments(new Term(PAGE, page(key)), new Term(VECTOR_PAGE, page(key)),
-                    new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)));
+                    new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)),
+                    new Term(DOCUMENT_PAGE, page(key)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
@@ -321,6 +397,15 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             String id = id(key, processorId);
             writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
                     new Term(FACT_OF, id));
+            // Bearbeitet der Prozessor die Seite nicht mehr, gilt das auch für ihre Dokumente samt Vektoren.
+            writer.deleteDocuments(new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(DOCUMENT_PAGE, page(key))), BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(DOCUMENT_PROCESSOR, processorId)), BooleanClause.Occur.FILTER).build());
+            if (EMBEDDING.equals(processorId)) {
+                writer.deleteDocuments(new BooleanQuery.Builder()
+                        .add(new TermQuery(new Term(VECTOR_PAGE, page(key))), BooleanClause.Occur.FILTER)
+                        .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.FILTER).build());
+            }
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
@@ -334,7 +419,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         String prefix = sourceId + SEPARATOR;
         try {
             writer.deleteDocuments(new PrefixQuery(new Term(PAGE, prefix)), new PrefixQuery(new Term(VECTOR_PAGE,
-                    prefix)), new PrefixQuery(new Term(TERM_PAGE, prefix)), new PrefixQuery(new Term(FACT_PAGE, prefix)));
+                    prefix)), new PrefixQuery(new Term(TERM_PAGE, prefix)), new PrefixQuery(new Term(FACT_PAGE, prefix)),
+                    new PrefixQuery(new Term(DOCUMENT_PAGE, prefix)));
             writer.commit();
             uncommitted = 0;
             searchers.maybeRefreshBlocking();
@@ -360,6 +446,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 .add(new TermInSetQuery(VECTOR_SOURCE, sourceIds.stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
+                // Nur Seiten: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026, eigene Suche).
+                .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.MUST_NOT)
                 .build();
         try {
             IndexSearcher searcher = searchers.acquire();
@@ -551,10 +639,35 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         return page(key) + SEPARATOR + processorId;
     }
 
+    /**
+     * Kennung eines Ergebnisses: für die Seite wie bisher, für ein Dokument mit Dokument, Abschnitt und Prozessor (ein
+     * führendes {@code \1} hält sie von jeder Seitenkennung fern).
+     */
+    private static String id(Enrichment enrichment) {
+        if (!enrichment.ofDocument()) {
+            return id(enrichment.key(), enrichment.processorId());
+        }
+        return "\u0001" + enrichment.document().value() + SEPARATOR + enrichment.section() + SEPARATOR
+                + enrichment.processorId();
+    }
+
+    private static String attachment(DocumentKey document) {
+        return page(document.page()) + SEPARATOR + document.attachmentId().orElse("");
+    }
+
     private static Document document(Enrichment enrichment) {
         Document doc = new Document();
-        doc.add(new StringField(ID, id(enrichment.key(), enrichment.processorId()), Field.Store.NO));
-        doc.add(new StringField(PAGE, page(enrichment.key()), Field.Store.NO));
+        doc.add(new StringField(ID, id(enrichment), Field.Store.NO));
+        if (enrichment.ofDocument()) {
+            DocumentKey document = enrichment.document();
+            doc.add(new StringField(DOCUMENT_PAGE, page(enrichment.key()), Field.Store.NO));
+            doc.add(new StringField(DOCUMENT_ATTACHMENT, attachment(document), Field.Store.NO));
+            doc.add(new StringField(DOCUMENT, document.value(), Field.Store.NO));
+            doc.add(new StringField(DOCUMENT_PROCESSOR, enrichment.processorId(), Field.Store.NO));
+            storeDocument(doc, enrichment);
+        } else {
+            doc.add(new StringField(PAGE, page(enrichment.key()), Field.Store.NO));
+        }
         doc.add(new StoredField(SOURCE_ID, enrichment.key().sourceId()));
         doc.add(new StoredField(PAGE_ID, enrichment.key().pageId()));
         doc.add(new StoredField(PROCESSOR_ID, enrichment.processorId()));
@@ -589,7 +702,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         if (payload.dimensions() < 1 || payload.dimensions() > MAX_VECTOR_DIMENSIONS) {
             return List.of();
         }
-        String id = id(enrichment.key(), enrichment.processorId());
+        String id = id(enrichment);
         List<Document> docs = new ArrayList<>(payload.chunks().size());
         for (int i = 0; i < payload.chunks().size(); i++) {
             EmbeddingPayload.Chunk chunk = payload.chunks().get(i);
@@ -608,6 +721,13 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             doc.add(new StoredField(CHUNK, i));
             doc.add(new StoredField(CHAR_START, chunk.charStart()));
             doc.add(new StoredField(CHAR_END, chunk.charEnd()));
+            if (enrichment.ofDocument()) {
+                doc.add(new StringField(VECTOR_DOCUMENT, "1", Field.Store.NO));
+                doc.add(new StringField(VECTOR_DOCUMENT_KEY, enrichment.document().value(), Field.Store.NO));
+                doc.add(new StringField(VECTOR_DOCUMENT_ATTACHMENT, attachment(enrichment.document()),
+                        Field.Store.NO));
+                storeDocument(doc, enrichment);
+            }
             doc.add(new KnnFloatVectorField(vectorField(vector.length), vector,
                     VectorSimilarityFunction.DOT_PRODUCT));
             docs.add(doc);
@@ -617,6 +737,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Ein Dokument je Begriff eines gültigen {@code terms}-Ergebnisses ({@link TermPayload#postings}). */
     private static List<Document> terms(Enrichment enrichment) {
+        if (enrichment.ofDocument()) {
+            // Begriffe je Dokument kommen mit AP9b (Strang B); bis dahin liest der Begriffsindex nur Seiten.
+            return List.of();
+        }
         List<TermPosting> postings = TermPayload.postings(enrichment);
         if (postings.isEmpty()) {
             return List.of();
@@ -657,6 +781,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Ein Dokument je Fakt des Ergebnisses ({@link EnrichmentFacts}); andere Prozessoren tragen keine. */
     private static List<Document> facts(Enrichment enrichment) {
+        if (enrichment.ofDocument()) {
+            return List.of();
+        }
         List<MetadataFact> facts = EnrichmentFacts.of(enrichment);
         if (facts.isEmpty()) {
             return List.of();
@@ -829,10 +956,29 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     private static Enrichment enrichment(Document doc) {
-        return new Enrichment(new PageKey(doc.get(SOURCE_ID), doc.get(PAGE_ID)), doc.get(PROCESSOR_ID),
+        PageKey key = new PageKey(doc.get(SOURCE_ID), doc.get(PAGE_ID));
+        return new Enrichment(key, doc.get(PROCESSOR_ID),
                 doc.get(PROCESSOR_VERSION), doc.get(INPUT_SHA256), doc.get(REVISION),
                 Enrichment.Status.valueOf(doc.get(STATUS)), doc.get(PAYLOAD), List.of(doc.getValues(WARNING)),
-                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)));
+                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)), documentKey(key, doc), section(doc));
+    }
+
+    /** Anhang, Teil und Abschnitt getrennt gespeichert (Schlüsselform, ADR 0026); nie aus einer Zeichenkette zerlegt. */
+    private static void storeDocument(Document doc, Enrichment enrichment) {
+        enrichment.document().attachmentId().ifPresent(id -> doc.add(new StoredField(ATTACHMENT_ID, id)));
+        enrichment.document().part().ifPresent(id -> doc.add(new StoredField(PART_ID, id.value())));
+        doc.add(new StoredField(SECTION, enrichment.section()));
+    }
+
+    private static DocumentKey documentKey(PageKey page, Document doc) {
+        String partId = doc.get(PART_ID);
+        return new DocumentKey(page, Optional.ofNullable(doc.get(ATTACHMENT_ID)),
+                Optional.ofNullable(partId).map(PartId::parse));
+    }
+
+    private static int section(Document doc) {
+        var field = doc.getField(SECTION);
+        return field == null ? 0 : field.numericValue().intValue();
     }
 
     private static void storeIfPresent(Document doc, String field, String value) {

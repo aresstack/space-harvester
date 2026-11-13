@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.application.enrichment;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Instant;
 import java.util.List;
@@ -59,6 +61,82 @@ public abstract class EnrichmentStoreContract {
         assertThat(store.find(PAGE)).isEmpty();
         assertThat(store.find(OTHER)).hasSize(1);
         assertThat(store.find(new PageKey("other", "101"))).hasSize(1);
+    }
+
+    @Test
+    void resultsOfDocumentsStayApartFromTheirPage() {
+        // ADR 0026, Punkt 10: Ergebnisse hängen am Dokument; find(PageKey) bleibt bei der Seite selbst.
+        EnrichmentStore store = store();
+        DocumentKey attachment = DocumentKey.attachment(PAGE, "att/1 ~@#");
+        DocumentKey part = attachment.child(new PartId.Content("ab".repeat(32), 1));
+        Enrichment page = ok(PAGE, "passages", "1", "{\"page\":true}");
+        Enrichment second = document(attachment, 1, "passages");
+        Enrichment first = document(attachment, 0, "passages");
+        Enrichment navigation = document(attachment, 0, "navigation");
+        Enrichment inPart = document(part, 0, "passages");
+        store.save(page);
+        store.save(second);
+        store.save(first);
+        store.save(navigation);
+        store.save(inPart);
+
+        assertThat(store.find(PAGE)).containsExactly(page);
+        assertThat(store.find(DocumentKey.page(PAGE))).containsExactly(page);
+        assertThat(store.find(attachment)).containsExactly(navigation, first, second);
+        assertThat(store.find(part)).singleElement().satisfies(result -> {
+            assertThat(result).isEqualTo(inPart);
+            assertThat(result.document().part()).isEqualTo(part.part());
+            assertThat(result.document().attachmentId()).contains("att/1 ~@#");
+        });
+        // Ersetzt wird je Dokument, Abschnitt und Prozessor.
+        Enrichment replaced = new Enrichment(PAGE, "passages", "2", "sha256:" + "e".repeat(64), null,
+                Enrichment.Status.OK, "{\"neu\":true}", List.of(), null, Instant.parse("2026-11-13T13:00:00Z"),
+                attachment, 1);
+        store.save(replaced);
+        assertThat(store.find(attachment)).containsExactly(navigation, first, replaced);
+    }
+
+    @Test
+    void removingDocumentsRemovesExactlyWhatBelongsToThem() {
+        EnrichmentStore store = store();
+        DocumentKey attachment = DocumentKey.attachment(PAGE, "a1");
+        DocumentKey part = attachment.child(new PartId.Content("ab".repeat(32), 1));
+        DocumentKey other = DocumentKey.attachment(PAGE, "a2");
+        Enrichment page = ok(PAGE, "passages", "1", "{}");
+        store.save(page);
+        store.save(document(attachment, 0, "passages"));
+        store.save(document(part, 0, "passages"));
+        store.save(document(other, 0, "passages"));
+        store.save(document(other, 0, "embedding"));
+
+        store.removeDocument(part);
+        assertThat(store.find(part)).isEmpty();
+        assertThat(store.find(attachment)).hasSize(1);
+
+        store.save(document(part, 0, "passages"));
+        store.removeDocument(attachment);
+        assertThat(store.find(attachment)).as("der Anhang samt seinen Teilen").isEmpty();
+        assertThat(store.find(part)).isEmpty();
+        assertThat(store.find(other)).hasSize(2);
+        assertThat(store.find(PAGE)).containsExactly(page);
+
+        store.remove(PAGE, "embedding");
+        assertThat(store.find(other)).extracting(Enrichment::processorId).containsExactly("passages");
+
+        store.removeDocument(DocumentKey.page(PAGE));
+        assertThat(store.find(PAGE)).isEmpty();
+        assertThat(store.find(other)).as("nur die Seite selbst").hasSize(1);
+
+        store.save(page);
+        store.removeAll(PAGE);
+        assertThat(store.find(PAGE)).isEmpty();
+        assertThat(store.find(other)).as("die Seite samt ihren Dokumenten").isEmpty();
+    }
+
+    private static Enrichment document(DocumentKey document, int section, String processor) {
+        return new Enrichment(document.page(), processor, "1", "sha256:" + "d".repeat(64), null, Enrichment.Status.OK,
+                "{\"section\":" + section + "}", List.of(), null, Instant.parse("2026-11-13T12:00:00Z"), document,
+                section);
     }
 
     private static Enrichment ok(PageKey key, String processor, String version, String payload) {

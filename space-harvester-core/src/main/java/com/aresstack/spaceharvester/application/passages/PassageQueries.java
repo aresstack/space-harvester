@@ -62,6 +62,10 @@ public final class PassageQueries {
      */
     public PassageLookup resolve(AccessContext caller, String passageId) {
         PassageId requested = PassageId.parse(passageId);
+        if (requested.document().isPresent()) {
+            // Absätze von Anhängen löst erst AP9a (Prozessoren je Dokument) auf; nie still die Absätze der Seite.
+            throw new IllegalArgumentException("Absätze von Anhängen lassen sich noch nicht auflösen");
+        }
         return PassageLookup.of(requested, page(caller, requested.sourceId(), requested.pageId()), NEIGHBOURS);
     }
 
