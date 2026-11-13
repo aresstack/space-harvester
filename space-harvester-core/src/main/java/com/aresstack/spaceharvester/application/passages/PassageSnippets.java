@@ -204,6 +204,16 @@ public final class PassageSnippets implements PageTextIndex {
     }
 
     @Override
+    public void replaceAttachment(PageKey page, String attachmentId, Iterable<AttachmentEntry> entries) {
+        index.replaceAttachment(page, attachmentId, entries);
+    }
+
+    @Override
+    public void replaceDocument(PageKey page, String attachmentId, String partId, Iterable<AttachmentEntry> entries) {
+        index.replaceDocument(page, attachmentId, partId, entries);
+    }
+
+    @Override
     public Optional<String> attachmentInputSha256(PageKey page, String attachmentId) {
         return index.attachmentInputSha256(page, attachmentId);
     }

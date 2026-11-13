@@ -61,7 +61,7 @@ eigene Prüfung hinzu.
 ## Fortschreibung: Anhangstexte (19.10.2026, #183)
 
 Der Volltextindex führt wie der Rohindex des Enterprise AI Client (`SourceAttachmentReader`) je abgelegtem Anhang ein
-eigenes Dokument mit der Seite als Eltern (`page-text-index/v2`). Treffer bleiben Seiten: Die Suche liefert je Seite ihr
+eigenes Dokument mit der Seite als Eltern (`page-text-index/v2`; seit ADR 0026 je Dokument und Abschnitt, `v3`). Treffer bleiben Seiten: Die Suche liefert je Seite ihr
 bestes Dokument, ein Anhangstreffer trägt `matchedIn: attachment` und den Anhang. Ein Anhang hat keine eigenen Rechte;
 er wird mit seiner Seite seitenweise geprüft (`metadata` und `content`, ADR 0014, Punkt 4) und erscheint ohne sie
 nirgends, auch nicht als Zähler.

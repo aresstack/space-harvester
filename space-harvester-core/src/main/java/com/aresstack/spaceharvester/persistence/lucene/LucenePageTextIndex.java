@@ -57,8 +57,11 @@ import org.apache.lucene.util.BytesRef;
  */
 public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
-    /** Schemaversion in den Commit-Daten; {@code v2}: Anhänge als eigene Dokumente der Seite (#183). */
-    public static final String VERSION = "page-text-index/v2";
+    /**
+     * Schemaversion in den Commit-Daten; {@code v2}: Anhänge als eigene Dokumente der Seite (#183); {@code v3}: je
+     * Anhang ein Eintrag je Dokument (auch enthaltene Dateien) und Abschnitt (ADR 0026, AP4b).
+     */
+    public static final String VERSION = "page-text-index/v3";
     /** So viel Text je Seite wird indiziert und für Auszüge gespeichert; der Rest einer sehr langen Seite fehlt. */
     public static final int MAX_TEXT_CHARS = 1_000_000;
     /** Höchstens so viele Treffer je Suche. */
@@ -80,6 +83,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     /** Die Seite, zu der ein Dokument gehört (Seite und ihre Anhänge), zum gemeinsamen Entfernen. */
     private static final String PAGE = "page";
     private static final String ATTACHMENT_ID = "attachmentId";
+    /** Alle Einträge eines Anhangs einer Seite, zum Ersetzen in einem Schritt. */
+    private static final String ATTACHMENT_KEY = "attachmentKey";
+    /** Alle Einträge eines Dokuments eines Anhangs (Dokument selbst oder enthaltene Datei). */
+    private static final String DOCUMENT_KEY = "documentKey";
+    private static final String PART_ID = "partId";
+    private static final String PART_TITLE = "partTitle";
+    private static final String SECTION = "section";
     private static final String PAGE_KIND = "page";
     private static final String ATTACHMENT_KIND = "attachment";
     /** So viele Dokumente liest eine Suche höchstens, um je Seite das beste zu finden. */
@@ -187,11 +197,21 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             for (ScoreDoc hit : searcher.search(moved, count).scoreDocs) {
                 Document doc = stored.document(hit.doc);
                 found.add(new AttachmentEntry(page, spaceKey, doc.get(ATTACHMENT_ID), doc.get(TITLE), doc.get(TEXT),
-                        doc.get(INPUT_SHA256)));
+                        doc.get(INPUT_SHA256), doc.get(PART_ID), doc.get(PART_TITLE),
+                        Integer.parseInt(Objects.requireNonNullElse(doc.get(SECTION), "0"))));
             }
             return found;
         });
-        entries.forEach(this::putAttachment);
+        try {
+            for (AttachmentEntry entry : entries) {
+                writer.updateDocument(new Term(ID, entryId(entry)), document(entry));
+            }
+            if (!entries.isEmpty()) {
+                changed();
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
     }
 
     @Override
@@ -200,7 +220,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         Objects.requireNonNull(attachmentId, "attachmentId");
         requireOpen();
         try {
-            writer.deleteDocuments(new Term(ID, attachmentId(page, attachmentId)));
+            writer.deleteDocuments(new Term(ATTACHMENT_KEY, attachmentId(page, attachmentId)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
@@ -210,14 +230,72 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     @Override
     public synchronized void putAttachment(AttachmentEntry entry) {
         Objects.requireNonNull(entry, "entry");
+        replaceAttachment(entry.page(), entry.attachmentId(), List.of(entry));
+    }
+
+    @Override
+    public synchronized void replaceAttachment(PageKey page, String attachmentId, Iterable<AttachmentEntry> entries) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        Objects.requireNonNull(entries, "entries");
         requireOpen();
+        replace(new Term(ATTACHMENT_KEY, attachmentId(page, attachmentId)), page, attachmentId, null, entries);
+    }
+
+    @Override
+    public synchronized void replaceDocument(PageKey page, String attachmentId, String partId,
+                                             Iterable<AttachmentEntry> entries) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        Objects.requireNonNull(partId, "partId");
+        Objects.requireNonNull(entries, "entries");
+        requireOpen();
+        replace(new Term(DOCUMENT_KEY, documentKey(page, attachmentId, partId)), page, attachmentId, partId, entries);
+    }
+
+    /**
+     * Löscht alle Einträge unter {@code key} und schreibt die neuen in einem Schritt des IndexWriters
+     * ({@link IndexWriter#updateDocuments}): Ein Leser sieht den alten oder den neuen Stand. Die Dokumente entstehen
+     * erst beim Schreiben, einzeln aus den Einträgen.
+     */
+    private void replace(Term key, PageKey page, String attachmentId, String partId,
+                         Iterable<AttachmentEntry> entries) {
+        Iterable<Document> documents = () -> new java.util.Iterator<>() {
+            private final java.util.Iterator<AttachmentEntry> source = entries.iterator();
+
+            @Override
+            public boolean hasNext() {
+                return source.hasNext();
+            }
+
+            @Override
+            public Document next() {
+                AttachmentEntry entry = source.next();
+                if (!entry.page().equals(page) || !entry.attachmentId().equals(attachmentId)
+                        || partId != null && !entry.partId().equals(partId)) {
+                    throw new IllegalArgumentException("Eintrag gehört nicht zu diesem Anhang");
+                }
+                return document(entry);
+            }
+        };
+        try {
+            writer.updateDocuments(key, documents);
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    private static Document document(AttachmentEntry entry) {
         String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
                 : entry.text();
-        String id = attachmentId(entry.page(), entry.attachmentId());
         Document doc = new Document();
-        doc.add(new StringField(ID, id, Field.Store.NO));
+        doc.add(new StringField(ID, entryId(entry), Field.Store.NO));
         doc.add(new StringField(KIND, ATTACHMENT_KIND, Field.Store.YES));
         doc.add(new StringField(PAGE, id(entry.page()), Field.Store.NO));
+        doc.add(new StringField(ATTACHMENT_KEY, attachmentId(entry.page(), entry.attachmentId()), Field.Store.NO));
+        doc.add(new StringField(DOCUMENT_KEY, documentKey(entry.page(), entry.attachmentId(), entry.partId()),
+                Field.Store.NO));
         doc.add(new StringField(ATTACHMENT_ID, entry.attachmentId(), Field.Store.YES));
         doc.add(new StringField(SOURCE_ID, entry.page().sourceId(), Field.Store.YES));
         doc.add(new StoredField(PAGE_ID, entry.page().pageId()));
@@ -225,12 +303,12 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
         doc.add(new TextField(TEXT, text, Field.Store.YES));
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
-        try {
-            writer.updateDocument(new Term(ID, id), doc);
-            changed();
-        } catch (IOException e) {
-            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        if (!entry.partId().isEmpty()) {
+            doc.add(new StoredField(PART_ID, entry.partId()));
+            doc.add(new StoredField(PART_TITLE, entry.partTitle()));
         }
+        doc.add(new StoredField(SECTION, Integer.toString(entry.section())));
+        return doc;
     }
 
     @Override
@@ -238,7 +316,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         Objects.requireNonNull(page, "page");
         Objects.requireNonNull(attachmentId, "attachmentId");
         requireOpen();
-        return stored(attachmentId(page, attachmentId), INPUT_SHA256);
+        return stored(ATTACHMENT_KEY, attachmentId(page, attachmentId), INPUT_SHA256);
     }
 
     @Override
@@ -277,8 +355,12 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
     /** Ein gespeichertes Feld des Dokuments mit dieser ID. */
     private Optional<String> stored(String id, String field) {
+        return stored(ID, id, field);
+    }
+
+    private Optional<String> stored(String keyField, String key, String field) {
         return read(searcher -> {
-            TopDocs top = searcher.search(new TermQuery(new Term(ID, id)), 1);
+            TopDocs top = searcher.search(new TermQuery(new Term(keyField, key)), 1);
             return top.scoreDocs.length == 0 ? Optional.<String>empty()
                     : Optional.ofNullable(searcher.storedFields().document(top.scoreDocs[0].doc, Set.of(field))
                             .get(field));
@@ -361,7 +443,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                     String snippet = window(doc.get(TEXT), wanted);
                     pages.put(page, ATTACHMENT_KIND.equals(doc.get(KIND))
                             ? new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), "", snippet,
-                                    doc.get(ATTACHMENT_ID), doc.get(TITLE))
+                                    doc.get(ATTACHMENT_ID), doc.get(TITLE), null, doc.get(PART_ID),
+                                    doc.get(PART_ID) == null ? null : doc.get(PART_TITLE))
                             : new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
                                     snippet));
                 }
@@ -473,6 +556,14 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
     private static String attachmentId(PageKey page, String attachmentId) {
         return id(page) + SEPARATOR + attachmentId;
+    }
+
+    private static String documentKey(PageKey page, String attachmentId, String partId) {
+        return attachmentId(page, attachmentId) + SEPARATOR + partId;
+    }
+
+    private static String entryId(AttachmentEntry entry) {
+        return documentKey(entry.page(), entry.attachmentId(), entry.partId()) + SEPARATOR + entry.section();
     }
 
     private void changed() throws IOException {

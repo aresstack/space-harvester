@@ -201,6 +201,81 @@ public final class DocumentExtractions {
     }
 
     /**
+     * Ein abgelegter Abschnitt eines Dokuments für den Volltextindex (ADR 0026, AP4b).
+     *
+     * @param partId    Teilkennung ({@link PartId#value()}) der enthaltenen Datei, leer für das Dokument selbst
+     * @param partTitle Anzeigename der enthaltenen Datei, leer für das Dokument selbst oder ohne Namen
+     * @param section   Nummer des Abschnitts im Dokument ab 0
+     * @param text      reiner Text des Abschnitts, Absätze mit Leerzeile getrennt
+     */
+    public record IndexSection(String partId, String partTitle, int section, String text) {
+
+        public IndexSection {
+            Objects.requireNonNull(partId, "partId");
+            Objects.requireNonNull(partTitle, "partTitle");
+            Objects.requireNonNull(text, "text");
+        }
+
+        @Override
+        public String toString() {
+            return "IndexSection[part=" + !partId.isEmpty() + ", section=" + section + ", chars=" + text.length() + "]";
+        }
+    }
+
+    /**
+     * Die abgelegten Abschnitte eines Dokuments und seiner lesbaren enthaltenen Dateien für den Volltextindex
+     * (ADR 0026, AP4b, Punkte 8 und 12): zuerst die des Dokuments, dann je Teil in Verzeichnisreihenfolge,
+     * inhaltsgleiche Teile einmal. Einzeln aus der Ablage gelesen, solange der Strom läuft, ohne Zeichengrenze; der
+     * Strom muss geschlossen werden. Ein Teil mit Status {@code FAILED}, {@code UNSUPPORTED} oder {@code EXCLUDED}
+     * hat keinen Abschnitt, {@code PARTIAL} den gelesenen Text.
+     *
+     * @return leer, wenn keine Extraktion abgelegt ist oder das Dokument keinen Text hat
+     */
+    public Optional<Stream<IndexSection>> indexSections(Asset asset) {
+        Optional<StoredExtraction> known = stored(asset.sha256());
+        if (known.isEmpty() || !usable(known.get().document().outcome())
+                || transientFailure(known.get().document()).isPresent()) {
+            return Optional.empty();
+        }
+        StoredExtraction extraction = known.get();
+        Stream<IndexSection> own = extraction.sections() > 0
+                ? extractions.sections(extraction.key()).map(section -> section("", "", section))
+                : Stream.empty();
+        Stream<IndexSection> parts = Stream.of(extraction).flatMap(this::partSections);
+        return Optional.of(Stream.concat(own, parts).filter(section -> !section.text().isBlank()));
+    }
+
+    /** Die Abschnitte der lesbaren Teile, erst beim Lesen geöffnet. */
+    private Stream<IndexSection> partSections(StoredExtraction extraction) {
+        if (extraction.document().directory().isEmpty()) {
+            return Stream.empty();
+        }
+        java.util.Set<String> stored = new java.util.HashSet<>();
+        extractions.parts(extraction.key()).forEach(part -> stored.add(part.key()));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        return extraction.document().directory().stream()
+                .filter(entry -> usable(entry.outcome()))
+                .filter(entry -> stored.contains(entry.id().storageKey()) && seen.add(entry.id().storageKey()))
+                .flatMap(entry -> extractions.partSections(extraction.key(), entry.id().storageKey())
+                        .map(section -> section(entry.id().value(), entry.displayName().orElse(""), section)));
+    }
+
+    private static IndexSection section(String partId, String partTitle, TextSection section) {
+        StringBuilder text = new StringBuilder();
+        for (Block block : section.blocks()) {
+            String piece = plain(block);
+            if (piece.isBlank()) {
+                continue;
+            }
+            if (!text.isEmpty()) {
+                text.append(PARAGRAPH_BREAK);
+            }
+            text.append(piece);
+        }
+        return new IndexSection(partId, partTitle, section.index(), text.toString());
+    }
+
+    /**
      * Hat die Quelle beim Erzeugen der Datei Teile ausgelassen (ADR 0026, AP7c), ist ein vollständig gelesenes Dokument
      * {@code PARTIAL/entries-not-readable}, Umfang wie gelesen, gekürzt. Ein schon schlechterer Status behält seinen
      * ersten Grund (ein Grund je Status). Steht nicht in der Extraktion, die nach dem Hash geteilt wird.

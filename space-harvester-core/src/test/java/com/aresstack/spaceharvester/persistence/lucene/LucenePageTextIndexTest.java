@@ -109,4 +109,83 @@ class LucenePageTextIndexTest {
         return new PageTextIndex.Entry(new PageKey(sourceId, pageId), spaceKey, title, text,
                 "sha256:" + text.split(" ")[0]);
     }
+
+    @Test
+    void anAttachmentIsReplacedAsAWholeAcrossItsDocumentsAndSections() {
+        PageKey page = new PageKey("wiki", "1");
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(new PageTextIndex.Entry(page, "DEV", "Seite", "Seitentext", "sha256:p"));
+            index.replaceAttachment(page, "a1", java.util.List.of(
+                    part(page, "a1", "", 0, "Absatz Ankerkette", "s1"),
+                    part(page, "a1", "", 1, "Absatz Bugstrahl", "s1"),
+                    part(page, "a1", "sha256:x:1", 0, "Anhang Kompass", "s1"),
+                    part(page, "a1", "sha256:y:1", 0, "Anhang Sextant", "s1")));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(page, "DEV", "a2", "andere.pdf", "Ruderhaus",
+                    "s9"));
+
+            assertThat(index.search("Kompass", Set.of("wiki"), SearchSpaces.all(), 10))
+                    .singleElement().satisfies(match -> {
+                        assertThat(match.attachmentId()).isEqualTo("a1");
+                        assertThat(match.partId()).isEqualTo("sha256:x:1");
+                        assertThat(match.partTitle()).isEqualTo("teil.txt");
+                    });
+            assertThat(index.search("Bugstrahl", Set.of("wiki"), SearchSpaces.all(), 10))
+                    .singleElement().satisfies(match -> assertThat(match.partId()).isNull());
+            assertThat(index.attachmentInputSha256(page, "a1")).contains("s1");
+
+            // Kürzer geworden, ein Teil weniger: überzählige Abschnitte und Teile verschwinden, der andere Anhang
+            // und die Seite bleiben.
+            index.replaceAttachment(page, "a1", java.util.List.of(
+                    part(page, "a1", "", 0, "Absatz Ankerkette", "s2"),
+                    part(page, "a1", "sha256:x:1", 0, "Anhang Kompass", "s2")));
+            assertThat(index.search("Bugstrahl", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Sextant", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Kompass", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+            assertThat(index.search("Ruderhaus", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+            assertThat(index.search("Seitentext", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+
+            // Ein einzelnes Dokument neu: die übrigen Dokumente des Anhangs bleiben.
+            index.replaceDocument(page, "a1", "sha256:x:1", java.util.List.of(
+                    part(page, "a1", "sha256:x:1", 0, "Anhang Lot", "s3")));
+            assertThat(index.search("Kompass", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Lot", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+            assertThat(index.search("Ankerkette", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+
+            // Scheitert das Lesen mitten im Ersetzen, gilt der alte Stand.
+            Iterable<PageTextIndex.AttachmentEntry> failing = () -> new java.util.Iterator<>() {
+                private int given;
+
+                @Override
+                public boolean hasNext() {
+                    return true;
+                }
+
+                @Override
+                public PageTextIndex.AttachmentEntry next() {
+                    if (given++ > 0) {
+                        throw new IllegalStateException("Ablage nicht lesbar");
+                    }
+                    return part(page, "a1", "", 0, "Absatz Neuland", "s4");
+                }
+            };
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> index.replaceAttachment(page, "a1", failing))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(index.search("Neuland", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Ankerkette", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+
+            // Die Teile folgen der Seite in einen anderen Space, mit Teilkennung.
+            index.put(new PageTextIndex.Entry(page, "OPS", "Seite", "Seitentext", "sha256:p2"));
+            assertThat(index.search("Lot", Set.of("wiki"), new SearchSpaces(Set.of("OPS"), Set.of()), 10))
+                    .singleElement().satisfies(match -> assertThat(match.partId()).isEqualTo("sha256:x:1"));
+
+            index.removeAttachment(page, "a1");
+            assertThat(index.search("Ankerkette Lot", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        }
+    }
+
+    private static PageTextIndex.AttachmentEntry part(PageKey page, String attachmentId, String partId, int section,
+                                                      String text, String input) {
+        return new PageTextIndex.AttachmentEntry(page, "DEV", attachmentId, "akte.zip", text, input, partId,
+                partId.isEmpty() ? "" : "teil.txt", section);
+    }
 }
