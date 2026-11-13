@@ -303,6 +303,8 @@ class AiConfiguration {
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
                 released, processorIds);
         live.listen(recomputation);
+        // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
+        recomputation.pageReleases(release.pages()::contains);
         // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten, deren
         // Quelle nicht als Ganzes freigegeben ist. Ohne Cache gibt es keine Seiten zu rechnen.
         if (pages != null) {

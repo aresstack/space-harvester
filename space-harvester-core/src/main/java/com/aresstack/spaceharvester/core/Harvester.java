@@ -527,6 +527,8 @@ public final class Harvester implements AutoCloseable {
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
+                // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
+                recomputation.pageReleases(pageReleases::contains);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
                 // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
                 // Chat-Modell.

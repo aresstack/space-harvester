@@ -74,6 +74,32 @@ class PageReleaseRecomputationTest {
         }
     }
 
+    @Test
+    void theStartComputesThePagesOfTheListWithTheModelAndRemovesWhatTheOthersStillCarry() throws Exception {
+        InMemoryEnrichmentStore store = new InMemoryEnrichmentStore();
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(embedding), store, CLOCK);
+        PageSnapshot listed = text("intern", "1", "1", "Ein Satz über den Betrieb.");
+        PageSnapshot removed = text("intern", "2", "1", "Ein Satz über die Wartung.");
+        PageSnapshot open = text("offen", "9", "1", "Ein Satz über die Übergabe.");
+        // Seite 2 stand auf der Liste und wurde entfernt, während der Dienst nicht lief: ihr Embedding blieb.
+        releases.add(List.of(entry(removed.key())));
+        enrichments.recompute(removed, null);
+        assertThat(has(store, removed.key())).isTrue();
+        releases.remove(List.of(removed.key()));
+        // Seite 1 kam auf die Liste, ohne dass sie gerechnet wurde.
+        releases.add(List.of(entry(listed.key())));
+        Map<String, List<PageSnapshot>> cache = Map.of("intern", List.of(listed, removed), "offen", List.of(open));
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> cache.getOrDefault(sourceId, List.of()).iterator(), embedding::covers,
+                List.of("embedding"))) {
+            recomputation.pageReleases(releases::contains);
+            recomputation.reconcileOnStart(List.of("intern", "offen"), () -> true, "source-not-approved");
+
+            eventually(() -> has(store, listed.key()) && !has(store, removed.key()) && has(store, open.key()));
+        }
+    }
+
     private static boolean has(InMemoryEnrichmentStore store, PageKey key) {
         return store.find(key).stream().anyMatch(found -> found.processorId().equals("embedding")
                 && found.status() == Enrichment.Status.OK);
