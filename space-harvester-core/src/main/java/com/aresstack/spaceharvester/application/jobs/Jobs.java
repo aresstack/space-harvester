@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.jobs;
 
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,6 +53,11 @@ import java.util.function.UnaryOperator;
  * gibt seinen Platz frei; die hängende Arbeit wird abgekoppelt: sie meldet nichts mehr, ändert den Eintrag nicht mehr
  * und endet an ihrem nächsten Prüfpunkt.
  *
+ * <p>Wer zusehen will, meldet sich an ({@link #subscribe(String, JobListener)}, ADR 0027), statt in Abständen zu fragen:
+ * Jede Änderung von Zustand, Zählern, Phase oder Pause und jedes Diagnoseereignis wird gemeldet, gebündelt auf einem
+ * eigenen Thread. Damit ein hängender Schritt auch ohne Abfrage abgekoppelt wird, prüft {@code Jobs} nach einem
+ * angeforderten Abbruch oder Anhalten nach {@link #STOP_GRACE} selbst.
+ *
  * <p>Hält sich ein Auftrag wegen fehlender Verbindung an ({@link PauseReason#CONNECTION_LOST}), läuft er nach
  * {@link RetrySettings#resumeDelay(int)} von selbst wieder an, nie endgültig aufgebend; ebenso läuft ein während des
  * Laufs angefordertes „Nur Fehler neu versuchen“ direkt nach dem Durchgang ({@link #recovery(JobRecovery)},
@@ -69,6 +77,12 @@ public class Jobs implements AutoCloseable {
 
     private final JobStore store;
     private final JobEventStore events;
+    /** Angemeldete Empfänger der Auftragsmeldungen (ADR 0027). */
+    private final Listeners<JobListener> listeners = new Listeners<>("Aufträge");
+    /** Gebündelte Zustellung je Auftrag; die Werte sind die Eigentümer, für die Meldung einer Löschung. */
+    private final Coalescer<String, Mark> notifier = new Coalescer<>("jobs", this::deliver);
+    /** Wann nach einem angeforderten Abbruch oder Anhalten selbst geprüft wird; in Tests kürzer. */
+    private volatile Duration stopWatch = STOP_GRACE.plusSeconds(1);
     private final RouteLookup routes;
     private final Executor executor;
     private final JobLimits limits;
@@ -132,7 +146,7 @@ public class Jobs implements AutoCloseable {
      */
     public Jobs(JobStore store, JobEventStore events, RouteLookup routes, Executor executor, JobLimits limits,
                 Clock clock) {
-        this.store = Objects.requireNonNull(store, "store");
+        this.store = new ObservedStore(Objects.requireNonNull(store, "store"));
         this.events = Objects.requireNonNull(events, "events");
         this.routes = Objects.requireNonNull(routes, "routes");
         this.executor = Objects.requireNonNull(executor, "executor");
@@ -319,6 +333,66 @@ public class Jobs implements AutoCloseable {
         }
     }
 
+    /**
+     * Meldet einen Empfänger für die Aufträge eines Auftraggebers an (ADR 0027): gemeldet wird jede Änderung von
+     * Zustand, Zählern, Phase oder Pause ({@link JobListener#changed}, je Auftrag höchstens alle
+     * {@link Coalescer#INTERVAL}), jede Löschung und jedes neue Diagnoseereignis. Wer danach {@link #list} oder
+     * {@link #status} liest, verpasst nichts.
+     *
+     * @param owner Auftraggeber wie bei {@link #submit}; {@code null} für Aufträge ohne Auftraggeber
+     */
+    public Subscription subscribe(String owner, JobListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        return listeners.add(listener, subject -> Objects.equals(subject, owner));
+    }
+
+    /** Auftraggeber eines Auftrags für die Meldung einer Löschung; {@code null} ohne Auftraggeber. */
+    /**
+     * Eine Vormerkung: der Auftraggeber und, bei einer Löschung, der letzte Stand des Auftrags, den es danach nicht mehr
+     * zu lesen gibt.
+     */
+    private record Mark(String owner, JobStatus gone) {
+    }
+
+    /** Merkt einen Auftrag zur Meldung vor; ohne Empfänger nichts. */
+    private void changed(String jobId, String owner) {
+        if (!listeners.isEmpty()) {
+            notifier.mark(jobId, Set.of(new Mark(owner, null)));
+        }
+    }
+
+    /** Auf dem Zustell-Thread: der jüngste Stand, oder die Löschung, wenn es den Auftrag nicht mehr gibt. */
+    private void deliver(String jobId, Set<Mark> marks) {
+        JobStatus status;
+        try {
+            // Liest wie eine Abfrage, koppelt also auch einen nach STOP_GRACE hängenden Schritt ab.
+            status = status(jobId);
+        } catch (UnknownJobException e) {
+            for (Mark mark : marks) {
+                if (mark.gone() != null) {
+                    listeners.deliver(mark.owner(), listener -> listener.removed(mark.gone()));
+                }
+            }
+            return;
+        }
+        listeners.deliver(status.owner(), listener -> listener.changed(status));
+    }
+
+    /**
+     * Unter dem Sperrobjekt, sobald Abbruch oder Anhalten eines laufenden Auftrags angefordert ist: prüft nach
+     * {@link #STOP_GRACE} selbst, ob sein Schritt hängt, statt auf eine Abfrage zu warten.
+     */
+    private void watchStop(Job job) {
+        if (job.state == JobState.RUNNING) {
+            notifier.markLater(job.id, Set.of(new Mark(job.owner, null)), stopWatch);
+        }
+    }
+
+    /** Für Tests: die eigene Prüfung nach {@link #STOP_GRACE} früher, die Uhr des Tests entscheidet. */
+    void stopWatch(Duration delay) {
+        stopWatch = Objects.requireNonNull(delay, "delay");
+    }
+
     /** @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt */
     public JobStatus status(String jobId) {
         boolean detached = false;
@@ -452,6 +526,7 @@ public class Jobs implements AutoCloseable {
                 job.retryFailedRequested = false;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
+                    watchStop(job);
                 }
                 boolean wasQueued = job.state == JobState.QUEUED;
                 if (wasQueued) {
@@ -944,6 +1019,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = clock.instant();
+                    watchStop(job);
                 }
                 // Abbrechen geht vor Anhalten und vor einem Neustart für „Nur Fehler neu versuchen“.
                 job.pauseRequested = false;
@@ -995,6 +1071,7 @@ public class Jobs implements AutoCloseable {
                 ownTimer.shutdownNow();
             }
         }
+        notifier.close();
     }
 
     /**
@@ -1506,6 +1583,7 @@ public class Jobs implements AutoCloseable {
                 job.cancelRequested = true;
                 if (job.stopRequestedAt == null) {
                     job.stopRequestedAt = now;
+                    watchStop(job);
                 }
                 job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
                         "Nur Fehler neu versuchen: Durchgang hält an und startet sofort neu", null, null, null, null);
@@ -1804,21 +1882,25 @@ public class Jobs implements AutoCloseable {
         @Override
         public void discovered(long pages) {
             discovered.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void processed(long pages) {
             processed.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void written(long pages) {
             written.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
         public void failed(long pages) {
             failedPages.addAndGet(pages);
+            changed(id, owner);
         }
 
         @Override
@@ -1829,6 +1911,7 @@ public class Jobs implements AutoCloseable {
             this.component = component;
             this.phase = phase;
             if (changed) {
+                changed(id, owner);
                 emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, component, null, "Phase: " + phase, null, null,
                         null, null);
             }
@@ -1879,9 +1962,13 @@ public class Jobs implements AutoCloseable {
                     }
                 } while (!sequence.compareAndSet(current, current + 1));
                 try {
-                    appendQuietly(new JobEvent(id, current + 1, clock.instant(), type, sourceId,
+                    JobEvent event = new JobEvent(id, current + 1, clock.instant(), type, sourceId,
                             partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
-                            proxyRoute, tlsFinding, detail));
+                            proxyRoute, tlsFinding, detail);
+                    appendQuietly(event);
+                    if (!listeners.isEmpty()) {
+                        notifier.execute(() -> listeners.deliver(owner, listener -> listener.event(event)));
+                    }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht erzeugt ({0})",
                             e.getClass().getName());
@@ -1892,6 +1979,39 @@ public class Jobs implements AutoCloseable {
         /** Koppelt die Arbeit ab; wartet auf ein gerade entstehendes Ereignis ({@link #emit}). */
         synchronized void detach() {
             detached = true;
+        }
+    }
+
+    /** Die Auftragsablage, die jedes Speichern und Löschen zur Meldung vormerkt (ADR 0027). */
+    private final class ObservedStore implements JobStore {
+
+        private final JobStore delegate;
+
+        ObservedStore(JobStore delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void save(JobStatus status) {
+            delegate.save(status);
+            changed(status.id(), status.owner());
+        }
+
+        @Override
+        public Optional<JobStatus> find(String jobId) {
+            return delegate.find(jobId);
+        }
+
+        @Override
+        public List<JobStatus> all() {
+            return delegate.all();
+        }
+
+        @Override
+        public void delete(String jobId) {
+            Optional<JobStatus> gone = listeners.isEmpty() ? Optional.empty() : delegate.find(jobId);
+            delegate.delete(jobId);
+            gone.ifPresent(status -> notifier.mark(jobId, Set.of(new Mark(status.owner(), status))));
         }
     }
 }

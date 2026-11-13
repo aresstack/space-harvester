@@ -197,6 +197,81 @@ class WorkspaceTest {
     }
 
     @Test
+    void jobChangesArriveWithoutAskingAgain() throws Exception {
+        Workspace workspace = start().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        java.util.List<com.aresstack.spaceharvester.application.jobs.JobEvent> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        changes.add(status);
+                    }
+
+                    @Override
+                    public void event(com.aresstack.spaceharvester.application.jobs.JobEvent event) {
+                        events.add(event);
+                    }
+                })) {
+            JobStatus started = workspace.startSync("handbuch", space);
+
+            JobStatus finished = null;
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            while (finished == null && System.nanoTime() < until) {
+                JobStatus next = changes.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null && next.id().equals(started.id()) && next.state() == JobState.COMPLETED) {
+                    finished = next;
+                }
+            }
+            assertThat(finished).as("Ende des Abgleichs gemeldet").isNotNull();
+            assertThat(finished.progress().processed()).isPositive();
+            assertThat(events).extracting(com.aresstack.spaceharvester.application.jobs.JobEvent::jobId)
+                    .contains(started.id());
+        }
+    }
+
+    @Test
+    void theDeletionOfAJobOfAnInvisibleSourceIsNotAnnounced() throws Exception {
+        AppRuntime started = start();
+        Workspace full = started.workspace();
+        Workspace onlyWiki = new Workspace(started.harvester(), new com.aresstack.spaceharvester.application.access
+                .AccessGuard(new LocalOperatorPolicy(com.aresstack.spaceharvester.application.access.AccessContext
+                .technicalClient(com.aresstack.spaceharvester.core.Harvester.OWNER), java.util.Set.of("wiki"))),
+                new ActivityLog(home.resolve("nur-wiki.txt")));
+        String hidden = await(full, full.startSync("handbuch", full.spaces("handbuch").get(0).key())).id();
+        String shown = await(full, full.startSync("wiki", "DEV")).id();
+        java.util.concurrent.BlockingQueue<String> removed = new java.util.concurrent.LinkedBlockingQueue<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = onlyWiki.subscribeJobs(
+                new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                    }
+
+                    @Override
+                    public void removed(JobStatus last) {
+                        removed.add(last.id());
+                    }
+                })) {
+            // Zuerst die unsichtbare: ihre Zustellung käme vor der sichtbaren.
+            full.deleteJob(hidden);
+            full.deleteJob(shown);
+
+            List<String> seen = new ArrayList<>();
+            long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (!seen.contains(shown) && System.nanoTime() < until) {
+                String next = removed.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                if (next != null) {
+                    seen.add(next);
+                }
+            }
+            assertThat(seen).as("Löschung des sichtbaren Auftrags gemeldet").contains(shown);
+            assertThat(seen).as("Löschung des unsichtbaren Auftrags").doesNotContain(hidden);
+        }
+    }
+
+    @Test
     void theActivityListSurvivesARestart() throws Exception {
         Workspace first = start().workspace();
         String id = await(first, first.startSync("wiki", "DEV")).id();

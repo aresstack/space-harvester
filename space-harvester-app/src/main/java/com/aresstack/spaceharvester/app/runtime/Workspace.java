@@ -19,10 +19,12 @@ import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.passages.PassageLookup;
@@ -1121,6 +1123,50 @@ public final class Workspace {
     public List<JobEvent> events(String jobId) {
         job(jobId);
         return harvester.events(jobId);
+    }
+
+    /**
+     * Meldet einen Empfänger für die Aufträge dieser App an (ADR 0027), statt die Liste in Abständen zu lesen: jede
+     * Änderung von Zustand, Zählern, Phase oder Pause, jede Löschung und jedes neue Diagnoseereignis, gebündelt auf dem
+     * Zustell-Thread des Core (nie auf dem EDT). Wie bei {@link #jobs()} und {@link #recentEvents} nur sichtbare
+     * Aufträge. Erst anmelden, dann {@link #jobs()} lesen, dann geht nichts verloren.
+     */
+    public Subscription subscribeJobs(JobListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        return harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (visible(status)) {
+                    listener.changed(status);
+                }
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                // Alle Aufträge der App haben denselben Eigentümer; erst die Rechte am letzten Stand verbergen eine
+                // Löschung, deren Auftrag schon unsichtbar war.
+                if (visible(last)) {
+                    listener.removed(last);
+                }
+            }
+
+            @Override
+            public void event(JobEvent event) {
+                if (access.permits(caller, scope(event.sourceId(), event.partitionKey()),
+                        event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC)) {
+                    listener.event(event);
+                }
+            }
+        });
+    }
+
+    private boolean visible(JobStatus status) {
+        try {
+            requireVisible(status, visibility(status));
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** Die jüngsten Diagnoseereignisse aller sichtbaren Aufträge dieser App, neueste zuerst. */
