@@ -40,13 +40,24 @@ public record ExtractionLimits(long maxFileBytes, long maxChars, long unpackRati
      * Formate, deren Lesen der Test mit 256 MiB Heap als speicherunabhängig nachweist; alle anderen (Mails, Archive,
      * alte Office-Formate, …) behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
      */
-    public static final java.util.Map<String, Long> DEFAULT_MEMORY_LIMITS = java.util.Map.of(
-            ANY_TYPE, 20 * MIB,
-            "application/pdf", 0L,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 0L,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 0L,
+    public static final java.util.Map<String, Long> DEFAULT_MEMORY_LIMITS = java.util.Map.ofEntries(
+            java.util.Map.entry(ANY_TYPE, 20 * MIB),
+            java.util.Map.entry("application/pdf", 0L),
+            java.util.Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", 0L),
+            java.util.Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 0L),
             // Mail mit Anhang über 300 MiB bei 256 MiB Heap (AP7a): Anhänge laufen als Strom über eine temporäre Datei.
-            "message/rfc822", 0L);
+            java.util.Map.entry("message/rfc822", 0L),
+            // AP3e: als Strom gelesen bzw. zählend in temporäre Dateien entpackt, je eine Datei über 300 MiB bei
+            // 256 MiB Heap vollständig (LargeDocumentFilesTest). HTML bleibt bei 20 MiB: Tikas JSoupParser baut den
+            // ganzen DOM-Baum, bevor er Text ausgibt (HTML über 300 MiB: FAILED/memory-limit bei 256 MiB Heap).
+            java.util.Map.entry("text/plain", 0L),
+            java.util.Map.entry("text/csv", 0L),
+            java.util.Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", 0L),
+            java.util.Map.entry("application/zip", 0L),
+            java.util.Map.entry("application/x-zip-compressed", 0L),
+            java.util.Map.entry("application/gzip", 0L),
+            java.util.Map.entry("application/x-gzip", 0L),
+            java.util.Map.entry("application/x-tar", 0L));
 
     /** Die vorgeschlagenen Standardwerte der ADR. */
     public static final ExtractionLimits DEFAULTS = new ExtractionLimits(0, 0, 100, 100 * MIB, 100, 1_000_000, 10,

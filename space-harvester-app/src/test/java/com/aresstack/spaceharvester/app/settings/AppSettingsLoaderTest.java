@@ -84,7 +84,7 @@ class AppSettingsLoaderTest {
                 """, Map.of());
 
         assertThat(settings.problems()).anySatisfy(problem -> assertThat(problem).contains("memory-limits"));
-        assertThat(settings.storage().extraction().memoryLimit("application/zip")).isEqualTo(20L * 1024 * 1024);
+        assertThat(settings.storage().extraction().memoryLimit("application/msword")).isEqualTo(20L * 1024 * 1024);
         assertThat(settings.storage().extraction().memoryLimit("message/rfc822")).isEqualTo(30L * 1024 * 1024);
     }
 
