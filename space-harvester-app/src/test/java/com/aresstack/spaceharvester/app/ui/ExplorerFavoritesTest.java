@@ -81,7 +81,10 @@ class ExplorerFavoritesTest {
             // Eine Seite merkt sich ihren Pfad im Hintergrund.
             explorer[0].toggleFavorite(new Explorer.PageItem("handbuch", space, pageId, "Wartung", false));
         });
-        for (int i = 0; i < 200 && context.favorites().all().size() < 2; i++) {
+        // Der Pfad kommt aus dem Core im Hintergrund; auf dem CI-Läufer dauert das länger als hier.
+        long deadline = System.nanoTime() + 120_000_000_000L;
+        while (context.favorites().all().size() < 2) {
+            assertThat(System.nanoTime()).as("Zeitlimit: Seiten-Favorit").isLessThan(deadline);
             Thread.sleep(50);
         }
         SwingUtilities.invokeAndWait(() -> {
