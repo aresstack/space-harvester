@@ -40,19 +40,35 @@ public final class AppContext {
 
     /** Die Bereiche der Hauptnavigation. */
     public enum Section {
-        // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
-        // Startansicht.
+        // Reihenfolge der Tastenkürzel Strg+1 …: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche
+        // ist die Startansicht.
         SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
-        /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
+        /** Rechts in der Icon-Leiste, abgetrennt von allem anderen. */
         public boolean administration() {
             return this == SOURCES || this == SETTINGS;
         }
 
         /**
-         * Ob der Bereich einen Knopf in der Icon-Leiste und ein Tastenkürzel hat. Status (Diagnose) hat keinen mehr: Er
-         * steht als Bereich „Diagnose“ in den Einstellungen (Angelo, 13.11.2026); {@code show(STATUS)} führt dorthin.
+         * Rechts in der Icon-Leiste, links vom Trenner der Verwaltung (Angelo, 13.11.2026): Begriffe und Aufträge
+         * stehen nicht mehr bei den Reitern der Mitte.
+         */
+        public boolean trailing() {
+            return this == TERMS || this == ACTIVITIES;
+        }
+
+        /**
+         * Ob der Bereich einen eigenen Knopf in der Icon-Leiste hat. Inhalte hat keinen: Die Reiter der Seitenansicht
+         * (Leseansicht, Text, …) stehen selbst in der Leiste und schalten die Mitte um; Status führt zur Diagnose.
+         */
+        public boolean button() {
+            return toolbar() && this != CONTENT;
+        }
+
+        /**
+         * Ob der Bereich ein Tastenkürzel Strg+Ziffer hat. Status (Diagnose) hat keins mehr: Er steht als Bereich
+         * „Diagnose“ in den Einstellungen (Angelo, 13.11.2026); {@code show(STATUS)} führt dorthin.
          */
         public boolean toolbar() {
             return this != STATUS;
@@ -84,6 +100,14 @@ public final class AppContext {
         }
 
         void openSpace(String sourceId, String spaceKey);
+
+        /**
+         * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
+         * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.
+         */
+        default void openExport(String sourceId, String spaceKey, String rootPageId) {
+            openSpace(sourceId, spaceKey);
+        }
 
         /** Zeigt eine Seite im Explorer (aufgeklappt und gewählt), ohne sie zu öffnen; ohne Explorer ohne Wirkung. */
         default void revealPage(String sourceId, String pageId) {
@@ -493,6 +517,14 @@ public final class AppContext {
     /** Der Ereignisbus dieses Fensters; die Statuszeile zeigt, was darauf als {@code StatusMessageEvent} erscheint. */
     public com.aresstack.spaceharvester.app.event.ApplicationEventBus events() {
         return events;
+    }
+
+    /** Favoriten des Benutzers (Stern im Explorer und in der Leseansicht), Datei im Datenordner der App. */
+    private final Favorites favorites = new Favorites(() -> settings() == null ? null
+            : settings().storage().dataDirectory().resolve(Favorites.FILE));
+
+    public Favorites favorites() {
+        return favorites;
     }
 
     public Navigator navigator() {

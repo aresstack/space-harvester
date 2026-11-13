@@ -87,6 +87,20 @@ class ContentViewTest {
         });
 
         await(() -> view.detail().shownPage() != null);
+        // Der Stern im Kopf (Angelo, 13.11.2026): dieselbe Markierung wie im Explorer, gefüllt als Favorit.
+        await(() -> view.detail().starButton().isEnabled());
+        assertThat(onEdt(() -> view.detail().starButton().getIcon()))
+                .isSameAs(com.aresstack.spaceharvester.app.ui.Glyph.STAR);
+        onEdt(() -> {
+            view.detail().starButton().doClick();
+            return null;
+        });
+        assertThat(context.favorites().all()).singleElement().satisfies(favorite -> {
+            assertThat(favorite.sourceId()).isEqualTo("handbuch");
+            assertThat(favorite.spaceKey()).isEqualTo(space);
+            assertThat(favorite.where()).startsWith("handbuch");
+        });
+        await(() -> view.detail().starButton().getIcon() == com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED);
         // Nachgeladen und sofort abgelegt (ADR 0010): die Anzeige kommt bereits aus dem Cache.
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
@@ -163,12 +177,12 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
-        // Die Hauptreiter sind quadratische Symbolknöpfe für die Werkzeugleiste unten; ihr Name steht im Tooltip,
-        // die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
+        // Die Hauptreiter sind quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters; ihr Name steht im
+        // Tooltip, die Reiterzeile oben entfällt, die Unterreiter von „Analysen“ stehen ganz oben.
         assertThat(onEdt(() -> {
             List<String> tips = new java.util.ArrayList<>();
             for (java.awt.Component c : ((java.awt.Container) detail.tabIcons()).getComponents()) {
@@ -179,9 +193,78 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
-        assertThat(onEdt(() -> view.tools())).isSameAs(detail.tabIcons());
+        // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
+        // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
+        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        onEdt(() -> {
+            detail.tabs().select("Export");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().isVisible())).isTrue();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
+        onEdt(() -> {
+            detail.tabs().select("Leseansicht");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
+        assertThat(onEdt(() -> view.tools())).as("unten in der Werkzeugleiste steht nichts mehr").isNull();
+        // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
+        onEdt(() -> {
+            view.tabsActive(false);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
+        assertThat(onEdt(() -> detail.tabs().button("Leseansicht").isSelected())).isFalse();
+        onEdt(() -> {
+            view.tabsActive(true);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().button("Leseansicht").isSelected())).isTrue();
+    }
+
+    @Test
+    void theChatFollowsTheSelectionAndSendingOnlySaysThatTheChatIsStillToCome() throws Exception {
+        PageDetailPanel detail = view.detail();
+        ChatPanel chat = detail.chat();
+        assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        onEdt(() -> {
+            detail.tabs().select("Chat");
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(chat::isVisible)).isTrue();
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces"));
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
+        // Senden im Click-Dummy: die eigene Nachricht als Sprechblase, der Composer leer, Status „Chat folgt“.
+        onEdt(() -> {
+            chat.attach(home.resolve("notiz.txt"));
+            ((javax.swing.text.JTextComponent) chat.editor()).setText("Was steht im Handbuch?");
+            chat.send();
+            return null;
+        });
+        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.FOLLOWS);
+        assertThat(onEdt(chat::attachments)).isEmpty();
+        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText())).isEmpty();
+        // Leer sendet nichts.
+        onEdt(() -> {
+            chat.send();
+            return null;
+        });
+        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        onEdt(() -> {
+            view.selection(null);
+            return null;
+        });
+        await(() -> ChatPanel.NO_SELECTION.equals(chat.knowledge()));
         onEdt(() -> {
             detail.tabs().button("Text").doClick();
             return null;

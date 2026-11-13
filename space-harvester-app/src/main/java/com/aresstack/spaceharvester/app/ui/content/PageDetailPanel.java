@@ -100,17 +100,26 @@ public final class PageDetailPanel extends JPanel {
     private static final String GRAPH = "Graph";
     static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
     private static final String ADVANCED = "Erweitert";
+    /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
+    static final String EXPORT = "Export";
+    static final String CHAT = "Chat";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
+    private static final String EXPORT_CARD = "export";
+    private static final String CHAT_CARD = "chat";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
     private final java.awt.CardLayout cards = new java.awt.CardLayout();
     private final JPanel deck = new JPanel(cards);
+    /** Welche Karte Seite oder Hinweis zeigt, solange nicht der Reiter „Export“ gewählt ist. */
+    private String pageCard = EMPTY;
+    private final ExportPanel export;
+    private final ChatPanel chat;
     private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
@@ -149,7 +158,7 @@ public final class PageDetailPanel extends JPanel {
     private final JTable enrichments = Comic.table(new JTable(enrichmentModel));
     private final JTextArea enrichmentResult = Comic.code();
     private final PillTabs tabs = new PillTabs();
-    /** Die Hauptreiter als quadratische Symbolknöpfe für die Werkzeugleiste unten ({@link #tabIcons()}). */
+    /** Die Hauptreiter als quadratische Symbolknöpfe für die Icon-Leiste des Hauptfensters ({@link #tabIcons()}). */
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
@@ -161,6 +170,12 @@ public final class PageDetailPanel extends JPanel {
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
+    /** Der Stern im Kopf (Angelo, 13.11.2026): dieselbe Markierung wie im Explorer, gefüllt als Favorit. */
+    private final com.aresstack.spaceharvester.app.ui.IconButton star =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.STAR,
+                    "Als Favorit markieren");
+    /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat; für den Favoriten. */
+    private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
@@ -220,6 +235,8 @@ public final class PageDetailPanel extends JPanel {
                 : context.runtime().workspace(), context.parserModel());
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
+        this.export = new ExportPanel(context);
+        this.chat = new ChatPanel(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(17f));
@@ -311,8 +328,13 @@ public final class PageDetailPanel extends JPanel {
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
-                .tab(ADVANCED, advanced);
-        // Die Hauptreiter wandern als Symbolknöpfe mittig in die Werkzeugleiste unten (wie die Kopfzeile in AskAI);
+                .tab(ADVANCED, advanced)
+                // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
+                // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
+                .tab(EXPORT, new JPanel())
+                // Der Chat ebenso: sein Wissen ist die Auswahl links, nicht die gezeigte Seite.
+                .tab(CHAT, new JPanel());
+        // Die Hauptreiter wandern als Symbolknöpfe in die Icon-Leiste oben (Angelo, 13.11.2026);
         // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
         icons.put(READING, PageTabIcons.reading());
@@ -321,9 +343,12 @@ public final class PageDetailPanel extends JPanel {
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
         icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.advanced());
+        icons.put(EXPORT, PageTabIcons.export());
+        icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
+            showDeck();
             loadVisible();
             showTabStatus();
         });
@@ -361,6 +386,8 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.addActionListener(e -> saveRaw());
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
+        star.addActionListener(e -> toggleFavorite());
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         previewAsset.addActionListener(e -> openAttachment());
@@ -407,7 +434,7 @@ public final class PageDetailPanel extends JPanel {
         // Zurück und Vor wie im Browser vor dem Titel.
         titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
         titleRow.add(heading, BorderLayout.CENTER);
-        titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
+        titleRow.add(Comic.row(star, bookmark, browse), BorderLayout.EAST);
         header.add(titleRow, BorderLayout.NORTH);
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
@@ -419,6 +446,8 @@ public final class PageDetailPanel extends JPanel {
         deck.setOpaque(false);
         deck.add(empty, EMPTY);
         deck.add(page, PAGE);
+        deck.add(export, EXPORT_CARD);
+        deck.add(chat, CHAT_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -456,8 +485,93 @@ public final class PageDetailPanel extends JPanel {
         renderDetails();
         feedback.clear();
         setActionsEnabled(false);
-        cards.show(deck, EMPTY);
-        tabIcons.setVisible(false);
+        showCard(EMPTY);
+    }
+
+    /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
+    private void toggleFavorite() {
+        if (page == null || sourceId == null || pageId == null) {
+            return;
+        }
+        String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
+                : page.header().metadata().partitionKey();
+        if (spaceKey == null) {
+            return;
+        }
+        String title = page.header().metadata().title();
+        java.util.List<String> path = new java.util.ArrayList<>();
+        java.util.List<String> ancestors = new java.util.ArrayList<>();
+        path.add(sourceTitle(sourceId));
+        if (shownPosition != null) {
+            path.add(shownPosition.spaceName() == null || shownPosition.spaceName().isBlank() ? spaceKey
+                    : shownPosition.spaceName());
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
+                    : shownPosition.ancestors()) {
+                path.add(ancestor.title());
+                ancestors.add(ancestor.pageId());
+            }
+        } else {
+            path.add(spaceKey);
+        }
+        context.favorites().toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite(sourceId, spaceKey,
+                pageId, title, path, ancestors));
+    }
+
+    private String sourceTitle(String id) {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource source
+                    : runtime.workspace().sources()) {
+                if (source.id().equals(id)) {
+                    return source.title() == null || source.title().isBlank() ? id : source.title();
+                }
+            }
+        }
+        return id;
+    }
+
+    /** Gefüllt, wenn die gezeigte Seite ein Favorit ist; ohne Seite gesperrt. */
+    private void updateStar() {
+        boolean shown = page != null && sourceId != null && pageId != null;
+        String spaceKey = !shown ? null : shownPosition != null && shownPosition.spaceKey() != null
+                ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
+        boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
+        star.setEnabled(shown && spaceKey != null);
+        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
+                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
+        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+    }
+
+    /** Für Tests: der Stern im Kopf. */
+    javax.swing.AbstractButton starButton() {
+        return star;
+    }
+
+    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
+    private void showCard(String card) {
+        pageCard = card;
+        showDeck();
+    }
+
+    private void showDeck() {
+        String selected = tabs.selected();
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : pageCard);
+    }
+
+    /** Der Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links. */
+    public ExportPanel export() {
+        return export;
+    }
+
+    /** Der Reiter „Chat“ (Angelo, 13.11.2026), vorerst ein Click-Dummy; sein Wissen ist die Auswahl links. */
+    public ChatPanel chat() {
+        return chat;
+    }
+
+    /** Zeigt den Reiter „Export“, etwa aus „Inhalte öffnen“ eines Auftrags. */
+    public void showExport() {
+        tabs.select(EXPORT);
     }
 
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
@@ -488,7 +602,7 @@ public final class PageDetailPanel extends JPanel {
      */
     public void openPassage(String passageId) {
         if (!PassageId.looksLike(passageId)) {
-            cards.show(deck, PAGE);
+            showCard(PAGE);
             feedback.problem(new InvalidQueryException("Keine Passage-ID"), Problems.Step.PAGE);
             return;
         }
@@ -515,8 +629,7 @@ public final class PageDetailPanel extends JPanel {
         positionShown.accept(null);
         references.message(" ");
         int current = ++request;
-        cards.show(deck, PAGE);
-        tabIcons.setVisible(true);
+        showCard(PAGE);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
         graphView.page(null);
@@ -1158,6 +1271,8 @@ public final class PageDetailPanel extends JPanel {
             if (shown == page) {
                 breadcrumbs.show(position);
                 renderDetails();
+                shownPosition = position;
+                updateStar();
                 positionShown.accept(position);
             }
         }, error -> {
@@ -1763,6 +1878,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void setActionsEnabled(boolean enabled) {
+        if (!enabled) {
+            shownPosition = null;
+        }
+        updateStar();
         refresh.setEnabled(enabled || pageId != null);
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
@@ -1796,7 +1915,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Die Hauptreiter (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als quadratische Symbolknöpfe;
-     * das Hauptfenster setzt sie mittig in die Werkzeugleiste unten. Sichtbar nur, solange eine Seite gezeigt wird.
+     * das Hauptfenster setzt sie in die Icon-Leiste oben, wo sie die Mitte umschalten. Immer sichtbar, auch ohne
+     * Seite (dann zeigt die Mitte den Hinweis, eine Seite im Explorer zu wählen).
      */
     public JComponent tabIcons() {
         return tabIcons;

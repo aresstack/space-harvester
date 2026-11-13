@@ -190,7 +190,10 @@ public final class BackgroundFill implements AutoCloseable {
     private final Map<PageKey, AcquisitionScheduler.Ticket> inFlight = new LinkedHashMap<>();
     private volatile boolean enabled;
     private volatile boolean closed;
-    /** Ob die Anlaufzeit ({@link Timing#initialDelay()}) vorbei ist; vorher weckt {@link #offer} nicht. */
+    /**
+     * Ob die Anlaufzeit ({@link Timing#initialDelay()}) vorbei ist; vorher wecken weder {@link #offer} noch
+     * {@link #wake}.
+     */
     private volatile boolean warmedUp;
     private boolean signalled;
     private boolean rescan;
@@ -343,7 +346,10 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
-    /** Sucht bald wieder im Katalog, etwa nach einem Abgleich oder jedem anderen Commit des Seiten-Cache. */
+    /**
+     * Sucht bald wieder im Katalog, etwa nach einem Abgleich oder jedem anderen Commit des Seiten-Cache; während der
+     * Anlaufzeit erst danach.
+     */
     public void wake() {
         synchronized (monitor) {
             rescan = true;
@@ -454,7 +460,7 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     private void loop() {
-        await(timing.initialDelay());
+        warmUp();
         warmedUp = true;
         while (!closed) {
             try {
@@ -483,7 +489,35 @@ public final class BackgroundFill implements AutoCloseable {
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Hintergrundfüllung unterbrochen ({0}); neuer Versuch später",
                         e.getClass().getName());
+                synchronized (monitor) {
+                    // Brach die Suche im Katalog ab, steht sie noch aus; nach der Pause wird erneut gesucht, sonst
+                    // wartete die Füllung bis zum nächsten Ereignis.
+                    rescan = true;
+                }
                 await(timing.idle());
+            }
+        }
+    }
+
+    /**
+     * Die Anlaufzeit ({@link Timing#initialDelay()}): Nur {@link #close()} beendet sie vorzeitig. Ein {@link #wake()}
+     * nach einem Commit des Seiten-Cache, etwa wenn die Titelsuche ihre Funde katalogisiert, merkt nur vor; die Füllung
+     * lädt erst danach und bremst den Start nicht.
+     */
+    private void warmUp() {
+        long deadline = System.nanoTime() + timing.initialDelay().toNanos();
+        synchronized (monitor) {
+            while (!closed) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
+                }
+                try {
+                    monitor.wait(Math.max(1, remaining / 1_000_000));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
         }
     }
@@ -573,6 +607,7 @@ public final class BackgroundFill implements AutoCloseable {
             seen = completions;
         }
         boolean again = false;
+        boolean dropped = false;
         for (Gap gap : next) {
             if (closed || !enabled) {
                 break;
@@ -592,6 +627,7 @@ public final class BackgroundFill implements AutoCloseable {
             if (!allowed(sourceId)) {
                 // Die Quelle will das (nicht mehr); ein neuer Blick in den Katalog reiht es wieder ein, wenn doch.
                 queue.remove(gap.key());
+                dropped = true;
                 continue;
             }
             AcquisitionScheduler.Ticket ticket;
@@ -616,10 +652,16 @@ public final class BackgroundFill implements AutoCloseable {
                 cancel(Map.of(gap.key(), ticket));
             }
         }
-        if (again) {
+        if (again || dropped) {
             changed();
         }
         synchronized (monitor) {
+            if (dropped && !again) {
+                // Hinter dem entfernten Anfang kann noch Arbeit warten, die kein Ereignis mehr meldet: gleich wieder
+                // in die Schlange sehen, bis sie leer ist oder etwas übergeben wurde.
+                signalled = true;
+                return true;
+            }
             return again || !inFlight.isEmpty();
         }
     }

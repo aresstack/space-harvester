@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.SignInSlot;
+import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.View;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -179,9 +180,41 @@ public final class ContentView implements View {
         return statusInfo;
     }
 
-    @Override
-    public JComponent tools() {
+    /**
+     * Die Reiter der Seitenansicht als Symbolknöpfe für die Icon-Leiste des Hauptfensters; sie schalten die Mitte um
+     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste steht deshalb nichts mehr ({@link #tools()} bleibt leer).
+     */
+    public JComponent tabBar() {
         return detail.tabIcons();
+    }
+
+    /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
+    public void tabsActive(boolean active) {
+        detail.tabs().showSelection(active);
+    }
+
+    /**
+     * Die Auswahl links im Explorer (Quelle, Space oder Seite samt Unterseiten) bestimmt die Reiter „Export“ und
+     * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
+     */
+    public void selection(ExportPanel.Selection selection) {
+        detail.export().selection(selection);
+        detail.chat().selection(selection);
+        if (selection != null) {
+            // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
+            // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
+            if (!Objects.equals(selection.sourceId(), sourceId)) {
+                detail.clear();
+            }
+            sourceId = selection.sourceId();
+            spaceKey = selection.spaceKey() == null || selection.spaceKey().isBlank() ? null : selection.spaceKey();
+            renderCrumbs();
+        }
+    }
+
+    /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
+    public void showExport() {
+        detail.showExport();
     }
 
     PageDetailPanel detail() {

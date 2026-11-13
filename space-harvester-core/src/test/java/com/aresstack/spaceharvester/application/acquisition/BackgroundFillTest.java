@@ -299,6 +299,25 @@ class BackgroundFillTest {
     }
 
     @Test
+    void aCommitDuringTheStartupDelayDoesNotEndIt() throws Exception {
+        // Die Titelsuche katalogisiert ihre Funde und bietet sie an, solange die Füllung anläuft.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("wiki", "fund", BackgroundFill.Kind.NOT_LOADED)));
+        BackgroundFill fill = new BackgroundFill(scheduler(1), queue, catalog(List.of()), SERVER, eligible::contains,
+                new BackgroundFill.Timing(Duration.ofSeconds(2), Duration.ofHours(1), 1000), true);
+        open.add(fill);
+        fill.start();
+
+        // Der Commit des Seiten-Cache weckt; die Füllung lädt trotzdem erst nach der Anlaufzeit.
+        fill.wake();
+        TimeUnit.MILLISECONDS.sleep(300);
+        assertThat(loaded).isEmpty();
+        assertThat(fill.status().lastScan()).isNull();
+
+        eventually(() -> loaded.contains("fund"));
+    }
+
+    @Test
     void aFailedPageComesBackOnceItsWaitIsOverWithoutAnyOtherEvent() throws Exception {
         failing.add("new-1");
         BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), catalog(GAPS),
@@ -311,6 +330,57 @@ class BackgroundFillTest {
         failing.remove("new-1");
 
         eventually(() -> loaded.contains("new-1"));
+    }
+
+    @Test
+    void aFailedCatalogSearchIsRepeatedAfterThePauseWithoutAnyOtherEvent() throws Exception {
+        List<BackgroundFill.Gap> gaps = new CopyOnWriteArrayList<>();
+        AtomicBoolean broken = new AtomicBoolean();
+        AtomicInteger searches = new AtomicInteger();
+        BackgroundFill.Catalog flaky = new BackgroundFill.Catalog() {
+            @Override
+            public List<SyncBaselineStore.SpaceRef> spaces() {
+                searches.incrementAndGet();
+                if (broken.getAndSet(false)) {
+                    throw new IllegalStateException("Katalog gerade nicht lesbar");
+                }
+                return List.of(new SyncBaselineStore.SpaceRef("wiki", "DEV"));
+            }
+
+            @Override
+            public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                return gaps.stream().limit(limit).toList();
+            }
+        };
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), flaky, SERVER,
+                eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(200), 1000), true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().lastScan() != null);
+
+        // Die Suche nach dieser Änderung scheitert einmal; danach kommt kein Ereignis mehr.
+        gaps.add(gap("wiki", "neu", BackgroundFill.Kind.NOT_LOADED));
+        broken.set(true);
+        fill.wake();
+
+        eventually(() -> loaded.contains("neu"));
+        assertThat(searches.get()).isEqualTo(3);
+    }
+
+    @Test
+    void entriesOfASwitchedOffSourceAtTheHeadOfTheQueueDoNotHideTheRest() throws Exception {
+        // Nach einem Neustart: vorn mehr als ein Fenster Einträge einer Quelle, die nicht mehr füllen soll.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("other", "a", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "b", BackgroundFill.Kind.NOT_LOADED), gap("other", "c", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "d", BackgroundFill.Kind.NOT_LOADED), gap("wiki", "dahinter",
+                        BackgroundFill.Kind.NOT_LOADED)));
+
+        fill(scheduler(1), queue, catalog(List.of()), true);
+
+        eventually(() -> loaded.contains("dahinter"));
+        assertThat(loaded).containsExactly("dahinter");
+        assertThat(queue.size()).isZero();
     }
 
     @Test
