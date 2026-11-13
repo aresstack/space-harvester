@@ -140,14 +140,10 @@ public final class DocumentEnrichments implements IndexedDocuments {
         if (extraction.isEmpty()) {
             return Optional.empty();
         }
-        try (Stream<DocumentExtractions.DocumentSection> sections =
-                     structured.get().documentSections(extraction.get())) {
-            return sections.filter(candidate -> candidate.section().index() == section
-                            && candidate.part().map(part -> part.id()).equals(document.part()))
-                    .findFirst()
-                    .map(candidate -> DocumentSectionText.project(candidate.section()))
-                    .filter(text -> inputSha256.equals(text.inputSha256()));
-        }
+        // Nur dieser Abschnitt: ein Ausschnitt am Ende eines großen Dokuments liest nicht das ganze Dokument.
+        return structured.get().documentSection(extraction.get(), document.part(), section)
+                .map(DocumentSectionText::project)
+                .filter(text -> inputSha256.equals(text.inputSha256()));
     }
 
     /** Ein gemeldeter Anhang. */

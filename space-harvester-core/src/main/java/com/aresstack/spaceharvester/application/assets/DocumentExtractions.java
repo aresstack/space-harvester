@@ -534,6 +534,30 @@ public final class DocumentExtractions {
     }
 
     /**
+     * Ein Abschnitt eines Dokuments, wie {@link #documentSections} ihn liefert, ohne die Abschnitte davor zu lesen: für
+     * das Dokument selbst direkt, für eine enthaltene Datei nur unter deren Abschnitten. Leer, wenn es ihn nicht gibt
+     * oder der Teil nicht lesbar abgelegt ist.
+     *
+     * @param part die enthaltene Datei, leer für das Dokument selbst
+     */
+    public Optional<TextSection> documentSection(StoredExtraction extraction, Optional<PartId> part, int index) {
+        Objects.requireNonNull(part, "part");
+        if (part.isEmpty()) {
+            return extraction.sections() > 0 ? extractions.section(extraction.key(), index) : Optional.empty();
+        }
+        String key = part.get().storageKey();
+        boolean usable = extraction.document().directory().stream()
+                .anyMatch(entry -> entry.id().storageKey().equals(key) && usable(entry.outcome()));
+        Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
+        if (!usable || reader.isEmpty() || !reader.get().keys().contains(key)) {
+            return Optional.empty();
+        }
+        try (Stream<TextSection> sections = reader.get().sections(key)) {
+            return sections.filter(section -> section.index() == index).findFirst();
+        }
+    }
+
+    /**
      * Welche Dokumente {@link #documentSections} liefern würde, ohne einen Abschnitt zu lesen (nur das Manifest): das
      * Dokument selbst ({@link Optional#empty()}), wenn es Abschnitte hat, dann je lesbarem Teil mit abgelegtem Text
      * einer, inhaltsgleiche einmal.
