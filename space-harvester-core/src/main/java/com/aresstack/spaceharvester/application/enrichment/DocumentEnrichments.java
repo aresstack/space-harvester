@@ -321,7 +321,9 @@ public final class DocumentEnrichments implements IndexedDocuments {
             return;
         }
         DocumentKey attachment = item.attachment();
-        String basis = basis(extraction.get());
+        // Mit der Grenze für das Embedding-Modell: eine andere Grenze nimmt die Abkürzung über das Manifest nicht.
+        long embeddingMaxChars = settings.get().documentEmbeddingMaxChars();
+        String basis = basis(extraction.get()) + "|embedding-max-chars=" + embeddingMaxChars;
         Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
@@ -334,7 +336,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
         // Die Extraktion steht erst am Stand, wenn das Dokument vollständig durchlief; ein abgebrochener Lauf genügt
         // dieser Abkürzung also nie.
         if (!expected.isEmpty() && expected.stream().allMatch(document -> current(stored.get(document), versions,
-                basis))) {
+                basis) && stored.get(document).stream().noneMatch(enrichments::outdated))) {
             return;
         }
         // Erster Durchgang: Hash des Lesetextes je Dokument und die Abschnitte mit Text.
@@ -350,14 +352,19 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 + HexFormat.of().formatHex(digest.digest())));
         Set<DocumentKey> work = new HashSet<>();
         for (Map.Entry<DocumentKey, String> hash : hashes.entrySet()) {
-            if (!covered(stored.get(hash.getKey()), versions, hash.getValue(), seen.get(hash.getKey()))) {
+            List<Enrichment> results = stored.getOrDefault(hash.getKey(), List.of());
+            // Andere Grenze oder inzwischen freigegeben: der zweite Durchgang entscheidet je Abschnitt und rechnet nur,
+            // was an dieser Stelle nicht mehr gilt (Enrichments#refreshDocument).
+            if (!covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
+                    || results.stream().anyMatch(result -> !Objects.equals(previousLimit(result.extraction()),
+                    "embedding-max-chars=" + embeddingMaxChars))
+                    || results.stream().anyMatch(enrichments::outdated)) {
                 work.add(hash.getKey());
             }
         }
         // Zweiter Durchgang: nur die Dokumente mit anderem Text oder fehlenden Ständen.
         if (!work.isEmpty()) {
             // Grenze für das Embedding-Modell je Dokument, fest für diesen Lauf; gezählt über die Abschnitte davor.
-            long embeddingMaxChars = settings.get().documentEmbeddingMaxChars();
             Map<DocumentKey, Long> offsets = new HashMap<>();
             forEachSection(item, extraction.get(), context, (document, index, text) -> {
                 if (!work.contains(document)) {
@@ -425,7 +432,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
      * Ob jeder Abschnitt mit Text ({@code sections}) je zuständigem Prozessor einen Stand in seiner Version für diesen
      * Hash des Lesetextes hat; fehlt einer, etwa nach einem Abbruch mitten im Dokument, wird das Dokument gerechnet.
      */
-    private static boolean covered(List<Enrichment> stored, Map<String, String> versions, String hash,
+    private boolean covered(List<Enrichment> stored, Map<String, String> versions, String hash,
                                    Set<Integer> sections) {
         for (Map.Entry<String, String> processor : versions.entrySet()) {
             Set<Integer> done = new HashSet<>();
@@ -433,7 +440,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 for (Enrichment result : stored) {
                     if (result.processorId().equals(processor.getKey())
                             && result.processorVersion().equals(processor.getValue())
-                            && hash.equals(result.revision())) {
+                            && hash.equals(result.revision()) && !enrichments.outdated(result)) {
                         done.add(result.section());
                     }
                 }
@@ -469,6 +476,15 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 }
             }
         }
+    }
+
+    /** Die Grenze, mit der ein Stand gebildet wurde, aus seiner Kennung; {@code null} ohne. */
+    private static String previousLimit(String extraction) {
+        if (extraction == null) {
+            return null;
+        }
+        int at = extraction.lastIndexOf("|embedding-max-chars=");
+        return at < 0 ? null : extraction.substring(at + 1);
     }
 
     /**

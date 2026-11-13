@@ -158,6 +158,39 @@ class DocumentPassagesTest {
         assertThat(last).as("Absätze ohne Grenze").isGreaterThan(60);
     }
 
+    @Test
+    void anotherLimitRecomputesOnlyTheEmbeddings() {
+        Asset asset = stored(Map.of("bericht.html", HTML));
+        documents(20).indexed(list(), asset, extractions);
+        Enrichment passages = processor(results.findDocuments(PAGE), "passages");
+
+        documents(0).indexed(list(), asset, extractions);
+
+        List<Enrichment> found = results.findDocuments(PAGE);
+        assertThat(processor(found, "embedding").payloadJson()).doesNotContain("\"cut\"");
+        assertThat(processor(found, "passages").computedAt()).isEqualTo(passages.computedAt());
+        assertThat(processor(found, "passages").payloadJson()).isEqualTo(passages.payloadJson());
+        int calls = embedded.size();
+        documents(0).indexed(list(), asset, extractions);
+        assertThat(embedded).as("danach aktuell").hasSize(calls);
+    }
+
+    @Test
+    void aLaterApprovalReplacesPassagesByStructure() {
+        released = false;
+        Asset asset = stored(Map.of("bericht.html", HTML));
+        documents(0).indexed(list(), asset, extractions);
+
+        released = true;
+        documents(0).indexed(list(), asset, extractions);
+
+        List<Enrichment> found = results.findDocuments(PAGE);
+        assertThat(found).extracting(Enrichment::processorId)
+                .containsExactlyInAnyOrder("embedding", "passages", "navigation");
+        assertThat(processor(found, "passages").payloadJson()).contains("\"mode\":\"semantic\"");
+        assertThat(processor(found, "navigation").payloadJson()).doesNotContain("source-not-approved");
+    }
+
     private static Enrichment processor(List<Enrichment> found, String id) {
         return found.stream().filter(result -> result.processorId().equals(id)).findFirst().orElseThrow();
     }

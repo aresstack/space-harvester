@@ -176,6 +176,15 @@ public class Enrichments {
     }
 
     /**
+     * Ob ein gespeicherter Stand eines Dokuments neu gerechnet werden muss, obwohl Text und Version gleich sind
+     * ({@link EnrichmentProcessor#outdated}); ein unbekannter Prozessor sagt nein.
+     */
+    public boolean outdated(Enrichment stored) {
+        EnrichmentProcessor processor = processors.get(stored.processorId());
+        return processor != null && processor.outdated(stored);
+    }
+
+    /**
      * Berechnet für einen Abschnitt eines Anhangs oder einer enthaltenen Datei die Ergebnisse, die fehlen oder veraltet
      * sind (ADR 0026, AP9a), im aufrufenden Thread: Der Auftrag der Anreicherung ist hier selbst der Hintergrund. Nur
      * Prozessoren mit {@link EnrichmentProcessor#documents()}, nur solange sie die Seite des Dokuments bearbeiten.
@@ -215,7 +224,8 @@ public class Enrichments {
                 continue;
             }
             Enrichment old = previous.get(processor.id());
-            if (old != null && old.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
+            if (old != null && old.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT
+                    && processor.current(old, text, position)) {
                 current++;
                 continue;
             }

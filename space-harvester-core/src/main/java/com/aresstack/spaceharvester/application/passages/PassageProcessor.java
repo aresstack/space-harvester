@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.passages;
 
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -86,6 +87,20 @@ public class PassageProcessor implements EnrichmentProcessor {
     @Override
     public boolean documents() {
         return true;
+    }
+
+    /**
+     * Absätze eines Dokuments nach Struktur, weil die Quelle nicht freigegeben war, gelten nicht mehr, sobald sie es
+     * ist; bei Seiten erledigt das die Neuberechnung nach der Freigabe.
+     */
+    @Override
+    public boolean outdated(Enrichment stored) {
+        return !stored.document().isPage() && notApproved(stored) && embedding != null
+                && embedding.covers(stored.key().sourceId());
+    }
+
+    static boolean notApproved(Enrichment stored) {
+        return stored.payloadJson().contains("\"reason\":\"" + PassagePayload.REASON_NOT_APPROVED + "\"");
     }
 
     /** Ohne Seite weiß der Prozessor nicht, ob die Quelle freigegeben ist: nur nach Struktur. */

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.enrichment.embedding;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.DocumentPosition;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
@@ -244,6 +245,24 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         String warning = "Grenze für das Embedding-Modell je Dokument erreicht: " + embedded + " von " + length
                 + " Zeichen dieses Abschnitts eingebettet";
         return process(cut(text, embedded), cut, warning);
+    }
+
+    private static final Pattern EMBEDDED_CHARS = Pattern.compile("\"cut\":\\{[^}]*\"embeddedChars\":(\\d+)");
+
+    /**
+     * Ein Stand gilt nur, wenn er so viele Zeichen des Abschnitts eingebettet hat, wie die Grenze an dieser Stelle jetzt
+     * zulässt: eine andere Grenze oder ein kürzerer Abschnitt davor rechnet ihn neu.
+     */
+    @Override
+    public boolean current(Enrichment stored, PageText text, DocumentPosition position) {
+        if (stored.document().isPage()) {
+            return true;
+        }
+        int length = text.text().length();
+        long expected = Math.min(position.embeddingBudget(), length);
+        java.util.regex.Matcher cut = EMBEDDED_CHARS.matcher(stored.payloadJson());
+        long recorded = cut.find() ? Long.parseLong(cut.group(1)) : length;
+        return recorded == expected;
     }
 
     /** Der Anfang {@code [0, chars)} des Textes mit den Abschnitten darin, Stellen unverändert. */
