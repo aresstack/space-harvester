@@ -50,7 +50,7 @@ public class DrawioDiagramRendererTest {
 
         assertTrue(svg, svg.contains("<svg"));
         assertTrue(svg, svg.contains("&lt;&lt;Modul&gt;&gt;"));
-        assertTrue(svg, svg.contains("Alpha Eins"));
+        assertTrue("&nbsp; bleibt ein geschütztes Leerzeichen wie in draw.io", svg.contains("Alpha\u00a0Eins"));
         assertTrue(svg, svg.contains("Beta"));
         assertFalse("keine HTML-Reste in der Beschriftung", svg.contains("div") || svg.contains("&amp;nbsp;"));
         assertTrue("light-dark(): helle Farbe, Batik schreibt rgb()", svg.contains("rgb(51,51,51)"));

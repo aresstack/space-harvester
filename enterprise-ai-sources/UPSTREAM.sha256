@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git b9287767b0eb6be6fef4c069e0a9a96c6c7d0b69
+# upstream https://github.com/aresstack/enterprise-ai-client.git f0681f6fbd19f003d1f770d7621b820802526fea
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -499,7 +499,7 @@ ed6a19139bc7c32dbe98a25bdafcc32d04794c473093b03eb9baddd0acb32b63  src/test/java/
 315f293803152f09aa221a57baf587094a95cbe8b3ba33096e22c08bd9585470  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/ConfluenceRetryTest.java
 348f3310bcde78e9aa40668e601097d47a58adfe5332cac2bba83897bdab72b6  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/ConfluenceStoredContentTest.java
 4bd2df919a06c057740c523ac18912e6162b6cedd2cb70e189476ba4ca3347cd  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/ConfluenceViewImageTest.java
-fba0d7e1d400f80944e13672d424244b648789db1e626326e8ad872eeb2ef7ca  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/DrawioDiagramRendererTest.java
+c36b9c182b1d8497259c8118e7af0e409e171c93fd4fdc3f67f4e6e2ba9eb037  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/DrawioDiagramRendererTest.java
 6142c0d412df03c62684b4d6d84e0d5f614f20190f8442643e504d7bff25f821  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/RecordingSecretProvider.java
 d269e6845e57c7899a8278e57dccdc2ef451c6d3ed449e055ad30b0ca00c1986  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/UrlConnectionConfluenceTransportTest.java
 9565e30e1d1d101c383099d610dfdda82a929b1171f103af40b8bf6e784b1add  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FakeFtpsServer.java
