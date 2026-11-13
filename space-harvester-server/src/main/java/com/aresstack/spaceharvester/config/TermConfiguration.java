@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -148,7 +149,8 @@ class TermConfiguration {
                                       ObjectProvider<SynonymJudgmentModel> model,
                                       ObjectProvider<EmbeddingProcessor> embeddings, LiveConfiguration live,
                                       ObjectProvider<SnapshotRepository> repository,
-                                      ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
+                                      ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences,
+                                      ObjectProvider<AiRelease> release) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -160,8 +162,14 @@ class TermConfiguration {
                 key -> payloads.apply(key).flatMap(projector::project), relations,
                 () -> processor == null ? Optional.empty() : processor.currentProvider(), judge::mayProcess,
                 termsVersion(sentences));
-        return new SynonymDiscovery(catalog, candidates, access, relations, judge, resolutions, jobs,
-                () -> live.current().terms().synonyms(), Clock.systemUTC());
+        SynonymDiscovery discovery = new SynonymDiscovery(catalog, candidates, access, relations, judge, resolutions,
+                jobs, () -> live.current().terms().synonyms(), Clock.systemUTC());
+        // ADR 0028: Textstellen von Seiten auf der Liste freigegebener Seiten gehen auch aus gesperrten Quellen hinaus.
+        AiRelease pages = release.getIfAvailable();
+        if (pages != null) {
+            discovery.pageReleases(pages.pages()::contains);
+        }
+        return discovery;
     }
 
     private static Function<PageKey, Optional<PageSnapshot>> payloads(SnapshotRepository snapshots,

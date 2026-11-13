@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -79,6 +80,23 @@ class ExcerptPriorityTest {
         scored.clear();
         assertThat(priority.prioritize("Urlaub", mixed.subList(0, 2)).order()).containsExactly(0, 1);
         assertThat(scored).isEmpty();
+    }
+
+    @Test
+    void aFollowingPriorityAsksTheListOfReleasedPagesOfTheCurrentOne() {
+        List<KeywordSearch.Hit> mixed = List.of(hit("wiki", "a", "Kantine", "Urlaub"),
+                hit("secret", "s", "Geheimer Plan", "Urlaub"), hit("secret", "t", "Anderer Plan", "Urlaub"));
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(new PageKey("secret", "s")));
+        ExcerptPriority current = new ExcerptPriority((query, documents) -> {
+            scored.add(documents);
+            return new double[] {0.1, 0.9};
+        }, "wiki"::equals).withPageReleases(released::contains);
+        ExcerptPriority following = ExcerptPriority.following(() -> current);
+
+        assertThat(following.prioritize("Urlaub", mixed).order()).containsExactly(1, 0, 2);
+        assertThat(scored).singleElement().satisfies(documents -> assertThat(documents)
+                .containsExactly("Kantine\nUrlaub", "Geheimer Plan\nUrlaub"));
+        assertThat(following.scores("Urlaub", mixed)[2]).isNaN();
     }
 
     private ExcerptPriority scoring(double... scores) {

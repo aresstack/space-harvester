@@ -10,9 +10,9 @@ import java.util.function.Consumer;
 
 /**
  * Die Liste der für die KI freigegebenen Seiten (ADR 0028): Ausnahmen von einer Quelle, die nicht in
- * {@code ai.external-processing-sources} steht. Der Benutzer trägt Seiten durch seine Interaktion mit dem Chat ein; eine
- * Seite der Liste ist für alle KI-Auswertungen freigegeben. {@link #contains} liest nur eine Hash-Menge im Speicher
- * und ist für jede Berechnung billig.
+ * {@code ai.external-processing-sources} steht. Der Benutzer trägt Seiten durch seine Interaktion mit dem Chat ein;
+ * eine Seite der Liste ist für alle KI-Auswertungen freigegeben. {@link #contains} liest nur eine Hash-Menge im
+ * Speicher und ist für jede Berechnung billig.
  *
  * <p>Änderungen meldet die Liste an ihre Beobachter (ADR 0027), nach dem Speichern und außerhalb ihrer Sperre.
  */

@@ -48,6 +48,12 @@ Startabgleich entscheidet je Quelle.
 - Die Prüfung liest bei jedem Aufruf den aktuellen Stand: Ein Eintrag oder ein Entfernen wirkt ab sofort, auch für
   schon eingereihte Berechnungen, ohne Prädikate neu zu bauen.
 - Text des Benutzers (Suchanfrage, Chat-Frage) prüft niemand; er stammt nicht aus einer Quelle.
+- Die Synonymsuche fragt je Fundstelle deren Seite: Textstellen einer Seite der Liste gehen an das Modell (und an das
+  Embedding der Vorauswahl), die übrigen Textstellen derselben Quelle nicht. Ein Paar ohne freigegebene Fundstelle auf
+  einer Seite bleibt übersprungen.
+- Das Auflösen von Abkürzungen und die Glossar-Einordnung behalten die Prüfung je Quelle. Beide laufen als Auftrag
+  über eine ganze Quelle und ersetzen deren Ergebnis als Ganzes; ein Lauf nur über die Seiten der Liste würde die
+  Befunde der übrigen Seiten als fehlend oder veraltet führen. Für sie braucht es weiter die Freigabe der Quelle.
 
 ### 2. Die Liste
 
@@ -74,12 +80,23 @@ Startabgleich entscheidet je Quelle.
 - Je Seite, je Gruppe (Knoten) oder je Space. Entfernt werden die KI-Ergebnisse der Seiten, die danach nicht mehr
   freigegeben sind (eine Seite einer freigegebenen Quelle behält ihre):
   - Embeddings samt Vektoren, Ergebnis und Fakten der Satzanalyse, auch die ihrer Anhänge (ADR 0026);
-  - Absätze und Navigation rechnen nach Struktur neu (`source-not-approved`), die Themenüberschriften entfallen damit;
+  - Absätze und Navigation rechnen nach Struktur neu (`source-not-approved`), die Themenüberschriften entfallen damit,
+    auch die der Anhänge: Ihre Stände mit Modell gelten dann als veraltet und rechnen im selben Hintergrund ohne
+    Modell neu;
   - die Bildbeschreibungen der Seite: ihr Ergebnis `images`, ihr Text im Volltextindex und die gespeicherte
-    Beschreibung selbst, sobald keine freigegebene Seite mehr ein Bild mit demselben SHA-256 trägt.
+    Beschreibung selbst, sobald keine freigegebene Seite mehr ein Bild mit demselben SHA-256 trägt. Verliert die Seite
+    die Freigabe, während das Modell beschreibt, prüft die Beschreibung nach dem Speichern erneut und nimmt zurück,
+    was sie eben ablegte.
   - Reranking speichert nichts; es fragt ab sofort nicht mehr.
 - Derselbe Weg gilt für den Entzug je Quelle: Auch dort entfallen künftig die Bildbeschreibungen. Damit gibt es eine
-  Regel für beide Wege.
+  Regel für beide Wege. Ist nur ein Vision-Modell eingestellt (kein Embedding- und kein Chat-Modell), läuft beim
+  Entzug nur diese Rücknahme.
+- Die Rücknahme der Bildbeschreibungen läuft im gedrosselten Hintergrund der Neuberechnung, je höchstens 100 Seiten,
+  und prüft bei der Ausführung je Seite erneut: Ist sie inzwischen wieder freigegeben, bleibt alles stehen. Eine
+  Beschreibung bleibt gespeichert, solange eine freigegebene Seite irgendeiner Quelle ein Bild mit demselben SHA-256
+  trägt; der Bildanhang bleibt im Volltextindex mit seinem Dateinamen auffindbar.
+- Der Startabgleich nimmt keine Bildbeschreibungen zurück. So bleibt „Nur diese Seite einmalig beschreiben“ (speichert
+  die Beschreibungen, aber keine Freigabe) über Neustarts erhalten.
 
 ### 5. Startabgleich
 

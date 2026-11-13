@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.release;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 
@@ -61,5 +63,13 @@ public final class AiRelease {
     /** Die Liste der freigegebenen Seiten. */
     public PageReleases pages() {
         return pages;
+    }
+
+    /**
+     * Die Seiten dieser Einträge, deren Quelle nicht als Ganzes freigegeben ist: Nur für sie ändert ein Eintragen oder
+     * Entfernen etwas.
+     */
+    public List<PageKey> outsideReleasedSources(Collection<PageReleases.Entry> entries) {
+        return entries.stream().map(PageReleases.Entry::key).filter(key -> !sourceReleased(key.sourceId())).toList();
     }
 }

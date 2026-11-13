@@ -79,7 +79,7 @@ public class PassageProcessor implements EnrichmentProcessor {
      */
     @Override
     public boolean background(PageKey key) {
-        return background() && embedding.covers(key.sourceId());
+        return background() && embedding.covers(key);
     }
 
     /**
@@ -93,12 +93,13 @@ public class PassageProcessor implements EnrichmentProcessor {
 
     /**
      * Absätze eines Dokuments nach Struktur, weil die Quelle nicht freigegeben war, gelten nicht mehr, sobald sie es
-     * ist; bei Seiten erledigt das die Neuberechnung nach der Freigabe.
+     * ist, und umgekehrt Absätze, die mit Modell entstanden, nicht mehr, sobald die Seite ihre Freigabe verlor
+     * (ADR 0028); bei Seiten erledigt das die Neuberechnung nach der Freigabe.
      */
     @Override
     public boolean outdated(Enrichment stored) {
-        return !stored.document().isPage() && notApproved(stored) && embedding != null
-                && embedding.covers(stored.key().sourceId());
+        return !stored.document().isPage() && embedding != null && embedding.available()
+                && notApproved(stored) == embedding.covers(stored.key());
     }
 
     /**
@@ -109,7 +110,7 @@ public class PassageProcessor implements EnrichmentProcessor {
     public EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
         Optional<EmbeddingProcessor.Generation> generation = generation();
         if (position.embeddingBudget() < text.text().length() && generation.isPresent()
-                && embedding.covers(document.page().sourceId())) {
+                && embedding.covers(document.page())) {
             return structure(text, PassagePayload.REASON_EMBEDDING_LIMIT, version(generation.get().modelId()),
                     List.of("Grenze für das Embedding-Modell je Dokument erreicht, Absätze nach Struktur"));
         }
@@ -131,7 +132,7 @@ public class PassageProcessor implements EnrichmentProcessor {
         boolean limited = position.embeddingBudget() < text.text().length();
         boolean recorded = stored.payloadJson().contains("\"reason\":\"" + PassagePayload.REASON_EMBEDDING_LIMIT
                 + "\"");
-        return limited == recorded || generation().isEmpty() || !embedding.covers(stored.key().sourceId());
+        return limited == recorded || generation().isEmpty() || !embedding.covers(stored.key());
     }
 
     static boolean notApproved(Enrichment stored) {
@@ -151,7 +152,7 @@ public class PassageProcessor implements EnrichmentProcessor {
             return structure(text, PassagePayload.REASON_NO_MODEL, version(null), List.of());
         }
         String model = generation.get().modelId();
-        if (!embedding.covers(key.sourceId())) {
+        if (!embedding.covers(key)) {
             return structure(text, PassagePayload.REASON_NOT_APPROVED, version(model), List.of());
         }
         PassageSegmentation.Result result;

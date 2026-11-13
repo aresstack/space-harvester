@@ -121,6 +121,7 @@ import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
@@ -406,6 +407,8 @@ public final class Harvester implements AutoCloseable {
             // ADR 0028: die für die KI freigegebenen Seiten neben dem Cache, als Hash-Menge im Speicher.
             LucenePageReleases pageReleases = LucenePageReleases.open(cacheDirectory.resolve("page-releases"));
             opened.add(pageReleases);
+            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : builder.ai)
+                    .mayProcessExternally(sourceId), pageReleases);
             // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
             SearchRunLog runLog = SearchRunLog.NONE;
             if (builder.searchRuns) {
@@ -444,8 +447,9 @@ public final class Harvester implements AutoCloseable {
             TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
             SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
             if (embedding != null) {
+                // ADR 0028: auch die Seiten der Liste freigegebener Seiten, gefragt bei jeder Seite.
                 embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
-                        sentenceRules)));
+                        sentenceRules))).withPageReleases(pageReleases::contains);
             }
             this.embeddingModel = model;
             if (embedding != null || builder.statements.enabled()) {
@@ -471,8 +475,6 @@ public final class Harvester implements AutoCloseable {
             // Themenabschnitte benennt das Chat-Modell der wirksamen Konfiguration (ChatSectionLabeler), nur für
             // freigegebene Quellen und nur in der Anreicherung.
             AiServiceSettings startAi = builder.ai;
-            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : startAi)
-                    .mayProcessExternally(sourceId), pageReleases);
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
             processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
                     enrichmentStore::find, new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
@@ -492,7 +494,8 @@ public final class Harvester implements AutoCloseable {
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
                 statementsReleased = chats.mayProcessExternally();
-                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased);
+                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats,
+                        statementsReleased, pageReleases::contains);
                 processors.add(statementProcessor);
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
@@ -503,8 +506,9 @@ public final class Harvester implements AutoCloseable {
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
-            // selbst. Schließt vor dem Hintergrund.
-            if (model != null || statementsReleased != null) {
+            // selbst. Schließt vor dem Hintergrund. Auch ohne beide Modelle: Die Rücknahme der Bildbeschreibungen
+            // (ADR 0028) läuft über ihn, auch wenn nur ein Vision-Modell eingestellt ist.
+            {
                 List<String> releaseDependent = new ArrayList<>();
                 if (model != null) {
                     releaseDependent.addAll(List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
@@ -516,8 +520,10 @@ public final class Harvester implements AutoCloseable {
                 // fragt die Freigabe darum selbst.
                 EmbeddingProcessor embeddings = model != null ? embedding : null;
                 Predicate<String> statementsFollow = statementsReleased;
-                Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
-                        || statementsFollow != null && statementsFollow.test(sourceId);
+                AiRelease release = this.aiRelease;
+                Predicate<String> released = embeddings == null && statementsFollow == null ? release::sourceReleased
+                        : sourceId -> embeddings != null && embeddings.covers(sourceId)
+                                || statementsFollow != null && statementsFollow.test(sourceId);
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
@@ -529,9 +535,12 @@ public final class Harvester implements AutoCloseable {
                         () -> embeddings != null && embeddings.available()
                                 || statementsOnStart != null && statementsOnStart.available(),
                         PassagePayload.REASON_NOT_APPROVED);
+                // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
+                // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
+                opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(
+                        release.outsideReleasedSources(change.added()),
+                        release.outsideReleasedSources(change.removed()), cache::find)));
                 this.releaseRecomputation = recomputation;
-            } else {
-                this.releaseRecomputation = null;
             }
             // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
             // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
@@ -617,6 +626,7 @@ public final class Harvester implements AutoCloseable {
                     () -> embeddingForTerms == null ? Optional.empty() : embeddingForTerms.currentProvider(),
                     judge::mayProcess, termProcessor.version()), access, termRelations, judge, synonymCache, jobs,
                     () -> (this.settings != null ? this.settings.terms() : startTerms).synonyms(), clock);
+            synonymDiscovery.pageReleases(pageReleases::contains);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -653,12 +663,14 @@ public final class Harvester implements AutoCloseable {
             SwappableReranker swappable = null;
             if (reranker == SearchReranker.NONE && liveAi) {
                 // ADR 0015: Modell und Option „umordnen“ wechseln zur Laufzeit; ohne beides ordnet nichts um.
-                swappable = new SwappableReranker(modelReranker(settings, catalog, trustBundles, builder.userAgent));
+                swappable = new SwappableReranker(modelReranker(settings, catalog, trustBundles, builder.userAgent,
+                        pageReleases::contains));
                 reranker = swappable;
             } else if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
                 // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
                 reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
-                        builder.userAgent).reranker(), builder.ai::mayProcessExternally);
+                        builder.userAgent).reranker(), builder.ai::mayProcessExternally)
+                        .withPageReleases(pageReleases::contains);
             }
             // #154: mit Cross-Encoder lädt die Schlagwortsuche die vielversprechendsten Funde zuerst; mit
             // Konfiguration folgt die Bewertung dem jeweils eingestellten Rerank-Modell.
@@ -771,6 +783,9 @@ public final class Harvester implements AutoCloseable {
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
             assets.indexedDocuments(documentEnrichments);
             documentEnrichments.assets(assets);
+            // ADR 0028: Bilder einer Seite auf der Liste freigegebener Seiten gehen auch aus einer gesperrten Quelle an
+            // das Vision-Modell.
+            assets.pageReleases(pageReleases::contains);
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);
@@ -788,6 +803,14 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
+            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen,
+            // und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
+            PageImageAnalysis pageImages = this.imageAnalysis;
+            AiRelease withdrawn = this.aiRelease;
+            releaseRecomputation.withdrawal(pages -> {
+                pageImages.withdraw(pages, withdrawn::mayProcess);
+                documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
+            });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.
             KnowledgeGraphStore graphStore = new FileKnowledgeGraphStore(
@@ -953,15 +976,20 @@ public final class Harvester implements AutoCloseable {
         return Optional.of(provider);
     }
 
-    /** Der Cross-Encoder des Dienstes (#181), wenn die Konfiguration umordnen lässt; sonst keiner. */
+    /**
+     * Der Cross-Encoder des Dienstes (#181), wenn die Konfiguration umordnen lässt; sonst keiner.
+     *
+     * @param pageReleased ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028)
+     */
     private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
-                                                TrustBundles trustBundles, String userAgent) {
+                                                TrustBundles trustBundles, String userAgent,
+                                                Predicate<PageKey> pageReleased) {
         if (!configuration.reranking()) {
             return SearchReranker.NONE;
         }
         AiServiceSettings ai = configuration.ai();
         return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trustBundles, userAgent).reranker(),
-                ai::mayProcessExternally);
+                ai::mayProcessExternally).withPageReleases(pageReleased);
     }
 
     /**
@@ -991,7 +1019,7 @@ public final class Harvester implements AutoCloseable {
         SearchReranker reranker = null;
         if (liveReranker != null && change.rerankerChanged()) {
             try {
-                reranker = modelReranker(next, catalog, trustBundles, userAgent);
+                reranker = modelReranker(next, catalog, trustBundles, userAgent, aiRelease.pages()::contains);
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -999,8 +1027,7 @@ public final class Harvester implements AutoCloseable {
         }
         EmbeddingGeneration nextModel = model;
         SearchReranker nextReranker = reranker;
-        ConfigurationListener.Preparation releases = releaseRecomputation == null
-                ? ConfigurationListener.Preparation.NOTHING : releaseRecomputation.prepare(change);
+        ConfigurationListener.Preparation releases = releaseRecomputation.prepare(change);
         return () -> {
             settings = next;
             if (network != null) {

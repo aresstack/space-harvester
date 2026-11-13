@@ -48,6 +48,8 @@ public class PageImageAnalysis {
      */
     public static final String PAGE_CHANGED = "page-changed";
 
+    private static final System.Logger LOG = System.getLogger(PageImageAnalysis.class.getName());
+
     private final Assets assets;
     private final Enrichments enrichments;
     private final Clock clock;
@@ -73,6 +75,18 @@ public class PageImageAnalysis {
     }
 
     /**
+     * Wie {@link #released(String)} für eine Seite: auch eine Seite auf der Liste freigegebener Seiten (ADR 0028) ist
+     * für das Vision-Modell freigegeben.
+     */
+    public boolean released(PageKey key) {
+        return assets.describerInUse().map(model -> mayDescribe(model, key)).orElse(true);
+    }
+
+    private boolean mayDescribe(ImageDescriber model, PageKey key) {
+        return model.mayDescribe(key.sourceId()) || assets.pageReleased(key);
+    }
+
+    /**
      * Die gespeicherten Bilder und Beschreibungen der Seite; beschreibt nichts und fragt die Quelle nicht. Ohne
      * Ergebnis nennt {@link PageImages#reason()}, ob ein Modell oder die Freigabe fehlt. Nennt die zuletzt geladene
      * Lese-Ansicht für einen Bildanhang eine andere Version als beim Beschreiben, ist das Ergebnis
@@ -90,7 +104,7 @@ public class PageImageAnalysis {
             if (model.isEmpty()) {
                 return PageImages.missing(PageImages.VISION_MODEL_MISSING);
             }
-            if (!model.get().mayDescribe(snapshot.key().sourceId())) {
+            if (!mayDescribe(model.get(), snapshot.key())) {
                 return PageImages.missing(PageImages.SOURCE_NOT_RELEASED);
             }
         }
@@ -124,7 +138,7 @@ public class PageImageAnalysis {
         PageKey key = snapshot.key();
         ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
-        if (!releasedOnce && !model.mayDescribe(key.sourceId())) {
+        if (!releasedOnce && !mayDescribe(model, key)) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Quelle nicht für den KI-Dienst freigegeben", null);
         }
@@ -161,7 +175,65 @@ public class PageImageAnalysis {
                 clock.instant());
         enrichments.store().save(result);
         enrichments.flush();
+        // ADR 0028: Verlor die Seite ihre Freigabe, während das Modell beschrieb, ist die Rücknahme womöglich schon
+        // gelaufen und sähe dieses Ergebnis nie. Erst nach dem Speichern geprüft, damit keine Lücke bleibt.
+        if (!releasedOnce && !mayDescribe(model, key)) {
+            withdraw(List.of(snapshot), page -> mayDescribe(model, page));
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Freigabe während der Beschreibung entzogen", null);
+        }
         return PageImages.read(key, enrichments.view(snapshot), text.get());
+    }
+
+    /**
+     * Nimmt die Bildbeschreibungen der Seiten zurück, die jetzt nicht mehr für den KI-Dienst freigegeben sind
+     * (ADR 0028, Abschnitt 4: von der Liste freigegebener Seiten entfernt oder Freigabe der Quelle entzogen): ihr
+     * Ergebnis {@code images}, die Beschreibungstexte ihrer Bildanhänge im Volltextindex und die gespeicherten
+     * Beschreibungen ihrer Bilder, sofern keine freigegebene Seite dieselben Bytes trägt. Seiten, die {@code released}
+     * jetzt zulässt, bleiben unberührt. Fragt weder Quelle noch Modell. Fehler bleiben hier und nennen im Log nur ihre
+     * Klasse.
+     *
+     * @param released ob eine Seite jetzt freigegeben ist, etwa {@code AiRelease::mayProcess}
+     * @return wie viele Seiten ein Ergebnis {@code images} verloren
+     */
+    public int withdraw(java.util.Collection<PageSnapshot> pages, java.util.function.Predicate<PageKey> released) {
+        Objects.requireNonNull(released, "released");
+        Map<PageKey, String> withdrawn = new LinkedHashMap<>();
+        java.util.Set<String> images = new java.util.HashSet<>();
+        int results = 0;
+        try {
+            for (PageSnapshot snapshot : pages) {
+                PageKey key = snapshot.key();
+                if (released.test(key)) {
+                    continue;
+                }
+                withdrawn.put(key, snapshot.metadata().partitionKey());
+                Optional<Enrichment> result = enrichments.store().find(key).stream()
+                        .filter(enrichment -> ImagePayload.PROCESSOR.equals(enrichment.processorId())).findFirst();
+                if (result.isEmpty()) {
+                    continue;
+                }
+                try {
+                    ImagePayload.parse(result.get().payloadJson()).forEach(entry -> {
+                        if (entry.sha256() != null) {
+                            images.add(entry.sha256());
+                        }
+                    });
+                } catch (IllegalArgumentException e) {
+                    // Unlesbar: das Ergebnis fällt trotzdem weg, die Bildanhänge der Seite kennt die Ablage.
+                }
+                enrichments.store().remove(key, ImagePayload.PROCESSOR);
+                results++;
+            }
+            if (results > 0) {
+                enrichments.flush();
+            }
+            assets.withdrawDescriptions(withdrawn, images, released);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Bildbeschreibungen nach Rücknahme der Freigabe nicht vollständig "
+                    + "entfernt ({0})", e.getClass().getName());
+        }
+        return results;
     }
 
     private ImagePayload.Entry describe(int index, PageKey key, String pageVersion, HarvestSource.ViewImage image,

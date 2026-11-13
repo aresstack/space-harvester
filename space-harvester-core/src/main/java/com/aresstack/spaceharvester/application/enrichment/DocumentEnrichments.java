@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -35,6 +36,7 @@ import java.util.Optional;
 import java.util.Set;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -354,6 +356,36 @@ public final class DocumentEnrichments implements IndexedDocuments {
         } finally {
             enrichments.flush();
         }
+    }
+
+    /**
+     * Nach dem Verlust der KI-Freigabe dieser Seiten (ADR 0028, Abschnitt 4; Liste oder Quelle): holt für ihre Anhänge
+     * wie {@link #catchUp} nach, was jetzt nicht mehr gilt, etwa semantische Absätze und Themenüberschriften, die mit
+     * Modell entstanden; ohne Freigabe fragt dabei nichts mehr das Modell. Seiten, die {@code released} jetzt zulässt,
+     * bleiben unberührt. Läuft im aufrufenden Thread, abgeschaltet geschieht nichts. Fehler bleiben hier und nennen im
+     * Log nur Quelle und Klasse.
+     *
+     * @param released ob eine Seite jetzt freigegeben ist, etwa {@code AiRelease::mayProcess}
+     */
+    public void withdrawn(Collection<PageSnapshot> pages, Predicate<PageKey> released) {
+        Objects.requireNonNull(released, "released");
+        Map<String, Map<String, List<String>>> partitions = new LinkedHashMap<>();
+        for (PageSnapshot page : pages) {
+            if (released.test(page.key())) {
+                continue;
+            }
+            partitions.computeIfAbsent(page.key().sourceId(), sourceId -> new LinkedHashMap<>())
+                    .computeIfAbsent(page.metadata().partitionKey(), spaceKey -> new ArrayList<>())
+                    .add(page.key().pageId());
+        }
+        partitions.forEach((sourceId, spaces) -> spaces.forEach((spaceKey, pageIds) -> {
+            try {
+                catchUp(sourceId, spaceKey, pageIds, null);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Analysen der Anhänge nach Rücknahme der Freigabe in {0} nicht "
+                        + "neu gerechnet ({1})", sourceId, e.getClass().getName());
+            }
+        }));
     }
 
     /**

@@ -328,6 +328,18 @@ public class FileSystemAssetStore implements AssetStore {
     }
 
     @Override
+    public void removeDescriptions(String imageSha256) {
+        if (!HEX_SHA.matcher(imageSha256).matches()) {
+            throw new IllegalArgumentException("Ungültiger Hash");
+        }
+        try {
+            deleteTree(root.resolve("descriptions").resolve(imageSha256.substring("sha256:".length())));
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Bildbeschreibungen nicht entfernbar", e);
+        }
+    }
+
+    @Override
     public void putDescription(ImageDescription description) {
         if (!HEX_SHA.matcher(description.imageSha256()).matches()) {
             throw new IllegalArgumentException("Ungültiger Hash");
