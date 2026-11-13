@@ -469,6 +469,10 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   (`PartUnavailableException`): `part-without-hash` (Kennung nach Position, kein vollständiges Original),
   `container-missing` (Original des Behälters nicht mehr in der Ablage), `part-not-found` (kein Teil mit dieser
   Kennung, oder unter den Grenzen nicht lesbar).
+- Viele Originale (Export, Auflage zu AP4c): `DocumentExtractions#copyParts` bzw. `DocumentStructure#copyParts` lesen
+  den Behälter genau einmal und geben jeden verlangten Teil mit Inhaltskennung nacheinander als Strom an einen
+  Abnehmer (aus seiner temporären Datei, die danach wegfällt; nichts im Speicher gesammelt, dieselben Schutzgrenzen);
+  scheitert der Abnehmer, endet der Lauf mit seinem Fehler. `openPart` für einen einzelnen Teil bleibt daneben.
 - Übergang bis AP4: Der Text des Behälters (`AssetText`) ist sein eigener Text, danach der seiner Teile in der
   Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
   über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer

@@ -639,6 +639,11 @@ class ExportPackageImportTest {
         }
 
         @Override
+        public void copyOriginals(DocumentExport.Originals originals) throws IOException {
+            originals.accept(eins, new java.io.ByteArrayInputStream("Anlage eins".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        @Override
         public Optional<InputStream> openOriginal(DocumentExport.Part part) {
             return part == eins ? Optional.of(new java.io.ByteArrayInputStream(
                     "Anlage eins".getBytes(StandardCharsets.UTF_8))) : Optional.empty();

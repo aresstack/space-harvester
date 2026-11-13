@@ -413,6 +413,88 @@ class TikaDocumentPartsTest {
     }
 
     @Test
+    void copyPartsReadsTheContainerExactlyOnceAndDeliversEveryPartWithItsHash() throws IOException {
+        // Auflage zu AP4c: ein Durchlauf je Behälter statt eines erneuten Lesens je Teil.
+        Map<String, byte[]> entries = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < 300; i++) {
+            entries.put("teil-" + i + ".txt", ("Inhalt Nummer " + i).getBytes(StandardCharsets.UTF_8));
+        }
+        entries.put("innen.zip", Archives.zip(Map.of("tief.txt", "Ganz innen".getBytes(StandardCharsets.UTF_8))));
+        Path file = Files.write(directory.resolve("viele.zip"), Archives.zip(entries));
+        Counting counting = new Counting();
+        TikaDocumentStructure counted = new TikaDocumentStructure(1, 64 * 1024, counting);
+        StructuredDocument document = counted.extract(file, "viele.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording(), PartRules.ALL);
+        java.util.Set<PartId.Content> wanted = new java.util.LinkedHashSet<>();
+        document.directory().forEach(entry -> {
+            if (entry.id() instanceof PartId.Content content) {
+                wanted.add(content);
+            }
+        });
+        assertThat(wanted).hasSize(302);
+        counting.roots = 0;
+        Path temp = Path.of(System.getProperty("java.io.tmpdir"));
+        List<Path> before = parts(temp);
+        Map<PartId.Content, String> received = new java.util.LinkedHashMap<>();
+
+        counted.copyParts(file, "viele.zip", Archives.ZIP, ExtractionLimits.DEFAULTS, PartRules.ALL, wanted,
+                (id, in) -> received.put(id, com.aresstack.spaceharvester.application.assets.Assets.sha256(
+                        in.readAllBytes())));
+
+        assertThat(counting.roots).as("Behälter genau einmal gelesen").isEqualTo(1);
+        assertThat(received.keySet()).containsExactlyInAnyOrderElementsOf(wanted);
+        received.forEach((id, sha) -> assertThat(sha).isEqualTo("sha256:" + id.sha256()));
+        assertThat(parts(temp)).containsExactlyInAnyOrderElementsOf(before);
+    }
+
+    @Test
+    void aFailingRecipientEndsTheRunWithItsError() throws IOException {
+        Path file = Files.write(directory.resolve("zwei.zip"), Archives.zip(Map.of(
+                "a.txt", "eins".getBytes(StandardCharsets.UTF_8), "b.txt", "zwei".getBytes(StandardCharsets.UTF_8))));
+        StructuredDocument document = structure.extract(file, "zwei.zip", Archives.ZIP, ExtractionLimits.DEFAULTS,
+                new TikaDocumentStructureTest.Recording(), PartRules.ALL);
+        java.util.Set<PartId.Content> wanted = new java.util.LinkedHashSet<>();
+        document.directory().forEach(entry -> wanted.add((PartId.Content) entry.id()));
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        IOException broken = new IOException("Paket voll");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> structure.copyParts(file, "zwei.zip", Archives.ZIP,
+                ExtractionLimits.DEFAULTS, PartRules.ALL, wanted, (id, in) -> {
+                    calls.incrementAndGet();
+                    throw broken;
+                })).isSameAs(broken);
+        assertThat(calls).hasValue(1);
+    }
+
+    /** Zählt die Läufe über den Behälter: nur der äußerste Aufruf, die Teile liest derselbe Parser darin. */
+    private static final class Counting implements org.apache.tika.parser.Parser {
+
+        private final org.apache.tika.parser.AutoDetectParser tika = new org.apache.tika.parser.AutoDetectParser();
+        private int depth;
+        int roots;
+
+        @Override
+        public java.util.Set<org.apache.tika.mime.MediaType> getSupportedTypes(
+                org.apache.tika.parser.ParseContext context) {
+            return tika.getSupportedTypes(context);
+        }
+
+        @Override
+        public void parse(java.io.InputStream stream, org.xml.sax.ContentHandler handler,
+                          org.apache.tika.metadata.Metadata metadata, org.apache.tika.parser.ParseContext context)
+                throws IOException, org.xml.sax.SAXException, org.apache.tika.exception.TikaException {
+            if (depth++ == 0) {
+                roots++;
+            }
+            try {
+                tika.parse(stream, handler, metadata, context);
+            } finally {
+                depth--;
+            }
+        }
+    }
+
+    @Test
     void openPartReportsFixedCodes() throws Exception {
         byte[] bytes = Corpus.zipInMail().bytes();
         com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore store =

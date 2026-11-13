@@ -57,6 +57,8 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
 
     /** Grenze für {@code manifest.json}, Lese-Ansichten und Texte. */
     static final long MAX_JSON_BYTES = 256L * 1024 * 1024;
+    /** Höchstens so viel Text wird je Anhang eingelesen (eigener Text und Teile zusammen). */
+    static final long MAX_TEXT_BYTES = 256L * 1024 * 1024;
 
     private final JsonMapper json = JsonMapper.builder().build();
     private final long maxPayloadBytes;
@@ -365,18 +367,21 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                     if (paths == null) {
                         return Optional.empty();
                     }
+                    // Der Export schreibt Texte ohne Zeichengrenze; eingelesen wird höchstens MAX_TEXT_BYTES je
+                    // Anhang (eigener Text und Teile zusammen), der Rest bleibt weg, statt das Paket abzulehnen.
                     List<String> texts = new ArrayList<>();
-                    long total = 0;
+                    long budget = MAX_TEXT_BYTES;
                     for (String path : paths) {
-                        if (zip.getEntry(path) == null) {
+                        if (budget <= 0) {
+                            break;
+                        }
+                        ZipEntry file = zip.getEntry(path);
+                        if (file == null || file.isDirectory()) {
                             continue;
                         }
-                        String text = new String(read(path, MAX_JSON_BYTES), StandardCharsets.UTF_8);
-                        total += text.length();
-                        if (total > MAX_JSON_BYTES) {
-                            throw new ExportPackageException(ExportPackageException.DAMAGED,
-                                    "Anhangstexte in attachments.json sind zu groß");
-                        }
+                        byte[] bytes = prefix(file, budget);
+                        budget -= bytes.length;
+                        String text = new String(bytes, StandardCharsets.UTF_8);
                         if (!text.isBlank()) {
                             texts.add(text);
                         }
@@ -430,6 +435,16 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
         }
 
         /** Liest einen Eintrag ganz, höchstens {@code limit} Bytes; mehr ist ein Fehler, nie gekürzt. */
+        /** Die ersten höchstens {@code limit} Bytes einer Datei des Pakets. */
+        private byte[] prefix(ZipEntry entry, long limit) {
+            try (InputStream in = zip.getInputStream(entry)) {
+                return in.readNBytes((int) Math.min(limit, Integer.MAX_VALUE - 8));
+            } catch (IOException e) {
+                throw new ExportPackageException(ExportPackageException.DAMAGED, entry.getName()
+                        + " ist nicht lesbar", e);
+            }
+        }
+
         private byte[] read(String path, long limit) {
             ZipEntry entry = zip.getEntry(path);
             if (entry == null || entry.isDirectory()) {

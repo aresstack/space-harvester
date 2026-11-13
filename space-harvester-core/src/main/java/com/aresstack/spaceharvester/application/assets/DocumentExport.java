@@ -39,6 +39,21 @@ public interface DocumentExport {
     Optional<InputStream> openOriginal(Part part);
 
     /**
+     * Gibt die Originale aller Teile mit Inhaltskennung in einem Durchlauf durch den Behälter nacheinander an
+     * {@code originals} (Auflage zu AP4c): der Behälter wird dafür genau einmal gelesen, nichts im Speicher gesammelt.
+     * Teile, die sich nicht abrufen lassen, kommen nicht vor.
+     *
+     * @throws IOException wenn {@code originals} scheitert
+     */
+    void copyOriginals(Originals originals) throws IOException;
+
+    /** Abnehmer der Originale; der Strom gilt nur während des Aufrufs. */
+    @FunctionalInterface
+    interface Originals {
+        void accept(Part part, InputStream content) throws IOException;
+    }
+
+    /**
      * Status einer Extraktion samt den Versionen, die sie erzeugt haben (ADR 0026, Punkte 7 und 11).
      *
      * @param status    {@link ExtractionStatus#name()}

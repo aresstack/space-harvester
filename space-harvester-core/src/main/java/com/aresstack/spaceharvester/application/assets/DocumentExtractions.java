@@ -128,6 +128,39 @@ public final class DocumentExtractions {
                 null));
     }
 
+    /**
+     * Die Originale der verlangten enthaltenen Dateien in einem Durchlauf durch den abgelegten Behälter (Auflage zu
+     * AP4c): unter denselben Schutzgrenzen wie beim Lesen, jeder Teil als Strom aus einer temporären Datei, die nach
+     * der Übergabe wegfällt. Was sich nicht mehr lesen lässt, wird übergangen.
+     *
+     * @throws PartUnavailableException {@code CONTAINER_MISSING}, wenn der Behälter nicht mehr vorliegt
+     * @throws java.io.IOException      wenn {@code originals} scheitert
+     */
+    public void copyParts(Asset asset, AssetStore store, java.util.Set<PartId.Content> wanted,
+                          DocumentStructure.PartOriginals originals) throws java.io.IOException {
+        if (wanted.isEmpty()) {
+            return;
+        }
+        java.io.IOException[] failure = new java.io.IOException[1];
+        try {
+            withOriginal(asset, store, original -> {
+                try {
+                    structure.copyParts(original, asset.title(), asset.mediaType(), limits,
+                            rules.forContainer(asset.sha256()), wanted, originals);
+                } catch (java.io.IOException e) {
+                    // Fehler des Abnehmers, nicht der Ablage: unverändert an den Aufrufer.
+                    failure[0] = e;
+                }
+                return null;
+            });
+        } catch (AssetStoreException e) {
+            throw new PartUnavailableException(PartUnavailableException.Reason.CONTAINER_MISSING, e);
+        }
+        if (failure[0] != null) {
+            throw failure[0];
+        }
+    }
+
     /** Liest das Original aus der abgelegten Datei oder einer temporären Kopie. */
     private StructuredDocument read(Asset asset, AssetStore store, StructureSink sink) {
         PartRules forAsset = rules.forContainer(asset.sha256());
@@ -290,6 +323,17 @@ public final class DocumentExtractions {
                     return Optional.empty();
                 }
                 return Optional.of(openPart(asset, store, id));
+            }
+
+            @Override
+            public void copyOriginals(Originals originals) throws java.io.IOException {
+                java.util.Map<PartId.Content, Part> wanted = new java.util.LinkedHashMap<>();
+                for (Part part : listed) {
+                    if (part.original() && PartId.parse(part.partId()) instanceof PartId.Content content) {
+                        wanted.put(content, part);
+                    }
+                }
+                copyParts(asset, store, wanted.keySet(), (id, in) -> originals.accept(wanted.get(id), in));
             }
         });
     }

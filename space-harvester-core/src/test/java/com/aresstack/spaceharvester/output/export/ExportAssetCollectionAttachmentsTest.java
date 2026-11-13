@@ -223,6 +223,10 @@ class ExportAssetCollectionAttachmentsTest {
                 .contains("Kühlturm");
         assertThat(result.files.get(first.path("path").asString()))
                 .isEqualTo("Kühlturm prüfen".getBytes(StandardCharsets.UTF_8));
+
+        // Ein Anhang namens „parts“ weicht dem Ordner der Teile aus: Datei und Ordner gleichen Pfads gibt es nicht.
+        assertThat(find(attachments, "parts").path("path").asString()).isEqualTo("attachments/100/parts-2");
+        assertThat(result.files).doesNotContainKey("attachments/100/parts");
     }
 
     @Test
@@ -522,6 +526,9 @@ class ExportAssetCollectionAttachmentsTest {
                 list.add(attachment("d2", "notiz.txt", "text/plain; charset=UTF-8", TXT.length));
                 list.add(attachment("d3", "archiv.zip", "application/zip", ZIP.length));
                 list.add(attachment("d4", "gross.pdf", "application/pdf", BIG.length));
+                if (archive) {
+                    list.add(attachment("d5", "parts", "text/plain", TXT.length));
+                }
             }
             return new PageAttachments(pageId, list, List.of(), "application/json", "test", List.of(),
                     Instant.parse("2026-11-09T01:00:00Z"));

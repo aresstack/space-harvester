@@ -345,19 +345,24 @@ public final class JsonPackageConverter implements ExportConverter {
                 continue;
             }
             structured.put(entry, document.get());
+            // Der Ordner parts gehört den enthaltenen Dateien: ein Anhang namens „parts“ bekommt einen anderen Namen,
+            // sonst wären Datei und Ordner gleichen Pfads im Paket nicht auszupacken.
+            used.add("attachments/" + safeAttachment(entry.pageId()) + "/parts");
             String partsDir = "attachments/" + safeAttachment(entry.pageId()) + "/parts/"
                     + safeAttachment(entry.attachmentId()) + "/";
-            for (var part : document.get().parts()) {
-                if (!part.original()) {
-                    continue;
-                }
-                String path = unique(partsDir + part.fileName() + "." + partExtension(part.mediaType()), used);
-                if (copyOptional(zip, path, document.get(), part)) {
-                    originals.put(entry.attachmentId() + '\u0000' + entry.pageId() + '\u0000' + part.partId(),
-                            path);
-                } else {
-                    used.remove(path);
-                }
+            // Ein Durchlauf je Behälter (Auflage zu AP4c): jeder Teil mit Inhaltskennung geht nacheinander ins Paket.
+            Entry container = entry;
+            try {
+                document.get().copyOriginals((part, content) -> {
+                    String path = unique(partsDir + part.fileName() + "." + partExtension(part.mediaType()), used);
+                    entry(zip, path);
+                    content.transferTo(zip);
+                    zip.closeEntry();
+                    originals.put(container.attachmentId() + '\u0000' + container.pageId() + '\u0000'
+                            + part.partId(), path);
+                });
+            } catch (RuntimeException e) {
+                // Behälter nicht mehr abrufbar (fester Code am Fehler); seine Teile stehen ohne Pfad im Verzeichnis.
             }
         }
         entry(zip, "attachments.json");
@@ -494,31 +499,6 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeStringProperty("version", extraction.version());
         generator.writeStringProperty("model", extraction.model());
         generator.writeEndObject();
-    }
-
-    /** Schreibt das Original eines Teils; {@code false}, wenn es sich nicht abrufen ließ (dann ohne Datei). */
-    private static boolean copyOptional(ZipOutputStream zip, String path,
-                                        com.aresstack.spaceharvester.application.assets.DocumentExport document,
-                                        com.aresstack.spaceharvester.application.assets.DocumentExport.Part part) {
-        InputStream in;
-        try {
-            Optional<InputStream> opened = document.openOriginal(part);
-            if (opened.isEmpty()) {
-                return false;
-            }
-            in = opened.get();
-        } catch (RuntimeException e) {
-            // Teil nicht mehr abrufbar (fester Code am Fehler); er steht ohne Pfad im Verzeichnis.
-            return false;
-        }
-        try (InputStream content = in) {
-            entry(zip, path);
-            content.transferTo(zip);
-            zip.closeEntry();
-            return true;
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
     }
 
     /** Ziel eines Texts im Paket. */
