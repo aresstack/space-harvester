@@ -190,7 +190,10 @@ public final class BackgroundFill implements AutoCloseable {
     private final Map<PageKey, AcquisitionScheduler.Ticket> inFlight = new LinkedHashMap<>();
     private volatile boolean enabled;
     private volatile boolean closed;
-    /** Ob die Anlaufzeit ({@link Timing#initialDelay()}) vorbei ist; vorher weckt {@link #offer} nicht. */
+    /**
+     * Ob die Anlaufzeit ({@link Timing#initialDelay()}) vorbei ist; vorher wecken weder {@link #offer} noch
+     * {@link #wake}.
+     */
     private volatile boolean warmedUp;
     private boolean signalled;
     private boolean rescan;
@@ -343,7 +346,10 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
-    /** Sucht bald wieder im Katalog, etwa nach einem Abgleich oder jedem anderen Commit des Seiten-Cache. */
+    /**
+     * Sucht bald wieder im Katalog, etwa nach einem Abgleich oder jedem anderen Commit des Seiten-Cache; während der
+     * Anlaufzeit erst danach.
+     */
     public void wake() {
         synchronized (monitor) {
             rescan = true;
@@ -454,7 +460,7 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     private void loop() {
-        await(timing.initialDelay());
+        warmUp();
         warmedUp = true;
         while (!closed) {
             try {
@@ -489,6 +495,29 @@ public final class BackgroundFill implements AutoCloseable {
                     rescan = true;
                 }
                 await(timing.idle());
+            }
+        }
+    }
+
+    /**
+     * Die Anlaufzeit ({@link Timing#initialDelay()}): Nur {@link #close()} beendet sie vorzeitig. Ein {@link #wake()}
+     * nach einem Commit des Seiten-Cache, etwa wenn die Titelsuche ihre Funde katalogisiert, merkt nur vor; die Füllung
+     * lädt erst danach und bremst den Start nicht.
+     */
+    private void warmUp() {
+        long deadline = System.nanoTime() + timing.initialDelay().toNanos();
+        synchronized (monitor) {
+            while (!closed) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return;
+                }
+                try {
+                    monitor.wait(Math.max(1, remaining / 1_000_000));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
         }
     }

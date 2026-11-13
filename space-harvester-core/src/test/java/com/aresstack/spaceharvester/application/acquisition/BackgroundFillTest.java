@@ -299,6 +299,25 @@ class BackgroundFillTest {
     }
 
     @Test
+    void aCommitDuringTheStartupDelayDoesNotEndIt() throws Exception {
+        // Die Titelsuche katalogisiert ihre Funde und bietet sie an, solange die Füllung anläuft.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("wiki", "fund", BackgroundFill.Kind.NOT_LOADED)));
+        BackgroundFill fill = new BackgroundFill(scheduler(1), queue, catalog(List.of()), SERVER, eligible::contains,
+                new BackgroundFill.Timing(Duration.ofSeconds(2), Duration.ofHours(1), 1000), true);
+        open.add(fill);
+        fill.start();
+
+        // Der Commit des Seiten-Cache weckt; die Füllung lädt trotzdem erst nach der Anlaufzeit.
+        fill.wake();
+        TimeUnit.MILLISECONDS.sleep(300);
+        assertThat(loaded).isEmpty();
+        assertThat(fill.status().lastScan()).isNull();
+
+        eventually(() -> loaded.contains("fund"));
+    }
+
+    @Test
     void aFailedPageComesBackOnceItsWaitIsOverWithoutAnyOtherEvent() throws Exception {
         failing.add("new-1");
         BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), catalog(GAPS),
