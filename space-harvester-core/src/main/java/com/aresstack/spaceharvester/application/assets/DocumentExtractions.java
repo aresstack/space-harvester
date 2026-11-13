@@ -237,7 +237,7 @@ public final class DocumentExtractions {
     }
 
     /** Reiner Text eines Blocks; Tabellenzellen je Zeile mit Tabulator. */
-    static String plain(Block block) {
+    public static String plain(Block block) {
         return switch (block) {
             case Block.Heading heading -> heading.text();
             case Block.Paragraph paragraph -> paragraph.text();
