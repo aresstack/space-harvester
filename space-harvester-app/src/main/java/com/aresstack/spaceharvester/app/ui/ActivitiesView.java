@@ -631,8 +631,11 @@ public final class ActivitiesView implements View {
                 .add(counters.discovered(), String.valueOf(p.discovered()))
                 .add(counters.processed(), String.valueOf(p.processed()))
                 .add(counters.written(), String.valueOf(p.written()))
-                .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK)
-                .add("Auftrags-ID", status.id());
+                .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK);
+        if (skipped(status) > 0) {
+            facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
+        }
+        facts.add("Auftrags-ID", status.id());
         if (status.error() != null) {
             facts.add("Fehler", status.error().code() + ": " + status.error().message(), Comic.RED);
         }
@@ -949,8 +952,13 @@ public final class ActivitiesView implements View {
         if (media.signInRequired() > 0) {
             parts.add(media.signInRequired() + " Anmeldung erforderlich");
         }
+        // Bewusst Ausgelassenes getrennt nach Grund, damit es nicht wie ein Fehler wirkt (Angelo, 13.11.2026).
         if (media.redundant() > 0) {
-            parts.add(media.redundant() + " bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+            parts.add(media.redundant() + (media.redundant() == 1 ? " Diagramm-Vorschau" : " Diagramm-Vorschauen")
+                    + " nicht verwendet (aus Quelle gezeichnet)");
+        }
+        if (media.excluded() > 0) {
+            parts.add(media.excluded() + " nach Einstellung ausgelassen");
         }
         return parts.isEmpty() ? "keine" : String.join(" · ", parts);
     }
@@ -1146,13 +1154,15 @@ public final class ActivitiesView implements View {
         JobProgress p = job.progress();
         String eta = remaining == null ? null : remainingText(remaining);
         Counters counters = Counters.of(job.type());
+        long skipped = skipped(job);
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
+                        + (skipped > 0 ? " · " + skipped + " bewusst ausgelassen" : "")
                         + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "")
                         + (eta == null ? "" : " · noch " + eta.replace("≈ ", "etwa ").replace("< 1 min", "unter einer Minute"));
         List<RowActions.Action> slots = new ArrayList<>();
         slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
-                p.processed(), p.failed(), eta), tip, true, () -> { }));
+                p.processed(), p.failed(), skipped, eta), tip, true, () -> { }));
         for (int i = 1; i < FORMATS.size(); i++) {
             slots.add(RowActions.EMPTY);
         }
@@ -1163,10 +1173,20 @@ public final class ActivitiesView implements View {
      * Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende, in der Mitte die geschätzte
      * Restzeit ({@code label}, sonst leer). Die Schrift ist auf der Füllung hell, auf der leeren Spur dunkel.
      */
-    record ProgressIcon(int width, long total, long done, long failed, String label) implements javax.swing.Icon {
+    /**
+     * Der Balken einer Zeile: Petrol für Abgelegtes, davor Gelb für bewusst Ausgelassenes (Diagramm-Vorschauen, nach
+     * Einstellung ausgelassene Anhänge), am Ende Rot nur für Fehler und fehlenden Zugriff (Angelo, 13.11.2026: „sonst
+     * denkt der User, alles, was rot ist, ist ein Fehler“).
+     */
+    record ProgressIcon(int width, long total, long done, long failed, long skipped, String label)
+            implements javax.swing.Icon {
 
         ProgressIcon(int width, long total, long done, long failed) {
-            this(width, total, done, failed, null);
+            this(width, total, done, failed, 0, null);
+        }
+
+        ProgressIcon(int width, long total, long done, long failed, String label) {
+            this(width, total, done, failed, 0, label);
         }
 
         @Override
@@ -1183,8 +1203,14 @@ public final class ActivitiesView implements View {
                 if (total > 0) {
                     filled = (int) Math.round(width * Math.min(1.0, (double) done / total));
                     int bad = Math.min(filled, (int) Math.round(width * Math.min(1.0, (double) failed / total)));
+                    int left = Math.min(filled - bad, (int) Math.round(width * Math.min(1.0,
+                            (double) skipped / total)));
                     g.setColor(Comic.PETROL);
                     g.fillRoundRect(x, y, filled, h, h, h);
+                    if (left > 0) {
+                        g.setColor(Comic.YELLOW);
+                        g.fillRoundRect(x + filled - bad - left, y, left, h, h, h);
+                    }
                     if (bad > 0) {
                         g.setColor(Comic.RED);
                         g.fillRoundRect(x + filled - bad, y, bad, h, h, h);
@@ -1425,7 +1451,22 @@ public final class ActivitiesView implements View {
         JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
         long done = status.type() == JobType.EXPORT && !fetching ? p.written() : p.processed();
-        return done + "/" + p.discovered() + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
+        long skipped = skipped(status);
+        return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
+                + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
+    }
+
+    /**
+     * Bewusst Ausgelassenes eines Bilder- oder Anhänge-Auftrags: geprüft, aber weder abgelegt noch fehlgeschlagen
+     * (Diagramm-Vorschauen zu gezeichneten draw.io-Quellen, Anhänge außerhalb der Export-Einstellungen). Andere Arten
+     * zählen so nicht; dort bleibt es 0.
+     */
+    static long skipped(JobStatus status) {
+        if (status.type() != JobType.ASSETS && status.type() != JobType.ATTACHMENTS) {
+            return 0;
+        }
+        JobProgress p = status.progress();
+        return Math.max(0, p.processed() - p.written() - p.failed());
     }
 
     /** Was die vier Zähler je Auftragsart bedeuten. */
