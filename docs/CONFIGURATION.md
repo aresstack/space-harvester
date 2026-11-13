@@ -210,6 +210,33 @@ Alle vier wirken nur beim Start. In der Bibliothek entsprechen ihnen `Harvester.
 (Standard `0`, ohne Grenze), `.largeAssetThresholdBytes(…)` (20 MiB) und `.maxConcurrentLargeAssets(…)` (2); die
 Wartezeit ist dort fest 30 s.
 
+Schutzgrenzen beim Lesen von Dokumenten (ADR 0026, Punkt 8) unter `space-harvester.assets.extraction`; `0` heißt ohne
+Grenze, nicht genannte Schlüssel behalten den Standard. Gleich in Dienst und App, in der Bibliothek
+`Harvester.builder().extractionLimits(…)`; Codes und Schranken je Format in [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md).
+Die Grenzen wirken beim Lesen: Bereits gelesene Dokumente behalten ihr Ergebnis, bis das Neulesen abgelegter Originale
+(eigener Auftrag, ADR 0026 Punkt 11) sie neu liest. Grenzen für enthaltene Dateien (Tiefe, Anzahl, Auspack-Verhältnis)
+kommen mit deren Umsetzung dazu.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `max-file-size` | `0` | Größte Datei, die gelesen wird (`too-large`, `EXCLUDED`) |
+| `max-chars` | `0` | Zeichen je Dokument, darüber gekürzt (`too-large`) |
+| `text-ratio` / `text-ratio-from-chars` | `100` / `1000000` | Zeichen zu Dateigröße, geprüft ab so vielen Zeichen (`text-ratio-exceeded`) |
+| `idle-timeout` / `total-timeout` | `30s` / `30m` | Laufzeit ohne Fortschritt / insgesamt je Dokument (`timeout`) |
+| `temp-space-reserve` | `1GB` | Freier Platz für temporäre Dateien (`temp-space-low`) |
+| `parallel` | `2` | Gleichzeitige Läufe |
+| `memory-limits` | `*`: `20MB`; PDF, `.docx`, `.xlsx`: `0` | Liste aus `type` (Medientyp oder `*`) und `limit`; Einträge ersetzen nur den genannten Typ (`memory-limit`, `EXCLUDED`) |
+
+```yaml
+space-harvester:
+  assets:
+    extraction:
+      total-timeout: 1h
+      memory-limits:
+        - type: "*"
+          limit: 40MB
+```
+
 - **Heap:** Die Größe einer Datei bestimmt den Heap nicht mehr, nur die Grenzen im Speicher: Mit 2 gleichzeitigen
   großen Dateien bis 100 MiB mindestens 512 MiB Heap einplanen (`-Xmx512m`, besser mehr bei vielen gleichzeitigen
   Nutzern); die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).

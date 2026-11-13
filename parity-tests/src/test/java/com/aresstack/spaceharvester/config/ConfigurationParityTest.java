@@ -75,6 +75,21 @@ class ConfigurationParityTest {
                   pause-after-failures: 7
                   resume-initial-delay: 5s
                   resume-max-delay: 2m
+              assets:
+                extraction:
+                  max-file-size: 2GB
+                  max-chars: 5000000
+                  text-ratio: 50
+                  text-ratio-from-chars: 2000000
+                  idle-timeout: 45s
+                  total-timeout: 1h
+                  temp-space-reserve: 512MB
+                  parallel: 3
+                  memory-limits:
+                    - type: "*"
+                      limit: 40MB
+                    - type: message/rfc822
+                      limit: 0
               terms:
                 synonyms:
                   max-terms: 300
@@ -142,6 +157,19 @@ class ConfigurationParityTest {
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+
+        // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
+        com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder
+                .bind("space-harvester.assets.extraction", ExtractionProperties.class).get().toLimits();
+        assertThat(app.storage().extraction()).isEqualTo(extraction);
+        assertThat(extraction.maxFileBytes()).isEqualTo(2L * 1024 * 1024 * 1024);
+        assertThat(extraction.maxChars()).isEqualTo(5_000_000);
+        assertThat(extraction.parallel()).isEqualTo(3);
+        assertThat(extraction.idleTimeout()).isEqualTo(java.time.Duration.ofSeconds(45));
+        assertThat(extraction.unpackRatio()).isEqualTo(100);
+        assertThat(extraction.memoryLimit("application/zip")).isEqualTo(40L * 1024 * 1024);
+        assertThat(extraction.memoryLimit("message/rfc822")).isZero();
+        assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
 
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);

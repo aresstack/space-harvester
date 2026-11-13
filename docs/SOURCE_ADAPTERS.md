@@ -413,7 +413,7 @@ Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung 
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
-Schranke `memory-limit` (`ExtractionLimits.memoryLimits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
+Schranke `memory-limit` (`space-harvester.assets.extraction.memory-limits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
 gelesen, deren Lesen die Testgruppe `largeFileTest` (eigene JVM mit 256 MiB Heap) als speicherunabhängig nachweist.
 Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 
