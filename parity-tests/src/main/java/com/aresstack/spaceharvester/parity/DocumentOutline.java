@@ -16,8 +16,8 @@ import java.util.Set;
  * @param updateFieldsOnOpen DOCX: Word aktualisiert Felder beim Öffnen ({@code w:updateFields})
  * @param pageNumbers        Seitenzahlen im Dokument (DOCX: PAGE-Feld; PDF: Zahl auf den meisten Seiten)
  * @param outlineEntries     PDF-Lesezeichen insgesamt
- * @param images             eingebettete Bilder (DOCX {@code w:drawing}, PDF-Bild-XObjects, Markdown {@code data:} oder
- *                           lokale Datei)
+ * @param images             eingebettete Bilder (DOCX {@code w:drawing}, PDF-Bild-XObjects, Markdown {@code data:},
+ *                           lokale Datei oder Codeblock {@code drawio})
  * @param imageNotes         sichtbare Hinweise auf nicht eingebettete Bilder ({@code [Bild: …]},
  *                           „Abbildung nicht verfügbar“, {@code attachment:}-Verweise)
  * @param tables             Tabellen; {@code null}, wenn das Format sie nicht erkennbar macht (PDF)

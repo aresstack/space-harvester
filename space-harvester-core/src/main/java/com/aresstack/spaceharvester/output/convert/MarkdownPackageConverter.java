@@ -32,17 +32,18 @@ import java.util.zip.ZipOutputStream;
  *
  * <pre>
  * pages.md                       alle Seiten, Bilder als ![Titel](assets/&lt;sha256&gt;.png)
- * assets/&lt;sha256&gt;.png            jede Abbildung einmal: Bilder, gezeichnete draw.io- und Mermaid-Diagramme
+ * assets/&lt;sha256&gt;.png            jede Abbildung einmal: Bilder und gezeichnete Mermaid-Diagramme
  * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;  das Original des Anhangs, verlinkt als [Titel](attachments/…)
  * </pre>
  *
  * Der Dateiname ist die Prüfsumme der PNG-Datei; dieselbe Abbildung auf mehreren Seiten liegt einmal im Paket.
- * Mermaid bleibt darüber als Codeblock mit seinem Quelltext. Deterministisch: feste Zeitstempel, Reihenfolge des Textes.
+ * Mermaid bleibt darüber als Codeblock mit seinem Quelltext; draw.io steht nur als Codeblock {@code ```drawio} mit
+ * seinem XML im Text (gezeichnet nur ohne lesbare Quelldaten). Deterministisch: feste Zeitstempel, Reihenfolge des Textes.
  */
 public final class MarkdownPackageConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown-package";
-    public static final String VERSION = "markdown-package/2";
+    public static final String VERSION = "markdown-package/3";
     private static final LocalDateTime ZIP_TIME = LocalDateTime.of(1980, 1, 1, 0, 0);
 
     @Override

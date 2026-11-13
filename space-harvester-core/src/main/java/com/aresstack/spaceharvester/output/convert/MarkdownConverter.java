@@ -38,7 +38,9 @@ import java.util.regex.Pattern;
  * Exports zeigen auf deren Sprungmarke.
  *
  * <p>Bilder, die der Datenbestand abgelegt hat, stehen als {@code data:}-URI im Text; Mermaid als Codeblock mit seiner
- * Textquelle und darunter als gezeichnetes Bild; draw.io-Diagramme gezeichnet aus ihren abgelegten Quelldaten. Formatverluste: nicht abgelegte Bilder erscheinen als „Abbildung
+ * Textquelle und darunter als gezeichnetes Bild; draw.io-Diagramme als Codeblock {@code ```drawio} mit dem XML ihrer
+ * abgelegten Quelldaten (Textform vor Bild, ADR 0012; Betrachter mit draw.io-Viewer zeichnen ihn), ohne lesbare
+ * Quelldaten wie in Word und PDF als Bild. Formatverluste: nicht abgelegte Bilder erscheinen als „Abbildung
  * nicht verfügbar“ mit Grund, externe zusätzlich mit ihrer Adresse; Gliffy-Diagramme
  * erscheinen als Hinweis mit ihrem Namen, PlantUML als Codeblock mit seiner Textquelle; Infokästen werden
  * Zitatblöcke; Zellen mit Listen oder mehreren Absätzen werden einzeilig; Farben, Ausrichtung und verbundene Zellen
@@ -47,7 +49,7 @@ import java.util.regex.Pattern;
 public final class MarkdownConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown";
-    public static final String VERSION = "markdown/7";
+    public static final String VERSION = "markdown/8";
 
     /** Zeichen am Zeilenanfang, die Markdown sonst als Überschrift, Liste oder Trennlinie läse. */
     private static final Pattern LINE_START = Pattern.compile("^(\\s*\\d*)([#=+-]|(?<=\\d)[.)])");
@@ -116,7 +118,7 @@ public final class MarkdownConverter implements ExportConverter {
         try {
             input.forEachPage(page -> {
                 try {
-                    ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
+                    ExportChapters.Figures figures = ExportChapters.markdownFigures(page, parser, input);
                     figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
                             layout.text(input, page, attachments == null ? figures.markdown()

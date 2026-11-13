@@ -226,7 +226,47 @@ class ExportImagesTest {
                 .contains("*[Abbildung nicht verfügbar: Geheim]*")
                 .contains("*\\[Abbildung nicht verfügbar: Zähler\\]* ([Adresse](" + UNKNOWN + "))")
                 .doesNotContain("attachment:", "drawio:", "](" + EXTERNAL + ")", "Seitenanhang");
-        assertThat(markdown.split("!\\[Diagramm \\(draw.io\\)", -1)).hasSize(4);
+        // draw.io mit lesbaren Quelldaten (ablauf, fremd): Codeblock mit dem XML statt Bild (ADR 0012, Textform vor
+        // Bild); „kaputt“ hat keine lesbaren Quelldaten und bleibt die abgelegte Vorschau des Plugins
+        String block = "```drawio\n" + new String(MXFILE, StandardCharsets.UTF_8) + "\n```";
+        assertThat(markdown.split(java.util.regex.Pattern.quote(block), -1)).hasSize(3);
+        assertThat(markdown.split("!\\[Diagramm \\(draw.io\\)", -1)).hasSize(2);
+        assertThat(markdown).contains("![Diagramm (draw.io) „kaputt“](data:image/png;base64,");
+    }
+
+    @Test
+    void drawioSourceBlocksKeepQuotesAndFallBackInsideALine() {
+        ExportAssets stored = new Stored();
+        String quoted = ExportChapters.drawioSources("> **Hinweis**\n>\n> ![Diagramm (draw.io) „ablauf“](drawio:ablauf)\n",
+                "100", stored);
+        assertThat(quoted).startsWith("> **Hinweis**\n>\n> ```drawio\n> <mxfile>").endsWith("</mxfile>\n> ```\n");
+        String inTable = "| a | ![Diagramm (draw.io) „ablauf“](drawio:ablauf) |\n";
+        assertThat(ExportChapters.drawioSources(inTable, "100", stored)).isEqualTo(inTable);
+        String unreadable = "![Diagramm (draw.io) „kaputt“](drawio:kaputt)";
+        assertThat(ExportChapters.drawioSources(unreadable, "100", stored)).isEqualTo(unreadable);
+        assertThat(ExportChapters.drawioSources("![Diagramm (draw.io) „fremd“](drawio:200/fremd)", "100", stored))
+                .startsWith("```drawio\n<mxfile>");
+        String example = "```\n![Diagramm (draw.io) „ablauf“](drawio:ablauf)\n```\n";
+        assertThat(ExportChapters.drawioSources(example, "100", stored)).isEqualTo(example);
+    }
+
+    @Test
+    void diagramXmlIsRecognisedByItsRoot() {
+        assertThat(ExportChapters.isDiagramXml("<?xml version=\"1.0\"?>\n<!-- x --><mxfile host=\"a\"/>")).isTrue();
+        assertThat(ExportChapters.isDiagramXml("<mxGraphModel><root/></mxGraphModel>")).isTrue();
+        assertThat(ExportChapters.isDiagramXml("<mxfileX/>")).isFalse();
+        assertThat(ExportChapters.isDiagramXml("kein Diagramm")).isFalse();
+        assertThat(ExportChapters.isDiagramXml("<?xml version=\"1.0\"")).isFalse();
+        // abgeschnitten oder kaputt: die Abbildung (Vorschau) bleibt
+        assertThat(ExportChapters.isDiagramXml("<mxfile><diagram>")).isFalse();
+        assertThat(ExportChapters.isDiagramXml("<!DOCTYPE mxfile [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><mxfile>&x;</mxfile>"))
+                .isFalse();
+    }
+
+    @Test
+    void theFenceIsLongerThanBackticksInTheDiagram() {
+        assertThat(ExportChapters.fenced("", "drawio", "<mxfile value=\"````\"/>"))
+                .isEqualTo("`````drawio\n<mxfile value=\"````\"/>\n`````");
     }
 
     @Test
