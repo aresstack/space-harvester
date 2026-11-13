@@ -4,6 +4,8 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
@@ -20,6 +22,9 @@ import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -119,6 +124,36 @@ class ExportFromHoldingsTest {
                 page("confluence", "DEV", "3", "1"), page("confluence", "DEV", "4", "2"));
     }
 
+    /** Ein Format, das nur die Zahl der Seiten schreibt. */
+    private static ExportConverter markdown() {
+        return new ExportConverter() {
+            @Override
+            public String format() {
+                return "md";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public String mediaType() {
+                return "text/markdown";
+            }
+
+            @Override
+            public String fileName() {
+                return "pages.md";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) throws IOException {
+                out.write(String.valueOf(input.headers().size()).getBytes(StandardCharsets.UTF_8));
+            }
+        };
+    }
+
     private static HoldingsCatalog.CatalogPage local(String pageId, String parentPageId) {
         return new HoldingsCatalog.CatalogPage(pageId, parentPageId, true, "3", "3");
     }
@@ -211,6 +246,33 @@ class ExportFromHoldingsTest {
         exports.retryFailed(id, "client-a", request -> request);
 
         assertThat(jobs.status(id).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(provisioned).isEmpty();
+    }
+
+    @Test
+    void anUnchangedOutputIsReusedAndAChangeOrOtherFormatsMakeANewOne() {
+        cache.publish("confluence", "DEV", new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null), stored());
+        stock = new HoldingsCatalog.Stock(new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null),
+                List.of(local("1", null), local("2", "1"), local("3", "1"), local("4", "2")), Set.of(), List.of());
+        Exports exports = new Exports(jobs, cache, writer, new ExportConverters(List.of(markdown()), 1 << 20),
+                provisioning, holdings, clock);
+
+        String first = exports.startFromHoldings(fromHoldings().withRoot("2")).id();
+        assertThat(exports.startFromHoldings(fromHoldings().withRoot("2")).id()).isEqualTo(first);
+        // Ein Stand außerhalb des Teilbaums ändert an dieser Ausgabe nichts.
+        stock = new HoldingsCatalog.Stock(stock.generation(), List.of(local("1", null), local("2", "1"),
+                new HoldingsCatalog.CatalogPage("3", "1", true, "5", "3"), local("4", "2")), Set.of(), List.of());
+        assertThat(exports.startFromHoldings(fromHoldings().withRoot("2")).id()).isEqualTo(first);
+
+        assertThat(exports.startFromHoldings(fromHoldings().withRoot("2").withDepth(0)).id()).isNotEqualTo(first);
+        assertThat(exports.startFromHoldings(ExportRequest.fromHoldings("confluence", "DEV", "client-a",
+                List.of("md")).withRoot("2")).id()).isNotEqualTo(first);
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isNotEqualTo(first);
+        stock = new HoldingsCatalog.Stock(stock.generation(), List.of(local("1", null), local("2", "1"),
+                stock.pages().get(2), new HoldingsCatalog.CatalogPage("4", "2", true, "4", "3")), Set.of(), List.of());
+        String changed = exports.startFromHoldings(fromHoldings().withRoot("2")).id();
+        assertThat(changed).isNotEqualTo(first);
+        assertThat(exports.startFromHoldings(fromHoldings().withRoot("2")).id()).isEqualTo(changed);
         assertThat(provisioned).isEmpty();
     }
 

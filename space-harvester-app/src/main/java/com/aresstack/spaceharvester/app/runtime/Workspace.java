@@ -903,9 +903,11 @@ public final class Workspace {
      * ({@code Holdings.outputs}), der nur den Seiten-Cache liest, nie die Quelle; braucht je Space export und content,
      * geprüft vor dem ersten Auftrag. Gespeicherte Seiten kommen mit, veraltete im gespeicherten Stand; nur aus dem
      * Katalog bekannte fehlen und stehen mit ihrer Zahl in den Warnungen des Ergebnisses. Artefakt, Dateien, Formate
-     * und Folgeaufträge wie bei {@link #startExport(String, String, List)}.
+     * und Folgeaufträge wie bei {@link #startExport(String, String, List)}. Haben die Seiten einer Ausgabe denselben
+     * Stand wie bei einer fertigen mit gleichem Umfang und gleichen Formaten, kommt deren Auftrag zurück, ohne neuen Lauf
+     * ({@code Exports.startFromHoldings}).
      *
-     * @return die angenommenen Aufträge, erst ganze Spaces, dann Teilbäume
+     * @return die Aufträge, erst ganze Spaces, dann Teilbäume; ein wiederverwendeter ist schon beendet
      */
     public List<JobStatus> startExportFromHoldings(
             com.aresstack.spaceharvester.application.holdings.Selection selection, List<String> formats) {
@@ -914,8 +916,8 @@ public final class Workspace {
         outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
         List<JobStatus> started = new ArrayList<>(outputs.size());
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
-            JobStatus status = harvester.exports().start(ExportRequest.fromHoldings(root.sourceId(), root.spaceKey(),
-                    Harvester.OWNER, formats).withRoot(root.pageId()));
+            JobStatus status = harvester.exports().startFromHoldings(ExportRequest.fromHoldings(root.sourceId(),
+                    root.spaceKey(), Harvester.OWNER, formats).withRoot(root.pageId()));
             activities.remember(status.id());
             started.add(status);
         }

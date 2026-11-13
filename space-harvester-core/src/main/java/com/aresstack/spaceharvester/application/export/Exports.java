@@ -207,11 +207,100 @@ public class Exports {
      */
     public JobStatus start(ExportRequest request) {
         Objects.requireNonNull(request, "request");
+        return start(request, null);
+    }
+
+    /**
+     * Startet eine Ausgabe aus dem Bestand oder gibt eine fertige zurück (ADR 0029): Das Artefakt eines beendeten
+     * Auftrags desselben Auftraggebers wird wiederverwendet, wenn Quelle, Space, Startseite, Tiefe und Formate gleich
+     * sind und die Seiten im Bestand denselben Stand haben wie bei seinem Start (Kopfdaten-Version, gespeicherte
+     * Version, Elternseite, gesperrt oder veraltet). Sonst wie {@link #start(ExportRequest)}.
+     *
+     * @throws IllegalArgumentException wenn {@code request} keine Ausgabe aus dem Bestand ist
+     * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format
+     */
+    public JobStatus startFromHoldings(ExportRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (!request.holdingsOnly()) {
+            throw new IllegalArgumentException("Nur eine Ausgabe aus dem Bestand wird wiederverwendet");
+        }
+        converters.select(request.formats());
+        String state = holdingsState(request);
+        if (state != null) {
+            for (JobStatus job : jobs.list(request.owner(), JobType.EXPORT)) {
+                if (job.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
+                        && state.equals(job.parameter(HOLDINGS_STATE)) && sameOutput(job, request)
+                        && writer.find(job.id()).isPresent()) {
+                    return job;
+                }
+            }
+        }
+        return start(request, state);
+    }
+
+    /** Ob ein beendeter Auftrag dieselbe Ausgabe aus dem Bestand ist: gleicher Umfang, gleiche Formate. */
+    private static boolean sameOutput(JobStatus job, ExportRequest request) {
+        if (!job.sourceId().equals(request.sourceId()) || !request.spaceKey().equals(job.partitionKey())) {
+            return false;
+        }
+        ExportRequest previous = request(job);
+        return previous.holdingsOnly() && Objects.equals(previous.rootPageId(), request.rootPageId())
+                && Objects.equals(previous.depth(), request.depth())
+                && Set.copyOf(previous.formats()).equals(Set.copyOf(request.formats()));
+    }
+
+    /**
+     * Fingerabdruck des Stands der Seiten einer Ausgabe aus dem Bestand: je Seite des Umfangs Elternseite, ob und in
+     * welcher Version ihr Inhalt gespeichert ist, die Version der Kopfdaten und ob sie veraltet ist, dazu gesperrte
+     * Seiten. {@code null}, wenn der Bestand den Space nicht kennt; dann wird nichts wiederverwendet.
+     */
+    private String holdingsState(ExportRequest request) {
+        Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
+        if (found.isEmpty()) {
+            return null;
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, String> parents = new HashMap<>();
+        stock.pages().forEach(page -> parents.put(page.pageId(), page.parentPageId()));
+        stock.locked().forEach(page -> parents.putIfAbsent(page.pageId(), page.parentPageId()));
+        Set<String> scope = request.rootPageId() == null ? parents.keySet()
+                : subtreeOf(parents, request.rootPageId(), request.depth());
+        java.util.TreeMap<String, String> entries = new java.util.TreeMap<>();
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            if (scope.contains(page.pageId())) {
+                entries.put(page.pageId(), page.parentPageId() + "\u0000" + page.loaded() + "\u0000" + page.version()
+                        + "\u0000" + page.loadedVersion() + "\u0000" + stock.stale().contains(page.pageId()));
+            }
+        }
+        for (HoldingsCatalog.LockedPage page : stock.locked()) {
+            if (scope.contains(page.pageId())) {
+                entries.putIfAbsent(page.pageId(), page.parentPageId() + "\u0000locked");
+            }
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            entries.forEach((pageId, entry) -> {
+                digest.update(pageId.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 1);
+                digest.update(entry.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 2);
+            });
+            return HexFormat.of().formatHex(digest.digest(), 0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+    }
+
+    /** @param holdingsState Fingerabdruck des Stands einer Ausgabe aus dem Bestand oder {@code null} */
+    private JobStatus start(ExportRequest request, String holdingsState) {
         List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
         java.util.function.Consumer<JobStatus> announce = submitted;
         Map<String, String> parameters = parameters(request);
+        if (holdingsState != null) {
+            parameters.put(HOLDINGS_STATE, holdingsState);
+        }
         if (announce == null) {
             return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
                     request.owner(), parameters, new ExportTask(request, selected));
@@ -252,6 +341,8 @@ public class Exports {
     static final String FORMATS = "formats";
     /** Angabe am Auftrag: Ausgabe aus dem Bestand ({@link ExportRequest#holdingsOnly()}), nur der Cache. */
     public static final String HOLDINGS = "holdings";
+    /** Angabe an einer Ausgabe aus dem Bestand: Fingerabdruck des Stands ihrer Seiten beim Start. */
+    static final String HOLDINGS_STATE = "holdings-state";
 
     /** Was ein Wiederanlauf braucht, um denselben Umfang zu bearbeiten ({@link JobStatus#parameters()}). */
     static Map<String, String> parameters(ExportRequest request) {

@@ -78,7 +78,10 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   kennen genau eine Startseite. Ein Teilbaum in einem gewählten Space oder unter einem anderen gewählten Teilbaum
   fällt weg, weil er schon in dessen Ausgabe steckt; eine Quelle steht für ihre sichtbaren Spaces im Bestand. Die
   Konverter lesen wie heute aus dem Cache; „einmal beschaffen, beliebig konvertieren“ bleibt.
-- Ein vorhandenes Artefakt wird wiederverwendet, wenn Auswahl (Fingerabdruck), Space und Stand der Seiten gleich sind.
+- Ein vorhandenes Artefakt wird wiederverwendet, wenn Auswahl (Fingerabdruck), Space und Stand der Seiten gleich sind
+  (`Exports.startFromHoldings`): gleiche Startseite, Tiefe und Formate, und je Seite des Umfangs dieselbe
+  Elternseite, gespeicherte Version, Version der Kopfdaten und dieselbe Markierung als veraltet oder gesperrt wie beim
+  Start der fertigen Ausgabe. Dann kommt deren Auftrag zurück, ohne neuen Lauf.
 - Der bisherige Export-Auftrag mit Beschaffung (ADR 0010, auch über REST) bleibt; er entscheidet über das Neuladen
   künftig nach der Abdeckung seines Teilbaums im Bestand statt nach der bestätigten Generation: Sind alle Seiten des
   Teilbaums gespeichert und aktuell (dieselbe Regel wie die Zustände der Bestandsübersicht, nur nach einer Inventur
@@ -112,7 +115,7 @@ Je ein kleiner Pull Request, Core zuerst:
 2. Suche: Cache, Live-Suche, Titelsuche, Cursor.
 3. Begriffe und Vorkommen.
 4. Aussagen und Graph.
-5. Ausgabe aus dem Bestand; Export-Auftrag entscheidet nach Abdeckung. Danach: vorhandenes Artefakt wiederverwenden.
+5. Ausgabe aus dem Bestand samt Wiederverwendung; Export-Auftrag entscheidet nach Abdeckung.
 6. Verzeichnis der Bilder und Anhänge je Seite und Version; Beschaffen auf einer Auswahl; Export daraus.
 
 ## Folgen
