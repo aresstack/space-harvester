@@ -77,8 +77,10 @@ der Diagnose sind Zustand der App (`AppContext.Connection`) und werden dort geme
   `spaceChanged`, ebenso, wenn eine Zustellung mehr als 1000 Seiten eines Space nennen würde (etwa nach einer großen
   Generation); die App liest dann einmal neu. Wird eine ganze Quelle entfernt oder geleert, bekommt jeder Empfänger
   der Quelle `spaceChanged` für seinen Space, ein Empfänger für alle Spaces mit leerem `spaceKey`. Eine verschobene
-  Seite meldet auch ihren bisherigen Space. Beginnt der Beschaffungsplaner, ein Abgleich oder ein Export eine Seite,
-  kommt `loading`; ihr Ende kommt als `pagesChanged`, in derselben Zustellung nach `loading`.
+  oder entfernte Seite meldet auch ihren bisherigen Space und ihre bisherige Elternseite, damit die Teilübersicht den
+  alten Pfad neu zählt. Beginnt ein Inhaltsabruf bei der Quelle (Beschaffungsplaner, Lesen, Abgleich, Export), kommt
+  `loading` für die Seite in ihrem Space laut Katalog; das Ende des Abrufs kommt als `pagesChanged`, auch wenn er
+  scheitert und nichts schreibt, bei kurzen Abrufen in derselben Zustellung nach `loading`.
 - **Abfrage „Bestandsübersicht je Space“.** `Holdings.overview(sourceId, spaceKey)` liefert je Seite des Katalogs
   den eigenen Zustand und die Zähler ihres Teilbaums, gerechnet im Core über den Katalogbaum, ohne Quellenzugriff:
   - Zustand `REMOTE` (nur Katalog, kein Inhalt lokal), `LOCAL` (Inhalt lokal und aktuell, gleich ob durch Laden,

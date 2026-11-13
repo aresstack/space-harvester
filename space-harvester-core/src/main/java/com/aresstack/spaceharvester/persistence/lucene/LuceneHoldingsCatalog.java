@@ -82,6 +82,11 @@ public final class LuceneHoldingsCatalog implements HoldingsCatalog {
     }
 
     @Override
+    public Optional<String> spaceOf(String sourceId, String pageId) {
+        return cache.findHeader(new PageKey(sourceId, pageId)).map(header -> header.metadata().partitionKey());
+    }
+
+    @Override
     public List<String> spaceKeys(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
         TreeSet<String> keys = cache.read(searcher -> {

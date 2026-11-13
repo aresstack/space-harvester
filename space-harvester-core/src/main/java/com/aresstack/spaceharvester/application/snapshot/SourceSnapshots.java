@@ -20,10 +20,19 @@ import java.util.concurrent.ExecutionException;
  */
 public class SourceSnapshots implements PageContentFetcher {
 
+    private static final System.Logger LOG = System.getLogger(SourceSnapshots.class.getName());
+    private static final Runnable NOTHING = () -> { };
+
     private final SourceCatalog catalog;
+    private volatile PageLoads loads = PageLoads.NONE;
 
     public SourceSnapshots(SourceCatalog catalog) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+    }
+
+    /** Meldet Beginn und Ende jedes Abrufs (ADR 0027); ohne Aufruf {@link PageLoads#NONE}. */
+    public void loads(PageLoads loads) {
+        this.loads = Objects.requireNonNull(loads, "loads");
     }
 
     /**
@@ -34,6 +43,15 @@ public class SourceSnapshots implements PageContentFetcher {
     @Override
     public PageSnapshot fetch(String sourceId, String pageId) {
         HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        Runnable ended = started(new PageKey(sourceId, pageId));
+        try {
+            return fetch(source, pageId);
+        } finally {
+            quietly(ended);
+        }
+    }
+
+    private PageSnapshot fetch(HarvestSource source, String pageId) {
         if (!source.asyncStoredPages()) {
             return snapshot(source, pageId, source.storedPage(pageId));
         }
@@ -76,6 +94,27 @@ public class SourceSnapshots implements PageContentFetcher {
             }
         });
         return result;
+    }
+
+    /** Ein Fehler des Beobachters ändert nichts am Abruf; protokolliert ohne Seiten-ID. */
+    private Runnable started(PageKey key) {
+        try {
+            Runnable ended = loads.started(key);
+            return ended == null ? NOTHING : ended;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Beobachter der Abrufe von Quelle {0} fehlgeschlagen ({1})",
+                    key.sourceId(), e.getClass().getSimpleName());
+            return NOTHING;
+        }
+    }
+
+    private static void quietly(Runnable ended) {
+        try {
+            ended.run();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Beobachter der Abrufe fehlgeschlagen ({0})",
+                    e.getClass().getSimpleName());
+        }
     }
 
     private static PageSnapshot snapshot(HarvestSource source, String pageId, StoredPage page) {

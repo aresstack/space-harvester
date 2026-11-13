@@ -29,7 +29,7 @@ class LucenePageCacheChangesTest {
     private final Recorder recorder = new Recorder();
 
     @Test
-    void everyWriteReportsItsPagesAndAMovedPageAlsoItsFormerSpace() {
+    void everyWriteReportsItsPagesAndAMovedOrRemovedPageAlsoItsFormerSpaceAndParent() {
         try (LucenePageCache cache = LucenePageCache.open(directory)) {
             cache.changes(recorder);
 
@@ -37,12 +37,21 @@ class LucenePageCacheChangesTest {
             assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1]");
             cache.saveHeader(page("wiki", "2", "DEV", "1", "1", json("{}")).header());
             assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[2]");
+            cache.save(page("wiki", "3", "DEV", "1", "1", json("{}")));
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[3]");
+
+            // Innerhalb des Space verschoben: die bisherige Elternseite verliert den Teilbaum, die Teilansicht zu den
+            // gemeldeten Seiten erreicht sie nur, wenn sie mitgemeldet wird.
+            cache.save(page("wiki", "3", "DEV", "2", "2", json("{}")));
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1, 3]");
 
             cache.save(page("wiki", "1", "OPS", null, "2", json("{}")));
             assertThat(recorder.take()).containsExactlyInAnyOrder("pages:wiki/DEV:[1]", "pages:wiki/OPS:[1]");
             cache.saveHeader(page("wiki", "2", "OPS", null, "2", json("{}")).header());
-            assertThat(recorder.take()).containsExactlyInAnyOrder("pages:wiki/DEV:[2]", "pages:wiki/OPS:[2]");
+            assertThat(recorder.take()).containsExactlyInAnyOrder("pages:wiki/DEV:[1, 2]", "pages:wiki/OPS:[2]");
 
+            assertThat(cache.remove(new PageKey("wiki", "3"))).isTrue();
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[2, 3]");
             assertThat(cache.remove(new PageKey("wiki", "2"))).isTrue();
             assertThat(recorder.take()).containsExactly("pages:wiki/OPS:[2]");
         }
@@ -60,14 +69,17 @@ class LucenePageCacheChangesTest {
                     .isEqualTo(FindingCataloging.Outcome.OUTDATED);
             assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1]");
 
-            // Gesperrt, dann nach Ablauf der Frist endgültig entfernt: der Space kommt aus dem zurückgehaltenen Stand.
+            // Gesperrt, dann nach Ablauf der Frist endgültig entfernt: Space und Elternseite kommen aus dem
+            // zurückgehaltenen Stand.
+            cache.save(page("wiki", "2", "DEV", "1", "1", json("{}")));
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[2]");
             try (LucenePageCache.Batch batch = cache.begin()) {
-                batch.withhold(new PageKey("wiki", "1"));
+                batch.withhold(new PageKey("wiki", "2"));
                 batch.commit();
             }
-            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1]");
-            assertThat(cache.remove(new PageKey("wiki", "1"))).isFalse();
-            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1]");
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[2]");
+            assertThat(cache.remove(new PageKey("wiki", "2"))).isFalse();
+            assertThat(recorder.take()).containsExactly("pages:wiki/DEV:[1, 2]");
         }
     }
 

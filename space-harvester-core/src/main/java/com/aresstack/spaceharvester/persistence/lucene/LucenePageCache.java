@@ -95,8 +95,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     private static final int SNAPSHOT_BATCH = 500;
     private static final System.Logger LOG = System.getLogger(LucenePageCache.class.getName());
     /** Nur der Space einer Seite, um eine Verschiebung zu melden. */
-    private static final Set<String> SPACE_ONLY = Set.of(PageCacheSchema.SPACE_KEY);
+    private static final Set<String> SPACE_AND_PARENT = Set.of(PageCacheSchema.SPACE_KEY, PageCacheSchema.PARENT_ID);
     private static final String WITHHELD_SPACE = PageCacheSchema.WITHHELD + "." + PageCacheSchema.SPACE_KEY;
+    private static final String WITHHELD_PARENT = PageCacheSchema.WITHHELD + "." + PageCacheSchema.PARENT_ID;
 
     private final Path path;
     private final Directory directory;
@@ -655,10 +656,11 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                         .length() + " Bytes groß, zulässig sind " + maxPayloadBytes + "; sie wird nicht gekürzt");
             }
             if (observed()) {
-                // Aus dem bestätigten Stand: eine verschobene Seite fehlt danach in ihrem bisherigen Space.
-                first(new TermQuery(PageCacheSchema.pageTerm(snapshot.key())), SPACE_ONLY,
-                        doc -> doc.get(PageCacheSchema.SPACE_KEY))
-                        .ifPresent(previous -> changed(snapshot.key(), previous));
+                // Aus dem bestätigten Stand: eine verschobene Seite fehlt danach in ihrem bisherigen Space und unter
+                // ihrer bisherigen Elternseite.
+                first(new TermQuery(PageCacheSchema.pageTerm(snapshot.key())), SPACE_AND_PARENT, doc -> doc)
+                        .ifPresent(previous -> changedFrom(snapshot.key(), previous.get(PageCacheSchema.SPACE_KEY),
+                                previous.get(PageCacheSchema.PARENT_ID)));
                 changed(snapshot.key(), snapshot.header().metadata().partitionKey());
             }
             dirty = true;
@@ -681,7 +683,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             PageSnapshot snapshot = existing != null && PageCacheSchema.hasSnapshot(existing)
                     ? PageCacheSchema.snapshot(existing) : null;
             if (existing != null) {
-                changed(header.key(), existing.get(PageCacheSchema.SPACE_KEY));
+                changedFrom(header.key(), existing.get(PageCacheSchema.SPACE_KEY),
+                        existing.get(PageCacheSchema.PARENT_ID));
             }
             changed(header.key(), header.metadata().partitionKey());
             dirty = true;
@@ -702,10 +705,11 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             Document existing = lookup(key);
             boolean existed = existing != null;
             if (existing != null) {
-                changed(key, existing.get(PageCacheSchema.SPACE_KEY));
+                changedFrom(key, existing.get(PageCacheSchema.SPACE_KEY), existing.get(PageCacheSchema.PARENT_ID));
             } else if (observed()) {
-                first(new TermQuery(PageCacheSchema.withheldTerm(key)), Set.of(WITHHELD_SPACE),
-                        doc -> doc.get(WITHHELD_SPACE)).ifPresent(space -> changed(key, space));
+                first(new TermQuery(PageCacheSchema.withheldTerm(key)), Set.of(WITHHELD_SPACE, WITHHELD_PARENT),
+                        doc -> doc).ifPresent(withheld -> changedFrom(key, withheld.get(WITHHELD_SPACE),
+                                withheld.get(WITHHELD_PARENT)));
             }
             dirty = true;
             touchedSources.add(key.sourceId());
@@ -833,9 +837,25 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
 
         /** Merkt eine Seite in einem Space für die Meldung nach dem Commit vor. */
         private void changed(PageKey key, String spaceKey) {
+            changed(key.sourceId(), spaceKey, key.pageId());
+        }
+
+        /**
+         * Wie {@link #changed(PageKey, String)} für den bisherigen Stand einer Seite, samt ihrer bisherigen
+         * Elternseite: Verschoben oder entfernt, fehlt sie in deren Teilbaum, und die Teilansicht zu den gemeldeten
+         * Seiten erreicht den alten Pfad nur über sie.
+         */
+        private void changedFrom(PageKey key, String spaceKey, String parentPageId) {
+            changed(key, spaceKey);
+            if (parentPageId != null && !parentPageId.isEmpty()) {
+                changed(key.sourceId(), spaceKey, parentPageId);
+            }
+        }
+
+        private void changed(String sourceId, String spaceKey, String pageId) {
             if (observed() && spaceKey != null) {
-                changedPages.computeIfAbsent(new SyncBaselineStore.SpaceRef(key.sourceId(), spaceKey),
-                        space -> new HashSet<>()).add(key.pageId());
+                changedPages.computeIfAbsent(new SyncBaselineStore.SpaceRef(sourceId, spaceKey),
+                        space -> new HashSet<>()).add(pageId);
             }
         }
 

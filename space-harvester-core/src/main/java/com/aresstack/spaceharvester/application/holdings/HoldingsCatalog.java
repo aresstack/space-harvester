@@ -22,6 +22,9 @@ public interface HoldingsCatalog {
     /** Spaces einer Quelle, von denen der Cache Seiten oder eine bestätigte Generation kennt, sortiert. */
     List<String> spaceKeys(String sourceId);
 
+    /** Der Space einer Seite nach ihren aktuellen Kopfdaten; leer, wenn der Katalog sie nicht kennt. */
+    Optional<String> spaceOf(String sourceId, String pageId);
+
     /**
      * Rohstand eines Space.
      *
@@ -77,6 +80,11 @@ public interface HoldingsCatalog {
         @Override
         public List<String> spaceKeys(String sourceId) {
             return List.of();
+        }
+
+        @Override
+        public Optional<String> spaceOf(String sourceId, String pageId) {
+            return Optional.empty();
         }
     };
 }

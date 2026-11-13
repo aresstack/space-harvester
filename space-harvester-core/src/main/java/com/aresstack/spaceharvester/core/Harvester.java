@@ -542,6 +542,8 @@ public final class Harvester implements AutoCloseable {
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
+            // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
+            snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);

@@ -8,6 +8,8 @@ import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageLoads;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -37,16 +39,19 @@ import java.util.Set;
  * Zyklen machen eine Seite zur Wurzel). Gesperrte Seiten hängen an der Elternseite aus ihrem zurückgehaltenen Stand.
  * Kein Quellenzugriff, keine Payload.
  *
- * <p><b>Meldungen.</b> Schreibwege melden über {@link HoldingsChanges}; hier wird je Space nur vorgemerkt und
+ * <p><b>Meldungen.</b> Schreibwege melden über {@link HoldingsChanges}, Inhaltsabrufe bei der Quelle über
+ * {@link PageLoads} (Beginn als „lädt“, Ende als Änderung, auch ohne Schreiben); hier wird je Space nur vorgemerkt und
  * gebündelt auf dem Zustell-Thread zugestellt ({@link Coalescer}). Ohne Empfänger wird nichts vorgemerkt.
  *
  * <p><b>Rechte.</b> Abfrage und Anmeldung verlangen {@link AccessKind#METADATA} für den Space (bei der Anmeldung für
  * alle Spaces: für die Quelle); Seiten ohne Freigabe fehlen in Übersicht und Meldungen, wie im Seitenbaum.
  */
-public final class Holdings implements HoldingsChanges, AutoCloseable {
+public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable {
 
     /** Höchstens so viele Seiten nennt eine Meldung {@link HoldingsListener#pagesChanged}; sonst kommt der Space. */
     public static final int MAX_PAGES_PER_MESSAGE = 1000;
+
+    private static final Runnable NOTHING = () -> { };
 
     private final SourceCatalog sources;
     private final HoldingsCatalog catalog;
@@ -258,6 +263,26 @@ public final class Holdings implements HoldingsChanges, AutoCloseable {
     @Override
     public void loading(String sourceId, String spaceKey, Collection<String> pageIds) {
         mark(sourceId, spaceKey, Mark.Kind.LOADING, pageIds);
+    }
+
+    /**
+     * Ein Inhaltsabruf beginnt: „lädt“ für die Seite in ihrem Space laut Katalog, ihr Ende als
+     * {@link HoldingsListener#pagesChanged}, auch wenn der Abruf scheitert. Ohne Empfänger und für Seiten, die der
+     * Katalog nicht kennt (sie stehen in keiner Übersicht), nichts.
+     */
+    @Override
+    public Runnable started(PageKey key) {
+        if (listeners.isEmpty()) {
+            return NOTHING;
+        }
+        Optional<String> space = catalog.spaceOf(key.sourceId(), key.pageId());
+        if (space.isEmpty() || space.get().isEmpty()) {
+            return NOTHING;
+        }
+        String spaceKey = space.get();
+        Set<String> page = Set.of(key.pageId());
+        loading(key.sourceId(), spaceKey, page);
+        return () -> pagesChanged(key.sourceId(), spaceKey, page);
     }
 
     @Override

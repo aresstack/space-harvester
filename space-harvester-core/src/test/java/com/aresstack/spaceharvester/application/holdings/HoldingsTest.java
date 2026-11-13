@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -66,7 +67,16 @@ class HoldingsTest {
             return stocks.keySet().stream().filter(key -> key.startsWith(sourceId + "/"))
                     .map(key -> key.substring(sourceId.length() + 1)).sorted().toList();
         }
+
+        @Override
+        public Optional<String> spaceOf(String sourceId, String pageId) {
+            spaceLookups++;
+            return stocks.entrySet().stream().filter(entry -> entry.getKey().startsWith(sourceId + "/"))
+                    .filter(entry -> entry.getValue().pages().stream().anyMatch(page -> page.pageId().equals(pageId)))
+                    .map(entry -> entry.getKey().substring(sourceId.length() + 1)).findFirst();
+        }
     };
+    private int spaceLookups;
     private final List<Holdings> opened = new ArrayList<>();
 
     @AfterEach
@@ -203,6 +213,25 @@ class HoldingsTest {
 
         assertThat(recorder.next()).isEqualTo("loading:wiki/DEV:[1]");
         assertThat(recorder.next()).isEqualTo("changed:wiki/DEV:[1]");
+    }
+
+    @Test
+    void aContentFetchReportsLoadingInTheSpaceOfThePageAndItsEndEvenWithoutAWrite() throws InterruptedException {
+        dev();
+        Holdings holdings = holdings(ALLOW_ALL, 100);
+        assertThat(holdings.started(new PageKey("wiki", "2")))
+                .as("ohne Empfänger").isNotNull();
+        assertThat(spaceLookups).as("ohne Empfänger kein Lesen im Katalog").isZero();
+        Recorder recorder = new Recorder();
+        holdings.subscribe(CALLER, "wiki", "DEV", recorder);
+
+        Runnable ended = holdings.started(new PageKey("wiki", "2"));
+        assertThat(recorder.next()).isEqualTo("loading:wiki/DEV:[2]");
+        ended.run();
+        assertThat(recorder.next()).isEqualTo("changed:wiki/DEV:[2]");
+
+        holdings.started(new PageKey("wiki", "unbekannt")).run();
+        assertThat(recorder.none()).as("Seite außerhalb des Katalogs").isTrue();
     }
 
     @Test
