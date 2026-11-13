@@ -118,9 +118,14 @@ public class DurationField extends JPanel {
             }
         }
         long count = seconds / SECONDS[index];
+        // Eine gesetzte Dauer bleibt erhalten: Braucht sie mehr als das Maximum, wächst das Maximum mit, statt dass
+        // der Wert still gekappt und beim Speichern verkürzt würde.
         SpinnerNumberModel model = (SpinnerNumberModel) amount.getModel();
-        long maximum = ((Number) model.getMaximum()).longValue();
-        amount.setValue((int) Math.min(maximum, count));
+        int value = (int) Math.min(Integer.MAX_VALUE, count);
+        if (((Number) model.getMaximum()).intValue() < value) {
+            model.setMaximum(value);
+        }
+        amount.setValue(value);
         unit.setSelectedIndex(index + (none != null ? 1 : 0));
     }
 
