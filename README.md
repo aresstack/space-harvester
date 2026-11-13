@@ -122,6 +122,141 @@ App dürfen nicht denselben Datenordner verwenden. Alle Schlüssel, Reihenfolge 
 [CONFIGURATION.md](docs/CONFIGURATION.md), [Geheimnisse](docs/SECRETS.md), [TLS/mTLS](docs/MTLS.md),
 [Desktop › Konfiguration](docs/DESKTOP_APP.md#konfiguration) und unten [Quellen konfigurieren](#quellen-konfigurieren).
 
+## Datenablage im Benutzerprofil und im JSON-Export
+
+Die Desktop-App speichert ihre Konfiguration und ihre Arbeitsdaten standardmäßig unter
+`%USERPROFILE%\.space-harvester\` (unter Linux/macOS: `~/.space-harvester/`).
+**Konfiguration und Daten sind getrennt:** Die YAML-Datei liegt direkt im Profilverzeichnis,
+die Inhalte unter `data/`. Der REST-Dienst verwendet seinen konfigurierten Datenordner;
+die folgende Struktur beschreibt die Standards der Desktop-App. Abweichende Pfade sind
+über `space-harvester-app.data-directory`, `space-harvester.assets.directory` und
+`space-harvester.export.directory` möglich.
+
+### Struktur des lokalen Datenordners
+
+Der folgende Baum zeigt die wichtigsten Ordner und Dateien. Einige werden erst angelegt,
+wenn die zugehörige Funktion erstmals verwendet wurde.
+
+```text
+.space-harvester/
+├── space-harvester-app.yml             # Konfiguration der Desktop-App
+├── logs/                               # Protokolle; außerhalb von data/
+└── data/
+    ├── app/
+    │   └── activities.txt             # In der App angezeigte Auftrags-IDs
+    ├── assets/
+    │   ├── blobs/<2 Zeichen>/<sha256>  # Originalbytes von Bildern UND Dokumentanhängen
+    │   ├── index/<Quelle>/<Anhang>/<Version>.properties
+    │   ├── texts/<sha256>/<Extraktor>/<Version>.properties
+    │   ├── descriptions/<sha256>/<Beschreiber>/<Modell>.properties
+    │   └── staging/                    # Temporäre Dateien laufender Downloads
+    ├── cache/
+    │   ├── pages/                     # Gespeicherte Seiten und Quellinhalte (Lucene)
+    │   ├── text/                      # Volltext-Suchindex (Lucene)
+    │   ├── enrichments/               # Ergebnisse der Seitenanalyse (Lucene)
+    │   ├── jobs/                      # Gespeicherte Aufträge (Lucene)
+    │   ├── job-events/                # Ereignisse und Diagnose von Aufträgen (Lucene)
+    │   ├── fill-queue/                # Warteschlange des Hintergrund-Nachladens (Lucene)
+    │   └── search-runs/               # Optionales Suchlauf-Protokoll (Lucene)
+    ├── exports/
+    │   ├── .incomplete/               # Noch nicht abgeschlossene Exporte
+    │   ├── <Export-ID>/               # Datenbestand und konvertierte Dateien je Export
+    │   └── knowledge-graph/           # Exportierte Wissensgraphen (falls vorhanden)
+    ├── glossary/                       # glossary.json, audit.jsonl
+    ├── term-relations/                 # relations.json, audit.jsonl, KI-/Synonym-Cache
+    ├── facts/                          # facts.json, audit.jsonl; manuelle/geprüfte Fakten
+    ├── knowledge-graph/
+    │   └── pages/                     # Gespeicherte Aussagenanalysen je Seite als JSON
+    ├── nlp-model/<Modellversion>/      # Installiertes deutsches Parsermodell
+    ├── git/                            # Optional: Ablage des Git-Quellenadapters
+    └── download-durations.properties   # Messwerte für die Download-Restzeit
+```
+
+**Wichtige Unterschiede:**
+
+- `data/assets/` ist der **gemeinsame Dateispeicher** für heruntergeladene Bilder, Diagramme und
+  sonstige Anhänge (zum Beispiel PDF, DOCX oder XLSX). Die Dateien unter `blobs/` enthalten
+  **unveränderte Originalbytes**, keine JSON-Kodierung und keine besonderen Blob-Dateiformate.
+  Ihr Dateiname ist der SHA-256-Hash ohne ursprüngliche Dateiendung; die ersten zwei Hex-Zeichen
+  bilden einen Unterordner. Identische Inhalte werden unabhängig von Quelle oder Anhang nur
+  einmal abgelegt. `index/` ordnet Quelle, Anhang und Version dem gespeicherten Inhalt zu.
+- `data/assets/texts/` enthält **bereits extrahierten Dokumenttext**, beispielsweise aus PDF-
+  oder Office-Dateien. Die Extraktion erfolgt über den Dokumenttext-Adapter mit **Apache Tika**;
+  `descriptions/` enthält dagegen maschinell erzeugte **Bildbeschreibungen**. Beides sind
+  Zusatzinformationen, keine zweiten Kopien der Originaldatei.
+- `data/cache/` ist trotz seines Namens **nicht vollständig entbehrlich**: `pages/` enthält
+  lokal gespeicherte Quellinhalte, `jobs/` den Auftragszustand. `text/` ist ein daraus
+  abgeleiteter Suchindex. Nicht einfach den gesamten Ordner löschen.
+- `glossary/`, `term-relations/` und `facts/` speichern unter anderem manuell bearbeitete
+  beziehungsweise bestätigte Informationen. `knowledge-graph/` speichert die explizit
+  erzeugten Aussagenanalysen; diese Daten liegen bewusst außerhalb des Lucene-Caches.
+- `data/exports/<Export-ID>/` ist die **interne Ablage eines Exportauftrags** mit
+  `pages.ndjson`, `raw/`, `tree.json`, `manifest.json` und gegebenenfalls `views/`,
+  `assets.json` und abgeleiteten Dateien wie `export.zip` oder `pages.pdf`. Der Ordner
+  `data/assets/` wird dafür **nicht** pro Export kopiert.
+
+### Struktur des Exports „JSON mit Medien“
+
+**`format=json`** erzeugt allein `pages.json` mit den Seiteninhalten.
+Der vollständige, transportable Export **„JSON mit Medien“** verwendet dagegen
+**`format=json-package`** und erzeugt **`export.zip`** (`json-package/3`).
+Die folgenden Verzeichnisse befinden sich **innerhalb dieses ZIPs** – sie sind nicht
+mit `data/assets/` aus dem Benutzerprofil gleichzusetzen:
+
+```text
+export.zip
+├── pages.json                           # Lesbare JSON-Darstellung der Seiten
+├── assets.json                          # Manifest der Bilder/Diagramme mit Pfaden und SHA-256
+├── attachments.json                     # Manifest der Dokumentanhänge und ihrer Textdateien
+├── assets/
+│   └── <Seiten-ID>/
+│       ├── diagramm.png                 # Originalbild bzw. originale Diagrammdatei
+│       ├── diagramm.svg                 # Optional: gerenderte Diagrammfassung
+│       └── diagramm.graph.json          # Optional: Struktur eines draw.io-Diagramms
+├── attachments/
+│   └── <Seiten-ID>/
+│       ├── Handbuch.pdf                 # Originaldatei, unveränderte Bytes
+│       ├── Handbuch.pdf.txt             # Optional: extrahierter Klartext (UTF-8)
+│       └── Tabelle.xlsx                 # Weiterer Originalanhang
+├── raw/
+│   └── <Seiten-ID>.json                 # Original-Payload der Seite, Byte für Byte
+├── views/
+│   └── <Seiten-ID>.json                 # Optional: gespeicherte Leseansicht
+├── tree.json                             # Seitenhierarchie
+└── manifest.json                         # Herkunft, Revisionen, Prüfsummen und Paketinhalt
+```
+
+Die Dateinamen im Beispiel dienen der Veranschaulichung. Tatsächliche Anhangsnamen
+werden für sichere ZIP-Pfade bereinigt und bei Namenskonflikten eindeutig gemacht.
+Nicht vorhandene oder ausgeschlossene Inhalte erscheinen gegebenenfalls nur in den
+Manifesten, nicht als Datei.
+
+**Warum gibt es `Handbuch.pdf` und `Handbuch.pdf.txt`?**
+Der Converter liest die Originalbytes aus `data/assets/blobs/` und schreibt sie unter
+einem lesbaren Namen nach `attachments/<Seiten-ID>/`. Wenn bereits nicht leerer,
+extrahierter Text in `data/assets/texts/` vorliegt, legt er daneben eine UTF-8-Datei
+mit der zusätzlichen Endung `.txt` ab. **`Handbuch.pdf.txt` ist somit der mit
+Apache Tika gewonnene Text der PDF, nicht eine zweite PDF und nicht der Seiteninhalt.**
+Der Converter führt dafür keine neue Textextraktion und keinen erneuten Download von
+der Quelle aus.
+
+`attachments.json` dokumentiert je Anhang unter anderem `pageId`, `attachmentId`,
+`title`, `mediaType`, `sha256`, `status`, `path` und `textPath`. Fehlt lesbarer Text,
+wird **keine leere `.txt`-Datei** geschrieben; `textPath` ist dann `null` und als
+Grund kann `text-unavailable` stehen. `assets.json` erfüllt die entsprechende
+Zuordnungsfunktion für Bilder und Diagramme.
+
+**Sichern und bereinigen:** Für eine vollständige Sicherung die Anwendung beenden und
+das Datenverzeichnis **zusammen mit der Konfiguration** sichern. Insbesondere
+`assets/blobs/`, `cache/pages/`, `glossary/`, `term-relations/`, `facts/` und
+`knowledge-graph/` nicht ohne Prüfung löschen. Ein `export.zip` enthält den
+exportierten Seitenbestand mit seinen mitgenommenen Medien, **nicht** automatisch
+alle lokalen Benutzerentscheidungen, bisherigen Aufträge, Suchindizes oder
+älteren Seitenversionen. Weitere technische Details unter
+[Konverter und Import](docs/CONVERTERS.md) und
+[Desktop-App: Konfiguration](docs/DESKTOP_APP.md#konfiguration).
+
+
 ## Module
 
 Java-21-Gradle-Multimodulprojekt (Gradle Wrapper 8.14.3, Spring Boot 4.1.1). Einzelheiten:
@@ -167,6 +302,7 @@ und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc
 ## Dokumentation
 
 - [Desktop-App](docs/DESKTOP_APP.md) – Bedienung, Einrichtung, Bereiche, Releases
+- [Datenablage im Benutzerprofil und im JSON-Export](#datenablage-im-benutzerprofil-und-im-json-export)
 - [Module und Architektur](docs/MODULES.md) und [Umsetzungsplan](docs/IMPLEMENTATION_PLAN.md)
 - [Konfiguration](docs/CONFIGURATION.md), [Quellenadapter](docs/SOURCE_ADAPTERS.md) und
   [Confluence-Kompatibilität](docs/CONFLUENCE_COMPAT.md)
