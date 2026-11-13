@@ -1169,6 +1169,17 @@ public final class Workspace {
     }
 
     /**
+     * Löst die Auswahl im Baum zu Seiten auf (ADR 0029): eine Seite samt allen Unterseiten, ein Space oder eine Quelle,
+     * auch mehrere zugleich. Liefert die Seiten, die Abdeckung („n von m Seiten lokal“) und ob die Auflösung lückenhaft
+     * ist, weil ein Space keine Inventur hat; ohne Quellenzugriff. Nach Meldungen von {@link #subscribeHoldings} für
+     * einen berührten Space neu auflösen.
+     */
+    public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.holdings().resolve(caller, selection);
+    }
+
+    /**
      * Meldet einen Empfänger für den Bestand eines Space an, mit leerem {@code spaceKey} für alle Spaces der Quelle
      * (ADR 0027). Meldungen kommen gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann
      * {@link #holdings} lesen.
