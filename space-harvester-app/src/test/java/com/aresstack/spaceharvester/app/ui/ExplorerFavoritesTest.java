@@ -81,12 +81,16 @@ class ExplorerFavoritesTest {
             // Eine Seite merkt sich ihren Pfad im Hintergrund.
             explorer[0].toggleFavorite(new Explorer.PageItem("handbuch", space, pageId, "Wartung", false));
         });
-        // Der Pfad kommt aus dem Core im Hintergrund; auf dem CI-Läufer dauert das länger als hier.
+        // Der Pfad kommt aus dem Core im Hintergrund, die Liste frischt danach auf dem EDT auf; auf dem CI-Läufer
+        // dauert das länger als hier. Auf die Liste warten, nicht nur auf den Speicher, sonst liest die Prüfung vor
+        // der Auffrischung.
         long deadline = System.nanoTime() + 120_000_000_000L;
-        while (context.favorites().all().size() < 2) {
+        int[] listed = new int[1];
+        do {
             assertThat(System.nanoTime()).as("Zeitlimit: Seiten-Favorit").isLessThan(deadline);
             Thread.sleep(50);
-        }
+            SwingUtilities.invokeAndWait(() -> listed[0] = explorer[0].favoriteList().getModel().getSize());
+        } while (listed[0] < 2);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(explorer[0].favoriteList().getModel().getSize()).isEqualTo(2);
             Favorites.Favorite page = explorer[0].favoriteList().getModel().getElementAt(1);
