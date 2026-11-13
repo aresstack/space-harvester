@@ -1415,7 +1415,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return new PageAttachment(lastSegment(resource.id()), resource.id().value(), resource.title(),
                 resource.contentType(), size == null ? null : Long.valueOf(size),
                 version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
-                resource.location().orElse(null));
+                resource.location().orElse(null),
+                partsWithoutFile(resource.metadata().asMap().get(PageAttachment.PARTS_WITHOUT_FILE)));
+    }
+
+    /** Zahl aus dem Metadatum der Outlook-Quelle (AP7c); fehlt sie oder ist sie keine Zahl, gilt 0. */
+    private static int partsWithoutFile(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(value.strip()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */

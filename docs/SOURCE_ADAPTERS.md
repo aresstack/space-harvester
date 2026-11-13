@@ -375,7 +375,7 @@ Umfang in Bytes und Zeichen) und je Ergebnis ein fester Grund (`StatusReason`, d
 | `too-large` | über einer vom Betreiber gesetzten Größe |
 | `text-ratio-exceeded` | mehr Zeichen je Byte als erlaubt (Textbombe) |
 | `temp-space-low` | freier Platz für temporäre Dateien unter der Reserve |
-| `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag); Behälter `PARTIAL` |
+| `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag), oder die Quelle musste Teile auslassen (AP7c); `PARTIAL` |
 | `unsupported-format` | kein Leser für das Format (`UNSUPPORTED`) |
 | `no-text` | Bytes vorhanden, aber kein Text, etwa ein gescanntes PDF ohne Texterkennung (`UNSUPPORTED`, nie `OK`) |
 
@@ -453,6 +453,11 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
   über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer
   vorübergehenden Grenze (`timeout`, `temp-space-low`) verhindert das Ablegen des Behälters.
+- Ausgelassene Teile der Quelle (AP7c): Das Metadatum `mail.attachment.partsWithoutFile` der Anhangsliste (angehängtes
+  Outlook-Element mit Verweisen oder OLE-Objekten) steht als `partsWithoutFile` am Anhang und am abgelegten Asset, nicht
+  in der Extraktion, die nach dem Hash geteilt wird. Ist sie größer als 0, wird ein `OK` gelesenes Dokument
+  `PARTIAL`/`entries-not-readable` mit `truncated=true` (`DocumentExtractions#outcome`), sein Text gilt als gekürzt;
+  ein schon schlechterer Status behält seinen ersten Grund.
 
 Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablegen, beim Nachholen und auf Abruf liest
 `Assets` Dokumente aus der abgelegten Datei mit diesem Adapter und legt die Extraktion unter `extractions/` ab; die

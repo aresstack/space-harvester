@@ -189,7 +189,36 @@ public final class DocumentExtractions {
         collect(extraction, text);
         AssetText result = text.result(asset, id(), version(), outcome, now);
         store.putText(result);
-        return result;
+        return withSource(result, asset);
+    }
+
+    /**
+     * Status des Dokuments eines Anhangs: der der abgelegten Extraktion, mit dem, was die Quelle auslassen musste
+     * (AP7c); leer, solange nichts abgelegt ist.
+     */
+    public Optional<Outcome> outcome(Asset asset) {
+        return stored(asset.sha256()).map(extraction -> withSource(extraction.document().outcome(), asset));
+    }
+
+    /**
+     * Hat die Quelle beim Erzeugen der Datei Teile ausgelassen (ADR 0026, AP7c), ist ein vollständig gelesenes Dokument
+     * {@code PARTIAL/entries-not-readable}, Umfang wie gelesen, gekürzt. Ein schon schlechterer Status behält seinen
+     * ersten Grund (ein Grund je Status). Steht nicht in der Extraktion, die nach dem Hash geteilt wird.
+     */
+    public static Outcome withSource(Outcome outcome, Asset asset) {
+        if (asset.partsWithoutFile() == 0 || outcome.status() != ExtractionStatus.OK) {
+            return outcome;
+        }
+        return new Outcome(ExtractionStatus.PARTIAL, Optional.of(StatusReason.ENTRIES_NOT_READABLE), true,
+                outcome.extent());
+    }
+
+    /** Der Text gilt als gekürzt, wenn die Quelle Teile auslassen musste; abgelegt wird er ohne diese Angabe. */
+    static AssetText withSource(AssetText text, Asset asset) {
+        if (asset.partsWithoutFile() == 0 || text.truncated()) {
+            return text;
+        }
+        return new AssetText(text.sha256(), text.extractor(), text.version(), text.text(), true, text.createdAt());
     }
 
     /**
@@ -205,7 +234,7 @@ public final class DocumentExtractions {
             }
             TextCollector text = new TextCollector(maxTextChars);
             collect(known.get(), text);
-            return text.result(asset, id(), version(), outcome, now);
+            return withSource(text.result(asset, id(), version(), outcome, now), asset);
         }
         TextCollector text = new TextCollector(maxTextChars);
         StructuredDocument document = read(asset, store, new StructureSink() {
@@ -224,7 +253,7 @@ public final class DocumentExtractions {
                 || !usable(document.outcome())) {
             throw failure(document.outcome());
         }
-        return text.result(asset, id(), version(), document.outcome(), now);
+        return withSource(text.result(asset, id(), version(), document.outcome(), now), asset);
     }
 
     /**

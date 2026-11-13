@@ -117,7 +117,8 @@ public class FileSystemAssetStore implements AssetStore {
             Asset asset = new Asset(p.getProperty("sourceId"), p.getProperty("pageId"), p.getProperty("attachmentId"),
                     p.getProperty("version"), p.getProperty("title"), p.getProperty("mediaType"),
                     AssetKind.valueOf(p.getProperty("kind")), Long.parseLong(p.getProperty("size")),
-                    p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")));
+                    p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")),
+                    Integer.parseInt(p.getProperty("partsWithoutFile", "0")));
             if (!asset.sourceId().equals(sourceId) || !asset.attachmentId().equals(attachmentId)
                     || !version.equals(asset.version()) || !HEX_SHA.matcher(asset.sha256()).matches()
                     || !Files.isRegularFile(blob(asset.sha256()))) {
@@ -218,6 +219,9 @@ public class FileSystemAssetStore implements AssetStore {
         p.setProperty("size", Long.toString(asset.size()));
         p.setProperty("sha256", asset.sha256());
         p.setProperty("retrievedAt", asset.retrievedAt().toString());
+        if (asset.partsWithoutFile() > 0) {
+            p.setProperty("partsWithoutFile", Integer.toString(asset.partsWithoutFile()));
+        }
         var text = new java.io.StringWriter();
         p.store(text, null);
         write(entry(asset.sourceId(), asset.attachmentId(), asset.version()),

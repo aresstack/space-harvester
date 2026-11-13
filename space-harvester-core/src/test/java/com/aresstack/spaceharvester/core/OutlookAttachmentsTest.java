@@ -86,6 +86,50 @@ class OutlookAttachmentsTest {
         }
     }
 
+    /**
+     * AP7c: Ein angehängtes Element mit Verweisen und OLE-Objekten wird als Mail ohne diese Teile geliefert. Die Zahl
+     * aus der Anhangsliste steht am Anhang und am abgelegten Asset; ihr Text gilt als gekürzt. Ein Anhang ohne
+     * ausgelassene Teile bleibt vollständig.
+     */
+    @Test
+    void anAttachedItemWithPartsWithoutFileIsMarkedAtItsAsset() throws Exception {
+        PstTestMailbox box = new PstTestMailbox();
+        PstTestMailbox.Message linked = box.folder("Posteingang").message("Mit Verweisen", "Weitergeleitet");
+        linked.attachment("notiz.txt", "text/plain", "Notiz ohne Lücken".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        PstTestMailbox.Message inner = linked.embeddedMessage("Innen mit Verweis", "Innerer Text");
+        inner.attachment("weg.txt", "text/plain", note).attachMethod(4).withoutDataField();
+        inner.attachment("ole.bin", "application/octet-stream", note).attachMethod(6);
+        box.write(mailbox.resolve("archiv.pst"));
+
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("mail", "outlook", "Mail", null, null,
+                        Map.of("mailbox", mailbox.toString())))
+                .dataDirectory(data).build()) {
+            PageMetadataListing listing = harvester.sources().pageMetadata("mail", "mail", null, 100);
+            String pageId = listing.entries().stream().filter(entry -> entry.page().title().equals("Mit Verweisen"))
+                    .findFirst().orElseThrow().page().pageId();
+            PageAttachmentList list = harvester.sources().attachments("mail", pageId);
+            PageAttachment text = list.attachments().attachments().get(0);
+            PageAttachment item = list.attachments().attachments().get(1);
+
+            assertThat(text.partsWithoutFile()).isZero();
+            assertThat(item.partsWithoutFile()).isEqualTo(2);
+            // Ohne Recht zum Ablegen frisch gelesen (Codex #719).
+            assertThat(harvester.assets().text(list, item.attachmentId(), false).truncated()).isTrue();
+            com.aresstack.spaceharvester.application.assets.Asset kept = harvester.assets().keep(list,
+                    item.attachmentId(), false);
+            assertThat(kept.partsWithoutFile()).isEqualTo(2);
+            // Ein Eintrag aus der Zeit vor AP7c kennt die Angabe nicht; es gilt die aktuelle Liste (Codex #719).
+            byte[] bytes = harvester.assets().content(list, item.attachmentId()).content();
+            new com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore(data.resolve("assets"))
+                    .put(kept.withPartsWithoutFile(0), bytes);
+            assertThat(harvester.assets().keep(list, item.attachmentId(), false).partsWithoutFile()).isEqualTo(2);
+            assertThat(harvester.assets().keep(list, text.attachmentId(), false).partsWithoutFile()).isZero();
+            assertThat(harvester.assets().text(list, item.attachmentId()).truncated()).isTrue();
+            assertThat(harvester.assets().text(list, text.attachmentId()).truncated()).isFalse();
+        }
+    }
+
     private static byte[] random(int size, long seed) {
         byte[] bytes = new byte[size];
         new Random(seed).nextBytes(bytes);

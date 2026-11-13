@@ -58,6 +58,38 @@ class DocumentExtractionsTest {
         assertThat(text.truncated()).isTrue();
     }
 
+    /**
+     * AP7c: Musste die Quelle beim Erzeugen der Datei Teile auslassen (angehängtes Outlook-Element), ist das vollständig
+     * gelesene Dokument PARTIAL/entries-not-readable und sein Text gekürzt; dieselben Bytes ohne Angabe bleiben OK, und
+     * die geteilte Extraktion bleibt unverändert. Der Eintrag im Asset-Speicher behält die Angabe.
+     */
+    @Test
+    void partsTheSourceLeftOutMakeTheDocumentPartial() {
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset complete = put(store, "Mail\n");
+        Asset shortened = new Asset(complete.sourceId(), complete.pageId(), "att2", "1", "element.eml",
+                "message/rfc822", AssetKind.OTHER, complete.size(), complete.sha256(), NOW, 2);
+        store.put(shortened, "Mail\n".getBytes(StandardCharsets.UTF_8));
+        DocumentExtractions extractions = new DocumentExtractions(new Lines(),
+                new FileSystemExtractionStore(directory), ExtractionLimits.DEFAULTS);
+
+        AssetText text = extractions.text(shortened, store, NOW);
+
+        assertThat(text.truncated()).isTrue();
+        assertThat(extractions.outcome(shortened)).hasValueSatisfying(outcome -> {
+            assertThat(outcome.status()).isEqualTo(ExtractionStatus.PARTIAL);
+            assertThat(outcome.reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
+            assertThat(outcome.truncated()).isTrue();
+        });
+        assertThat(extractions.outcome(complete)).hasValueSatisfying(outcome ->
+                assertThat(outcome.status()).isEqualTo(ExtractionStatus.OK));
+        assertThat(extractions.text(complete, store, NOW).truncated()).isFalse();
+        assertThat(store.find("wiki", "att2", "1")).hasValueSatisfying(asset ->
+                assertThat(asset.partsWithoutFile()).isEqualTo(2));
+        assertThat(DocumentExtractions.withSource(Outcome.of(ExtractionStatus.FAILED, StatusReason.CORRUPT),
+                shortened).reason()).as("ein Grund je Status").contains(StatusReason.CORRUPT);
+    }
+
     @Test
     void aStoredExtractionIsNotReadAgain() {
         Lines structure = new Lines();
