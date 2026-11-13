@@ -67,7 +67,7 @@ class TikaDocumentBlocksTest {
     }
 
     @Test
-    void excelCellsBecomeTablesUnderTheirSheetWithoutRowReference() throws IOException {
+    void excelCellsBecomeTablesUnderTheirSheetWithTheirCellReference() throws IOException {
         Path xlsx = directory.resolve("blaetter.xlsx");
         try (XSSFWorkbook workbook = new XSSFWorkbook(); OutputStream out = Files.newOutputStream(xlsx)) {
             var kosten = workbook.createSheet("Kosten");
@@ -88,7 +88,7 @@ class TikaDocumentBlocksTest {
         assertThat(tables.get(1).location().flatMap(Location::sheet)).contains("Personen");
         assertThat(tables.get(0).cells()).extracting(Block.Cell::text).contains("B3-Wert", "D17-Wert");
         assertThat(tables).flatExtracting(Block.Table::cells).allSatisfy(cell -> {
-            assertThat(cell.cellRef()).as("Tika liefert die Zeile nicht").isEmpty();
+            assertThat(cell.cellRef()).as("Zellbezug aus dem Original (TikaXlsxCellRefsTest)").isPresent();
             assertThat(cell.text()).doesNotStartWith("\t");
         });
         assertThat(sink.blocks).filteredOn(Block.Heading.class::isInstance)

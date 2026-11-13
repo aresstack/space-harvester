@@ -16,6 +16,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Tag;
@@ -59,7 +60,12 @@ class LargeDocumentFilesTest {
     void excelWithOneMillionRowsIsReadCompletely() {
         Path xlsx = LargeFiles.xlsx(directory.resolve("zeilen.xlsx"), LargeFiles.XLSX_ROWS);
 
-        assertComplete(xlsx, XLSX, LargeFiles.rowMark(0), LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+        TikaDocumentStructureTest.Counting sink = assertComplete(xlsx, XLSX, LargeFiles.rowMark(0),
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+
+        // AP10: Zellbezug aus dem Original bis zur letzten Zeile.
+        assertThat(sink.cellRefs).containsExactlyInAnyOrderEntriesOf(Map.of(LargeFiles.rowMark(0), "A1",
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1), "A" + LargeFiles.XLSX_ROWS));
     }
 
     /**
@@ -71,7 +77,12 @@ class LargeDocumentFilesTest {
     void excelWithOneMillionSharedStringsIsReadCompletely() {
         Path xlsx = sharedStringsXlsx(directory.resolve("geteilt.xlsx"), LargeFiles.XLSX_ROWS);
 
-        assertComplete(xlsx, XLSX, LargeFiles.rowMark(0), LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+        TikaDocumentStructureTest.Counting sink = assertComplete(xlsx, XLSX, LargeFiles.rowMark(0),
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1));
+
+        // AP10: Zellbezug aus dem Original bis zur letzten Zeile.
+        assertThat(sink.cellRefs).containsExactlyInAnyOrderEntriesOf(Map.of(LargeFiles.rowMark(0), "A1",
+                LargeFiles.rowMark(LargeFiles.XLSX_ROWS - 1), "A" + LargeFiles.XLSX_ROWS));
     }
 
     @Test
@@ -191,7 +202,8 @@ class LargeDocumentFilesTest {
         assertThat(sink.partChars).isGreaterThan(LargeFiles.MIB_300 / 2);
     }
 
-    private void assertComplete(Path file, String mediaType, String firstMark, String lastMark) {
+    private TikaDocumentStructureTest.Counting assertComplete(Path file, String mediaType, String firstMark,
+            String lastMark) {
         TikaDocumentStructureTest.Counting sink = new TikaDocumentStructureTest.Counting(firstMark, lastMark);
 
         StructuredDocument result = structure.extract(file, file.getFileName().toString(), mediaType,
@@ -202,6 +214,7 @@ class LargeDocumentFilesTest {
         assertThat(sink.found).containsExactlyInAnyOrder(firstMark, lastMark);
         assertThat(result.chars()).isEqualTo(sink.chars);
         assertThat(sink.largestBlock).isLessThanOrEqualTo(ExtractionStore.DEFAULT_SECTION_CHARS);
+        return sink;
     }
 
     /** Ein Blatt mit {@code rows} Zeilen, Spalte A die Zeilenmarke als geteilte Zeichenkette; ohne POI geschrieben. */

@@ -463,8 +463,22 @@ bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile
 größer als ein Abschnitt der Ablage (100 000 Zeichen): Längere Absätze teilt der Adapter an Leerraum, Tabellen an
 Zeilen (Folgestücke mit `continued`, die Zeilen zählen weiter). Fundstellen nur, wo Tika sie liefert: `page` ist bei PDF
 die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckte Seitenzahl; leere Seiten zählen mit),
-`sheet` bei Excel der Blattname. Excel-Zeile und `cellRef` bleiben leer (Tika liefert die Zeile nicht), Word hat keine
-Seiten. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
+`sheet` bei Excel der Blattname, Word hat keine Seiten. Bei `.xlsx` und `.xlsm` (AP10) trägt jede Zelle ihren
+Zellbezug aus dem Original (`cellRef`, z. B. `AA1018`); `row` und `column` bleiben die Position im Block, der Bezug
+bleibt auch in Folgestücken einer geteilten Tabelle. Tika gibt je `row`-Element des Blatt-XML eine Tabellenzeile aus,
+Zellen ab Spalte A aufgefüllt, eine Zelle nur mit Wert (`v` oder `is`); fehlende Zeilen fehlen auch in der Ausgabe.
+`XlsxCellRefs` liest dasselbe Blatt-XML mit (sicherer XML-Leser ohne DTD, Beziehungsteile höchstens 8 MiB, Blatt
+höchstens 4 GiB, beim Lesen gezählt) und nimmt die Zeilennummer nur aus `r` oder der Folge der Zeilen, nie aus der
+Ausgabe gezählt. Eine Zeile bekommt Bezüge nur, wenn Tikas Zellenzahl bis zur letzten belegten Spalte reicht und Text
+nur in belegten Spalten steht; sonst endet die Zuordnung für dieses Blatt (bis dahin vergebene Bezüge bleiben, sie
+waren belegt), einmal im Log mit dem Code `xlsx-cellref-unmatched` ohne Dokumentdaten, der Status bleibt, das nächste
+Blatt beginnt neu. Formeln stehen mit ihrem gespeicherten Wert (ohne Wert keine Zelle), verbundene Zellen oben links,
+ausgeblendete Blätter zählen mit, Kommentare stehen im Text ihrer Zelle und tragen deren Bezug. Text außerhalb des
+Rasters (Textfelder, Kopf- und Fußzeilen, Diagrammblätter) ist keine Tabellenzeile und bekommt keinen Bezug. Gleiche
+Bindung an die geprüften Fassungen wie bei `.pptx`. Ohne Bezug bleiben `.xls`, `.xlsb`, `.ods` und `.csv`, ebenso
+Excel-Dateien in Archiven oder Anhängen. Die Markdown-Ansicht und der Export zeigen den Bezug nicht; er steht nur am
+Block. Kosten (gemessen, 256 MiB Heap): 1 Mio. Zeilen zu 9 Spalten 97 s statt 83 s samt Erzeugen der Datei, 1 Mio.
+geteilte Zeichenketten 7,6 s statt 7,1 s. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
 zählen mit (nicht getestet: ob Notizen in `.ppt` mitzählen; HSLF kann im Test keine Notizen anlegen, der Zähler
 reagiert nur auf Folienelemente). Bei `.pptx` (AP10) ist `slide` die Position der Folie in `p:sldIdLst` ab 1,
 ausgeblendete zählen mit, Notizen tragen die Nummer ihrer Folie. Tika liest eine pptx-Datei auf dem SAX-Weg und gibt die
@@ -475,7 +489,7 @@ ordnet jeder ausgegebenen Folie ihre Nummer zu. Die Zuordnung gilt nur für die 
 Teile fehlen oder sind zu groß, eine Folie fehlt in `p:sldIdLst`, doppelte Kennungen oder Ziele. Gibt Tika am Ende
 mehr oder weniger Folien aus als zugeordnet, sind die schon geschriebenen Nummern nicht belegt: Der Lauf wird verworfen
 (`StructureSink.restart`) und einmal ohne Zuordnung gelesen, abgelegt wird nie ein Stand mit unbelegten Nummern. Benannte Grenze: Die Blöcke bleiben in Tikas Reihenfolge, nicht in Folienreihenfolge; ein eigener SAX-Leser
-in Folienreihenfolge wird erst gebaut, wenn echte Dateien es brauchen. Version `3.3-s12`, „Neu lesen“ holt den Bestand nach. Word-Listen bleiben Absätze (benannte Qualitätsgrenze, AP10 gemessen): Tika setzt die berechnete Marke in den Text
+in Folienreihenfolge wird erst gebaut, wenn echte Dateien es brauchen. Version `3.3-s13` (Excel-Zellbezug), „Neu lesen“ holt den Bestand nach. Word-Listen bleiben Absätze (benannte Qualitätsgrenze, AP10 gemessen): Tika setzt die berechnete Marke in den Text
 („· Punkt A“, „1. Schritt eins“), Suche und Analysen verlieren also nichts; es fehlen nur Ebene und Listenart. Eine
 Zuordnung über einen zweiten Durchlauf durch `document.xml` wäre eine Zuordnung nach Wahrscheinlichkeit und wird nicht
 gebaut. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
@@ -561,7 +575,7 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 |---|---|---|
 | PDF (`application/pdf`) | keine | PDF über 300 MiB mit Bildern, PDF mit 4 000 Textseiten |
 | Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
-| Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
+| Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten, Zellbezug bis zur letzten Zeile |
 | Mail (`.eml`, `message/rfc822`) | keine | Mail mit PDF-Anhang über 300 MiB und weiterem Anhang |
 | Text (`text/plain`), CSV (`text/csv`) | keine | je Datei über 300 MiB (AP3e) |
 | PowerPoint (`.pptx`) | keine | 310 Folien mit je einem Bild, über 300 MiB (AP3e) |
