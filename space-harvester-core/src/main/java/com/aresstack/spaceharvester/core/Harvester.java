@@ -544,8 +544,8 @@ public final class Harvester implements AutoCloseable {
             this.addresses = new PageAddresses(catalog, access, pages);
             // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
             AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
-            DocumentTexts documentTexts = (document, section, inputSha256) -> sectionTexts.get() == null
-                    ? Optional.empty() : sectionTexts.get().sectionText(document, section, inputSha256);
+            DocumentTexts documentTexts = (document, section, inputSha256, extraction) -> sectionTexts.get() == null
+                    ? Optional.empty() : sectionTexts.get().sectionText(document, section, inputSha256, extraction);
             this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
             this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);

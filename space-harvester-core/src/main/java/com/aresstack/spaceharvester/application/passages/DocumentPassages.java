@@ -7,10 +7,12 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Passage-IDs der Absätze eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9a, Punkt 9; Form von AT
@@ -19,7 +21,9 @@ import java.util.Optional;
  *   <li>{@code capture} ist der Hash des Lesetextes des ganzen Dokuments ({@link Enrichment#revision()}, 64
  *       Hexziffern ohne Präfix); ändert sich der Text irgendeines Abschnitts, ändert sich jede ID des Dokuments;</li>
  *   <li>{@code position} zählt die Absätze über alle Abschnitte in Reihenfolge, ab 0;</li>
- *   <li>Zerlegung und Modell wie bei Seiten, gleich für alle Abschnitte.</li>
+ *   <li>Zerlegung und Modell wie bei Seiten; tragen die Abschnitte verschiedene (vor der Grenze für das
+ *       Embedding-Modell je Dokument semantisch, danach nach Struktur), steht dort die Kurzform der verschiedenen
+ *       Kürzel in Abschnittsfolge, so ändert eine andere Grenze die ID.</li>
  * </ul>
  * Solange die Absatz-Stände des Dokuments nicht alle dieselbe {@code revision} tragen (ein Lauf ist noch nicht
  * durch), gibt es keine ID. Die Zahl der Absätze je Abschnitt steht in den gespeicherten Ergebnissen; eine Position
@@ -105,7 +109,10 @@ public final class DocumentPassages {
             }
             Optional<PageText> text;
             try {
-                text = texts.text(document, section.result().section(), section.result().inputSha256());
+                // Mit der Extraktion des Standes: Die Capture gilt nur, solange der Stand zur jetzigen Extraktion gehört.
+                String extraction = section.result().extraction();
+                text = extraction == null ? Optional.empty()
+                        : texts.text(document, section.result().section(), section.result().inputSha256(), extraction);
             } catch (RuntimeException e) {
                 text = Optional.empty();
             }
@@ -160,8 +167,8 @@ public final class DocumentPassages {
             return Optional.empty();
         }
         String revision = own.getFirst().revision();
-        String segmentation = null;
-        String model = null;
+        Set<String> segmentations = new LinkedHashSet<>();
+        Set<String> models = new LinkedHashSet<>();
         List<Section> sections = new ArrayList<>(own.size());
         int base = 0;
         for (Enrichment result : own) {
@@ -178,20 +185,24 @@ public final class DocumentPassages {
             } catch (IllegalArgumentException e) {
                 return Optional.empty();
             }
-            if (PagePassages.overlapping(parsed.passages())
-                    || segmentation != null && (!segmentation.equals(segmentationTag) || !model.equals(modelTag))) {
+            if (PagePassages.overlapping(parsed.passages())) {
                 return Optional.empty();
             }
-            segmentation = segmentationTag;
-            model = modelTag;
+            segmentations.add(segmentationTag);
+            models.add(modelTag);
             sections.add(new Section(result, parsed, base));
             base += parsed.passages().size();
         }
         try {
-            return Optional.of(new Layout(PassageId.captureOf(revision), segmentation, model, sections));
+            return Optional.of(new Layout(PassageId.captureOf(revision), tag(segmentations), tag(models), sections));
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
+    }
+
+    /** Ein Kürzel, wenn alle Abschnitte es tragen, sonst die Kurzform der verschiedenen in Abschnittsfolge. */
+    private static String tag(Set<String> tags) {
+        return tags.size() == 1 ? tags.iterator().next() : PassageId.versionTag(String.join("\n", tags));
     }
 
     private record Layout(String capture, String segmentation, String model, List<Section> sections) {

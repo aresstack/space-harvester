@@ -275,6 +275,16 @@ class DocumentPassagesTest {
                     assertThat(gone.match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
                     assertThat(gone.passages()).isEmpty();
                 });
+        // Der Stand gehört zu einer anderen Extraktion (ein anderer Abschnitt kann sich geändert haben): kein Text.
+        assertThat(vectors.extraction()).isNotNull();
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256(),
+                vectors.extraction())).isPresent();
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256(),
+                "andere|extraktion")).isEmpty();
+        List<Enrichment> otherExtraction = found.stream().map(result -> result.withBasis(result.revision(),
+                "andere|extraktion")).toList();
+        assertThat(DocumentPassages.resolve(requested, otherExtraction, documents::sectionText, 1).match())
+                .isEqualTo(PassageLookup.Match.UNAVAILABLE);
         // Ohne lesbaren Text des Abschnitts nichts Falsches, sondern gerade nicht verfügbar.
         assertThat(DocumentPassages.resolve(requested, found, DocumentTexts.NONE, 1).match())
                 .isEqualTo(PassageLookup.Match.UNAVAILABLE);

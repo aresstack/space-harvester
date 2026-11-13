@@ -280,7 +280,7 @@ class DocumentRelevanceSearchTest {
 
     private RelevanceSearch search(AccessPolicy policy, boolean documents, SearchReranker reranker) {
         return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, vectors, processor, null,
-                reranker, texts(), null, SearchRunLog.NONE, () -> documents, (document, section, inputSha256) -> {
+                reranker, texts(), null, SearchRunLog.NONE, () -> documents, (document, section, inputSha256, extraction) -> {
                     textsRead.add(document);
                     return SECTION_TEXT.equals(inputSha256)
                             ? Optional.of(new PageText("document-text/v1", "Betrieb im Anhang", List.of()))

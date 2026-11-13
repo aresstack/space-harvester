@@ -120,6 +120,16 @@ public final class DocumentEnrichments implements IndexedDocuments {
      * semantischen Suche in einem Dokument (ADR 0026, AP9a): Stellen gelten nur in genau diesem Text.
      */
     public Optional<PageText> sectionText(DocumentKey document, int section, String inputSha256) {
+        return sectionText(document, section, inputSha256, null);
+    }
+
+    /**
+     * Wie {@link #sectionText(DocumentKey, int, String)}, mit {@code extraction} (die am Stand vermerkte Extraktion,
+     * {@link Enrichment#extraction()}) zudem nur, wenn der Stand zur jetzigen Extraktion des Anhangs gehört; ohne
+     * vermerkte Extraktion (Lauf nicht durch) nie.
+     */
+    public Optional<PageText> sectionText(DocumentKey document, int section, String inputSha256,
+                                          String extraction) {
         Objects.requireNonNull(document, "document");
         DocumentInventory source = assets;
         if (source == null || document.attachmentId().isEmpty() || inputSha256 == null) {
@@ -136,12 +146,16 @@ public final class DocumentEnrichments implements IndexedDocuments {
         if (asset == null) {
             return Optional.empty();
         }
-        Optional<StoredExtraction> extraction = structured.get().readable(asset.sha256());
-        if (extraction.isEmpty()) {
+        Optional<StoredExtraction> current = structured.get().readable(asset.sha256());
+        if (current.isEmpty()) {
+            return Optional.empty();
+        }
+        if (extraction != null && !extraction.startsWith(basis(current.get()) + "|")) {
+            // Der Stand gehört zu einer anderen Extraktion: ein anderer Abschnitt kann sich geändert haben.
             return Optional.empty();
         }
         // Nur dieser Abschnitt: ein Ausschnitt am Ende eines großen Dokuments liest nicht das ganze Dokument.
-        return structured.get().documentSection(extraction.get(), document.part(), section)
+        return structured.get().documentSection(current.get(), document.part(), section)
                 .map(DocumentSectionText::project)
                 .filter(text -> inputSha256.equals(text.inputSha256()));
     }
