@@ -916,7 +916,12 @@ public final class AppSettingsLoader {
                     problems.add(prefix + "memory-limits braucht type und limit");
                     continue;
                 }
-                memory.put(type.trim(), size(limit, 0, prefix + "memory-limits", problems));
+                // Eine ungültige Angabe hebt die Schranke nicht auf: Der Eintrag entfällt, der Standard bleibt.
+                int before = problems.size();
+                long bytes = size(limit, 0, prefix + "memory-limits", problems);
+                if (problems.size() == before) {
+                    memory.put(type.trim(), bytes);
+                }
             }
         } else if (entries != null) {
             problems.add(prefix + "memory-limits muss eine Liste sein");
@@ -925,15 +930,13 @@ public final class AppSettingsLoader {
             return new ExtractionLimits(
                     size(get(node, "max-file-size"), d.maxFileBytes(), prefix + "max-file-size", problems),
                     longNumber(get(node, "max-chars"), d.maxChars(), prefix + "max-chars", problems),
-                    longNumber(get(node, "unpack-ratio"), d.unpackRatio(), prefix + "unpack-ratio", problems),
-                    size(get(node, "unpack-ratio-from"), d.unpackRatioFromBytes(), prefix + "unpack-ratio-from",
-                            problems),
+                    d.unpackRatio(),
+                    d.unpackRatioFromBytes(),
                     longNumber(get(node, "text-ratio"), d.textRatio(), prefix + "text-ratio", problems),
                     longNumber(get(node, "text-ratio-from-chars"), d.textRatioFromChars(),
                             prefix + "text-ratio-from-chars", problems),
-                    integer(get(node, "max-depth"), d.maxDepth(), prefix + "max-depth", problems),
-                    integer(get(node, "max-embedded-files"), d.maxEmbeddedFiles(), prefix + "max-embedded-files",
-                            problems),
+                    d.maxDepth(),
+                    d.maxEmbeddedFiles(),
                     duration(get(node, "idle-timeout"), d.idleTimeout(), prefix + "idle-timeout", problems),
                     duration(get(node, "total-timeout"), d.totalTimeout(), prefix + "total-timeout", problems),
                     size(get(node, "temp-space-reserve"), d.tempSpaceReserve(), prefix + "temp-space-reserve",
