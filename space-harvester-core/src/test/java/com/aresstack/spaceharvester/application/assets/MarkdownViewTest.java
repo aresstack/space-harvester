@@ -71,6 +71,58 @@ class MarkdownViewTest {
     }
 
     @Test
+    void aRowSplitAcrossPiecesStaysOneRow() {
+        Block.Table first = new Block.Table(0, Optional.empty(), List.of(), List.of(
+                new Block.Cell(0, 0, "links", false, Optional.empty())), false);
+        Block.Table second = new Block.Table(1, Optional.empty(),
+                List.of(new Link("https://example.org/r", Optional.of("rechts"))), List.of(
+                new Block.Cell(0, 1, "rechts", false, Optional.empty()),
+                new Block.Cell(1, 0, "unten", false, Optional.empty())), true);
+
+        assertThat(MarkdownView.of(List.of(first, second))).isEqualTo("""
+                |  |  |
+                | --- | --- |
+                | links | [rechts](https://example.org/r) |
+                | unten |  |
+                """);
+    }
+
+    @Test
+    void mixedListsStayNestedUnderTheirParentsMarker() {
+        String markdown = MarkdownView.of(List.of(
+                new Block.ListItem(0, Optional.empty(), List.of(), true, 1, "eins"),
+                new Block.ListItem(1, Optional.empty(), List.of(), false, 2, "darunter"),
+                new Block.ListItem(2, Optional.empty(), List.of(), true, 3, "tiefer"),
+                new Block.ListItem(3, Optional.empty(), List.of(), false, 1, "oben")));
+
+        assertThat(markdown).isEqualTo("1. eins\n   - darunter\n     1. tiefer\n- oben\n");
+    }
+
+    @Test
+    void characterReferencesStayText() {
+        String markdown = MarkdownView.of(List.of(
+                new Block.Paragraph(0, Optional.empty(), List.of(), "&lt;tag&gt; &copy; &#42; A&B")));
+
+        assertThat(markdown).isEqualTo("\\&lt;tag\\&gt; \\&copy; \\&#42; A\\&B\n");
+    }
+
+    @Test
+    void manyDeferredLinksOfALongTableAreAllWrittenAfterIt() {
+        int pieces = MarkdownView.LINKS_IN_MEMORY + 5;
+        java.util.List<Block> blocks = new java.util.ArrayList<>();
+        for (int i = 0; i < pieces; i++) {
+            blocks.add(new Block.Table(i, Optional.empty(), List.of(new Link("https://example.org/" + i,
+                    Optional.empty())), List.of(new Block.Cell(i, 0, "z" + i, false, Optional.empty())), i > 0));
+        }
+
+        String markdown = MarkdownView.of(blocks);
+
+        assertThat(markdown).contains("| z" + (pieces - 1) + " |\n\n[https://example.org/0](https://example.org/0)\\\n")
+                .endsWith("[https://example.org/" + (pieces - 1) + "](https://example.org/" + (pieces - 1) + ")\n");
+        assertThat(markdown.split("\\]\\(https").length - 1).isEqualTo(pieces);
+    }
+
+    @Test
     void linksGoToTheirLabelOrFollowTheBlock() {
         String markdown = MarkdownView.of(List.of(
                 new Block.Paragraph(0, Optional.empty(), List.of(

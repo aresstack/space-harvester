@@ -1,7 +1,12 @@
 package com.aresstack.spaceharvester.application.assets;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -33,7 +38,9 @@ public final class MarkdownView {
     /** Version der Ansicht (ADR 0026, Punkt 11: Ansicht). */
     public static final String SCHEMA = "markdown/v1";
 
-    private static final Pattern SPECIAL = Pattern.compile("[\\\\`*_\\[\\]<>|~]");
+    private static final Pattern SPECIAL = Pattern.compile("[\\\\`*_\\[\\]<>|~&]");
+    /** So viele nachgestellte Verweise hält die Ansicht im Speicher, weitere gehen in eine temporäre Datei. */
+    static final int LINKS_IN_MEMORY = 1_000;
     private static final Pattern LINE_START = Pattern.compile("^(\\s*)([#+\\-=>]|\\d+[.)])");
     private static final Pattern SCHEME = Pattern.compile("^([A-Za-z][A-Za-z0-9+.\\-]*):");
 
@@ -41,7 +48,17 @@ public final class MarkdownView {
     private Block previous;
     private Optional<Location> location = Optional.empty();
     private int tableColumns;
+    private boolean tableHeaderWritten;
+    /** Die letzte Zeile einer Tabelle bleibt offen, bis eine neue Zeile beginnt oder die Tabelle endet. */
+    private final List<Block.Cell> openRow = new ArrayList<>();
+    /** Verweise des vorigen Tabellenstücks, deren Beschriftung in der offenen Zeile steht. */
+    private final List<Link> openRowLinks = new ArrayList<>();
+    /** Einrückung des Inhalts je Listenebene (Breite der Marken der Vorfahren). */
+    private final List<Integer> listIndents = new ArrayList<>();
     private final List<Link> pendingLinks = new ArrayList<>();
+    private final List<String> deferredLines = new ArrayList<>();
+    private Path deferredFile;
+    private BufferedWriter deferredWriter;
 
     public MarkdownView(Appendable out) {
         this.out = Objects.requireNonNull(out, "out");
@@ -54,6 +71,7 @@ public final class MarkdownView {
             boolean continuesTable = block instanceof Block.Table table && table.continued()
                     && previous instanceof Block.Table;
             if (!continuesTable) {
+                closeTable();
                 flushLinks();
             }
             boolean moved = block.location().isPresent() && !block.location().equals(location);
@@ -74,8 +92,11 @@ public final class MarkdownView {
                 }
                 case Block.Paragraph paragraph -> out.append(lines(paragraph.text(), paragraph.links(), ""));
                 case Block.ListItem item -> {
-                    String indent = (item.ordered() ? "   " : "  ").repeat(item.level() - 1);
+                    if (!(previous instanceof Block.ListItem) || moved) {
+                        listIndents.clear();
+                    }
                     String marker = item.ordered() ? "1. " : "- ";
+                    String indent = listIndent(item.level(), marker.length());
                     out.append(indent).append(marker)
                             .append(lines(item.text(), item.links(), indent + " ".repeat(marker.length())));
                 }
@@ -91,6 +112,7 @@ public final class MarkdownView {
     /** Schließt die Ansicht ab: noch offene Verweise einer Tabelle, Zeilenende. */
     public void finish() {
         try {
+            closeTable();
             flushLinks();
             if (previous != null) {
                 out.append('\n');
@@ -127,37 +149,81 @@ public final class MarkdownView {
         pendingLinks.addAll(code.links());
     }
 
+    /**
+     * Einrückung eines Listenpunkts: die Summe der Markenbreiten seiner Vorfahren, damit gemischte Listen
+     * ({@code 1.} mit {@code -} darunter) verschachtelt bleiben. Fehlende Vorfahren zählen mit der eigenen Breite.
+     */
+    private String listIndent(int level, int markerWidth) {
+        while (listIndents.size() > level - 1) {
+            listIndents.removeLast();
+        }
+        while (listIndents.size() < level - 1) {
+            listIndents.add(markerWidth);
+        }
+        int width = listIndents.stream().mapToInt(Integer::intValue).sum();
+        listIndents.add(markerWidth);
+        return " ".repeat(width);
+    }
+
+    /**
+     * Ein Tabellenstück. Die letzte Zeile bleibt offen, weil das nächste Stück sie fortsetzen kann (die Ablage teilt
+     * Tabellen auch innerhalb einer Zeile).
+     */
     private void table(Block.Table table, boolean continued) throws IOException {
-        List<Link> unused = new ArrayList<>(table.links());
-        List<List<Block.Cell>> rows = new ArrayList<>();
-        int columns = continued ? tableColumns : 0;
-        long row = Long.MIN_VALUE;
-        for (Block.Cell cell : table.cells()) {
-            if (cell.row() != row) {
-                rows.add(new ArrayList<>());
-                row = cell.row();
-            }
-            rows.getLast().add(cell);
-            if (!continued) {
-                columns = Math.max(columns, cell.column() + 1);
-            }
-        }
-        if (rows.isEmpty()) {
-            return;
-        }
-        columns = Math.max(columns, 1);
-        int first = 0;
         if (!continued) {
-            boolean header = rows.getFirst().stream().allMatch(Block.Cell::header);
-            out.append(row(header ? rows.getFirst() : List.of(), columns, unused)).append('\n');
-            out.append("|").append(" --- |".repeat(columns));
-            first = header ? 1 : 0;
-            tableColumns = columns;
+            tableColumns = 1;
+            tableHeaderWritten = false;
         }
-        for (int i = first; i < rows.size(); i++) {
-            out.append('\n').append(row(rows.get(i), columns, unused));
+        // Die Spaltenzahl steht mit der Kopfzeile fest; bis dahin zählen alle Zellen, die schon da sind.
+        if (!tableHeaderWritten) {
+            for (Block.Cell cell : table.cells()) {
+                tableColumns = Math.max(tableColumns, cell.column() + 1);
+            }
         }
-        pendingLinks.addAll(unused);
+        List<Link> unused = new ArrayList<>(openRowLinks);
+        openRowLinks.clear();
+        unused.addAll(table.links());
+        for (Block.Cell cell : table.cells()) {
+            if (!openRow.isEmpty() && openRow.getLast().row() != cell.row()) {
+                writeRow(unused);
+            }
+            openRow.add(cell);
+        }
+        // Nur Verweise, die noch in der offenen Zeile stehen können, warten auf das nächste Stück.
+        for (Link link : unused) {
+            boolean inOpenRow = link.label().isPresent() && openRow.stream()
+                    .anyMatch(cell -> cell.text().replaceAll("\\s+", " ").contains(link.label().get()));
+            if (inOpenRow) {
+                openRowLinks.add(link);
+            } else {
+                defer(link);
+            }
+        }
+    }
+
+    /** Schreibt die offene Zeile einer Tabelle und beendet die Tabelle. */
+    private void closeTable() throws IOException {
+        if (!openRow.isEmpty()) {
+            List<Link> unused = new ArrayList<>(openRowLinks);
+            openRowLinks.clear();
+            writeRow(unused);
+            unused.forEach(this::defer);
+        }
+    }
+
+    private void writeRow(List<Link> unused) throws IOException {
+        List<Block.Cell> cells = List.copyOf(openRow);
+        openRow.clear();
+        if (!tableHeaderWritten) {
+            tableHeaderWritten = true;
+            boolean header = cells.stream().allMatch(Block.Cell::header);
+            out.append(row(header ? cells : List.of(), tableColumns, unused)).append('\n');
+            out.append("|").append(" --- |".repeat(tableColumns));
+            if (header) {
+                return;
+            }
+        }
+        out.append('\n').append(row(cells, tableColumns, unused));
     }
 
     /** Eine Tabellenzeile; Zellen jenseits der Spaltenzahl der Kopfzeile gehen in die letzte Spalte. */
@@ -228,18 +294,50 @@ public final class MarkdownView {
         return result.toString();
     }
 
+    /** Merkt einen Verweis für die Zeile nach dem Block vor; über {@link #LINKS_IN_MEMORY} in einer Datei. */
+    private void defer(Link link) {
+        Optional<String> target = target(link);
+        String label = escape(link.label().orElse(link.target()).replaceAll("\\s+", " ").strip(), false);
+        String line = target.map(t -> "[" + label + "](" + t + ")").orElse(escape(link.target(), false));
+        try {
+            if (deferredWriter == null && deferredLines.size() < LINKS_IN_MEMORY) {
+                deferredLines.add(line);
+                return;
+            }
+            if (deferredWriter == null) {
+                deferredFile = Files.createTempFile("markdown-verweise-", ".tmp");
+                deferredWriter = Files.newBufferedWriter(deferredFile, StandardCharsets.UTF_8);
+            }
+            // Eine Zeile je Verweis: Ziel und Beschriftung enthalten keinen Zeilenumbruch mehr.
+            deferredWriter.write(line.replaceAll("\\R", " "));
+            deferredWriter.newLine();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private void flushLinks() throws IOException {
-        if (pendingLinks.isEmpty()) {
+        pendingLinks.forEach(this::defer);
+        pendingLinks.clear();
+        if (deferredLines.isEmpty()) {
             return;
         }
-        List<String> lines = new ArrayList<>();
-        for (Link link : pendingLinks) {
-            Optional<String> target = target(link);
-            String label = escape(link.label().orElse(link.target()).replaceAll("\\s+", " ").strip(), false);
-            lines.add(target.map(t -> "[" + label + "](" + t + ")").orElse(escape(link.target(), false)));
+        out.append("\n\n").append(String.join("\\\n", deferredLines));
+        deferredLines.clear();
+        if (deferredWriter != null) {
+            try {
+                deferredWriter.close();
+                try (BufferedReader reader = Files.newBufferedReader(deferredFile, StandardCharsets.UTF_8)) {
+                    for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+                        out.append("\\\n").append(line);
+                    }
+                }
+            } finally {
+                deferredWriter = null;
+                Files.deleteIfExists(deferredFile);
+                deferredFile = null;
+            }
         }
-        pendingLinks.clear();
-        out.append("\n\n").append(String.join("\\\n", lines));
     }
 
     /** Das Ziel als Markdown-Ziel; leer bei nicht zugelassenem Schema oder unbrauchbaren Zeichen. */
