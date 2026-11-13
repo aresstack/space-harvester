@@ -79,7 +79,7 @@ class DocumentRereadsTest {
     Path directory;
 
     private final Map<String, byte[]> files = new HashMap<>();
-    private final MovingClock clock = new MovingClock(NOW);
+    private final MovingClock clock = new MovingClock();
     private final InMemoryJobStore jobStore = new InMemoryJobStore();
     private final List<Jobs> opened = new ArrayList<>();
     private LucenePageTextIndex index;
@@ -316,16 +316,15 @@ class DocumentRereadsTest {
         }
     }
 
-    /** Eine Uhr, die nur auf Zuruf weitergeht: Neugelesenes ist jünger als der Beginn des Auftrags. */
+    /**
+     * Die Systemzeit mit einem Vorlauf, der auf Zuruf wächst: Abgelegte Extraktionen tragen die Systemzeit, ein danach
+     * gestarteter Auftrag beginnt deutlich später.
+     */
     private static final class MovingClock extends Clock {
-        private volatile Instant now;
-
-        MovingClock(Instant now) {
-            this.now = now;
-        }
+        private volatile Duration ahead = Duration.ZERO;
 
         void advance() {
-            now = now.plus(Duration.ofMinutes(1));
+            ahead = ahead.plus(Duration.ofMinutes(1));
         }
 
         @Override
@@ -340,7 +339,7 @@ class DocumentRereadsTest {
 
         @Override
         public Instant instant() {
-            return now;
+            return Instant.now().plus(ahead);
         }
     }
 
