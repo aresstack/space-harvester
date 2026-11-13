@@ -270,7 +270,10 @@ public final class StatusView implements View {
         dashboard = board;
         welcome = Comic.column(welcomePlate(), welcomeAttention);
         root.add(dashboard, BorderLayout.CENTER);
-        context.onChange(ignored -> render());
+        context.onChange(ignored -> {
+            background.rebind();
+            render();
+        });
         root.addHierarchyListener(e -> {
             if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) == 0) {
                 return;

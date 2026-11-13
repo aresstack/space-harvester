@@ -119,6 +119,9 @@ public final class ActivitiesView implements View {
     private Subscription subscription;
     private AppRuntime subscribed;
     private boolean refreshPending;
+    /** Eine Abfrage läuft; Meldungen währenddessen führen danach zu genau einer weiteren. */
+    private boolean reading;
+    private boolean readAgain;
     private String selectedId;
     private Object detail;
     /**
@@ -405,6 +408,11 @@ public final class ActivitiesView implements View {
             model.set(List.of());
             return;
         }
+        if (reading) {
+            readAgain = true;
+            return;
+        }
+        reading = true;
         String id = selectedId;
         Background.run(() -> {
             List<JobStatus> jobs = runtime.workspace().jobs();
@@ -423,6 +431,7 @@ public final class ActivitiesView implements View {
             }
             return new Object[] {jobs, current, currentPhase};
         }, data -> {
+            readDone();
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
             for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
@@ -448,8 +457,18 @@ public final class ActivitiesView implements View {
                 render();
             }
         }, error -> {
+            readDone();
             feedback.problem(error);
         });
+    }
+
+    /** Nach einer Abfrage: kam währenddessen eine Meldung, einmal nachlesen. */
+    private void readDone() {
+        reading = false;
+        if (readAgain) {
+            readAgain = false;
+            SwingUtilities.invokeLater(this::poll);
+        }
     }
 
     private void select(String id) {
