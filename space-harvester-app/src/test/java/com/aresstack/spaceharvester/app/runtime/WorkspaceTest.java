@@ -272,6 +272,37 @@ class WorkspaceTest {
     }
 
     @Test
+    void theHoldingsOfASpaceReportTheirChangeAndCountTheLoadedPages() throws Exception {
+        Workspace workspace = start().workspace();
+        java.util.concurrent.BlockingQueue<String> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+        try (com.aresstack.spaceharvester.application.observe.Subscription subscription = workspace.subscribeHoldings(
+                "wiki", "DEV", new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                    @Override
+                    public void pagesChanged(String sourceId, String spaceKey, java.util.Set<String> pageIds) {
+                        changes.add("pages:" + spaceKey);
+                    }
+
+                    @Override
+                    public void spaceChanged(String sourceId, String spaceKey) {
+                        changes.add("space:" + spaceKey);
+                    }
+                })) {
+            assertThat(workspace.holdings("wiki", "DEV").space().inventoried()).isFalse();
+
+            assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
+
+            assertThat(changes.poll(10, java.util.concurrent.TimeUnit.SECONDS)).as("Meldung ohne Abfrage")
+                    .isNotNull();
+            com.aresstack.spaceharvester.application.holdings.SpaceHoldings holdings = workspace.holdings("wiki",
+                    "DEV");
+            assertThat(holdings.space().inventoried()).isTrue();
+            assertThat(holdings.space().counts().pages()).isPositive().isEqualTo(holdings.pages().size());
+            assertThat(workspace.holdingSpaces("wiki")).extracting(
+                    com.aresstack.spaceharvester.application.holdings.SpaceSummary::spaceKey).contains("DEV");
+        }
+    }
+
+    @Test
     void theActivityListSurvivesARestart() throws Exception {
         Workspace first = start().workspace();
         String id = await(first, first.startSync("wiki", "DEV")).id();

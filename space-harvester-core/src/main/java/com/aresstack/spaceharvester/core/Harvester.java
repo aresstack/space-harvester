@@ -63,6 +63,7 @@ import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.holdings.Holdings;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -167,6 +168,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneHoldingsCatalog;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -277,6 +279,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceKeyCheck spaceKeys;
     private final PageFreshness freshness;
     private final PageQueries pages;
+    private final Holdings holdings;
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
@@ -532,9 +535,15 @@ public final class Harvester implements AutoCloseable {
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
+            // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
+            this.holdings = new Holdings(catalog, new LuceneHoldingsCatalog(cache), access, builder.maxTreeNodes);
+            opened.add(holdings);
+            cache.changes(holdings);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
+            // ADR 0027: jeder Inhaltsabruf bei der Quelle (Planer, Lesen, Abgleich, Export) meldet dem Bestand „lädt“.
+            snapshots.loads(holdings);
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
@@ -1206,6 +1215,11 @@ public final class Harvester implements AutoCloseable {
     /** Seiten, Baum und Einzelseiten aus dem Cache, mit {@code refresh} gegen die Quelle geprüft. */
     public PageQueries pages() {
         return pages;
+    }
+
+    /** Bestand je Space mit Zählern je Teilbaum und Meldungen bei jeder Änderung (ADR 0027). */
+    public Holdings holdings() {
+        return holdings;
     }
 
     /**

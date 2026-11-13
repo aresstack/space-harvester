@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -114,6 +115,38 @@ class SourceSnapshotsTest {
                 e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE));
         assertThat(stillInterrupted).isTrue();
         assertThat(pending).isCancelled();
+    }
+
+    @Test
+    void everyFetchIsObservedFromItsStartToItsEndEvenWhenItFails() {
+        List<String> seen = new ArrayList<>();
+        SourceSnapshots ok = snapshots(new StoredPage(page("7"), new byte[] {'{', '}'}, "application/json",
+                "test+json", RETRIEVED));
+        ok.loads(key -> {
+            seen.add("start:" + key.pageId());
+            return () -> seen.add("end:" + key.pageId());
+        });
+        ok.fetch("wiki", "7");
+        SourceSnapshots failing = snapshots(null, CompletableFuture.failedFuture(new SourceAccessException("wiki",
+                SourceAccessException.Reason.UNAVAILABLE, "weg", null)));
+        failing.loads(key -> {
+            seen.add("start:" + key.pageId());
+            return () -> seen.add("end:" + key.pageId());
+        });
+        assertThatThrownBy(() -> failing.fetch("wiki", "8")).isInstanceOf(SourceAccessException.class);
+
+        assertThat(seen).containsExactly("start:7", "end:7", "start:8", "end:8");
+    }
+
+    @Test
+    void aFailingObserverDoesNotStopTheFetch() {
+        SourceSnapshots snapshots = snapshots(new StoredPage(page("7"), new byte[] {'{', '}'}, "application/json",
+                "test+json", RETRIEVED));
+        snapshots.loads(key -> {
+            throw new IllegalStateException("kaputt");
+        });
+
+        assertThat(snapshots.fetch("wiki", "7").key()).isEqualTo(new PageKey("wiki", "7"));
     }
 
     private static PageMetadata page(String pageId) {
