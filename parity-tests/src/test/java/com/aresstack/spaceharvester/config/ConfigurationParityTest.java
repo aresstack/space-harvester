@@ -99,6 +99,10 @@ class ConfigurationParityTest {
                   max-terms: 300
                   max-embedded-terms: 100
                   max-judged-pairs: 50
+              enrichment:
+                documents:
+                  enabled: false
+                  embedding-max-chars: 750000
             """;
 
     private static final String TOKEN = "parity-token";
@@ -161,6 +165,11 @@ class ConfigurationParityTest {
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+
+        // ADR 0026, AP9a: Analysen je Anhang, beim Dienst ebenfalls über withSyncRules.
+        assertThat(app.enrichment()).isEqualTo(service2.enrichment())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.EnrichmentSettings(false,
+                        750_000));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

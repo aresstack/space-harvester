@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
@@ -44,7 +45,8 @@ public final class ConfigurationOverlay {
             StorageSettings.DATA_DIRECTORY, LocalFileSettings.ALLOW_ALL, LocalFileSettings.ROOTS,
             ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MEDIA_TYPES,
             ExportSettings.ATTACHMENTS_MAX_SIZE, TermSettings.SYNONYMS_MAX_TERMS,
-            TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS);
+            TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS,
+            EnrichmentSettings.DOCUMENTS_ENABLED, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
@@ -116,6 +118,9 @@ public final class ConfigurationOverlay {
         put(properties, TermSettings.SYNONYMS_MAX_TERMS, configuration.terms().synonyms().maxTerms());
         put(properties, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS, configuration.terms().synonyms().maxEmbeddedTerms());
         put(properties, TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, configuration.terms().synonyms().maxJudgedPairs());
+        put(properties, EnrichmentSettings.DOCUMENTS_ENABLED, configuration.enrichment().documents());
+        put(properties, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
+                configuration.enrichment().documentEmbeddingMaxChars());
         return properties;
     }
 

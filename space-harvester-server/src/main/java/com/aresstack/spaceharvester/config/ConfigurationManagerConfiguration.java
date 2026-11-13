@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.api.NetworkDescription;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
@@ -125,7 +126,8 @@ class ConfigurationManagerConfiguration {
         // Anhänge im Export (ADR 0023): Medientypen als Text mit Kommas oder als YAML-Liste.
         for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE,
                 TermSettings.SYNONYMS_MAX_TERMS, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS,
-                TermSettings.SYNONYMS_MAX_JUDGED_PAIRS)) {
+                TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, EnrichmentSettings.DOCUMENTS_ENABLED,
+                EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
@@ -137,7 +139,7 @@ class ConfigurationManagerConfiguration {
                         properties.setProperty(SourceSyncOverride.key(id, field), value))));
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
         return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles())
-                .withExport(read.export()).withTerms(read.terms());
+                .withExport(read.export()).withTerms(read.terms()).withEnrichment(read.enrichment());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(

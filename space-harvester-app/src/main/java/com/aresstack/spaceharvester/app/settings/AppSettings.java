@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -58,7 +59,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           TrustSettings tls, Cache cache, boolean setupCompleted,
                           Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
                           LocalFileSettings localFiles, Map<String, String> sourceKeePass,
-                          List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput) {
+                          List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                          EnrichmentSettings enrichment) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -81,6 +83,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         inactiveRoots = inactiveRoots == null ? List.of() : List.copyOf(inactiveRoots);
         terms = terms == null ? TermSettings.DEFAULT : terms;
         consoleOutput = consoleOutput == null ? ConsoleOutput.DEFAULT : consoleOutput;
+        enrichment = enrichment == null ? EnrichmentSettings.DEFAULT : enrichment;
+    }
+
+    /** Mit den Analysen je Dokument ohne Angabe ({@link EnrichmentSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, EnrichmentSettings.DEFAULT);
     }
 
     /** Mit der Terminal-Ausgabe ohne Angabe ({@link ConsoleOutput#DEFAULT}), für Aufrufer, die sie nicht brauchen. */
@@ -167,7 +184,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput);
+                inactiveRoots, terms, consoleOutput, enrichment);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -175,7 +192,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
-                consoleOutput);
+                consoleOutput, enrichment);
     }
 
     /**
@@ -186,7 +203,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
-                sourceKeePass, inactiveRoots, terms, consoleOutput);
+                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment);
     }
 
     /**
@@ -201,21 +218,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
-                other.consoleOutput);
+                other.consoleOutput, other.enrichment);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput);
+                inactiveRoots, terms, consoleOutput, enrichment);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
     public AppSettings withConsoleOutput(ConsoleOutput output) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, output);
+                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
