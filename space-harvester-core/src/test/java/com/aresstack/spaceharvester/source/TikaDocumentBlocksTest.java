@@ -204,6 +204,107 @@ class TikaDocumentBlocksTest {
         assertThat(sink.text()).contains("Abschnitt 1", LargeFiles.paragraphMark(1)).doesNotContain(".png");
     }
 
+    @Test
+    void pptSlidesAreNumberedInSlideOrderHiddenSlidesIncluded() throws Exception {
+        Path ppt = ppt(directory.resolve("folien.ppt"), 2, "FOLIE-EINS", "FOLIE-ZWEI", "FOLIE-DREI");
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        structure.extract(ppt, "folien.ppt", "application/vnd.ms-powerpoint", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(slideOf(sink, "FOLIE-EINS")).hasValue(1);
+        assertThat(slideOf(sink, "FOLIE-ZWEI")).as("ausgeblendet, zählt mit").hasValue(2);
+        assertThat(slideOf(sink, "FOLIE-DREI")).hasValue(3);
+    }
+
+    @Test
+    void pptxSlidesGetNoSlideNumber() throws Exception {
+        Path pptx = directory.resolve("folien.pptx");
+        try (org.apache.poi.xslf.usermodel.XMLSlideShow show = new org.apache.poi.xslf.usermodel.XMLSlideShow()) {
+            for (String mark : new String[] {"FOLIE-EINS", "FOLIE-ZWEI"}) {
+                org.apache.poi.xslf.usermodel.XSLFTextBox box = show.createSlide().createTextBox();
+                box.setText(mark);
+                box.setAnchor(new java.awt.Rectangle(50, 50, 300, 50));
+            }
+            try (java.io.OutputStream out = Files.newOutputStream(pptx)) {
+                show.write(out);
+            }
+        }
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        structure.extract(pptx, "folien.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation", ExtractionLimits.DEFAULTS,
+                sink);
+
+        assertThat(sink.text()).contains("FOLIE-EINS", "FOLIE-ZWEI");
+        assertThat(sink.blocks).as("Reihenfolge von Tika nicht verlässlich").allSatisfy(block ->
+                assertThat(block.location().flatMap(Location::slide)).isEmpty());
+    }
+
+    @Test
+    void wordListsStayParagraphsWithoutAnUnambiguousMarker() throws Exception {
+        Path docx = directory.resolve("liste.docx");
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument document = new org.apache.poi.xwpf.usermodel.XWPFDocument()) {
+            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTAbstractNum definition =
+                    org.openxmlformats.schemas.wordprocessingml.x2006.main.CTAbstractNum.Factory.newInstance();
+            definition.setAbstractNumId(java.math.BigInteger.ZERO);
+            org.openxmlformats.schemas.wordprocessingml.x2006.main.CTLvl level = definition.addNewLvl();
+            level.setIlvl(java.math.BigInteger.ZERO);
+            level.addNewNumFmt().setVal(org.openxmlformats.schemas.wordprocessingml.x2006.main.STNumberFormat.BULLET);
+            level.addNewLvlText().setVal("•");
+            org.apache.poi.xwpf.usermodel.XWPFNumbering numbering = document.createNumbering();
+            java.math.BigInteger list = numbering.addNum(numbering.addAbstractNum(
+                    new org.apache.poi.xwpf.usermodel.XWPFAbstractNum(definition)));
+            document.createParagraph().createRun().setText("Einleitung");
+            for (String item : new String[] {"Punkt A", "Punkt B"}) {
+                org.apache.poi.xwpf.usermodel.XWPFParagraph paragraph = document.createParagraph();
+                paragraph.setNumID(list);
+                paragraph.createRun().setText(item);
+            }
+            try (java.io.OutputStream out = Files.newOutputStream(docx)) {
+                document.write(out);
+            }
+        }
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        structure.extract(docx, "liste.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ExtractionLimits.DEFAULTS,
+                sink);
+
+        // Tika gibt Word-Listenpunkte als Absatz mit vorangestelltem Zeichen aus, ohne Listenelement oder Klasse.
+        assertThat(sink.text()).contains("Punkt A", "Punkt B");
+        assertThat(sink.blocks).noneMatch(Block.ListItem.class::isInstance);
+    }
+
+    /**
+     * Eine .ppt mit einer Marke je Folie; {@code hidden} ist die ausgeblendete Folie ab 1. HSLF liegt nur zur Laufzeit
+     * (über die Parser der Kopie) auf dem Klassenpfad, deshalb per Reflexion statt einer Zusatzabhängigkeit.
+     */
+    private static Path ppt(Path target, int hidden, String... slides) throws Exception {
+        Class<?> type = Class.forName("org.apache.poi.hslf.usermodel.HSLFSlideShow");
+        try (AutoCloseable show = (AutoCloseable) type.getConstructor().newInstance()) {
+            for (int i = 0; i < slides.length; i++) {
+                Object slide = type.getMethod("createSlide").invoke(show);
+                Object box = slide.getClass().getMethod("createTextBox").invoke(slide);
+                box.getClass().getMethod("setText", String.class).invoke(box, slides[i]);
+                box.getClass().getMethod("setAnchor", java.awt.geom.Rectangle2D.class)
+                        .invoke(box, new java.awt.Rectangle(50, 50, 300, 50));
+                if (i + 1 == hidden) {
+                    slide.getClass().getMethod("setHidden", boolean.class).invoke(slide, true);
+                }
+            }
+            try (java.io.OutputStream out = Files.newOutputStream(target)) {
+                type.getMethod("write", java.io.OutputStream.class).invoke(show, out);
+            }
+        }
+        return target;
+    }
+
+    private static Optional<Integer> slideOf(TikaDocumentStructureTest.Recording sink, String mark) {
+        return sink.blocks.stream().filter(block -> DocumentExtractions.plain(block).contains(mark))
+                .findFirst()
+                .flatMap(Block::location).flatMap(Location::slide);
+    }
+
     /** Je Seite eine Marke; {@code null} ergibt eine leere Seite. */
     private static Path pdf(Path target, String... pages) throws IOException {
         try (PDDocument document = new PDDocument()) {

@@ -77,7 +77,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s3";
+    public static final String VERSION = "3.3-s4";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -611,6 +611,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private boolean sheetTitle;
             private boolean sheetHeading;
             private int page;
+            private int slide;
             private String sheet;
             private int tables;
             private final List<Block.Cell> cells = new ArrayList<>();
@@ -815,6 +816,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     sheet = null;
                 } else if (cls.equals("page") && pdf()) {
                     page++;
+                } else if (cls.equals("slide") && legacyPowerPoint()) {
+                    // Nur .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit). Bei
+                    // .pptx stimmt die Reihenfolge nicht, dort bleibt die Folie leer (Architekt 13.11.2026).
+                    slide++;
                 }
                 resetKind();
             }
@@ -826,6 +831,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
             private boolean pdf() {
                 return "application/pdf".equals(detectedType());
+            }
+
+            private boolean legacyPowerPoint() {
+                return "application/vnd.ms-powerpoint".equals(detectedType());
             }
 
             private boolean spreadsheet() {
@@ -849,6 +858,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 }
                 if (sheet != null) {
                     return Optional.of(new Location(Optional.empty(), Optional.empty(), Optional.of(sheet)));
+                }
+                if (slide > 0) {
+                    return Optional.of(Location.slide(slide));
                 }
                 return page > 0 ? Optional.of(Location.page(page)) : Optional.empty();
             }
