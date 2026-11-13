@@ -48,6 +48,12 @@ dependencies {
     testImplementation testFixtures(project(':enterprise-ai-sources'))
     // Kleines MaltParser-Testmodell (nicht das GSD-Modell) für den Adapter-Test
     testImplementation testFixtures(project(':nlp-parser'))
+    testImplementation libs.opennlp.tools
+    // Keep English tagging models restricted to the opt-in Atlassian experiment.
+    testRuntimeOnly 'org.apache.opennlp:opennlp-models-sentdetect-en:1.3.0'
+    testRuntimeOnly 'org.apache.opennlp:opennlp-models-tokenizer-en:1.3.0'
+    testRuntimeOnly 'org.apache.opennlp:opennlp-models-pos-en:1.3.0'
+    testRuntimeOnly 'org.apache.opennlp:opennlp-models-lemmatizer-en:1.3.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
@@ -151,4 +157,20 @@ def appJarCheck = tasks.register('appJarCheck') {
 
 tasks.named('check') {
     dependsOn appJarCheck
+}
+
+// Run a bounded, opt-in source/NLP experiment without starting the desktop application.
+tasks.register('atlassianTextSpike', JavaExec) {
+    group = 'verification'
+    description = 'Fetch public Atlassian Confluence help through HarvestSource and inspect German NLP output.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.aresstack.spaceharvester.app.spike.AtlassianTextSpike'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    def outputDirectory = layout.buildDirectory.dir('atlassian-text-spike')
+    def parserModel = rootProject.layout.projectDirectory.dir('nlp-parser/build/nlp-model/maltparser-de-gsd-v1.0.0')
+    args outputDirectory.get().asFile.absolutePath, parserModel.asFile.absolutePath
+    if (project.hasProperty('atlassianSpikeSpace')) {
+        args project.property('atlassianSpikeSpace').toString()
+    }
 }
