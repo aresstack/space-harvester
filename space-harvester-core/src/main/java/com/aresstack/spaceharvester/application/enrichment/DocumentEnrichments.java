@@ -208,7 +208,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
                 }
                 DocumentExtractions.DocumentSection section = found.next();
                 DocumentKey document = section.part().map(part -> attachment.child(part.id())).orElse(attachment);
-                PageText text = DocumentSectionText.project(extraction.get().key(), section.section());
+                PageText text = DocumentSectionText.project(section.section());
                 if (text.text().isBlank()) {
                     continue;
                 }

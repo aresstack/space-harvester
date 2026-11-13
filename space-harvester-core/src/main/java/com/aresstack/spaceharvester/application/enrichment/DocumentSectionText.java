@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.assets.Block;
-import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.TextSection;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,8 +20,9 @@ import java.util.Objects;
  *       reicht über die Grenze einer Tabelle.</li>
  * </ul>
  *
- * <p>Das Schema nennt Regeln, Extraktion und Version, aus der der Abschnitt stammt: Wird das Dokument mit einer anderen
- * Extraktion neu gelesen, ändert sich {@link PageText#inputSha256()}, und die Ergebnisse veralten.
+ * <p>Das Schema nennt nur die Regeln dieser Ansicht, nicht Extraktor, Version oder Modell (Abnahme 8): Eine neue
+ * Extraktorversion mit gleichen Blöcken ergibt denselben {@link PageText#inputSha256()}, die Ergebnisse bleiben aktuell;
+ * geänderte Blöcke ändern den Text und machen genau diese Ergebnisse alt.
  */
 public final class DocumentSectionText {
 
@@ -33,14 +33,8 @@ public final class DocumentSectionText {
     private DocumentSectionText() {
     }
 
-    /** Schema eines Abschnitts aus dieser Extraktion. */
-    public static String schema(ExtractionKey extraction) {
-        return SCHEMA + "+" + extraction.extractor() + ":" + extraction.version() + ":" + extraction.model();
-    }
-
     /** Der Lesetext eines Abschnitts. */
-    public static PageText project(ExtractionKey extraction, TextSection section) {
-        Objects.requireNonNull(extraction, "extraction");
+    public static PageText project(TextSection section) {
         Objects.requireNonNull(section, "section");
         StringBuilder text = new StringBuilder();
         List<int[]> headings = new ArrayList<>();
@@ -65,7 +59,7 @@ public final class DocumentSectionText {
             int end = h + 1 < headings.size() ? headings.get(h + 1)[0] : text.length();
             sections.add(new PageText.Section(headingTexts.get(h), headings.get(h)[1], start, end));
         }
-        return new PageText(schema(extraction), text.toString(), sections);
+        return new PageText(SCHEMA, text.toString(), sections);
     }
 
     private static String line(Block block) {
