@@ -199,6 +199,9 @@ public final class ContentView implements View {
      */
     public void selection(ExportPanel.Selection selection) {
         detail.export().selection(selection);
+        // Der Chat löst die Auswahl im Core zu Seiten auf (ADR 0029) und frischt sie bei Bestandsmeldungen auf; der
+        // Graph grenzt sich auf dieselben Seiten ein, ohne ein zweites Mal aufzulösen.
+        detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
         if (selection != null) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite

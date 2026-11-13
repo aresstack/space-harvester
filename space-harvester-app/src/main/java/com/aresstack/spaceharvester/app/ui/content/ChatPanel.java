@@ -14,11 +14,11 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
-import com.aresstack.spaceharvester.application.holdings.PageHolding;
-import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 
 import javax.swing.BorderFactory;
@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Reiter „Chat“ (Angelo, 13.11.2026), vorerst als Click-Dummy nach {@code ChatShellPanel} und
@@ -119,6 +120,8 @@ public final class ChatPanel extends JPanel {
     private AppRuntime subscribed;
     private boolean refreshPending;
     private int request;
+    private PageSelection resolved;
+    private Consumer<PageSelection> onResolved;
 
     public ChatPanel(AppContext context) {
         super(new BorderLayout(0, 8));
@@ -303,8 +306,9 @@ public final class ChatPanel extends JPanel {
         if (key == null) {
             return;
         }
-        subscription = runtime.workspace().subscribeHoldings(current.sourceId(),
-                current.spaceKey() == null ? "" : current.spaceKey(), new HoldingsListener() {
+        try {
+            subscription = runtime.workspace().subscribeHoldings(current.sourceId(),
+                    current.spaceKey() == null ? "" : current.spaceKey(), new HoldingsListener() {
                     @Override
                     public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
                         scheduleRefresh();
@@ -320,6 +324,11 @@ public final class ChatPanel extends JPanel {
                         scheduleRefresh();
                     }
                 });
+        } catch (RuntimeException gone) {
+            // Die gewählte Quelle gibt es in dieser Laufzeit nicht mehr (etwa entfernt): der Baum räumt die Auswahl
+            // gleich weg; bis dahin ohne Meldungen, das Lesen meldet den Fehler selbst.
+            subscription = null;
+        }
     }
 
     /** Vom Zustell-Thread des Core: einmal auf dem EDT auffrischen, auch bei mehreren Meldungen hintereinander. */
@@ -348,9 +357,9 @@ public final class ChatPanel extends JPanel {
             renderKnowledge(current, null);
             return;
         }
-        Background.run(() -> counts(runtime, current), counts -> {
+        Background.run(() -> runtime.workspace().resolveSelection(current.toCore()), resolved -> {
             if (ticket == request) {
-                renderKnowledge(current, counts);
+                renderKnowledge(current, resolved);
             }
         }, error -> {
             if (ticket == request) {
@@ -359,29 +368,30 @@ public final class ChatPanel extends JPanel {
         });
     }
 
-    /** Die Zähler der Auswahl aus der Bestandsübersicht: Quelle über alle Spaces, Space, Seite samt Unterseiten. */
-    static HoldingCounts counts(AppRuntime runtime, Selection selection) {
-        if (selection.spaceKey() == null) {
-            HoldingCounts total = HoldingCounts.ZERO;
-            for (SpaceSummary space : runtime.workspace().holdingSpaces(selection.sourceId())) {
-                total = total.plus(space.counts());
-            }
-            return total;
-        }
-        if (selection.pageId() == null) {
-            return runtime.workspace().holdings(selection.sourceId(), selection.spaceKey()).space().counts();
-        }
-        PageHolding page = runtime.workspace().holdings(selection.sourceId(), selection.spaceKey(),
-                Set.of(selection.pageId())).pages().get(selection.pageId());
-        return page == null ? HoldingCounts.ZERO : page.subtree();
+    /**
+     * Meldet jede aufgelöste Auswahl (ADR 0029), damit Analysen wie der Graph dieselben Seiten eingrenzen;
+     * {@code null} ohne Auswahl oder Laufzeit.
+     */
+    public void onResolved(Consumer<PageSelection> listener) {
+        this.onResolved = listener;
     }
 
-    private void renderKnowledge(Selection current, HoldingCounts counts) {
+    /** Die zuletzt aufgelöste Auswahl: die Seiten, die der Chat als Wissen sendet; {@code null} ohne Auswahl. */
+    PageSelection resolved() {
+        return resolved;
+    }
+
+    private void renderKnowledge(Selection current, PageSelection resolved) {
+        this.resolved = resolved;
         boolean allowed = current == null || allowed(context.settings(), current.sourceId());
-        knowledge.setText(knowledgeText(current, counts, allowed));
+        HoldingCounts counts = resolved == null ? null : resolved.counts();
+        knowledge.setText(knowledgeText(current, counts, resolved == null || resolved.complete(), allowed));
         load.setVisible(current != null && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         send.setEnabled(current != null);
+        if (onResolved != null) {
+            onResolved.accept(resolved);
+        }
     }
 
     /** Ob die Quelle Inhalte an den KI-Dienst geben darf ({@code ai.external-processing-sources}). */
@@ -394,7 +404,7 @@ public final class ChatPanel extends JPanel {
      * Die Statuszeile des Wissens: „Wissen: ‹Seite› samt Unterseiten · n Seiten“, für einen Space „Space ‹Name›“,
      * für eine Quelle „‹Quelle› · alle Spaces“; dazu, was nicht geladen ist, und ob die Quelle für KI freigegeben ist.
      */
-    static String knowledgeText(Selection selection, HoldingCounts counts, boolean allowed) {
+    static String knowledgeText(Selection selection, HoldingCounts counts, boolean complete, boolean allowed) {
         if (selection == null) {
             return NO_SELECTION;
         }
@@ -416,6 +426,10 @@ public final class ChatPanel extends JPanel {
                 text.append(" · ").append(missing).append(" davon nicht geladen");
             }
         }
+        if (!complete) {
+            // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
+            text.append(" · ").append(ExportPanel.INCOMPLETE);
+        }
         if (!allowed) {
             text.append(" · ").append(NOT_ALLOWED);
         }
@@ -430,9 +444,17 @@ public final class ChatPanel extends JPanel {
         }
         load.setEnabled(false);
         feedback.working("Download wird gestartet …");
-        java.util.function.Consumer<Downloads.Started> started = result -> {
-            feedback.working(current.page() ? "Download der Seite samt Unterseiten gestartet"
-                    : current.spaceKey() == null ? "Download aller Spaces gestartet" : "Download des Space gestartet");
+        Consumer<Downloads.Started> started = result -> {
+            if (!result.failed().isEmpty()) {
+                feedback.warning(Texts.count(result.failed().size(), "Download ließ", "Downloads ließen")
+                        + " sich nicht starten", String.join("; ", result.failed()));
+            } else if (result.jobs().isEmpty()) {
+                feedback.info("Kein Space zum Herunterladen", null);
+            } else {
+                feedback.working(current.page() ? "Download der Seite samt Unterseiten gestartet"
+                        : current.spaceKey() == null ? "Download aller Spaces gestartet"
+                        : "Download des Space gestartet");
+            }
             load.setEnabled(true);
         };
         java.util.function.Consumer<Throwable> failed = error -> {

@@ -10,7 +10,10 @@ import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -34,6 +37,17 @@ import org.junit.jupiter.api.io.TempDir;
  * Ausgabeordner ab, ohne Dateidialog und ohne technische Dateien. Aufträge hat keine Formate mehr.
  */
 class ExportPanelTest {
+
+    @Test
+    void theHoldingsLineCountsLocalPagesAndNamesAGapInTheResolution() {
+        PageSet pages = PageSet.of(Map.of("wiki", List.of("1", "2", "3")));
+        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 2, 0, 0), List.of(), true)))
+                .isEqualTo("2 von 3 Seiten lokal");
+        assertThat(ExportPanel.holdingsText(new PageSelection(pages, new HoldingCounts(3, 3, 0, 0), List.of(), false)))
+                .isEqualTo("3 von 3 Seiten lokal · " + ExportPanel.INCOMPLETE);
+        assertThat(ExportPanel.holdingsText(new PageSelection(PageSet.EMPTY, HoldingCounts.ZERO, List.of(), true)))
+                .isEqualTo("keine Seite bekannt");
+    }
 
     @TempDir
     Path home;

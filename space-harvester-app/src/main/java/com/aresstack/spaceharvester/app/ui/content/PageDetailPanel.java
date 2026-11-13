@@ -569,6 +569,11 @@ public final class PageDetailPanel extends JPanel {
         return chat;
     }
 
+    /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
+    public KnowledgeGraphTab graph() {
+        return graphView;
+    }
+
     /** Zeigt den Reiter „Export“, etwa aus „Inhalte öffnen“ eines Auftrags. */
     public void showExport() {
         tabs.select(EXPORT);

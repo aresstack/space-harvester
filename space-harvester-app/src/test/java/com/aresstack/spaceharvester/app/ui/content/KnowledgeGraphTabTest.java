@@ -9,8 +9,10 @@ import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
@@ -208,6 +210,19 @@ class KnowledgeGraphTabTest {
                 .contains(GraphNeighbourhood.EdgeType.CONFIRMED_TERM_RELATION);
         tab.setShowCandidates(true);
         assertThat(tab.options().types()).contains(GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE);
+    }
+
+    @Test
+    void theTreeSelectionBoundsTheGraphUntilTheFilterIsSwitchedOff() {
+        assertThat(tab.options().pages()).as("ohne Auswahl keine Grenze").isNull();
+        PageSet pages = PageSet.of(Map.of("wiki", List.of("1", "2")));
+        tab.within(pages);
+        assertThat(tab.options().pages()).isSameAs(pages);
+        tab.setSelectionOnly(false);
+        assertThat(tab.options().pages()).as("Filter aus: ganzer Graph").isNull();
+        tab.setSelectionOnly(true);
+        tab.within(null);
+        assertThat(tab.options().pages()).as("Auswahl aufgehoben").isNull();
     }
 
     @Test
