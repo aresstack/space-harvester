@@ -110,12 +110,14 @@ class ExplorerAnalyzeTest {
     @Test
     void entriesFollowDownloadInTheRightOrder() throws Exception {
         useFakes();
-        assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.ANALYZE, Explorer.PAGE_ONLY);
-        assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.ANALYZE,
+        // „Favorit“ steht hinter Herunterladen (Spaces und Seiten); Quellen haben keinen Stern.
+        assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
+                Explorer.PAGE_ONLY);
+        assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
                 Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.ANALYZE,
+        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
                 Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.ANALYZE);
+        assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE);
         assertThat(labels(SOURCE)).containsExactly("Herunterladen", Explorer.ANALYZE);
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();
         assertThat(labels(new Explorer.Note(Explorer.LOADING))).isEmpty();
