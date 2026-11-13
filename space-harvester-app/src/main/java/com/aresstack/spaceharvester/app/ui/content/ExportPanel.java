@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -69,6 +70,16 @@ public final class ExportPanel extends JPanel {
             return spaceKey != null && pageId == null;
         }
 
+        /** Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten. */
+        com.aresstack.spaceharvester.application.holdings.Selection toCore() {
+            com.aresstack.spaceharvester.application.holdings.Selection.Root root = pageId != null
+                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree(sourceId, spaceKey, pageId)
+                    : spaceKey != null
+                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey)
+                    : com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId);
+            return com.aresstack.spaceharvester.application.holdings.Selection.of(root);
+        }
+
         /** Ob ein Download genau diese Auswahl geladen hat: derselbe Space und dieselbe Startseite (oder keine). */
         boolean matches(JobStatus job) {
             return job.type() == JobType.EXPORT && Objects.equals(job.sourceId(), sourceId)
@@ -84,6 +95,8 @@ public final class ExportPanel extends JPanel {
             "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)", "analysis",
             "Analyse exportieren (analysis.json: Analysedaten je Seite, Originaldaten unverändert)");
     static final String NOT_LOADED = "Noch nicht geladen";
+    /** Ein berührter Space ohne Inventur: der Cache kennt dort nur einzeln geladene Seiten. */
+    static final String INCOMPLETE = "lückenhaft, Space ohne Inventur";
     static final String LOAD_SPACE = "Ganzen Space laden";
     static final String REFRESH = "Aktualisieren";
     static final String LOAD_SUBTREE = "Samt Unterseiten laden";
@@ -322,13 +335,24 @@ public final class ExportPanel extends JPanel {
                 Selection whole = new Selection(selection.sourceId(), space.key(), null, space.name());
                 rows.add(new SpaceRow(space, newest(jobs, whole), running(jobs, whole)));
             }
-            return new Data(selection, null, null, null, List.of(), rows);
+            return new Data(selection, null, null, null, List.of(), rows, null);
         }
         JobStatus newest = newest(jobs, selection);
         ExportDatasetInfo dataset = newest == null ? null
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
-        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of());
+        // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, nicht nur die Startseite.
+        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore());
+        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings);
+    }
+
+    /** „120 von 127 Seiten lokal“, bei lückenhafter Auflösung mit Hinweis; ohne bekannte Seiten „keine Seite bekannt“. */
+    static String holdingsText(PageSelection holdings) {
+        if (holdings.size() == 0) {
+            return holdings.complete() ? "keine Seite bekannt" : "keine Seite bekannt · " + INCOMPLETE;
+        }
+        return holdings.counts().stored() + " von " + Texts.count(holdings.size(), "Seite", "Seiten") + " lokal"
+                + (holdings.complete() ? "" : " · " + INCOMPLETE);
     }
 
     /** Der jüngste erfolgreich beendete Download genau dieser Auswahl. */
@@ -346,8 +370,8 @@ public final class ExportPanel extends JPanel {
 
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
-                List<String> files, List<SpaceRow> spaces) {
-        static final Data NONE = new Data(null, null, null, null, List.of(), List.of());
+                List<String> files, List<SpaceRow> spaces, PageSelection holdings) {
+        static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null);
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
@@ -427,6 +451,12 @@ public final class ExportPanel extends JPanel {
         stand.reset();
         if (running != null) {
             stand.add("Auftrag", Texts.state(running) + " · " + progress(running), Comic.tone(Texts.tone(running)));
+        }
+        PageSelection holdings = data.holdings();
+        if (holdings != null) {
+            boolean all = holdings.size() > 0 && holdings.counts().stored() >= holdings.size();
+            stand.add("Bestand", holdingsText(holdings), holdings.size() == 0 ? Comic.MUTED
+                    : all && holdings.complete() ? Comic.GREEN : Comic.ORANGE);
         }
         if (newest == null) {
             stand.add("Stand", NOT_LOADED, Comic.MUTED);

@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -136,6 +137,9 @@ final class KnowledgeGraphTab extends JPanel {
     private final JCheckBoxMenuItem candidates = check("Gleiche Grundform (Kandidaten)");
     private final JCheckBoxMenuItem stale = check("Veraltete zeigen");
     private final JCheckBoxMenuItem thisSource = check("Nur diese Quelle");
+    /** Nur die Auswahl links im Baum (ADR 0029): die Seiten aus {@link #within}; ohne Auswahl ohne Wirkung. */
+    private final JCheckBoxMenuItem selectionOnly = check("Nur Auswahl im Baum");
+    private PageSet selectionPages;
     private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
     private final IconButton expand = new IconButton(Glyph.NEIGHBOURS,
             "Nachbarn erweitern: lädt die direkten Nachbarn des gewählten Knotens dazu (auch Doppelklick)");
@@ -217,6 +221,8 @@ final class KnowledgeGraphTab extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
         thisSource.setSelected(false);
+        selectionOnly.setToolTipText("Fokus, Nachbarn und Begriffssuche nur auf der Auswahl links im Explorer "
+                + "samt Unterseiten");
         // Anfangs ohne Kandidatenkanten und ohne veraltete Seiten: beides lässt sich im Filtermenü einschalten.
         candidates.setSelected(false);
         stale.setSelected(false);
@@ -230,7 +236,7 @@ final class KnowledgeGraphTab extends JPanel {
         head.copy(this::copyText);
         head.tool(filter, fit, view, export, deleteAll);
         for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, candidates,
-                stale, thisSource)) {
+                stale, thisSource, selectionOnly)) {
             box.addActionListener(e -> reloadFocus());
             if (box == stale) {
                 filterMenu.addSeparator();
@@ -550,7 +556,23 @@ final class KnowledgeGraphTab extends JPanel {
         }
         return new GraphNeighbourhood.Options(GraphNeighbourhood.DEFAULT_MAX_NODES,
                 GraphNeighbourhood.DEFAULT_MAX_EDGES, kinds, types, stale.isSelected(),
-                thisSource.isSelected() && page != null ? page.sourceId() : null, null);
+                thisSource.isSelected() && page != null ? page.sourceId() : null, null)
+                .within(selectionOnly.isSelected() ? selectionPages : null);
+    }
+
+    /**
+     * Die Auswahl links im Baum, zu Seiten aufgelöst (ADR 0029, aus {@code Workspace.resolveSelection}); mit
+     * „Nur Auswahl im Baum“ grenzt sie Fokus, Nachbarn und Begriffssuche ein. {@code null} ohne Auswahl. Eine andere
+     * Menge lädt die Ansicht neu, dieselbe nicht.
+     */
+    public void within(PageSet pages) {
+        boolean same = pages == null ? selectionPages == null
+                : selectionPages != null && pages.fingerprint().equals(selectionPages.fingerprint());
+        selectionPages = pages;
+        selectionOnly.setEnabled(pages != null);
+        if (!same && selectionOnly.isSelected()) {
+            reloadFocus();
+        }
     }
 
     private Filters appliedFilters;
@@ -559,7 +581,8 @@ final class KnowledgeGraphTab extends JPanel {
     private Filters filters() {
         return new Filters(documents.isSelected(), statements.isSelected(), mentions.isSelected(),
                 roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), candidates.isSelected(),
-                stale.isSelected(), thisSource.isSelected() && page != null);
+                stale.isSelected(), thisSource.isSelected() && page != null,
+                selectionOnly.isSelected() && selectionPages != null);
     }
 
     /** Setzt die Filter ohne neues Laden ({@code setSelected} löst keine ActionListener aus). */
@@ -576,6 +599,7 @@ final class KnowledgeGraphTab extends JPanel {
         candidates.setSelected(filters.candidates());
         stale.setSelected(filters.stale());
         thisSource.setSelected(filters.thisSource());
+        selectionOnly.setSelected(filters.selectionOnly());
     }
 
     private void apply(GraphNeighbourhood.Subgraph subgraph, boolean merge) {
@@ -956,6 +980,7 @@ final class KnowledgeGraphTab extends JPanel {
         back.setEnabled(!history.isEmpty());
         pageButton.setEnabled(page != null);
         thisSource.setEnabled(page != null);
+        selectionOnly.setEnabled(selectionPages != null);
         // Blau, sobald die Filter von der Grundeinstellung abweichen (Kandidaten und Veraltete sind anfangs aus).
         boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage).stream()
                 .allMatch(JCheckBoxMenuItem::isSelected) || candidates.isSelected() || stale.isSelected()
@@ -1514,7 +1539,8 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private record Filters(boolean documents, boolean statements, boolean mentions, boolean roles, boolean nominal,
-                           boolean crossPage, boolean candidates, boolean stale, boolean thisSource) {
+                           boolean crossPage, boolean candidates, boolean stale, boolean thisSource,
+                           boolean selectionOnly) {
     }
 
     private record Loaded(GraphNeighbourhood.Subgraph base, List<GraphNeighbourhood.Subgraph> more,
@@ -1709,6 +1735,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     void showPageNow() {
         showPage();
+    }
+
+    void setSelectionOnly(boolean only) {
+        selectionOnly.setSelected(only);
     }
 
     void setShowStale(boolean show) {
