@@ -519,6 +519,14 @@ public final class AppContext {
         return events;
     }
 
+    /** Favoriten des Benutzers (Stern im Explorer und in der Leseansicht), Datei im Datenordner der App. */
+    private final Favorites favorites = new Favorites(() -> settings() == null ? null
+            : settings().storage().dataDirectory().resolve(Favorites.FILE));
+
+    public Favorites favorites() {
+        return favorites;
+    }
+
     public Navigator navigator() {
         return navigator;
     }
