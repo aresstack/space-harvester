@@ -571,7 +571,10 @@ final class KnowledgeGraphTab extends JPanel {
         selectionPages = pages;
         selectionOnly.setEnabled(pages != null);
         if (!same && selectionOnly.isSelected()) {
+            // Frühere Ansichten galten für andere Seiten; „Zurück“ darf sie nicht als aktuell zeigen.
+            history.clear();
             reloadFocus();
+            refreshButtons();
         }
     }
 

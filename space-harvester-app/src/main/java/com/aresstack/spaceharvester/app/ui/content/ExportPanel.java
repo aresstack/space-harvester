@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -147,6 +148,9 @@ public final class ExportPanel extends JPanel {
     /** Anmeldung bei den Auftragsmeldungen des Core; je Laufzeit eine. */
     private Subscription subscription;
     private AppRuntime subscribed;
+    /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl (die Zeile „Bestand“). */
+    private Subscription holdingsSubscription;
+    private String holdingsKey;
     /** Eine Auffrischung ist schon angestoßen; weitere Meldungen bis dahin verfallen. */
     private boolean refreshPending;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
@@ -249,6 +253,7 @@ public final class ExportPanel extends JPanel {
     /** Meldet sich bei den Auftragsmeldungen der aktuellen Laufzeit an (ADR 0027): Downloads ändern den Stand. */
     private void subscribe() {
         AppRuntime runtime = context.runtime();
+        subscribeHoldings(runtime);
         if (runtime == subscribed) {
             return;
         }
@@ -275,6 +280,44 @@ public final class ExportPanel extends JPanel {
                 }
             }
         });
+    }
+
+    /**
+     * Meldet sich für den Bestand von Quelle und Space der Auswahl an, damit die Zeile „Bestand“ auch nach Abgleich,
+     * Import oder Bereinigung stimmt (ADR 0027); eine andere Auswahl oder Laufzeit meldet neu an.
+     */
+    private void subscribeHoldings(AppRuntime runtime) {
+        Selection current = selection;
+        String key = runtime == null || current == null || current.spaceKey() == null ? null
+                : current.sourceId() + "\u0000" + current.spaceKey();
+        if (runtime == subscribed && Objects.equals(key, holdingsKey)) {
+            return;
+        }
+        if (holdingsSubscription != null) {
+            holdingsSubscription.close();
+            holdingsSubscription = null;
+        }
+        holdingsKey = key;
+        if (key == null) {
+            return;
+        }
+        try {
+            holdingsSubscription = runtime.workspace().subscribeHoldings(current.sourceId(), current.spaceKey(),
+                    new HoldingsListener() {
+                        @Override
+                        public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
+                            scheduleRefresh();
+                        }
+
+                        @Override
+                        public void spaceChanged(String sourceId, String spaceKey) {
+                            scheduleRefresh();
+                        }
+                    });
+        } catch (RuntimeException gone) {
+            // Die Quelle gibt es in dieser Laufzeit nicht mehr; der Baum räumt die Auswahl gleich weg.
+            holdingsSubscription = null;
+        }
     }
 
     /**
