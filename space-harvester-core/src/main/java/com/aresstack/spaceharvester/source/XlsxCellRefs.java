@@ -198,6 +198,7 @@ final class XlsxCellRefs {
         Optional<Row> next() {
             try {
                 while (reader.hasNext()) {
+                    stopWhenInterrupted();
                     if (reader.next() == XMLStreamConstants.START_ELEMENT && "row".equals(reader.getLocalName())) {
                         String r = reader.getAttributeValue(null, "r");
                         long number = r == null ? previous + 1 : Long.parseLong(r.strip());
@@ -221,6 +222,7 @@ final class XlsxCellRefs {
             int depth = 1;
             int cell = -1;
             while (reader.hasNext() && depth > 0) {
+                stopWhenInterrupted();
                 int event = reader.next();
                 if (event == XMLStreamConstants.START_ELEMENT) {
                     depth++;
@@ -240,6 +242,13 @@ final class XlsxCellRefs {
                 }
             }
             return values;
+        }
+
+        /** Ein Abbruch des Laufs (die Wache unterbricht den Thread) beendet auch das Mitlesen. */
+        private static void stopWhenInterrupted() throws XMLStreamException {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new XMLStreamException("unterbrochen");
+            }
         }
 
         @Override

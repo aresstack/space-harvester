@@ -567,7 +567,6 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 flushMailBody(root);
                 root.handler.flush();
                 root.handler.checkSlides();
-                root.handler.closeWorkbook();
                 outcome = root.full ? root.truncatedOrFailed(StatusReason.TOO_LARGE)
                         : missing != null ? root.partial(missing)
                         : embeddedFailure(metadata) ? root.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
@@ -575,6 +574,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 outcome = aborted(root, e);
             } finally {
                 discardMailBody(root);
+                // Auch nach Abbruch oder Fehler: Mappe und Blattleser sind eigene Dateizugriffe.
+                root.handler.closeWorkbook();
             }
             synchronized (this) {
                 if (stopped) {
@@ -1176,7 +1177,6 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     flushMailBody(child);
                     child.handler.flush();
                     child.handler.checkSlides();
-                    child.handler.closeWorkbook();
                     outcome = child.full ? child.truncatedOrFailed(StatusReason.TOO_LARGE)
                             : embeddedFailure(metadata) ? child.partial(StatusReason.ENTRIES_NOT_READABLE) : null;
                 } catch (Exception | LinkageError | OutOfMemoryError e) {
@@ -1194,6 +1194,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 partSink.head(child.head(metadata));
             } finally {
                 discardMailBody(child);
+                child.handler.closeWorkbook();
                 synchronized (Reader.this) {
                     open.remove(child);
                     // Die Zeit im Teil zählt nicht zur Gesamtlaufzeit des Elterndokuments.
@@ -1532,6 +1533,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private Optional<XlsxCellRefs.Workbook> workbook;
                 private XlsxCellRefs.Sheet sheetRows;
                 private XlsxCellRefs.Row expectedRow;
+                /** Vor der Sperre gelesene Zeile zum beginnenden {@code tr}. */
+                private XlsxCellRefs.Row aheadRow;
                 /** Die Zuordnung ist für dieses Blatt beendet (nicht belegt). */
                 private boolean sheetUnmatched;
                 /** Erste Zelle der laufenden Zeile in {@code cells}. */
@@ -1554,6 +1557,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         throws SAXException {
                     progress();
                     String name = name(localName, qName);
+                    // Die Zeile des Blatt-XML außerhalb der Sperre lesen: Die Wache braucht sie für Zeitgrenze und
+                    // Abbruch. Den Zustand des Handlers ändert nur dieser Thread.
+                    aheadRow = name.equals("tr") && tables == 1 && ignored == 0 ? nextSheetRow() : null;
                     synchronized (Reader.this) {
                         if (name.equals("head") || name.equals("script") || name.equals("style")) {
                             ignored++;
@@ -2019,7 +2025,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 }
                                 column = 0;
                                 rowCellsStart = cells.size();
-                                expectedRow = nextSheetRow();
+                                expectedRow = aheadRow;
+                                aheadRow = null;
                             } else {
                                 appendCell("\n");
                             }
