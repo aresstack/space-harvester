@@ -421,6 +421,14 @@ Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung 
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
+Aus derselben Extraktion entsteht die Markdown-Ansicht (`application.assets.MarkdownView`, Schema `markdown/v1`,
+`DocumentExtractions#markdown`), fortlaufend aus den Abschnitten und ohne Längengrenze: Überschriften als `#`,
+Listenpunkte nach Ebene eingerückt, Tabellen als GFM-Tabelle (ohne Kopfzellen mit leerer Kopfzeile, Folgestücke setzen
+die Tabelle fort), Code im Zaun. Verweise stehen an ihrer Beschriftung, sonst nach dem Block; nur `http`, `https`,
+`mailto`, `ftp` und relative Ziele werden Verweise. Fundstellen erscheinen als HTML-Kommentar (`<!-- page 3 -->`), wenn
+sie wechseln. Quelltext wird maskiert und nie als Auszeichnung gelesen. Die `.md`-Datei im Export folgt mit AP4
+(`attachments/v2`).
+
 Schranke `memory-limit` (`space-harvester.assets.extraction.memory-limits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
 gelesen, deren Lesen die Testgruppe `largeFileTest` (eigene JVM mit 256 MiB Heap) als speicherunabhängig nachweist.
 Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
