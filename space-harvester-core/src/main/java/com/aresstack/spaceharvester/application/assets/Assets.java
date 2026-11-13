@@ -1009,7 +1009,8 @@ public class Assets {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        return store.text(asset.sha256(), textExtractor(), textVersion());
+        return store.text(asset.sha256(), textExtractor(), textVersion())
+                .map(text -> DocumentExtractions.withSource(text, asset));
     }
 
     /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
@@ -1886,7 +1887,7 @@ public class Assets {
         boolean corrected = !base(mediaType).equals(base(declaredType)) && !textual(base(mediaType));
         AssetKind kind = corrected ? AssetKind.of(mediaType, null) : AssetKind.of(mediaType, title);
         Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType, kind,
-                size, sink.sha256(), file.retrievedAt());
+                size, sink.sha256(), file.retrievedAt(), attachment.partsWithoutFile());
         if (keep) {
             store.putFile(asset, staging);
         }
