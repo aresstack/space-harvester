@@ -394,7 +394,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s2`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s3`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -402,7 +402,9 @@ größer als ein Abschnitt der Ablage (100 000 Zeichen): Längere Absätze teilt
 Zeilen (Folgestücke mit `continued`, die Zeilen zählen weiter). Fundstellen nur, wo Tika sie liefert: `page` ist bei PDF
 die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckte Seitenzahl; leere Seiten zählen mit),
 `sheet` bei Excel der Blattname. Excel-Zeile und `cellRef` bleiben leer (Tika liefert die Zeile nicht), Word hat keine
-Seiten; Folien folgen erst mit Nachweis am Testkorpus. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
+Seiten. Bei PowerPoint (`.pptx`) bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
+liefert, nicht in Folienreihenfolge; ausgeblendete Folien sind enthalten, Notizen und Mastertext stehen als Absätze
+(Korrektur der Reihenfolge erst mit AP10 über POI). Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
 geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien folgen mit AP7
 als eigene Dokumente; bis dahin stehen sie wie bisher im Text des Behälters, ohne Fundstelle. Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
 `TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
@@ -415,7 +417,7 @@ Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablege
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s2`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s3`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
@@ -429,6 +431,12 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
 | Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
 | alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
+
+Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
+gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Ist ein Container größer als die Standardschranke (`*`), liest
+das Lesen eingebettete Dateien nur, wenn ihr Format ohne Schranke nachgewiesen ist oder es ein Bild ist; alle anderen
+eingebetteten Teile bleiben ungelesen, der Container wird `PARTIAL` mit `entries-not-readable`. Bis zur
+Standardschranke liest es eingebettete Dateien wie bisher.
 
 ## Einen Adapter ergänzen
 

@@ -352,6 +352,72 @@ class TikaDocumentStructureTest {
                 Block.Heading.class, heading -> assertThat(heading.text()).startsWith("image2.png"));
     }
 
+    @Test
+    void theMemoryLimitAlsoAppliesToTheTypeFoundInTheFile() throws Exception {
+        Path mail = Files.writeString(directory.resolve("bericht.pdf"), "From: a@example.org\r\nTo: b@example.org\r\n"
+                + "Subject: Bericht\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\n" + "Text ".repeat(400));
+        ExtractionLimits small = limits(Map.of(ExtractionLimits.ANY_TYPE, 1_000L, "application/pdf", 0L), 0, 0);
+
+        StructuredDocument result = structure.extract(mail, "bericht.pdf", "application/pdf", small, new Recording());
+
+        assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.EXCLUDED);
+        assertThat(result.outcome().reason()).contains(StatusReason.MEMORY_LIMIT);
+    }
+
+    @Test
+    void aLargeContainerSkipsEmbeddedFilesOfFormatsWithoutProof() throws Exception {
+        Path pdf = pdfWithAttachment(directory.resolve("mit-mail.pdf"), "nachricht.eml",
+                ("From: a@example.org\r\nTo: b@example.org\r\nSubject: Anhang\r\nMIME-Version: 1.0\r\n"
+                        + "Content-Type: text/plain\r\n\r\nMARKE-EINGEBETTET\r\n").getBytes(StandardCharsets.UTF_8));
+        Recording guarded = new Recording();
+        Recording open = new Recording();
+
+        StructuredDocument large = structure.extract(pdf, "mit-mail.pdf", "application/pdf",
+                limits(Map.of(ExtractionLimits.ANY_TYPE, 100L, "application/pdf", 0L), 0, 0), guarded);
+        StructuredDocument small = structure.extract(pdf, "mit-mail.pdf", "application/pdf",
+                limits(Map.of(ExtractionLimits.ANY_TYPE, 100L * 1024 * 1024, "application/pdf", 0L), 0, 0), open);
+
+        assertThat(large.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
+        assertThat(large.outcome().reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
+        assertThat(guarded.text()).contains("MARKE-SEITE").doesNotContain("MARKE-EINGEBETTET");
+        assertThat(small.outcome().status()).as("unter der Standardschranke wie bisher").isEqualTo(ExtractionStatus.OK);
+        assertThat(open.text()).contains("MARKE-SEITE", "MARKE-EINGEBETTET");
+    }
+
+    private static Path pdfWithAttachment(Path target, String name, byte[] content) throws Exception {
+        try (org.apache.pdfbox.pdmodel.PDDocument document = new org.apache.pdfbox.pdmodel.PDDocument()) {
+            org.apache.pdfbox.pdmodel.PDPage page = new org.apache.pdfbox.pdmodel.PDPage();
+            document.addPage(page);
+            try (org.apache.pdfbox.pdmodel.PDPageContentStream text =
+                         new org.apache.pdfbox.pdmodel.PDPageContentStream(document, page)) {
+                text.beginText();
+                text.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(
+                        org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 10);
+                text.newLineAtOffset(40, 700);
+                text.showText("MARKE-SEITE");
+                text.endText();
+            }
+            org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile file =
+                    new org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile(document,
+                            new java.io.ByteArrayInputStream(content));
+            file.setSubtype("message/rfc822");
+            file.setSize(content.length);
+            org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification spec =
+                    new org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification();
+            spec.setFile(name);
+            spec.setEmbeddedFile(file);
+            org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode tree =
+                    new org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode();
+            tree.setNames(Map.of(name, spec));
+            org.apache.pdfbox.pdmodel.PDDocumentNameDictionary names =
+                    new org.apache.pdfbox.pdmodel.PDDocumentNameDictionary(document.getDocumentCatalog());
+            names.setEmbeddedFiles(tree);
+            document.getDocumentCatalog().setNames(names);
+            document.save(target.toFile());
+        }
+        return target;
+    }
+
     @FunctionalInterface
     interface Script {
         void run(ContentHandler handler, Metadata metadata) throws Exception;
