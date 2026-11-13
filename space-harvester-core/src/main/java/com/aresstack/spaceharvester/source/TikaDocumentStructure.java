@@ -164,6 +164,60 @@ public final class TikaDocumentStructure implements DocumentStructure {
     @Override
     public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                       StructureSink sink, PartRules rules) {
+        return extract(original, title, mediaType, limits, sink, rules, null, null);
+    }
+
+    /**
+     * Liest den Behälter erneut unter denselben Grenzen, ohne Blöcke abzulegen, und behält die temporäre Datei des
+     * gesuchten Teils; das Auspacken endet dort.
+     */
+    @Override
+    public Optional<InputStream> openPart(Path original, String title, String mediaType, ExtractionLimits limits,
+                                          PartRules rules, PartId.Content id) {
+        Objects.requireNonNull(id, "id");
+        java.util.concurrent.atomic.AtomicReference<Path> found = new java.util.concurrent.atomic.AtomicReference<>();
+        StructureSink discard = new StructureSink() {
+            @Override
+            public BlockSink document() {
+                return block -> {
+                };
+            }
+
+            @Override
+            public PartSink part(EmbeddedEntry entry) {
+                return block -> {
+                };
+            }
+        };
+        extract(original, title, mediaType, limits, discard, rules, id, found);
+        Path file = found.get();
+        if (file == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(new java.io.FilterInputStream(Files.newInputStream(file)) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        Files.deleteIfExists(file);
+                    }
+                }
+            });
+        } catch (IOException e) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException ignored) {
+                // nichts weiter: eine temporäre Datei
+            }
+            return Optional.empty();
+        }
+    }
+
+    private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                       StructureSink sink, PartRules rules, PartId.Content wanted,
+                                       java.util.concurrent.atomic.AtomicReference<Path> found) {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
@@ -210,7 +264,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 Thread.currentThread().interrupt();
                 return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.TIMEOUT));
             }
-            return run(new Reader(tika, original, title, mediaType, size, limits, sink, target, rules), limits);
+            Reader reader = new Reader(tika, original, title, mediaType, size, limits, sink, target, rules);
+            reader.wanted = wanted;
+            reader.found = found;
+            return run(reader, limits);
         } finally {
             target.close();
         }
@@ -353,6 +410,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
         /** Erster Grund, aus dem dem Behälter Teile fehlen (zu viele, zu weit ausgepackt). */
         private StatusReason missing;
         private boolean unpackingEnded;
+        /** Gesucht für {@link #openPart}: dieser Teil behält seine temporäre Datei, danach endet das Auspacken. */
+        private PartId.Content wanted;
+        private java.util.concurrent.atomic.AtomicReference<Path> found;
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
@@ -768,6 +828,23 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     return;
                 }
                 PartId id = numbering().content(spooled.sha256());
+                if (wanted != null && wanted.equals(id)) {
+                    // Gefunden: Die Datei geht an den Aufrufer, die übrigen Teile werden nicht mehr ausgepackt.
+                    Path kept = Files.createTempFile("original-", ".tmp");
+                    Files.move(temp, kept, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    temp = null;
+                    synchronized (this) {
+                        // Unter der Sperre wie der Abbruch: Ist der Aufrufer schon fort (Zeitgrenze), übernimmt
+                        // niemand die Datei, sie wird gelöscht.
+                        if (stopped) {
+                            Files.deleteIfExists(kept);
+                            return;
+                        }
+                        found.set(kept);
+                        unpackingEnded = true;
+                    }
+                    return;
+                }
                 Optional<String> sha = Optional.of(spooled.sha256());
                 String type = detectedType(temp, metadata, declared.orElse(""));
                 Optional<String> typeValue = Optional.of(type).filter(value -> !value.isEmpty()).or(() -> declared);

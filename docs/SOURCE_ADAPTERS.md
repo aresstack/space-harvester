@@ -443,6 +443,12 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   desselben Behälters teilen sich die Ablage, ihre Blöcke werden einmal geschrieben) oder ohne vollständige Bytes
   `PartId#fileName()` (`pos-<Behälter>-1-3`, nur `[0-9a-z-]`). Behälter und Teile werden zusammen gültig und beim
   Neulesen zusammen ersetzt. Derselbe Anhang in verschiedenen Behältern wird je Behälter gelesen und abgelegt.
+- Original abrufen (AP7b): `DocumentExtractions#openPart(asset, store, partId)` liest den abgelegten Behälter unter
+  denselben Schutzgrenzen erneut und gibt den Teil mit passendem Hash als Strom heraus (aus einer temporären Datei,
+  die beim Schließen gelöscht wird); eine zweite Kopie wird nicht abgelegt. Feste Codes
+  (`PartUnavailableException`): `part-without-hash` (Kennung nach Position, kein vollständiges Original),
+  `container-missing` (Original des Behälters nicht mehr in der Ablage), `part-not-found` (kein Teil mit dieser
+  Kennung, oder unter den Grenzen nicht lesbar).
 - Übergang bis AP4: Der Text des Behälters (`AssetText`) ist sein eigener Text, danach der seiner Teile in der
   Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
   über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer
