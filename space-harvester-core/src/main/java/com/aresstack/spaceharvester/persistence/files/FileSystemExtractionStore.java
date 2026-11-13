@@ -45,12 +45,16 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <p>Ein neuer Stand wird vollständig in ein eigenes Verzeichnis geschrieben und erst dann durch atomares Ersetzen von
  * {@code current} gültig; bis dahin liest jeder den bisherigen Stand, ein abgebrochener Lauf hinterlässt nichts
- * Sichtbares. Namen aus Extraktion, Version und Modell gehen über {@link FileSystemAssetStore#name} nie ungeprüft in
+ * Sichtbares. Der ersetzte Stand bleibt bis zum nächsten Ersetzen liegen, damit ein laufender Leser ihn zu Ende liest.
+ * Fehlt ein Abschnitt oder ist er beschädigt, wird der Stand verworfen und gilt danach als nicht vorhanden. Ein
+ * Abschnitt hat höchstens {@link #MAX_SECTION_BLOCKS} Blöcke. Namen aus Extraktion, Version und Modell gehen über {@link FileSystemAssetStore#name} nie ungeprüft in
  * Pfade. Eine beschädigte Ablage gilt als nicht vorhanden; dann wird neu gelesen.
  */
 public class FileSystemExtractionStore implements ExtractionStore {
 
     static final String SCHEMA = "structured-extraction/v1";
+    /** Höchstens so viele Blöcke je Abschnitt, damit auch Blöcke ohne Zeichen keinen unbegrenzten Abschnitt bilden. */
+    static final int MAX_SECTION_BLOCKS = 10_000;
     private static final String CURRENT = "current";
     private static final String DOCUMENT = "document.json";
     private static final Pattern GENERATION = Pattern.compile("g-[0-9a-f-]{36}");
@@ -65,7 +69,18 @@ public class FileSystemExtractionStore implements ExtractionStore {
 
     @Override
     public Optional<StoredExtraction> find(ExtractionKey key) {
-        return generation(key).flatMap(dir -> manifest(key, dir)).map(Manifest::stored);
+        Optional<Path> dir = generation(key);
+        Optional<Manifest> manifest = dir.flatMap(path -> manifest(key, path));
+        if (manifest.isEmpty()) {
+            return Optional.empty();
+        }
+        for (int i = 0; i < manifest.get().sections().size(); i++) {
+            if (!Files.isRegularFile(dir.get().resolve(sectionName(i)))) {
+                invalidate(key, dir.get());
+                return Optional.empty();
+            }
+        }
+        return Optional.of(manifest.get().stored());
     }
 
     @Override
@@ -91,7 +106,12 @@ public class FileSystemExtractionStore implements ExtractionStore {
         if (manifest.isEmpty() || index < 0 || index >= manifest.get().sections().size()) {
             return Optional.empty();
         }
-        return Optional.of(read(dir.get(), index, manifest.get().sections().get(index)));
+        try {
+            return Optional.of(read(dir.get(), index, manifest.get().sections().get(index)));
+        } catch (DamagedSection e) {
+            invalidate(key, dir.get());
+            return Optional.empty();
+        }
     }
 
     @Override
@@ -102,7 +122,29 @@ public class FileSystemExtractionStore implements ExtractionStore {
             return Stream.empty();
         }
         List<SectionInfo> infos = manifest.get().sections();
-        return IntStream.range(0, infos.size()).mapToObj(i -> read(dir.get(), i, infos.get(i)));
+        return IntStream.range(0, infos.size()).mapToObj(i -> {
+            try {
+                return read(dir.get(), i, infos.get(i));
+            } catch (DamagedSection e) {
+                invalidate(key, dir.get());
+                throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
+            }
+        });
+    }
+
+    /**
+     * Verwirft einen beschädigten Stand, damit er als nicht vorhanden gilt und neu gelesen wird; nur, wenn er noch der
+     * gültige ist.
+     */
+    private void invalidate(ExtractionKey key, Path dir) {
+        Path current = base(key).resolve(CURRENT);
+        try {
+            if (generation(key).filter(dir::equals).isPresent()) {
+                Files.deleteIfExists(current);
+            }
+        } catch (IOException | AssetStoreException e) {
+            // nichts weiter: dann bleibt der Lesefehler sichtbar
+        }
     }
 
     /** Entfernt alle Extraktionen eines Inhalts, etwa wenn der Inhalt die Ablage verlässt. */
@@ -168,7 +210,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
     }
 
     private static TextSection read(Path dir, int index, SectionInfo info) {
-        List<Block> blocks = new ArrayList<>(info.blocks());
+        List<Block> blocks = new ArrayList<>(Math.min(info.blocks(), MAX_SECTION_BLOCKS));
         try (BufferedReader in = Files.newBufferedReader(dir.resolve(sectionName(index)), StandardCharsets.UTF_8)) {
             String line;
             while ((line = in.readLine()) != null) {
@@ -176,19 +218,21 @@ public class FileSystemExtractionStore implements ExtractionStore {
                     blocks.add(ExtractionJson.block(ExtractionJson.JSON.readTree(line)));
                 }
             }
+        } catch (NoSuchFileException e) {
+            throw new DamagedSection();
         } catch (IOException e) {
             throw new AssetStoreException("Abschnitt nicht lesbar", e);
         } catch (JacksonException | IllegalArgumentException e) {
-            throw new AssetStoreException("Abschnitt beschädigt", null);
+            throw new DamagedSection();
         }
-        if (blocks.size() != info.blocks()) {
-            throw new AssetStoreException("Abschnitt unvollständig", null);
+        if (blocks.size() != info.blocks() || blocks.getFirst().index() != info.firstBlock()) {
+            throw new DamagedSection();
         }
         return new TextSection(index, info.firstBlock(), blocks, info.chars());
     }
 
     private static String sectionName(int index) {
-        return String.format("s%06d.ndjson", index);
+        return String.format(java.util.Locale.ROOT, "s%06d.ndjson", index);
     }
 
     private static void deleteTree(Path directory) throws IOException {
@@ -203,6 +247,14 @@ public class FileSystemExtractionStore implements ExtractionStore {
     }
 
     private record SectionInfo(long firstBlock, int blocks, long chars) {
+    }
+
+    /** Ein Abschnitt fehlt oder ist beschädigt. */
+    private static final class DamagedSection extends RuntimeException {
+
+        DamagedSection() {
+            super(null, null, false, false);
+        }
     }
 
     private record Manifest(StoredExtraction stored, List<SectionInfo> sections) {
@@ -242,7 +294,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
             }
             long size = block.chars();
             try {
-                if (out != null && sectionCharCount + size > sectionChars) {
+                if (out != null && (sectionCharCount + size > sectionChars || sectionBlocks >= MAX_SECTION_BLOCKS)) {
                     finishSection();
                 }
                 if (out == null) {
@@ -303,9 +355,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
                 Optional<Path> previous = generation(key);
                 replace(base.resolve(CURRENT), dir.getFileName().toString());
                 done = true;
-                if (previous.isPresent() && !previous.get().equals(dir)) {
-                    deleteTree(previous.get());
-                }
+                removeOlderGenerations(previous.orElse(null));
             } catch (IOException | UncheckedIOException e) {
                 close();
                 throw new AssetStoreException("Extraktion nicht ablegbar", e);
@@ -326,6 +376,21 @@ public class FileSystemExtractionStore implements ExtractionStore {
                 deleteTree(dir);
             } catch (IOException e) {
                 // nichts weiter: ein nie gültig gewordener Stand
+            }
+        }
+
+        /**
+         * Entfernt alle Stände außer dem neuen und dem eben ersetzten: Ein Leser, der den ersetzten Stand vor dem
+         * Ersetzen geöffnet hat, liest ihn zu Ende; erst das übernächste Ersetzen räumt ihn weg.
+         */
+        private void removeOlderGenerations(Path previous) throws IOException {
+            try (Stream<Path> children = Files.list(base)) {
+                for (Path child : (Iterable<Path>) children::iterator) {
+                    String name = child.getFileName().toString();
+                    if (GENERATION.matcher(name).matches() && !child.equals(dir) && !child.equals(previous)) {
+                        deleteTree(child);
+                    }
+                }
             }
         }
 

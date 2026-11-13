@@ -109,7 +109,7 @@ class FileSystemExtractionStoreTest {
         try (Stream<Path> generations = Files.list(root.resolve("extractions").resolve(HEX).resolve("ptika")
                 .resolve("x332e332d32").resolve(FileSystemAssetStore.name(DocumentStructure.MODEL_VERSION)))) {
             assertThat(generations.filter(path -> path.getFileName().toString().startsWith("g-")).count())
-                    .isEqualTo(1);
+                    .isEqualTo(2);
         } catch (java.io.IOException e) {
             throw new AssertionError(e);
         }
@@ -168,6 +168,69 @@ class FileSystemExtractionStoreTest {
 
         store.remove(KEY.sha256());
         assertThat(base).doesNotExist();
+    }
+
+    @Test
+    void aReaderOpenedBeforeAReplacementReadsItsStateToTheEnd() {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        write(store, "alt");
+        try (Stream<TextSection> running = store.sections(KEY)) {
+            write(store, "neu");
+            assertThat(running.map(section -> ((Block.Paragraph) section.blocks().getFirst()).text()).toList())
+                    .containsExactly("alt");
+        }
+        write(store, "neuer");
+        assertThat(firstText(store)).isEqualTo("neuer");
+    }
+
+    @Test
+    void aMissingOrDamagedSectionDiscardsTheExtraction() throws Exception {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        write(store, "text");
+        Path section = section();
+        Files.delete(section);
+        assertThat(store.find(KEY)).isEmpty();
+
+        write(store, "text");
+        Files.writeString(section(), "{kaputt\n");
+        assertThat(store.find(KEY)).isPresent();
+        assertThat(store.section(KEY, 0)).isEmpty();
+        assertThat(store.find(KEY)).isEmpty();
+    }
+
+    @Test
+    void blocksWithoutCharactersStillEndASectionAtTheBlockLimit() {
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        int count = FileSystemExtractionStore.MAX_SECTION_BLOCKS + 1;
+        try (ExtractionWriter writer = store.writer(KEY)) {
+            for (int i = 0; i < count; i++) {
+                writer.accept(new Block.Paragraph(i, Optional.empty(), List.of(), ""));
+            }
+            assertThat(writer.commit(document(count, 0)).sections()).isEqualTo(2);
+        }
+        assertThat(store.section(KEY, 1).orElseThrow().blocks()).hasSize(1);
+    }
+
+    @Test
+    void sectionNamesDoNotDependOnTheLocale() {
+        java.util.Locale before = java.util.Locale.getDefault();
+        FileSystemExtractionStore store = new FileSystemExtractionStore(root);
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"));
+            write(store, "text");
+            java.util.Locale.setDefault(java.util.Locale.US);
+            assertThat(firstText(store)).isEqualTo("text");
+        } finally {
+            java.util.Locale.setDefault(before);
+        }
+    }
+
+    private Path section() throws java.io.IOException {
+        try (Stream<Path> files = Files.walk(root.resolve("extractions"))) {
+            Path dir = files.filter(path -> path.getFileName().toString().equals("current")).findFirst()
+                    .orElseThrow().getParent();
+            return dir.resolve(Files.readString(dir.resolve("current")).strip()).resolve("s000000.ndjson");
+        }
     }
 
     private static void write(FileSystemExtractionStore store, String text) {
