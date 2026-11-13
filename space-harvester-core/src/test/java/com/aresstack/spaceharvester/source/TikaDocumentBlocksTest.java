@@ -156,6 +156,43 @@ class TikaDocumentBlocksTest {
     }
 
     @Test
+    void captionComesFirstCellBlocksStaySeparateAndLinksStayWithTheirCell() throws IOException {
+        Path html = Files.writeString(directory.resolve("zellen.html"), """
+                <html><body><table><caption>Einheit kg</caption>
+                <tr><td><p>eins</p>zwei</td><td>AAAA</td></tr>
+                <tr><td><a href="https://example.org/b">BBB</a>CCCCCCC</td></tr>
+                </table></body></html>""");
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        new TikaDocumentStructure(1, 12).extract(html, "zellen.html", "text/html", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(sink.blocks.get(0)).isInstanceOfSatisfying(Block.Paragraph.class,
+                paragraph -> assertThat(paragraph.text()).isEqualTo("Einheit kg"));
+        List<Block.Table> tables = sink.blocks.stream().filter(Block.Table.class::isInstance)
+                .map(Block.Table.class::cast).toList();
+        assertThat(tables.get(0).cells().get(0).text()).matches("eins\\s+zwei");
+        assertThat(tables).allSatisfy(table -> {
+            boolean hasLabel = table.cells().stream().anyMatch(cell -> cell.text().contains("BBB"));
+            assertThat(table.links().isEmpty()).isEqualTo(!hasLabel);
+        });
+    }
+
+    @Test
+    void manyEmptyCellsAreDrainedInBoundedPieces() throws IOException {
+        StringBuilder rows = new StringBuilder("<html><body><table><tr>");
+        rows.append("<td></td>".repeat(25_000)).append("<td>Ende</td></tr></table></body></html>");
+        Path html = Files.writeString(directory.resolve("leer.html"), rows);
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        structure.extract(html, "leer.html", "text/html", ExtractionLimits.DEFAULTS, sink);
+
+        Block.Table last = (Block.Table) sink.blocks.get(sink.blocks.size() - 1);
+        assertThat(last.cells()).hasSizeLessThanOrEqualTo(10_000);
+        assertThat(last.cells().get(last.cells().size() - 1).text()).isEqualTo("Ende");
+        assertThat(last.cells().get(last.cells().size() - 1).column()).isEqualTo(25_000);
+    }
+
+    @Test
     void namesOfPackageEntriesAreNoBlocks() {
         Path docx = LargeFiles.docx(directory.resolve("bilder.docx"), 3, 2);
         TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();

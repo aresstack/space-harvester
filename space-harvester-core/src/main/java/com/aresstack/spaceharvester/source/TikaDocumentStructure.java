@@ -91,6 +91,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
     private static final Set<String> MAIL_TYPES = Set.of("message/rfc822", "application/vnd.ms-outlook");
     private static final long POLL_MILLIS = 50;
     private static final int MAX_LINKS = 1_000;
+    private static final int MAX_TABLE_CELLS = 10_000;
     private static final int MAX_LABEL_CHARS = 1_000;
 
     private final int maxBlockChars;
@@ -536,6 +537,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private int pre;
             private int ignored;
             private final List<Link> links = new ArrayList<>();
+            /** Verweise der offenen Zelle; sie gehen mit der Zelle in ihr Tabellenstück. */
+            private final List<Link> cellLinks = new ArrayList<>();
             private String anchor;
             private final StringBuilder label = new StringBuilder();
             /** Klassen der offenen div-Elemente. */
@@ -805,8 +808,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
             private void endAnchor() {
                 // Verweise ohne Ziel sind Artefakte (leere Anker aus Word).
-                if (anchor != null && !anchor.isEmpty() && links.size() < MAX_LINKS) {
-                    links.add(new Link(anchor, Optional.of(normalize(label.toString()))));
+                List<Link> into = tables > 0 && cellOpen ? cellLinks : links;
+                if (anchor != null && !anchor.isEmpty() && links.size() + cellLinks.size() < MAX_LINKS) {
+                    into.add(new Link(anchor, Optional.of(normalize(label.toString()))));
                 }
                 anchor = null;
                 label.setLength(0);
@@ -820,6 +824,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     case "tr" -> {
                         if (tables == 1) {
+                            // Text vor den Zeilen (etwa eine Beschriftung) steht vor der Tabelle.
+                            if (row == 0 && cells.isEmpty() && !continued && !buffer.isEmpty()) {
+                                flushText();
+                            }
                             column = 0;
                         } else {
                             appendCell("\n");
@@ -872,6 +880,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     case "a" -> endAnchor();
                     default -> {
+                        if (cellOpen && BLOCK_ELEMENTS.contains(name)) {
+                            appendCell(" ");
+                        }
                     }
                 }
             }
@@ -902,6 +913,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         }
                         String part = cell.substring(0, cut);
                         cell.delete(0, cut);
+                        links.addAll(cellLinks);
+                        cellLinks.clear();
                         cells.add(new Block.Cell(row, column, part, header, Optional.empty()));
                         cellChars += part.length();
                         emitTablePiece();
@@ -921,7 +934,13 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 }
                 cells.add(new Block.Cell(row, column, text, header, Optional.empty()));
                 cellChars += text.length();
+                links.addAll(cellLinks);
+                cellLinks.clear();
                 column++;
+                // Auch viele leere Zellen bleiben in begrenzten Stücken.
+                if (cells.size() >= MAX_TABLE_CELLS) {
+                    emitTablePiece();
+                }
             }
 
             private void emitTablePiece() throws SAXException {
