@@ -19,10 +19,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -262,6 +264,53 @@ class BackgroundFillTest {
         // Die gescheiterte Seite kommt erst nach der Wartezeit wieder, nicht in einer Schleife.
         assertThat(attempts.get("kaputt")).isEqualTo(1);
         assertThat(fill.status().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void theCatalogIsSearchedAfterEachChangeAndNeverInIntervals() throws Exception {
+        List<BackgroundFill.Gap> gaps = new CopyOnWriteArrayList<>();
+        AtomicInteger searches = new AtomicInteger();
+        BackgroundFill.Catalog counting = new BackgroundFill.Catalog() {
+            @Override
+            public List<SyncBaselineStore.SpaceRef> spaces() {
+                searches.incrementAndGet();
+                return List.of(new SyncBaselineStore.SpaceRef("wiki", "DEV"));
+            }
+
+            @Override
+            public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                return gaps.stream().limit(limit).toList();
+            }
+        };
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), counting, SERVER,
+                eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(200), 1000), true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().lastScan() != null);
+
+        TimeUnit.MILLISECONDS.sleep(800);
+        assertThat(searches.get()).as("keine Suche in Abständen").isEqualTo(1);
+
+        gaps.add(gap("wiki", "neu", BackgroundFill.Kind.NOT_LOADED));
+        fill.wake();
+        fill.wake();
+        eventually(() -> loaded.contains("neu"));
+        assertThat(searches.get()).as("zwei Weckrufe kurz hintereinander, eine Suche").isEqualTo(2);
+    }
+
+    @Test
+    void aFailedPageComesBackOnceItsWaitIsOverWithoutAnyOtherEvent() throws Exception {
+        failing.add("new-1");
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), catalog(GAPS),
+                SERVER, eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(300), 1000),
+                true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().failed() == 1);
+
+        failing.remove("new-1");
+
+        eventually(() -> loaded.contains("new-1"));
     }
 
     @Test

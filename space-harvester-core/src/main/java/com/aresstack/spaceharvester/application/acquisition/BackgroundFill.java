@@ -47,7 +47,12 @@ import java.util.function.Predicate;
  * <p><b>Dauerhaft.</b> Die Warteschlange ({@link FillQueue}) hält nur Quelle, Seiten-ID und Art. Ein Eintrag fällt
  * erst weg, wenn sein Abruf endet (geladen oder gescheitert) oder seine Quelle ihn nicht mehr will; was beim Beenden
  * noch wartet oder lädt, bleibt und kommt nach dem Neustart zuerst dran. Ist die Schlange leer, sucht die Füllung den
- * Katalog nach Lücken ab, höchstens alle {@link Timing#idle()}.
+ * Katalog nach Lücken ab, wenn er sich geändert hat ({@link #wake()}, etwa nach jedem Commit des Seiten-Cache) und wenn
+ * die Wartezeit einer gescheiterten Seite um ist.
+ *
+ * <p><b>Ohne Abfragen</b> (ADR 0027): Die Füllung wartet auf Ereignisse (beendeter Abruf, neue Lücken, geänderter
+ * Katalog, Schalter, freier Platz im Planer), nie in festen Abständen; nur der Start, die Wiederholung gescheiterter
+ * Seiten und die Pause nach einem unerwarteten Fehler haben eine Frist.
  *
  * <p><b>Meldungen</b> (ADR 0027): {@link #subscribe} liefert den jüngsten {@link #status()} nach jeder Änderung von
  * Füllung oder Planer, gebündelt; die App fragt nicht in Abständen.
@@ -58,8 +63,12 @@ public final class BackgroundFill implements AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(BackgroundFill.class.getName());
     /** So oft schaut die Füllung nach, solange etwas lädt. */
-    private static final Duration POLL = Duration.ofSeconds(1);
     private static final String STATUS = "status";
+    /**
+     * Entprellen (ADR 0027, Abschnitt 1): nach einer Änderung des Katalogs sucht die Füllung erst, wenn er so lange
+     * ruht, damit viele Commits hintereinander, etwa beim Laden der Suchtreffer, eine Suche auslösen und nicht viele.
+     */
+    static final Duration SETTLE = Duration.ofSeconds(1);
 
     /** Standard der Parallelität im Hintergrund. */
     public static final int DEFAULT_PARALLELISM = 2;
@@ -153,12 +162,13 @@ public final class BackgroundFill implements AutoCloseable {
      * Zeitverhalten.
      *
      * @param initialDelay so lange nach dem Start wartet die Füllung, damit sie den Start nicht bremst
-     * @param idle         frühestens so lange nach der letzten Suche im Katalog sucht sie erneut nach Lücken
+     * @param idle         so lange nach ihrem Fehlschlag kommt eine Seite frühestens wieder dran; ebenso lange pausiert
+     *                     die Füllung nach einem unerwarteten Fehler
      * @param maxQueued    höchstens so viele Einträge reiht eine Suche im Katalog ein
      */
     public record Timing(Duration initialDelay, Duration idle, int maxQueued) {
 
-        /** 30 s nach dem Start, danach höchstens alle 10 min den Katalog absuchen, je Suche bis 10 000 Seiten. */
+        /** 30 s nach dem Start, gescheiterte Seiten nach 10 min wieder, je Suche bis 10 000 Seiten. */
         public static final Timing DEFAULT = new Timing(Duration.ofSeconds(30), Duration.ofMinutes(10), 10_000);
 
         public Timing {
@@ -184,6 +194,10 @@ public final class BackgroundFill implements AutoCloseable {
     private volatile boolean warmedUp;
     private boolean signalled;
     private boolean rescan;
+    /** Der Planer nahm zuletzt nichts mehr an; seine nächste Änderung weckt die Füllung. Unter {@link #monitor}. */
+    private boolean blocked;
+    /** Zeitpunkt ({@link System#nanoTime()}) des letzten {@link #wake()}; unter {@link #monitor}. */
+    private long lastWake = System.nanoTime() - SETTLE.toNanos();
     private long loaded;
     private long failed;
     /** Zählt beendete Abrufe; ein Blick in die Warteschlange gilt nur, solange keiner dazukam. */
@@ -227,10 +241,30 @@ public final class BackgroundFill implements AutoCloseable {
     public BackgroundFill start() {
         synchronized (monitor) {
             if (worker == null && !closed) {
+                observePlanner();
                 worker = Thread.ofVirtual().name("background-fill").start(this::loop);
             }
         }
         return this;
+    }
+
+    /** Meldet die Füllung beim Planer an, einmal; unter {@link #monitor}. */
+    private void observePlanner() {
+        if (planner == null && !closed) {
+            planner = scheduler.subscribe(status -> plannerChanged());
+        }
+    }
+
+    /** Der Planer hat sich geändert: Stand melden und, wenn er zuletzt nichts annahm, die Füllung wecken. */
+    private void plannerChanged() {
+        changed();
+        synchronized (monitor) {
+            if (blocked) {
+                blocked = false;
+                signalled = true;
+                monitor.notifyAll();
+            }
+        }
     }
 
     public boolean enabled() {
@@ -245,9 +279,7 @@ public final class BackgroundFill implements AutoCloseable {
     public Subscription subscribe(Consumer<AcquisitionStatus> listener) {
         Subscription subscription = listeners.add(Objects.requireNonNull(listener, "listener"));
         synchronized (monitor) {
-            if (planner == null && !closed) {
-                planner = scheduler.subscribe(status -> changed());
-            }
+            observePlanner();
         }
         return subscription;
     }
@@ -311,10 +343,11 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
-    /** Sucht bald wieder im Katalog, etwa nach einem Abgleich. */
+    /** Sucht bald wieder im Katalog, etwa nach einem Abgleich oder jedem anderen Commit des Seiten-Cache. */
     public void wake() {
         synchronized (monitor) {
             rescan = true;
+            lastWake = System.nanoTime();
             signalled = true;
             monitor.notifyAll();
         }
@@ -426,20 +459,27 @@ public final class BackgroundFill implements AutoCloseable {
         while (!closed) {
             try {
                 if (!enabled) {
-                    await(timing.idle());
+                    // Bis zum Einschalten: enabled(true) weckt.
+                    await(null);
                     continue;
                 }
-                boolean busy = feed();
-                if (busy) {
-                    await(POLL);
+                if (feed()) {
+                    // Bis ein Abruf endet, Neues kommt oder der Planer wieder annimmt; kein Nachsehen in Abständen.
+                    await(null);
                     continue;
                 }
                 if (scanDue()) {
+                    Duration settle = settling();
+                    if (settle != null) {
+                        // Ein weiteres wake() verlängert die Ruhe; danach wird einmal gesucht.
+                        await(settle);
+                        continue;
+                    }
                     if (scan() > 0) {
                         continue;
                     }
                 }
-                await(nextScan());
+                await(nextRetry());
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Hintergrundfüllung unterbrochen ({0}); neuer Versuch später",
                         e.getClass().getName());
@@ -448,17 +488,24 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
-    /** Wartet höchstens {@code duration}, bis {@link #wake()}, ein beendeter Abruf oder {@link #close()} weckt. */
+    /**
+     * Wartet, bis {@link #wake()}, neue Lücken, ein beendeter Abruf, der Planer oder {@link #close()} weckt; mit
+     * {@code duration} höchstens so lange, ohne ({@code null}) unbegrenzt.
+     */
     private void await(Duration duration) {
-        long deadline = System.nanoTime() + duration.toNanos();
+        long deadline = duration == null ? 0 : System.nanoTime() + duration.toNanos();
         synchronized (monitor) {
             while (!signalled && !closed) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    break;
-                }
                 try {
-                    monitor.wait(Math.max(1, remaining / 1_000_000));
+                    if (duration == null) {
+                        monitor.wait();
+                    } else {
+                        long remaining = deadline - System.nanoTime();
+                        if (remaining <= 0) {
+                            break;
+                        }
+                        monitor.wait(Math.max(1, remaining / 1_000_000));
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
@@ -468,20 +515,45 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
+    /** Ob im Katalog zu suchen ist: nach einer Änderung, beim ersten Mal und wenn eine gescheiterte Seite wieder darf. */
     private boolean scanDue() {
         synchronized (monitor) {
-            return rescan || lastScan == null || !clock.instant().isBefore(lastScan.plus(timing.idle()));
+            return rescan || lastScan == null || retryDue();
         }
     }
 
-    private Duration nextScan() {
+    /** Wie lange der Katalog nach dem letzten {@link #wake()} noch ruhen muss; {@code null}: jetzt suchen. */
+    private Duration settling() {
         synchronized (monitor) {
-            if (lastScan == null) {
-                return timing.idle();
+            if (!rescan || lastScan == null) {
+                return null;
             }
-            Duration left = Duration.between(clock.instant(), lastScan.plus(timing.idle()));
+            long left = lastWake + SETTLE.toNanos() - System.nanoTime();
+            return left > 0 ? Duration.ofNanos(left) : null;
+        }
+    }
+
+    /** Ob die Wartezeit einer gescheiterten Seite um ist. Unter {@link #monitor}. */
+    private boolean retryDue() {
+        Instant earliest = earliestFailure();
+        return earliest != null && !clock.instant().isBefore(earliest.plus(timing.idle()));
+    }
+
+    /** Bis die erste gescheiterte Seite wieder darf; {@code null}, wenn keine wartet (dann nur auf Ereignisse). */
+    private Duration nextRetry() {
+        synchronized (monitor) {
+            Instant earliest = earliestFailure();
+            if (earliest == null) {
+                return null;
+            }
+            Duration left = Duration.between(clock.instant(), earliest.plus(timing.idle()));
             return left.isNegative() ? Duration.ZERO : left;
         }
+    }
+
+    /** Unter {@link #monitor}; {@link #failedAt} ist nach Zeit geordnet, der erste Eintrag ist der älteste. */
+    private Instant earliestFailure() {
+        return failedAt.isEmpty() ? null : failedAt.values().iterator().next();
     }
 
     /**
@@ -526,6 +598,11 @@ public final class BackgroundFill implements AutoCloseable {
             try {
                 ticket = scheduler.request(caller, gap.key(), AcquisitionScheduler.Priority.BACKGROUND);
             } catch (RejectedExecutionException e) {
+                // Der Planer ist voll: seine nächste Änderung weckt die Füllung (plannerChanged).
+                synchronized (monitor) {
+                    blocked = true;
+                }
+                again = true;
                 break;
             }
             synchronized (monitor) {
@@ -644,7 +721,8 @@ public final class BackgroundFill implements AutoCloseable {
         gaps.forEach(gap -> perSource.merge(gap.key().sourceId(), 1, Integer::sum));
         synchronized (monitor) {
             lastScan = clock.instant();
-            rescan = more && added > 0;
+            // Ein wake() während der Suche bleibt stehen: Sie sah den Katalog vielleicht noch ohne diese Änderung.
+            rescan = rescan || more && added > 0;
         }
         changed();
         perSource.forEach((sourceId, count) -> LOG.log(System.Logger.Level.INFO,
