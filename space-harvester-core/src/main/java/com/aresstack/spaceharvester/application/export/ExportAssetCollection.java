@@ -501,7 +501,7 @@ public class ExportAssetCollection {
             List<ExportAssetManifest.Entry> own = stored.get().assets().stream().filter(run.share::owns)
                     .map(entry -> entry.document() ? filtered(run.settings, entry) : entry).toList();
             if (own.stream().allMatch(ExportAssetManifest.Entry::present)) {
-                done.put(snapshot.key().pageId(), new CheckedPage(own, own.size(), own.size(),
+                done.put(snapshot.key().pageId(), new CheckedPage(version, own, own.size(), own.size(),
                         own.stream().filter(ExportAssetManifest.Entry::stored).count(), 0));
             }
         });
@@ -684,9 +684,27 @@ public class ExportAssetCollection {
         }
     }
 
-    /** Eine fertig geprüfte Seite: ihre Einträge und was sie zu den Zählern beitrug. */
-    private record CheckedPage(List<ExportAssetManifest.Entry> entries, long discovered, long processed,
-                               long written, long failed) {
+    /** Eine fertig geprüfte Seite: die geprüfte Version, ihre Einträge und was sie zu den Zählern beitrug. */
+    private record CheckedPage(String version, List<ExportAssetManifest.Entry> entries, long discovered,
+                               long processed, long written, long failed) {
+    }
+
+    /**
+     * Vergisst die geprüften Seiten, deren Version im Datenbestand dieses Laufs eine andere ist. Ein Export hält seine
+     * Versionen fest; eine Auswahl liest bei jedem Lauf den heutigen Cache, sodass ein Abgleich zwischen Anhalten und
+     * Fortsetzen eine Seite erneuert haben kann. Deren neue Version wird dann wieder geprüft.
+     */
+    private static void forgetChanged(ConversionInput dataset, Map<String, CheckedPage> done) {
+        if (done.isEmpty()) {
+            return;
+        }
+        dataset.forEachPage(page -> {
+            PageSnapshot snapshot = page.snapshot();
+            CheckedPage earlier = done.get(snapshot.key().pageId());
+            if (earlier != null && !Objects.equals(earlier.version(), snapshot.metadata().version())) {
+                done.remove(snapshot.key().pageId());
+            }
+        });
     }
 
     /** Zählt mit, was ein Lauf meldet, und reicht alles an den Auftrag weiter. */
@@ -897,9 +915,12 @@ public class ExportAssetCollection {
                 fromStore(current, exportId, dataset, true);
                 return;
             }
-            if (selection(exportId) && !fresh) {
-                // Beschaffen auf einer Auswahl (ADR 0029, Schritt 7): ergänzt nur, was im Bestand fehlt.
-                collected(current, dataset, done);
+            if (selection(exportId)) {
+                forgetChanged(dataset, done);
+                if (!fresh) {
+                    // Beschaffen auf einer Auswahl (ADR 0029, Schritt 7): ergänzt nur, was im Bestand fehlt.
+                    collected(current, dataset, done);
+                }
             }
             boolean[] complete = {true};
             // Erst vorbereiten: alle Verweise aller Seiten zählen, ohne zu laden; danach steht die Gesamtzahl fest
@@ -1080,8 +1101,8 @@ public class ExportAssetCollection {
             if (result.checked()) {
                 remember(run, dataset.sourceId(), snapshot, pageEntries);
                 checked.add(pageId);
-                done.put(pageId, new CheckedPage(List.copyOf(pageEntries), result.discovered(), page.processed,
-                        page.written, page.failed));
+                done.put(pageId, new CheckedPage(snapshot.metadata().version(), List.copyOf(pageEntries),
+                        result.discovered(), page.processed, page.written, page.failed));
             } else {
                 synchronized (complete) {
                     complete[0] = false;

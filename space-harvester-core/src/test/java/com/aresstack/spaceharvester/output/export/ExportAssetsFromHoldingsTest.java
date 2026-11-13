@@ -230,6 +230,36 @@ class ExportAssetsFromHoldingsTest {
     }
 
     @Test
+    void aPageUpdatedBeforeASelectionRunIsResumedIsCheckedAgainInItsNewVersion() {
+        setUp(true);
+        source.brokenOn101 = true;
+
+        JobStatus collecting = images.collect("client-a", Selection.Root.space("confluence", "DEV")).get(0);
+        run(collecting);
+        JobStatus first = jobs.status(collecting.id(), "client-a");
+        assertThat(first.state()).as(String.valueOf(first)).isEqualTo(JobState.PAUSED);
+        assertThat(holdings.find(new PageKey("confluence", "100"), "3")).isPresent();
+
+        // Ein Abgleich erneuert Seite 100 um ein neues Bild, bevor der Auftrag im selben Eintrag weiterläuft.
+        source.brokenOn101 = false;
+        source.version = "4";
+        stored = List.of(withVersion(stored.get(0), "4"), stored.get(1));
+        run(images.resume(collecting.id(), "client-a"));
+
+        assertThat(jobs.status(collecting.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(holdings.find(new PageKey("confluence", "100"), "4")).as("die neue Version im Bestand")
+                .hasValueSatisfying(page -> assertThat(page.assets()).extracting(ExportAssetManifest.Entry::title)
+                        .contains("bild.png", "neu.png"));
+    }
+
+    private static PageSnapshot withVersion(PageSnapshot page, String version) {
+        PageMetadata m = page.metadata();
+        return PageSnapshot.of(page.key().sourceId(), new PageMetadata(m.pageId(), m.resourceId(), m.title(),
+                m.partitionKey(), m.parentPageId(), version, m.modifiedAt(), m.url(), m.attributes()),
+                page.payload(), page.retrievedAt());
+    }
+
+    @Test
     void aCollectionWithoutAccessToTheWholeSourceLeavesNothingInTheHoldings() {
         setUp(false);
         run(exports.start("confluence", "DEV", "client-a", List.of("json")));
@@ -305,6 +335,9 @@ class ExportAssetsFromHoldingsTest {
 
         boolean down;
         int callsWhileDown;
+        /** Das Bild auf Seite 101 lässt sich nicht laden, weil das Netz weg ist; der Auftrag hält an. */
+        boolean brokenOn101;
+        String version = "3";
 
         private void reachable() {
             if (down) {
@@ -342,17 +375,21 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             reachable();
-            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, "3",
+            return new PageMetadata(pageId, "confluence:wiki/page/" + pageId, "Seite " + pageId, "DEV", null, version,
                     null, null, PageMetadata.sorted(Map.of()));
         }
 
         @Override
         public PageAttachments attachments(String pageId) {
             reachable();
-            List<PageAttachment> list = "100".equals(pageId)
+            List<PageAttachment> list = "100".equals(pageId) && "4".equals(version)
+                    ? List.of(attachment("att1", "bild.png", "image/png", PNG.length),
+                    attachment("att2", "handbuch.pdf", "application/pdf", PDF.length),
+                    attachment("att4", "neu.png", "image/png", PNG.length))
+                    : "100".equals(pageId)
                     ? List.of(attachment("att1", "bild.png", "image/png", PNG.length),
                     attachment("att2", "handbuch.pdf", "application/pdf", PDF.length))
-                    : List.of();
+                    : brokenOn101 ? List.of(attachment("att3", "kaputt.png", "image/png", PNG.length)) : List.of();
             return new PageAttachments(pageId, list, List.of(), "application/json", "test", List.of(),
                     Instant.parse("2026-11-12T01:00:00Z"));
         }
@@ -364,7 +401,10 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
             reachable();
-            byte[] content = "att1".equals(attachment.attachmentId()) ? PNG : PDF;
+            if ("att3".equals(attachment.attachmentId())) {
+                throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "kein Netz", null);
+            }
+            byte[] content = "att2".equals(attachment.attachmentId()) ? PDF : PNG;
             return new AttachmentFile(attachment, content, Instant.parse("2026-11-12T01:00:00Z"));
         }
 
@@ -377,7 +417,7 @@ class ExportAssetsFromHoldingsTest {
         @Override
         public ReadingPage readingPage(String pageId) {
             reachable();
-            return new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
+            return new ReadingPage(version, "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
                     "Bild Eingebunden", List.of());
         }
 
