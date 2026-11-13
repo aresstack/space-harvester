@@ -632,20 +632,26 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
         /**
          * Nimmt einen Textteil der Mail an. Von Alternativen (gleiche Grenze in {@code multipart/alternative}) zählt
-         * wie bei Tika die beste, HTML vor Text, bei Gleichstand die spätere (RFC 2046); sie wartet in einer
-         * temporären Datei, bis die Gruppe endet.
+         * wie bei Tika ({@code MailContentHandler#handleBestParts}) die beste, HTML vor Text, bei Gleichstand die
+         * frühere; sie wartet in einer temporären Datei, bis die Gruppe endet. Folgt auf eine wartende Textfassung ein
+         * HTML-Teil in einem verschachtelten Teil (etwa {@code multipart/related} als Alternative), wählt Tika diesen
+         * verschachtelten Teil; die Textfassung entfällt dann ebenso.
          */
         private void mailBody(InputStream stream, Metadata metadata, Doc parent) throws SAXException, IOException {
             boolean alternative = "alternative".equalsIgnoreCase(metadata.get(Message.MULTIPART_SUBTYPE));
             String group = alternative ? Objects.toString(metadata.get(Message.MULTIPART_BOUNDARY), "") : null;
+            int score = baseType(metadata.get(Metadata.CONTENT_TYPE)).equals("text/html") ? 2 : 1;
             MailBody pending = parent.mailBody;
             if (pending != null && (group == null || !group.equals(pending.group()))) {
-                flushMailBody(parent);
+                if (pending.group() != null && pending.score() < score) {
+                    discardMailBody(parent);
+                } else {
+                    flushMailBody(parent);
+                }
                 pending = null;
             }
             Path temp = Files.createTempFile("teil-text-", ".tmp");
-            MailBody body = new MailBody(temp, metadata, group,
-                    baseType(metadata.get(Metadata.CONTENT_TYPE)).equals("text/html") ? 2 : 1);
+            MailBody body = new MailBody(temp, metadata, group, score);
             try {
                 byte[] buffer = new byte[64 * 1024];
                 try (var out = Files.newOutputStream(temp)) {
@@ -662,7 +668,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 Files.deleteIfExists(temp);
                 throw e;
             }
-            if (pending != null && pending.score() > body.score()) {
+            if (pending != null && pending.score() >= body.score()) {
                 Files.deleteIfExists(temp);
                 return;
             }
