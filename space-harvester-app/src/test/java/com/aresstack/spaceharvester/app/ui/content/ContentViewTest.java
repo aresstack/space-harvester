@@ -87,6 +87,20 @@ class ContentViewTest {
         });
 
         await(() -> view.detail().shownPage() != null);
+        // Der Stern im Kopf (Angelo, 13.11.2026): dieselbe Markierung wie im Explorer, gefüllt als Favorit.
+        await(() -> view.detail().starButton().isEnabled());
+        assertThat(onEdt(() -> view.detail().starButton().getIcon()))
+                .isSameAs(com.aresstack.spaceharvester.app.ui.Glyph.STAR);
+        onEdt(() -> {
+            view.detail().starButton().doClick();
+            return null;
+        });
+        assertThat(context.favorites().all()).singleElement().satisfies(favorite -> {
+            assertThat(favorite.sourceId()).isEqualTo("handbuch");
+            assertThat(favorite.spaceKey()).isEqualTo(space);
+            assertThat(favorite.where()).startsWith("handbuch");
+        });
+        await(() -> view.detail().starButton().getIcon() == com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED);
         // Nachgeladen und sofort abgelegt (ADR 0010): die Anzeige kommt bereits aus dem Cache.
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),

@@ -379,7 +379,7 @@ public final class ChatPanel extends JPanel {
     private void renderKnowledge(Selection current, HoldingCounts counts) {
         boolean allowed = current == null || allowed(context.settings(), current.sourceId());
         knowledge.setText(knowledgeText(current, counts, allowed));
-        load.setVisible(current != null && (counts == null || counts.local() < counts.pages()
+        load.setVisible(current != null && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         send.setEnabled(current != null);
     }
@@ -410,7 +410,8 @@ public final class ChatPanel extends JPanel {
             text.append(" · ").append(NOT_LOADED);
         } else {
             text.append(" · ").append(counts.pages()).append(counts.pages() == 1 ? " Seite" : " Seiten");
-            int missing = counts.pages() - counts.local();
+            // Veraltete Seiten sind geladen, nur nicht aktuell; „nicht geladen“ zählt nur, was ganz fehlt.
+            int missing = counts.pages() - counts.stored();
             if (missing > 0) {
                 text.append(" · ").append(missing).append(" davon nicht geladen");
             }

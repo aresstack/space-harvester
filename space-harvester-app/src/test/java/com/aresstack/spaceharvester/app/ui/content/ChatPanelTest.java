@@ -26,7 +26,7 @@ class ChatPanelTest {
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
         Selection source = new Selection("wiki", null, null, "Beta");
         // Der Chat ist die Ausnahme der KI-Freigabe (Angelo, 13.11.2026): genannt, nicht gesperrt.
-        assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 184, 8, 0), false))
+        assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), false))
                 .isEqualTo("Wissen: Beta · alle Spaces · 2010 Seiten · 1826 davon nicht geladen · "
                         + ChatPanel.NOT_ALLOWED);
     }

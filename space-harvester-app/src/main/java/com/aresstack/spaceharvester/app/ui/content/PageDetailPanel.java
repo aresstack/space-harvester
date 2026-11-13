@@ -170,6 +170,12 @@ public final class PageDetailPanel extends JPanel {
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
+    /** Der Stern im Kopf (Angelo, 13.11.2026): dieselbe Markierung wie im Explorer, gefüllt als Favorit. */
+    private final com.aresstack.spaceharvester.app.ui.IconButton star =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.STAR,
+                    "Als Favorit markieren");
+    /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat; für den Favoriten. */
+    private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
@@ -380,6 +386,8 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.addActionListener(e -> saveRaw());
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
+        star.addActionListener(e -> toggleFavorite());
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         previewAsset.addActionListener(e -> openAttachment());
@@ -426,7 +434,7 @@ public final class PageDetailPanel extends JPanel {
         // Zurück und Vor wie im Browser vor dem Titel.
         titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
         titleRow.add(heading, BorderLayout.CENTER);
-        titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
+        titleRow.add(Comic.row(star, bookmark, browse), BorderLayout.EAST);
         header.add(titleRow, BorderLayout.NORTH);
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
@@ -478,6 +486,66 @@ public final class PageDetailPanel extends JPanel {
         feedback.clear();
         setActionsEnabled(false);
         showCard(EMPTY);
+    }
+
+    /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
+    private void toggleFavorite() {
+        if (page == null || sourceId == null || pageId == null) {
+            return;
+        }
+        String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
+                : page.header().metadata().partitionKey();
+        if (spaceKey == null) {
+            return;
+        }
+        String title = page.header().metadata().title();
+        java.util.List<String> path = new java.util.ArrayList<>();
+        java.util.List<String> ancestors = new java.util.ArrayList<>();
+        path.add(sourceTitle(sourceId));
+        if (shownPosition != null) {
+            path.add(shownPosition.spaceName() == null || shownPosition.spaceName().isBlank() ? spaceKey
+                    : shownPosition.spaceName());
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
+                    : shownPosition.ancestors()) {
+                path.add(ancestor.title());
+                ancestors.add(ancestor.pageId());
+            }
+        } else {
+            path.add(spaceKey);
+        }
+        context.favorites().toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite(sourceId, spaceKey,
+                pageId, title, path, ancestors));
+    }
+
+    private String sourceTitle(String id) {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource source
+                    : runtime.workspace().sources()) {
+                if (source.id().equals(id)) {
+                    return source.title() == null || source.title().isBlank() ? id : source.title();
+                }
+            }
+        }
+        return id;
+    }
+
+    /** Gefüllt, wenn die gezeigte Seite ein Favorit ist; ohne Seite gesperrt. */
+    private void updateStar() {
+        boolean shown = page != null && sourceId != null && pageId != null;
+        String spaceKey = !shown ? null : shownPosition != null && shownPosition.spaceKey() != null
+                ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
+        boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
+        star.setEnabled(shown && spaceKey != null);
+        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
+                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
+        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+    }
+
+    /** Für Tests: der Stern im Kopf. */
+    javax.swing.AbstractButton starButton() {
+        return star;
     }
 
     /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
@@ -1203,6 +1271,8 @@ public final class PageDetailPanel extends JPanel {
             if (shown == page) {
                 breadcrumbs.show(position);
                 renderDetails();
+                shownPosition = position;
+                updateStar();
                 positionShown.accept(position);
             }
         }, error -> {
@@ -1808,6 +1878,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void setActionsEnabled(boolean enabled) {
+        if (!enabled) {
+            shownPosition = null;
+        }
+        updateStar();
         refresh.setEnabled(enabled || pageId != null);
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
