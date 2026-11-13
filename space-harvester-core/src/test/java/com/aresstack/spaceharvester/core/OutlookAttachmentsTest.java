@@ -114,6 +114,15 @@ class OutlookAttachmentsTest {
 
             assertThat(text.partsWithoutFile()).isZero();
             assertThat(item.partsWithoutFile()).isEqualTo(2);
+            // Ohne Recht zum Ablegen frisch gelesen (Codex #719).
+            assertThat(harvester.assets().text(list, item.attachmentId(), false).truncated()).isTrue();
+            com.aresstack.spaceharvester.application.assets.Asset kept = harvester.assets().keep(list,
+                    item.attachmentId(), false);
+            assertThat(kept.partsWithoutFile()).isEqualTo(2);
+            // Ein Eintrag aus der Zeit vor AP7c kennt die Angabe nicht; es gilt die aktuelle Liste (Codex #719).
+            byte[] bytes = harvester.assets().content(list, item.attachmentId()).content();
+            new com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore(data.resolve("assets"))
+                    .put(kept.withPartsWithoutFile(0), bytes);
             assertThat(harvester.assets().keep(list, item.attachmentId(), false).partsWithoutFile()).isEqualTo(2);
             assertThat(harvester.assets().keep(list, text.attachmentId(), false).partsWithoutFile()).isZero();
             assertThat(harvester.assets().text(list, item.attachmentId()).truncated()).isTrue();

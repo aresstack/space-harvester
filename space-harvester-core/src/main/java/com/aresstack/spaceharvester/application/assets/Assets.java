@@ -256,7 +256,7 @@ public class Assets {
         Map<String, String> previews = previews(list.attachments().attachments());
         List<PageAssets.Entry> entries = list.attachments().attachments().stream()
                 .map(a -> new PageAssets.Entry(a, AssetKind.of(a.mediaType(), a.title()),
-                        previews.get(a.attachmentId()), store.find(list.sourceId(), a.attachmentId(), a.version())
+                        previews.get(a.attachmentId()), stored(list.sourceId(), a)
                                 .orElse(null)))
                 .toList();
         return new PageAssets(list.sourceId(), list.attachments().pageId(), list.spaceKey(),
@@ -280,7 +280,7 @@ public class Assets {
                 indexed |= forgetStale(list, attachment);
                 continue;
             }
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 backfillText(stored.get());
                 indexed |= indexStored(list, stored.get());
@@ -344,7 +344,7 @@ public class Assets {
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
         if (!fresh) {
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 return read(stored.get());
             }
@@ -363,7 +363,7 @@ public class Assets {
     public Asset keep(PageAttachmentList list, String attachmentId, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
         if (!fresh) {
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 verify(stored.get());
                 return stored.get();
@@ -441,7 +441,7 @@ public class Assets {
 
     private AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore) {
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
         if (stored.isPresent()) {
             return open(stored.get());
         }
@@ -956,7 +956,7 @@ public class Assets {
     public AssetText text(PageAttachmentList list, String attachmentId, boolean mayStore) {
         DocumentText extraction = documents();
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
         // Ein abgelegter Text braucht die Bytes nicht: weder Lesen der Datei noch ein Platz der Schranke.
         Optional<AssetText> existing = stored.isPresent() ? storedText(extraction, stored.get()) : Optional.empty();
         Asset asset;
@@ -1004,6 +1004,15 @@ public class Assets {
         return storedText(extraction, content.asset()).orElseGet(() -> extract(extraction, content, true));
     }
 
+    /**
+     * Der abgelegte Anhang dieser Version, mit der Angabe der aktuellen Liste zu ausgelassenen Teilen (AP7c): Sie
+     * gehört zur Quelle, und ältere Einträge kennen sie noch nicht.
+     */
+    private Optional<Asset> stored(String sourceId, PageAttachment attachment) {
+        return store.find(sourceId, attachment.attachmentId(), attachment.version())
+                .map(asset -> asset.withPartsWithoutFile(attachment.partsWithoutFile()));
+    }
+
     /** Der abgelegte Text eines Dokuments; für alles andere {@code UNSUPPORTED}. */
     private Optional<AssetText> storedText(DocumentText extraction, Asset asset) {
         if (asset.kind() != AssetKind.OTHER) {
@@ -1035,7 +1044,7 @@ public class Assets {
         if (keep) {
             store.putText(text);
         }
-        return text;
+        return DocumentExtractions.withSource(text, asset);
     }
 
     /**
@@ -1085,7 +1094,7 @@ public class Assets {
             return false;
         }
         try {
-            if (store.find(list.sourceId(), attachment.attachmentId(), attachment.version()).isPresent()) {
+            if (stored(list.sourceId(), attachment).isPresent()) {
                 return false;
             }
             PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
@@ -1524,7 +1533,7 @@ public class Assets {
         ImageDescriber model = describer();
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        DescribedImage described = store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
+        DescribedImage described = stored(list.sourceId(), attachment)
                 .flatMap(asset -> store.description(asset.sha256(), model.id(), model.modelVersion())
                         .map(description -> new DescribedImage(asset, description, false)))
                 .orElseThrow(() -> new ImageDescriptionException(ImageDescriptionException.Reason.NOT_FOUND,

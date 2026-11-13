@@ -27,6 +27,12 @@ public record Asset(String sourceId, String pageId, String attachmentId, String 
         this(sourceId, pageId, attachmentId, version, title, mediaType, kind, size, sha256, retrievedAt, 0);
     }
 
+    /** Derselbe Anhang mit der Zahl ausgelassener Teile laut aktueller Liste der Quelle. */
+    public Asset withPartsWithoutFile(int parts) {
+        return parts == partsWithoutFile ? this : new Asset(sourceId, pageId, attachmentId, version, title, mediaType,
+                kind, size, sha256, retrievedAt, parts);
+    }
+
     public Asset {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(pageId, "pageId");
