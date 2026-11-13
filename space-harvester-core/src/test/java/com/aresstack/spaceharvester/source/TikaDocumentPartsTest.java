@@ -230,8 +230,23 @@ class TikaDocumentPartsTest {
                 + "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
                 + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ERSTE\r\n"
                 + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ZWEITE\r\n--A--\r\n";
-        List<String> marks = List.of("MARKE-TEXTFASSUNG", "MARKE-HTMLFASSUNG", "MARKE-ERSTE", "MARKE-ZWEITE");
-        for (String mail : List.of(related, tie)) {
+        // Codex #720: Eine Alternative nur mit Text, danach ein eigener HTML-Teil (Fußzeile): beide bleiben.
+        String footer = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Fuss\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/mixed; boundary=\"M\"\r\n\r\n"
+                + "--M\r\nContent-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ERSTE\r\n--A--\r\n"
+                + "--M\r\nContent-Type: text/html\r\n\r\n<html><body><p>MARKE-FUSS</p></body></html>\r\n"
+                + "--M--\r\n";
+        // Alternativen mit verschachteltem Teil zuerst, dann Text: der verschachtelte Teil zählt (Wert 4).
+        String relatedFirst = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Rel2\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: multipart/related; boundary=\"R\"\r\n\r\n"
+                + "--R\r\nContent-Type: text/html\r\n\r\n<html><body><p>MARKE-HTMLFASSUNG</p></body></html>\r\n"
+                + "--R--\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-TEXTFASSUNG\r\n--A--\r\n";
+        List<String> marks = List.of("MARKE-TEXTFASSUNG", "MARKE-HTMLFASSUNG", "MARKE-ERSTE", "MARKE-ZWEITE",
+                "MARKE-FUSS");
+        for (String mail : List.of(related, tie, footer, relatedFirst)) {
             byte[] bytes = mail.getBytes(StandardCharsets.UTF_8);
             TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
             read("alt.eml", bytes, ExtractionLimits.DEFAULTS, sink);
@@ -258,7 +273,7 @@ class TikaDocumentPartsTest {
 
             List<String> ours = marks.stream().filter(sink.text()::contains).toList();
             List<String> theirs = marks.stream().filter(tika.toString()::contains).toList();
-            assertThat(ours).as("wie Tika").isEqualTo(theirs).hasSize(1);
+            assertThat(ours).as("wie Tika").isEqualTo(theirs).isNotEmpty();
         }
     }
 

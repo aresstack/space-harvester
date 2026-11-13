@@ -394,7 +394,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s7`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s8`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -453,7 +453,7 @@ Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablege
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s7`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s8`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 

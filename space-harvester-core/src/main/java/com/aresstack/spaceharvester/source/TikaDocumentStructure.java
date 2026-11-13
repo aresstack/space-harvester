@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s7";
+    public static final String VERSION = "3.3-s8";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -586,7 +586,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     mailBody(stream, metadata, parent);
                     return;
                 }
-                flushMailBody(parent);
+                beforePart(metadata, parent);
                 synchronized (Reader.this) {
                     checkRunning();
                     // Die Position zählt jeden übergebenen Teil, auch die, die kein Eintrag werden (Architekt).
@@ -631,27 +631,43 @@ public final class TikaDocumentStructure implements DocumentStructure {
         }
 
         /**
-         * Nimmt einen Textteil der Mail an. Von Alternativen (gleiche Grenze in {@code multipart/alternative}) zählt
-         * wie bei Tika ({@code MailContentHandler#handleBestParts}) die beste, HTML vor Text, bei Gleichstand die
-         * frühere; sie wartet in einer temporären Datei, bis die Gruppe endet. Folgt auf eine wartende Textfassung ein
-         * HTML-Teil in einem verschachtelten Teil (etwa {@code multipart/related} als Alternative), wählt Tika diesen
-         * verschachtelten Teil; die Textfassung entfällt dann ebenso.
+         * Nimmt einen Textteil der Mail an, wie Tika ohne {@code extractAllAlternatives} wählt
+         * ({@code MailContentHandler#handleBestParts}): Außerhalb von {@code multipart/alternative} wird er sofort
+         * gelesen. In Alternativen zählt der beste Zweig (Text 1, HTML 2, ein verschachtelter Teil wie
+         * {@code multipart/related} 4), bei Gleichstand der frühere; sein Text wird gelesen, wenn die Alternativen enden.
+         * Wohin ein Teil gehört, zeigt der Baum der Grenzen ({@link MimeTree}); ohne Nachweis endet die Gruppe, und
+         * nichts geht verloren.
          */
         private void mailBody(InputStream stream, Metadata metadata, Doc parent) throws SAXException, IOException {
-            boolean alternative = "alternative".equalsIgnoreCase(metadata.get(Message.MULTIPART_SUBTYPE));
-            String group = alternative ? Objects.toString(metadata.get(Message.MULTIPART_BOUNDARY), "") : null;
-            int score = baseType(metadata.get(Metadata.CONTENT_TYPE)).equals("text/html") ? 2 : 1;
-            MailBody pending = parent.mailBody;
-            if (pending != null && (group == null || !group.equals(pending.group()))) {
-                if (pending.group() != null && pending.score() < score) {
-                    discardMailBody(parent);
-                } else {
+            String boundary = metadata.get(Message.MULTIPART_BOUNDARY);
+            String subtype = Objects.toString(metadata.get(Message.MULTIPART_SUBTYPE), "").toLowerCase(Locale.ROOT);
+            MailBody body = spoolBody(stream, metadata);
+            try {
+                if (parent.alternatives != null && !parent.alternatives.contains(boundary, parent)) {
                     flushMailBody(parent);
                 }
-                pending = null;
+                if (parent.alternatives == null) {
+                    String group = subtype.equals("alternative") ? boundary
+                            : !subtype.isEmpty() && !subtype.equals("mixed") && boundary != null
+                            ? parent.mimeTree().alternativeAbove(boundary) : null;
+                    if (group == null) {
+                        read(body, parent);
+                        return;
+                    }
+                    parent.alternatives = new Alternatives(group);
+                }
+                parent.alternatives.add(boundary, body, parent);
+                body = null;
+            } finally {
+                if (body != null) {
+                    Files.deleteIfExists(body.temp());
+                }
             }
+        }
+
+        /** Schreibt einen Textteil zählend in eine temporäre Datei. */
+        private MailBody spoolBody(InputStream stream, Metadata metadata) throws SAXException, IOException {
             Path temp = Files.createTempFile("teil-text-", ".tmp");
-            MailBody body = new MailBody(temp, metadata, group, score);
             try {
                 byte[] buffer = new byte[64 * 1024];
                 try (var out = Files.newOutputStream(temp)) {
@@ -668,26 +684,40 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 Files.deleteIfExists(temp);
                 throw e;
             }
-            if (pending != null && pending.score() >= body.score()) {
-                Files.deleteIfExists(temp);
-                return;
-            }
-            if (pending != null) {
-                Files.deleteIfExists(pending.temp());
-            }
-            parent.mailBody = body;
-            if (group == null) {
+            int score = baseType(metadata.get(Metadata.CONTENT_TYPE)).equals("text/html") ? 2 : 1;
+            return new MailBody(temp, metadata, score);
+        }
+
+        /**
+         * Vor einem anderen Teil der Mail: Gehört er nicht zu den wartenden Alternativen (etwa ein Inline-Bild im
+         * gewählten Zweig), enden sie, und ihr bester Zweig wird gelesen.
+         */
+        private void beforePart(Metadata metadata, Doc parent) throws SAXException, IOException {
+            if (parent.alternatives != null
+                    && !parent.alternatives.contains(metadata.get(Message.MULTIPART_BOUNDARY), parent)) {
                 flushMailBody(parent);
             }
         }
 
-        /** Liest den wartenden Textteil der Mail in ihren eigenen Text; danach ist er gelöscht. */
+        /** Liest den besten Zweig der wartenden Alternativen in den Text der Mail; die übrigen fallen weg. */
         private void flushMailBody(Doc doc) throws SAXException, IOException {
-            MailBody body = doc.mailBody;
-            if (body == null) {
+            Alternatives alternatives = doc.alternatives;
+            if (alternatives == null) {
                 return;
             }
-            doc.mailBody = null;
+            doc.alternatives = null;
+            List<MailBody> chosen = alternatives.best();
+            try {
+                for (MailBody body : chosen) {
+                    read(body, doc);
+                }
+            } finally {
+                alternatives.delete();
+            }
+        }
+
+        /** Liest einen Textteil in den Text der Mail; danach ist seine Datei gelöscht. */
+        private void read(MailBody body, Doc doc) throws SAXException, IOException {
             try (TikaInputStream in = TikaInputStream.get(body.temp())) {
                 Metadata inline = new Metadata();
                 String type = baseType(body.metadata().get(Metadata.CONTENT_TYPE));
@@ -704,21 +734,87 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
         }
 
-        /** Nach einem Abbruch: Der wartende Textteil wird nicht mehr gelesen, seine temporäre Datei fällt weg. */
+        /** Nach einem Abbruch: Wartende Textteile werden nicht mehr gelesen, ihre temporären Dateien fallen weg. */
         private void discardMailBody(Doc doc) {
-            MailBody body = doc.mailBody;
-            doc.mailBody = null;
-            if (body != null) {
-                try {
-                    Files.deleteIfExists(body.temp());
-                } catch (IOException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Temporäre Datei nicht gelöscht");
-                }
+            Alternatives alternatives = doc.alternatives;
+            doc.alternatives = null;
+            if (alternatives != null) {
+                alternatives.delete();
             }
         }
 
-        /** Ein Textteil der Mail, der auf das Ende seiner Alternativen wartet. */
-        private record MailBody(Path temp, Metadata metadata, String group, int score) {
+        /** Ein Textteil der Mail in einer temporären Datei; Wert 1 Text, 2 HTML. */
+        private record MailBody(Path temp, Metadata metadata, int score) {
+        }
+
+        /** Wartende Zweige einer {@code multipart/alternative} (Grenze {@code group}) in Lesereihenfolge. */
+        private static final class Alternatives {
+
+            private final String group;
+            private final java.util.LinkedHashMap<String, Branch> branches = new java.util.LinkedHashMap<>();
+            private int direct;
+
+            Alternatives(String group) {
+                this.group = group;
+            }
+
+            /** Ob ein Teil mit dieser Grenze in diesen Alternativen liegt (nachgewiesen über den Baum). */
+            boolean contains(String boundary, Doc doc) throws IOException {
+                if (boundary == null) {
+                    return false;
+                }
+                return boundary.equals(group) || doc.mimeTree().childBelow(group, boundary) != null;
+            }
+
+            void add(String boundary, MailBody body, Doc doc) throws IOException {
+                if (group.equals(boundary)) {
+                    // Ein Teil direkt in den Alternativen ist ein eigener Zweig.
+                    Branch branch = new Branch(body.score());
+                    branch.bodies.add(body);
+                    branches.put("direkt-" + direct++, branch);
+                    return;
+                }
+                String child = doc.mimeTree().childBelow(group, boundary);
+                branches.computeIfAbsent("teil-" + child, key -> new Branch(4)).bodies.add(body);
+            }
+
+            /** Der beste Zweig, bei Gleichstand der frühere; seine Textteile in Reihenfolge. */
+            List<MailBody> best() {
+                Branch best = null;
+                for (Branch branch : branches.values()) {
+                    if (best == null || branch.score > best.score) {
+                        best = branch;
+                    }
+                }
+                if (best == null) {
+                    return List.of();
+                }
+                List<MailBody> chosen = List.copyOf(best.bodies);
+                best.bodies.clear();
+                return chosen;
+            }
+
+            void delete() {
+                for (Branch branch : branches.values()) {
+                    for (MailBody body : branch.bodies) {
+                        try {
+                            Files.deleteIfExists(body.temp());
+                        } catch (IOException e) {
+                            LOG.log(System.Logger.Level.DEBUG, "Temporäre Datei nicht gelöscht");
+                        }
+                    }
+                    branch.bodies.clear();
+                }
+            }
+
+            private static final class Branch {
+                private final int score;
+                private final List<MailBody> bodies = new ArrayList<>();
+
+                Branch(int score) {
+                    this.score = score;
+                }
+            }
         }
 
         /**
@@ -964,8 +1060,19 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private int entries;
             private EmbeddedEntry entry;
             private int slot = -1;
-            /** Textteil einer Mail, der auf das Ende seiner Alternativen wartet. */
-            private MailBody mailBody;
+            /** Textteile einer Mail, die auf das Ende ihrer Alternativen warten. */
+            private Alternatives alternatives;
+            /** Baum der MIME-Grenzen einer Mail, erst bei Bedarf gelesen. */
+            private MimeTree mimeTree;
+
+            /** Der Baum der Grenzen aus der Datei dieses Dokuments (eine Mail). */
+            private MimeTree mimeTree() throws IOException {
+                if (mimeTree == null) {
+                    Path file = stream == null ? null : stream.getPath();
+                    mimeTree = file == null ? MimeTree.EMPTY : MimeTree.scan(file);
+                }
+                return mimeTree;
+            }
 
             Doc(BlockSink target, long size, String mediaType, PartId id, String path, int depth) {
                 this.target = target;
