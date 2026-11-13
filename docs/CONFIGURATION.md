@@ -214,13 +214,16 @@ Schutzgrenzen beim Lesen von Dokumenten (ADR 0026, Punkt 8) unter `space-harvest
 Grenze, nicht genannte Schlüssel behalten den Standard. Gleich in Dienst und App, in der Bibliothek
 `Harvester.builder().extractionLimits(…)`; Codes und Schranken je Format in [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md).
 Die Grenzen wirken beim Lesen: Bereits gelesene Dokumente behalten ihr Ergebnis, bis das Neulesen abgelegter Originale
-(eigener Auftrag, ADR 0026 Punkt 11) sie neu liest. Grenzen für enthaltene Dateien (Tiefe, Anzahl, Auspack-Verhältnis)
-kommen mit deren Umsetzung dazu.
+(eigener Auftrag, ADR 0026 Punkt 11) sie neu liest. Welche enthaltenen Dateien eigene Dokumente werden, folgt
+`export.attachments.media-types` (andere: `media-type-excluded`; Archive und Mails werden trotzdem geöffnet).
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
 | `max-file-size` | `0` | Größte Datei, die gelesen wird (`too-large`, `EXCLUDED`) |
 | `max-chars` | `0` | Zeichen je Dokument, darüber gekürzt (`too-large`) |
+| `unpack-ratio` / `unpack-ratio-from-size` | `100` / `100MB` | Ausgepacktes zu Gepacktem je äußerem Behälter, geprüft ab so viel Ausgepacktem (`unpacked-too-large`, das Auspacken endet) |
+| `max-depth` | `10` | Tiefe enthaltener Dateien; tiefere werden Eintrag ohne Inhalt (`too-deep`) |
+| `max-embedded-files` | `10000` | Einträge je äußerem Behälter; darüber keine weiteren, Behälter `PARTIAL` (`too-many-files`) |
 | `text-ratio` / `text-ratio-from-chars` | `100` / `1000000` | Zeichen zu Dateigröße, geprüft ab so vielen Zeichen (`text-ratio-exceeded`) |
 | `idle-timeout` / `total-timeout` | `30s` / `30m` | Laufzeit ohne Fortschritt / insgesamt je Dokument (`timeout`) |
 | `temp-space-reserve` | `1GB` | Freier Platz für temporäre Dateien (`temp-space-low`) |

@@ -79,6 +79,10 @@ class ConfigurationParityTest {
                 extraction:
                   max-file-size: 2GB
                   max-chars: 5000000
+                  unpack-ratio: 50
+                  unpack-ratio-from-size: 200MB
+                  max-depth: 4
+                  max-embedded-files: 500
                   text-ratio: 50
                   text-ratio-from-chars: 2000000
                   idle-timeout: 45s
@@ -166,7 +170,10 @@ class ConfigurationParityTest {
         assertThat(extraction.maxChars()).isEqualTo(5_000_000);
         assertThat(extraction.parallel()).isEqualTo(3);
         assertThat(extraction.idleTimeout()).isEqualTo(java.time.Duration.ofSeconds(45));
-        assertThat(extraction.unpackRatio()).isEqualTo(100);
+        assertThat(extraction.unpackRatio()).isEqualTo(50);
+        assertThat(extraction.unpackRatioFromBytes()).isEqualTo(200L * 1024 * 1024);
+        assertThat(extraction.maxDepth()).isEqualTo(4);
+        assertThat(extraction.maxEmbeddedFiles()).isEqualTo(500);
         assertThat(extraction.memoryLimit("application/zip")).isEqualTo(40L * 1024 * 1024);
         assertThat(extraction.memoryLimit("message/rfc822")).isZero();
         assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
