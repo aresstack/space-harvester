@@ -354,6 +354,13 @@ Umfang in Bytes und Zeichen) und je Ergebnis ein fester Grund (`StatusReason`, d
 | `temp-space-low` | freier Platz für temporäre Dateien unter der Reserve |
 | `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag); Behälter `PARTIAL` |
 
+Ablage (`ExtractionStore`, Umsetzung `FileSystemExtractionStore` unter `extractions/` im Asset-Verzeichnis, Schema
+`structured-extraction/v1`): Schlüssel `ExtractionKey` = Inhalt, Extraktion, Version und Strukturmodell. Blöcke gehen
+fortlaufend in Abschnitte von höchstens 100 000 Zeichen (`ExtractionStore.DEFAULT_SECTION_CHARS`), geschnitten an
+Blockgrenzen; ein größerer Block bildet einen Abschnitt allein. Gelesen wird abschnittsweise. Ein neuer Stand wird
+erst mit `commit` gültig, bis dahin gilt der alte; ein abgebrochener Lauf hinterlässt nichts. Entfällt ein Inhalt,
+entfallen seine Extraktionen mit. Die bisherige Ablage `texts/` (`AssetText`) bleibt unverändert lesbar.
+
 Standardgrenzen (`ExtractionLimits.DEFAULTS`, `0` = keine Grenze): Größe und Zeichen ohne Grenze, ausgepackt zu
 gepackt 100:1 ab 100 MiB, Zeichen zu Bytes 100:1 ab 1 Mio. Zeichen, Tiefe 10, 10 000 enthaltene Dateien, 30 s ohne
 Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.

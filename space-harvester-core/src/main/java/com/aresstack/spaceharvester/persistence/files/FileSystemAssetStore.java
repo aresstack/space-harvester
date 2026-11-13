@@ -42,6 +42,8 @@ import java.util.stream.Stream;
  *       Modell</li>
  *   <li>{@code texts/<sha256-hex>/<Extraktion>/<Version>.properties}: Text von Dokumenten (#183), je Inhalt und
  *       Extraktion</li>
+ *   <li>{@code extractions/<sha256-hex>/…}: strukturierte Extraktionen in Abschnitten (ADR 0026), geschrieben von
+ *       {@link FileSystemExtractionStore}</li>
  * </ul>
  *
  * <p>Namen aus Quell-IDs werden nie ungeprüft zu Pfaden: harmlose Namen bekommen das Präfix {@code p}, alle anderen
@@ -396,6 +398,7 @@ public class FileSystemAssetStore implements AssetStore {
                     }
                     deleteTree(root.resolve("descriptions").resolve(hex));
                     deleteTree(root.resolve("texts").resolve(hex));
+                    deleteTree(root.resolve("extractions").resolve(hex));
                     removed++;
                 }
             }

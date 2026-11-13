@@ -20,6 +20,17 @@ public sealed interface Block {
     /** Verweisziele des Blocks. */
     List<Link> links();
 
+    /** Zeichen im Text des Blocks (bei Tabellen die Summe der Zellen); Maß für die Abschnitte der Ablage. */
+    default long chars() {
+        return switch (this) {
+            case Heading heading -> heading.text().length();
+            case Paragraph paragraph -> paragraph.text().length();
+            case ListItem item -> item.text().length();
+            case Code code -> code.text().length();
+            case Table table -> table.cells().stream().mapToLong(cell -> cell.text().length()).sum();
+        };
+    }
+
     /** Überschrift der Ebene 1 bis 6. */
     record Heading(long index, Optional<Location> location, List<Link> links, int level, String text)
             implements Block {
