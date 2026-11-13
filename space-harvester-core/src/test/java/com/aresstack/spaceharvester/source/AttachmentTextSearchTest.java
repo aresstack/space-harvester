@@ -287,6 +287,47 @@ class AttachmentTextSearchTest {
     }
 
     @Test
+    void aWithdrawnImageDescriptionLeavesOnlyTheFileNameInTheIndexAndTheStore() {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 4, 5, 6};
+        files.put("att6", png);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                calls.incrementAndGet();
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att6", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        KeywordSearch search = search(allow());
+        assets.describe(list, "att6");
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).hasSize(1);
+
+        // ADR 0028: Die Seite ist nicht mehr freigegeben.
+        assets.withdrawDescriptions(Map.of(new PageKey("wiki", "101"), "DEV"), Set.of(), key -> false);
+
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
+        // Auch ein neu aufgebauter Index findet keine Beschreibung mehr; erst ein neues Beschreiben fragt das Modell.
+        assets.harvest(list);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+        assets.describe(list, "att6");
+        assertThat(calls).hasValue(2);
+    }
+
+    @Test
     void aDiagramAttachmentStandsInTheIndexWithItsFileName() {
         files.put("att3", "<mxfile><diagram name=\"x\"/></mxfile>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assets().harvest(list("101", attachment("att3", "Topologie Netzwerk.drawio", "application/vnd.jgraph.mxfile")));

@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -64,10 +63,8 @@ class PageReleaseRecomputationTest {
 
         try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                 sourceId -> cache.values().iterator(), embedding::covers, List.of("embedding"))) {
-            releases.subscribe(change -> recomputation.recomputePages(Stream.concat(change.added().stream(),
-                            change.removed().stream()).map(PageReleases.Entry::key)
-                    .filter(key -> !release.sourceReleased(key.sourceId())).toList(),
-                    key -> Optional.ofNullable(cache.get(key))));
+            releases.subscribe(change -> recomputation.recomputePages(release.outsideReleasedSources(change.added()),
+                    release.outsideReleasedSources(change.removed()), key -> Optional.ofNullable(cache.get(key))));
 
             releases.add(List.of(entry(page.key())));
             eventually(() -> has(store, page.key()));

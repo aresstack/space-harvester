@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.nio.charset.StandardCharsets;
@@ -96,6 +97,28 @@ class ModelRerankerTest {
 
         assertThat(priority.order()).containsExactly(2, 1, 0);
         assertThat(sent).containsExactly(List.of("Architektur", "Nachtbetrieb"));
+    }
+
+    @Test
+    void aPageOnTheListOfReleasedPagesIsScoredAlthoughItsSourceIsNot() {
+        java.util.Set<PageKey> released = new java.util.HashSet<>();
+        ModelReranker reranker = reranker((query, documents) -> {
+            sent.add(documents);
+            return documents.stream().mapToDouble(document -> document.contains("Geheim") ? 0.9 : 0.1).toArray();
+        }).withPageReleases(released::contains);
+        assertThat(ids(new Reranking(reranker).apply(request("nachts", hits)))).containsExactly("1", "3", "2");
+        assertThat(sent).containsExactly(List.of("Architektur", "Nachtbetrieb"));
+
+        // Die Liste gilt beim nächsten Umordnen, ohne neuen Reranker; auch für die Ladereihenfolge der Auszüge.
+        released.add(new PageKey("intern", "3"));
+        sent.clear();
+        assertThat(ids(new Reranking(reranker).apply(request("nachts", hits)))).containsExactly("3", "1", "2");
+        assertThat(sent).containsExactly(List.of("Architektur", "Geheimer Betrieb", "Nachtbetrieb"));
+        List<KeywordSearch.Hit> found = List.of(found("wiki", "1", "Architektur"), found("intern", "3", "Geheim"),
+                found("intern", "4", "Auch geheim"));
+        sent.clear();
+        assertThat(reranker.excerptPriority().prioritize("nachts", found).order()).containsExactly(1, 0, 2);
+        assertThat(sent).containsExactly(List.of("Architektur", "Geheim"));
     }
 
     private static KeywordSearch.Hit found(String sourceId, String pageId, String title) {

@@ -180,6 +180,8 @@ public class Assets implements DocumentInventory {
     private volatile DocumentExtractions extractions;
     /** Hört auf neu indexierte Dokumente (ADR 0026, AP9a), etwa für ihre Analysen; ohne ihn geschieht nichts. */
     private volatile IndexedDocuments indexedDocuments;
+    /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
+    private volatile java.util.function.Predicate<PageKey> pageReleases = key -> false;
 
     /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
     private static final class Downloads extends Semaphore {
@@ -256,6 +258,19 @@ public class Assets implements DocumentInventory {
     /** Schließt den Hörer auf neu indexierte Dokumente an (ADR 0026, AP9a). */
     public void indexedDocuments(IndexedDocuments listener) {
         this.indexedDocuments = listener;
+    }
+
+    /**
+     * Schließt die Liste freigegebener Seiten an (ADR 0028): Bilder einer Seite darauf gehen auch aus einer nicht
+     * freigegebenen Quelle an das Modell. Gefragt wird bei jeder Beschreibung.
+     */
+    public void pageReleases(java.util.function.Predicate<PageKey> released) {
+        this.pageReleases = Objects.requireNonNull(released, "released");
+    }
+
+    /** Ob die Seite auf der Liste freigegebener Seiten steht (ADR 0028). */
+    public boolean pageReleased(PageKey key) {
+        return pageReleases.test(key);
     }
 
     /** Kennung der Extraktion, unter der Texte liegen. */
@@ -1380,7 +1395,8 @@ public class Assets implements DocumentInventory {
                 return Optional.empty();
             }
             ExtractionKey key = extraction.get().key();
-            String input = inputSha256(list, asset, title, textKey(key.extractor(), key.version()) + ":sections");
+            String input = inputSha256(list.spaceKey(), asset, title,
+                    textKey(key.extractor(), key.version()) + ":sections");
             try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream =
                          structured.indexSections(extraction.get())) {
                 if (!replace && texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals)
@@ -1435,8 +1451,8 @@ public class Assets implements DocumentInventory {
     }
 
     /** Stand eines Indexeintrags: Inhalt, Herkunft des Textes, Space und Dateiname. */
-    private static String inputSha256(PageAttachmentList list, Asset asset, String title, String origin) {
-        return sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
+    private static String inputSha256(String spaceKey, Asset asset, String title, String origin) {
+        return sha256((asset.sha256() + "\n" + origin + "\n" + spaceKey + "\n" + title)
                 .getBytes(StandardCharsets.UTF_8));
     }
 
@@ -1448,25 +1464,98 @@ public class Assets implements DocumentInventory {
      * @return ob der Index geändert wurde
      */
     private boolean indexText(PageAttachmentList list, Asset asset, String text, String origin) {
+        return indexText(new PageKey(list.sourceId(), list.attachments().pageId()), list.spaceKey(), asset, text,
+                origin);
+    }
+
+    private boolean indexText(PageKey page, String spaceKey, Asset asset, String text, String origin) {
         if (texts == null) {
             return false;
         }
-        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
         String title = asset.title() == null ? "" : asset.title();
-        String input = inputSha256(list, asset, title, origin);
+        String input = inputSha256(spaceKey, asset, title, origin);
         try {
             if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
                 return false;
             }
-            texts.putAttachment(new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
+            texts.putAttachment(new PageTextIndex.AttachmentEntry(page, spaceKey, asset.attachmentId(), title,
                     text, input));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
             LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Anhangs in {0} nicht aktualisiert ({1})",
-                    list.sourceId(), e.getClass().getName());
+                    page.sourceId(), e.getClass().getName());
             return false;
         }
+    }
+
+    /**
+     * Nimmt die Bildbeschreibungen dieser Seiten zurück (ADR 0028, Abschnitt 4), ohne Quelle und ohne Modell: Ihre
+     * Bildanhänge stehen danach nur noch mit dem Dateinamen im Volltextindex, und die gespeicherten Beschreibungen
+     * ihrer Bilder und der Bilder {@code images} entfallen, sobald keine freigegebene Seite ein Bild mit denselben
+     * Bytes trägt.
+     *
+     * @param pages    die Seiten mit ihrem Space; nur solche, die nicht mehr freigegeben sind
+     * @param images   SHA-256 weiterer Bilder dieser Seiten, etwa aus ihrem Ergebnis {@code images}
+     * @param released ob eine Seite jetzt für den KI-Dienst freigegeben ist
+     * @return wie viele Bildinhalte ihre Beschreibungen verloren
+     */
+    public int withdrawDescriptions(Map<PageKey, String> pages, Set<String> images,
+                                    java.util.function.Predicate<PageKey> released) {
+        Objects.requireNonNull(released, "released");
+        if (pages.isEmpty()) {
+            return 0;
+        }
+        Set<String> candidates = new HashSet<>(images);
+        // Je Seite und Anhang der jüngste abgelegte Stand eines Bildes: Er steht im Index.
+        Map<PageKey, Map<String, Asset>> attachments = new HashMap<>();
+        Set<String> sources = new java.util.TreeSet<>();
+        pages.keySet().forEach(key -> sources.add(key.sourceId()));
+        for (String sourceId : sources) {
+            try (java.util.stream.Stream<Asset> entries = store.entries(sourceId)) {
+                entries.filter(asset -> asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR)
+                        .filter(asset -> pages.containsKey(new PageKey(sourceId, asset.pageId())))
+                        .forEach(asset -> {
+                            candidates.add(asset.sha256());
+                            attachments.computeIfAbsent(new PageKey(sourceId, asset.pageId()), key -> new HashMap<>())
+                                    .merge(asset.attachmentId(), asset,
+                                            (a, b) -> b.retrievedAt().isAfter(a.retrievedAt()) ? b : a);
+                        });
+            }
+        }
+        candidates.remove(null);
+        // Trägt eine freigegebene Seite, gleich welcher Quelle, dieselben Bytes, bleibt deren Beschreibung.
+        Set<String> kept = new HashSet<>();
+        for (HarvestSource source : catalog.all()) {
+            try (java.util.stream.Stream<Asset> entries = store.entries(source.id())) {
+                entries.filter(asset -> candidates.contains(asset.sha256()))
+                        .filter(asset -> {
+                            PageKey key = new PageKey(source.id(), asset.pageId());
+                            return !pages.containsKey(key) && released.test(key);
+                        })
+                        .forEach(asset -> kept.add(asset.sha256()));
+            }
+        }
+        int removed = 0;
+        for (String sha : candidates) {
+            if (!kept.contains(sha)) {
+                store.removeDescriptions(sha);
+                removed++;
+            }
+        }
+        boolean indexed = false;
+        for (Map.Entry<PageKey, Map<String, Asset>> page : attachments.entrySet()) {
+            for (Asset asset : page.getValue().values()) {
+                if (texts != null && !kept.contains(asset.sha256())
+                        && texts.attachmentInputSha256(page.getKey(), asset.attachmentId()).isPresent()) {
+                    indexed |= indexText(page.getKey(), pages.get(page.getKey()), asset, "", "");
+                }
+            }
+        }
+        if (indexed) {
+            flushIndex();
+        }
+        return removed;
     }
 
     /**
@@ -1875,7 +1964,7 @@ public class Assets implements DocumentInventory {
      *                                   {@code FAILED}
      */
     public DescribedImage describe(PageAttachmentList list, String attachmentId) {
-        ImageDescriber model = describer(list.sourceId());
+        ImageDescriber model = describer(new PageKey(list.sourceId(), list.attachments().pageId()));
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
         // Laden bzw. Lesen und der Modellaufruf belegen die Schranke je für sich (content, generate): Der Modellaufruf
@@ -1906,7 +1995,7 @@ public class Assets implements DocumentInventory {
      */
     public DescribedImage describeViewImage(String sourceId, String pageId, String pageVersion,
                                             HarvestSource.ViewImage image, boolean releasedOnce) {
-        ImageDescriber model = releasedOnce ? describer() : describer(sourceId);
+        ImageDescriber model = releasedOnce ? describer() : describer(new PageKey(sourceId, pageId));
         AssetContent content = viewImage(sourceId, pageId, pageVersion, image);
         // Nur Rasterbilder: SVG ist Text und geht als Quelle in die Analyse, nicht als Bild an das Modell.
         if (content.asset().kind() != AssetKind.IMAGE) {
@@ -2084,10 +2173,13 @@ public class Assets implements DocumentInventory {
         return describer;
     }
 
-    /** Der Beschreiber für Bilder dieser Quelle; nicht freigegebene Bilder gehen nie an das Modell. */
-    private ImageDescriber describer(String sourceId) {
+    /**
+     * Der Beschreiber für Bilder dieser Seite; Bilder, deren Quelle nicht freigegeben ist und deren Seite nicht auf der
+     * Liste freigegebener Seiten steht (ADR 0028), gehen nie an das Modell.
+     */
+    private ImageDescriber describer(PageKey key) {
         ImageDescriber model = describer();
-        if (!model.mayDescribe(sourceId)) {
+        if (!model.mayDescribe(key.sourceId()) && !pageReleases.test(key)) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
                     "Quelle nicht für den KI-Dienst freigegeben", null);
         }

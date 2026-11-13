@@ -390,6 +390,26 @@ class SynonymDiscoveryTest {
     }
 
     @Test
+    void contextsOfAListedPageReachTheModelAlthoughItsSourceIsNot() {
+        siblings("intern");
+        cached("intern", "DEV", "Der Rückmeldeschlüssel liegt im Tresor.");
+        Set<PageKey> listed = new HashSet<>(Set.of(new PageKey("intern", "1")));
+        discovery.pageReleases(listed::contains);
+
+        // Nur eine Seite des Paars steht auf der Liste: der anderen Seite fehlt jede Fundstelle, nichts geht hinaus.
+        SynonymDiscovery.Outcome half = run(SynonymScope.source("intern"));
+        assertThat(half.asked()).isZero();
+        assertThat(half.skipped()).isEqualTo(1);
+        assertThat(inputs).isEmpty();
+
+        listed.add(new PageKey("intern", "2"));
+        assertThat(run(SynonymScope.source("intern")).asked()).isEqualTo(1);
+        assertThat(inputs).singleElement().satisfies(input -> assertThat(input)
+                .contains("Rückmeldeschlüssel ist Pflicht", "Rückmeldungsschlüssel wird vergeben")
+                .as("die dritte Seite steht nicht auf der Liste").doesNotContain("Tresor"));
+    }
+
+    @Test
     void aModelFailurePreservesTheEarlierProposals() {
         siblings("wiki");
         run(SynonymScope.source("wiki"));

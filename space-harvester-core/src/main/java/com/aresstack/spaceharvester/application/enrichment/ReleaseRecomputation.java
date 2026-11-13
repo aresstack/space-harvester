@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,15 +29,17 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Rechnet nach einem Wechsel der Freigabe {@code ai.external-processing-sources} (ADR 0015) die Seiten einer Quelle im
  * Cache für die Prozessoren neu, deren Ergebnis an der Freigabe hängt (im Kern {@code embedding}, {@code passages},
- * {@code navigation}, eingeschaltet {@code statements}; {@code images} rechnet nur auf Abruf und prüft die Freigabe dann selbst). Die Version bleibt
- * dieselbe, deshalb erzwungen über {@link Enrichments#recomputeInBackground}, gedrosselt im vorhandenen Hintergrund und
- * ohne neuen Abruf von der Quelle:
+ * {@code navigation}, eingeschaltet {@code statements}; {@code images} rechnet nur auf Abruf und prüft die Freigabe
+ * dann selbst). Die Version bleibt dieselbe, deshalb erzwungen über {@link Enrichments#recomputeInBackground},
+ * gedrosselt im vorhandenen Hintergrund und ohne neuen Abruf von der Quelle:
  *
  * <ul>
  *     <li>neu freigegeben: mit Modell;</li>
  *     <li>entzogen: ohne Modell auf den Rückfall (Absätze und Navigation nach Struktur, keine Embeddings). Ob eine
  *     Berechnung das Modell fragen darf, entscheidet ihre Ausführung, nicht das Einreihen; ab dem Aktivieren fragt
- *     also auch keine schon eingereihte Berechnung mehr das Modell.</li>
+ *     also auch keine schon eingereihte Berechnung mehr das Modell. Was außerhalb der Ergebnisse gespeichert ist
+ *     (Bildbeschreibungen, ADR 0028), nimmt die {@link Withdrawal} zurück, auch wenn nur ein Vision-Modell
+ *     eingestellt ist.</li>
  * </ul>
  *
  * Was die Freigabe verpasst, weil sie wechselte, während der Dienst nicht lief, oder weil ein Lauf abbrach, holt
@@ -63,6 +66,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     private final ExecutorService runs = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("enrichment-release-", 0).factory());
     private volatile boolean closed;
+    private volatile Withdrawal withdrawal = pages -> {
+    };
+    /** So viele Seiten gibt ein Lauf höchstens auf einmal an die {@link Withdrawal}. */
+    static final int WITHDRAWAL_BATCH = 100;
 
     /**
      * @param pages        die Seiten einer Quelle im Cache
@@ -85,13 +92,48 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         Iterator<PageSnapshot> of(String sourceId);
     }
 
+    /**
+     * Nimmt zurück, was zu Seiten außerhalb der Prozessorergebnisse gespeichert ist, wenn sie ihre Freigabe verlieren,
+     * etwa ihre Bildbeschreibungen (ADR 0028, Abschnitt 4). Läuft im Hintergrund der Neuberechnung; Seiten, die bei der
+     * Ausführung doch freigegeben sind, lässt sie stehen.
+     */
+    @FunctionalInterface
+    public interface Withdrawal {
+
+        void withdrawn(List<PageSnapshot> pages);
+    }
+
+    /** Schließt die Rücknahme an; ohne sie bleibt außerhalb der Ergebnisse alles stehen. */
+    public void withdrawal(Withdrawal withdrawal) {
+        this.withdrawal = Objects.requireNonNull(withdrawal, "withdrawal");
+    }
+
     @Override
     public Preparation prepare(ConfigurationChange change) {
         Map<String, Boolean> changed = changes(change.previous().ai(), change.next().ai());
-        if (changed.isEmpty()) {
+        List<String> imagesOnly = withdrawnImages(change.previous().ai(), change.next().ai(), changed);
+        if (changed.isEmpty() && imagesOnly.isEmpty()) {
             return Preparation.NOTHING;
         }
-        return () -> changed.forEach(this::recompute);
+        return () -> {
+            changed.forEach(this::recompute);
+            imagesOnly.forEach(this::withdraw);
+        };
+    }
+
+    /**
+     * Entzogene Quellen, für die nur die Rücknahme gespeicherter Bildbeschreibungen läuft: vorher war ein
+     * Vision-Modell eingestellt, und {@link #changes} rechnet sie nicht schon neu (kein Embedding- und kein
+     * Chat-Modell).
+     */
+    static List<String> withdrawnImages(AiServiceSettings before, AiServiceSettings after,
+                                        Map<String, Boolean> changed) {
+        if (!before.vision()) {
+            return List.of();
+        }
+        return before.externalProcessingSources().stream()
+                .filter(sourceId -> !after.mayProcessExternally(sourceId) && !changed.containsKey(sourceId))
+                .sorted().toList();
     }
 
     /**
@@ -125,18 +167,56 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         }
     }
 
+    /** Reiht für eine entzogene Quelle nur die {@link Withdrawal} ihrer Seiten ein, ohne neu zu rechnen. */
+    void withdraw(String sourceId) {
+        try {
+            runs.execute(() -> {
+                int seen = 0;
+                try {
+                    Iterator<PageSnapshot> snapshots = pages.of(sourceId);
+                    List<PageSnapshot> batch = new ArrayList<>();
+                    while (!closed && !released.test(sourceId) && snapshots.hasNext()) {
+                        batch.add(snapshots.next());
+                        seen++;
+                        if (batch.size() == WITHDRAWAL_BATCH) {
+                            withdrawal.withdrawn(List.copyOf(batch));
+                            batch.clear();
+                        }
+                    }
+                    if (!batch.isEmpty() && !closed) {
+                        withdrawal.withdrawn(List.copyOf(batch));
+                    }
+                    LOG.log(System.Logger.Level.INFO, "Freigabe für den KI-Dienst entzogen, Quelle {0}: "
+                            + "Bildbeschreibungen von {1} Seiten zurückgenommen", sourceId, seen);
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Rücknahme der Bildbeschreibungen, Quelle {0}, nach {1} "
+                            + "Seiten abgebrochen ({2})", sourceId, seen, e.getClass().getName());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            LOG.log(System.Logger.Level.INFO, "Rücknahme der Bildbeschreibungen, Quelle {0}, nicht gestartet",
+                    sourceId);
+        }
+    }
+
     /**
      * Reiht die Seiten ein, deren Freigabe sich über die Liste freigegebener Seiten änderte (ADR 0028), im selben
      * Hintergrund wie die Läufe nach einem Wechsel je Quelle: Neu eingetragene rechnen mit Modell, entfernte ohne;
-     * Ergebnisse der Prozessoren, die die Seite danach nicht mehr bearbeiten (Embeddings, Satzanalyse), entfallen.
-     * Ob eine Berechnung das Modell fragen darf, entscheidet wie immer ihre Ausführung. Seiten ohne Snapshot im Cache
-     * haben nichts zu rechnen. Das Log nennt nur die Anzahl.
+     * Ergebnisse der Prozessoren, die die Seite danach nicht mehr bearbeiten (Embeddings, Satzanalyse), entfallen, und
+     * die {@link Withdrawal} nimmt für die entfernten zurück, was außerhalb der Ergebnisse liegt. Ob eine Berechnung
+     * das Modell fragen darf, entscheidet wie immer ihre Ausführung. Seiten ohne Snapshot im Cache haben nichts zu
+     * rechnen. Das Log nennt nur die Anzahl.
      *
-     * @param keys   die Seiten; nur solche, deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts
-     * @param lookup der gespeicherte Snapshot einer Seite
+     * @param added   neu eingetragene Seiten; nur solche, deren Quelle nicht als Ganzes freigegeben ist, sonst ändert
+     *                sich nichts
+     * @param removed entfernte Seiten, ebenso
+     * @param lookup  der gespeicherte Snapshot einer Seite
      */
-    public void recomputePages(Collection<PageKey> keys, Function<PageKey, Optional<PageSnapshot>> lookup) {
-        List<PageKey> pending = List.copyOf(keys);
+    public void recomputePages(Collection<PageKey> added, Collection<PageKey> removed,
+                               Function<PageKey, Optional<PageSnapshot>> lookup) {
+        List<PageKey> pending = new ArrayList<>(added);
+        pending.addAll(removed);
+        Set<PageKey> withdrawn = Set.copyOf(removed);
         Objects.requireNonNull(lookup, "lookup");
         if (pending.isEmpty()) {
             return;
@@ -145,6 +225,7 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
             runs.execute(() -> {
                 int count = 0;
                 try {
+                    List<PageSnapshot> batch = new ArrayList<>();
                     for (PageKey key : pending) {
                         if (closed) {
                             return;
@@ -154,8 +235,14 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
                                 processorIds) > 0) {
                             count++;
                         }
+                        if (snapshot.isPresent() && withdrawn.contains(key)) {
+                            batch.add(snapshot.get());
+                        }
                     }
                     enrichments.flush();
+                    if (!batch.isEmpty()) {
+                        withdrawal.withdrawn(List.copyOf(batch));
+                    }
                     LOG.log(System.Logger.Level.INFO, "Liste freigegebener Seiten geändert: {0} von {1} Seiten zur "
                             + "Neuberechnung", count, pending.size());
                 } catch (InterruptedException e) {
@@ -220,6 +307,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
      */
     private void run(String sourceId, boolean release, String notApproved) {
         boolean onStart = notApproved != null;
+        // Nur ein Entzug nimmt Bildbeschreibungen zurück, nicht der Start: „Nur diese Seite einmalig beschreiben“ in
+        // einer nie freigegebenen Quelle bleibt so über Neustarts erhalten.
+        boolean withdrawing = !onStart && !release;
+        List<PageSnapshot> batch = new ArrayList<>();
         int seen = 0;
         int count = 0;
         try {
@@ -228,6 +319,13 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
             while (!closed && released.test(sourceId) == release && snapshots.hasNext()) {
                 PageSnapshot snapshot = snapshots.next();
                 seen++;
+                if (withdrawing) {
+                    batch.add(snapshot);
+                    if (batch.size() == WITHDRAWAL_BATCH) {
+                        withdrawal.withdrawn(List.copyOf(batch));
+                        batch.clear();
+                    }
+                }
                 List<String> due = onStart ? outdated(snapshot.key(), release, notApproved) : processorIds;
                 if (due.isEmpty()) {
                     continue;
@@ -237,6 +335,9 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
                 }
             }
             enrichments.flush();
+            if (!batch.isEmpty() && !closed && released.test(sourceId) == release) {
+                withdrawal.withdrawn(List.copyOf(batch));
+            }
             if (onStart) {
                 if (seen > 0) {
                     LOG.log(System.Logger.Level.INFO, release

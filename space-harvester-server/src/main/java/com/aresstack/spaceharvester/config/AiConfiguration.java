@@ -120,24 +120,28 @@ class AiConfiguration {
 
     /**
      * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Kosinusrangfolge um, mit
-     * Texten nur aus Quellen in {@code external-processing-sources}. Modell und {@code search.rerank} wechseln zur
-     * Laufzeit (ADR 0015); ohne beides bleibt die Reihenfolge.
+     * Texten nur aus Quellen in {@code external-processing-sources} und von Seiten der Liste freigegebener Seiten
+     * (ADR 0028). Modell und {@code search.rerank} wechseln zur Laufzeit (ADR 0015); ohne beides bleibt die
+     * Reihenfolge.
      */
     @Bean
     SwappableReranker searchReranker(AiServiceSettings settings, ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                     ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+                                     ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                     AiRelease release) {
         if (settings.rerankModel() != null && !settings.reranking()) {
             throw new IllegalStateException("space-harvester.ai.rerank-model braucht base-url");
         }
         String userAgent = userAgent(build);
-        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent));
+        PageReleases pages = release.pages();
+        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent,
+                pages));
         live.listen(change -> {
             if (!change.rerankerChanged()) {
                 return ConfigurationListener.Preparation.NOTHING;
             }
             SearchReranker next;
             try {
-                next = modelReranker(change.next(), catalog, trust, userAgent);
+                next = modelReranker(change.next(), catalog, trust, userAgent, pages);
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -170,16 +174,17 @@ class AiConfiguration {
 
     /**
      * Der Cross-Encoder, wenn die Konfiguration umordnen lässt. Die Freigabe je Quelle stammt aus denselben
-     * Einstellungen wie Endpunkt und Modell; eine geänderte Freigabe baut einen neuen Reranker.
+     * Einstellungen wie Endpunkt und Modell; eine geänderte Freigabe baut einen neuen Reranker. Die Liste
+     * freigegebener Seiten (ADR 0028) fragt er bei jedem Umordnen.
      */
     private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
-                                                TrustBundles trust, String userAgent) {
+                                                TrustBundles trust, String userAgent, PageReleases pages) {
         if (!configuration.reranking()) {
             return SearchReranker.NONE;
         }
         AiServiceSettings ai = configuration.ai();
         return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trust, userAgent).reranker(),
-                ai::mayProcessExternally);
+                ai::mayProcessExternally).withPageReleases(pages::contains);
     }
 
     private static String userAgent(ObjectProvider<BuildProperties> build) {
@@ -298,9 +303,9 @@ class AiConfiguration {
         // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten, deren
         // Quelle nicht als Ganzes freigegeben ist. Ohne Cache gibt es keine Seiten zu rechnen.
         if (pages != null) {
-            release.pages().subscribe(change -> recomputation.recomputePages(java.util.stream.Stream.concat(
-                            change.added().stream(), change.removed().stream()).map(PageReleases.Entry::key)
-                    .filter(key -> !release.sourceReleased(key.sourceId())).toList(), pages::find));
+            release.pages().subscribe(change -> recomputation.recomputePages(
+                    release.outsideReleasedSources(change.added()), release.outsideReleasedSources(change.removed()),
+                    pages::find));
         }
         return recomputation;
     }
