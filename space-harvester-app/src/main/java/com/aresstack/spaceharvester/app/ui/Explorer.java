@@ -613,11 +613,31 @@ public final class Explorer {
     }
 
     private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
-        Runnable next = () -> {
+        Runnable next = () -> step(node, steps, index, ticket);
+        TreePath path = new TreePath(node.getPath());
+        if (node.loaded) {
+            tree.expandPath(path);
+            next.run();
+        } else {
+            node.then = next;
+            tree.expandPath(path);
+        }
+    }
+
+    /** Ein Schritt des Abstiegs; liegt das Kind in einem noch nicht geladenen Stapel, lädt er ihn nach und sucht erneut. */
+    private void step(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
+        {
             if (ticket != revealRequest) {
                 return;
             }
             Node child = index < steps.size() ? child(node, steps.get(index)) : null;
+            if (child == null) {
+                Node moreNode = child(node, item -> item instanceof MoreItem);
+                if (moreNode != null && moreNode.item() instanceof MoreItem more) {
+                    loadMore(node, moreNode, more, () -> step(node, steps, index, ticket));
+                    return;
+                }
+            }
             if (child == null && index < steps.size() - 1 && node.item() instanceof SpaceItem) {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
                 child = child(node, steps.get(steps.size() - 1));
@@ -631,14 +651,6 @@ public final class Explorer {
             } else {
                 descend(child, steps, index + 1, ticket);
             }
-        };
-        TreePath path = new TreePath(node.getPath());
-        if (node.loaded) {
-            tree.expandPath(path);
-            next.run();
-        } else {
-            node.then = next;
-            tree.expandPath(path);
         }
     }
 
@@ -754,15 +766,15 @@ public final class Explorer {
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
-            case MoreItem more -> loadMore(node, more);
+            case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
         }
     }
 
-    private void loadMore(Node moreNode, MoreItem more) {
+    /** Lädt den nächsten Stapel Kinder von {@code parent}; {@code then} läuft danach auf dem EDT (etwa der Abstieg). */
+    private void loadMore(Node parent, Node moreNode, MoreItem more, Runnable then) {
         AppRuntime runtime = context.runtime();
-        Node parent = (Node) moreNode.getParent();
         if (runtime == null || parent == null || parent.loading) {
             return;
         }
@@ -774,6 +786,9 @@ public final class Explorer {
             parent.remove(moreNode);
             append(parent, batch);
             model.nodeStructureChanged(parent);
+            if (then != null) {
+                then.run();
+            }
         }, error -> {
             parent.loading = false;
             moreNode.setUserObject(more);

@@ -199,6 +199,16 @@ public final class ContentView implements View {
      */
     public void selection(ExportPanel.Selection selection) {
         detail.export().selection(selection);
+        if (selection != null) {
+            // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
+            // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
+            if (!Objects.equals(selection.sourceId(), sourceId)) {
+                detail.clear();
+            }
+            sourceId = selection.sourceId();
+            spaceKey = selection.spaceKey() == null || selection.spaceKey().isBlank() ? null : selection.spaceKey();
+            renderCrumbs();
+        }
     }
 
     /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
