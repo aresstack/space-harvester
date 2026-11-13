@@ -57,10 +57,11 @@ public class RereadController {
             description = "Startet einen Auftrag (Art reread), der die abgelegten Dokument-Anhänge der Quelle ohne "
                     + "Download neu liest. Ohne status trifft er jedes Dokument ohne Extraktion der eingestellten "
                     + "Version, etwa nach einem Versionswechsel oder einem Import; mit status nur Dokumente, deren "
-                    + "Extraktion einen dieser Status hat, etwa failed oder partial nach geänderten Grenzen. Bis das "
-                    + "neue Lesen Text liefert, bleibt der bisherige Text lieferbar und durchsuchbar (stale: true); "
-                    + "ein gescheitertes Lesen lässt ihn stehen. Erst nach erfolgreichem Lesen ersetzt der Auftrag "
-                    + "den Volltext und entfernt ältere Stände. Nur für Clients mit manage-configuration.")
+                    + "Extraktion einen dieser Status hat (ok, partial, unsupported, failed, excluded), etwa partial, "
+                    + "failed oder excluded nach geänderten Grenzen. Bis das neue Lesen Text liefert, bleibt der "
+                    + "bisherige Text lieferbar und durchsuchbar (stale: true); ein gescheitertes Lesen lässt ihn "
+                    + "stehen. Erst nach erfolgreichem Lesen ersetzt der Auftrag den Volltext und entfernt ältere "
+                    + "Stände. Nur für Clients mit manage-configuration.")
     @ApiResponse(responseCode = "202", description = "RereadJobResponse; Stand unter Location")
     @ApiResponse(responseCode = "400", description = "Unbekannter Status (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -76,7 +77,7 @@ public class RereadController {
                                                    @Parameter(description = "Nur Dokumente mit diesem Status der "
                                                            + "Extraktion; mehrfach oder kommagetrennt",
                                                            schema = @Schema(allowableValues = {"ok", "partial",
-                                                                   "unsupported", "failed"}))
+                                                                   "unsupported", "failed", "excluded"}))
                                                    @RequestParam(required = false) List<String> status) {
         JobStatus job = rereads.start(sourceId, caller.jobOwner(), statuses(status));
         return ResponseEntity.accepted()

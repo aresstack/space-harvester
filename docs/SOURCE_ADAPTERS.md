@@ -373,9 +373,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   abgelegten Dokument-Anhänge ohne Download neu, je Anhang die jüngste abgelegte Version, je Inhalt einmal. Ohne
   Beschränkung ist Arbeit genau das, was keine Extraktion der eingestellten Version hat (veraltete Stände nach einem
   Versionswechsel oder Import, vorübergehend gescheiterte); beschränkt auf Status (`OK`, `PARTIAL`, `UNSUPPORTED`,
-  `FAILED`) nur Dokumente, deren aktuelle Extraktion diesen Status hat und vor dem Start entstand, etwa nach geänderten
-  Grenzen; dann ersetzt nur ein lesbares Ergebnis den bisherigen Stand. Erst nach erfolgreichem Lesen ersetzt er die
-  Einträge im Volltextindex (Space aus dem Seiten-Cache) und räumt Texte und Extraktionen anderer Versionen ab; ein
+  `FAILED`, `EXCLUDED`) nur Dokumente, deren aktuelle Extraktion diesen Status hat und vor dem Start entstand, etwa
+  nach geänderten Grenzen; dann ersetzt nur ein lesbares Ergebnis den bisherigen Stand. Erst nach erfolgreichem Lesen
+  ersetzt er die Einträge im Volltextindex (Space aus dem Seiten-Cache) und räumt Texte und Extraktionen anderer
+  Versionen ab; ein
   gescheitertes Lesen lässt den alten Stand stehen und zählt als Fehler (Auftrag fertig mit Fehlern). Eingeplant wie
   ein Folgeauftrag, anhaltbar, Fortsetzen im selben Eintrag auch nach einem Neustart (aus den Angaben `statuses` und
   `since`), dabei wird übersprungen, was schon neu gelesen ist. Desktop-App: `Harvester.reread(sourceId, statuses)`
