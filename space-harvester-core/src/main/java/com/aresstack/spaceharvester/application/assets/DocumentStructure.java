@@ -44,4 +44,18 @@ public interface DocumentStructure {
                                        StructureSink sink, PartRules rules) {
         return extract(original, title, mediaType, limits, sink);
     }
+
+    /**
+     * Öffnet das Original einer enthaltenen Datei (ADR 0026, Punkt 6, Abnahme 9): liest den Behälter erneut unter
+     * denselben Schutzgrenzen und gibt den Teil mit dieser Kennung als Strom heraus, ohne zweite Kopie in der Ablage.
+     * Der Strom liest aus einer temporären Datei, die beim Schließen gelöscht wird.
+     *
+     * @return leer, wenn der Teil in diesem Behälter nicht (mehr) vollständig zu lesen ist; ohne enthaltene Dateien
+     *         immer leer
+     */
+    default java.util.Optional<java.io.InputStream> openPart(Path original, String title, String mediaType,
+                                                              ExtractionLimits limits, PartRules rules,
+                                                              PartId.Content id) {
+        return java.util.Optional.empty();
+    }
 }

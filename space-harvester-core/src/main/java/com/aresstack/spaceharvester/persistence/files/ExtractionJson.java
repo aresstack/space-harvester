@@ -123,10 +123,8 @@ final class ExtractionJson {
         };
     }
 
-    static ObjectNode document(StructuredDocument document) {
-        ObjectNode node = JSON.createObjectNode();
-        DocumentHead head = document.head();
-        ObjectNode h = node.putObject("head");
+    static ObjectNode head(DocumentHead head) {
+        ObjectNode h = JSON.createObjectNode();
         head.title().ifPresent(value -> h.put("title", value));
         head.subject().ifPresent(value -> h.put("subject", value));
         head.from().ifPresent(value -> h.put("from", value));
@@ -135,6 +133,21 @@ final class ExtractionJson {
             head.to().forEach(to::add);
         }
         head.date().ifPresent(value -> h.put("date", value.toString()));
+        return h;
+    }
+
+    static DocumentHead head(JsonNode h) {
+        List<String> to = new ArrayList<>();
+        for (JsonNode value : h.path("to")) {
+            to.add(value.asString());
+        }
+        return new DocumentHead(optionalText(h, "title"), optionalText(h, "subject"), optionalText(h, "from"), to,
+                optionalText(h, "date").map(Instant::parse));
+    }
+
+    static ObjectNode document(StructuredDocument document) {
+        ObjectNode node = JSON.createObjectNode();
+        node.set("head", head(document.head()));
         node.set("outcome", outcome(document.outcome()));
         ArrayNode directory = node.putArray("directory");
         for (EmbeddedEntry entry : document.directory()) {
@@ -155,13 +168,7 @@ final class ExtractionJson {
     }
 
     static StructuredDocument document(JsonNode node) {
-        JsonNode h = node.path("head");
-        List<String> to = new ArrayList<>();
-        for (JsonNode value : h.path("to")) {
-            to.add(value.asString());
-        }
-        DocumentHead head = new DocumentHead(optionalText(h, "title"), optionalText(h, "subject"),
-                optionalText(h, "from"), to, optionalText(h, "date").map(Instant::parse));
+        DocumentHead head = head(node.path("head"));
         List<EmbeddedEntry> directory = new ArrayList<>();
         for (JsonNode e : node.path("directory")) {
             directory.add(new EmbeddedEntry(PartId.parse(e.path("id").asString()), optionalText(e, "sha256"),
