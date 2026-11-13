@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -17,6 +18,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -379,6 +381,38 @@ public final class ConfigFileEditor {
         AppSettings settings = loader.read(file, text);
         if (settings.sync().backgroundFill() != fill || settings.sync().backgroundParallelism() != parallelism) {
             throw new IllegalArgumentException("Die Hintergrundfüllung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit den gemeinsamen Erkennungsregeln aller Quellen ({@code space-harvester.sync.interval},
+     * {@code inventory-interval}, {@code mode}, {@code catch-up-on-start}, {@code before-search}, {@code events}),
+     * dieselben Schlüssel wie im Dienst; nur diese Werte ändern sich. Ein Abstand {@code null} („aus“) entfernt seinen
+     * Schlüssel. Frist, Sperrfrist und Hintergrund schreiben {@link #withCache} und
+     * {@link #withBackground}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSync(Path file, Draft base, SyncSettings sync) {
+        String text = nested(base.text(), "sync", "interval", indent -> sync.interval() == null ? ""
+                : indent + "interval: " + duration(sync.interval()) + "\n");
+        text = nested(text, "sync", "inventory-interval", indent -> sync.inventoryInterval() == null ? ""
+                : indent + "inventory-interval: " + duration(sync.inventoryInterval()) + "\n");
+        text = nested(text, "sync", "mode", indent -> indent + "mode: " + sync.mode().key() + "\n");
+        text = nested(text, "sync", "catch-up-on-start", indent -> indent + "catch-up-on-start: "
+                + sync.catchUpOnStart() + "\n");
+        text = nested(text, "sync", "before-search", indent -> indent + "before-search: " + sync.beforeSearch() + "\n");
+        text = nested(text, "sync", "events", indent -> indent + "events: " + sync.events() + "\n");
+        AppSettings settings = loader.read(file, text);
+        SyncSettings read = settings.sync();
+        if (!Objects.equals(read.interval(), sync.interval())
+                || !Objects.equals(read.inventoryInterval(), sync.inventoryInterval()) || read.mode() != sync.mode()
+                || read.catchUpOnStart() != sync.catchUpOnStart() || read.beforeSearch() != sync.beforeSearch()
+                || read.events() != sync.events()) {
+            throw new IllegalArgumentException("Die Synchronisierung ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
@@ -1102,7 +1136,10 @@ public final class ConfigFileEditor {
     }
 
     private static void add(List<String> lines, int at, String block) {
-        lines.addAll(at, List.of(block.split("\n")));
+        // Ein leerer Block entfernt den Schlüssel, ohne eine Leerzeile zu hinterlassen.
+        if (!block.isEmpty()) {
+            lines.addAll(at, List.of(block.split("\n")));
+        }
     }
 
     private static boolean blankOrComment(String line) {
