@@ -82,9 +82,12 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s10";
+    public static final String VERSION = "3.3-s11";
 
-    /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
+    /**
+     * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
+     * statt Tikas DOM (AP10), auch in Archiven und Mails, weil es dieselbe Erkennung ist.
+     */
     private static final String CONFIG = """
             <?xml version="1.0" encoding="UTF-8"?>
             <properties>
@@ -92,7 +95,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 <parser class="org.apache.tika.parser.DefaultParser">
                   <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
                   <parser-exclude class="org.apache.tika.parser.mail.RFC822Parser"/>
+                  <parser-exclude class="org.apache.tika.parser.html.JSoupParser"/>
                 </parser>
+                <parser class="com.aresstack.spaceharvester.source.HtmlStreamParser"/>
                 <parser class="org.apache.tika.parser.mail.RFC822Parser">
                   <params>
                     <param name="extractAllAlternatives" type="bool">true</param>

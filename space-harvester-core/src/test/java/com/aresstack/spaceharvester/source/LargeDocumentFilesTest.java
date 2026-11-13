@@ -123,6 +123,15 @@ class LargeDocumentFilesTest {
     }
 
     @Test
+    void htmlOver300MiBIsReadCompletely() throws IOException {
+        // AP10: als Strom (HtmlStreamParser), nicht als DOM-Baum.
+        Path html = LargeFiles.html(directory.resolve("gross.html"), LargeFiles.BYTES_OVER_300_MIB);
+        assertThat(Files.size(html)).isGreaterThan(LargeFiles.MIB_300);
+
+        assertComplete(html, "text/html", LargeFiles.FIRST_MARK, LargeFiles.LAST_MARK);
+    }
+
+    @Test
     void csvOver300MiBIsReadCompletely() throws IOException {
         Path csv = LargeFiles.csv(directory.resolve("gross.csv"), LargeFiles.BYTES_OVER_300_MIB);
         assertThat(Files.size(csv)).isGreaterThan(LargeFiles.MIB_300);

@@ -48,8 +48,8 @@ public record ExtractionLimits(long maxFileBytes, long maxChars, long unpackRati
             // Mail mit Anhang über 300 MiB bei 256 MiB Heap (AP7a): Anhänge laufen als Strom über eine temporäre Datei.
             java.util.Map.entry("message/rfc822", 0L),
             // AP3e: als Strom gelesen bzw. zählend in temporäre Dateien entpackt, je eine Datei über 300 MiB bei
-            // 256 MiB Heap vollständig (LargeDocumentFilesTest). HTML bleibt bei 20 MiB: Tikas JSoupParser baut den
-            // ganzen DOM-Baum, bevor er Text ausgibt (HTML über 300 MiB: FAILED/memory-limit bei 256 MiB Heap).
+            // 256 MiB Heap vollständig (LargeDocumentFilesTest). HTML liest seit AP10 HtmlStreamParser als Strom statt
+            // Tikas DOM-Baum (HTML über 300 MiB mit 256 MiB Heap vollständig).
             java.util.Map.entry("text/plain", 0L),
             java.util.Map.entry("text/csv", 0L),
             java.util.Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", 0L),
@@ -57,7 +57,9 @@ public record ExtractionLimits(long maxFileBytes, long maxChars, long unpackRati
             java.util.Map.entry("application/x-zip-compressed", 0L),
             java.util.Map.entry("application/gzip", 0L),
             java.util.Map.entry("application/x-gzip", 0L),
-            java.util.Map.entry("application/x-tar", 0L));
+            java.util.Map.entry("application/x-tar", 0L),
+            java.util.Map.entry("text/html", 0L),
+            java.util.Map.entry("application/xhtml+xml", 0L));
 
     /** Die vorgeschlagenen Standardwerte der ADR. */
     public static final ExtractionLimits DEFAULTS = new ExtractionLimits(0, 0, 100, 100 * MIB, 100, 1_000_000, 10,
