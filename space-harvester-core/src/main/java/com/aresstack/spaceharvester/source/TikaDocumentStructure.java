@@ -833,8 +833,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     Path kept = Files.createTempFile("original-", ".tmp");
                     Files.move(temp, kept, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     temp = null;
-                    found.set(kept);
                     synchronized (this) {
+                        // Unter der Sperre wie der Abbruch: Ist der Aufrufer schon fort (Zeitgrenze), übernimmt
+                        // niemand die Datei, sie wird gelöscht.
+                        if (stopped) {
+                            Files.deleteIfExists(kept);
+                            return;
+                        }
+                        found.set(kept);
                         unpackingEnded = true;
                     }
                     return;
