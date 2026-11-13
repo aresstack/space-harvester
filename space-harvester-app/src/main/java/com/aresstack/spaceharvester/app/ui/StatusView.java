@@ -317,6 +317,12 @@ public final class StatusView implements View {
             }
 
             @Override
+            public void removed(com.aresstack.spaceharvester.application.jobs.JobStatus last) {
+                // Mit dem Auftrag verschwinden seine Ereignisse (Ablauf der Aufbewahrung, Löschen).
+                scheduleLoad();
+            }
+
+            @Override
             public void event(JobEvent event) {
                 scheduleLoad();
             }

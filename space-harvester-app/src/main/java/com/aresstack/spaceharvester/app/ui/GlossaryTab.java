@@ -590,13 +590,21 @@ final class GlossaryTab {
         }
         unobserveJobs = glossary.observeJobs(status -> javax.swing.SwingUtilities.invokeLater(() -> track(status)));
         List<String> ids = started.stream().map(JobStatus::id).toList();
+        // Der Stand beim Start; hat eine Meldung ihn inzwischen ersetzt, ist sie jünger als das Gelesene.
+        Map<String, JobStatus> before = new HashMap<>(jobs);
         Background.run(() -> {
             List<JobStatus> states = new ArrayList<>();
             for (String id : ids) {
                 states.add(glossary.classification(id));
             }
             return states;
-        }, states -> states.forEach(this::track), this::finish);
+        }, states -> {
+            for (JobStatus state : states) {
+                if (jobs.get(state.id()) == before.get(state.id())) {
+                    track(state);
+                }
+            }
+        }, this::finish);
     }
 
     /** Merkt sich den Stand eines Auftrags; sind alle zu Ende, Rückmeldung in die Statuszeile und die Liste neu. */
