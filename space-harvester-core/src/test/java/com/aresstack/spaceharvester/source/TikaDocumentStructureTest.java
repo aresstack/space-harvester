@@ -344,6 +344,45 @@ class TikaDocumentStructureTest {
     }
 
     @Test
+    void onlyTheGeneratedOutlookHeaderLeavesTheTextHeadingsAndListsOfTheBodyStay() throws Exception {
+        Path file = Files.writeString(directory.resolve("o.msg"), "egal");
+        org.xml.sax.helpers.AttributesImpl none = new org.xml.sax.helpers.AttributesImpl();
+        TikaDocumentStructure outlook = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            metadata.set(Metadata.CONTENT_TYPE, "application/vnd.ms-outlook");
+            metadata.set(org.apache.tika.metadata.TikaCoreProperties.TITLE, "Betreff");
+            for (String[] element : new String[][]{{"h1", "Betreff"}, {"dl", null}, {"dt", "From"}, {"dd", "A"},
+                    {"/dl", null}, {"h1", "Überschrift im Inhalt"}, {"dl", null}, {"dt", "Begriff"},
+                    {"dd", "Erklärung"}, {"/dl", null}}) {
+                if (element[0].startsWith("/")) {
+                    handler.endElement("", element[0].substring(1), element[0].substring(1));
+                } else if (element[1] == null) {
+                    handler.startElement("", element[0], element[0], none);
+                } else {
+                    handler.startElement("", element[0], element[0], none);
+                    characters(handler, element[1]);
+                    handler.endElement("", element[0], element[0]);
+                }
+            }
+        }));
+        Recording sink = new Recording();
+
+        outlook.extract(file, "o.msg", "application/vnd.ms-outlook", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(sink.text()).doesNotContain("From").startsWith("Überschrift im Inhalt")
+                .contains("Begriff", "Erklärung");
+
+        Recording noSubject = new Recording();
+        new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            metadata.set(Metadata.CONTENT_TYPE, "application/vnd.ms-outlook");
+            handler.startElement("", "h1", "h1", none);
+            characters(handler, "Kapitel 1");
+            handler.endElement("", "h1", "h1");
+        })).extract(file, "o.msg", "application/vnd.ms-outlook", ExtractionLimits.DEFAULTS, noSubject);
+
+        assertThat(noSubject.text()).as("ohne Betreff bleibt die Überschrift").isEqualTo("Kapitel 1");
+    }
+
+    @Test
     void anUnreadableEmbeddedFileMakesTheResultPartial() throws Exception {
         Path file = Files.writeString(directory.resolve("e.txt"), "egal");
         TikaDocumentStructure embedded = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
