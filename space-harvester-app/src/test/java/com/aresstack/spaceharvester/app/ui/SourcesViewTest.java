@@ -128,6 +128,29 @@ class SourcesViewTest {
         assertThat(context.runtime().workspace().jobs()).allMatch(job -> job.state().terminal());
     }
 
+    @Test
+    void cardsAreGroupedByTypeUnderCollapsibleHeadersAndSelectingReopensAGroup() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        // Beide Quellen sind Ordner: eine Gruppe, nur Typen mit Quellen erscheinen.
+        List<com.aresstack.spaceharvester.app.ui.controls.SectionHeader> headers = view[0].typeHeaders();
+        assertThat(headers).hasSize(1);
+        assertThat(headers.get(0).title()).isEqualTo("Lokale Dateien");
+        assertThat(headers.get(0).isOpen()).isTrue();
+        Container root = all(view[0]);
+        List<StatusMark> marks = find(root, StatusMark.class);
+        assertThat(marks).allMatch(mark -> mark.getParent().isVisible());
+
+        SwingUtilities.invokeAndWait(headers.get(0)::toggle);
+        assertThat(headers.get(0).isOpen()).isFalse();
+        assertThat(marks).as("zugeklappt: keine Karte sichtbar").allMatch(mark -> !mark.getParent().isVisible());
+
+        SwingUtilities.invokeAndWait(() -> view[0].select("kurz"));
+        assertThat(headers.get(0).isOpen()).as("gewählte Quelle klappt ihre Gruppe auf").isTrue();
+        assertThat(marks).allMatch(mark -> mark.getParent().isVisible());
+    }
+
     private static List<IconButton> buttons(Container root, String tooltip) throws Exception {
         List<IconButton> found = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> find(root, IconButton.class).stream()

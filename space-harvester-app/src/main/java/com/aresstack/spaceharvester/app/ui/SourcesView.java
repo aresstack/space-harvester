@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.ui.controls.SectionHeader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
@@ -353,9 +354,38 @@ public final class SourcesView implements View {
             selected = sourceId;
             filter.setText("");
         }
+        // Eine gewählte Quelle in einer zugeklappten Gruppe klappt die Gruppe auf.
+        String type = cards.get(sourceId).entry.config().type();
+        if (collapsedTypes.remove(type)) {
+            typeHeaders().stream().filter(h -> h.title().equals(Texts.sourceType(type))).forEach(h -> h.open(true));
+            showGroups();
+        }
         cards.values().forEach(SourceCard::update);
         cards.get(sourceId).scrollRectToVisible(new Rectangle(cards.get(sourceId).getSize()));
         showSelected();
+    }
+
+    /** Quellentypen, deren Gruppe zugeklappt ist; gilt für die Sitzung. */
+    private final java.util.Set<String> collapsedTypes = new java.util.HashSet<>();
+
+    /** Für Tests: die Gruppenüberschriften in Reihenfolge. */
+    List<SectionHeader> typeHeaders() {
+        List<SectionHeader> headers = new ArrayList<>();
+        for (Component c : cardsPanel.getComponents()) {
+            if (c instanceof SectionHeader header) {
+                headers.add(header);
+            }
+        }
+        return headers;
+    }
+
+    /** Zeigt die Karten offener Gruppen und versteckt die zugeklappten. */
+    private void showGroups() {
+        for (SourceCard card : cards.values()) {
+            card.setVisible(!collapsedTypes.contains(card.entry.config().type()));
+        }
+        cardsPanel.revalidate();
+        cardsPanel.repaint();
     }
 
     private void refresh() {
@@ -366,13 +396,34 @@ public final class SourcesView implements View {
             sources.addAll(entries);
             cards.clear();
             cardsPanel.removeAll();
+            // Je Quellentyp eine aufklappbare Gruppe, in der Reihenfolge der Datei; nur Typen mit Quellen.
+            Map<String, List<AppSettings.SourceEntry>> byType = new LinkedHashMap<>();
             for (AppSettings.SourceEntry entry : entries) {
-                SourceCard card = new SourceCard(entry);
-                cards.put(entry.id(), card);
-                cardsPanel.add(card);
+                byType.computeIfAbsent(entry.config().type(), t -> new ArrayList<>()).add(entry);
             }
-            cardsPanel.revalidate();
-            cardsPanel.repaint();
+            byType.forEach((type, group) -> {
+                boolean open = !collapsedTypes.contains(type);
+                SectionHeader header = new SectionHeader(Texts.sourceType(type), open, null) {
+                    @Override
+                    public void toggle() {
+                        super.toggle();
+                        if (isOpen()) {
+                            collapsedTypes.remove(type);
+                        } else {
+                            collapsedTypes.add(type);
+                        }
+                        showGroups();
+                    }
+                };
+                header.count(group.size());
+                cardsPanel.add(header);
+                for (AppSettings.SourceEntry entry : group) {
+                    SourceCard card = new SourceCard(entry);
+                    cards.put(entry.id(), card);
+                    cardsPanel.add(card);
+                }
+            });
+            showGroups();
         }
         if (selected == null || !cards.containsKey(selected)) {
             selected = sources.isEmpty() ? null : sources.get(0).id();
@@ -1320,16 +1371,27 @@ public final class SourcesView implements View {
         /** Höhen aus der tatsächlichen Breite: umbrechende Namen kennen ihre Höhe erst mit der Breite. */
         @Override
         public void doLayout() {
-            int y = 0;
-            for (Component c : getComponents()) {
-                int h = ((SourceCard) c).heightFor(getWidth());
-                c.setBounds(0, y, getWidth(), h);
-                y += h + GAP;
-            }
+            int y = place(getWidth(), true);
             if (y != lastHeight) {
                 lastHeight = y;
                 revalidate();
             }
+        }
+
+        /** Überschriften mit ihrer festen Höhe, Karten mit ihrer Höhe bei dieser Breite; versteckte Karten fehlen. */
+        private int place(int width, boolean apply) {
+            int y = 0;
+            for (Component c : getComponents()) {
+                if (!c.isVisible()) {
+                    continue;
+                }
+                int h = c instanceof SourceCard card ? card.heightFor(width) : c.getPreferredSize().height;
+                if (apply) {
+                    c.setBounds(0, y, width, h);
+                }
+                y += h + (c instanceof SourceCard ? GAP : 2);
+            }
+            return y;
         }
 
         private int lastHeight = -1;
@@ -1338,11 +1400,7 @@ public final class SourcesView implements View {
         public Dimension getPreferredSize() {
             int width = getWidth() > 0 ? getWidth() : getParent() != null && getParent().getWidth() > 0
                     ? getParent().getWidth() : 220;
-            int y = 0;
-            for (Component c : getComponents()) {
-                y += ((SourceCard) c).heightFor(width) + GAP;
-            }
-            return new Dimension(width, y);
+            return new Dimension(width, place(width, false));
         }
 
         @Override
