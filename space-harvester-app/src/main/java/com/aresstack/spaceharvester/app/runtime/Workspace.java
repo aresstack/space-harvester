@@ -799,6 +799,15 @@ public final class Workspace {
         return status;
     }
 
+    /** Wie {@link #catchUp(String, String)}, in der Betriebsart {@code mode} (etwa der wirksamen der Quelle). */
+    public JobStatus catchUp(String sourceId, String spaceKey, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.spaceKeys().requireExisting(sourceId, spaceKey);
+        JobStatus status = harvester.syncs().catchUp(sourceId, spaceKey, Harvester.OWNER, null, mode);
+        activities.remember(status.id());
+        return status;
+    }
+
     /**
      * Katalogstand eines Space im Cache, ohne Quellenzugriff ({@code GET …/spaces/{key}/catalog}): erfasst oder nicht,
      * bekannte Seiten und Seiten mit Inhalt.

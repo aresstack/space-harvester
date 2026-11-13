@@ -1087,13 +1087,16 @@ public final class SourcesView implements View {
             return;
         }
         cards.values().forEach(SourceCard::update);
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
+                : SyncMode.CATALOG_ONLY;
         feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
         Background.run(() -> {
             List<String> jobs = new ArrayList<>();
             Map<String, Exception> failed = new LinkedHashMap<>();
             for (String key : keys) {
                 try {
-                    jobs.add(runtime.workspace().catchUp(id, key).id());
+                    jobs.add(runtime.workspace().catchUp(id, key, mode).id());
                 } catch (RuntimeException e) {
                     failed.put(key, e);
                 }

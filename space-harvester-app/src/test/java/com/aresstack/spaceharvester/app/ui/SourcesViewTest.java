@@ -121,7 +121,9 @@ class SourcesViewTest {
         SwingUtilities.invokeAndWait(arrow::doClick);
         assertThat(arrow.isEnabled()).as("grau, solange die Aufträge laufen").isFalse();
         await(() -> !context.runtime().workspace().jobs().isEmpty());
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()));
+        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()))
+                .as("Betriebsart der Quelle, hier die Vorgabe").allMatch(job -> "CATALOG_ONLY".equals(
+                        job.parameters().get("mode")));
         await(arrow::isEnabled);
         assertThat(context.runtime().workspace().jobs()).allMatch(job -> job.state().terminal());
     }
