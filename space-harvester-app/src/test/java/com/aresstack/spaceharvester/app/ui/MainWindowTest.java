@@ -92,14 +92,16 @@ class MainWindowTest {
         // Arbeitsbereiche, dann Verwaltung und Einstellungen.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Inhalte", "Begriffe", "Aufträge", "Status", "Wissensquellen verwalten",
+                .containsSubsequence("Suche", "Inhalte", "Begriffe", "Aufträge", "Wissensquellen verwalten",
                         "Einstellungen")
-                .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen");
+                .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
+                .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Inhalte (Strg+2)", "Begriffe (Strg+3)", "Wissensquellen verwalten (Strg+6)");
+                .contains("Inhalte (Strg+2)", "Begriffe (Strg+3)", "Wissensquellen verwalten (Strg+5)");
         assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
                 .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
+        assertThat(window[0].current()).as("Status führt zu Einstellungen › Diagnose").isEqualTo(AppContext.Section.SETTINGS);
         assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
                 .doesNotContain(AboutDialog.TAGLINE);
 
@@ -318,7 +320,7 @@ class MainWindowTest {
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
                     SettingsView.AI, SettingsView.MODELS, SettingsView.NETWORK, SettingsView.CACHE,
-                    SettingsView.SECURITY, SettingsView.LIBRARIES);
+                    SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
             layoutAll(surface);
             List<Integer> ys = new ArrayList<>();
             for (SettingsNavRow row : settings.navRows()) {
@@ -326,8 +328,8 @@ class MainWindowTest {
             }
             assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
             // „Bibliotheken“ klebt am Boden des Drawers: unter dem Scrollbereich der Bereiche, über „Zurück“.
-            SettingsNavRow libraries = settings.navRows().get(6);
-            int librariesY = ys.get(6);
+            SettingsNavRow libraries = settings.navRows().get(7);
+            int librariesY = ys.get(7);
             int backY = SwingUtilities.convertPoint(settings.back.getParent(), settings.back.getLocation(),
                     settings.drawer()).y;
             assertThat(librariesY + libraries.getHeight()).isLessThanOrEqualTo(backY);
@@ -336,7 +338,7 @@ class MainWindowTest {
                     .as("scrollt nicht mit").isNull();
             assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, settings.navRows().get(0)))
                     .isNotNull();
-            assertThat(librariesY).isGreaterThan(ys.get(5) + settings.navRows().get(5).getHeight());
+            assertThat(librariesY).isGreaterThan(ys.get(6) + settings.navRows().get(6).getHeight());
             assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
 
             // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.

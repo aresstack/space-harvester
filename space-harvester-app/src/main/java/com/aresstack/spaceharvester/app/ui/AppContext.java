@@ -50,6 +50,14 @@ public final class AppContext {
             return this == SOURCES || this == SETTINGS;
         }
 
+        /**
+         * Ob der Bereich einen Knopf in der Icon-Leiste und ein Tastenkürzel hat. Status (Diagnose) hat keinen mehr: Er
+         * steht als Bereich „Diagnose“ in den Einstellungen (Angelo, 13.11.2026); {@code show(STATUS)} führt dorthin.
+         */
+        public boolean toolbar() {
+            return this != STATUS;
+        }
+
         private final String title;
 
         Section(String title) {
