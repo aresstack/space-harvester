@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.within;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -161,6 +162,32 @@ public abstract class EmbeddingIndexContract {
         assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-doc", new float[] {0, 0, 0}, 5)).isEmpty();
         store().removeDocument(document);
         assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-doc", new float[] {1, 0, 0}, 5)).isEmpty();
+    }
+
+    @Test
+    void aPageSetSearchesOnlyAmongItsChunksSoThatKIsFilledFromIt() {
+        // ADR 0029: Seite samt Unterseiten. Ohne Grenze wäre bei k = 1 NIGHT der nächste Nachbar.
+        store().save(embedding(NIGHT, VERSION, "[1,0,0]", "[0.9,0.1,0]"));
+        store().save(embedding(HOLIDAY, VERSION, "[0,1,0]"));
+        store().save(embedding(OTHER_SOURCE, VERSION, "[1,0,0]"));
+        Enrichment holiday = embedding(HOLIDAY, VERSION, "[0,1,0]");
+        com.aresstack.spaceharvester.application.assets.DocumentKey document =
+                com.aresstack.spaceharvester.application.assets.DocumentKey.attachment(HOLIDAY, "a1");
+        store().save(new Enrichment(HOLIDAY, "embedding", VERSION, holiday.inputSha256(), null,
+                Enrichment.Status.OK, holiday.payloadJson(), List.of(), null, holiday.computedAt(), document, 0));
+        java.util.Set<String> both = java.util.Set.of("wiki", "files");
+        float[] query = {1, 0, 0};
+
+        assertThat(index().nearest(both, VERSION, query, 1, PageSet.ofKeys(List.of(HOLIDAY))))
+                .extracting(EmbeddingIndex.ChunkHit::page).containsExactly(HOLIDAY);
+        assertThat(index().nearest(both, VERSION, query, 10, PageSet.ofKeys(List.of(OTHER_SOURCE))))
+                .as("dieselbe Seiten-ID in einer anderen Quelle").extracting(EmbeddingIndex.ChunkHit::page)
+                .containsExactly(OTHER_SOURCE);
+        assertThat(index().nearest(both, VERSION, query, 10, PageSet.EMPTY)).isEmpty();
+        assertThat(index().nearest(both, VERSION, query, 10, null)).hasSize(4);
+        assertThat(index().nearestDocuments(both, VERSION, query, 10, PageSet.ofKeys(List.of(NIGHT)))).isEmpty();
+        assertThat(index().nearestDocuments(both, VERSION, query, 10, PageSet.ofKeys(List.of(HOLIDAY))))
+                .extracting(EmbeddingIndex.ChunkHit::page).containsExactly(HOLIDAY);
     }
 
     protected static Enrichment embedding(PageKey key, String version, String... vectors) {

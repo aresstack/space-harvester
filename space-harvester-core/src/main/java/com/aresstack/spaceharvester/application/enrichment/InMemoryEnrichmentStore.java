@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
 import com.aresstack.spaceharvester.application.terms.TermOrigin;
@@ -156,8 +157,13 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
-    public synchronized List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query,
-                                               int k) {
+    public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearest(sourceIds, processorVersion, query, k, null);
+    }
+
+    @Override
+    public synchronized List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                               PageSet pages) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         if (k < 1 || k > MAX_K) {
@@ -173,14 +179,21 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             return List.of();
         }
         for (Map.Entry<PageKey, TreeMap<String, Enrichment>> page : results.entrySet()) {
-            collect(hits, page.getValue().get(EMBEDDING), sourceIds, processorVersion, normalized);
+            if (pages == null || pages.contains(page.getKey())) {
+                collect(hits, page.getValue().get(EMBEDDING), sourceIds, processorVersion, normalized);
+            }
         }
         return top(hits, k);
     }
 
     @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        return nearestDocuments(sourceIds, processorVersion, query, k, null);
+    }
+
+    @Override
     public synchronized List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion,
-                                                        float[] query, int k) {
+                                                        float[] query, int k, PageSet pages) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         if (k < 1 || k > MAX_K) {
@@ -197,7 +210,7 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
         }
         for (TreeMap<String, Enrichment> entries : documents.values()) {
             for (Enrichment result : entries.values()) {
-                if (EMBEDDING.equals(result.processorId())) {
+                if (EMBEDDING.equals(result.processorId()) && (pages == null || pages.contains(result.key()))) {
                     collect(hits, result, sourceIds, processorVersion, normalized);
                 }
             }

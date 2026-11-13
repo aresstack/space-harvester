@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermOccurrence;
@@ -489,16 +490,28 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     @Override
     public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
-        return nearest(sourceIds, processorVersion, query, k, false);
+        return nearest(sourceIds, processorVersion, query, k, false, null);
     }
 
     @Override
     public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
-        return nearest(sourceIds, processorVersion, query, k, true);
+        return nearest(sourceIds, processorVersion, query, k, true, null);
+    }
+
+    @Override
+    public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                  PageSet pages) {
+        return nearest(sourceIds, processorVersion, query, k, false, pages);
+    }
+
+    @Override
+    public List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                           PageSet pages) {
+        return nearest(sourceIds, processorVersion, query, k, true, pages);
     }
 
     private List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
-                                   boolean documents) {
+                                   boolean documents, PageSet within) {
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         Objects.requireNonNull(query, "query");
@@ -507,17 +520,25 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         requireOpen();
         float[] normalized = EmbeddingIndex.normalized(query);
-        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()) {
+        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()
+                || within != null && within.isEmpty()) {
             return List.of();
         }
-        BooleanQuery filter = new BooleanQuery.Builder()
+        BooleanQuery.Builder filters = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(VECTOR_SOURCE, sourceIds.stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
                 // Seiten und Dokumente getrennt: Stücke von Anhängen beziehen sich nicht auf den Seitentext (ADR 0026).
                 .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")),
-                        documents ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT)
-                .build();
+                        documents ? BooleanClause.Occur.FILTER : BooleanClause.Occur.MUST_NOT);
+        if (within != null) {
+            // Seite samt Unterseiten (ADR 0029): vor der Nachbarsuche, damit alle k aus der Menge kommen.
+            List<BytesRef> pages = new ArrayList<>(within.size());
+            within.asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                    pages.add(new BytesRef(page(new PageKey(sourceId, pageId))))));
+            filters.add(new TermInSetQuery(VECTOR_PAGE, pages), BooleanClause.Occur.FILTER);
+        }
+        BooleanQuery filter = filters.build();
         try {
             IndexSearcher searcher = searchers.acquire();
             try {

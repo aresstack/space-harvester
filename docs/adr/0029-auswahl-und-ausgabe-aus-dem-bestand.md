@@ -54,7 +54,7 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 | Titelsuche | Lucene-Klausel über die Seiten-ID | `LucenePageSearchIndex.filter` |
 | Begriffe und Vorkommen | Lucene-Klausel über das Seitenfeld der Begriffe | `TermIndex.Filter`, `TermQueries` |
 | Aussagen und Graph | Prüfung je Seite an der einen Stelle, die Fokusseiten, Ziele und Begriffssuche zulässt | `GraphNeighbourhood.Options` |
-| Chat | dieselbe `PageSelection` begrenzt Suche und Absätze als Kontext des Chats | über Suche und Absätze |
+| Semantische Suche und Chat | Nachbarsuche der Embeddings vor ihrer Grenze auf die Seiten der Auswahl gefiltert; der Chat (App) holt seinen Kontext über Schlagwort- und semantische Suche mit derselben Seitenmenge, Absätze kommen als Auszüge dieser Treffer | `EmbeddingIndex.nearest`, `RelevanceSearch` |
 
 - Die Anfragen bekommen nur die Seitenmenge (`Query.within(PageSet)`, `PageSearchQuery.within(PageSet)`). Die
   Abdeckung (`counts`, `complete`) kommt aus der Auflösung, die die Ansicht zu ihrer Anfrage hält, und steht neben jeder

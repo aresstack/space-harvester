@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment.embedding;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -38,6 +39,38 @@ public interface EmbeddingIndex {
      */
     default List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k) {
         return List.of();
+    }
+
+    /**
+     * Wie {@link #nearest(Set, String, float[], int)}, aber nur Stücke dieser Seiten (ADR 0029), mit {@code null} ohne
+     * diese Grenze. Eine Ablage mit eigenem Index filtert vor der Nachbarsuche, damit alle {@code k} aus der Menge
+     * kommen; diese Vorgabe filtert nur nach.
+     */
+    default List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                   PageSet pages) {
+        if (pages == null) {
+            return nearest(sourceIds, processorVersion, query, k);
+        }
+        Set<String> within = within(sourceIds, pages);
+        return within.isEmpty() ? List.of() : nearest(within, processorVersion, query, k).stream()
+                .filter(hit -> pages.contains(hit.page())).toList();
+    }
+
+    /** Wie {@link #nearestDocuments(Set, String, float[], int)}, nur Dokumente dieser Seiten (ADR 0029). */
+    default List<ChunkHit> nearestDocuments(Set<String> sourceIds, String processorVersion, float[] query, int k,
+                                            PageSet pages) {
+        if (pages == null) {
+            return nearestDocuments(sourceIds, processorVersion, query, k);
+        }
+        Set<String> within = within(sourceIds, pages);
+        return within.isEmpty() ? List.of() : nearestDocuments(within, processorVersion, query, k).stream()
+                .filter(hit -> pages.contains(hit.page())).toList();
+    }
+
+    private static Set<String> within(Set<String> sourceIds, PageSet pages) {
+        Set<String> within = new java.util.TreeSet<>(sourceIds);
+        within.retainAll(pages.sourceIds());
+        return within;
     }
 
     /**
