@@ -22,7 +22,7 @@ class DiagramsTest {
     }
 
     @Test
-    void reportsWhatJgraphxCannotDrawInsteadOfGuessing() {
+    void reportsWhatCannotBeDrawnInsteadOfGuessing() {
         Diagrams.Rendering broken = Diagrams.drawio("kein Diagramm".getBytes(StandardCharsets.UTF_8));
         Diagrams.Rendering doctype = Diagrams.drawio(("<!DOCTYPE x [<!ENTITY e SYSTEM \"file:///etc/passwd\">]>"
                 + MXFILE).getBytes(StandardCharsets.UTF_8));

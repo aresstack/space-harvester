@@ -18,6 +18,8 @@ java {
 dependencies {
     // Nur die Bibliothek, nie :space-harvester-server (#103)
     implementation project(':space-harvester-core')
+    // draw.io-XML-Schablonen (BPMN-Tasks/-Events, Flowchart, Basic, Pfeile) für drawio-java im Core
+    runtimeOnly libs.drawio.stencils
     implementation project(':comic-controls')
     // Aussagenanalyse auf Knopfdruck (#499, ADR 0024): MaltParser und OpenNLP nur in der App, nie im Core oder Dienst;
     // das Modell lädt die App erst beim ersten Klick aus <Datenverzeichnis>/nlp-model, nie aus dem Netz

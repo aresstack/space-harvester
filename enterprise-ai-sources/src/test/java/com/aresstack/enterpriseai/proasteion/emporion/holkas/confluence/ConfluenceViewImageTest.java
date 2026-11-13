@@ -395,7 +395,7 @@ public class ConfluenceViewImageTest {
         assertTrue(infoLines.toString(), infoLines.stream().noneMatch(line -> line.contains("Bild A")
                 || line.contains("Bild%20A") || line.contains("page=")));
         assertTrue(infoLines.toString(), infoLines.stream().anyMatch(line -> line.startsWith(
-                "[Confluence] draw.io: JGraphX nicht möglich (nicht unterstützt: shape=mxgraph.unbekannt.form),"
+                "[Confluence] draw.io: Zeichnung nicht möglich (nicht unterstützt: stencil:mxgraph.unbekannt.form),"
                         + " verwende PNG-Vorschau")));
     }
 

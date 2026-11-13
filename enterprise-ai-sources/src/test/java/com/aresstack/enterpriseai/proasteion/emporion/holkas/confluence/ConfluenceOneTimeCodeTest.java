@@ -246,7 +246,7 @@ public class ConfluenceOneTimeCodeTest {
      */
     @Test
     public void anUndrawableDiagramAsksForTheCodeOfItsPreviewAndThenShowsThePreview() throws Exception {
-        drawioShape = "ext";
+        drawioShape = "mxgraph.unbekannt.form";
         ConfluenceKnowledgeSource source = source();
 
         OneTimeCodeChallenge challenge = challengeOf(() -> source.loadViewImage(DIAGRAM));
