@@ -182,6 +182,11 @@ public final class DocumentEnrichments implements IndexedDocuments {
         try {
             Pending item;
             while ((item = take(sourceId, spaceKey, partition)) != null) {
+                if (!enabled.getAsBoolean()) {
+                    // Inzwischen abgeschaltet: nichts Neues; der Lauf nach dem Abgleich holt es nach dem Einschalten
+                    // aus dem Zustand nach.
+                    continue;
+                }
                 int removed = removals(item);
                 try {
                     process(item, context);

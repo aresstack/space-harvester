@@ -327,8 +327,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         try {
             enrichment = new EnrichmentSettings(read.bool(EnrichmentSettings.DOCUMENTS_ENABLED, true),
-                    read.integer(EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
-                            (int) EnrichmentSettings.DEFAULT_EMBEDDING_MAX_CHARS));
+                    read.longNumber(EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
+                            EnrichmentSettings.DEFAULT_EMBEDDING_MAX_CHARS));
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, e.getMessage()));
         }
@@ -456,6 +456,19 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             }
             try {
                 return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                problems.add(new ConfigurationProblem(key, "Erwartet eine ganze Zahl"));
+                return fallback;
+            }
+        }
+
+        long longNumber(String key, long fallback) {
+            String value = value(key);
+            if (value == null) {
+                return fallback;
+            }
+            try {
+                return Long.parseLong(value);
             } catch (NumberFormatException e) {
                 problems.add(new ConfigurationProblem(key, "Erwartet eine ganze Zahl"));
                 return fallback;

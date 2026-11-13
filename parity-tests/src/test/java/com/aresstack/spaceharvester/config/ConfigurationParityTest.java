@@ -102,7 +102,7 @@ class ConfigurationParityTest {
               enrichment:
                 documents:
                   enabled: false
-                  embedding-max-chars: 750000
+                  embedding-max-chars: 3000000000
             """;
 
     private static final String TOKEN = "parity-token";
@@ -169,7 +169,7 @@ class ConfigurationParityTest {
         // ADR 0026, AP9a: Analysen je Anhang, beim Dienst ebenfalls über withSyncRules.
         assertThat(app.enrichment()).isEqualTo(service2.enrichment())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.EnrichmentSettings(false,
-                        750_000));
+                        3_000_000_000L));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder
