@@ -71,6 +71,24 @@ class AppSettingsLoaderTest {
     }
 
     @Test
+    void anInvalidMemoryLimitKeepsTheDefaultInsteadOfRemovingIt() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  assets:
+                    extraction:
+                      memory-limits:
+                        - type: "*"
+                          limit: 40MiB
+                        - type: message/rfc822
+                          limit: 30MB
+                """, Map.of());
+
+        assertThat(settings.problems()).anySatisfy(problem -> assertThat(problem).contains("memory-limits"));
+        assertThat(settings.storage().extraction().memoryLimit("application/zip")).isEqualTo(20L * 1024 * 1024);
+        assertThat(settings.storage().extraction().memoryLimit("message/rfc822")).isEqualTo(30L * 1024 * 1024);
+    }
+
+    @Test
     void keepsASourceWhoseSecretIsMissingAndNamesTheVariable() throws Exception {
         AppSettings settings = load("""
                 space-harvester:

@@ -338,6 +338,43 @@ class AssetsTest {
     }
 
     @Test
+    void withTheStructuredReaderADocumentAboveTheOldTextLimitGetsItsTextFromTheFile() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(64L * 1024 * 1024, null, documents);
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        assets.documentExtractions(new DocumentExtractions(new DocumentStructure() {
+            @Override
+            public String id() {
+                return "struktur";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public StructuredDocument extract(java.nio.file.Path original, String title, String mediaType,
+                                              ExtractionLimits limits, StructureSink sink) {
+                reads.incrementAndGet();
+                sink.document().accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Großer Bericht"));
+                return new StructuredDocument(DocumentHead.EMPTY, Outcome.ok(new ReadExtent(1, 14)), List.of(), 1,
+                        14);
+            }
+        }, new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(directory),
+                ExtractionLimits.DEFAULTS));
+        source.file("att1", "1", "%PDF" + "x".repeat((int) Assets.IN_MEMORY_BYTES));
+        PageAttachmentList list = list(attachment("att1", "gross.pdf", "application/pdf", "1"));
+
+        assets.harvest(list);
+
+        assertThat(reads).as("beim Ablegen gelesen").hasValue(1);
+        assertThat(assets.text(list, "att1").text()).isEqualTo("Großer Bericht");
+        assertThat(reads).as("aus der Ablage").hasValue(1);
+        assertThat(documents.extractions).as("der alte Leser bleibt unbenutzt").hasValue(0);
+    }
+
+    @Test
     void theTextOfANotStoredDocumentAboveTheTextLimitIsTooLargeWithoutReadingIt() throws Exception {
         FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
         Assets assets = assets(64L * 1024 * 1024, null, documents);

@@ -13,7 +13,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -75,6 +82,57 @@ class FileSystemAssetStoreTest {
         byte[] small = bytes("abcde");
         store.put(asset("att4", "1", small), small);
         assertThat(store.read(asset("att4", "1", small))).isEqualTo(small);
+    }
+
+    /**
+     * Audit 13.11.2026: Prüfen und Reservieren liefen nicht zusammen, gleichzeitige Ablagen desselben Inhalts zählten
+     * ihn mehrfach und scheiterten an der Grenze. Die Grenze fasst hier genau einen Inhalt, jede Doppelzählung fällt
+     * also auf; danach muss noch genau der Rest frei sein.
+     */
+    @Test
+    void theSameContentStoredConcurrentlyCountsOnceAgainstTheTotalLimit() throws Exception {
+        int writers = 16;
+        byte[] content = new byte[256 * 1024];
+        byte[] rest = bytes("rest");
+        ExecutorService pool = Executors.newFixedThreadPool(writers);
+        try {
+            for (int round = 0; round < 8; round++) {
+                content[0] = (byte) round;
+                byte[] shared = content.clone();
+                FileSystemAssetStore store = new FileSystemAssetStore(root.resolve("runde" + round),
+                        shared.length + rest.length);
+                CyclicBarrier start = new CyclicBarrier(writers);
+                List<Future<?>> results = new ArrayList<>();
+                for (int writer = 0; writer < writers; writer++) {
+                    String id = "att" + writer;
+                    boolean staged = writer % 2 == 1;
+                    results.add(pool.submit(() -> {
+                        Asset asset = asset(id, "1", shared);
+                        Path file = null;
+                        if (staged) {
+                            file = store.stagingFile();
+                            Files.write(file, shared);
+                        }
+                        start.await(30, TimeUnit.SECONDS);
+                        if (staged) {
+                            store.putFile(asset, file);
+                        } else {
+                            store.put(asset, shared);
+                        }
+                        return null;
+                    }));
+                }
+                for (Future<?> result : results) {
+                    result.get(60, TimeUnit.SECONDS);
+                }
+                for (int writer = 0; writer < writers; writer++) {
+                    assertThat(store.find("wiki", "att" + writer, "1")).isPresent();
+                }
+                store.put(asset("rest", "1", rest), rest);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

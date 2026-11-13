@@ -341,8 +341,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof AttachmentListSource) {
             capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
         }
-        if (port instanceof PageViewSource && port instanceof AttachmentListSource) {
-            // Vorschauen gibt es bei Quellen mit Lese-Ansicht und Anhangsliste (Confluence, #183).
+        if (previews()) {
+            // Vorschauen gibt es bei Quellen mit Lese-Ansicht und Anhangsliste, die sie selbst erzeugen (Confluence,
+            // #183); Outlook nicht (ADR 0026 Punkt 9).
             capabilities.add(SourceCapability.ATTACHMENT_PREVIEWS);
         }
         if (port instanceof PageNavigationSource && port instanceof ResourceMetadataSource) {
@@ -892,6 +893,23 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 content.nativeFormat(), content.retrievedAt());
     }
 
+    /**
+     * Vorschauen erzeugt nur eine Quelle mit Lese-Ansicht und Anhangsliste, die
+     * {@link PageViewSource#loadAttachmentPreview} selbst umsetzt; die Vorgabe des Interfaces meldet immer
+     * {@code UNSUPPORTED} (Outlook, ADR 0026 Punkt 9).
+     */
+    private boolean previews() {
+        if (!(port instanceof PageViewSource) || !(port instanceof AttachmentListSource)) {
+            return false;
+        }
+        try {
+            return port.getClass().getMethod("loadAttachmentPreview", PageView.Attachment.class,
+                    PageView.Preview.class).getDeclaringClass() != PageViewSource.class;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
+    }
+
     @Override
     public PageAttachments attachments(String pageId) {
         if (!(port instanceof AttachmentListSource listing)) {
@@ -899,7 +917,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         StoredAttachmentList list;
         try {
-            list = listing.storedAttachments(pageId);
+            // Über discover ist die Seiten-ID die Ressourcen-ID als Base64url; die Quelle kennt die Ressourcen-ID
+            // (Outlook, ADR 0026 Punkt 9). Sonst ist die Seiten-ID die lokale ID der Quelle.
+            list = listing.storedAttachments(discovering() ? resourceIdOf(pageId).value() : pageId);
         } catch (KnowledgeSourceException e) {
             if (e.kind() == KnowledgeSourceException.Kind.INVALID_RESPONSE && port instanceof PageViewSource view) {
                 return readerAttachments(pageId, view, e);
@@ -939,7 +959,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         String warning = "Anhangsliste nicht vollständig lieferbar (" + cause.kind() + "); es gelten die Anhänge "
                 + "des Lesebereichs";
         try {
-            attachments = view.attachmentsOf(resource(pageId).id()).stream()
+            attachments = view.attachmentsOf(discovering() ? resourceIdOf(pageId) : resource(pageId).id()).stream()
                     .map(KnowledgeSourceHarvestSource::attachment).toList();
         } catch (KnowledgeSourceException | RuntimeException e) {
             LOG.warn("Quelle {}: Anhänge des Lesebereichs nicht lesbar ({})", id, e.getClass().getSimpleName());
@@ -1083,7 +1103,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     @Override
     public byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
-        if (!(port instanceof PageViewSource views) || !(port instanceof AttachmentListSource)) {
+        if (!(port instanceof PageViewSource views) || !previews()) {
             return HarvestSource.super.attachmentPreview(attachment, preview, maxBytes);
         }
         Objects.requireNonNull(preview, "preview");
@@ -1395,7 +1415,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return new PageAttachment(lastSegment(resource.id()), resource.id().value(), resource.title(),
                 resource.contentType(), size == null ? null : Long.valueOf(size),
                 version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
-                resource.location().orElse(null));
+                resource.location().orElse(null),
+                partsWithoutFile(resource.metadata().asMap().get(PageAttachment.PARTS_WITHOUT_FILE)));
+    }
+
+    /** Zahl aus dem Metadatum der Outlook-Quelle (AP7c); fehlt sie oder ist sie keine Zahl, gilt 0. */
+    private static int partsWithoutFile(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(value.strip()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */

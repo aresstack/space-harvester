@@ -8,9 +8,11 @@ on:
 permissions:
   contents: write
 
+# Ein Lauf nach dem anderen, in der Reihenfolge der Pushes: Ein laufender Build wird nicht abgebrochen, sonst
+# erscheint bei vielen Merges nie ein ZIP. Wartet schon ein Lauf, ersetzt ihn der neuere.
 concurrency:
   group: chatgpt-compatible-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   package:
@@ -100,5 +102,27 @@ jobs:
               --title "$RELEASE_TITLE" --notes "$notes" --prerelease --latest=false
           fi
 
-          gh release delete-asset "$RELEASE_TAG" "$ASSET_NAME" --yes >/dev/null 2>&1 || true
-          gh release upload "$RELEASE_TAG" "build/$ASSET_NAME"
+          # Erst das neue ZIP unter vorläufigem Namen hochladen, dann das alte entfernen und umbenennen: Scheitert
+          # der Upload, bleibt das bisherige ZIP abrufbar.
+          pending_name="$ASSET_NAME.new"
+          mv "build/$ASSET_NAME" "build/$pending_name"
+          gh release upload "$RELEASE_TAG" "build/$pending_name" --clobber
+
+          release_api="repos/$GITHUB_REPOSITORY/releases"
+          asset_id() {
+            gh api "$release_api/tags/$RELEASE_TAG" --jq ".assets[] | select(.name == \"$1\") | .id"
+          }
+          old_id="$(asset_id "$ASSET_NAME")"
+          new_id="$(asset_id "$pending_name")"
+          test -n "$new_id"
+          if [ -n "$old_id" ]; then
+            gh api -X DELETE "$release_api/assets/$old_id"
+          fi
+          gh api -X PATCH "$release_api/assets/$new_id" -f name="$ASSET_NAME" >/dev/null
+
+          # Der Tag zeigt auf den Commit, aus dem das ZIP stammt. Das ZIP ist da schon veröffentlicht; lässt sich
+          # der Tag nicht verschieben, meldet der Lauf das, ohne das ZIP zurückzuhalten.
+          if ! gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null; then
+            echo "::warning::Tag $RELEASE_TAG ließ sich nicht auf $GITHUB_SHA verschieben."
+          fi

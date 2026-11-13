@@ -141,6 +141,30 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
   Listen, Codeblöcke), statt auf fehlendes Storage-Format hinzuweisen.
 - **Fehler:** nur die Art (`Quelle: NOT_FOUND` …), ohne die Meldung des Adapters, die Seitentitel, Pfade oder Jobnamen
   nennen kann.
+- **Outlook-Anhänge** (ADR 0026 Punkt 9, Pakete OL1 und OL2, enterprise-ai-client#220 und #221):
+  `OutlookKnowledgeSource` ist `AttachmentListSource` und `PageViewSource`. Anhangskennung
+  `mail:<Postfach>/<Datei>/<Node-ID>/<Token>`, Token = Base64url ohne Auffüllung über Datei, Node-ID und
+  Anhangsnummer (`getAttachNum`); als `attachmentId` gilt das Token, es taugt als Dateiname. Es fehlt kein Eintrag:
+  eine doppelte Nummer bekommt einen Zähler in Listenreihenfolge, eine unlesbare Tabellenzeile eine Kennung nach
+  Position (ihr Abruf scheitert), beides als Warnung ohne Dateinamen; eine unlesbare Anhangstabelle ist ein Fehler
+  (`INVALID_RESPONSE`), keine leere Liste. Dateibytes fließen als Strom aus der Postfachdatei; ein fehlendes
+  Datenfeld ist ein Fehler, ein leerer Anhang eine leere Datei. Ein angehängtes Outlook-Element kommt als
+  `message/rfc822` (Titel mit `.eml`), nur aus Quelldaten; tiefer als 8 Ebenen bleibt es gelistet und sein Abruf
+  meldet `UNSUPPORTED`, gekürzt wird nie. Verweise und OLE-Objekte haben keine Datei: direkt an der Nachricht
+  gelistet mit `UNSUPPORTED` beim Abruf, in einem angehängten Element ausgelassen und gezählt, mit der Warnung
+  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen; betrifft nur diesen Eintrag, die Liste bleibt
+  vollständig, `PageAttachments#complete`). Medientyp aus dem MIME-Tag des Anhangs,
+  sonst aus der Endung (pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, md, htm, html, xml, json,
+  zip, msg, eml, png, jpg, jpeg, gif, bmp, tif, tiff, svg), sonst `application/octet-stream`; was gelesen wird,
+  entscheidet der Core. Im Core (OL2): `attachments(pageId)` übersetzt bei Quellen über `discover` die Seiten-ID
+  (Base64url) zurück in die Ressourcen-ID, bevor es `storedAttachments` aufruft. `ATTACHMENT_PREVIEWS` meldet nur
+  eine Quelle, die `loadAttachmentPreview` selbst umsetzt, Outlook also nicht. Test: `OutlookAttachmentsTest`.
+  **Bekannte Grenze (java-libpst 0.9.3):** Beginnen die gespeicherten Bytes eines Anhangs mit dem zlib-Kopf
+  `78 9C`, entpackt java-libpst sie beim Lesen (`PSTNodeInputStream.detectZlib`, gedacht für komprimierte Blöcke).
+  Ist der Inhalt ein gültiger zlib-Strom, kommt der entpackte Inhalt statt der Originalbytes, ganz im Speicher und
+  mit anderem Hash; sonst scheitert der Abruf mit `INVALID_RESPONSE`. Das betrifft nur Dateien, die selbst mit diesen
+  zwei Bytes beginnen (rohe zlib-Daten), auch als Anhang in einem angehängten Element; PDF, Office, ZIP und Bilder
+  beginnen anders. Geprüft mit einem im Test erzeugten Postfach (13.11.2026).
 
 Die Rechte je Seite gelten wie bei jeder Quelle über die `AccessPolicy`; nicht lesbare Seiten fehlen in Listen,
 Suche und Export.
@@ -304,7 +328,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `GET …/assets/{attachmentId}/preview?kind=…` mit derselben Rechteprüfung wie `…/content`.
 - **Anhangstexte im Volltextindex:** wie im Enterprise AI Client (`SourceAttachmentReader` mit
   `DocumentSourceFileTextExtractor`, Composition Root): Jeder Anhang ist ein eigenes Dokument mit der Seite als Eltern
-  im `LucenePageTextIndex` (Schema `page-text-index/v2`; ein v1-Index wird leer neu angelegt und füllt sich wieder),
+  im `LucenePageTextIndex` (Schema `page-text-index/v3`; ein älterer Index wird leer neu angelegt und füllt sich
+  wieder),
   Dateiname als Titel, Text aus `DocumentText` bzw. bei Bildern eine vorhandene Beschreibung; ohne lesbaren Text steht
   nur der Dateiname darin (EAC: `# Titel`). Text gibt es bis 20 MiB (Grenze der Extraktion), auch ohne Grenze für
   Anhänge (`space-harvester.assets.max-size`, Standard `0`). In den Index kommt
@@ -318,9 +343,186 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
   auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
   darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
-- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated`; Rechte wie
+- **Index je Dokument und Abschnitt (ADR 0026, AP4b, `page-text-index/v3`):** Ist die strukturierte Extraktion
+  abgelegt, bekommt ein Dokument-Anhang je abgelegtem Abschnitt einen Eintrag, jede lesbare enthaltene Datei
+  (Anhang einer Mail, Eintrag eines Archivs) ebenso mit ihrer Teilkennung (`PartId#value`) und ihrem Anzeigenamen;
+  inhaltsgleiche Teile einmal. Gelesen wird abschnittsweise aus der Ablage, ohne Zeichengrenze
+  (`DocumentExtractions#indexSections`). Ein Behälter ohne eigenen Text hat nur Einträge seiner Teile; ohne jeden
+  Abschnitt mit Text steht der Anhang wie bisher mit seinem Dateinamen darin. Teile mit `FAILED`, `UNSUPPORTED` oder
+  `EXCLUDED` haben keinen Text, nur einen Namenseintrag (Anzeigename durchsuchbar, nie erzeugter Text), `PARTIAL` den
+  gelesenen Text. Alle Einträge eines Anhangs werden in einem Schritt
+  des IndexWriters ersetzt (`PageTextIndex#replaceAttachment`, `updateDocuments`): Leser sehen den alten oder den
+  neuen Stand, überzählige Abschnitte und weggefallene Teile verschwinden, scheitert das Lesen, bleibt der alte Stand.
+  Ein einzelnes Dokument ersetzt `replaceDocument` (Anhang + Teilkennung); `Assets#reindex` legt einen abgelegten
+  Anhang ohne Download neu in den Index (für „Neu lesen“). Je Seite bleibt ein Treffer; ein Treffer in einer
+  enthaltenen Datei nennt zusätzlich `attachment.partId` und `attachment.partTitle` (sonst `null`). Der Text unter
+  `…/text` bleibt der Gesamttext aus Behälter und Teilen; der Export (`attachments/v2`, AP4c) trennt ihn: eigener
+  Text und Markdown des Behälters, jede enthaltene Datei als eigener Eintrag mit Status (`DocumentExport`).
+- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
+  Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
+  (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle
+  auslassen musste; ein nur gelesener, nicht abgelegter Text (ohne `sync`) hat diese Felder leer. Rechte wie
   `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
   `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
+
+## Dokumente als Struktur (ADR 0026)
+
+Vertrag der strukturierten Extraktion im Paket `application.assets` (Stufe 1, noch ohne Umsetzung; bis Stufe 2 gilt
+der Weg oben): Port `DocumentStructure` liest ein Original aus einer Datei (`Path`, nie Byte-Array) mit
+`ExtractionLimits` und gibt Blöcke (`Heading`, `Paragraph`, `ListItem`, `Table`, `Code`) als Strom an einen
+`StructureSink`: einen Strom für das äußere Dokument, je enthaltener Datei einen eigenen (`PartSink`, nimmt auch die
+eigenen Kopfdaten des Teils an, etwa einer weitergeleiteten Mail). Kopfdaten (`DocumentHead`)
+gehen nie in den Lesetext. Fundstellen (`Location`: Seite, Folie, Blatt; Zellbezug an der Zelle) stehen nur, wenn
+der Extraktor sie aus der Datei liest. Dokumentkennung `DocumentKey` = Seite, Anhangskennung der Quelle und für
+enthaltene Dateien eine Teilkennung `PartId` im äußeren Behälter: `sha256:<hex>:<n>` (laufende Nummer unter
+inhaltsgleichen Teilen in Lesereihenfolge über den ganzen Behälter) oder, ohne vollständig gelesene Bytes,
+`pos:<sha256 des Behälters>:/1/3`. Anzeigenamen werden nie Kennung oder Pfad.
+
+Status (`ExtractionStatus`): `OK`, `PARTIAL`, `UNSUPPORTED`, `FAILED`, `EXCLUDED`; dazu `truncated` (nur mit gelesenem
+Umfang in Bytes und Zeichen) und je Ergebnis ein fester Grund (`StatusReason`, der zuerst erreichte):
+
+| Code | Bedeutung |
+|---|---|
+| `encrypted` | verschlüsselt, nur wenn die Ausnahme es eindeutig sagt |
+| `corrupt` | defekt |
+| `empty` | ohne Inhalt |
+| `timeout` | Laufzeit ohne Fortschritt oder insgesamt erreicht |
+| `too-deep` | Verschachtelungstiefe überschritten |
+| `too-many-files` | zu viele enthaltene Dateien im äußeren Behälter |
+| `unpacked-too-large` | ausgepackt zu gepackt über dem Verhältnis |
+| `memory-limit` | Format braucht mehr Speicher als im Dienst erlaubt |
+| `media-type-excluded` | Medientyp nicht zugelassen (steht nur im Verzeichnis) |
+| `too-large` | über einer vom Betreiber gesetzten Größe |
+| `text-ratio-exceeded` | mehr Zeichen je Byte als erlaubt (Textbombe) |
+| `temp-space-low` | freier Platz für temporäre Dateien unter der Reserve |
+| `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag), oder die Quelle musste Teile auslassen (AP7c); `PARTIAL` |
+| `unsupported-format` | kein Leser für das Format (`UNSUPPORTED`) |
+| `no-text` | Bytes vorhanden, aber kein Text, etwa ein gescanntes PDF ohne Texterkennung (`UNSUPPORTED`, nie `OK`) |
+
+Eine leere Datei (0 Bytes) ist `UNSUPPORTED` mit `empty`.
+
+Ablage (`ExtractionStore`, Umsetzung `FileSystemExtractionStore` unter `extractions/` im Asset-Verzeichnis, Schema
+`structured-extraction/v1`): Schlüssel `ExtractionKey` = Inhalt, Extraktion, Version und Strukturmodell. Blöcke gehen
+fortlaufend in Abschnitte von höchstens 100 000 Zeichen (`ExtractionStore.DEFAULT_SECTION_CHARS`), geschnitten an
+Blockgrenzen; ein größerer Block bildet einen Abschnitt allein. Gelesen wird abschnittsweise. Ein neuer Stand wird
+erst mit `commit` gültig, bis dahin gilt der alte; ein abgebrochener Lauf hinterlässt nichts. Entfällt ein Inhalt,
+entfallen seine Extraktionen mit. Die bisherige Ablage `texts/` (`AssetText`) bleibt unverändert lesbar.
+
+Standardgrenzen (`ExtractionLimits.DEFAULTS`, `0` = keine Grenze): Größe und Zeichen ohne Grenze, ausgepackt zu
+gepackt 100:1 ab 100 MiB, Zeichen zu Bytes 100:1 ab 1 Mio. Zeichen, Tiefe 10, 10 000 enthaltene Dateien, 30 s ohne
+Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
+
+### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
+
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s9`) liest das Original aus der Datei
+(`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
+bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
+`th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
+größer als ein Abschnitt der Ablage (100 000 Zeichen): Längere Absätze teilt der Adapter an Leerraum, Tabellen an
+Zeilen (Folgestücke mit `continued`, die Zeilen zählen weiter). Fundstellen nur, wo Tika sie liefert: `page` ist bei PDF
+die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckte Seitenzahl; leere Seiten zählen mit),
+`sheet` bei Excel der Blattname. Excel-Zeile und `cellRef` bleiben leer (Tika liefert die Zeile nicht), Word hat keine
+Seiten. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
+zählen mit (nicht getestet: ob Notizen in `.ppt` mitzählen; HSLF kann im Test keine Notizen anlegen, der Zähler
+reagiert nur auf Folienelemente). Bei `.pptx` bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
+liefert, nicht in Folienreihenfolge; ausgeblendete Folien sind enthalten, Notizen und Mastertext stehen als Absätze
+(Korrektur der Reihenfolge erst mit AP10 über POI). Word-Listen bleiben Absätze: Tika gibt Listenpunkte aus Word als Absatz mit vorangestelltem Zeichen aus, ohne
+eindeutige Auszeichnung. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
+geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien siehe unten
+(AP7a). Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
+`TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
+ohne Fortschritt und insgesamt; nach einer Zeitgrenze nimmt der Empfänger keinen Block mehr an, auch das Warten auf
+einen freien Lauf endet dort. Bis zum Abbruch gesammelter Text bleibt (`PARTIAL`); meldet Tika unlesbare enthaltene
+Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
+
+**Enthaltene Dateien (AP7a).** Ein eigener `EmbeddedDocumentExtractor` entscheidet je Teil, den Tika übergibt:
+
+- Zum Dokument gehört ein Teil, den Tika `INLINE` nennt (Bilder in Word, ausgenommen Mails), oder, ohne diese Angabe,
+  ein Bild in einem Office-Dokument oder PDF (eine eingebettete Datei wie eine Excel-Mappe in Word ist ein Eintrag,
+  auch mit Beziehungskennung). Er wird kein Eintrag und liefert seinen Text (meist
+  keinen) in das Elterndokument. Textfassungen einer Mail (`multipart/alternative`) wählt Tika selbst; ihr Text steht
+  genau einmal in der Mail.
+- Jeder andere Teil wird ein Eintrag im Verzeichnis (`StructuredDocument.directory`), auch defekt, leer, zu tief oder
+  ausgeschlossen. Er wird zählend und hashend in eine temporäre Datei geschrieben (nach jedem Teil gelöscht, auch bei
+  Fehler und Abbruch) und daraus mit eigenem Handler, eigenem Status und eigenem Kopf gelesen
+  (`StructureSink.part` → `PartSink`). Vollständig gelesen trägt er `sha256:<hex>:<n>`, sonst `pos:<Behälter>:/1/3`.
+  Der Zählerpfad zählt jeden übergebenen Teil, auch die, die zum Dokument gehören.
+- Grenzen je äußerem Behälter: Tiefe 10 (darüber Eintrag `EXCLUDED`/`too-deep`, nicht geöffnet), 10 000 Einträge
+  (darüber keine weiteren; Behälter `PARTIAL`/`too-many-files`, das Auspacken endet), Verhältnis 100:1 ab 100 MiB
+  (nur dieser Teil endet `FAILED`/`unpacked-too-large`, seine Bytes zählen nicht weiter, die übrigen Teile werden
+  gelesen, Behälter `PARTIAL`/`unpacked-too-large`), Platzreserve (`FAILED`/`temp-space-low`). Je Teil gelten
+  Speicherschranke nach erkanntem und gemeldetem Typ (`EXCLUDED`/`memory-limit`), leere Datei (`EXCLUDED`/`empty`),
+  Zeichengrenze und Gesamtlaufzeit; endet ein Teil an seiner Grenze, endet nur dieser Teil. Die Grenze ohne Fortschritt
+  gilt für den ganzen Lauf (Behälter `PARTIAL`/`timeout`, gelesene Teile bleiben).
+- Welche Typen eigene Dokumente werden, erfährt der Adapter beim Aufruf (`PartRules.documentTypes`); andere Teile
+  stehen mit `EXCLUDED`/`media-type-excluded` im Verzeichnis, Archive und Mails werden trotzdem geöffnet.
+- Ein Archiv hat keinen eigenen Text (Namen der Einträge sind Tika-Artefakte). Erreicht eine Mail ihre Zeichengrenze,
+  bleibt sie gekürzt, ihre Anhänge werden weiter gelesen.
+- Ein Behälter ohne eigenen Text, aber mit Einträgen (Archiv, Mail nur mit Anhängen) ist `OK`; `no-text` gilt nur
+  ohne Text und ohne Einträge. Betreff und Von/An einer Outlook-Mail stehen nur in den Kopfdaten.
+- Ablage (AP7b): Jeder Teil liegt im Stand seines äußeren Behälters unter `parts/<Schlüssel>/` mit eigenen
+  Abschnitten und eigenem Kopf in `document.json`. Schlüssel ist der SHA-256 des Teils (inhaltsgleiche Einträge
+  desselben Behälters teilen sich die Ablage, ihre Blöcke werden einmal geschrieben) oder ohne vollständige Bytes
+  `PartId#fileName()` (`pos-<Behälter>-1-3`, nur `[0-9a-z-]`). Behälter und Teile werden zusammen gültig und beim
+  Neulesen zusammen ersetzt. Derselbe Anhang in verschiedenen Behältern wird je Behälter gelesen und abgelegt.
+- Original abrufen (AP7b): `DocumentExtractions#openPart(asset, store, partId)` liest den abgelegten Behälter unter
+  denselben Schutzgrenzen erneut und gibt den Teil mit passendem Hash als Strom heraus (aus einer temporären Datei,
+  die beim Schließen gelöscht wird); eine zweite Kopie wird nicht abgelegt. Feste Codes
+  (`PartUnavailableException`): `part-without-hash` (Kennung nach Position, kein vollständiges Original),
+  `container-missing` (Original des Behälters nicht mehr in der Ablage), `part-not-found` (kein Teil mit dieser
+  Kennung, oder unter den Grenzen nicht lesbar).
+- Viele Originale (Export, Auflage zu AP4c): `DocumentExtractions#copyParts` bzw. `DocumentStructure#copyParts` lesen
+  den Behälter genau einmal und geben jeden verlangten Teil mit Inhaltskennung nacheinander als Strom an einen
+  Abnehmer (aus seiner temporären Datei, die danach wegfällt; nichts im Speicher gesammelt, dieselben Schutzgrenzen);
+  scheitert der Abnehmer, endet der Lauf mit seinem Fehler. `openPart` für einen einzelnen Teil bleibt daneben.
+- Übergang bis AP4: Der Text des Behälters (`AssetText`) ist sein eigener Text, danach der seiner Teile in der
+  Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
+  über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer
+  vorübergehenden Grenze (`timeout`, `temp-space-low`) verhindert das Ablegen des Behälters.
+- Ausgelassene Teile der Quelle (AP7c): Das Metadatum `mail.attachment.partsWithoutFile` der Anhangsliste (angehängtes
+  Outlook-Element mit Verweisen oder OLE-Objekten) steht als `partsWithoutFile` am Anhang und am abgelegten Asset, nicht
+  in der Extraktion, die nach dem Hash geteilt wird. Ist sie größer als 0, wird ein `OK` gelesenes Dokument
+  `PARTIAL`/`entries-not-readable` mit `truncated=true` (`DocumentExtractions#outcome`), sein Text gilt als gekürzt;
+  ein schon schlechterer Status behält seinen ersten Grund.
+
+Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablegen, beim Nachholen und auf Abruf liest
+`Assets` Dokumente aus der abgelegten Datei mit diesem Adapter und legt die Extraktion unter `extractions/` ab; die
+bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
+oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
+vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s9`: Blöcke mit
+Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
+(Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
+
+Aus derselben Extraktion entsteht die Markdown-Ansicht (`application.assets.MarkdownView`, Schema `markdown/v1`,
+`DocumentExtractions#markdown`), fortlaufend aus den Abschnitten und ohne Längengrenze: Überschriften als `#`,
+Listenpunkte nach Ebene eingerückt, Tabellen als GFM-Tabelle (ohne Kopfzellen mit leerer Kopfzeile, Folgestücke setzen
+die Tabelle fort), Code im Zaun. Verweise stehen an ihrer Beschriftung, sonst nach dem Block; nur `http`, `https`,
+`mailto`, `ftp` und relative Ziele werden Verweise. Fundstellen erscheinen als HTML-Kommentar (`<!-- page 3 -->`), wenn
+sie wechseln. Quelltext wird maskiert und nie als Auszeichnung gelesen. Die `.md`-Datei im Export folgt mit AP4
+(`attachments/v2`).
+
+Schranke `memory-limit` (`space-harvester.assets.extraction.memory-limits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
+gelesen, deren Lesen die Testgruppe `largeFileTest` (eigene JVM mit 256 MiB Heap) als speicherunabhängig nachweist.
+Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
+
+| Format | Schranke | Nachweis |
+|---|---|---|
+| PDF (`application/pdf`) | keine | PDF über 300 MiB mit Bildern, PDF mit 4 000 Textseiten |
+| Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
+| Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
+| Mail (`.eml`, `message/rfc822`) | keine | Mail mit PDF-Anhang über 300 MiB und weiterem Anhang |
+| alle übrigen (Outlook `.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – |
+
+Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
+gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein
+Teil über seiner Schranke wird `EXCLUDED`/`memory-limit`, die übrigen Teile werden gelesen.
+
+Mails (`.eml`): Tikas Mail-Parser kopiert von sich aus jeden Teil der ersten Ebene in ein Byte-Array. Er ist deshalb so
+eingestellt, dass er alle Teile als Strom durchreicht (`extractAllAlternatives`); Anhänge gehen zählend in eine
+temporäre Datei. Namenlose Textteile (`text/plain`, `text/html` ohne `attachment`) ordnet der Adapter selbst der Mail
+zu: Sie bekommen keine Position, von Alternativen zählt die beste (HTML vor Text, bei Gleichstand die frühere, wie Tika; ein HTML-Teil in einem verschachtelten Teil der Alternativen verdrängt die Textfassung), und der
+angegebene Zeichensatz gilt.
 
 ## Einen Adapter ergänzen
 

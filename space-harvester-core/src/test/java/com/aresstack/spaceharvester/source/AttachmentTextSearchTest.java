@@ -7,7 +7,10 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.passages.PassageId;
@@ -29,7 +32,9 @@ import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
+import com.aresstack.spaceharvester.testcorpus.Archives;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -61,6 +66,7 @@ class AttachmentTextSearchTest {
     /** Seiten der Quelle; fehlt eine, ist sie gelöscht. */
     private final Map<String, String> pages = new HashMap<>(Map.of("101", "Planung", "103", "Gesperrt"));
     private LucenePageTextIndex index;
+    private long maxBytes = 1_000_000;
 
     @AfterEach
     void close() {
@@ -178,6 +184,37 @@ class AttachmentTextSearchTest {
                 .extracting(PageTextIndex.Match::attachmentId).containsExactly("att2");
         index.remove(new PageKey("wiki", "101"));
         assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+    }
+
+    /**
+     * Eine Warnung zu einem einzelnen gelisteten Eintrag (Outlook: ausgelassene Teile eines angehängten Elements) macht
+     * die Liste nicht unvollständig; ein entfernter Anhang fällt weiter aus dem Index. Eine Warnung über fehlende
+     * Einträge der Liste verhindert das Bereinigen wie bisher.
+     */
+    @Test
+    void aWarningAboutOneListedEntryStillLetsTheIndexBeCleaned() {
+        files.put("att1", DocumentFixtures.pdf("Wartungsfenster Samstag"));
+        files.put("att2", DocumentFixtures.pdf("Notfallplan Sonntag"));
+        Assets assets = assets();
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF),
+                attachment("att2", "notfall.pdf", DocumentFixtures.PDF)));
+
+        PageAttachments partial = new PageAttachments("101", List.of(attachment("att1", "betrieb.pdf",
+                DocumentFixtures.PDF)), List.of(), "application/json", "test",
+                List.of("Anhangsliste nicht vollständig lieferbar"), NOW);
+        assets.harvest(new PageAttachmentList("wiki", "DEV", partial, NOW));
+        assertThat(partial.complete()).isFalse();
+        assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).as("nicht bereinigt")
+                .hasSize(1);
+
+        PageAttachments withEntryWarning = new PageAttachments("101", List.of(attachment("att1", "betrieb.pdf",
+                DocumentFixtures.PDF)), List.of(), "application/json", "test",
+                List.of("entries-not-readable;id=att1;count=2"), NOW);
+        assets.harvest(new PageAttachmentList("wiki", "DEV", withEntryWarning, NOW));
+
+        assertThat(withEntryWarning.complete()).isTrue();
+        assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
     }
 
     @Test
@@ -298,6 +335,90 @@ class AttachmentTextSearchTest {
                 .hasSize(1);
     }
 
+    @Test
+    void aWordOnlyInAnEnclosedFileFindsThePageAndNamesTheFile() {
+        files.put("att1", Archives.zip(Map.of("kuehlung.txt",
+                "Inspektion am Kühlturm".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "pumpe.txt", "Wartung im Pumpenhaus".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        Assets assets = structuredAssets();
+        assets.harvest(list("101", attachment("att1", "Kraftwerk Anlagen.zip", Archives.ZIP)));
+
+        List<KeywordSearch.Hit> hits = search(allow()).search(APP, KeywordSearch.Query.of("Kühlturm"), null, 10)
+                .hits();
+
+        assertThat(hits).extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        KeywordSearch.AttachmentMatch match = hits.getFirst().attachment();
+        assertThat(match.attachmentId()).isEqualTo("att1");
+        assertThat(match.title()).isEqualTo("Kraftwerk Anlagen.zip");
+        assertThat(match.partId()).startsWith("sha256:");
+        assertThat(match.partTitle()).contains("kuehlung.txt");
+        // Ein Treffer je Seite, auch wenn mehrere Teile passen.
+        assertThat(index.search("Inspektion Wartung", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+        // Der Dateiname des Behälters bleibt auffindbar.
+        assertThat(index.search("kraftwerk", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+
+        // Neue Version ohne den Teil: sein Text verschwindet, der verbliebene bleibt.
+        files.put("att1", Archives.zip(Map.of("pumpe.txt",
+                "Wartung im Pumpenhaus".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        assets.harvest(list("101", attachment("att1", "Kraftwerk Anlagen.zip", Archives.ZIP, "2")));
+
+        assertThat(index.search("Kühlturm", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        assertThat(index.search("Pumpenhaus", Set.of("wiki"), SearchSpaces.all(), 10))
+                .extracting(PageTextIndex.Match::partTitle).singleElement().asString().contains("pumpe.txt");
+    }
+
+    @Test
+    void aWordBehindTheOldCharacterLimitFindsThePage() {
+        StringBuilder html = new StringBuilder("<html><body>");
+        for (int i = 0; html.length() < 1_200_000; i++) {
+            html.append("<p>Absatz ").append(i).append(" mit gewöhnlichem Fülltext über den Betrieb.</p>");
+        }
+        html.append("<p>Leuchtfeuer am Ende</p></body></html>");
+        files.put("att1", html.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Assets assets = structuredAssets();
+        assets.harvest(list("101", attachment("att1", "handbuch.html", "text/html")));
+
+        List<PageTextIndex.Match> hits = index.search("Leuchtfeuer", Set.of("wiki"), SearchSpaces.all(), 10);
+
+        assertThat(hits).extracting(PageTextIndex.Match::attachmentId).containsExactly("att1");
+        assertThat(hits.getFirst().partId()).as("das Dokument selbst").isNull();
+        assertThat(hits.getFirst().snippet()).contains("Leuchtfeuer");
+    }
+
+    @Test
+    void anUnreadableEnclosedFileLeavesNoEntry() {
+        files.put("att1", Archives.zip(Map.of("lesbar.txt",
+                "Schaltplan Umspannwerk".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                "defekt Plan.pdf", "%PDF-1.7 kaputt Trafostation".getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        Assets assets = structuredAssets();
+        assets.harvest(list("101", attachment("att1", "netz.zip", Archives.ZIP)));
+
+        assertThat(index.search("Umspannwerk", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+        assertThat(index.search("Trafostation", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        // Über seinen Namen bleibt der Teil auffindbar, mit Teilkennung, aber ohne erzeugten Text.
+        assertThat(index.search("defekt", Set.of("wiki"), SearchSpaces.all(), 10)).singleElement()
+                .satisfies(match -> {
+                    assertThat(match.partId()).isNotNull();
+                    assertThat(match.partTitle()).contains("defekt");
+                    assertThat(match.snippet()).isEmpty();
+                });
+    }
+
+    @Test
+    void aStoredDocumentIsIndexedAgainWithoutDownload() {
+        files.put("att1", DocumentFixtures.docx("Abnahme der Schleuse"));
+        Assets assets = structuredAssets();
+        PageAttachmentList list = list("101", attachment("att1", "protokoll.docx", DocumentFixtures.DOCX));
+        assets.harvest(list);
+        PageKey page = new PageKey("wiki", "101");
+        index.removeAttachment(page, "att1");
+        files.remove("att1");
+
+        assertThat(assets.reindex(list, "att1")).isTrue();
+        assertThat(index.search("Schleuse", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+        assertThat(assets.reindex(list, "att1")).as("unverändert").isFalse();
+    }
+
     private KeywordSearch search(AccessGuard guard) {
         return new KeywordSearch(catalog(), guard, index, null);
     }
@@ -315,6 +436,35 @@ class AttachmentTextSearchTest {
         return search(new AccessGuard(policy));
     }
 
+    @Test
+    void anAdoptedTextNeverPretendsToBeAStructuredExtraction() {
+        // Import eines JSON-Pakets (attachments/v1 und v2): der Text wird abgelegt, eine strukturierte Extraktion
+        // mit Teilen entsteht dabei nie (ADR 0026, AP4c); sie entsteht erst beim Lesen des Originals.
+        maxBytes = 16_000_000;
+        Assets assets = assets();
+        DocumentExtractions extractions = new DocumentExtractions(new TikaDocumentStructure(),
+                new FileSystemExtractionStore(directory.resolve("assets")), ExtractionLimits.DEFAULTS);
+        assets.documentExtractions(extractions);
+        String sha = Assets.sha256("Bericht".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        assertThat(assets.adoptText(sha, "Bericht über alles\n\nAnlage eins")).isTrue();
+
+        assertThat(assets.storedText(sha)).map(AssetText::text).contains("Bericht über alles\n\nAnlage eins");
+        assertThat(extractions.stored(sha)).isEmpty();
+
+        // Beim Import gekürzt: nie still, der abgelegte Text trägt Kürzung und gelesenen Umfang.
+        String other = Assets.sha256("Anderer".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(assets.adoptText(other, "Anfang", true, 6)).isTrue();
+        AssetText cut = assets.storedText(other).orElseThrow();
+        assertThat(cut.truncated()).isTrue();
+        assertThat(cut.outcome()).hasValueSatisfying(outcome -> {
+            assertThat(outcome.status()).isEqualTo(
+                    com.aresstack.spaceharvester.application.assets.ExtractionStatus.PARTIAL);
+            assertThat(outcome.reason()).contains(com.aresstack.spaceharvester.application.assets.StatusReason.TOO_LARGE);
+            assertThat(outcome.extent()).contains(new com.aresstack.spaceharvester.application.assets.ReadExtent(6, 6));
+        });
+    }
+
     private Assets assets() {
         return assets(null);
     }
@@ -323,8 +473,17 @@ class AttachmentTextSearchTest {
         if (index == null) {
             index = LucenePageTextIndex.open(directory.resolve("text"));
         }
-        return new Assets(catalog(), new FileSystemAssetStore(directory.resolve("assets")), 1_000_000,
+        return new Assets(catalog(), new FileSystemAssetStore(directory.resolve("assets")), maxBytes,
                 Clock.fixed(NOW, ZoneOffset.UTC), describer, new TikaDocumentText(), index);
+    }
+
+    /** Mit der strukturierten Extraktion wie im Dienst (ADR 0026): Index je Dokument und Abschnitt. */
+    private Assets structuredAssets() {
+        maxBytes = 16_000_000;
+        Assets assets = assets();
+        assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(),
+                new FileSystemExtractionStore(directory.resolve("assets")), ExtractionLimits.DEFAULTS));
+        return assets;
     }
 
     private SourceCatalog catalog() {

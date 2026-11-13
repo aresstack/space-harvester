@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
@@ -66,6 +67,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -105,6 +107,7 @@ final class KnowledgeGraphTab extends JPanel {
     private static final double GAP_Y = 18;
     private static final double NODE_HEIGHT = 34;
     /** Alles sehen, nichts zeichnen: prüft nur, ob es überhaupt etwas gäbe. */
+    static final String DELETE_ALL_TIP = "Alle Aussagen löschen: gespeicherte Analysen aller Seiten verwerfen";
     static final String FILTER_TIP = "Filter: welche Knoten und Kanten der Graph zeigt";
     static final String TABLE_TIP = "Als Tabelle zeigen";
     static final String GRAPH_TIP = "Als Grafik zeigen";
@@ -129,6 +132,8 @@ final class KnowledgeGraphTab extends JPanel {
     private final JCheckBoxMenuItem roles = check("Rollen");
     private final JCheckBoxMenuItem nominal = check("Nominale Bezüge");
     private final JCheckBoxMenuItem crossPage = check("Seitenverbindungen");
+    /** Unbestätigte Kandidaten „gleiche Grundform?“; anfangs aus, sonst überdecken sie den Graphen (Angelo). */
+    private final JCheckBoxMenuItem candidates = check("Gleiche Grundform (Kandidaten)");
     private final JCheckBoxMenuItem stale = check("Veraltete zeigen");
     private final JCheckBoxMenuItem thisSource = check("Nur diese Quelle");
     private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
@@ -138,6 +143,7 @@ final class KnowledgeGraphTab extends JPanel {
     private final IconButton filter = new IconButton(Glyph.FILTER, FILTER_TIP);
     private final IconButton fit = new IconButton(Glyph.FIT, "Einpassen: ganzen Teilgraphen in die Fläche einpassen");
     private final IconButton view = new IconButton(Glyph.TABLE, TABLE_TIP);
+    private final IconButton deleteAll = new IconButton(Glyph.TRASH, DELETE_ALL_TIP);
     private final JButton export = Comic.exportButton(EXPORT_TIP);
     /** Rückmeldung zum Export, in der Statuszeile hinter dem Stand des Graphen; leer ohne. */
     private String exportNote = "";
@@ -187,6 +193,11 @@ final class KnowledgeGraphTab extends JPanel {
     private int generation;
     private boolean tableShown;
     private boolean syncingTable;
+    private boolean deleting;
+    private boolean dropHistory;
+    private Runnable onDeleted = () -> { };
+    private BooleanSupplier confirmDelete = () -> Dialogs.confirm(this, "Alle Aussagen löschen?",
+            "Wirklich alle Aussagen aller Seiten löschen?");
 
     /** @param workspace die laufende App oder {@code null}, solange keine läuft */
     KnowledgeGraphTab(Supplier<Workspace> workspace) {
@@ -206,6 +217,10 @@ final class KnowledgeGraphTab extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
         thisSource.setSelected(false);
+        // Anfangs ohne Kandidatenkanten und ohne veraltete Seiten: beides lässt sich im Filtermenü einschalten.
+        candidates.setSelected(false);
+        stale.setSelected(false);
+        candidates.setToolTipText("Kanten zwischen Erwähnungen mit gleicher Grundform – unbestätigt, nur ein Kandidat");
         head.badge("Experimentell", Comic.PETROL)
                 .note("nur manuell analysierte Seiten · Parserbefunde, nicht fachlich geprüft");
         search.setToolTipText("Begriff, Grundform oder Wortlaut; Enter sucht");
@@ -213,9 +228,9 @@ final class KnowledgeGraphTab extends JPanel {
         head.search(InputFrame.search(search));
         head.action(pageButton, expand, back);
         head.copy(this::copyText);
-        head.tool(filter, fit, view, export);
-        for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, stale,
-                thisSource)) {
+        head.tool(filter, fit, view, export, deleteAll);
+        for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, candidates,
+                stale, thisSource)) {
             box.addActionListener(e -> reloadFocus());
             if (box == stale) {
                 filterMenu.addSeparator();
@@ -230,6 +245,7 @@ final class KnowledgeGraphTab extends JPanel {
         fit.addActionListener(e -> canvas.fit());
         view.addActionListener(e -> toggleView());
         export.addActionListener(e -> exportMenu().show(export, 0, export.getHeight()));
+        deleteAll.addActionListener(e -> deleteAllStatements());
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setAutoCreateRowSorter(true);
@@ -459,7 +475,12 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             loading = false;
-            if (!nodes.isEmpty() || entry != null) {
+            if (dropHistory) {
+                // Nach „Alle Aussagen löschen“: frühere Ansichten zeigen gelöschte Analysen, „Zurück“ darf sie nicht
+                // wiederherstellen.
+                dropHistory = false;
+                history.clear();
+            } else if (!nodes.isEmpty() || entry != null) {
                 history.push(snapshot());
             }
             entry = start;
@@ -521,7 +542,8 @@ final class KnowledgeGraphTab extends JPanel {
             boolean wanted = type == GraphNeighbourhood.EdgeType.CONTAINS
                     || type.role() && roles.isSelected()
                     || type == GraphNeighbourhood.EdgeType.NOMINAL && nominal.isSelected()
-                    || type.crossPage() && crossPage.isSelected();
+                    || (type == GraphNeighbourhood.EdgeType.LEXICAL_CANDIDATE ? candidates.isSelected()
+                            : type.crossPage() && crossPage.isSelected());
             if (wanted) {
                 types.add(type);
             }
@@ -536,8 +558,8 @@ final class KnowledgeGraphTab extends JPanel {
     /** Die Filter, wie sie die Abfrage tatsächlich anwendet („Nur diese Quelle“ nur mit geöffneter Seite). */
     private Filters filters() {
         return new Filters(documents.isSelected(), statements.isSelected(), mentions.isSelected(),
-                roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), stale.isSelected(),
-                thisSource.isSelected() && page != null);
+                roles.isSelected(), nominal.isSelected(), crossPage.isSelected(), candidates.isSelected(),
+                stale.isSelected(), thisSource.isSelected() && page != null);
     }
 
     /** Setzt die Filter ohne neues Laden ({@code setSelected} löst keine ActionListener aus). */
@@ -551,6 +573,7 @@ final class KnowledgeGraphTab extends JPanel {
         roles.setSelected(filters.roles());
         nominal.setSelected(filters.nominal());
         crossPage.setSelected(filters.crossPage());
+        candidates.setSelected(filters.candidates());
         stale.setSelected(filters.stale());
         thisSource.setSelected(filters.thisSource());
     }
@@ -933,10 +956,13 @@ final class KnowledgeGraphTab extends JPanel {
         back.setEnabled(!history.isEmpty());
         pageButton.setEnabled(page != null);
         thisSource.setEnabled(page != null);
-        boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage, stale).stream()
-                .allMatch(JCheckBoxMenuItem::isSelected) || (thisSource.isSelected() && page != null);
+        // Blau, sobald die Filter von der Grundeinstellung abweichen (Kandidaten und Veraltete sind anfangs aus).
+        boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage).stream()
+                .allMatch(JCheckBoxMenuItem::isSelected) || candidates.isSelected() || stale.isSelected()
+                || (thisSource.isSelected() && page != null);
         filter.setForeground(filtered ? Comic.BLUE : Comic.INK);
         export.setEnabled(actions.get() != null && !exporting);
+        deleteAll.setEnabled(actions.get() != null && !deleting);
     }
 
     /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
@@ -974,6 +1000,46 @@ final class KnowledgeGraphTab extends JPanel {
         withStale.addActionListener(e -> exportStale = withStale.isSelected());
         menu.add(withStale);
         return menu;
+    }
+
+    /**
+     * Löscht nach „Wirklich alle Aussagen aller Seiten löschen?“ alle gespeicherten Aussagen-Analysen aller Quellen
+     * (auch veraltete); danach ist jede Seite wieder unanalysiert und der Graph leer. Läuft im Hintergrund.
+     */
+    void deleteAllStatements() {
+        Actions current = actions.get();
+        if (current == null || deleting || !confirmDelete.getAsBoolean()) {
+            return;
+        }
+        deleting = true;
+        deleteAll.setEnabled(false);
+        exportNote("Aussagen werden gelöscht …");
+        runner.run(current::deleteAllStatements, pages -> {
+            deleting = false;
+            deleteAll.setEnabled(actions.get() != null);
+            exportNote(pages == 0 ? "Keine Aussagen vorhanden"
+                    : "Aussagen von " + (pages == 1 ? "1 Seite" : pages + " Seiten") + " gelöscht");
+            history.clear();
+            dropHistory = true;
+            reloadFocus();
+            if (!loading) {
+                // Keine Ansicht offen, nichts neu zu laden: nur „Zurück“ sperren.
+                dropHistory = false;
+                refresh();
+            }
+            onDeleted.run();
+        }, failure -> {
+            deleting = false;
+            deleteAll.setEnabled(actions.get() != null);
+            String reason = failure.getMessage();
+            exportNote("Aussagen nicht gelöscht: "
+                    + (reason == null || reason.isBlank() ? failure.getClass().getSimpleName() : reason));
+        });
+    }
+
+    /** {@code listener} läuft, nachdem alle Aussagen gelöscht sind (Seitenansicht lädt den Aussagen-Reiter neu). */
+    void onDeleted(Runnable listener) {
+        onDeleted = Objects.requireNonNull(listener, "listener");
     }
 
     /**
@@ -1448,7 +1514,7 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private record Filters(boolean documents, boolean statements, boolean mentions, boolean roles, boolean nominal,
-                           boolean crossPage, boolean stale, boolean thisSource) {
+                           boolean crossPage, boolean candidates, boolean stale, boolean thisSource) {
     }
 
     private record Loaded(GraphNeighbourhood.Subgraph base, List<GraphNeighbourhood.Subgraph> more,
@@ -1505,6 +1571,9 @@ final class KnowledgeGraphTab extends JPanel {
         /** Startet den JSON-LD-Export vorhandener Analysen als Auftrag; analysiert nie. */
         JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale);
 
+        /** Löscht alle gespeicherten Aussagen-Analysen, die der Aufrufer lesen darf; liefert die Zahl der Seiten. */
+        int deleteAllStatements();
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -1529,11 +1598,28 @@ final class KnowledgeGraphTab extends JPanel {
                 public JobStatus export(KnowledgeGraphExportUseCase.Scope scope, boolean includeStale) {
                     return workspace.startKnowledgeGraphExport(scope, includeStale);
                 }
+
+                @Override
+                public int deleteAllStatements() {
+                    return workspace.deleteAllStatements();
+                }
             };
         }
     }
 
     // ---- für Tests
+
+    void confirmDeleteWith(BooleanSupplier confirm) {
+        confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    boolean deleteAllOffered() {
+        return deleteAll.isVisible() && deleteAll.isEnabled() && deleteAll.getParent() != null;
+    }
+
+    void clickDeleteAll() {
+        deleteAll.doClick();
+    }
 
     String exportNoteText() {
         return exportNote;
@@ -1593,6 +1679,10 @@ final class KnowledgeGraphTab extends JPanel {
         back.doClick();
     }
 
+    boolean backOffered() {
+        return back.isEnabled();
+    }
+
     /** Klickt „Zum Beleg im Text“ im Detailfenster. */
     void clickJump() {
         popup.clickLink(0);
@@ -1623,6 +1713,26 @@ final class KnowledgeGraphTab extends JPanel {
 
     void setShowStale(boolean show) {
         stale.setSelected(show);
+    }
+
+    void setShowCandidates(boolean show) {
+        candidates.setSelected(show);
+    }
+
+    boolean showsCandidates() {
+        return candidates.isSelected();
+    }
+
+    boolean showsStale() {
+        return stale.isSelected();
+    }
+
+    boolean filterHighlighted() {
+        return Comic.BLUE.equals(filter.getForeground());
+    }
+
+    void refreshNow() {
+        refreshButtons();
     }
 
     /** Wie ein Klick auf „Veraltete zeigen“ (lädt neu). */

@@ -42,6 +42,8 @@ import java.util.stream.Stream;
  *       Modell</li>
  *   <li>{@code texts/<sha256-hex>/<Extraktion>/<Version>.properties}: Text von Dokumenten (#183), je Inhalt und
  *       Extraktion</li>
+ *   <li>{@code extractions/<sha256-hex>/…}: strukturierte Extraktionen in Abschnitten (ADR 0026), geschrieben von
+ *       {@link FileSystemExtractionStore}</li>
  * </ul>
  *
  * <p>Namen aus Quell-IDs werden nie ungeprüft zu Pfaden: harmlose Namen bekommen das Präfix {@code p}, alle anderen
@@ -53,6 +55,10 @@ import java.util.stream.Stream;
  * AssetStoreFullException}, nichts wird verdrängt. Gezählt wird beim ersten Schreiben einmal über {@code blobs/},
  * danach je neuem Inhalt; Einträge, Beschreibungen und Texte zählen nicht mit (ein Text ist durch die Zeichengrenze der
  * Extraktion begrenzt).
+ *
+ * <p>Prüfen, Reservieren und Ablegen eines Inhalts laufen je Inhalt nacheinander ({@link #contentLock}): Legen mehrere
+ * Aufträge denselben Inhalt gleichzeitig ab, zählt er einmal, und keiner scheitert an der Grenze, obwohl der Platz
+ * reicht. Verschiedene Inhalte schreiben weiter nebeneinander.
  */
 public class FileSystemAssetStore implements AssetStore {
 
@@ -66,6 +72,8 @@ public class FileSystemAssetStore implements AssetStore {
     private final long maxTotalBytes;
     /** Belegte Bytes in {@code blobs/}; {@code -1}, solange noch nicht gezählt. Geschützt durch {@code this}. */
     private long usedBytes = -1;
+    /** Sperren je Inhalt, verteilt über den Hash; siehe {@link #contentLock}. */
+    private final Object[] contentLocks = new Object[64];
 
     public FileSystemAssetStore(Path root) {
         this(root, DEFAULT_MAX_TOTAL_BYTES);
@@ -77,6 +85,18 @@ public class FileSystemAssetStore implements AssetStore {
             throw new IllegalArgumentException("maxTotalBytes muss positiv sein");
         }
         this.maxTotalBytes = maxTotalBytes;
+        for (int i = 0; i < contentLocks.length; i++) {
+            contentLocks[i] = new Object();
+        }
+    }
+
+    /**
+     * Die Sperre für einen Inhalt. Wer sie hält, darf {@code this} nehmen ({@link #reserve}), nie umgekehrt.
+     *
+     * @param sha256 geprüft gegen {@link #HEX_SHA}
+     */
+    private Object contentLock(String sha256) {
+        return contentLocks[Math.floorMod(sha256.hashCode(), contentLocks.length)];
     }
 
     @Override
@@ -97,7 +117,8 @@ public class FileSystemAssetStore implements AssetStore {
             Asset asset = new Asset(p.getProperty("sourceId"), p.getProperty("pageId"), p.getProperty("attachmentId"),
                     p.getProperty("version"), p.getProperty("title"), p.getProperty("mediaType"),
                     AssetKind.valueOf(p.getProperty("kind")), Long.parseLong(p.getProperty("size")),
-                    p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")));
+                    p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")),
+                    Integer.parseInt(p.getProperty("partsWithoutFile", "0")));
             if (!asset.sourceId().equals(sourceId) || !asset.attachmentId().equals(attachmentId)
                     || !version.equals(asset.version()) || !HEX_SHA.matcher(asset.sha256()).matches()
                     || !Files.isRegularFile(blob(asset.sha256()))) {
@@ -117,13 +138,15 @@ public class FileSystemAssetStore implements AssetStore {
         }
         try {
             Path blob = blob(asset.sha256());
-            if (!Files.isRegularFile(blob) || Files.size(blob) != content.length) {
-                reserve(content.length);
-                try {
-                    write(blob, content);
-                } catch (IOException | RuntimeException e) {
-                    release(content.length);
-                    throw e;
+            synchronized (contentLock(asset.sha256())) {
+                if (!Files.isRegularFile(blob) || Files.size(blob) != content.length) {
+                    reserve(content.length);
+                    try {
+                        write(blob, content);
+                    } catch (IOException | RuntimeException e) {
+                        release(content.length);
+                        throw e;
+                    }
                 }
             }
             putEntry(asset);
@@ -152,18 +175,21 @@ public class FileSystemAssetStore implements AssetStore {
                 throw new IllegalArgumentException("sha256 oder size passen nicht zum Inhalt");
             }
             Path blob = blob(asset.sha256());
-            if (!Files.isRegularFile(blob) || Files.size(blob) != asset.size()) {
-                reserve(asset.size());
-                try {
-                    Files.createDirectories(blob.getParent());
+            synchronized (contentLock(asset.sha256())) {
+                if (!Files.isRegularFile(blob) || Files.size(blob) != asset.size()) {
+                    reserve(asset.size());
                     try {
-                        Files.move(file, blob, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (AtomicMoveNotSupportedException e) {
-                        Files.move(file, blob, StandardCopyOption.REPLACE_EXISTING);
+                        Files.createDirectories(blob.getParent());
+                        try {
+                            Files.move(file, blob, StandardCopyOption.ATOMIC_MOVE,
+                                    StandardCopyOption.REPLACE_EXISTING);
+                        } catch (AtomicMoveNotSupportedException e) {
+                            Files.move(file, blob, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    } catch (IOException | RuntimeException e) {
+                        release(asset.size());
+                        throw e;
                     }
-                } catch (IOException | RuntimeException e) {
-                    release(asset.size());
-                    throw e;
                 }
             }
             putEntry(asset);
@@ -193,10 +219,22 @@ public class FileSystemAssetStore implements AssetStore {
         p.setProperty("size", Long.toString(asset.size()));
         p.setProperty("sha256", asset.sha256());
         p.setProperty("retrievedAt", asset.retrievedAt().toString());
+        if (asset.partsWithoutFile() > 0) {
+            p.setProperty("partsWithoutFile", Integer.toString(asset.partsWithoutFile()));
+        }
         var text = new java.io.StringWriter();
         p.store(text, null);
         write(entry(asset.sourceId(), asset.attachmentId(), asset.version()),
                 text.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Override
+    public Optional<Path> file(Asset asset) {
+        if (!HEX_SHA.matcher(asset.sha256()).matches()) {
+            return Optional.empty();
+        }
+        Path blob = blob(asset.sha256());
+        return Files.isRegularFile(blob) ? Optional.of(blob) : Optional.empty();
     }
 
     @Override
@@ -292,12 +330,29 @@ public class FileSystemAssetStore implements AssetStore {
         try {
             AssetText text = new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),
                     p.getProperty("version"), p.getProperty("text"), Boolean.parseBoolean(p.getProperty("truncated")),
-                    Instant.parse(p.getProperty("createdAt")));
+                    Instant.parse(p.getProperty("createdAt")), outcome(p));
             return text.sha256().equals(sha256) && text.extractor().equals(extractor)
                     && text.version().equals(version) ? Optional.of(text) : Optional.empty();
         } catch (RuntimeException e) {
             throw new AssetStoreException("Dokumenttext beschädigt", null);
         }
+    }
+
+    /** Der am Text abgelegte Status, leer ohne Angabe (ältere Texte, Status in der Extraktion). */
+    private static Optional<com.aresstack.spaceharvester.application.assets.Outcome> outcome(Properties p) {
+        String status = p.getProperty("status");
+        if (status == null) {
+            return Optional.empty();
+        }
+        Optional<com.aresstack.spaceharvester.application.assets.ReadExtent> extent =
+                p.getProperty("bytesRead") == null ? Optional.empty()
+                        : Optional.of(new com.aresstack.spaceharvester.application.assets.ReadExtent(
+                        Long.parseLong(p.getProperty("bytesRead")), Long.parseLong(p.getProperty("charsRead"))));
+        return Optional.of(new com.aresstack.spaceharvester.application.assets.Outcome(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.valueOf(status),
+                Optional.ofNullable(p.getProperty("reason"))
+                        .flatMap(com.aresstack.spaceharvester.application.assets.StatusReason::fromCode),
+                Boolean.parseBoolean(p.getProperty("outcomeTruncated")), extent));
     }
 
     @Override
@@ -312,6 +367,16 @@ public class FileSystemAssetStore implements AssetStore {
         p.setProperty("text", text.text());
         p.setProperty("truncated", Boolean.toString(text.truncated()));
         p.setProperty("createdAt", text.createdAt().toString());
+        // Status am Text selbst (etwa ein beim Import gekürzter Text); ohne Angabe gilt die abgelegte Extraktion.
+        text.outcome().ifPresent(outcome -> {
+            p.setProperty("status", outcome.status().name());
+            outcome.reason().ifPresent(reason -> p.setProperty("reason", reason.code()));
+            p.setProperty("outcomeTruncated", Boolean.toString(outcome.truncated()));
+            outcome.extent().ifPresent(extent -> {
+                p.setProperty("bytesRead", Long.toString(extent.bytes()));
+                p.setProperty("charsRead", Long.toString(extent.chars()));
+            });
+        });
         try {
             var out = new java.io.StringWriter();
             p.store(out, null);
@@ -373,6 +438,7 @@ public class FileSystemAssetStore implements AssetStore {
                     }
                     deleteTree(root.resolve("descriptions").resolve(hex));
                     deleteTree(root.resolve("texts").resolve(hex));
+                    deleteTree(root.resolve("extractions").resolve(hex));
                     removed++;
                 }
             }

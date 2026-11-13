@@ -351,6 +351,7 @@ public final class PageDetailPanel extends JPanel {
         statementsTab(statementsView);
         graphView.onJump(this::jumpTo);
         statementsView.onAnalysed(graphView::analysisChanged);
+        graphView.onDeleted(statementsView::reload);
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
         images.onDescribeOnce(() -> describeImages(true));

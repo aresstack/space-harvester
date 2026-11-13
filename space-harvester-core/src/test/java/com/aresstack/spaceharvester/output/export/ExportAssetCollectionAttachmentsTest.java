@@ -68,6 +68,7 @@ class ExportAssetCollectionAttachmentsTest {
     private static final byte[] TXT = "Notizen zur Freigabe".getBytes(StandardCharsets.UTF_8);
     private static final byte[] ZIP = {'P', 'K', 3, 4, 0, 0, 0, 0};
     private static final byte[] BIG = new byte[2048];
+    private static final byte[] ARCHIVE = archive();
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-11-09T02:00:00Z"), ZoneOffset.UTC);
     private final Queue<Runnable> queued = new ArrayDeque<>();
@@ -86,6 +87,8 @@ class ExportAssetCollectionAttachmentsTest {
     /** Läuft nach dem Export, bevor Bilder und Anhänge beschafft werden. */
     private Runnable beforeCollecting;
     private Runnable beforeConverting;
+    /** Mit der strukturierten Extraktion wie im Dienst (ADR 0026). */
+    private boolean structured;
 
     @TempDir
     Path data;
@@ -100,7 +103,7 @@ class ExportAssetCollectionAttachmentsTest {
         assertThat(result.json("assets.json").path("assets").get(0).path("title").asString()).isEqualTo("bild.png");
 
         JsonNode attachments = result.json("attachments.json");
-        assertThat(attachments.path("format").asString()).isEqualTo("attachments/v1");
+        assertThat(attachments.path("format").asString()).isEqualTo("attachments/v2");
         Map<String, JsonNode> byTitle = new LinkedHashMap<>();
         attachments.path("attachments").forEach(node -> byTitle.put(node.path("title").asString(), node));
         assertThat(byTitle).containsOnlyKeys("handbuch.pdf", "notiz.txt", "archiv.zip", "gross.pdf");
@@ -143,6 +146,87 @@ class ExportAssetCollectionAttachmentsTest {
         assertThat(result.manifest.complete()).isTrue();
         assertThat(result.manifest.forPage("100")).extracting(entry -> entry.reference().kind())
                 .containsOnly(ExportAssetManifest.Kind.ATTACHMENT);
+    }
+
+    @Test
+    void structuredDocumentsBringStatusMarkdownAndTheirEnclosedFilesAsOwnEntries() throws Exception {
+        source.archive = true;
+        structured = true;
+        List<String> types = new ArrayList<>(ExportSettings.DEFAULT_MEDIA_TYPES);
+        types.add("application/zip");
+        Result result = export(new ExportSettings(true, types, 1024 * 1024));
+
+        JsonNode attachments = result.json("attachments.json");
+        assertThat(attachments.path("format").asString()).isEqualTo("attachments/v2");
+        List<JsonNode> all = new ArrayList<>();
+        attachments.path("attachments").forEach(all::add);
+
+        // Das PDF: eigener Text und Markdown, Status der Extraktion mit den Versionen, die ihn erzeugt haben.
+        JsonNode pdf = find(attachments, "handbuch.pdf");
+        assertThat(pdf.path("partId").isNull()).isTrue();
+        assertThat(pdf.path("path").asString()).isEqualTo("attachments/100/handbuch.pdf");
+        assertThat(pdf.path("textPath").asString()).isEqualTo("attachments/100/handbuch.pdf.txt");
+        assertThat(pdf.path("markdownPath").asString()).isEqualTo("attachments/100/handbuch.pdf.md");
+        assertThat(new String(result.files.get("attachments/100/handbuch.pdf.txt"), StandardCharsets.UTF_8))
+                .contains("Betriebshandbuch Stapelverarbeitung");
+        assertThat(new String(result.files.get("attachments/100/handbuch.pdf.md"), StandardCharsets.UTF_8))
+                .contains("Betriebshandbuch Stapelverarbeitung");
+        JsonNode extraction = pdf.path("extraction");
+        assertThat(extraction.path("status").asString()).isEqualTo("OK");
+        assertThat(extraction.path("truncated").asBoolean()).isFalse();
+        assertThat(extraction.path("extractor").asString()).isNotEmpty();
+        assertThat(extraction.path("version").asString()).isNotEmpty();
+        assertThat(extraction.path("model").asString()).isNotEmpty();
+        assertThat(extraction.has("bytesRead")).isTrue();
+        assertThat(extraction.has("charsRead")).isTrue();
+
+        // Der Behälter ohne eigenen Text: Original wie in v1, kein erzeugter Text, kein Grund (seine Teile haben Text).
+        JsonNode zip = find(attachments, "archiv.zip");
+        assertThat(zip.path("path").asString()).isEqualTo("attachments/100/archiv.zip");
+        assertThat(zip.path("textPath").isNull()).isTrue();
+        assertThat(zip.path("markdownPath").isNull()).isTrue();
+        assertThat(zip.path("reason").isNull()).isTrue();
+        assertThat(result.files.keySet()).noneMatch(name -> name.startsWith("attachments/100/archiv.zip."));
+
+        // Seine Teile folgen ihm als eigene Einträge, Dateien nach der Kennung, der Anzeigename nur in title.
+        List<JsonNode> parts = all.subList(all.indexOf(zip) + 1, all.size()).stream()
+                .takeWhile(node -> !node.path("partId").isNull()).toList();
+        assertThat(parts).hasSize(5).allSatisfy(part -> {
+            assertThat(part.path("attachmentId").asString()).isEqualTo("d3");
+            assertThat(part.path("partId").asString()).startsWith("sha256:");
+            assertThat(part.path("parentPartId").isNull()).isTrue();
+            assertThat(part.path("depth").asInt()).isEqualTo(1);
+            assertThat(part.path("position").asString()).startsWith("/");
+            assertThat(part.path("extraction").path("status").asString()).isEqualTo("OK");
+            for (String field : List.of("path", "textPath", "markdownPath")) {
+                String path = part.path(field).asString();
+                assertThat(path).startsWith("attachments/100/parts/d3/");
+                assertThat(path.substring("attachments/100/parts/d3/".length())).matches("[a-z0-9-]+\\.[a-z0-9]+");
+                assertThat(result.files).containsKey(path);
+            }
+            assertThat(part.path("path").asString()).endsWith(".txt");
+            assertThat(part.path("textPath").asString()).doesNotContain(".txt.txt");
+        });
+        assertThat(parts).extracting(part -> part.path("title").asString())
+                .anyMatch(title -> title.contains("../"))
+                // Den Rückstrich macht das Archiv schon zum Schrägstrich; auch der bleibt nur im Titel.
+                .anyMatch(title -> title.contains("ordner/rueck"))
+                .anyMatch(title -> title.contains("C:"));
+        // Zwei Teile gleichen Namens und Inhalts: zwei Kennungen, zwei Dateien.
+        assertThat(parts).extracting(part -> part.path("path").asString()).doesNotHaveDuplicates();
+        assertThat(parts).extracting(part -> part.path("partId").asString()).doesNotHaveDuplicates();
+        assertThat(result.files.keySet()).noneMatch(name -> name.contains("..") || name.contains("\\")
+                || name.contains(":") || name.contains("dup") || name.contains("boese"));
+        JsonNode first = parts.stream().filter(part -> part.path("title").asString().contains("boese")).findFirst()
+                .orElseThrow();
+        assertThat(new String(result.files.get(first.path("textPath").asString()), StandardCharsets.UTF_8))
+                .contains("Kühlturm");
+        assertThat(result.files.get(first.path("path").asString()))
+                .isEqualTo("Kühlturm prüfen".getBytes(StandardCharsets.UTF_8));
+
+        // Ein Anhang namens „parts“ weicht dem Ordner der Teile aus: Datei und Ordner gleichen Pfads gibt es nicht.
+        assertThat(find(attachments, "parts").path("path").asString()).isEqualTo("attachments/100/parts-2");
+        assertThat(result.files).doesNotContainKey("attachments/100/parts");
     }
 
     @Test
@@ -331,6 +415,12 @@ class ExportAssetCollectionAttachmentsTest {
         };
         Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock, null,
                 new TikaDocumentText());
+        if (structured) {
+            assets.documentExtractions(new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                    new com.aresstack.spaceharvester.source.TikaDocumentStructure(),
+                    new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(data.resolve("assets")),
+                    com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS));
+        }
         collection = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
                 (owner, sourceId) -> true, com.aresstack.spaceharvester.application.signin.SignInRequests.none(),
                 () -> current);
@@ -363,6 +453,16 @@ class ExportAssetCollectionAttachmentsTest {
         return new Result(files, writer.assets(export.id()).orElseThrow());
     }
 
+    private static byte[] archive() {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("../boese.txt", "Kühlturm prüfen".getBytes(StandardCharsets.UTF_8));
+        entries.put("ordner\\rueck.txt", "Pumpe warten".getBytes(StandardCharsets.UTF_8));
+        entries.put("C:/laufwerk.txt", "Ventil schließen".getBytes(StandardCharsets.UTF_8));
+        entries.put("eins/dup.txt", "Gleicher Inhalt".getBytes(StandardCharsets.UTF_8));
+        entries.put("zwei/dup.txt", "Gleicher Inhalt".getBytes(StandardCharsets.UTF_8));
+        return com.aresstack.spaceharvester.testcorpus.Archives.zip(entries);
+    }
+
     private record Result(Map<String, byte[]> files, ExportAssetManifest manifest) {
 
         JsonNode json(String name) {
@@ -377,6 +477,8 @@ class ExportAssetCollectionAttachmentsTest {
         boolean brokenPdf;
         boolean awkward;
         boolean blankText;
+        /** Ob archiv.zip ein echtes Archiv mit heiklen Namen ist. */
+        boolean archive;
 
         @Override
         public String id() {
@@ -424,6 +526,9 @@ class ExportAssetCollectionAttachmentsTest {
                 list.add(attachment("d2", "notiz.txt", "text/plain; charset=UTF-8", TXT.length));
                 list.add(attachment("d3", "archiv.zip", "application/zip", ZIP.length));
                 list.add(attachment("d4", "gross.pdf", "application/pdf", BIG.length));
+                if (archive) {
+                    list.add(attachment("d5", "parts", "text/plain", TXT.length));
+                }
             }
             return new PageAttachments(pageId, list, List.of(), "application/json", "test", List.of(),
                     Instant.parse("2026-11-09T01:00:00Z"));
@@ -439,7 +544,7 @@ class ExportAssetCollectionAttachmentsTest {
             byte[] content = switch (attachment.attachmentId()) {
                 case "img" -> PNG;
                 case "d1" -> brokenPdf ? "%PDF-1.7\nkaputt".getBytes(StandardCharsets.US_ASCII) : PDF;
-                case "d3" -> ZIP;
+                case "d3" -> archive ? ARCHIVE : ZIP;
                 case "d4" -> BIG;
                 case "d2" -> blankText ? " \n\t ".getBytes(StandardCharsets.UTF_8) : TXT;
                 default -> TXT;

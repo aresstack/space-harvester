@@ -174,6 +174,8 @@ public class Assets {
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Downloads downloads = new Downloads(MAX_CONCURRENT_DOWNLOADS);
     private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
+    /** Strukturierte Extraktion aus der Datei (ADR 0026, AP3b); ohne sie gilt der bisherige Weg über Byte-Arrays. */
+    private volatile DocumentExtractions extractions;
 
     /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
     private static final class Downloads extends Semaphore {
@@ -206,6 +208,27 @@ public class Assets {
         return durations;
     }
 
+    /**
+     * Schließt die strukturierte Extraktion an (ADR 0026, AP3b): Dokumente werden aus der abgelegten Datei gelesen,
+     * ohne die Grenze von {@link #IN_MEMORY_BYTES}, und ihr Text liegt unter dieser Extraktion. Typerkennung und
+     * Dokumente, die nicht abgelegt werden dürfen, bleiben beim bisherigen {@link DocumentText}.
+     */
+    public void documentExtractions(DocumentExtractions extractions) {
+        this.extractions = extractions;
+    }
+
+    /** Kennung der Extraktion, unter der Texte liegen. */
+    private String textExtractor() {
+        DocumentExtractions current = extractions;
+        return current != null ? current.id() : documents.id();
+    }
+
+    /** Version der Extraktion, unter der Texte liegen. */
+    private String textVersion() {
+        DocumentExtractions current = extractions;
+        return current != null ? current.version() : documents.version();
+    }
+
     public synchronized void downloadLimit(int jobDownloads) {
         int wanted = Math.max(MAX_CONCURRENT_DOWNLOADS, jobDownloads + 2);
         if (wanted > downloadLimit) {
@@ -233,7 +256,7 @@ public class Assets {
         Map<String, String> previews = previews(list.attachments().attachments());
         List<PageAssets.Entry> entries = list.attachments().attachments().stream()
                 .map(a -> new PageAssets.Entry(a, AssetKind.of(a.mediaType(), a.title()),
-                        previews.get(a.attachmentId()), store.find(list.sourceId(), a.attachmentId(), a.version())
+                        previews.get(a.attachmentId()), stored(list.sourceId(), a)
                                 .orElse(null)))
                 .toList();
         return new PageAssets(list.sourceId(), list.attachments().pageId(), list.spaceKey(),
@@ -257,7 +280,7 @@ public class Assets {
                 indexed |= forgetStale(list, attachment);
                 continue;
             }
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 backfillText(stored.get());
                 indexed |= indexStored(list, stored.get());
@@ -321,7 +344,7 @@ public class Assets {
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
         if (!fresh) {
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 return read(stored.get());
             }
@@ -340,7 +363,7 @@ public class Assets {
     public Asset keep(PageAttachmentList list, String attachmentId, boolean fresh) {
         PageAttachment attachment = attachment(list, attachmentId);
         if (!fresh) {
-            Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+            Optional<Asset> stored = stored(list.sourceId(), attachment);
             if (stored.isPresent()) {
                 verify(stored.get());
                 return stored.get();
@@ -418,7 +441,7 @@ public class Assets {
 
     private AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore) {
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
         if (stored.isPresent()) {
             return open(stored.get());
         }
@@ -855,6 +878,28 @@ public class Assets {
         }
     }
 
+    /**
+     * Das abgelegte Dokument eines Anhangs mit seinen enthaltenen Dateien für den Export (ADR 0026, AP4c); liest nichts
+     * neu und fragt die Quelle nicht. Leer ohne strukturierte Extraktion dieser Bytes.
+     */
+    public Optional<DocumentExport> documentExport(String sourceId, String attachmentId, String version,
+                                                   String sha256) {
+        DocumentExtractions structured = extractions;
+        if (structured == null || sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256))
+                .orElse(null);
+        if (asset == null || asset.kind() != AssetKind.OTHER) {
+            return Optional.empty();
+        }
+        try {
+            return structured.export(asset, store);
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
@@ -933,14 +978,23 @@ public class Assets {
     public AssetText text(PageAttachmentList list, String attachmentId, boolean mayStore) {
         DocumentText extraction = documents();
         PageAttachment attachment = attachment(list, attachmentId);
-        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
         // Ein abgelegter Text braucht die Bytes nicht: weder Lesen der Datei noch ein Platz der Schranke.
         Optional<AssetText> existing = stored.isPresent() ? storedText(extraction, stored.get()) : Optional.empty();
         Asset asset;
         AssetText text;
+        DocumentExtractions structured = extractions;
         if (existing.isPresent()) {
             asset = stored.get();
             text = existing.get();
+        } else if (structured != null && stored.isPresent()) {
+            // Aus der abgelegten Datei, ohne Größengrenze (ADR 0026); die Schranke für große Dateien gilt weiter.
+            try (LargeFileGate.Permit permit = gate.enter(list.sourceId(), stored.get().size())) {
+                asset = stored.get();
+                // Ohne Recht zum Ablegen nur gelesen, wie bisher.
+                text = mayStore ? structured.text(asset, store, clock.instant())
+                        : structured.peek(asset, store, clock.instant());
+            }
         } else if (stored.isPresent() && stored.get().size() > IN_MEMORY_BYTES) {
             // Über der Grenze der Textextraktion bleibt die Datei ungelesen (Dateien beliebiger Größe, Angelo
             // 11.11.2026); sie hat wie bisher keinen Text.
@@ -953,10 +1007,16 @@ public class Assets {
                         : download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore, false);
                 asset = content.asset();
                 existing = storedText(extraction, asset);
-                text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
+                if (existing.isPresent()) {
+                    text = existing.get();
+                } else if (structured != null && mayStore) {
+                    text = structured.text(asset, store, clock.instant());
+                } else {
+                    text = extract(extraction, content, mayStore);
+                }
             }
         }
-        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), extractionKey(extraction))) {
+        if ((mayStore || existing.isPresent()) && indexDocument(list, asset, text.text())) {
             flushIndex();
         }
         return text;
@@ -966,12 +1026,32 @@ public class Assets {
         return storedText(extraction, content.asset()).orElseGet(() -> extract(extraction, content, true));
     }
 
+    /**
+     * Der abgelegte Anhang dieser Version, mit der Angabe der aktuellen Liste zu ausgelassenen Teilen (AP7c): Sie
+     * gehört zur Quelle, und ältere Einträge kennen sie noch nicht.
+     */
+    private Optional<Asset> stored(String sourceId, PageAttachment attachment) {
+        return store.find(sourceId, attachment.attachmentId(), attachment.version())
+                .map(asset -> asset.withPartsWithoutFile(attachment.partsWithoutFile()));
+    }
+
     /** Der abgelegte Text eines Dokuments; für alles andere {@code UNSUPPORTED}. */
     private Optional<AssetText> storedText(DocumentText extraction, Asset asset) {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        return store.text(asset.sha256(), extraction.id(), extraction.version());
+        return store.text(asset.sha256(), textExtractor(), textVersion())
+                .map(text -> DocumentExtractions.withSource(withStoredOutcome(text, asset), asset));
+    }
+
+    /** Der abgelegte Text trägt keinen Status; er steht in der abgelegten Extraktion (AP4a). */
+    private AssetText withStoredOutcome(AssetText text, Asset asset) {
+        DocumentExtractions structured = extractions;
+        if (text.outcome().isPresent() || structured == null) {
+            return text;
+        }
+        return structured.stored(asset.sha256()).map(extraction -> text.withOutcome(extraction.document().outcome()))
+                .orElse(text);
     }
 
     /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */
@@ -996,7 +1076,7 @@ public class Assets {
         if (keep) {
             store.putText(text);
         }
-        return text;
+        return DocumentExtractions.withSource(text, asset);
     }
 
     /**
@@ -1012,10 +1092,14 @@ public class Assets {
             return false;
         }
         try {
-            if (asset.kind() == AssetKind.OTHER && documents != null) {
-                String text = store.text(asset.sha256(), documents.id(), documents.version()).map(AssetText::text)
+            if (asset.kind() == AssetKind.OTHER && (documents != null || extractions != null)) {
+                Optional<Boolean> sections = indexSections(list, asset);
+                if (sections.isPresent()) {
+                    return sections.get();
+                }
+                String text = store.text(asset.sha256(), textExtractor(), textVersion()).map(AssetText::text)
                         .orElse("");
-                return indexText(list, asset, text, text.isEmpty() ? "" : extractionKey(documents));
+                return indexText(list, asset, text, text.isEmpty() ? "" : textKey());
             }
             if (asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR) {
                 // Wie im EAC (DocumentSourceFileTextExtractor → describe), aber ohne Modellaufruf: nur die vorhandene
@@ -1046,7 +1130,7 @@ public class Assets {
             return false;
         }
         try {
-            if (store.find(list.sourceId(), attachment.attachmentId(), attachment.version()).isPresent()) {
+            if (stored(list.sourceId(), attachment).isPresent()) {
                 return false;
             }
             PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
@@ -1067,8 +1151,97 @@ public class Assets {
                 "describer:" + description.describer() + ":" + description.modelVersion());
     }
 
-    private static String extractionKey(DocumentText extraction) {
-        return "text:" + extraction.id() + ":" + extraction.version();
+    private String textKey() {
+        return "text:" + textExtractor() + ":" + textVersion();
+    }
+
+    /**
+     * Legt einen abgelegten Dokument-Anhang aus seiner abgelegten Extraktion neu in den Volltextindex, ohne Download
+     * und ohne die übrigen Einträge der Seite zu berühren (ADR 0026, AP4b; für „Neu lesen“, Punkt 11). Gibt es keine
+     * abgelegte Extraktion mit Text, bleibt der Eintrag, wie er ist.
+     *
+     * @return ob der Index geändert wurde
+     */
+    public boolean reindex(PageAttachmentList list, String attachmentId) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = stored(list.sourceId(), attachment);
+        if (stored.isEmpty()) {
+            return false;
+        }
+        boolean changed = indexSections(list, stored.get()).orElse(false);
+        if (changed) {
+            flushIndex();
+        }
+        return changed;
+    }
+
+    /** Ein Dokument mit Text: aus den Abschnitten der abgelegten Extraktion, sonst sein bisheriger Text. */
+    private boolean indexDocument(PageAttachmentList list, Asset asset, String text) {
+        Optional<Boolean> sections = indexSections(list, asset);
+        return sections.isPresent() ? sections.get() : indexText(list, asset, text, textKey());
+    }
+
+    /**
+     * Legt ein Dokument mit seinen enthaltenen Dateien je Abschnitt der abgelegten Extraktion im Volltextindex ab
+     * (ADR 0026, AP4b): alle Einträge des Anhangs in einem Schritt ersetzt, abschnittsweise aus der Ablage gelesen.
+     * Ohne abgelegte Extraktion mit Text bleibt der Index unberührt; scheitert das Lesen, gilt der alte Stand.
+     *
+     * @return leer, wenn es keine abgelegte Extraktion mit Text gibt; sonst ob der Index geändert wurde
+     */
+    private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset) {
+        DocumentExtractions structured = extractions;
+        if (texts == null || structured == null || asset.kind() != AssetKind.OTHER) {
+            return Optional.empty();
+        }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        String title = asset.title() == null ? "" : asset.title();
+        String input = inputSha256(list, asset, title, textKey() + ":sections");
+        try {
+            Optional<java.util.stream.Stream<DocumentExtractions.IndexSection>> sections =
+                    structured.indexSections(asset);
+            if (sections.isEmpty()) {
+                return Optional.empty();
+            }
+            try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream = sections.get()) {
+                if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+                    return Optional.of(false);
+                }
+                java.util.Iterator<DocumentExtractions.IndexSection> found = stream.iterator();
+                if (!found.hasNext()) {
+                    // Kein Abschnitt mit Text (etwa ein Behälter ohne eigenen Text und ohne lesbare Teile): wie
+                    // bisher nur der Dateiname.
+                    texts.replaceAttachment(page, asset.attachmentId(), List.of(new PageTextIndex.AttachmentEntry(
+                            page, list.spaceKey(), asset.attachmentId(), title, "", input)));
+                    return Optional.of(true);
+                }
+                Iterable<PageTextIndex.AttachmentEntry> entries = () -> new java.util.Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return found.hasNext();
+                    }
+
+                    @Override
+                    public PageTextIndex.AttachmentEntry next() {
+                        DocumentExtractions.IndexSection section = found.next();
+                        return new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
+                                section.text(), input, section.partId(), section.partTitle(), section.section());
+                    }
+                };
+                texts.replaceAttachment(page, asset.attachmentId(), entries);
+                return Optional.of(true);
+            }
+        } catch (RuntimeException e) {
+            // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Dokuments in {0} nicht aktualisiert ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return Optional.of(false);
+        }
+    }
+
+    /** Stand eines Indexeintrags: Inhalt, Herkunft des Textes, Space und Dateiname. */
+    private static String inputSha256(PageAttachmentList list, Asset asset, String title, String origin) {
+        return sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
+                .getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -1084,8 +1257,7 @@ public class Assets {
         }
         PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
         String title = asset.title() == null ? "" : asset.title();
-        String input = sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
-                .getBytes(StandardCharsets.UTF_8));
+        String input = inputSha256(list, asset, title, origin);
         try {
             if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
                 return false;
@@ -1138,7 +1310,9 @@ public class Assets {
      * nicht im Speicher und hat wie bisher keinen Text.
      */
     private void harvestText(Downloaded downloaded) {
-        if (downloaded.content() != null) {
+        if (extractions != null && documents != null && downloaded.asset().kind() == AssetKind.OTHER) {
+            harvestStructured(downloaded.asset());
+        } else if (downloaded.content() != null) {
             harvestText(new AssetContent(downloaded.asset(), downloaded.content()));
         } else if (documents != null && downloaded.asset().kind() == AssetKind.OTHER) {
             LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
@@ -1168,6 +1342,24 @@ public class Assets {
         }
     }
 
+    /** Wie {@link #harvestText(AssetContent)}, aber aus der abgelegten Datei und ohne Größengrenze (ADR 0026). */
+    private void harvestStructured(Asset asset) {
+        DocumentExtractions structured = extractions;
+        try {
+            if (store.text(asset.sha256(), structured.id(), structured.version()).isEmpty()) {
+                structured.text(asset, store, clock.instant());
+            }
+        } catch (DocumentTextException e) {
+            if (e.reason() != DocumentTextException.Reason.UNSUPPORTED) {
+                LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
+                        asset.sourceId(), e.reason().code());
+            }
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Dokumenttext nicht ablegbar: source={0} ({1})",
+                    asset.sourceId(), e.getClass().getName());
+        }
+    }
+
     /**
      * Holt den Text eines schon abgelegten Dokuments aus der Ablage nach, etwa für Ablagen von vor #183, ohne den
      * Anhang neu zu laden. Je Laufzeit nur ein Versuch je Inhalt, damit ein nicht lesbares Dokument nicht bei jeder
@@ -1175,13 +1367,23 @@ public class Assets {
      */
     private void backfillText(Asset asset) {
         if (documents == null || asset.kind() != AssetKind.OTHER
-                || store.text(asset.sha256(), documents.id(), documents.version()).isPresent()) {
+                || store.text(asset.sha256(), textExtractor(), textVersion()).isPresent()) {
             return;
         }
         if (backfilled.size() > MAX_BACKFILLED) {
             backfilled.clear();
         }
         if (!backfilled.add(asset.sha256())) {
+            return;
+        }
+        if (extractions != null) {
+            try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+                harvestStructured(asset);
+            } catch (SourceAccessException e) {
+                backfilled.remove(asset.sha256());
+                LOG.log(System.Logger.Level.INFO, "Dokumenttext später nachholen: source={0}, code={1}",
+                        asset.sourceId(), code(e.reason()));
+            }
             return;
         }
         if (asset.size() > IN_MEMORY_BYTES) {
@@ -1455,7 +1657,7 @@ public class Assets {
         ImageDescriber model = describer();
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        DescribedImage described = store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
+        DescribedImage described = stored(list.sourceId(), attachment)
                 .flatMap(asset -> store.description(asset.sha256(), model.id(), model.modelVersion())
                         .map(description -> new DescribedImage(asset, description, false)))
                 .orElseThrow(() -> new ImageDescriptionException(ImageDescriptionException.Reason.NOT_FOUND,
@@ -1523,7 +1725,7 @@ public class Assets {
         if (documents == null || sha256 == null) {
             return Optional.empty();
         }
-        return store.text(sha256, documents.id(), documents.version());
+        return store.text(sha256, textExtractor(), textVersion());
     }
 
     /**
@@ -1533,10 +1735,22 @@ public class Assets {
      * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
      */
     public boolean adoptText(String sha256, String text) {
+        return adoptText(sha256, text, false, 0);
+    }
+
+    /**
+     * Wie {@link #adoptText(String, String)}; ein beim Einlesen gekürzter Text trägt das selbst: {@code truncated} und
+     * Status {@code PARTIAL} mit Grund {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
+     */
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead) {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
-        store.putText(new AssetText(sha256, documents.id(), documents.version(), text, false, clock.instant()));
+        Optional<Outcome> outcome = truncated
+                ? Optional.of(Outcome.truncated(StatusReason.TOO_LARGE, new ReadExtent(bytesRead, text.length())))
+                : Optional.empty();
+        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, truncated, clock.instant(),
+                outcome));
         return true;
     }
 
@@ -1818,7 +2032,7 @@ public class Assets {
         boolean corrected = !base(mediaType).equals(base(declaredType)) && !textual(base(mediaType));
         AssetKind kind = corrected ? AssetKind.of(mediaType, null) : AssetKind.of(mediaType, title);
         Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType, kind,
-                size, sink.sha256(), file.retrievedAt());
+                size, sink.sha256(), file.retrievedAt(), attachment.partsWithoutFile());
         if (keep) {
             store.putFile(asset, staging);
         }
