@@ -341,6 +341,22 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     @Override
+    public Optional<DocumentTitles> documentTitles(PageKey page, String attachmentId, String partId) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        requireOpen();
+        String key = documentKey(page, attachmentId, partId == null ? "" : partId);
+        return read(searcher -> {
+            TopDocs top = searcher.search(new TermQuery(new Term(DOCUMENT_KEY, key)), 1);
+            if (top.scoreDocs.length == 0) {
+                return Optional.<DocumentTitles>empty();
+            }
+            Document doc = searcher.storedFields().document(top.scoreDocs[0].doc, Set.of(TITLE, PART_TITLE));
+            return Optional.of(new DocumentTitles(doc.get(TITLE), doc.get(PART_TITLE)));
+        });
+    }
+
+    @Override
     public Optional<String> inputSha256(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();

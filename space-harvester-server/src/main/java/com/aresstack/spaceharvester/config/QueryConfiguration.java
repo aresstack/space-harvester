@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
@@ -310,7 +311,8 @@ class QueryConfiguration {
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
                                     ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
                                     KeywordSearch keywords, ObjectProvider<PageCacheReader> cache,
-                                    ObjectProvider<Enrichments> enrichments, SearchRunLog runs) {
+                                    ObjectProvider<Enrichments> enrichments, SearchRunLog runs,
+                                    LiveConfiguration live, ObjectProvider<DocumentEnrichments> documents) {
         ExecutorService background = renewals.getIfAvailable();
         EmbeddingProcessor processor = embedding.getIfUnique();
         PageCacheReader reader = cache.getIfAvailable();
@@ -324,7 +326,13 @@ class QueryConfiguration {
                 store.getIfUnique(), vectors.getIfUnique(), processor,
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique(), preparation, runs);
+                texts.getIfUnique(), preparation, runs,
+                // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
+                () -> live.current().enrichment().documents(),
+                (document, section, inputSha256) -> {
+                    DocumentEnrichments found = documents.getIfAvailable();
+                    return found == null ? Optional.empty() : found.sectionText(document, section, inputSha256);
+                });
     }
 
     /**

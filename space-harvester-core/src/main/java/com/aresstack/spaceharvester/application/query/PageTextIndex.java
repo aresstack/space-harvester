@@ -49,6 +49,30 @@ public interface PageTextIndex {
         return Optional.empty();
     }
 
+    /**
+     * Dateiname des Anhangs und Anzeigename der enthaltenen Datei, wie sie Treffer des Volltexts tragen (#723), für
+     * Treffer der semantischen Suche in einem Dokument (ADR 0026, AP9a). Leer, wenn der Index das Dokument nicht kennt.
+     *
+     * @param partId Teilkennung ({@code PartId#value()}) oder leer für den Anhang selbst
+     */
+    default Optional<DocumentTitles> documentTitles(PageKey page, String attachmentId, String partId) {
+        return Optional.empty();
+    }
+
+    /**
+     * Namen eines Dokuments.
+     *
+     * @param title     Dateiname des Anhangs, leer ohne
+     * @param partTitle Anzeigename der enthaltenen Datei, leer für den Anhang selbst oder ohne Namen
+     */
+    record DocumentTitles(String title, String partTitle) {
+
+        public DocumentTitles {
+            title = title == null ? "" : title;
+            partTitle = partTitle == null ? "" : partTitle;
+        }
+    }
+
     /** Entfernt den Text eines Anhangs der Seite; ein unbekannter Anhang ist kein Fehler. */
     default void removeAttachment(PageKey page, String attachmentId) {
     }

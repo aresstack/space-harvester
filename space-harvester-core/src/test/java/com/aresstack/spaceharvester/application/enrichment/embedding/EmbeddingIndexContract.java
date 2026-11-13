@@ -134,6 +134,35 @@ public abstract class EmbeddingIndexContract {
         assertThat(index().nearest("wiki", "v-doc", new float[] {0, 1, 0}, 5)).isEmpty();
     }
 
+    @Test
+    void theDocumentSearchFindsOnlyVectorsOfDocumentsUnderTheirPage() {
+        // ADR 0026, AP9a: getrennt von der Seitensuche, damit deren Kandidaten bleiben.
+        PageKey page = new PageKey("wiki", "dokument");
+        Enrichment pageVectors = embedding(page, "v-doc", "[1,0,0]");
+        com.aresstack.spaceharvester.application.assets.DocumentKey document =
+                com.aresstack.spaceharvester.application.assets.DocumentKey.attachment(page, "a1");
+        Enrichment attachment = new Enrichment(page, "embedding", "v-doc", pageVectors.inputSha256(), null,
+                Enrichment.Status.OK, pageVectors.payloadJson().replace("[1,0,0]", "[0.6,0.8,0]"), List.of(), null,
+                pageVectors.computedAt(), document, 3);
+        store().save(pageVectors);
+        store().save(attachment);
+        store().save(embedding(new PageKey("files", "dokument"), "v-doc", "[1,0,0]"));
+
+        assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-doc", new float[] {1, 0, 0}, 5))
+                .singleElement().satisfies(hit -> {
+                    assertThat(hit.page()).isEqualTo(page);
+                    assertThat(hit.similarity()).isCloseTo(0.6, org.assertj.core.api.Assertions.within(1e-4));
+                    assertThat(hit.charStart()).isZero();
+                    assertThat(hit.charEnd()).isEqualTo(10);
+                });
+        assertThat(index().nearestDocuments(java.util.Set.of("files"), "v-doc", new float[] {1, 0, 0}, 5)).isEmpty();
+        assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-other", new float[] {1, 0, 0}, 5))
+                .isEmpty();
+        assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-doc", new float[] {0, 0, 0}, 5)).isEmpty();
+        store().removeDocument(document);
+        assertThat(index().nearestDocuments(java.util.Set.of("wiki"), "v-doc", new float[] {1, 0, 0}, 5)).isEmpty();
+    }
+
     protected static Enrichment embedding(PageKey key, String version, String... vectors) {
         return new Enrichment(key, "embedding", version, sha(key.pageId()), "2", Enrichment.Status.OK,
                 payload(vectors), List.of(), null, Instant.parse("2026-10-17T09:00:00Z"));

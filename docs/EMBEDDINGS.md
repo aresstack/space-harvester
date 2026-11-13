@@ -163,7 +163,18 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   Satzvektoren. Absätze zerlegen den Lesetext wie die
   Projektion einer Seite zeilenweise: Jede Tabellenzeile ist ein eigener Absatz, keiner reicht über eine Tabelle. Die
   Navigation nutzt die Embeddings je Absatz desselben Abschnitts; der Anzeigename des Dokuments geht nie an das
-  Chat-Modell. Gesucht wird in den Vektoren der Dokumente noch nicht (folgt).
+  Chat-Modell.
+- Suche in Dokumenten (ADR 0026, AP9a), nur mit `space-harvester.enrichment.documents.enabled`: Die semantische Suche
+  sucht zusätzlich und getrennt in den Vektoren der Anhänge und enthaltenen Dateien (`EmbeddingIndex#nearestDocuments`);
+  die Kandidaten aus Seiten bleiben dieselben. Ein Treffer zählt für die Seite, unter der das Dokument steht, und
+  braucht deren Rechte (`metadata` und `content`); ohne sie fällt er ohne Spur weg, samt Ausschnitt und Text für einen
+  Reranker. Je Seite bleibt es ein Treffer mit dem besten Stück aus Seite und Dokumenten (bei Gleichstand die Seite).
+  Liegt es in einem Dokument, trägt `relevance` zusätzlich `attachmentId`, `attachmentTitle`, `partId` und
+  `partTitle` (nur bei einer enthaltenen Datei) und `section`; `chunk` bezieht sich dann auf den Lesetext dieses
+  Abschnitts (`document-text/v1`). Namen kommen aus dem Volltextindex wie bei Treffern der Volltextsuche (#723).
+  Ausschnitt und Reranker-Text stammen aus der abgelegten Extraktion, nur wenn deren Abschnitt genau der Text des
+  Embeddings ist. `passageId` bleibt bei Stücken in Dokumenten vorerst `null` (folgt mit dem Absatz-Abruf). Ohne
+  Dokumentvektoren sind Treffer und Reihenfolge byte-gleich; abgeschaltet wird nicht in Dokumenten gesucht.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

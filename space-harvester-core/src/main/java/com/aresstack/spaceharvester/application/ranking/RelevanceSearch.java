@@ -5,8 +5,12 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
@@ -45,6 +49,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.function.BooleanSupplier;
 
 /**
  * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche
@@ -100,6 +105,13 @@ import java.util.concurrent.Semaphore;
  * <p>Jede Suche ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182) mit Anfrage, Quellen des Umfangs,
  * ausgelieferten Treffern und noch nicht vorbereiteten Seiten; die Schlagwortsuche der Vorbereitung ist ein Teillauf.
  * Kandidaten aus der Vektorsuche zählen nicht, weil sie vor der Live-Prüfung ungeprüft sind.
+ *
+ * <p>Anhänge und enthaltene Dateien (ADR 0026, AP9a), nur mit {@code enrichment.documents.enabled}: Die Vektorsuche
+ * sucht zusätzlich und getrennt in den Vektoren der Dokumente; ein Treffer zählt für die Seite, unter der das Dokument
+ * steht, und braucht deren Rechte. Je Seite bleibt es ein Treffer, bewertet mit dem besten Stück aus Seite und
+ * Dokumenten zusammen (bei Gleichstand die Seite). Liegt es in einem Dokument, nennt die Bewertung Anhang, Teil und
+ * Abschnitt samt Namen wie die Volltextsuche (#723); die Stellen beziehen sich dann auf den Lesetext dieses Abschnitts.
+ * Ohne Dokumentvektoren ändern sich weder Treffer noch Reihenfolge.
  */
 public class RelevanceSearch {
 
@@ -131,6 +143,8 @@ public class RelevanceSearch {
     private final PageTextIndex texts;
     private final Preparation preparation;
     private final SearchRunLog runs;
+    private final BooleanSupplier documents;
+    private final DocumentTexts documentTexts;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -198,6 +212,23 @@ public class RelevanceSearch {
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts, Preparation preparation,
                            SearchRunLog runs) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts, preparation, runs,
+                () -> false, DocumentTexts.NONE);
+    }
+
+    /**
+     * Mit Anhängen und enthaltenen Dateien (ADR 0026, AP9a).
+     *
+     * @param documents     ob die Suche auch in den Vektoren der Dokumente sucht
+     *                      ({@code space-harvester.enrichment.documents.enabled}), je Suche gelesen
+     * @param documentTexts Lesetext eines Abschnitts für Ausschnitte, siehe {@link DocumentTexts}
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts, Preparation preparation,
+                           SearchRunLog runs, BooleanSupplier documents, DocumentTexts documentTexts) {
+        this.documents = Objects.requireNonNull(documents, "documents");
+        this.documentTexts = Objects.requireNonNull(documentTexts, "documentTexts");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.preparation = preparation;
         this.texts = texts;
@@ -522,8 +553,7 @@ public class RelevanceSearch {
         if (live.version() != null && (staleScore || !live.version().equals(hit.page().header().revision()))) {
             renew(caller, key);
             if (checked != null) {
-                checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE,
-                        checked.inputSha256(), checked.passageId());
+                checked = checked.stale();
             }
         }
         return new Verified(ranked(hit, checked), false, live.partitionKey());
@@ -541,7 +571,12 @@ public class RelevanceSearch {
     private static RankedHit ranked(SearchHit hit, Score score) {
         return score == null ? new RankedHit(hit, null)
                 : new RankedHit(hit, new Relevance(score.similarity(), score.charStart(), score.charEnd(),
-                        score.freshness(), score.passageId()));
+                        score.freshness(), score.passageId(),
+                        score.document() == null ? null : score.document().attachmentId().orElse(null),
+                        score.document() == null ? null : score.document().part().map(PartId::value).orElse(null),
+                        score.document() == null ? null : score.section(),
+                        score.document() == null ? null : score.attachmentTitle(),
+                        score.document() == null || score.document().part().isEmpty() ? null : score.partTitle()));
     }
 
     private static String indexed(SearchHit hit) {
@@ -619,9 +654,23 @@ public class RelevanceSearch {
     private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, Set<String> excluded,
                                                SearchScope scope, SearchIndexState state,
                                                EmbeddingProcessor.Generation model, float[] vector) {
+        List<EmbeddingIndex.ChunkHit> chunks = vectors.nearest(scope.sourceIds(), model.version(), vector,
+                MAX_CHUNKS);
+        if (documents.getAsBoolean()) {
+            // Getrennt gesucht, damit die Stücke der Seiten dieselben bleiben; zusammen nach Ähnlichkeit geordnet.
+            List<EmbeddingIndex.ChunkHit> fromDocuments = vectors.nearestDocuments(scope.sourceIds(),
+                    model.version(), vector, MAX_CHUNKS);
+            if (!fromDocuments.isEmpty()) {
+                List<EmbeddingIndex.ChunkHit> merged = new ArrayList<>(chunks);
+                merged.addAll(fromDocuments);
+                merged.sort(java.util.Comparator.comparingDouble(EmbeddingIndex.ChunkHit::similarity).reversed()
+                        .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
+                        .thenComparingInt(EmbeddingIndex.ChunkHit::chunk));
+                chunks = merged;
+            }
+        }
         Set<PageKey> pages = new LinkedHashSet<>();
-        for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), model.version(), vector,
-                MAX_CHUNKS)) {
+        for (EmbeddingIndex.ChunkHit chunk : chunks) {
             pages.add(chunk.page());
         }
         List<SearchHit> found = new ArrayList<>();
@@ -662,17 +711,57 @@ public class RelevanceSearch {
                 passages = found;
             }
         }
-        if (result == null || result.status() != Enrichment.Status.OK
-                || !result.processorVersion().equals(model.version())) {
-            return null;
+        boolean pageEmbedded = result != null && result.status() == Enrichment.Status.OK
+                && result.processorVersion().equals(model.version());
+        Score best = null;
+        if (pageEmbedded) {
+            Chunk chunk = best(result, vector);
+            if (chunk != null) {
+                Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
+                        : Freshness.STALE;
+                // Die Passage-ID nur aus dem schon geladenen Ergebnis der Absätze, ohne weitere Abfrage je Treffer.
+                best = new Score(chunk.similarity(), chunk.start(), chunk.end(), freshness, result.inputSha256(),
+                        PagePassages.idAt(header.key(), passages, result.inputSha256(), chunk.start(), chunk.end()));
+            }
         }
+        if (!documents.getAsBoolean()) {
+            return best;
+        }
+        // Das beste Stück aus Seite und Dokumenten zusammen; bei Gleichstand bleibt die Seite.
+        Enrichment bestDocument = null;
+        Chunk bestDocumentChunk = null;
+        for (Enrichment found : store.findDocuments(header.key())) {
+            if (!"embedding".equals(found.processorId()) || found.status() != Enrichment.Status.OK
+                    || !found.processorVersion().equals(model.version())) {
+                continue;
+            }
+            Chunk chunk = best(found, vector);
+            if (chunk != null && (bestDocumentChunk == null || chunk.similarity() > bestDocumentChunk.similarity())) {
+                bestDocument = found;
+                bestDocumentChunk = chunk;
+            }
+        }
+        if (bestDocumentChunk == null || best != null && bestDocumentChunk.similarity() <= best.similarity()) {
+            return best;
+        }
+        DocumentKey document = bestDocument.document();
+        PageTextIndex.DocumentTitles titles = titles(document);
+        // Wie aktuell, sagt die Seite: Ihre Version prüft die Live-Prüfung; die Passage-ID eines Dokuments folgt.
+        Freshness freshness = best != null ? best.freshness() : Freshness.CURRENT;
+        return new Score(bestDocumentChunk.similarity(), bestDocumentChunk.start(), bestDocumentChunk.end(),
+                freshness, bestDocument.inputSha256(), null, document, bestDocument.section(), titles.title(),
+                titles.partTitle());
+    }
+
+    /** Das ähnlichste Stück eines Embedding-Ergebnisses oder {@code null}. */
+    private static Chunk best(Enrichment result, float[] vector) {
         EmbeddingPayload payload;
         try {
             payload = EmbeddingPayload.parse(result.payloadJson());
         } catch (IllegalArgumentException e) {
             return null;
         }
-        Score best = null;
+        Chunk best = null;
         for (EmbeddingPayload.Chunk chunk : payload.chunks()) {
             float[] normalized = EmbeddingIndex.normalized(chunk.vector());
             if (normalized.length != vector.length) {
@@ -689,17 +778,75 @@ public class RelevanceSearch {
             }
             double similarity = Math.max(-1, Math.min(1, dot));
             if (best == null || similarity > best.similarity()) {
-                best = new Score(similarity, chunk.charStart(), chunk.charEnd(), null, null, null);
+                best = new Chunk(similarity, chunk.charStart(), chunk.charEnd());
             }
         }
-        if (best == null) {
-            return null;
+        return best;
+    }
+
+    private record Chunk(double similarity, int start, int end) {
+    }
+
+    /** Dateiname und Name der enthaltenen Datei aus dem Volltextindex, wie Treffer der Volltextsuche sie tragen. */
+    private PageTextIndex.DocumentTitles titles(DocumentKey document) {
+        if (texts == null || document.attachmentId().isEmpty()) {
+            return new PageTextIndex.DocumentTitles("", "");
         }
-        Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
-                : Freshness.STALE;
-        // Die Passage-ID nur aus dem schon geladenen Ergebnis der Absätze, ohne weitere Abfrage je Treffer.
-        return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness, result.inputSha256(),
-                PagePassages.idAt(header.key(), passages, result.inputSha256(), best.charStart(), best.charEnd()));
+        try {
+            return texts.documentTitles(document.page(), document.attachmentId().get(),
+                    document.part().map(PartId::value).orElse(""))
+                    .orElseGet(() -> new PageTextIndex.DocumentTitles("", ""));
+        } catch (RuntimeException e) {
+            return new PageTextIndex.DocumentTitles("", "");
+        }
+    }
+
+    /**
+     * Ein Ausschnitt des Lesetexts um das ähnlichste Stück eines Treffers in einem Dokument (höchstens
+     * {@code maxChars} Zeichen, ab dem Stück, nicht über sein Ende); leer, wenn das Stück in der Seite liegt oder der
+     * Text, aus dem es entstand, nicht mehr vorliegt. Nur für ausgelieferte, also geprüfte Treffer.
+     */
+    public String documentExcerpt(RankedHit ranked, int maxChars) {
+        Relevance relevance = ranked.relevance();
+        if (relevance == null || relevance.attachmentId() == null || store == null) {
+            return "";
+        }
+        PageKey page = ranked.hit().page().header().key();
+        DocumentKey document = DocumentKey.attachment(page, relevance.attachmentId());
+        if (relevance.partId() != null) {
+            document = document.child(PartId.parse(relevance.partId()));
+        }
+        DocumentKey key = document;
+        String inputSha256 = store.find(key).stream()
+                .filter(found -> "embedding".equals(found.processorId()) && found.section() == relevance.section())
+                .map(Enrichment::inputSha256).findFirst().orElse(null);
+        return excerpt(key, relevance.section(), inputSha256, relevance.charStart(), relevance.charEnd(), maxChars,
+                true);
+    }
+
+    /**
+     * Ausschnitt aus dem Lesetext eines Abschnitts, nur wenn er genau der Text des Ergebnisses ist.
+     *
+     * @param untilEnd nur bis zum Ende des Stücks, sonst das Stück mittig
+     */
+    private String excerpt(DocumentKey document, int section, String inputSha256, int charStart, int charEnd,
+                           int maxChars, boolean untilEnd) {
+        String text;
+        try {
+            text = documentTexts.text(document, section, inputSha256).map(PageText::text).orElse("");
+        } catch (RuntimeException e) {
+            return "";
+        }
+        int start = Math.clamp(charStart, 0, text.length());
+        int end = Math.min(text.length(), start + maxChars);
+        if (untilEnd && charEnd > start) {
+            end = Math.min(end, charEnd);
+        } else if (charEnd > start && charEnd - start < maxChars) {
+            int spare = maxChars - (Math.min(charEnd, text.length()) - start);
+            start = Math.max(0, start - spare / 2);
+            end = Math.min(text.length(), start + maxChars);
+        }
+        return text.substring(start, end).strip();
     }
 
     /**
@@ -713,8 +860,18 @@ public class RelevanceSearch {
         String title = hit.page().header().metadata().title();
         title = title == null ? "" : title.strip();
         PageKey key = hit.page().header().key();
-        if (texts == null || !access.permits(caller, ResourceScope.page(key.sourceId(), partition, key.pageId()),
+        if (!access.permits(caller, ResourceScope.page(key.sourceId(), partition, key.pageId()),
                 AccessKind.CONTENT)) {
+            return title;
+        }
+        if (score != null && score.document() != null) {
+            // Das Stück liegt in einem Anhang: sein Abschnitt, nicht der Text der Seite.
+            String excerpt = excerpt(score.document(), score.section(), score.inputSha256(), score.charStart(),
+                    score.charEnd(), MAX_DOCUMENT_CHARS, checked != null && checked.freshness() == Freshness.CURRENT
+                            && embedding.passages());
+            return title.isEmpty() ? excerpt : excerpt.isEmpty() ? title : title + "\n" + excerpt;
+        }
+        if (texts == null) {
             return title;
         }
         String text;
@@ -756,10 +913,24 @@ public class RelevanceSearch {
     /**
      * @param inputSha256 Eingabe-Hash der Textprojektion, aus der das Embedding entstand
      * @param passageId   Passage-ID des Absatzes, der das Stück enthält, oder {@code null}
+     * @param document    das Dokument, in dem das Stück liegt, {@code null} für die Seite selbst
+     * @param section     Abschnitt im Dokument
      */
     private record Score(double similarity, int charStart, int charEnd, Freshness freshness, String inputSha256,
-                         String passageId) {
+                         String passageId, DocumentKey document, int section, String attachmentTitle,
+                         String partTitle) {
+
+        Score(double similarity, int charStart, int charEnd, Freshness freshness, String inputSha256,
+              String passageId) {
+            this(similarity, charStart, charEnd, freshness, inputSha256, passageId, null, 0, null, null);
+        }
+
+        Score stale() {
+            return new Score(similarity, charStart, charEnd, Freshness.STALE, inputSha256, passageId, document,
+                    section, attachmentTitle, partTitle);
+        }
     }
+
 
     /** Ob das Embedding hinter einer Ähnlichkeit zur aktuellen Revision der Seite gehört. */
     public enum Freshness {
@@ -775,9 +946,22 @@ public class RelevanceSearch {
      * @param charEnd    Ende (exklusiv)
      * @param freshness  ob das Embedding aus der aktuellen Revision stammt
      * @param passageId  stabile Adresse des Absatzes, der dieses Stück enthält ({@code PassageId}, EAC-Lücke 5), oder
-     *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen
+     *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen; bei einem Stück in
+     *                   einem Dokument vorerst {@code null}
+     * @param attachmentId Anhang, in dem das Stück liegt (ADR 0026, AP9a), {@code null} für die Seite selbst; dann
+     *                   beziehen sich {@code charStart}/{@code charEnd} auf den Lesetext des Abschnitts
+     * @param partId     enthaltene Datei im Anhang ({@code PartId#value()}), {@code null} für den Anhang selbst
+     * @param section    Abschnitt im Dokument ab 0, {@code null} für die Seite selbst
+     * @param attachmentTitle Dateiname des Anhangs, leer, wenn der Volltextindex ihn nicht kennt
+     * @param partTitle  Anzeigename der enthaltenen Datei, nur mit {@code partId}
      */
-    public record Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId) {
+    public record Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId,
+                            String attachmentId, String partId, Integer section, String attachmentTitle,
+                            String partTitle) {
+
+        public Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId) {
+            this(similarity, charStart, charEnd, freshness, passageId, null, null, null, null, null);
+        }
 
         public Relevance(double similarity, int charStart, int charEnd, Freshness freshness) {
             this(similarity, charStart, charEnd, freshness, null);
