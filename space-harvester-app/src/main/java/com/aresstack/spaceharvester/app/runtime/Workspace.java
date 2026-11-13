@@ -232,6 +232,21 @@ public final class Workspace {
         return harvester.jobs().status(jobId, caller.jobOwner());
     }
 
+    /**
+     * Meldet einen Empfänger für den Synonymlauf {@code jobId} an (ADR 0027): jeder neue Stand, auf dem
+     * Zustell-Thread des Core. Die Läufe gehören dem Aufrufer der App, deshalb nicht über {@link #subscribeJobs}.
+     * Erst anmelden, dann {@link #synonymJob} lesen.
+     */
+    public Subscription subscribeSynonymJob(String jobId, java.util.function.Consumer<JobStatus> listener) {
+        Objects.requireNonNull(jobId, "jobId");
+        Objects.requireNonNull(listener, "listener");
+        return harvester.jobs().subscribe(caller.jobOwner(), status -> {
+            if (jobId.equals(status.id())) {
+                listener.accept(status);
+            }
+        });
+    }
+
     /** Synonymlauf abbrechen; bisherige Vorschläge bleiben. */
     public JobStatus cancelSynonymJob(String jobId) {
         synonymJob(jobId);

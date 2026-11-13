@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -28,6 +30,7 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -109,7 +112,16 @@ public final class ActivitiesView implements View {
             + "Anhängeaufträge gleichzeitig ihre Verweise zählen (1 bis " + JobLimits.MAX_PARALLEL_PREPARATIONS + ").",
             1, JobLimits.MAX_PARALLEL_PREPARATIONS, List.of(1, 2, 4, 8, 16), JobLimits.DEFAULT_PARALLEL_PREPARATIONS,
             value -> parallel(), this::invalidParallel);
-    private final Timer timer = new Timer(1500, e -> poll());
+    /**
+     * Anmeldung bei den Auftragsmeldungen des Core (ADR 0027, Angelo 13.11.2026: kein Zeitgeber): jede Änderung eines
+     * Auftrags, jede Löschung und jedes Diagnoseereignis liest die Liste einmal neu, gebündelt auf dem EDT.
+     */
+    private Subscription subscription;
+    private AppRuntime subscribed;
+    private boolean refreshPending;
+    /** Eine Abfrage läuft; Meldungen währenddessen führen danach zu genau einer weiteren. */
+    private boolean reading;
+    private boolean readAgain;
     private String selectedId;
     private Object detail;
     /**
@@ -303,7 +315,6 @@ public final class ActivitiesView implements View {
     @Override
     public void shown() {
         poll();
-        timer.start();
     }
 
     /**
@@ -313,7 +324,6 @@ public final class ActivitiesView implements View {
      */
     public void follow() {
         poll();
-        timer.start();
     }
 
     /** Zeigt einen Auftrag (z. B. direkt nach dem Start). */
@@ -321,7 +331,6 @@ public final class ActivitiesView implements View {
         toTop = toTop || !jobId.equals(selectedId);
         selectedId = jobId;
         poll();
-        timer.start();
     }
 
     /**
@@ -335,7 +344,6 @@ public final class ActivitiesView implements View {
             table.clearSelection();
             render();
             poll();
-            timer.start();
         } else {
             show(request.jobIds().get(0));
         }
@@ -343,12 +351,68 @@ public final class ActivitiesView implements View {
         signIn.focusCode();
     }
 
+    /** Meldet sich einmal je Laufzeit an; eine neue Laufzeit meldet neu an, ohne Laufzeit wird abgemeldet. */
+    private void subscribe() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == subscribed) {
+            return;
+        }
+        if (subscription != null) {
+            subscription.close();
+            subscription = null;
+        }
+        subscribed = runtime;
+        if (runtime == null) {
+            return;
+        }
+        subscription = runtime.workspace().subscribeJobs(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                scheduleRefresh();
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                scheduleRefresh();
+            }
+
+            @Override
+            public void event(JobEvent event) {
+                // Die Phase des gewählten Auftrags kommt aus seiner Diagnose.
+                scheduleRefresh();
+            }
+        });
+    }
+
+    /** Vom Zustell-Thread des Core: einmal auf dem EDT lesen, auch bei vielen Meldungen hintereinander. */
+    private void scheduleRefresh() {
+        synchronized (this) {
+            if (refreshPending) {
+                return;
+            }
+            refreshPending = true;
+        }
+        SwingUtilities.invokeLater(() -> {
+            synchronized (this) {
+                refreshPending = false;
+            }
+            poll();
+        });
+    }
+
+    /** Liest Aufträge und den gewählten Auftrag einmal; danach lesen nur die Meldungen des Core erneut. */
     private void poll() {
+        subscribe();
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             model.set(List.of());
             return;
         }
+        if (reading) {
+            readAgain = true;
+            return;
+        }
+        reading = true;
         String id = selectedId;
         Background.run(() -> {
             List<JobStatus> jobs = runtime.workspace().jobs();
@@ -367,6 +431,7 @@ public final class ActivitiesView implements View {
             }
             return new Object[] {jobs, current, currentPhase};
         }, data -> {
+            readDone();
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
             for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
@@ -391,14 +456,19 @@ public final class ActivitiesView implements View {
                 phase = (String) data[2];
                 render();
             }
-            boolean active = jobs.stream().anyMatch(j -> !j.state().terminal());
-            if (!active && !root.isShowing()) {
-                timer.stop();
-            }
         }, error -> {
+            readDone();
             feedback.problem(error);
-            timer.stop();
         });
+    }
+
+    /** Nach einer Abfrage: kam währenddessen eine Meldung, einmal nachlesen. */
+    private void readDone() {
+        reading = false;
+        if (readAgain) {
+            readAgain = false;
+            SwingUtilities.invokeLater(this::poll);
+        }
     }
 
     private void select(String id) {
