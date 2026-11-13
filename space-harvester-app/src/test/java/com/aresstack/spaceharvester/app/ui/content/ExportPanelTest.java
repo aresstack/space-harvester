@@ -121,6 +121,15 @@ class ExportPanelTest {
         SwingUtilities.invokeAndWait(() -> panel[0].exportAs(job, "analysis"));
         await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".json")));
         assertThat(list(out)).hasSize(3);
+        // Die Format-Knöpfe geben aus dem Bestand aus (ADR 0029): der Auftrag liest nur den Cache; da sich nichts
+        // geändert hat, kommt der fertige Download zurück und die Datei entsteht sofort aus seinem Datenbestand.
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].output("pdf");
+            assertThat(panel[0].exportBlocked("pdf")).as("eine Ausgabe je Auswahl zugleich").contains("wird gerade erzeugt");
+        });
+        await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".pdf")));
+        await(() -> panel[0].exportBlocked("pdf") == null);
+        assertThat(list(out)).hasSize(4);
         // Eine Seite derselben Quelle hat keinen eigenen Download: „Noch nicht geladen“, der Datenbestand des Space
         // gilt nicht für sie.
         SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("handbuch", space, "x",
