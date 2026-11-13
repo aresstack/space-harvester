@@ -206,13 +206,16 @@ class DocumentStructureContractTest {
         assertThat(defaults.maxDepth()).isEqualTo(10);
         assertThat(defaults.maxEmbeddedFiles()).isEqualTo(10_000);
         assertThat(defaults.parallel()).isEqualTo(2);
+        assertThat(defaults.memoryLimit("application/pdf")).isZero();
+        assertThat(defaults.memoryLimit("message/rfc822")).isEqualTo(20L * 1024 * 1024);
+        assertThat(defaults.memoryLimit("APPLICATION/PDF; charset=x")).isZero();
         assertThat(ExtractionLimits.exceeds(Long.MAX_VALUE, 0)).isFalse();
         assertThat(ExtractionLimits.exceeds(11, 10)).isTrue();
         assertThat(ExtractionLimits.exceeds(10, 10)).isFalse();
         assertThatThrownBy(() -> new ExtractionLimits(-1, 0, 0, 0, 0, 0, 0, 0, java.time.Duration.ZERO,
-                java.time.Duration.ZERO, 0, 1)).isInstanceOf(IllegalArgumentException.class);
+                java.time.Duration.ZERO, 0, 1, null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ExtractionLimits(0, 0, 0, 0, 0, 0, 0, 0, java.time.Duration.ZERO,
-                java.time.Duration.ZERO, 0, 0)).isInstanceOf(IllegalArgumentException.class);
+                java.time.Duration.ZERO, 0, 0, null)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

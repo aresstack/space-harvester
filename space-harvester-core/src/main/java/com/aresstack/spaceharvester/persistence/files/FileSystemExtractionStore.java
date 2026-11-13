@@ -56,6 +56,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
     /** Höchstens so viele Blöcke je Abschnitt, damit auch Blöcke ohne Zeichen keinen unbegrenzten Abschnitt bilden. */
     static final int MAX_SECTION_BLOCKS = 10_000;
     private static final String CURRENT = "current";
+    private static final int MOVE_ATTEMPTS = 5;
     private static final String DOCUMENT = "document.json";
     private static final Pattern GENERATION = Pattern.compile("g-[0-9a-f-]{36}");
 
@@ -394,15 +395,38 @@ public class FileSystemExtractionStore implements ExtractionStore {
             }
         }
 
+        /**
+         * Ersetzt atomar; unter Windows kann das scheitern, solange ein Leser die Datei offen hat, deshalb einige kurze
+         * Wiederholungen statt eines Abbruchs.
+         */
+        private static void move(Path temp, Path target) throws IOException {
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    try {
+                        Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (AtomicMoveNotSupportedException e) {
+                        Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    return;
+                } catch (java.nio.file.FileSystemException e) {
+                    if (attempt >= MOVE_ATTEMPTS) {
+                        throw e;
+                    }
+                    try {
+                        Thread.sleep(20L * attempt);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                }
+            }
+        }
+
         private static void replace(Path target, String content) throws IOException {
             Path temp = target.resolveSibling("." + target.getFileName() + "." + UUID.randomUUID() + ".tmp");
             try {
                 Files.writeString(temp, content, StandardCharsets.UTF_8);
-                try {
-                    Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
-                }
+                move(temp, target);
             } finally {
                 Files.deleteIfExists(temp);
             }

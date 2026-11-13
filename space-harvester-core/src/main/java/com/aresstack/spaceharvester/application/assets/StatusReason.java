@@ -14,7 +14,7 @@ public enum StatusReason {
     ENCRYPTED,
     /** Defekt. */
     CORRUPT,
-    /** Ohne Inhalt. */
+    /** Ohne Inhalt (0 Bytes). */
     EMPTY,
     /** Laufzeitgrenze erreicht (ohne Fortschritt oder insgesamt). */
     TIMEOUT,
@@ -38,7 +38,14 @@ public enum StatusReason {
      * Der Parser des Behälters übergab enthaltene Dateien nicht als Datei (etwa ein verschlüsselter ZIP-Eintrag); sie
      * haben keinen Eintrag, der Behälter ist {@link ExtractionStatus#PARTIAL}.
      */
-    ENTRIES_NOT_READABLE;
+    ENTRIES_NOT_READABLE,
+    /** Kein Leser für dieses Format. */
+    UNSUPPORTED_FORMAT,
+    /**
+     * Bytes vorhanden, aber kein Text (etwa ein gescanntes PDF ohne Texterkennung); nie stillschweigend als vollständig
+     * gelesen.
+     */
+    NO_TEXT;
 
     /** Fester Code, z. B. {@code unpacked-too-large}. */
     public String code() {

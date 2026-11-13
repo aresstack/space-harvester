@@ -35,6 +35,9 @@ dependencies {
     implementation libs.jsoup
     // PDF-Ausgabe (#30), nur im Paket output.convert
     implementation libs.pdfbox
+    // Eigener Tika-Adapter (ADR 0026, AP3): nur tika-core zum Übersetzen, dieselbe Fassung wie die Kopie; die Parser
+    // kommen zur Laufzeit wie bisher über enterprise-ai-sources
+    implementation libs.tika.core
     // Satzgrenzen der semantischen Absätze (#181, ADR 0020): nur der Satzdetektor von OpenNLP mit dem deutschen
     // Satzmodell (UD German GSD, rund 100 KB), dieselben Versionen wie :nlp-parser; Tokens, Wortarten und Parser nicht
     implementation libs.opennlp.tools
@@ -79,12 +82,33 @@ tasks.withType(AbstractArchiveTask).configureEach {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        // Große Prüfdateien laufen in einer eigenen JVM mit kleinem Heap (largeFileTest)
+        excludeTags 'large-files'
+    }
     // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
     systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
     // Wie ein Programm, das beim Start ProxyAuthenticator.allowBasicTunneling() ruft: Das JDK liest die Property nur
     // einmal, beim ersten HttpURLConnection-Aufbau, und der kann in einem früheren Test liegen.
     systemProperty 'jdk.http.auth.tunneling.disabledSchemes', ''
+}
+
+// Testgruppe mit kleinem Heap (ADR 0026, Abnahme 5): Ein PDF über 300 MiB, ein Excel mit 1 Mio. Zeilen und weitere
+// große Prüfdateien entstehen erst im Test (Testkorpus) und werden mit 256 MiB Heap vollständig gelesen.
+def largeFileTest = tasks.register('largeFileTest', Test) {
+    group = 'verification'
+    description = 'Liest große Prüfdateien in einer JVM mit 256 MiB Heap (ADR 0026).'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'large-files'
+    }
+    maxHeapSize = '256m'
+    shouldRunAfter tasks.named('test')
+}
+
+tasks.named('check') {
+    dependsOn largeFileTest
 }
 
 ext.publishedArtifactId = 'space-harvester-core'

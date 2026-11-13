@@ -353,6 +353,10 @@ Umfang in Bytes und Zeichen) und je Ergebnis ein fester Grund (`StatusReason`, d
 | `text-ratio-exceeded` | mehr Zeichen je Byte als erlaubt (Textbombe) |
 | `temp-space-low` | freier Platz für temporäre Dateien unter der Reserve |
 | `entries-not-readable` | der Parser übergab enthaltene Dateien nicht (etwa verschlüsselter ZIP-Eintrag); Behälter `PARTIAL` |
+| `unsupported-format` | kein Leser für das Format (`UNSUPPORTED`) |
+| `no-text` | Bytes vorhanden, aber kein Text, etwa ein gescanntes PDF ohne Texterkennung (`UNSUPPORTED`, nie `OK`) |
+
+Eine leere Datei (0 Bytes) ist `UNSUPPORTED` mit `empty`.
 
 Ablage (`ExtractionStore`, Umsetzung `FileSystemExtractionStore` unter `extractions/` im Asset-Verzeichnis, Schema
 `structured-extraction/v1`): Schlüssel `ExtractionKey` = Inhalt, Extraktion, Version und Strukturmodell. Blöcke gehen
@@ -364,6 +368,28 @@ entfallen seine Extraktionen mit. Die bisherige Ablage `texts/` (`AssetText`) bl
 Standardgrenzen (`ExtractionLimits.DEFAULTS`, `0` = keine Grenze): Größe und Zeichen ohne Grenze, ausgepackt zu
 gepackt 100:1 ab 100 MiB, Zeichen zu Bytes 100:1 ab 1 Mio. Zeichen, Tiefe 10, 10 000 enthaltene Dateien, 30 s ohne
 Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
+
+### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
+
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s1`) liest das Original aus der Datei
+(`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt den Text fortlaufend als Absatz-Blöcke an den Empfänger.
+Kein Block ist größer als ein Abschnitt der Ablage (100 000 Zeichen); längere Absätze teilt der Adapter an Leerraum.
+Überschriften, Listen, Tabellen und Fundstellen folgen mit AP6, eigene Dokumente für enthaltene Dateien mit AP7; bis
+dahin stehen sie wie bisher im Text des Behälters. Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
+`TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
+ohne Fortschritt und insgesamt; nach einer Zeitgrenze nimmt der Empfänger keinen Block mehr an. Noch nicht
+angeschlossen: Die Umstellung von `Assets` auf diesen Adapter folgt im nächsten Schritt.
+
+Schranke `memory-limit` (`ExtractionLimits.memoryLimits`, Status `EXCLUDED`): Ohne Schranke werden nur Formate
+gelesen, deren Lesen die Testgruppe `largeFileTest` (eigene JVM mit 256 MiB Heap) als speicherunabhängig nachweist.
+Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
+
+| Format | Schranke | Nachweis |
+|---|---|---|
+| PDF (`application/pdf`) | keine | PDF über 300 MiB mit Bildern, PDF mit 4 000 Textseiten |
+| Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
+| Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
+| alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
 
 ## Einen Adapter ergänzen
 
