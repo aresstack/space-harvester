@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.persistence.files;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
@@ -8,18 +10,16 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.core.JacksonException;
@@ -40,6 +41,11 @@ import tools.jackson.databind.node.ObjectNode;
  * {@code pages/<sha256(quelle, seite)>.json} (Schema {@value PageStatementAnalysis#SCHEMA}) mit Analyse und CoNLL-U,
  * atomar ersetzt. Das Verzeichnis liegt außerhalb des Caches, ein Neuaufbau des Caches berührt es nicht.
  *
+ * <p>Anhänge und enthaltene Dateien (ADR 0026, Punkt 10, Schlüsselform Punkt 7) liegen unter
+ * {@code documents/<Hash der Seite>/<DocumentKey#hash()>.json}, damit alles zu einer Seite in einem Zug gefunden und
+ * entfernt werden kann. Seiten behalten Ort und Namen ({@link DocumentKey#hash()} der Seite ist der bisherige Name);
+ * in der Datei stehen {@code pageId}, {@code attachmentId} und {@code partId} als getrennte Felder.
+ *
  * <p>Gelesen wird beim ersten Zugriff, nicht beim Start. Im Speicher bleiben die Analysen ohne CoNLL-U; die
  * Syntaxdetails liest {@link #conllu} bei Bedarf aus der Datei. Eine unlesbare Datei (abgebrochener Schreibvorgang
  * eines anderen Programms, fremdes Schema) wird übergangen und protokolliert, ohne Inhalt: Die Analyse ist aus einer
@@ -48,12 +54,14 @@ import tools.jackson.databind.node.ObjectNode;
 public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
 
     static final String PAGES = "pages";
+    static final String DOCUMENTS = "documents";
 
     private static final Logger LOG = LoggerFactory.getLogger(FileKnowledgeGraphStore.class);
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final String SUFFIX = ".json";
 
     private final Path directory;
-    private Map<PageKey, PageStatementAnalysis> loaded;
+    private Map<DocumentKey, PageStatementAnalysis> loaded;
 
     public FileKnowledgeGraphStore(Path directory) {
         this.directory = Objects.requireNonNull(directory, "directory");
@@ -65,21 +73,36 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
 
     @Override
     public synchronized List<PageStatementAnalysis> all() {
-        return List.copyOf(analyses().values());
+        return analyses().values().stream().filter(analysis -> !analysis.ofDocument()).toList();
+    }
+
+    @Override
+    public synchronized List<PageStatementAnalysis> documents() {
+        return analyses().values().stream().filter(PageStatementAnalysis::ofDocument).toList();
     }
 
     @Override
     public synchronized Optional<PageStatementAnalysis> find(PageKey key) {
-        return Optional.ofNullable(analyses().get(key));
+        return find(DocumentKey.page(key));
+    }
+
+    @Override
+    public synchronized Optional<PageStatementAnalysis> find(DocumentKey document) {
+        return Optional.ofNullable(analyses().get(document));
     }
 
     @Override
     public synchronized Optional<String> conllu(PageKey key) {
-        if (!analyses().containsKey(key)) {
+        return conllu(DocumentKey.page(key));
+    }
+
+    @Override
+    public synchronized Optional<String> conllu(DocumentKey document) {
+        if (!analyses().containsKey(document)) {
             return Optional.empty();
         }
         try {
-            JsonNode root = JSON.readTree(Files.readString(file(key), StandardCharsets.UTF_8));
+            JsonNode root = JSON.readTree(Files.readString(file(document), StandardCharsets.UTF_8));
             return Optional.ofNullable(root.path("result").path("conllu").asString(null));
         } catch (NoSuchFileException e) {
             return Optional.empty();
@@ -92,83 +115,143 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
 
     @Override
     public synchronized void replace(PageStatementAnalysis analysis) {
-        Map<PageKey, PageStatementAnalysis> all = analyses();
+        Map<DocumentKey, PageStatementAnalysis> all = analyses();
+        Path target = file(analysis.document());
         try {
-            Files.createDirectories(directory.resolve(PAGES));
-            replace(file(analysis.key()), JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(json(analysis)));
+            Files.createDirectories(target.getParent());
+            replace(target, JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(json(analysis)));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        all.put(analysis.key(), analysis.withResult(analysis.result().withoutConllu()));
+        all.put(analysis.document(), analysis.withResult(analysis.result().withoutConllu()));
     }
 
     @Override
     public synchronized void remove(PageKey key) {
-        Map<PageKey, PageStatementAnalysis> all = analyses();
+        Map<DocumentKey, PageStatementAnalysis> all = analyses();
         try {
-            Files.deleteIfExists(file(key));
+            Files.deleteIfExists(file(DocumentKey.page(key)));
+            deleteTree(documentsOf(key));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        all.remove(key);
+        all.keySet().removeIf(document -> document.page().equals(key));
     }
 
-    private Map<PageKey, PageStatementAnalysis> analyses() {
+    @Override
+    public synchronized void removeDocument(DocumentKey document) {
+        Map<DocumentKey, PageStatementAnalysis> all = analyses();
+        List<DocumentKey> gone = document.isPage() || document.isEmbedded() ? List.of(document)
+                : all.keySet().stream().filter(other -> other.page().equals(document.page())
+                && other.attachmentId().equals(document.attachmentId())).toList();
+        try {
+            Files.deleteIfExists(file(document));
+            for (DocumentKey other : gone) {
+                Files.deleteIfExists(file(other));
+            }
+            if (!document.isPage()) {
+                deleteIfEmpty(documentsOf(document.page()));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        gone.forEach(all::remove);
+    }
+
+    private Map<DocumentKey, PageStatementAnalysis> analyses() {
         if (loaded == null) {
             loaded = load();
         }
         return loaded;
     }
 
-    private Map<PageKey, PageStatementAnalysis> load() {
-        Map<PageKey, PageStatementAnalysis> found = new LinkedHashMap<>();
-        Path pages = directory.resolve(PAGES);
-        if (!Files.isDirectory(pages)) {
-            return found;
+    private Map<DocumentKey, PageStatementAnalysis> load() {
+        Map<DocumentKey, PageStatementAnalysis> found = new LinkedHashMap<>();
+        int skipped = read(directory.resolve(PAGES), found);
+        Path documents = directory.resolve(DOCUMENTS);
+        if (Files.isDirectory(documents)) {
+            for (Path page : sorted(documents, null)) {
+                if (Files.isDirectory(page)) {
+                    skipped += read(page, found);
+                }
+            }
         }
-        List<Path> files = new ArrayList<>();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(pages, "*.json")) {
-            stream.forEach(files::add);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+        if (skipped > 0) {
+            LOG.warn("Wissensgraph: {} Analyse(n) übergangen", skipped);
         }
-        files.sort(Comparator.comparing(Path::toString));
+        return found;
+    }
+
+    /** Liest alle Analysen eines Ordners; gibt die Zahl der übergangenen Dateien zurück. */
+    private int read(Path folder, Map<DocumentKey, PageStatementAnalysis> found) {
+        if (!Files.isDirectory(folder)) {
+            return 0;
+        }
         int skipped = 0;
-        for (Path file : files) {
+        for (Path file : sorted(folder, "*" + SUFFIX)) {
             try {
                 PageStatementAnalysis analysis = analysis(JSON.readTree(Files.readString(file,
                         StandardCharsets.UTF_8)));
-                // Nur die Datei unter ihrem eigenen Namen gilt; eine umbenannte Kopie verdoppelte die Seite.
-                if (file.getFileName().toString().equals(name(analysis.key()))) {
-                    found.put(analysis.key(), analysis.withResult(analysis.result().withoutConllu()));
+                // Nur die Datei unter ihrem eigenen Namen und Ort gilt; eine umbenannte Kopie verdoppelte das Dokument.
+                if (file.equals(file(analysis.document()))) {
+                    found.put(analysis.document(), analysis.withResult(analysis.result().withoutConllu()));
                 } else {
                     skipped++;
                 }
             } catch (IOException | RuntimeException e) {
                 // Jede Datei für sich: ein kaputtes Feld (Zeitstempel, Enum, fehlender Wert) sperrt nicht die übrigen.
                 skipped++;
-                LOG.warn("Wissensgraph: eine Seitenanalyse ist unlesbar und bleibt unberücksichtigt ({})",
+                LOG.warn("Wissensgraph: eine Analyse ist unlesbar und bleibt unberücksichtigt ({})",
                         e.getClass().getSimpleName());
             }
         }
-        if (skipped > 0) {
-            LOG.warn("Wissensgraph: {} Seitenanalyse(n) übergangen", skipped);
+        return skipped;
+    }
+
+    private static List<Path> sorted(Path folder, String glob) {
+        List<Path> files = new ArrayList<>();
+        try (DirectoryStream<Path> stream = glob == null ? Files.newDirectoryStream(folder)
+                : Files.newDirectoryStream(folder, glob)) {
+            stream.forEach(files::add);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
-        return found;
+        files.sort(Comparator.comparing(Path::toString));
+        return files;
     }
 
-    private Path file(PageKey key) {
-        return directory.resolve(PAGES).resolve(name(key));
+    private Path file(DocumentKey document) {
+        if (document.isPage()) {
+            return directory.resolve(PAGES).resolve(name(document.page()));
+        }
+        return documentsOf(document.page()).resolve(document.hash() + SUFFIX);
     }
 
-    /** Dateiname ohne Kennungen im Klartext: {@code sha256(quelle \n seite)}. */
+    private Path documentsOf(PageKey key) {
+        return directory.resolve(DOCUMENTS).resolve(DocumentKey.page(key).hash());
+    }
+
+    /** Dateiname ohne Kennungen im Klartext: {@code sha256(quelle \n seite)}, also {@link DocumentKey#hash()}. */
     static String name(PageKey key) {
+        return DocumentKey.page(key).hash() + SUFFIX;
+    }
+
+    private static void deleteIfEmpty(Path folder) throws IOException {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest((key.sourceId() + "\n" + key.pageId()).getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest) + ".json";
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
+            Files.deleteIfExists(folder);
+        } catch (DirectoryNotEmptyException stillUsed) {
+            // Weitere Dokumente der Seite bleiben.
+        }
+    }
+
+    private static void deleteTree(Path folder) throws IOException {
+        if (!Files.isDirectory(folder)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(folder)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -177,6 +260,9 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         root.put("schema", PageStatementAnalysis.SCHEMA);
         root.put("sourceId", analysis.key().sourceId());
         root.put("pageId", analysis.key().pageId());
+        // Dokumente (ADR 0026): getrennte Felder, nie eine zusammengesetzte Kennung; bei Seiten fehlen beide.
+        analysis.document().attachmentId().ifPresent(id -> root.put("attachmentId", id));
+        analysis.document().part().ifPresent(part -> root.put("partId", part.value()));
         root.put("spaceKey", analysis.spaceKey());
         root.put("title", analysis.title());
         root.put("revision", analysis.revision());
@@ -314,10 +400,15 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         node.path("components").forEach(value -> components.add(value.asString()));
         ParsedStatements result = new ParsedStatements(sentences, mentions, statements, attachments, components,
                 text(node, "conllu"));
-        return new PageStatementAnalysis(new PageKey(root.path("sourceId").asString(),
-                root.path("pageId").asString()), text(root, "spaceKey"), text(root, "title"),
+        PageKey key = new PageKey(root.path("sourceId").asString(), root.path("pageId").asString());
+        String attachmentId = text(root, "attachmentId");
+        String partId = text(root, "partId");
+        DocumentKey document = new DocumentKey(key, Optional.ofNullable(attachmentId),
+                Optional.ofNullable(partId).map(PartId::parse));
+        return new PageStatementAnalysis(key, text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
-                root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result);
+                root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result,
+                document);
     }
 
     /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */

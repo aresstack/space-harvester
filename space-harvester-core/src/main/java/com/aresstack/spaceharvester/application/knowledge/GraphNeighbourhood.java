@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -154,6 +155,11 @@ public class GraphNeighbourhood {
      * Bezüge und übrige Erwähnungen; Enthält-Kanten vom Dokument zu Erwähnungen nur für sonst unverbundene Erwähnungen.
      */
     public Subgraph page(AccessContext caller, PageKey key, Options options) {
+        return page(caller, DocumentKey.page(key), options);
+    }
+
+    /** Wie oben für ein Dokument: Seite, Anhang oder enthaltene Datei (ADR 0026, Punkt 10). */
+    public Subgraph page(AccessContext caller, DocumentKey key, Options options) {
         Optional<KnowledgeGraph.AnalysedPage> found = graph.page(caller, key);
         if (found.isEmpty() || !admitted(found.get().page(), options)) {
             return Subgraph.empty();
@@ -245,7 +251,9 @@ public class GraphNeighbourhood {
         if (key.isEmpty()) {
             return Subgraph.empty();
         }
-        Optional<KnowledgeGraph.AnalysedPage> page = graph.page(caller, key.get());
+        Optional<String> document = documentOf(nodeId);
+        Optional<KnowledgeGraph.AnalysedPage> page = document.isEmpty() ? graph.page(caller, key.get())
+                : graph.document(caller, key.get(), document.get());
         if (page.isEmpty() || !admitted(page.get().page(), options)) {
             return Subgraph.empty();
         }
@@ -257,7 +265,7 @@ public class GraphNeighbourhood {
             return Subgraph.empty(); // andere Fassung oder unbekannt: nichts verraten
         }
         if (focus.kind() == PageGraph.NodeKind.DOCUMENT) {
-            return page(caller, key.get(), options);
+            return page(caller, page.get().page().document(), options);
         }
         Builder builder = new Builder(options);
         builder.node(node(page.get(), focus));
@@ -266,7 +274,8 @@ public class GraphNeighbourhood {
             builder.connect(edge(edge), node(page.get(), nodes.get(other)));
         }
         if (focus.kind() == PageGraph.NodeKind.MENTION && crossPageAllowed(options)) {
-            candidates(caller, page.get(), nodeId, graph.links(caller, key.get()), builder, builder::has);
+            candidates(caller, page.get(), nodeId, graph.links(caller, page.get().page().document()), builder,
+                    builder::has);
         }
         return builder.build(nodeId);
     }
@@ -282,7 +291,7 @@ public class GraphNeighbourhood {
         KnowledgeGraph.Search search = graph.search(caller, term,
                 Math.min(options.maxNodes(), KnowledgeGraph.MAX_LIMIT), page -> admitted(page, options));
         Builder builder = new Builder(options);
-        Map<PageKey, Optional<Projection>> projections = new LinkedHashMap<>();
+        Map<DocumentKey, Optional<Projection>> projections = new LinkedHashMap<>();
         String focus = null;
         for (KnowledgeGraph.Hit hit : search.hits()) {
             ParsedStatements.Mention mention = hit.mention();
@@ -291,7 +300,7 @@ public class GraphNeighbourhood {
                 continue;
             }
             focus = focus == null ? mention.id() : focus;
-            Optional<Projection> projection = projections.computeIfAbsent(hit.page().key(),
+            Optional<Projection> projection = projections.computeIfAbsent(hit.page().document(),
                     key -> graph.page(caller, key).map(Projection::new));
             if (projection.isEmpty()) {
                 continue;
@@ -347,7 +356,7 @@ public class GraphNeighbourhood {
                     || mentionId != null && !link.mentions().contains(mentionId)) {
                 continue;
             }
-            Optional<KnowledgeGraph.AnalysedPage> target = graph.page(caller, link.target().key());
+            Optional<KnowledgeGraph.AnalysedPage> target = graph.page(caller, link.target().document());
             if (target.isEmpty()) {
                 continue;
             }
@@ -439,6 +448,22 @@ public class GraphNeighbourhood {
      * Die Seite eines Knotens aus seiner ID ({@code quelle/seite@fassung} bzw. {@code …#s1.t2}); leer, wenn die ID
      * nicht so aufgebaut ist.
      */
+    /**
+     * Der Dokumentteil einer Knoten-ID ({@code ~<DocumentKey#fileName()>} hinter dem letzten {@code @}, siehe
+     * {@link PageStatementAnalysis#documentId(DocumentKey, String)}); leer für Knoten einer Seite selbst.
+     */
+    static Optional<String> documentOf(String nodeId) {
+        if (nodeId == null) {
+            return Optional.empty();
+        }
+        int hash = nodeId.indexOf('#');
+        String document = hash < 0 ? nodeId : nodeId.substring(0, hash);
+        int at = document.lastIndexOf('@');
+        int tilde = at < 0 ? -1 : document.indexOf(PageStatementAnalysis.DOCUMENT, at);
+        return tilde < 0 || tilde == document.length() - 1 ? Optional.empty()
+                : Optional.of(document.substring(tilde + 1));
+    }
+
     static Optional<PageKey> pageOf(String nodeId) {
         if (nodeId == null) {
             return Optional.empty();

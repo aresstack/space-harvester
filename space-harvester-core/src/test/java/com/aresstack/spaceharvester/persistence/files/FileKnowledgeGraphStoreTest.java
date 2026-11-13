@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.persistence.files;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -164,6 +166,87 @@ class FileKnowledgeGraphStoreTest {
 
         assertThat(new FileKnowledgeGraphStore(missing).all()).isEmpty();
         assertThat(missing).doesNotExist();
+    }
+
+    @Test
+    void documentsLieUnderTheirPageWithSeparateFieldsAndThePageStaysWhereItWas() throws IOException {
+        // ADR 0026, Punkt 10 und Schlüsselform Punkte 1 und 7
+        PageStatementAnalysis page = analysis("wiki", "1", "Beleg");
+        DocumentKey attachment = DocumentKey.attachment(page.key(), "att/42?x");
+        DocumentKey part = attachment.child(new PartId.Content("a".repeat(64), 1));
+        FileKnowledgeGraphStore store = new FileKnowledgeGraphStore(directory);
+        store.replace(page);
+        store.replace(document(page, attachment, "Anhang"));
+        store.replace(document(page, part, "Teil"));
+
+        Path folder = directory.resolve(FileKnowledgeGraphStore.DOCUMENTS)
+                .resolve(DocumentKey.page(page.key()).hash());
+        assertThat(folder.resolve(attachment.hash() + ".json")).exists();
+        assertThat(folder.resolve(part.hash() + ".json")).exists();
+        assertThat(directory.resolve(FileKnowledgeGraphStore.PAGES)
+                .resolve(FileKnowledgeGraphStore.name(page.key()))).exists();
+        tools.jackson.databind.JsonNode json = tools.jackson.databind.json.JsonMapper.builder().build()
+                .readTree(Files.readString(folder.resolve(part.hash() + ".json"), StandardCharsets.UTF_8));
+        assertThat(json.path("pageId").asString()).isEqualTo("1");
+        assertThat(json.path("attachmentId").asString()).isEqualTo("att/42?x");
+        assertThat(json.path("partId").asString()).isEqualTo("sha256:" + "a".repeat(64) + ":1");
+
+        FileKnowledgeGraphStore restarted = new FileKnowledgeGraphStore(directory);
+        assertThat(restarted.all()).extracting(PageStatementAnalysis::document)
+                .containsExactly(DocumentKey.page(page.key()));
+        assertThat(restarted.documents()).extracting(PageStatementAnalysis::document)
+                .containsExactlyInAnyOrder(attachment, part);
+        assertThat(restarted.find(part).orElseThrow().result().mentions())
+                .extracting(ParsedStatements.Mention::text).containsExactly("Sachbearbeiter", "Teil");
+        assertThat(restarted.find(page.key()).orElseThrow().ofDocument()).isFalse();
+        assertThat(restarted.conllu(attachment)).contains("1\tAnhang\t_\t_\t_\t_\t0\troot\t_\t_\n");
+    }
+
+    @Test
+    void removingAnAttachmentTakesItsPartsAndRemovingThePageTakesEverything() {
+        PageStatementAnalysis page = analysis("wiki", "1", "Beleg");
+        DocumentKey attachment = DocumentKey.attachment(page.key(), "42");
+        DocumentKey part = attachment.child(new PartId.Content("b".repeat(64), 1));
+        DocumentKey other = DocumentKey.attachment(page.key(), "43");
+        FileKnowledgeGraphStore store = new FileKnowledgeGraphStore(directory);
+        store.replace(page);
+        store.replace(document(page, attachment, "Anhang"));
+        store.replace(document(page, part, "Teil"));
+        store.replace(document(page, other, "Zweiter"));
+
+        store.removeDocument(attachment);
+
+        assertThat(new FileKnowledgeGraphStore(directory).documents()).extracting(PageStatementAnalysis::document)
+                .containsExactly(other);
+        assertThat(store.find(page.key())).isPresent();
+
+        store.remove(page.key());
+
+        FileKnowledgeGraphStore restarted = new FileKnowledgeGraphStore(directory);
+        assertThat(restarted.all()).isEmpty();
+        assertThat(restarted.documents()).isEmpty();
+        assertThat(directory.resolve(FileKnowledgeGraphStore.DOCUMENTS)
+                .resolve(DocumentKey.page(page.key()).hash())).doesNotExist();
+    }
+
+    @Test
+    void aPageFileWithoutDocumentFieldsIsThePageItself() {
+        // Bestehende Ablagen vor ADR 0026: keine Migration, kein Neulauf
+        PageStatementAnalysis page = analysis("wiki", "1", "Beleg");
+        new FileKnowledgeGraphStore(directory).replace(page);
+
+        PageStatementAnalysis read = new FileKnowledgeGraphStore(directory).find(page.key()).orElseThrow();
+
+        assertThat(read.document()).isEqualTo(DocumentKey.page(page.key()));
+        assertThat(FileKnowledgeGraphStore.json(page).has("attachmentId")).isFalse();
+        assertThat(FileKnowledgeGraphStore.json(page).has("partId")).isFalse();
+    }
+
+    private static PageStatementAnalysis document(PageStatementAnalysis page, DocumentKey document, String noun) {
+        PageStatementAnalysis analysis = analysis(page.key().sourceId(), page.key().pageId(), noun);
+        return new PageStatementAnalysis(analysis.key(), analysis.spaceKey(), noun, "sha256:" + "c".repeat(64),
+                analysis.inputSha256(), analysis.analyzerId(), analysis.analyzerVersion(), analysis.analyzedAt(),
+                analysis.result(), document);
     }
 
     private static PageStatementAnalysis analysis(String sourceId, String pageId, String noun) {
