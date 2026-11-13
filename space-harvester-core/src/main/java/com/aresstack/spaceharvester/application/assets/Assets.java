@@ -878,6 +878,28 @@ public class Assets {
         }
     }
 
+    /**
+     * Das abgelegte Dokument eines Anhangs mit seinen enthaltenen Dateien für den Export (ADR 0026, AP4c); liest nichts
+     * neu und fragt die Quelle nicht. Leer ohne strukturierte Extraktion dieser Bytes.
+     */
+    public Optional<DocumentExport> documentExport(String sourceId, String attachmentId, String version,
+                                                   String sha256) {
+        DocumentExtractions structured = extractions;
+        if (structured == null || sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256))
+                .orElse(null);
+        if (asset == null || asset.kind() != AssetKind.OTHER) {
+            return Optional.empty();
+        }
+        try {
+            return structured.export(asset, store);
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
@@ -1028,8 +1050,8 @@ public class Assets {
      * Der abgelegte Text dieser Bytes (ADR 0026, Punkt 11, Abnahme 8): der der eingestellten Extraktion, sonst der
      * jüngste einer anderen Extraktion oder Version, als veraltet gekennzeichnet; er bleibt lieferbar, bis das Original
      * neu gelesen ist. Ein Text der eingestellten Extraktion ohne abgelegte strukturierte Extraktion (Ablage verworfen)
-     * gilt ebenfalls als veraltet. Der Status kommt aus der zugehörigen abgelegten Extraktion (AP4a), denn der Text
-     * trägt keinen.
+     * gilt ebenfalls als veraltet. Der Status kommt vom Text selbst (etwa beim Import gekürzt), sonst aus der
+     * zugehörigen abgelegten Extraktion (AP4a).
      */
     private Optional<AssetText> storedOrStale(String sha256) {
         DocumentExtractions structured = extractions;
@@ -1039,11 +1061,15 @@ public class Assets {
                 return current;
             }
             AssetText text = current.get();
-            return Optional.of(structured.stored(sha256).map(found -> text.withOutcome(found.document().outcome()))
-                    .orElseGet(text::asStale));
+            Optional<StoredExtraction> extraction = structured.stored(sha256);
+            if (extraction.isEmpty()) {
+                return Optional.of(text.asStale());
+            }
+            return Optional.of(text.outcome().isPresent() ? text
+                    : text.withOutcome(extraction.get().document().outcome()));
         }
         Optional<AssetText> older = store.latestText(sha256).map(AssetText::asStale);
-        if (older.isEmpty() || structured == null) {
+        if (older.isEmpty() || structured == null || older.get().outcome().isPresent()) {
             return older;
         }
         AssetText text = older.get();
@@ -1742,29 +1768,40 @@ public class Assets {
     /** Version eines mitgebrachten Textes, wenn das Paket keine nennt. */
     public static final String UNKNOWN_VERSION = "unbekannt";
 
-    /** Wie {@link #adoptText(String, String, String, String)} ohne Angabe der Extraktion im Paket. */
+    /** Wie {@link #adoptText(String, String, boolean, long, String, String)}, ungekürzt und ohne Angabe im Paket. */
     public boolean adoptText(String sha256, String text) {
-        return adoptText(sha256, text, null, null);
+        return adoptText(sha256, text, false, 0);
+    }
+
+    /** Wie {@link #adoptText(String, String, boolean, long, String, String)} ohne Angabe der Extraktion im Paket. */
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead) {
+        return adoptText(sha256, text, truncated, bytesRead, null, null);
     }
 
     /**
      * Legt einen mitgebrachten Text eines Dokument-Anhangs ab (Import eines JSON-Pakets): unter Extraktion und Version
      * aus dem Paket ({@code attachments/v2}), sonst unter {@value #IMPORTED_EXTRACTOR}/{@value #UNKNOWN_VERSION}; nie
      * unter der eingestellten Extraktion, denn eine strukturierte Extraktion entsteht beim Import nicht. So liefert
-     * {@link #storedText} ihn als veraltet, bis das Original neu gelesen ist (ADR 0026, Punkt 11, Abnahme 8).
+     * {@link #storedText} ihn als veraltet, bis das Original neu gelesen ist (ADR 0026, Punkt 11, Abnahme 8). Ein beim
+     * Einlesen gekürzter Text trägt das selbst: {@code truncated} und Status {@code PARTIAL} mit Grund
+     * {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
      *
      * @param extractor Extraktion laut Paket oder {@code null}
      * @param version   Version laut Paket oder {@code null}
      * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
      */
-    public boolean adoptText(String sha256, String text, String extractor, String version) {
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead, String extractor,
+                             String version) {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
         boolean named = extractor != null && !extractor.isBlank() && version != null && !version.isBlank()
                 && !(extractor.equals(textExtractor()) && version.equals(textVersion()));
+        Optional<Outcome> outcome = truncated
+                ? Optional.of(Outcome.truncated(StatusReason.TOO_LARGE, new ReadExtent(bytesRead, text.length())))
+                : Optional.empty();
         store.putText(new AssetText(sha256, named ? extractor : IMPORTED_EXTRACTOR,
-                named ? version : UNKNOWN_VERSION, text, false, clock.instant()));
+                named ? version : UNKNOWN_VERSION, text, truncated, clock.instant(), outcome));
         return true;
     }
 

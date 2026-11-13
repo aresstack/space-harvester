@@ -164,7 +164,50 @@ public final class TikaDocumentStructure implements DocumentStructure {
     @Override
     public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                       StructureSink sink, PartRules rules) {
-        return extract(original, title, mediaType, limits, sink, rules, null, null);
+        return extract(original, title, mediaType, limits, sink, rules, null, null, null);
+    }
+
+    /**
+     * Ein Durchlauf ohne abgelegte Blöcke: jeder verlangte Teil geht, sobald er vollständig ausgepackt und gehasht ist,
+     * aus seiner temporären Datei an {@code originals}; sind alle übergeben, endet das Auspacken.
+     */
+    @Override
+    public void copyParts(Path original, String title, String mediaType, ExtractionLimits limits, PartRules rules,
+                          java.util.Set<PartId.Content> wanted, PartOriginals originals) throws IOException {
+        Objects.requireNonNull(originals, "originals");
+        if (wanted.isEmpty()) {
+            return;
+        }
+        Delivery delivery = new Delivery(new java.util.HashSet<>(wanted), originals);
+        StructureSink discard = new StructureSink() {
+            @Override
+            public BlockSink document() {
+                return block -> {
+                };
+            }
+
+            @Override
+            public PartSink part(EmbeddedEntry entry) {
+                return block -> {
+                };
+            }
+        };
+        extract(original, title, mediaType, limits, discard, rules, null, null, delivery);
+        if (delivery.failure != null) {
+            throw delivery.failure;
+        }
+    }
+
+    /** Verlangte Teile eines Durchlaufs und ihr Abnehmer; {@code failure}, wenn der Abnehmer scheiterte. */
+    private static final class Delivery {
+        final java.util.Set<PartId.Content> remaining;
+        final PartOriginals originals;
+        IOException failure;
+
+        Delivery(java.util.Set<PartId.Content> remaining, PartOriginals originals) {
+            this.remaining = remaining;
+            this.originals = originals;
+        }
     }
 
     /**
@@ -189,7 +232,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 };
             }
         };
-        extract(original, title, mediaType, limits, discard, rules, id, found);
+        extract(original, title, mediaType, limits, discard, rules, id, found, null);
         Path file = found.get();
         if (file == null) {
             return Optional.empty();
@@ -217,7 +260,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     private StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
                                        StructureSink sink, PartRules rules, PartId.Content wanted,
-                                       java.util.concurrent.atomic.AtomicReference<Path> found) {
+                                       java.util.concurrent.atomic.AtomicReference<Path> found, Delivery delivery) {
         Objects.requireNonNull(original, "original");
         Objects.requireNonNull(rules, "rules");
         Objects.requireNonNull(limits, "limits");
@@ -267,6 +310,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             Reader reader = new Reader(tika, original, title, mediaType, size, limits, sink, target, rules);
             reader.wanted = wanted;
             reader.found = found;
+            reader.delivery = delivery;
             return run(reader, limits);
         } finally {
             target.close();
@@ -413,6 +457,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
         /** Gesucht für {@link #openPart}: dieser Teil behält seine temporäre Datei, danach endet das Auspacken. */
         private PartId.Content wanted;
         private java.util.concurrent.atomic.AtomicReference<Path> found;
+        /** Verlangt für {@link #copyParts}: diese Teile gehen nacheinander an den Abnehmer. */
+        private Delivery delivery;
         private boolean stopped;
         private StatusReason stopReason;
         private StructuredDocument result;
@@ -957,6 +1003,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     return;
                 }
+                if (delivery != null && deliver(id, temp)) {
+                    return;
+                }
                 Optional<String> sha = Optional.of(spooled.sha256());
                 String type = detectedType(temp, metadata, declared.orElse(""));
                 Optional<String> typeValue = Optional.of(type).filter(value -> !value.isEmpty()).or(() -> declared);
@@ -978,6 +1027,47 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 if (temp != null) {
                     Files.deleteIfExists(temp);
                 }
+            }
+        }
+
+        /**
+         * Gibt einen verlangten Teil an den Abnehmer, unter der Sperre wie der Abbruch: Ist der Aufrufer fort
+         * (Zeitgrenze), geht nichts mehr hinaus. Der Teil wird danach weiter gelesen, weil er selbst verlangte Teile
+         * enthalten kann.
+         *
+         * @return ob das Auspacken endet (alles übergeben, Abnehmer gescheitert oder Lauf beendet)
+         */
+        private boolean deliver(PartId id, Path temp) throws IOException {
+            synchronized (this) {
+                if (stopped) {
+                    return true;
+                }
+                if (!(id instanceof PartId.Content content) || !delivery.remaining.remove(content)) {
+                    return false;
+                }
+                lastProgress.set(System.nanoTime());
+                try (InputStream in = Files.newInputStream(temp)) {
+                    delivery.originals.accept(content, in);
+                } catch (IOException e) {
+                    delivery.failure = e;
+                    unpackingEnded = true;
+                    return true;
+                } catch (java.io.UncheckedIOException e) {
+                    delivery.failure = e.getCause();
+                    unpackingEnded = true;
+                    return true;
+                } catch (RuntimeException e) {
+                    delivery.failure = new IOException("Abnehmer gescheitert", e);
+                    unpackingEnded = true;
+                    return true;
+                } finally {
+                    lastProgress.set(System.nanoTime());
+                }
+                if (delivery.remaining.isEmpty()) {
+                    unpackingEnded = true;
+                    return true;
+                }
+                return false;
             }
         }
 

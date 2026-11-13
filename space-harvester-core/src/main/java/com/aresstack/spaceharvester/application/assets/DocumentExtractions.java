@@ -152,6 +152,39 @@ public final class DocumentExtractions {
                 null));
     }
 
+    /**
+     * Die Originale der verlangten enthaltenen Dateien in einem Durchlauf durch den abgelegten Behälter (Auflage zu
+     * AP4c): unter denselben Schutzgrenzen wie beim Lesen, jeder Teil als Strom aus einer temporären Datei, die nach
+     * der Übergabe wegfällt. Was sich nicht mehr lesen lässt, wird übergangen.
+     *
+     * @throws PartUnavailableException {@code CONTAINER_MISSING}, wenn der Behälter nicht mehr vorliegt
+     * @throws java.io.IOException      wenn {@code originals} scheitert
+     */
+    public void copyParts(Asset asset, AssetStore store, java.util.Set<PartId.Content> wanted,
+                          DocumentStructure.PartOriginals originals) throws java.io.IOException {
+        if (wanted.isEmpty()) {
+            return;
+        }
+        java.io.IOException[] failure = new java.io.IOException[1];
+        try {
+            withOriginal(asset, store, original -> {
+                try {
+                    structure.copyParts(original, asset.title(), asset.mediaType(), limits,
+                            rules.forContainer(asset.sha256()), wanted, originals);
+                } catch (java.io.IOException e) {
+                    // Fehler des Abnehmers, nicht der Ablage: unverändert an den Aufrufer.
+                    failure[0] = e;
+                }
+                return null;
+            });
+        } catch (AssetStoreException e) {
+            throw new PartUnavailableException(PartUnavailableException.Reason.CONTAINER_MISSING, e);
+        }
+        if (failure[0] != null) {
+            throw failure[0];
+        }
+    }
+
     /** Liest das Original aus der abgelegten Datei oder einer temporären Kopie. */
     private StructuredDocument read(Asset asset, AssetStore store, StructureSink sink) {
         PartRules forAsset = rules.forContainer(asset.sha256());
@@ -212,7 +245,9 @@ public final class DocumentExtractions {
         TextCollector text = new TextCollector(maxTextChars);
         collect(extraction, text);
         AssetText result = text.result(asset, id(), version(), outcome, now);
-        store.putText(result);
+        // Abgelegt ohne Status: er steht in der abgelegten Extraktion (AP4a); nur ein importierter Text ohne
+        // Extraktion trägt ihn selbst.
+        store.putText(result.withOutcome(null));
         return withSource(result, asset);
     }
 
@@ -222,6 +257,152 @@ public final class DocumentExtractions {
      */
     public Optional<Outcome> outcome(Asset asset) {
         return stored(asset.sha256()).map(extraction -> withSource(extraction.document().outcome(), asset));
+    }
+
+    /**
+     * Das abgelegte Dokument eines Anhangs mit seinen enthaltenen Dateien für den Export (ADR 0026, AP4c); liest das
+     * Original nicht. Status mit dem, was die Quelle auslassen musste (AP7c). Ohne aktuelle Extraktion mit Text gilt
+     * bis zum Neulesen die jüngste lesbare anderer Version ({@link #readable}, ADR 0026, Punkt 11); Extraktion und
+     * Version stehen dann am Eintrag.
+     *
+     * @return leer, wenn keine Extraktion abgelegt ist
+     */
+    public Optional<DocumentExport> export(Asset asset, AssetStore store) {
+        Optional<StoredExtraction> known = readable(asset.sha256()).or(() -> stored(asset.sha256()));
+        if (known.isEmpty()) {
+            return Optional.empty();
+        }
+        StoredExtraction extraction = known.get();
+        StructuredDocument document = extraction.document();
+        Outcome outcome = withSource(document.outcome(), asset);
+        ExtractionKey key = extraction.key();
+        Optional<ExtractionStore.PartSections> reader = document.directory().isEmpty() ? Optional.empty()
+                : extractions.partSections(key);
+        java.util.Map<String, StoredPart> storedParts = new java.util.HashMap<>();
+        extractions.parts(key).forEach(part -> storedParts.put(part.key(), part));
+        java.util.List<DocumentExport.Part> parts = new java.util.ArrayList<>();
+        for (EmbeddedEntry entry : document.directory()) {
+            StoredPart part = storedParts.get(entry.id().storageKey());
+            boolean text = usable(entry.outcome()) && part != null && part.chars() > 0;
+            parts.add(new DocumentExport.Part(entry.id().value(), entry.parent().map(PartId::value).orElse(null),
+                    entry.position(), entry.depth(), entry.displayName().orElse(null), entry.mediaType().orElse(null),
+                    entry.size().orElse(null), entry.sha256().orElse(null), entry.id().fileName(),
+                    DocumentExport.Extraction.of(entry.outcome(), key), text,
+                    entry.id() instanceof PartId.Content));
+        }
+        java.util.List<DocumentExport.Part> listed = java.util.List.copyOf(parts);
+        boolean ownText = usable(document.outcome()) && extraction.sections() > 0 && extraction.chars() > 0;
+        return Optional.of(new DocumentExport() {
+            @Override
+            public Extraction extraction() {
+                return Extraction.of(outcome, key);
+            }
+
+            @Override
+            public boolean hasText() {
+                return ownText;
+            }
+
+            @Override
+            public void writeText(java.io.OutputStream out) throws java.io.IOException {
+                if (ownText) {
+                    try (Stream<TextSection> sections = extractions.sections(key)) {
+                        plainText(sections, out);
+                    }
+                }
+            }
+
+            @Override
+            public void writeMarkdown(java.io.OutputStream out) throws java.io.IOException {
+                if (ownText) {
+                    try (Stream<TextSection> sections = extractions.sections(key)) {
+                        markdownText(sections, out);
+                    }
+                }
+            }
+
+            @Override
+            public java.util.List<Part> parts() {
+                return listed;
+            }
+
+            @Override
+            public void writeText(Part part, java.io.OutputStream out) throws java.io.IOException {
+                if (part.hasText() && reader.isPresent()) {
+                    try (Stream<TextSection> sections = reader.get().sections(storageKey(part))) {
+                        plainText(sections, out);
+                    }
+                }
+            }
+
+            @Override
+            public void writeMarkdown(Part part, java.io.OutputStream out) throws java.io.IOException {
+                if (part.hasText() && reader.isPresent()) {
+                    try (Stream<TextSection> sections = reader.get().sections(storageKey(part))) {
+                        markdownText(sections, out);
+                    }
+                }
+            }
+
+            @Override
+            public Optional<java.io.InputStream> openOriginal(Part part) {
+                PartId id = PartId.parse(part.partId());
+                if (!(id instanceof PartId.Content)) {
+                    return Optional.empty();
+                }
+                return Optional.of(openPart(asset, store, id));
+            }
+
+            @Override
+            public void copyOriginals(Originals originals) throws java.io.IOException {
+                java.util.Map<PartId.Content, Part> wanted = new java.util.LinkedHashMap<>();
+                for (Part part : listed) {
+                    if (part.original() && PartId.parse(part.partId()) instanceof PartId.Content content) {
+                        wanted.put(content, part);
+                    }
+                }
+                copyParts(asset, store, wanted.keySet(), (id, in) -> originals.accept(wanted.get(id), in));
+            }
+        });
+    }
+
+    private static String storageKey(DocumentExport.Part part) {
+        return PartId.parse(part.partId()).storageKey();
+    }
+
+    /** Reiner Text aus Abschnitten, Absätze mit Leerzeile getrennt, wie {@link #text}; kein erzeugter Text. */
+    private static void plainText(Stream<TextSection> sections, java.io.OutputStream out) throws java.io.IOException {
+        java.io.Writer writer = new java.io.OutputStreamWriter(out, java.nio.charset.StandardCharsets.UTF_8);
+        // Nicht schließen: den Strom schließt der Aufrufer.
+        boolean first = true;
+        var iterator = sections.iterator();
+        while (iterator.hasNext()) {
+            for (Block block : iterator.next().blocks()) {
+                String piece = plain(block);
+                if (piece.isBlank()) {
+                    continue;
+                }
+                if (!first) {
+                    writer.write(PARAGRAPH_BREAK);
+                }
+                writer.write(piece);
+                first = false;
+            }
+        }
+        writer.flush();
+    }
+
+    private static void markdownText(Stream<TextSection> sections, java.io.OutputStream out)
+            throws java.io.IOException {
+        java.io.Writer writer = new java.io.OutputStreamWriter(out, java.nio.charset.StandardCharsets.UTF_8);
+        // Nicht schließen: den Strom schließt der Aufrufer.
+        MarkdownView view = new MarkdownView(writer);
+        var iterator = sections.iterator();
+        while (iterator.hasNext()) {
+            iterator.next().blocks().forEach(view::accept);
+        }
+        view.finish();
+        writer.flush();
     }
 
     /**

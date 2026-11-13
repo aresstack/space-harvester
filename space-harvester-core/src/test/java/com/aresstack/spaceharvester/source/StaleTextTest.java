@@ -116,7 +116,7 @@ class StaleTextTest {
         byte[] docx = DocumentFixtures.docx("Abnahme der Schleuse");
         String sha = Assets.sha256(docx);
 
-        assertThat(assets.adoptText(sha, "mitgebracht", "tika", TikaDocumentStructure.VERSION)).isTrue();
+        assertThat(assets.adoptText(sha, "mitgebracht", false, 0, "tika", TikaDocumentStructure.VERSION)).isTrue();
         AssetText imported = assets.storedText(sha).orElseThrow();
         assertThat(imported.stale()).isTrue();
         assertThat(imported.extractor()).isEqualTo(Assets.IMPORTED_EXTRACTOR);
@@ -124,7 +124,7 @@ class StaleTextTest {
         assertThat(imported.text()).isEqualTo("mitgebracht");
 
         String other = Assets.sha256(DocumentFixtures.docx("anderer Inhalt"));
-        assets.adoptText(other, "aus dem Paket", "tika", "3.3-s1");
+        assets.adoptText(other, "aus dem Paket", false, 0, "tika", "3.3-s1");
         assertThat(assets.storedText(other)).hasValueSatisfying(text -> {
             assertThat(text.stale()).isTrue();
             assertThat(text.extractor()).isEqualTo("tika");

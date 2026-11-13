@@ -58,4 +58,30 @@ public interface DocumentStructure {
                                                               PartId.Content id) {
         return java.util.Optional.empty();
     }
+
+    /**
+     * Gibt die Originale der verlangten enthaltenen Dateien in einem Durchlauf durch den Behälter nacheinander an
+     * {@code originals} (ADR 0026, Auflage zu AP4c): unter denselben Schutzgrenzen wie beim Lesen, nichts wird im
+     * Speicher gesammelt, jede temporäre Datei fällt nach der Übergabe weg. Teile, die sich nicht (mehr) vollständig
+     * lesen lassen, werden übergangen. Ohne eigene Umsetzung je Teil über {@link #openPart}.
+     *
+     * @throws IOException wenn {@code originals} scheitert; der Durchlauf endet dann
+     */
+    default void copyParts(Path original, String title, String mediaType, ExtractionLimits limits, PartRules rules,
+                           java.util.Set<PartId.Content> wanted, PartOriginals originals) throws java.io.IOException {
+        for (PartId.Content id : wanted) {
+            java.util.Optional<java.io.InputStream> part = openPart(original, title, mediaType, limits, rules, id);
+            if (part.isPresent()) {
+                try (java.io.InputStream in = part.get()) {
+                    originals.accept(id, in);
+                }
+            }
+        }
+    }
+
+    /** Abnehmer der Originale enthaltener Dateien; der Strom gilt nur während des Aufrufs. */
+    @FunctionalInterface
+    interface PartOriginals {
+        void accept(PartId.Content id, java.io.InputStream content) throws java.io.IOException;
+    }
 }

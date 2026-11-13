@@ -71,4 +71,43 @@ public interface ExportAssets {
     default Optional<String> text(ExportAssetManifest.Entry entry) {
         return Optional.empty();
     }
+
+    /**
+     * Wie {@link #text}, mit der Angabe, ob der Text beim Einlesen eines Pakets gekürzt wurde, und dem gelesenen
+     * Umfang in Bytes (ADR 0026, Auflage zu AP4c: nie stilles Kürzen).
+     */
+    default Optional<DocumentText> documentText(ExportAssetManifest.Entry entry) {
+        return text(entry).map(text -> new DocumentText(text, false,
+                text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length));
+    }
+
+    /**
+     * Text eines Dokument-Anhangs aus einem Paket.
+     *
+     * @param truncated ob beim Einlesen gekürzt wurde
+     * @param bytesRead gelesene Bytes (UTF-8)
+     * @param extractor Extraktion laut Paket ({@code attachments/v2}: {@code extraction.extractor} des Behälters) oder
+     *                  {@code null}
+     * @param version   Version der Extraktion laut Paket oder {@code null}
+     */
+    record DocumentText(String text, boolean truncated, long bytesRead, String extractor, String version) {
+
+        public DocumentText {
+            java.util.Objects.requireNonNull(text, "text");
+        }
+
+        /** Ohne Angabe der Extraktion ({@code attachments/v1}). */
+        public DocumentText(String text, boolean truncated, long bytesRead) {
+            this(text, truncated, bytesRead, null, null);
+        }
+    }
+
+    /**
+     * Ein abgelegter Dokument-Anhang mit seinen enthaltenen Dateien als Struktur (ADR 0026, AP4c,
+     * {@code attachments/v2}); leer ohne strukturierte Extraktion, dann gilt {@link #text}.
+     */
+    default Optional<com.aresstack.spaceharvester.application.assets.DocumentExport> document(
+            ExportAssetManifest.Entry entry) {
+        return Optional.empty();
+    }
 }
