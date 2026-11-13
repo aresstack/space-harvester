@@ -530,6 +530,33 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theSynonymBudgetGoesUnderTermsSynonymsAndKeepsTheOtherKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  terms:\n    synonyms:\n      max-terms: 300   # bleibt\n"
+                + "      max-judged-pairs: 5\n  jobs:\n    max-concurrent: 3\n");
+        var budget = new com.aresstack.spaceharvester.application.terms.SynonymBudget(300, 500, 40);
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                budget));
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                budget));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    synonyms:\n      max-terms: 300\n      max-embedded-terms: 500\n"
+                + "      max-judged-pairs: 40\n", "max-concurrent: 3").doesNotContain("max-judged-pairs: 5");
+        assertThat(text.indexOf("synonyms:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("synonyms:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.terms().synonyms()).isEqualTo(budget);
+        assertThat(settings.jobLimits().maxConcurrent()).isEqualTo(3);
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        editor.save(file, editor.withSynonymBudget(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                com.aresstack.spaceharvester.application.terms.SynonymBudget.DEFAULT.withMaxJudgedPairs(20)));
+        assertThat(loader.load(file).terms().synonyms().maxJudgedPairs()).as("Block ohne terms neu angelegt")
+                .isEqualTo(20);
+    }
+
+    @Test
     void retriesGoUnderJobsRetryAndKeepTheOtherJobLimits() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3   # bleibt\n");
