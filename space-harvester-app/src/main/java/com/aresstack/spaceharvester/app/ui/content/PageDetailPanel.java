@@ -197,6 +197,10 @@ public final class PageDetailPanel extends JPanel {
     private boolean readingLoaded;
     private boolean referencesLoaded;
     private boolean imagesLoaded;
+    /** Anmeldung bei der Liste freigegebener Seiten (ADR 0028), damit „Bilder“ eine neue Freigabe der Seite zeigt. */
+    private com.aresstack.spaceharvester.application.observe.Subscription releaseSubscription =
+            com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+    private AppRuntime releaseRuntime;
     private final ReadingPane readingPane = new ReadingPane();
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
@@ -1315,6 +1319,7 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || page == null || imagesLoaded) {
             return;
         }
+        watchReleases(runtime);
         imagesLoaded = true;
         images.loading();
         String source = sourceId;
@@ -1391,6 +1396,31 @@ public final class PageDetailPanel extends JPanel {
             images.describing(false);
             if (shown == page) {
                 feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /**
+     * Meldet sich je Laufzeit einmal bei der Liste freigegebener Seiten an: Kommt die gezeigte Seite dazu oder geht sie
+     * weg (etwa durch Senden im Chat), gilt der geladene Stand der Bilder nicht mehr; ist „Bilder“ offen, lädt er neu.
+     */
+    private void watchReleases(AppRuntime runtime) {
+        if (runtime == releaseRuntime) {
+            return;
+        }
+        releaseSubscription.close();
+        releaseRuntime = runtime;
+        releaseSubscription = runtime.workspace().subscribePageReleases(change -> {
+            boolean mine = java.util.stream.Stream.concat(change.added().stream(), change.removed().stream())
+                    .anyMatch(entry -> entry.key().sourceId().equals(sourceId)
+                            && entry.key().pageId().equals(pageId));
+            if (mine) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    imagesLoaded = false;
+                    if (IMAGES.equals(selectedTab())) {
+                        loadImages();
+                    }
+                });
             }
         });
     }

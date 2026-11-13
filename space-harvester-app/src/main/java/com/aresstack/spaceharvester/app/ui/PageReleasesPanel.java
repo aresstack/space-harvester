@@ -223,6 +223,11 @@ public final class PageReleasesPanel {
 
     /** Liest die Gruppen im Hintergrund; nur das Ergebnis der jüngsten Abfrage zählt. Erst anmelden, dann lesen. */
     void refresh() {
+        if (!root.isShowing()) {
+            // Eine späte Rückmeldung (Entfernen, gebündelte Meldung) darf die Abmeldung beim Verbergen nicht aufheben.
+            unsubscribe();
+            return;
+        }
         AppRuntime runtime = context.runtime();
         subscribe(runtime);
         int ticket = ++request;
