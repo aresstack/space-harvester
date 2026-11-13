@@ -121,7 +121,7 @@ public final class SemanticVariantSearch implements VariantSearch {
 
     private static PageSearchQuery scope(KeywordSearch.Query query) {
         return new PageSearchQuery(query.sourceId(), query.sourceIds(), query.spaceKeys(), List.of(), null, null,
-                null, null, null, SearchSort.TITLE);
+                null, null, null, SearchSort.TITLE, query.pages());
     }
 
     /**

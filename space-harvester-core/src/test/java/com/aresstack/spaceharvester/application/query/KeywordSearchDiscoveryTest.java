@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -17,7 +18,9 @@ import com.aresstack.spaceharvester.application.searchrun.InMemorySearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -439,6 +442,20 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void withASelectionOnlyItsFindingsGoToTheCatalogSoThatTheFillLoadsNothingOutsideIt() {
+        wiki.results("Hashicorp Vault", "1", "2", "3");
+        List<String> offered = Collections.synchronizedList(new ArrayList<>());
+        FindingCatalog findings = (finder, sourceId, found) -> found.forEach(finding -> offered.add(finding.pageId()));
+
+        new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.sourceOrder(), SearchRunLog.NONE, findings)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault")
+                        .within(PageSet.of(Map.of("wiki", List.of("2")))), null, 50);
+
+        assertThat(offered).containsExactly("2");
+    }
+
+    @Test
     void aFailingCatalogNeverFailsTheSearch() {
         wiki.results("Hashicorp Vault", "1");
         FindingCatalog failing = (finder, sourceId, found) -> {
@@ -450,6 +467,75 @@ class KeywordSearchDiscoveryTest {
                 .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
 
         assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
+    }
+
+    @Test
+    void withASelectionOnlyItsPagesAreLoadedAndHitWhileTheCursorKeepsTheOrderOfTheSource() {
+        // ADR 0029: Seite samt Unterseiten. „a“ liegt schon im Cache, gehört aber nicht zur Auswahl.
+        wiki.results("agil", "a", "b", "c", "d", "e");
+        cached.add("a");
+        when(texts.search(anyString(), any(), any(), any(PageSet.class), anyInt())).thenAnswer(call -> {
+            PageSet pages = call.getArgument(3);
+            int limit = call.getArgument(4);
+            return new ArrayList<>(cached).stream().filter(id -> pages.contains("wiki", id)).limit(limit)
+                    .map(id -> new PageTextIndex.Match("wiki", id, "DEV", "Seite " + id, "Auszug " + id)).toList();
+        });
+        // Quellweit freigegeben, damit der Beobachter die Funde je Quelle schon während der Suche bekommt.
+        AccessGuard sourceWide = new AccessGuard(new com.aresstack.spaceharvester.application.access.AccessPolicy() {
+            @Override
+            public AccessDecision decide(AccessContext context,
+                                         com.aresstack.spaceharvester.application.access.ResourceScope scope,
+                                         AccessKind kind) {
+                return AccessDecision.ALLOW;
+            }
+
+            @Override
+            public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+                return AccessDecision.ALLOW;
+            }
+        });
+        KeywordSearch search = new KeywordSearch(catalog, sourceWide, texts, prefetch, 1, ExcerptPriority.off());
+        KeywordSearch.Query query = KeywordSearch.Query.of("agil")
+                .within(PageSet.of(Map.of("wiki", List.of("b", "d", "e"))));
+        List<String> found = Collections.synchronizedList(new ArrayList<>());
+        KeywordSearch.Found watcher = (sourceId, hits) -> hits.forEach(hit -> found.add(hit.pageId()));
+
+        List<String> delivered = new ArrayList<>();
+        String cursor = null;
+        String first = null;
+        for (int batch = 0; batch < 10; batch++) {
+            KeywordSearch.Results results = search.search(APP, query, cursor, 2, null, watcher);
+            results.hits().forEach(hit -> delivered.add(hit.pageId()));
+            assertThat(results.found()).extracting(KeywordSearch.Hit::pageId).allMatch(Set.of("b", "d", "e")::contains);
+            cursor = results.nextCursor();
+            first = first == null ? cursor : first;
+            if (cursor == null) {
+                break;
+            }
+        }
+
+        assertThat(delivered).containsExactly("b", "d", "e");
+        assertThat(loads).containsExactly(List.of("b"), List.of("d"), List.of("e"));
+        assertThat(found).isNotEmpty().allMatch(Set.of("b", "d", "e")::contains);
+        String other = first;
+        assertThatThrownBy(() -> search.search(APP, KeywordSearch.Query.of("agil"), other, 2))
+                .as("Cursor einer anderen Auswahl").isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> search.search(APP, KeywordSearch.Query.of("agil")
+                .within(PageSet.of(Map.of("wiki", List.of("b")))), other, 2)).isInstanceOf(InvalidQueryException.class);
+    }
+
+    @Test
+    void anEmptySelectionAsksNoSourceAndFindsNothing() {
+        wiki.results("agil", "a");
+        cached.add("a");
+
+        KeywordSearch.Results results = search(1, ExcerptPriority.off())
+                .search(APP, KeywordSearch.Query.of("agil").within(PageSet.EMPTY), null, 50);
+
+        assertThat(wiki.searches).isEmpty();
+        assertThat(loads).isEmpty();
+        assertThat(results.hits()).isEmpty();
+        assertThat(results.nextCursor()).isNull();
     }
 
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {

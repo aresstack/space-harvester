@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageLoads;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -151,20 +152,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         HoldingsCatalog.Stock stock = found.get();
         Map<String, HoldingState> states = new LinkedHashMap<>();
         Map<String, String> parents = new HashMap<>();
-        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
-            if (!states.containsKey(page.pageId()) && visible(caller, sourceId, spaceKey, page.pageId())) {
-                states.put(page.pageId(), state(page, stock.stale()));
-                parents.put(page.pageId(), page.parentPageId());
-            }
-        }
-        // Eine wieder sichtbare Seite hat ein Seitendokument, bevor die nächste Generation sie entsperrt: es gilt der
-        // Katalog.
-        for (HoldingsCatalog.LockedPage page : stock.locked()) {
-            if (!states.containsKey(page.pageId()) && visible(caller, sourceId, spaceKey, page.pageId())) {
-                states.put(page.pageId(), HoldingState.LOCKED);
-                parents.put(page.pageId(), page.parentPageId());
-            }
-        }
+        visiblePages(caller, sourceId, spaceKey, stock, states, parents);
         HoldingCounts total = HoldingCounts.ZERO;
         for (HoldingState state : states.values()) {
             total = total.plus(HoldingCounts.of(state));
@@ -183,6 +171,126 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
             accumulate(root, states, pages);
         }
         return new Computed(summary, pages);
+    }
+
+    /** Zustand und Elternseite jeder Seite des Space, die der Aufrufer sehen darf. */
+    private void visiblePages(AccessContext caller, String sourceId, String spaceKey, HoldingsCatalog.Stock stock,
+                              Map<String, HoldingState> states, Map<String, String> parents) {
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            if (!states.containsKey(page.pageId()) && visible(caller, sourceId, spaceKey, page.pageId())) {
+                states.put(page.pageId(), state(page, stock.stale()));
+                parents.put(page.pageId(), page.parentPageId());
+            }
+        }
+        // Eine wieder sichtbare Seite hat ein Seitendokument, bevor die nächste Generation sie entsperrt: es gilt der
+        // Katalog.
+        for (HoldingsCatalog.LockedPage page : stock.locked()) {
+            if (!states.containsKey(page.pageId()) && visible(caller, sourceId, spaceKey, page.pageId())) {
+                states.put(page.pageId(), HoldingState.LOCKED);
+                parents.put(page.pageId(), page.parentPageId());
+            }
+        }
+    }
+
+    // --- Auswahl (ADR 0029) ---------------------------------------------------------------------------------------
+
+    /**
+     * Löst eine Auswahl im Core zu Seiten auf (ADR 0029), über denselben Baum wie {@link #overview}: eine Seite samt
+     * allen Nachkommen, ein ganzer Space oder alle Spaces einer Quelle, die der Aufrufer sehen darf. Ohne Quellenzugriff
+     * und ohne Obergrenze, denn das Ergebnis ist nur eine Menge von IDs. Seiten ohne Leserecht fehlen.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn ein gewählter Space bzw. eine
+     *                                                                               gewählte Quelle nicht für
+     *                                                                               {@code metadata} freigegeben ist
+     * @throws UnknownSourceException wenn eine Quelle nicht konfiguriert ist
+     */
+    public PageSelection resolve(AccessContext caller, Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        Map<String, Set<String>> pages = new LinkedHashMap<>();
+        Map<Space, SpaceSummary> spaces = new LinkedHashMap<>();
+        HoldingCounts counts = HoldingCounts.ZERO;
+        boolean complete = true;
+        for (Selection.Root root : selection.roots()) {
+            List<String> spaceKeys;
+            if (root.spaceKey() == null) {
+                access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
+                requireSource(root.sourceId());
+                spaceKeys = catalog.spaceKeys(root.sourceId()).stream().filter(spaceKey -> access.permits(caller,
+                        ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)).toList();
+            } else {
+                spaceKeys = List.of(root.spaceKey());
+            }
+            for (String spaceKey : spaceKeys) {
+                Resolved resolved = resolve(caller, root.sourceId(), spaceKey, root.pageId());
+                spaces.putIfAbsent(new Space(root.sourceId(), spaceKey), resolved.summary());
+                complete &= resolved.summary().inventoried() && resolved.found();
+                Set<String> selected = pages.computeIfAbsent(root.sourceId(), id -> new HashSet<>());
+                for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
+                    if (selected.add(page.getKey())) {
+                        counts = counts.plus(HoldingCounts.of(page.getValue()));
+                    }
+                }
+            }
+        }
+        return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
+    }
+
+    /** Eine Wurzel in einem Space: die Seite samt Nachkommen, ohne Seite der ganze Space. */
+    private Resolved resolve(AccessContext caller, String sourceId, String spaceKey, String pageId) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        requireSource(sourceId);
+        Optional<HoldingsCatalog.Stock> found = catalog.stock(sourceId, spaceKey);
+        if (found.isEmpty()) {
+            return new Resolved(new SpaceSummary(sourceId, spaceKey, null, HoldingCounts.ZERO), Map.of(), false);
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, HoldingState> states = new LinkedHashMap<>();
+        Map<String, String> parents = new HashMap<>();
+        visiblePages(caller, sourceId, spaceKey, stock, states, parents);
+        HoldingCounts total = HoldingCounts.ZERO;
+        for (HoldingState state : states.values()) {
+            total = total.plus(HoldingCounts.of(state));
+        }
+        SpaceSummary summary = new SpaceSummary(sourceId, spaceKey, stock.generation(), total);
+        if (pageId == null) {
+            return new Resolved(summary, states, true);
+        }
+        if (!states.containsKey(pageId)) {
+            return new Resolved(summary, Map.of(), false);
+        }
+        // Derselbe Baum wie der Seitenbaum: Zyklen sind aufgebrochen, fehlende Eltern machen Wurzeln.
+        List<TreeEntry> entries = new ArrayList<>(states.size());
+        parents.forEach((id, parent) -> entries.add(new TreeEntry(id, parent)));
+        PageTree.Node start = find(PageTreeBuilder.build(entries).roots(), pageId);
+        Map<String, HoldingState> subtree = new LinkedHashMap<>();
+        Deque<PageTree.Node> open = new ArrayDeque<>();
+        if (start != null) {
+            open.push(start);
+        }
+        while (!open.isEmpty()) {
+            PageTree.Node node = open.pop();
+            if (subtree.put(node.pageId(), states.get(node.pageId())) == null) {
+                node.children().forEach(open::push);
+            }
+        }
+        return new Resolved(summary, subtree, start != null);
+    }
+
+    /** Der Knoten einer Seite im Baum, ohne Rekursion. */
+    private static PageTree.Node find(List<PageTree.Node> roots, String pageId) {
+        Deque<PageTree.Node> open = new ArrayDeque<>(roots);
+        while (!open.isEmpty()) {
+            PageTree.Node node = open.pop();
+            if (node.pageId().equals(pageId)) {
+                return node;
+            }
+            node.children().forEach(open::push);
+        }
+        return null;
+    }
+
+    private record Resolved(SpaceSummary summary, Map<String, HoldingState> pages, boolean found) {
     }
 
     /** Zustand einer Seite des Katalogs; dieselbe Regel wie die Lücken der Hintergrundfüllung (ADR 0016). */
