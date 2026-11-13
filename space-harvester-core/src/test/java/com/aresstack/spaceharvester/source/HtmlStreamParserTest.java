@@ -102,6 +102,30 @@ class HtmlStreamParserTest {
     }
 
     @Test
+    void inlineOnlyBodiesAreEmittedInTheSameOrderAsTika() throws Exception {
+        // Über der Schwelle für Inline-Text, mit falsch verschachtelter Formatierung und Tabellen dazwischen.
+        StringBuilder html = new StringBuilder("<html><body>");
+        for (int i = 0; i < 3 * HtmlStreamParser.INLINE_FLUSH; i++) {
+            html.append("<span>Zeile ").append(i).append("</span><br>");
+            if (i % 500 == 0) {
+                html.append("<b>fett <i>beide</b> kursiv</i><table>lose<tr><td><span>z").append(i)
+                        .append("</span></table><a href=\"x\"><span>ver</span>weis</a>");
+            }
+        }
+        html.append("</body></html>");
+
+        assertThat(xhtml(new HtmlStreamParser(), html.toString())).isEqualTo(xhtml(new JSoupParser(), html.toString()));
+    }
+
+    @Test
+    void deeplyNestedElementsNeedNoCallStack() throws Exception {
+        String html = "<html><body>" + "<span>".repeat(50_000) + "TIEF" + "</span>".repeat(50_000)
+                + "<p>danach</p></body></html>";
+
+        assertThat(text(new HtmlStreamParser(), html)).contains("TIEF", "danach");
+    }
+
+    @Test
     void everyMarkTheTikaPathFindsTheStreamFindsToo() throws Exception {
         for (String html : List.of(SEITE, HINWEISE, NESTED, BROKEN)) {
             String tika = text(new JSoupParser(), html);

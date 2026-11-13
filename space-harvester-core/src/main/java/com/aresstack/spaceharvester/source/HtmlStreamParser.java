@@ -70,6 +70,13 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
             "section", "article", "main", "header", "footer", "nav", "aside", "form", "address", "figure",
             "figcaption", "fieldset", "details", "summary", "hr", "head", "title", "body");
 
+    /** Abgeschlossene Elemente ohne Block, nach denen spätestens abgegeben wird. */
+    static final int INLINE_FLUSH = 1024;
+    /** Elemente, unter denen jsoup abgeschlossene Knoten noch umhängen kann. */
+    private static final Set<String> MOVABLE = Set.of("a", "b", "big", "code", "em", "font", "i", "nobr", "s",
+            "small", "strike", "strong", "tt", "u", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "caption",
+            "colgroup", "select", "template");
+
     /** Fester Code im Log, wenn der Strom nicht verfügbar ist. */
     static final String UNAVAILABLE = "html-stream-unavailable";
 
@@ -156,10 +163,15 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
             parser.parse(skipBom(reader), "");
             Emitter emitter = new Emitter(target, parser.document());
             Iterator<Element> elements = parser.iterator();
+            int retained = 0;
             while (elements.hasNext()) {
                 Element element = elements.next();
-                if (FLUSH.contains(element.normalName())) {
+                retained++;
+                // Blöcke sofort; reiner Inline-Text (etwa span und br ohne Absätze) nach einer festen Zahl an einem
+                // Element, dessen Lage jsoup nicht mehr ändert, damit der Baum auch ohne Blöcke klein bleibt.
+                if (FLUSH.contains(element.normalName()) || retained >= INLINE_FLUSH && settled(element)) {
                     emitter.through(element);
+                    retained = 0;
                 }
             }
             emitter.rest();
@@ -167,6 +179,19 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
             throw e.getCause();
         }
         target.endDocument();
+    }
+
+    /**
+     * Ob jsoup ein abgeschlossenes Element nicht mehr umhängt: weder es noch ein Vorfahr ist ein Formatierungselement
+     * (Adoption Agency) oder Teil einer Tabelle (Foster Parenting).
+     */
+    private static boolean settled(Element element) {
+        for (Element node = element; node != null; node = node.parent()) {
+            if (MOVABLE.contains(node.normalName())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static ContentHandler chain(HtmlMapper mapper, ContentHandler handler, Metadata metadata,
@@ -295,12 +320,22 @@ public final class HtmlStreamParser extends AbstractEncodingDetectorParser {
             }
         }
 
-        private void traverse(Node node) throws SAXException {
-            head(node);
-            for (int i = 0; i < node.childNodeSize(); i++) {
-                traverse(node.childNode(i));
+        /** Wie Tikas {@code NodeTraversor}: ohne Rekursion, tiefe Verschachtelung braucht keinen Stapel. */
+        private void traverse(Node root) throws SAXException {
+            Node node = root;
+            while (node != null) {
+                head(node);
+                if (node.childNodeSize() > 0) {
+                    node = node.childNode(0);
+                    continue;
+                }
+                while (node != root && node.nextSibling() == null) {
+                    tail(node);
+                    node = node.parentNode();
+                }
+                tail(node);
+                node = node == root ? null : node.nextSibling();
             }
-            tail(node);
         }
 
         private void head(Node node) throws SAXException {

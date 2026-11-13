@@ -229,7 +229,7 @@ public final class LargeFiles {
 
     /**
      * HTML mit Überschriften, Absätzen, Listen und Tabellen bis mindestens {@code bytes} Bytes, ohne umschließendes
-     * Element außer body; erster und letzter Absatz Marken.
+     * Element außer body, dazwischen ein langer Abschnitt nur aus span und br; erster und letzter Absatz Marken.
      */
     public static Path html(Path target, long bytes) {
         try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {
@@ -248,7 +248,12 @@ public final class LargeFiles {
                 if (i % 30 == 0) {
                     block.append("<ul><li>").append(line(random, 20)).append("</li></ul>");
                 }
-                block.append("<p>").append(line(random, 100)).append("</p>\n");
+                if (written > bytes / 3 && written < bytes / 2) {
+                    // Ein Drittel bis zur Hälfte nur Inline-Text ohne Block: auch der bleibt nicht im Speicher.
+                    block.append("<span>").append(line(random, 100)).append("</span><br>\n");
+                } else {
+                    block.append("<p>").append(line(random, 100)).append("</p>\n");
+                }
                 written += write(out, block.toString());
             }
             write(out, "<p>" + LAST_MARK + "</p></body></html>\n");
