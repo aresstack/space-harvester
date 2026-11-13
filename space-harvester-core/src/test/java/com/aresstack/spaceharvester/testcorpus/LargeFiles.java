@@ -29,12 +29,13 @@ import org.apache.poi.xwpf.usermodel.XWPFTable;
 /**
  * Große, ganz normale Prüfdateien (ADR 0026, Abnahme 5 und 6), zur Laufzeit in eine Datei geschrieben statt
  * eingecheckt. Der Umfang ist ein Parameter: Die Testgruppe mit kleinem Heap nimmt die Werte unten, normale Tests
- * nehmen wenige Seiten oder Zeilen. Der Inhalt ist erfundener Fülltext aus festem Zufall (Saat {@value #SEED}), also bei
- * gleichem Umfang gleich (Text, Bilder, Größe; ein PDF kann sich in Kennungen von PDFBox unterscheiden). Jede Seite,
- * jeder Absatz und jede Zeile trägt eine Marke, an der ein Test Vollständigkeit prüft.
+ * nehmen wenige Seiten oder Zeilen. Der Inhalt ist erfundener Fülltext aus festem Zufall (Saat {@value #SEED}), also
+ * bei gleichem Umfang gleich (Text, Bilder, Größe; ein PDF kann sich in Kennungen von PDFBox unterscheiden). Jede
+ * Seite, jeder Absatz und jede Zeile trägt eine Marke, an der ein Test Vollständigkeit prüft.
  *
  * <p>Der Erzeuger hält die Datei nie ganz im Speicher: PDFBox puffert in einer temporären Datei, Excel schreibt über
- * {@link SXSSFWorkbook} (200 Zeilen im Speicher). Word baut POI im Speicher; dafür ist der Umfang hier klein gedacht.
+ * {@link SXSSFWorkbook} (200 Zeilen im Speicher, Zeichenketten inline). Word baut POI im Speicher; dafür ist der
+ * Umfang hier klein gedacht.
  */
 public final class LargeFiles {
 
@@ -164,7 +165,8 @@ public final class LargeFiles {
 
     /**
      * Excel mit einem Blatt „Kosten“ und {@code rows} Zeilen zu 9 Spalten: Marke {@link #rowMark}, 4 Zahlen, 4 Texte
-     * aus 5 000 verschiedenen (geteilte Zeichenketten wie in Excel). Mit {@link #XLSX_ROWS} rund 140 Mio. Zeichen Text.
+     * aus 5 000 verschiedenen, als Inline-Zeichenketten (eine Tabelle geteilter Zeichenketten hielte die Million Marken
+     * beim Erzeugen im Speicher). Mit {@link #XLSX_ROWS} rund 140 Mio. Zeichen Text.
      */
     public static Path xlsx(Path target, int rows) {
         requirePositive(rows);
@@ -173,7 +175,7 @@ public final class LargeFiles {
         for (int i = 0; i < pool.length; i++) {
             pool[i] = line(random, 24) + " " + i;
         }
-        try (SXSSFWorkbook workbook = new SXSSFWorkbook(null, 200, true, true)) {
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(null, 200, true, false)) {
             SXSSFSheet sheet = workbook.createSheet("Kosten");
             for (int y = 0; y < rows; y++) {
                 var row = sheet.createRow(y);
