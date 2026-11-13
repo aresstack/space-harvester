@@ -114,6 +114,13 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   unvollständig statt anzuhalten. „Neu erzwingen“ gibt es für sie nicht.
 - Eine neue Version der Seite macht ihr Verzeichnis veraltet; der nächste Lauf von „Bilder beschaffen“ bzw. „Anhänge
   beschaffen“ für die Auswahl ergänzt nur, was fehlt.
+- Ohne Export: `ExportAssetCollection.collect` je Wurzel in einem Space, in der App `Workspace.collectAssets` für eine
+  Auswahl (aufgeteilt wie die Ausgabe, `Holdings.outputs`, mit sync-Freigabe je Space). Die Aufträge sind dieselben
+  Arten „Bilder beschaffen“ und „Anhänge beschaffen“ mit `selection=true` und, für einen Teilbaum, `selectionRoot`,
+  ohne `exportId`; sie laden die lokal gespeicherten Seiten in ihrer gespeicherten Version. Seiten, deren Verzeichnis
+  nach den heutigen Einstellungen schon vollständig ist, rufen sie nicht ab; „Neu erzwingen“ lädt alles. Ihr Manifest
+  bleibt im Speicher, was bleibt, steht im Verzeichnis je Seite. Ein zweiter Klick auf dieselbe Wurzel liefert den
+  offenen Auftrag oder lässt den beendeten im selben Eintrag erneut laufen.
 
 ### 5. Nicht Teil dieser Entscheidung
 

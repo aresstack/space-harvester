@@ -947,6 +947,31 @@ public final class Workspace {
         return started;
     }
 
+    /**
+     * Bilder und Anhänge einer Auswahl beschaffen, ohne Export-Auftrag (ADR 0029, Schritt 7): je gewähltem Space bzw.
+     * Teilbaum ({@code Holdings.outputs}) ein Auftrag „Bilder beschaffen“ und, bei eingeschalteten Anhängen, ein Auftrag
+     * „Anhänge beschaffen“ für die lokal gespeicherten Seiten; braucht je Space die sync-Freigabe, geprüft vor dem
+     * ersten Auftrag. Was schon im Bestand liegt, ruft der Lauf nicht ab. Danach findet eine Ausgabe aus dem Bestand
+     * die Dateien ({@link #startExportFromHoldings}). Die Aufträge tragen {@code selection=true} und, für einen
+     * Teilbaum, {@code selectionRoot}, aber keine {@code exportId}.
+     *
+     * @return die eingeplanten Aufträge; ein schon offener für dieselbe Wurzel kommt zurück
+     */
+    public List<JobStatus> collectAssets(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> access.require(caller, ResourceScope.space(root.sourceId(), root.spaceKey()),
+                AccessKind.SYNC));
+        List<JobStatus> started = new ArrayList<>();
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            for (JobStatus status : harvester.assetCollection().collect(Harvester.OWNER, root)) {
+                activities.remember(status.id());
+                started.add(status);
+            }
+        }
+        return started;
+    }
+
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
         ownExport(exportId);

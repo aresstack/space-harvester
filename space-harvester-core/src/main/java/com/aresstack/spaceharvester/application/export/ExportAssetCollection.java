@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
@@ -134,6 +135,10 @@ public class ExportAssetCollection {
     private volatile ReadingViewStore importedViews;
     /** Je Export ein Schloss: beide Aufträge lesen, mischen und schreiben dasselbe Manifest. */
     private final Map<String, Object> manifests = new ConcurrentHashMap<>();
+    /** Die Seiten einer Auswahl im Bestand für Aufträge ohne Export (ADR 0029, Schritt 7); {@code null} ohne. */
+    private volatile SelectionPages selectionPages;
+    /** Das Manifest je Auswahl-Lauf, nur im Speicher: Was bleibt, steht im Verzeichnis je Seite ({@link #remember}). */
+    private final Map<String, ExportAssetManifest> selectionManifests = new ConcurrentHashMap<>();
 
     /**
      * Was ein Auftrag beschafft: Bilder (mit Lese-Ansicht und Mermaid) oder Dokument-Anhänge. Beide teilen jeden
@@ -348,6 +353,160 @@ public class ExportAssetCollection {
     /** Wiederanlauf-Angabe: der Export, dessen Bilder der Auftrag beschafft ({@link JobStatus#parameters()}). */
     public static final String EXPORT_ID = "exportId";
 
+    // --- Beschaffen auf einer Auswahl, ohne Export (ADR 0029, Schritt 7) ----------------------------------------
+
+    /** Angabe eines Auftrags, der für eine Auswahl im Bestand beschafft statt für einen Export: {@code true}. */
+    public static final String SELECTION = "selection";
+    /** Angabe dazu: die Seite der Wurzel im Space des Auftrags; fehlt für den ganzen Space. */
+    public static final String SELECTION_ROOT = "selectionRoot";
+    /** Anfang des internen Schlüssels eines Auswahl-Laufs; der Rest ist ein Hash ohne Kennungen. */
+    private static final String SELECTION_KEY = "selection:";
+    /** Die Wurzel zu jedem Schlüssel eines Auswahl-Laufs, gefüllt, wo der Schlüssel entsteht ({@link #key}). */
+    private final Map<String, Selection.Root> selectionRoots = new ConcurrentHashMap<>();
+
+    /**
+     * Die lokal gespeicherten Seiten einer Wurzel der Auswahl als Datenbestand (Snapshots im Cache), für den
+     * Auftraggeber; leer, wenn er sie nicht lesen darf.
+     */
+    @FunctionalInterface
+    public interface SelectionPages {
+
+        Optional<ConversionInput> dataset(String owner, Selection.Root root);
+    }
+
+    /** Schließt die Seiten einer Auswahl an; ohne sie beschafft {@link #collect} nichts. */
+    public void selections(SelectionPages pages) {
+        this.selectionPages = pages;
+    }
+
+    /**
+     * Beschafft Bilder und, bei eingeschalteten Anhängen ({@link ExportSettings#attachments()}), in einem eigenen
+     * Auftrag die Anhänge einer Wurzel einer Auswahl im Bestand, ohne Export-Auftrag (ADR 0029, Schritt 7): für ihre
+     * lokal gespeicherten Seiten in deren gespeicherter Version, abgelegt im Verzeichnis je Seite ({@link #imported}),
+     * damit eine Ausgabe aus dem Bestand sie findet. Seiten, deren Verzeichnis für die Art schon vollständig ist, ruft
+     * der Lauf nicht ab; er ergänzt nur, was fehlt. Abgelegt wird wie bei einem Export nur, wenn der Auftraggeber die
+     * ganze Quelle lesen darf. Gibt es für die Wurzel schon einen offenen Auftrag der Art, kommt er zurück; ein
+     * beendeter läuft im selben Eintrag erneut. Fortsetzen, „Nur Fehler“ und „Neu erzwingen“ wie bei einem Export.
+     *
+     * @param root eine Wurzel in einem Space ({@code Holdings.outputs} teilt eine Auswahl so auf)
+     * @return die eingeplanten Aufträge, Bilder zuerst; leer ohne lokal gespeicherte Seiten
+     * @throws IllegalArgumentException wenn die Wurzel keinen Space nennt
+     */
+    public List<JobStatus> collect(String owner, Selection.Root root) {
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(root, "root");
+        if (root.spaceKey() == null) {
+            throw new IllegalArgumentException("Eine Wurzel je Space");
+        }
+        String key = key(root);
+        Optional<ConversionInput> dataset = dataset(key, owner);
+        if (dataset.isEmpty() || dataset.get().headers().isEmpty()) {
+            return List.of();
+        }
+        ExportSettings current = settings.get();
+        List<JobStatus> started = new ArrayList<>(2);
+        submit(Scope.MEDIA, root, key, owner).ifPresent(started::add);
+        if (current != null && current.attachments()) {
+            submit(Scope.DOCUMENTS, root, key, owner).ifPresent(started::add);
+        }
+        return List.copyOf(started);
+    }
+
+    private Optional<JobStatus> submit(Scope scope, Selection.Root root, String key, String owner) {
+        Map<String, String> parameters = root.pageId() == null ? Map.of(SELECTION, "true")
+                : Map.of(SELECTION, "true", SELECTION_ROOT, root.pageId());
+        try {
+            Optional<JobStatus> earlier = jobs.list(owner, scope.type).stream()
+                    .filter(job -> key.equals(key(job))).findFirst();
+            if (earlier.isPresent() && !earlier.get().state().terminal()) {
+                return earlier;
+            }
+            JobStatus status = earlier.isPresent()
+                    ? jobs.rerun(earlier.get().id(), owner, parameters, new AssetTask(key, scope))
+                    : jobs.submit(scope.type, root.sourceId(), root.spaceKey(), root.pageId(), owner, parameters,
+                    new AssetTask(key, scope));
+            running.put(scope.key(key), status.id());
+            return Optional.of(status);
+        } catch (JobCapacityExceededException | JobNotResumableException | IllegalStateException e) {
+            LOG.log(System.Logger.Level.INFO, "{0} für eine Auswahl nicht eingeplant ({1})", scope.label,
+                    e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    /** Der Schlüssel eines Auftrags: sein Export oder, ohne Export, seine Auswahl; {@code null} bei einem alten. */
+    private String key(JobStatus status) {
+        if (Boolean.parseBoolean(status.parameter(SELECTION)) && status.partitionKey() != null) {
+            return key(new Selection.Root(status.sourceId(), status.partitionKey(), status.parameter(SELECTION_ROOT)));
+        }
+        return status.parameter(EXPORT_ID);
+    }
+
+    /** Der Schlüssel eines Auswahl-Laufs: ein Hash über Quelle, Space und Wurzel, damit kein Log Kennungen nennt. */
+    private String key(Selection.Root root) {
+        String hash = Assets.sha256(String.join("\u0000", root.sourceId(), root.spaceKey(),
+                Objects.toString(root.pageId(), "")).getBytes(StandardCharsets.UTF_8));
+        String key = SELECTION_KEY + hash.substring(hash.indexOf(':') + 1, hash.indexOf(':') + 17);
+        selectionRoots.putIfAbsent(key, root);
+        return key;
+    }
+
+    private static boolean selection(String key) {
+        return key != null && key.startsWith(SELECTION_KEY);
+    }
+
+    /** Der Datenbestand eines Laufs: der Export oder die lokal gespeicherten Seiten der Auswahl. */
+    private Optional<ConversionInput> dataset(String key, String owner) {
+        if (!selection(key)) {
+            return writer.dataset(key);
+        }
+        SelectionPages pages = selectionPages;
+        Selection.Root root = selectionRoots.get(key);
+        return pages == null || root == null ? Optional.empty() : pages.dataset(owner, root);
+    }
+
+    private Optional<ExportAssetManifest> manifest(String key) {
+        return selection(key) ? Optional.ofNullable(selectionManifests.get(key)) : writer.assets(key);
+    }
+
+    private void putManifest(String key, ExportAssetManifest manifest) {
+        if (selection(key)) {
+            selectionManifests.put(key, manifest);
+        } else {
+            writer.putAssets(key, manifest);
+        }
+    }
+
+    /**
+     * Übernimmt für einen Auswahl-Lauf die Seiten als fertig geprüft, deren Verzeichnis im Bestand zu ihrer gespeicherten
+     * Version für die Arten dieses Laufs vollständig ist, nach den heutigen Einstellungen gefiltert: Sie werden nicht
+     * abgerufen. Ein damals ausgeschlossener, heute zugelassener Anhang macht die Seite unvollständig.
+     */
+    private void collected(Run run, ConversionInput dataset, Map<String, CheckedPage> done) {
+        ImportedAssets directory = imported;
+        if (directory == null) {
+            return;
+        }
+        dataset.forEachPage(page -> {
+            PageSnapshot snapshot = page.snapshot();
+            String version = snapshot.metadata().version();
+            if (version == null || done.containsKey(snapshot.key().pageId())) {
+                return;
+            }
+            Optional<ExportAssetManifest> stored = directory.find(snapshot.key(), version);
+            if (stored.isEmpty() || run.share.images() && !stored.get().imagesComplete()
+                    || run.share.documents() && !stored.get().documentsComplete()) {
+                return;
+            }
+            List<ExportAssetManifest.Entry> own = stored.get().assets().stream().filter(run.share::owns)
+                    .map(entry -> entry.document() ? filtered(run.settings, entry) : entry).toList();
+            if (own.stream().allMatch(ExportAssetManifest.Entry::present)) {
+                done.put(snapshot.key().pageId(), new CheckedPage(own, own.size(), own.size(),
+                        own.stream().filter(ExportAssetManifest.Entry::stored).count(), 0));
+            }
+        });
+    }
+
     /**
      * Die Angaben eines Folgeauftrags: sein Export und, bei einer Ausgabe aus dem Bestand, {@link Exports#HOLDINGS};
      * dann liest er nur, was je Seite im Bestand liegt, nie die Quelle (ADR 0029).
@@ -405,7 +564,7 @@ public class ExportAssetCollection {
         if (scope == null) {
             throw new UnknownJobException(jobId);
         }
-        String exportId = status.parameter(EXPORT_ID);
+        String exportId = key(status);
         JobStatus resumed;
         if (jobs.resumable(jobId, owner) || !status.state().terminal()) {
             resumed = jobs.resume(jobId, owner, failedAgain ? AssetTask::withoutFailedPages : null);
@@ -441,7 +600,7 @@ public class ExportAssetCollection {
         if (scope == null) {
             throw new UnknownJobException(jobId);
         }
-        String exportId = status.parameter(EXPORT_ID);
+        String exportId = key(status);
         if (exportId == null) {
             throw new JobNotResumableException(jobId, "der Auftrag nennt seinen Export nicht");
         }
@@ -462,6 +621,10 @@ public class ExportAssetCollection {
      * Export keinen eigenen Auftrag „Anhänge beschaffen“ gibt.
      */
     private boolean documentsWithImages(String exportId, String owner) {
+        if (selection(exportId)) {
+            // Auf einer Auswahl laufen Bilder und Anhänge immer als eigene Aufträge.
+            return false;
+        }
         ExportSettings current = settings.get();
         return current != null && current.attachments() && jobs.list(owner, JobType.ATTACHMENTS).stream()
                 .noneMatch(job -> exportId.equals(job.parameter(EXPORT_ID)));
@@ -724,7 +887,7 @@ public class ExportAssetCollection {
         Set<String> checked = ConcurrentHashMap.newKeySet();
         Run run = null;
         try {
-            ConversionInput dataset = writer.dataset(exportId).orElseThrow(() ->
+            ConversionInput dataset = dataset(exportId, job.owner()).orElseThrow(() ->
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, scope.phase);
             run = new Run(context, scope, share, dataset.sourceId(), settings.get(), fresh);
@@ -733,6 +896,10 @@ public class ExportAssetCollection {
                 // Ausgabe aus dem Bestand (ADR 0029): nur was je Seite abgelegt ist, nie die Quelle.
                 fromStore(current, exportId, dataset, true);
                 return;
+            }
+            if (selection(exportId) && !fresh) {
+                // Beschaffen auf einer Auswahl (ADR 0029, Schritt 7): ergänzt nur, was im Bestand fehlt.
+                collected(current, dataset, done);
             }
             boolean[] complete = {true};
             // Erst vorbereiten: alle Verweise aller Seiten zählen, ohne zu laden; danach steht die Gesamtzahl fest
@@ -976,7 +1143,7 @@ public class ExportAssetCollection {
                                                   Set<String> checked, boolean pagesComplete,
                                                   ExportSettings current) {
         synchronized (manifests.computeIfAbsent(exportId, id -> new Object())) {
-            Optional<ExportAssetManifest> previous = writer.assets(exportId);
+            Optional<ExportAssetManifest> previous = manifest(exportId);
             List<ExportAssetManifest.Entry> own = merged(previous.map(manifest -> new ExportAssetManifest(false,
                     manifest.assets().stream().filter(share::owns).toList())), entries, checked);
             List<ExportAssetManifest.Entry> result = new ArrayList<>(own);
@@ -989,7 +1156,7 @@ public class ExportAssetCollection {
                     .filter(ExportAssetManifest.Entry::document).allMatch(ExportAssetManifest.Entry::present)
                     : previous.map(ExportAssetManifest::documentsComplete)
                             .orElse(current == null || !current.attachments());
-            writer.putAssets(exportId, new ExportAssetManifest(images, documents, result));
+            putManifest(exportId, new ExportAssetManifest(images, documents, result));
             return own;
         }
     }
@@ -1603,6 +1770,10 @@ public class ExportAssetCollection {
 
     /** Ablegen darf die Bilder nie verhindern; ohne Ansicht melden die Converter den eingebundenen Inhalt fehlend. */
     private void putView(String exportId, ExportReadingView view) {
+        if (selection(exportId)) {
+            // Ohne Export keine Ansicht im Datenbestand; die Lese-Ansicht je Seite legt keepView ab.
+            return;
+        }
         try {
             writer.putReadingView(exportId, view);
         } catch (RuntimeException e) {

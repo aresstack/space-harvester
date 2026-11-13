@@ -59,12 +59,14 @@ import com.aresstack.spaceharvester.application.enrichment.statements.StatementS
 import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
+import com.aresstack.spaceharvester.application.export.SelectionDataset;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.holdings.Holdings;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -289,6 +291,7 @@ public final class Harvester implements AutoCloseable {
     private final Holdings holdings;
     private final AiRelease aiRelease;
     private final PageReleaseService pageReleaseService;
+    private final ExportAssetCollection assetCollection;
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
@@ -871,6 +874,16 @@ public final class Harvester implements AutoCloseable {
             images.imported(importedAssets, readingViews);
             // Ihr Stand gehört zum Fingerabdruck einer Ausgabe aus dem Bestand (ADR 0029).
             exports.imported(importedAssets, readingViews);
+            // ADR 0029, Schritt 7: Bilder und Anhänge einer Auswahl ohne Export beschaffen, für die Aufträge dieser App.
+            Holdings selected = this.holdings;
+            AccessContext app = this.caller;
+            images.selections((owner, root) -> OWNER.equals(owner)
+                    ? Optional.of(new SelectionDataset(root.sourceId(), root.spaceKey(), root.pageId(),
+                    selected.storedPages(app, Selection.of(root)).stream()
+                            .map(page -> cache.findHeader(page.key())).flatMap(Optional::stream).toList(),
+                    cache::find))
+                    : Optional.empty());
+            this.assetCollection = images;
             // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
@@ -1271,6 +1284,11 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Bestand je Space mit Zählern je Teilbaum und Meldungen bei jeder Änderung (ADR 0027). */
+    /** Bilder und Anhänge beschaffen, für Exporte und für eine Auswahl ohne Export (ADR 0029, Schritt 7). */
+    public ExportAssetCollection assetCollection() {
+        return assetCollection;
+    }
+
     /** Die Liste freigegebener Seiten für die Oberfläche (ADR 0028): Eintragen, Liste, Entfernen. */
     public PageReleaseService pageReleaseService() {
         return pageReleaseService;

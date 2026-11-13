@@ -14,6 +14,8 @@ import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentSto
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.export.SelectionDataset;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -26,6 +28,7 @@ import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -77,6 +80,7 @@ class ExportAssetsFromHoldingsTest {
     private final ReadingViewStore views = new ReadingViewStore(enrichments);
     private final Source source = new Source();
     private ExportSettings settings = ExportSettings.DEFAULT;
+    private List<PageSnapshot> stored = List.of();
     /** Wie die Voreinstellung, aber ohne PDF: das Handbuch steht dann als ausgeschlossen im Manifest. */
     private static final ExportSettings NO_PDF = new ExportSettings(true, List.of("text/plain"),
             ExportSettings.DEFAULT_MAX_SIZE);
@@ -178,6 +182,54 @@ class ExportAssetsFromHoldingsTest {
     }
 
     @Test
+    void collectingASelectionFillsTheHoldingsWithoutAnExportAndLaterOnlyAddsWhatIsMissing() {
+        setUp(true);
+
+        List<JobStatus> started = images.collect("client-a", Selection.Root.space("confluence", "DEV"));
+        run(started.get(0));
+
+        assertThat(started).extracting(JobStatus::type).containsExactly(JobType.ASSETS, JobType.ATTACHMENTS);
+        assertThat(jobs.list("client-a", JobType.EXPORT)).as("kein Export-Auftrag").isEmpty();
+        for (JobStatus job : started) {
+            JobStatus done = jobs.status(job.id(), "client-a");
+            assertThat(done.state()).as(String.valueOf(done)).isEqualTo(JobState.COMPLETED);
+            assertThat(done.incomplete()).isFalse();
+            assertThat(done.parameter(ExportAssetCollection.SELECTION)).isEqualTo("true");
+            assertThat(done.parameter(ExportAssetCollection.EXPORT_ID)).isNull();
+        }
+        assertThat(holdings.find(new PageKey("confluence", "100"), "3")).hasValueSatisfying(page -> {
+            assertThat(page.complete()).isTrue();
+            assertThat(page.assets()).extracting(ExportAssetManifest.Entry::title)
+                    .containsExactlyInAnyOrder("bild.png", "handbuch.pdf");
+        });
+        assertThat(views.find(new PageKey("confluence", "100"))).isPresent();
+
+        // Ein zweiter Lauf fragt die Quelle nicht: alles liegt schon im Bestand.
+        source.down = true;
+        List<JobStatus> again = images.collect("client-a", Selection.Root.space("confluence", "DEV"));
+        run(again.get(0));
+        assertThat(again).extracting(JobStatus::id).containsExactlyElementsOf(started.stream().map(JobStatus::id)
+                .toList());
+        assertThat(source.callsWhileDown).isZero();
+        assertThat(again).allSatisfy(job -> assertThat(jobs.status(job.id(), "client-a").state())
+                .isEqualTo(JobState.COMPLETED));
+
+        // Danach findet eine Ausgabe aus dem Bestand die Dateien ohne Quelle.
+        String exportId = run(exports.start(ExportRequest.fromHoldings("confluence", "DEV", "client-a",
+                List.of("json"))));
+        ExportAssetManifest manifest = writer.assets(exportId).orElseThrow();
+        assertThat(manifest.complete()).isTrue();
+        assertThat(manifest.documents()).extracting(ExportAssetManifest.Entry::title).containsExactly("handbuch.pdf");
+
+        // „Neu erzwingen“ auf dem Auftrag einer Auswahl lädt wieder von der Quelle, im selben Eintrag.
+        source.down = false;
+        JobStatus forced = images.forceRefresh(started.get(0).id(), "client-a");
+        run(forced);
+        assertThat(jobs.status(forced.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(forced.id()).isEqualTo(started.get(0).id());
+    }
+
+    @Test
     void aCollectionWithoutAccessToTheWholeSourceLeavesNothingInTheHoldings() {
         setUp(false);
         run(exports.start("confluence", "DEV", "client-a", List.of("json")));
@@ -226,9 +278,13 @@ class ExportAssetsFromHoldingsTest {
         exports = new Exports(jobs, cache, writer, converters, clock);
         exports.onSubmitted(images::announce);
         exports.onPublished(images::start);
-        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
-                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
-                page("confluence", "DEV", "101", "100")));
+        stored = List.of(page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100"));
+        cache.publish("confluence", "DEV", confirmed("g1"), stored);
+        // Wie im Core: die lokal gespeicherten Seiten der Wurzel aus dem Cache.
+        images.selections((owner, root) -> Optional.of(new SelectionDataset(root.sourceId(), root.spaceKey(),
+                root.pageId(), stored.stream().map(PageSnapshot::header).toList(),
+                key -> stored.stream().filter(page -> page.key().equals(key)).findFirst())));
     }
 
     private String run(JobStatus export) {
