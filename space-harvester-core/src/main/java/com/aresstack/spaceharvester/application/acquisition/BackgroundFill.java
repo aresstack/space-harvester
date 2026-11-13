@@ -483,6 +483,11 @@ public final class BackgroundFill implements AutoCloseable {
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Hintergrundfüllung unterbrochen ({0}); neuer Versuch später",
                         e.getClass().getName());
+                synchronized (monitor) {
+                    // Brach die Suche im Katalog ab, steht sie noch aus; nach der Pause wird erneut gesucht, sonst
+                    // wartete die Füllung bis zum nächsten Ereignis.
+                    rescan = true;
+                }
                 await(timing.idle());
             }
         }
@@ -573,6 +578,7 @@ public final class BackgroundFill implements AutoCloseable {
             seen = completions;
         }
         boolean again = false;
+        boolean dropped = false;
         for (Gap gap : next) {
             if (closed || !enabled) {
                 break;
@@ -592,6 +598,7 @@ public final class BackgroundFill implements AutoCloseable {
             if (!allowed(sourceId)) {
                 // Die Quelle will das (nicht mehr); ein neuer Blick in den Katalog reiht es wieder ein, wenn doch.
                 queue.remove(gap.key());
+                dropped = true;
                 continue;
             }
             AcquisitionScheduler.Ticket ticket;
@@ -616,10 +623,16 @@ public final class BackgroundFill implements AutoCloseable {
                 cancel(Map.of(gap.key(), ticket));
             }
         }
-        if (again) {
+        if (again || dropped) {
             changed();
         }
         synchronized (monitor) {
+            if (dropped && !again) {
+                // Hinter dem entfernten Anfang kann noch Arbeit warten, die kein Ereignis mehr meldet: gleich wieder
+                // in die Schlange sehen, bis sie leer ist oder etwas übergeben wurde.
+                signalled = true;
+                return true;
+            }
             return again || !inFlight.isEmpty();
         }
     }

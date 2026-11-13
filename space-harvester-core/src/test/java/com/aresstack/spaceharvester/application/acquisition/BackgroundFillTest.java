@@ -314,6 +314,57 @@ class BackgroundFillTest {
     }
 
     @Test
+    void aFailedCatalogSearchIsRepeatedAfterThePauseWithoutAnyOtherEvent() throws Exception {
+        List<BackgroundFill.Gap> gaps = new CopyOnWriteArrayList<>();
+        AtomicBoolean broken = new AtomicBoolean();
+        AtomicInteger searches = new AtomicInteger();
+        BackgroundFill.Catalog flaky = new BackgroundFill.Catalog() {
+            @Override
+            public List<SyncBaselineStore.SpaceRef> spaces() {
+                searches.incrementAndGet();
+                if (broken.getAndSet(false)) {
+                    throw new IllegalStateException("Katalog gerade nicht lesbar");
+                }
+                return List.of(new SyncBaselineStore.SpaceRef("wiki", "DEV"));
+            }
+
+            @Override
+            public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                return gaps.stream().limit(limit).toList();
+            }
+        };
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), flaky, SERVER,
+                eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofMillis(200), 1000), true);
+        open.add(fill);
+        fill.start();
+        eventually(() -> fill.status().lastScan() != null);
+
+        // Die Suche nach dieser Änderung scheitert einmal; danach kommt kein Ereignis mehr.
+        gaps.add(gap("wiki", "neu", BackgroundFill.Kind.NOT_LOADED));
+        broken.set(true);
+        fill.wake();
+
+        eventually(() -> loaded.contains("neu"));
+        assertThat(searches.get()).isEqualTo(3);
+    }
+
+    @Test
+    void entriesOfASwitchedOffSourceAtTheHeadOfTheQueueDoNotHideTheRest() throws Exception {
+        // Nach einem Neustart: vorn mehr als ein Fenster Einträge einer Quelle, die nicht mehr füllen soll.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        queue.add(List.of(gap("other", "a", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "b", BackgroundFill.Kind.NOT_LOADED), gap("other", "c", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "d", BackgroundFill.Kind.NOT_LOADED), gap("wiki", "dahinter",
+                        BackgroundFill.Kind.NOT_LOADED)));
+
+        fill(scheduler(1), queue, catalog(List.of()), true);
+
+        eventually(() -> loaded.contains("dahinter"));
+        assertThat(loaded).containsExactly("dahinter");
+        assertThat(queue.size()).isZero();
+    }
+
+    @Test
     void recentlyChangedPagesComeFirst() throws Exception {
         List<BackgroundFill.Gap> gaps = List.of(
                 new BackgroundFill.Gap(new PageKey("wiki", "alt"), BackgroundFill.Kind.NOT_LOADED,
