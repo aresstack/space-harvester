@@ -712,11 +712,12 @@ public final class Explorer {
         AppRuntime runtime = context.runtime();
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
         List<String> ids = sources.stream().map(HarvestSource::id).toList();
+        // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
+        states.watch(ids);
         if (ids.equals(shownSources) && top.getChildCount() > 0) {
             return;
         }
         shownSources = ids;
-        states.watch(ids);
         top.removeAllChildren();
         for (HarvestSource source : sources) {
             top.add(expandable(new SourceItem(source.id(), source.title())));
@@ -794,9 +795,16 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> children(runtime, parent.item(), more.cursor()), batch -> {
             parent.loading = false;
-            parent.remove(moreNode);
+            // Nur einfügen und entfernen, nicht den Knoten neu aufbauen: das ließe die Auswahl darunter (und damit den
+            // Suchbereich) fallen.
+            model.removeNodeFromParent(moreNode);
+            int first = parent.getChildCount();
             append(parent, batch);
-            model.nodeStructureChanged(parent);
+            int[] added = new int[parent.getChildCount() - first];
+            for (int i = 0; i < added.length; i++) {
+                added[i] = first + i;
+            }
+            model.nodesWereInserted(parent, added);
             if (then != null) {
                 then.run();
             }
