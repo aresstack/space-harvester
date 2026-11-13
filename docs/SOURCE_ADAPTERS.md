@@ -402,9 +402,12 @@ größer als ein Abschnitt der Ablage (100 000 Zeichen): Längere Absätze teilt
 Zeilen (Folgestücke mit `continued`, die Zeilen zählen weiter). Fundstellen nur, wo Tika sie liefert: `page` ist bei PDF
 die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckte Seitenzahl; leere Seiten zählen mit),
 `sheet` bei Excel der Blattname. Excel-Zeile und `cellRef` bleiben leer (Tika liefert die Zeile nicht), Word hat keine
-Seiten. Bei PowerPoint (`.pptx`) bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
+Seiten. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
+zählen mit (nicht getestet: ob Notizen in `.ppt` mitzählen; HSLF kann im Test keine Notizen anlegen, der Zähler
+reagiert nur auf Folienelemente). Bei `.pptx` bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
 liefert, nicht in Folienreihenfolge; ausgeblendete Folien sind enthalten, Notizen und Mastertext stehen als Absätze
-(Korrektur der Reihenfolge erst mit AP10 über POI). Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
+(Korrektur der Reihenfolge erst mit AP10 über POI). Word-Listen bleiben Absätze: Tika gibt Listenpunkte aus Word als Absatz mit vorangestelltem Zeichen aus, ohne
+eindeutige Auszeichnung. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
 geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien siehe unten
 (AP7a). Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
 `TesseractOCRParser` aus). Höchstens zwei Läufe gleichzeitig, jeder in einem eigenen Thread mit Wache über Laufzeit
