@@ -104,7 +104,7 @@ public final class MainWindow implements AppContext.Navigator {
     private AppContext.Section current = AppContext.Section.SEARCH;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.SEARCH;
-    private final JPanel top = new JPanel(new BorderLayout(12, 0));
+    private final JPanel top = new JPanel(new HeaderLayout(12));
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -250,10 +250,11 @@ public final class MainWindow implements AppContext.Navigator {
             }
         }
         icons.add(tabBar);
+        // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout).
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
-        west.add(title, BorderLayout.WEST);
-        west.add(icons, BorderLayout.CENTER);
+        west.add(title, BorderLayout.CENTER);
+        west.add(icons, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
         east.add(trailing);

@@ -291,7 +291,8 @@ class MainWindowTest {
 
     /**
      * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
-     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht.
+     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
+     * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.
      */
     @Test
     void theSearchFieldSitsCenteredInTheHeaderAndEnterOpensTheResults() throws Exception {
@@ -306,7 +307,7 @@ class MainWindowTest {
             javax.swing.JPanel surface = window.content(() -> { }, () -> { });
             javax.swing.JComponent bar = window.searchView().searchBar();
             java.awt.Container top = bar.getParent().getParent();
-            for (int width : new int[] {960, 1280, 1920}) {
+            for (int width : new int[] {800, 960, 1280, 1920}) {
                 surface.setSize(width, 600);
                 layout(surface);
                 java.awt.Rectangle field = SwingUtilities.convertRectangle(bar.getParent(), bar.getBounds(), top);
@@ -318,6 +319,12 @@ class MainWindowTest {
                         SearchBarLayout.MAX_WIDTH);
                 assertThat(field.x).as("links frei bei %d", width).isGreaterThanOrEqualTo(west.getX() + west.getWidth());
                 assertThat(field.x + field.width).as("rechts frei bei %d", width).isLessThanOrEqualTo(east.getX());
+                java.awt.Component icons = ((java.awt.BorderLayout) ((java.awt.Container) west).getLayout())
+                        .getLayoutComponent(java.awt.BorderLayout.EAST);
+                assertThat(icons.getX() + icons.getWidth()).as("Knöpfe ganz sichtbar bei %d", width)
+                        .isLessThanOrEqualTo(west.getWidth());
+                assertThat(icons.getWidth()).as("Knöpfe ungekürzt bei %d", width)
+                        .isEqualTo(icons.getPreferredSize().width);
             }
             window.show(AppContext.Section.SETTINGS);
             javax.swing.JTextField field = (javax.swing.JTextField) ((java.awt.BorderLayout) bar.getLayout())
