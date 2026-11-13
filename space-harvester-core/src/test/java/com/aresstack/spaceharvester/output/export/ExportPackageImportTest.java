@@ -85,10 +85,17 @@ class ExportPackageImportTest {
     private final InMemorySyncStore store = new InMemorySyncStore(repository);
     private final MemoryAssets assets = new MemoryAssets();
     private final Map<String, String> texts = new HashMap<>();
+    /** Beim Einlesen gekürzte Texte mit gelesenen Bytes. */
+    private final Map<String, Long> cut = new HashMap<>();
     private final List<SpaceSync.SyncRun> committed = new ArrayList<>();
     private final ExportPackageImport imports = new ExportPackageImport(jobs,
             new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop", "confluence")::contains,
-            assets, (sha, text) -> texts.put(sha, text) == null, null, List.of(committed::add), clock);
+            assets, (sha, text, truncated, bytes) -> {
+                if (truncated) {
+                    cut.put(sha, bytes);
+                }
+                return texts.put(sha, text) == null;
+            }, null, List.of(committed::add), clock);
 
     @Test
     void importsPagesAsANewGenerationOfTheTargetSourceAndKeepsTheRawBytes() throws Exception {
@@ -165,6 +172,31 @@ class ExportPackageImportTest {
         // Der Teil wird kein eigenes Asset: nur die drei Anhänge des Pakets liegen in der Ablage.
         assertThat(assets.content("laptop", "att-pdf", "2")).contains(PDF);
         assertThat(assets.entries).hasSize(3);
+        assertThat(cut).isEmpty();
+    }
+
+    @Test
+    void aTextCutWhileImportingSaysSoAndThePackageStaysAsItIs() throws Exception {
+        Path pkg = pkg(pages("100"), new PackageAssets(true, true));
+        byte[] before = Files.readAllBytes(pkg);
+        Map<String, String> adopted = new HashMap<>();
+        Map<String, Long> truncated = new HashMap<>();
+        ExportPackageImport tight = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024, 10), store, Set.of("laptop")::contains, assets,
+                (sha, text, cutOff, bytes) -> {
+                    if (cutOff) {
+                        truncated.put(sha, bytes);
+                    }
+                    return adopted.put(sha, text) == null;
+                }, null, List.of(committed::add), clock);
+
+        JobStatus job = tight.start(pkg, "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        // Zehn Bytes: „Bericht “ und das zweibytige „ü“; die Teile fehlen, und der Text sagt es selbst.
+        assertThat(adopted).containsEntry(sha256(PDF), "Bericht ü");
+        assertThat(truncated).containsEntry(sha256(PDF), 10L);
+        assertThat(Files.readAllBytes(pkg)).isEqualTo(before);
     }
 
     @Test

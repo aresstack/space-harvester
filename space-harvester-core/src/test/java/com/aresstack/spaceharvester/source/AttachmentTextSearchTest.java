@@ -451,6 +451,18 @@ class AttachmentTextSearchTest {
 
         assertThat(assets.storedText(sha)).map(AssetText::text).contains("Bericht über alles\n\nAnlage eins");
         assertThat(extractions.stored(sha)).isEmpty();
+
+        // Beim Import gekürzt: nie still, der abgelegte Text trägt Kürzung und gelesenen Umfang.
+        String other = Assets.sha256("Anderer".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(assets.adoptText(other, "Anfang", true, 6)).isTrue();
+        AssetText cut = assets.storedText(other).orElseThrow();
+        assertThat(cut.truncated()).isTrue();
+        assertThat(cut.outcome()).hasValueSatisfying(outcome -> {
+            assertThat(outcome.status()).isEqualTo(
+                    com.aresstack.spaceharvester.application.assets.ExtractionStatus.PARTIAL);
+            assertThat(outcome.reason()).contains(com.aresstack.spaceharvester.application.assets.StatusReason.TOO_LARGE);
+            assertThat(outcome.extent()).contains(new com.aresstack.spaceharvester.application.assets.ReadExtent(6, 6));
+        });
     }
 
     private Assets assets() {

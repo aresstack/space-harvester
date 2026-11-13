@@ -63,14 +63,24 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
     private final JsonMapper json = JsonMapper.builder().build();
     private final long maxPayloadBytes;
     private final long maxAssetBytes;
+    private final long maxTextBytes;
 
     /**
      * @param maxPayloadBytes größte Payload einer Seite, wie der Cache sie annimmt
      * @param maxAssetBytes   größte Datei eines Bildes oder Anhangs, wie die Asset-Ablage sie annimmt
      */
     public ZipExportPackageReader(long maxPayloadBytes, long maxAssetBytes) {
+        this(maxPayloadBytes, maxAssetBytes, MAX_TEXT_BYTES);
+    }
+
+    /** Wie oben; {@code maxTextBytes}: höchstens so viel Text je Anhang wird eingelesen, der Rest gekürzt. */
+    public ZipExportPackageReader(long maxPayloadBytes, long maxAssetBytes, long maxTextBytes) {
+        if (maxTextBytes < 1) {
+            throw new IllegalArgumentException("maxTextBytes muss positiv sein");
+        }
         this.maxPayloadBytes = maxPayloadBytes;
         this.maxAssetBytes = maxAssetBytes;
+        this.maxTextBytes = maxTextBytes;
     }
 
     @Override
@@ -363,30 +373,45 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
 
                 @Override
                 public Optional<String> text(ExportAssetManifest.Entry entry) {
+                    return documentText(entry).map(DocumentText::text);
+                }
+
+                @Override
+                public Optional<DocumentText> documentText(ExportAssetManifest.Entry entry) {
                     List<String> paths = entry.stored() ? textFiles.get(entry.sha256()) : null;
                     if (paths == null) {
                         return Optional.empty();
                     }
                     // Der Export schreibt Texte ohne Zeichengrenze; eingelesen wird höchstens MAX_TEXT_BYTES je
                     // Anhang (eigener Text und Teile zusammen), der Rest bleibt weg, statt das Paket abzulehnen.
+                    // Gekürzt wird nie still: der Text sagt es selbst (truncated, gelesene Bytes); das Paket bleibt.
                     List<String> texts = new ArrayList<>();
-                    long budget = MAX_TEXT_BYTES;
+                    long budget = maxTextBytes;
+                    long read = 0;
+                    boolean truncated = false;
                     for (String path : paths) {
-                        if (budget <= 0) {
-                            break;
-                        }
                         ZipEntry file = zip.getEntry(path);
                         if (file == null || file.isDirectory()) {
                             continue;
                         }
-                        byte[] bytes = prefix(file, budget);
+                        if (budget <= 0) {
+                            truncated |= file.getSize() != 0;
+                            continue;
+                        }
+                        byte[] bytes = prefix(file, budget + 1);
+                        if (bytes.length > budget) {
+                            bytes = java.util.Arrays.copyOf(bytes, (int) budget);
+                            truncated = true;
+                        }
                         budget -= bytes.length;
+                        read += bytes.length;
                         String text = new String(bytes, StandardCharsets.UTF_8);
                         if (!text.isBlank()) {
                             texts.add(text);
                         }
                     }
-                    return texts.isEmpty() ? Optional.empty() : Optional.of(String.join("\n\n", texts));
+                    return texts.isEmpty() ? Optional.empty()
+                            : Optional.of(new DocumentText(String.join("\n\n", texts), truncated, read));
                 }
             };
         }

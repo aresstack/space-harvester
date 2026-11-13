@@ -221,7 +221,9 @@ public final class DocumentExtractions {
         TextCollector text = new TextCollector(maxTextChars);
         collect(extraction, text);
         AssetText result = text.result(asset, id(), version(), outcome, now);
-        store.putText(result);
+        // Abgelegt ohne Status: er steht in der abgelegten Extraktion (AP4a); nur ein importierter Text ohne
+        // Extraktion trägt ihn selbst.
+        store.putText(result.withOutcome(null));
         return withSource(result, asset);
     }
 

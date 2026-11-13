@@ -330,12 +330,29 @@ public class FileSystemAssetStore implements AssetStore {
         try {
             AssetText text = new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),
                     p.getProperty("version"), p.getProperty("text"), Boolean.parseBoolean(p.getProperty("truncated")),
-                    Instant.parse(p.getProperty("createdAt")));
+                    Instant.parse(p.getProperty("createdAt")), outcome(p));
             return text.sha256().equals(sha256) && text.extractor().equals(extractor)
                     && text.version().equals(version) ? Optional.of(text) : Optional.empty();
         } catch (RuntimeException e) {
             throw new AssetStoreException("Dokumenttext beschädigt", null);
         }
+    }
+
+    /** Der am Text abgelegte Status, leer ohne Angabe (ältere Texte, Status in der Extraktion). */
+    private static Optional<com.aresstack.spaceharvester.application.assets.Outcome> outcome(Properties p) {
+        String status = p.getProperty("status");
+        if (status == null) {
+            return Optional.empty();
+        }
+        Optional<com.aresstack.spaceharvester.application.assets.ReadExtent> extent =
+                p.getProperty("bytesRead") == null ? Optional.empty()
+                        : Optional.of(new com.aresstack.spaceharvester.application.assets.ReadExtent(
+                        Long.parseLong(p.getProperty("bytesRead")), Long.parseLong(p.getProperty("charsRead"))));
+        return Optional.of(new com.aresstack.spaceharvester.application.assets.Outcome(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.valueOf(status),
+                Optional.ofNullable(p.getProperty("reason"))
+                        .flatMap(com.aresstack.spaceharvester.application.assets.StatusReason::fromCode),
+                Boolean.parseBoolean(p.getProperty("outcomeTruncated")), extent));
     }
 
     @Override
@@ -350,6 +367,16 @@ public class FileSystemAssetStore implements AssetStore {
         p.setProperty("text", text.text());
         p.setProperty("truncated", Boolean.toString(text.truncated()));
         p.setProperty("createdAt", text.createdAt().toString());
+        // Status am Text selbst (etwa ein beim Import gekürzter Text); ohne Angabe gilt die abgelegte Extraktion.
+        text.outcome().ifPresent(outcome -> {
+            p.setProperty("status", outcome.status().name());
+            outcome.reason().ifPresent(reason -> p.setProperty("reason", reason.code()));
+            p.setProperty("outcomeTruncated", Boolean.toString(outcome.truncated()));
+            outcome.extent().ifPresent(extent -> {
+                p.setProperty("bytesRead", Long.toString(extent.bytes()));
+                p.setProperty("charsRead", Long.toString(extent.chars()));
+            });
+        });
         try {
             var out = new java.io.StringWriter();
             p.store(out, null);

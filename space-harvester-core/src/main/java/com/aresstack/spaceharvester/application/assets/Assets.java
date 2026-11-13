@@ -1735,10 +1735,22 @@ public class Assets {
      * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
      */
     public boolean adoptText(String sha256, String text) {
+        return adoptText(sha256, text, false, 0);
+    }
+
+    /**
+     * Wie {@link #adoptText(String, String)}; ein beim Einlesen gekürzter Text trägt das selbst: {@code truncated} und
+     * Status {@code PARTIAL} mit Grund {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
+     */
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead) {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
-        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, false, clock.instant()));
+        Optional<Outcome> outcome = truncated
+                ? Optional.of(Outcome.truncated(StatusReason.TOO_LARGE, new ReadExtent(bytesRead, text.length())))
+                : Optional.empty();
+        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, truncated, clock.instant(),
+                outcome));
         return true;
     }
 
