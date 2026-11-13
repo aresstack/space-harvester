@@ -329,9 +329,10 @@ class QueryConfiguration {
                 texts.getIfUnique(), preparation, runs,
                 // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
                 () -> live.current().enrichment().documents(),
-                (document, section, inputSha256) -> {
+                (document, section, inputSha256, extraction) -> {
                     DocumentEnrichments found = documents.getIfAvailable();
-                    return found == null ? Optional.empty() : found.sectionText(document, section, inputSha256);
+                    return found == null ? Optional.empty()
+                            : found.sectionText(document, section, inputSha256, extraction);
                 });
     }
 

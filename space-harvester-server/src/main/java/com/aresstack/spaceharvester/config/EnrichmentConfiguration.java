@@ -120,8 +120,14 @@ class EnrichmentConfiguration {
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */
     @Bean
-    PassageQueries passageQueries(PageQueries pages, Enrichments enrichments) {
-        return new PassageQueries(pages, enrichments, projector());
+    PassageQueries passageQueries(PageQueries pages, Enrichments enrichments,
+                                  ObjectProvider<DocumentEnrichments> documents) {
+        // ADR 0026, AP9a: Absätze aus Anhängen lesen den Text nur ihres Abschnitts aus der Extraktion.
+        return new PassageQueries(pages, enrichments, projector(), (document, section, inputSha256, extraction) -> {
+            DocumentEnrichments found = documents.getIfAvailable();
+            return found == null ? java.util.Optional.empty()
+                    : found.sectionText(document, section, inputSha256, extraction);
+        });
     }
 
     /**

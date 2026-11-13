@@ -173,8 +173,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   `partTitle` (nur bei einer enthaltenen Datei) und `section`; `chunk` bezieht sich dann auf den Lesetext dieses
   Abschnitts (`document-text/v1`). Namen kommen aus dem Volltextindex wie bei Treffern der Volltextsuche (#723).
   Ausschnitt und Reranker-Text stammen aus der abgelegten Extraktion, nur wenn deren Abschnitt genau der Text des
-  Embeddings ist. `passageId` bleibt bei Stücken in Dokumenten vorerst `null` (folgt mit dem Absatz-Abruf). Ohne
-  Dokumentvektoren sind Treffer und Reihenfolge byte-gleich; abgeschaltet wird nicht in Dokumenten gesucht.
+  Embeddings ist. Ohne Dokumentvektoren sind Treffer und Reihenfolge byte-gleich; abgeschaltet wird nicht in
+  Dokumenten gesucht.
+- Passage-IDs in Dokumenten (`DocumentPassages`, Form von AT bestätigt): Capture ist der Hash des Lesetextes des
+  ganzen Dokuments (`revision`, 64 Hexziffern), die Position zählt die Absätze über alle Abschnitte in Reihenfolge.
+  Tragen die Absatz-Stände des Dokuments nicht alle dieselbe `revision` (Lauf nicht durch), gibt es keine ID.
+  `GET /api/v1/passages?id=` prüft die Rechte der Seite und liest nur den Text des einen Abschnitts (die Zahl der
+  Absätze je Abschnitt steht in den gespeicherten Ergebnissen). Anderer Text des Dokuments oder ein Dokument, das es
+  nicht mehr gibt (etwa eine Positionskennung nach dem Neulesen des Behälters): `older-version` ohne Absätze, fest
+  „nicht mehr vorhanden“. Gleicher Text mit anderer Zerlegung oder anderem Modell: `changed`. Nachbarn kommen aus
+  demselben Abschnitt.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

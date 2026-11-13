@@ -84,7 +84,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
     public static final String VERSION = "3.3-s11";
 
-    /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
+    /**
+     * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
+     * statt Tikas DOM (AP10), auch in Archiven und Mails, weil es dieselbe Erkennung ist. Ist er nicht verfügbar
+     * ({@link HtmlStreamParser#available()}), bleibt Tikas JSoupParser.
+     */
     private static final String CONFIG = """
             <?xml version="1.0" encoding="UTF-8"?>
             <properties>
@@ -92,7 +96,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 <parser class="org.apache.tika.parser.DefaultParser">
                   <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
                   <parser-exclude class="org.apache.tika.parser.mail.RFC822Parser"/>
+                  HTML_EXCLUDE
                 </parser>
+                HTML_PARSER
                 <parser class="org.apache.tika.parser.mail.RFC822Parser">
                   <params>
                     <param name="extractAllAlternatives" type="bool">true</param>
@@ -297,7 +303,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
             AutoDetectParser tika = parser();
             // Der gemeldete Typ wird hier billig geprüft, der erkannte erst im Lauf (unter Platz- und Zeitgrenze).
-            if (ExtractionLimits.exceeds(size, limits.memoryLimit(mediaType))) {
+            if (ExtractionLimits.exceeds(size, memoryLimit(limits, mediaType))) {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
             }
             if (limits.tempSpaceReserve() > 0 && usableTempSpace() < limits.tempSpaceReserve()) {
@@ -422,6 +428,31 @@ public final class TikaDocumentStructure implements DocumentStructure {
         }
     }
 
+    /** Die Konfiguration mit dem HTML-Strom, wenn er verfügbar ist. */
+    static String config() {
+        boolean stream = HtmlStreamParser.available();
+        return CONFIG.replace("HTML_EXCLUDE", stream
+                        ? "<parser-exclude class=\"org.apache.tika.parser.html.JSoupParser\"/>" : "")
+                .replace("HTML_PARSER", stream
+                        ? "<parser class=\"" + HtmlStreamParser.class.getName() + "\"/>" : "");
+    }
+
+    /**
+     * Die Speicherschranke des Typs; ohne HTML-Strom gilt für HTML wieder die Schranke aller übrigen Typen (Tikas
+     * DOM-Baum, gemessen: OutOfMemoryError ab 60 MiB bei 256 MiB Heap).
+     */
+    static long memoryLimit(ExtractionLimits limits, String mediaType) {
+        long limit = limits.memoryLimit(mediaType);
+        String type = mediaType == null ? "" : mediaType.split(";", 2)[0].strip().toLowerCase(Locale.ROOT);
+        if (!HtmlStreamParser.available() && HTML_TYPES.contains(type)) {
+            long fallback = limits.memoryLimit(ExtractionLimits.ANY_TYPE);
+            return limit == 0 ? fallback : fallback == 0 ? limit : Math.min(limit, fallback);
+        }
+        return limit;
+    }
+
+    private static final Set<String> HTML_TYPES = Set.of("text/html", "application/xhtml+xml");
+
     private static StructuredDocument empty(Outcome outcome) {
         return new StructuredDocument(DocumentHead.EMPTY, outcome, List.of(), 0, 0);
     }
@@ -434,7 +465,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 if (current == null) {
                     try {
                         current = new AutoDetectParser(new TikaConfig(
-                                new ByteArrayInputStream(CONFIG.getBytes(StandardCharsets.UTF_8))));
+                                new ByteArrayInputStream(config().getBytes(StandardCharsets.UTF_8))));
                     } catch (Exception e) {
                         throw new IllegalStateException("Tika-Konfiguration nicht lesbar", e);
                     }
@@ -503,7 +534,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
             // Gelesen wird nach dem Inhalt; die Schranke gilt deshalb auch für den an der Datei erkannten Typ, bei
             // Abweichung der strengere Wert (Architekt 13.11.2026). Die Erkennung läuft hier unter Platz- und
             // Zeitgrenze, weil sie bei Containern (OLE2, ZIP) selbst Struktur liest.
-            if (ExtractionLimits.exceeds(size, limits.memoryLimit(detect(tika, original, title)))) {
+            if (ExtractionLimits.exceeds(size, memoryLimit(limits, detect(tika, original, title)))) {
                 synchronized (this) {
                     if (!stopped) {
                         result = new StructuredDocument(DocumentHead.EMPTY,
@@ -1103,9 +1134,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
             if (!CONTAINER_TYPES.contains(type) && !rules.documentTypes().test(type)) {
                 return Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEDIA_TYPE_EXCLUDED);
             }
-            long limit = limits.memoryLimit(type);
+            long limit = memoryLimit(limits, type);
             if (!declared.isEmpty()) {
-                long other = limits.memoryLimit(declared);
+                long other = memoryLimit(limits, declared);
                 limit = limit == 0 ? other : other == 0 ? limit : Math.min(limit, other);
             }
             if (ExtractionLimits.exceeds(bytes, limit)) {

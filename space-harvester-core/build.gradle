@@ -38,6 +38,9 @@ dependencies {
     // Eigener Tika-Adapter (ADR 0026, AP3): nur tika-core zum Übersetzen, dieselbe Fassung wie die Kopie; die Parser
     // kommen zur Laufzeit wie bisher über enterprise-ai-sources
     implementation libs.tika.core
+    // HTML als Strom vor Tikas DOM (ADR 0026, AP10): dieselbe Tika-Fassung; jsoup ohne eigene Versionsnummer in der
+    // Fassung, die Tika mitbringt (StreamParser), wie zur Laufzeit
+    implementation libs.tika.parser.html
     // Satzgrenzen der semantischen Absätze (#181, ADR 0020): nur der Satzdetektor von OpenNLP mit dem deutschen
     // Satzmodell (UD German GSD, rund 100 KB), dieselben Versionen wie :nlp-parser; Tokens, Wortarten und Parser nicht
     implementation libs.opennlp.tools

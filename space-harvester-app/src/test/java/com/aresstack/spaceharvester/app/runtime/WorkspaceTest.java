@@ -30,6 +30,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -37,9 +38,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -581,19 +582,45 @@ class WorkspaceTest {
 
     private static void assertNoFileContains(Path directory, String secret) throws Exception {
         byte[] needle = secret.getBytes(StandardCharsets.UTF_8);
-        try (Stream<Path> files = Files.walk(directory)) {
-            for (Path file : files.filter(Files::isRegularFile).toList()) {
-                byte[] bytes;
-                try {
-                    bytes = Files.readAllBytes(file);
-                } catch (java.nio.file.NoSuchFileException e) {
-                    // Eine temporäre Datei eines laufenden Auftrags (etwa beim Entpacken eines Anhangs) ist schon
-                    // wieder weg; was bleibt, wird geprüft.
-                    continue;
+        // Ohne Files.walk: Verschwindet ein temporäres Verzeichnis eines laufenden Auftrags während des Durchlaufs,
+        // bricht walk mit NoSuchFileException ab; hier wird es übersprungen.
+        List<Path> found = new ArrayList<>();
+        Files.walkFileTree(directory, new java.nio.file.SimpleFileVisitor<>() {
+            @Override
+            public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                if (attrs.isRegularFile()) {
+                    found.add(file);
                 }
-                String content = new String(bytes, StandardCharsets.ISO_8859_1);
-                assertThat(content).as(file.toString()).doesNotContain(new String(needle, StandardCharsets.ISO_8859_1));
+                return java.nio.file.FileVisitResult.CONTINUE;
             }
+
+            @Override
+            public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
+                if (e instanceof java.nio.file.NoSuchFileException) {
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+                throw e;
+            }
+
+            @Override
+            public java.nio.file.FileVisitResult postVisitDirectory(Path dir, IOException e) throws IOException {
+                if (e != null && !(e instanceof java.nio.file.NoSuchFileException)) {
+                    throw e;
+                }
+                return java.nio.file.FileVisitResult.CONTINUE;
+            }
+        });
+        for (Path file : found) {
+            byte[] bytes;
+            try {
+                bytes = Files.readAllBytes(file);
+            } catch (java.nio.file.NoSuchFileException e) {
+                // Eine temporäre Datei eines laufenden Auftrags (etwa beim Entpacken eines Anhangs) ist schon
+                // wieder weg; was bleibt, wird geprüft.
+                continue;
+            }
+            String content = new String(bytes, StandardCharsets.ISO_8859_1);
+            assertThat(content).as(file.toString()).doesNotContain(new String(needle, StandardCharsets.ISO_8859_1));
         }
     }
 }
