@@ -21,6 +21,7 @@ derselbe Text mit demselben Analysator analysiert wird.
 |---|---|---|
 | Export | `urn:space-harvester:kg:export:<auftrag>` | `sh:GraphExport` |
 | Seite | `…:page:<quelle>:<seite>` | `sh:Page` |
+| Anhang, enthaltene Datei | `…:document:<quelle>:<seite>:<dokument>` | `sh:Document` |
 | Analysierte Fassung | `…:revision:<quelle>:<seite>:<fassung>` | `sh:PageRevision` (`prov:Entity`) |
 | Analyselauf | `…:run:<quelle>:<seite>:<fassung>:<analysator>` | `sh:AnalysisRun` (`prov:Activity`) |
 | Erwähnung | `…:node:<quelle>:<seite>:<fassung>:s<satz>.t<token>` | `sh:Mention` |
@@ -29,13 +30,20 @@ derselbe Text mit demselben Analysator analysiert wird.
 | Beleg | Aussage-IRI + `:evidence` | `sh:Evidence` |
 | Nominaler Bezug | `…:node:…:<kopf>→<abhängig>` | `sh:NominalAttachment` |
 
+Für einen Anhang oder eine enthaltene Datei mit eigener Analyse (ADR 0026, Punkt 10) steht in Fassung, Lauf und
+Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName()` (nur `0–9 a–z -`), zum Beispiel
+`…:node:<quelle>:<seite>:<dokument>:<fassung>:s1.t4`. Seiten behalten ihre IRIs.
+
 ## Klassen und Eigenschaften
 
 - `sh:GraphExport`: `sh:format`, `sh:scope` (Umfang für Menschen), `prov:generatedAtTime`, `sh:includesStale`,
   `sh:complete` (alle lesbaren Seiten des Umfangs enthalten), `sh:pageCount`, `sh:exportedQuality` (exportierte
   Qualitätsstufen; standardmäßig nur `PLAUSIBLE`, Aussagen anderer Stufen fehlen dann, ihre Erwähnungen bleiben).
 - `sh:Page`: `sh:sourceId`, `sh:pageId`, `sh:spaceKey`, `sh:title`.
-- `sh:PageRevision`: `sh:revisionOf` → Seite, `sh:revision` (Version der Quelle), `sh:inputSha256`, `sh:status`
+- `sh:Document` (Anhang oder enthaltene Datei): `sh:documentOf` → Seite, `sh:attachmentId` (Kennung der Quelle),
+  `sh:partId` (Teilkennung; fehlt beim Anhang selbst), `sh:title`. Die Kennungen stehen immer getrennt, nie als
+  zusammengesetzte Zeichenkette. Ein Dokument hat die Rechte seiner Seite.
+- `sh:PageRevision`: `sh:revisionOf` → Seite oder Dokument, `sh:revision` (Version der Quelle), `sh:inputSha256`, `sh:status`
   (`CURRENT` | `STALE`), `sh:staleReason` (`text-changed`, `analyzer-changed`, `no-text`, `page-missing`).
 - `sh:AnalysisRun`: `sh:analyzer`, `sh:analyzerVersion` (Adapter | Modell | Modell-Prüfsumme | Regeln),
   `prov:used` → Fassung, `prov:endedAtTime`.

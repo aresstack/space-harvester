@@ -37,6 +37,9 @@ import java.util.function.Consumer;
  * {@code discovered}. Gelöschte und gesperrte Seiten (ADR 0014) nimmt schon der Aufruf nach dem Commit aus Volltext und
  * Anreicherungen, bevor er den Auftrag einplant.
  *
+ * <p>Mit {@link DocumentEnrichments} holt derselbe Auftrag danach die Analysen der Anhänge dieser Seiten nach, deren
+ * Stand fehlt oder veraltet ist (ADR 0026, AP9a, Phase {@value DocumentEnrichments#PHASE}).
+ *
  * <p>Sind alle Prozessoren durchgelaufen, ruft derselbe Auftrag die Folgeschritte je Quelle auf (Phase
  * {@code Folgeschritte}), etwa die Akronym-Regel der Begriffsbeziehungen (#120). Nach einem Abbruch entfallen sie bis
  * zum nächsten Lauf; ein scheiternder Folgeschritt hält die Anreicherung nicht auf.
@@ -51,6 +54,7 @@ public class EnrichmentsAfterSync implements SyncCommitted {
     private final Jobs jobs;
     private final PageTextIndexing texts;
     private final List<Consumer<String>> followUps;
+    private final DocumentEnrichments documents;
 
     /** Im aufrufenden Thread, ohne eigenen Auftrag. */
     public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots) {
@@ -74,6 +78,17 @@ public class EnrichmentsAfterSync implements SyncCommitted {
     /** @param followUps Folgeschritte je Quelle nach vollständiger Anreicherung, mit der Quellkennung */
     public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots, Jobs jobs,
                                 PageTextIndexing texts, List<Consumer<String>> followUps) {
+        this(enrichments, snapshots, jobs, texts, followUps, null);
+    }
+
+    /**
+     * @param documents Analysen je Anhang und enthaltener Datei oder {@code null}: Nach den Seiten holt derselbe
+     *                  Auftrag für die Anhänge dieser Seiten nach, was fehlt oder veraltet ist (ADR 0026, AP9a)
+     */
+    public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots, Jobs jobs,
+                                PageTextIndexing texts, List<Consumer<String>> followUps,
+                                DocumentEnrichments documents) {
+        this.documents = documents;
         this.followUps = List.copyOf(followUps);
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.snapshots = snapshots;
@@ -183,6 +198,10 @@ public class EnrichmentsAfterSync implements SyncCommitted {
                 }
                 // Was fertig ist, bleibt auch nach einem Abbruch.
                 enrichments.flush();
+            }
+            if (documents != null) {
+                documents.catchUp(sourceId, run.plan().inventory().spaceKey(),
+                        pages.stream().map(PageKey::pageId).toList(), context);
             }
             followUps(sourceId, context);
         } finally {

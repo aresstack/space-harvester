@@ -90,7 +90,8 @@ public final class KnowledgeGraphJsonLd {
     public static void write(OutputStream out, Header header, List<Entry> entries) {
         List<Entry> sorted = entries.stream().sorted(Comparator
                 .comparing((Entry entry) -> entry.analysis().key().sourceId())
-                .thenComparing(entry -> entry.analysis().key().pageId())).toList();
+                .thenComparing(entry -> entry.analysis().key().pageId())
+                .thenComparing(entry -> entry.analysis().document().value())).toList();
         try (JsonGenerator json = JSON.createGenerator(out, JsonEncoding.UTF8)) {
             json.writeStartObject();
             context(json);
@@ -112,10 +113,19 @@ public final class KnowledgeGraphJsonLd {
         return IRI + "page:" + encode(key.sourceId()) + ":" + encode(key.pageId());
     }
 
+    /**
+     * IRI des analysierten Dokuments (ADR 0026, Punkt 10): für die Seite selbst {@link #page(PageKey)}, für einen
+     * Anhang oder eine enthaltene Datei die Seite plus {@code DocumentKey#fileName()}.
+     */
+    public static String document(PageStatementAnalysis analysis) {
+        return analysis.ofDocument() ? IRI + "document:" + encode(analysis.key().sourceId()) + ":"
+                + encode(analysis.key().pageId()) + documentPart(analysis) : page(analysis.key());
+    }
+
     /** IRI der analysierten Fassung (Texthash). */
     public static String revision(PageStatementAnalysis analysis) {
-        return IRI + "revision:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId()) + ":"
-                + version(analysis);
+        return IRI + "revision:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId())
+                + documentPart(analysis) + ":" + version(analysis);
     }
 
     /**
@@ -125,13 +135,18 @@ public final class KnowledgeGraphJsonLd {
     public static String node(PageStatementAnalysis analysis, String localId) {
         int hash = localId.lastIndexOf('#');
         String local = hash < 0 ? localId : localId.substring(hash + 1);
-        return IRI + "node:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId()) + ":"
-                + version(analysis) + ":" + encode(local);
+        return IRI + "node:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId())
+                + documentPart(analysis) + ":" + version(analysis) + ":" + encode(local);
     }
 
     private static String run(PageStatementAnalysis analysis) {
-        return IRI + "run:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId()) + ":"
-                + version(analysis) + ":" + encode(analysis.analyzerId());
+        return IRI + "run:" + encode(analysis.key().sourceId()) + ":" + encode(analysis.key().pageId())
+                + documentPart(analysis) + ":" + version(analysis) + ":" + encode(analysis.analyzerId());
+    }
+
+    /** Für Anhang und enthaltene Datei {@code :<DocumentKey#fileName()>} (nur {@code [0-9a-z-]}), für Seiten leer. */
+    private static String documentPart(PageStatementAnalysis analysis) {
+        return analysis.ofDocument() ? ":" + analysis.document().fileName() : "";
     }
 
     private static String version(PageStatementAnalysis analysis) {
@@ -166,12 +181,14 @@ public final class KnowledgeGraphJsonLd {
         json.writeStringProperty("prov", "http://www.w3.org/ns/prov#");
         json.writeStringProperty("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
         json.writeStringProperty("xsd", "http://www.w3.org/2001/XMLSchema#");
-        for (String type : List.of("GraphExport", "Page", "PageRevision", "AnalysisRun", "Mention", "Statement",
+        for (String type : List.of("GraphExport", "Page", "Document", "PageRevision", "AnalysisRun", "Mention",
+                "Statement",
                 "Participation", "NominalAttachment", "Evidence")) {
             json.writeStringProperty(type, "sh:" + type);
         }
         for (String term : List.of("format", "scope", "includesStale", "complete", "pageCount", "sourceId",
-                "pageId", "spaceKey", "title", "revision", "inputSha256", "status", "staleReason", "analyzer",
+                "pageId", "attachmentId", "partId", "spaceKey", "title", "revision", "inputSha256", "status",
+                "staleReason", "analyzer",
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
                 "verificationStatus",
@@ -183,8 +200,8 @@ public final class KnowledgeGraphJsonLd {
         set(json, "extractionQuality", "sh:extractionQuality");
         set(json, "qualityReason", "sh:qualityReason");
         set(json, "exportedQuality", "sh:exportedQuality");
-        for (String link : List.of("revisionOf", "page", "mention", "participant", "head", "dependent",
-                "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
+        for (String link : List.of("revisionOf", "documentOf", "page", "mention", "participant", "head",
+                "dependent", "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
                 "instrument", "time", "circumstance")) {
             reference(json, link, "sh:" + link);
         }
@@ -259,13 +276,27 @@ public final class KnowledgeGraphJsonLd {
         json.writeStringProperty("sourceId", analysis.key().sourceId());
         json.writeStringProperty("pageId", analysis.key().pageId());
         optional(json, "spaceKey", analysis.spaceKey());
-        optional(json, "title", analysis.title());
+        if (!analysis.ofDocument()) {
+            optional(json, "title", analysis.title());
+        }
         json.writeEndObject();
+
+        if (analysis.ofDocument()) {
+            // Anhang oder enthaltene Datei (ADR 0026): eigene Ressource unter der Seite, Kennungen getrennt.
+            json.writeStartObject();
+            json.writeStringProperty("@id", document(analysis));
+            json.writeStringProperty("@type", "Document");
+            json.writeStringProperty("documentOf", page);
+            optional(json, "attachmentId", analysis.document().attachmentId().orElse(null));
+            optional(json, "partId", analysis.document().part().map(part -> part.value()).orElse(null));
+            optional(json, "title", analysis.title());
+            json.writeEndObject();
+        }
 
         json.writeStartObject();
         json.writeStringProperty("@id", revision);
         json.writeStringProperty("@type", "PageRevision");
-        json.writeStringProperty("revisionOf", page);
+        json.writeStringProperty("revisionOf", document(analysis));
         optional(json, "revision", analysis.revision());
         json.writeStringProperty("inputSha256", analysis.inputSha256());
         json.writeStringProperty("status", entry.state().name());

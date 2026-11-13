@@ -126,11 +126,16 @@ public final class SourceDataStores {
         });
     }
 
-    /** Aussagenanalysen der Seiten dieser Quelle, also ihr Anteil am Knowledge Graph. */
+    /**
+     * Aussagenanalysen der Seiten dieser Quelle samt ihren Anhängen und enthaltenen Dateien (ADR 0026), also ihr Anteil
+     * am Knowledge Graph.
+     */
     public SourceDataStores knowledgeGraph(KnowledgeGraphStore graph, Runnable forgetInputs) {
         Objects.requireNonNull(graph, "graph");
         return add("Aussagen (Knowledge Graph)", sourceId -> {
-            for (PageStatementAnalysis analysis : graph.all()) {
+            List<PageStatementAnalysis> all = new java.util.ArrayList<>(graph.all());
+            all.addAll(graph.documents());
+            for (PageStatementAnalysis analysis : all) {
                 if (analysis.key().sourceId().equals(sourceId)) {
                     graph.remove(analysis.key());
                 }

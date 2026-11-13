@@ -106,7 +106,7 @@ public record PageGraph(PageKey key, List<Node> nodes, List<Edge> edges) {
      * übergangen. Erwähnungen und nominale Bezüge bleiben vollständig, sie sind Text, keine Relation.
      */
     public static PageGraph of(PageStatementAnalysis analysis, Set<ParsedStatements.Quality> qualities) {
-        String document = PageStatementAnalysis.documentId(analysis.key(), analysis.inputSha256());
+        String document = analysis.documentId();
         ParsedStatements result = analysis.result();
         List<Node> nodes = new ArrayList<>();
         List<Edge> edges = new ArrayList<>();

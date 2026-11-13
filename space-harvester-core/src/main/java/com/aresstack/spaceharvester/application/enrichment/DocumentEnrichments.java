@@ -1,9 +1,10 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.assets.Asset;
+import com.aresstack.spaceharvester.application.assets.DocumentInventory;
+import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
-import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.IndexedDocuments;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.assets.StoredExtraction;
@@ -16,10 +17,17 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,7 +62,7 @@ public final class DocumentEnrichments implements IndexedDocuments {
 
     private static final System.Logger LOG = System.getLogger(DocumentEnrichments.class.getName());
     private static final String COMPONENT = "Enrichments";
-    static final String PHASE = "Anreichern: Anhänge";
+    public static final String PHASE = "Anreichern: Anhänge";
 
     private final Enrichments enrichments;
     private final Jobs jobs;
@@ -69,6 +77,8 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private final Map<String, String> scheduled = new HashMap<>();
     /** Wie oft die Ergebnisse eines Anhangs entfernt wurden, nach {@link DocumentKey#value()}; bewacht von {@code this}. */
     private final Map<String, Integer> removals = new HashMap<>();
+    /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
+    private volatile DocumentInventory assets;
 
     /**
      * @param jobs    Auftragsverwaltung oder {@code null}, dann im aufrufenden Thread
@@ -78,6 +88,11 @@ public final class DocumentEnrichments implements IndexedDocuments {
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.jobs = jobs;
         this.enabled = Objects.requireNonNull(enabled, "enabled");
+    }
+
+    /** Schließt die Anhänge an, aus deren Ablage {@link #catchUp} den Bestand nachholt. */
+    public void assets(DocumentInventory assets) {
+        this.assets = assets;
     }
 
     /** Ein gemeldeter Anhang. */
@@ -224,6 +239,58 @@ public final class DocumentEnrichments implements IndexedDocuments {
         }
     }
 
+    /**
+     * Holt den Bestand nach (ADR 0026, AP9a): für die abgelegten Dokument-Anhänge dieser Seiten, die im Volltextindex
+     * stehen, jedes Dokument mit lesbarer Extraktion, dessen Analysestand fehlt oder nicht aktuell ist. Aktuell heißt:
+     * Stände aller zuständigen Prozessoren in ihrer Version, gebildet für diese Extraktion; das prüft der Lauf am
+     * Manifest, ohne einen Abschnitt zu lesen. Läuft im Auftrag der Anreicherung nach einem Abgleich.
+     */
+    public void catchUp(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
+        DocumentInventory source = assets;
+        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+            return;
+        }
+        Optional<DocumentExtractions> structured = source.documentExtractions();
+        if (structured.isEmpty()) {
+            return;
+        }
+        List<Asset> documents = source.indexedDocuments(sourceId, pageIds);
+        if (documents.isEmpty()) {
+            return;
+        }
+        if (context != null) {
+            context.phase(COMPONENT, PHASE);
+        }
+        try {
+            for (Asset asset : documents) {
+                if (context != null) {
+                    context.checkpoint();
+                }
+                PageKey page = new PageKey(sourceId, asset.pageId());
+                Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), spaceKey,
+                        asset.sha256(), structured.get());
+                int removed = removals(item);
+                try {
+                    process(item, context);
+                } catch (JobCancelledException | JobFailedException e) {
+                    throw e;
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Analysen eines Anhangs in {0} übersprungen ({1})",
+                            sourceId, e.getClass().getName());
+                } finally {
+                    forgetIfRemoved(item, removed);
+                }
+            }
+        } finally {
+            enrichments.flush();
+        }
+    }
+
+    /**
+     * Rechnet die Dokumente eines Anhangs, deren Analysestand fehlt oder nicht aktuell ist. Erster Durchgang nur, wenn
+     * das Manifest nicht schon genügt: Hash des Lesetextes je Dokument. Zweiter Durchgang nur für Dokumente mit
+     * anderem Hash oder fehlenden Ständen. Gleicher Hash aus einer neuen Extraktion trägt nur die Extraktion nach.
+     */
     private void process(Pending item, JobContext context) {
         Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
         if (extraction.isEmpty()) {
@@ -231,54 +298,167 @@ public final class DocumentEnrichments implements IndexedDocuments {
             return;
         }
         DocumentKey attachment = item.attachment();
+        String basis = basis(extraction.get());
+        Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
             if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
-                stored.computeIfAbsent(enrichment.document(), key -> new java.util.ArrayList<>()).add(enrichment);
+                stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
             }
         }
+        List<DocumentKey> expected = item.extractions().documents(extraction.get()).stream()
+                .map(part -> part.map(entry -> attachment.child(entry.id())).orElse(attachment)).toList();
+        // Die Extraktion steht erst am Stand, wenn das Dokument vollständig durchlief; ein abgebrochener Lauf genügt
+        // dieser Abkürzung also nie.
+        if (!expected.isEmpty() && expected.stream().allMatch(document -> current(stored.get(document), versions,
+                basis))) {
+            return;
+        }
+        // Erster Durchgang: Hash des Lesetextes je Dokument und die Abschnitte mit Text.
+        Map<DocumentKey, MessageDigest> digests = new LinkedHashMap<>();
         Map<DocumentKey, Set<Integer>> seen = new HashMap<>();
-        try (Stream<DocumentExtractions.DocumentSection> sections =
-                     item.extractions().documentSections(extraction.get())) {
-            Iterator<DocumentExtractions.DocumentSection> found = sections.iterator();
-            while (found.hasNext()) {
-                if (context != null) {
-                    context.checkpoint();
+        forEachSection(item, extraction.get(), context, (document, index, text) -> {
+            digests.computeIfAbsent(document, key -> sha256()).update((text.inputSha256() + "\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            seen.computeIfAbsent(document, key -> new HashSet<>()).add(index);
+        });
+        Map<DocumentKey, String> hashes = new HashMap<>();
+        digests.forEach((document, digest) -> hashes.put(document, "sha256:"
+                + HexFormat.of().formatHex(digest.digest())));
+        Set<DocumentKey> work = new HashSet<>();
+        for (Map.Entry<DocumentKey, String> hash : hashes.entrySet()) {
+            if (!covered(stored.get(hash.getKey()), versions, hash.getValue(), seen.get(hash.getKey()))) {
+                work.add(hash.getKey());
+            }
+        }
+        // Zweiter Durchgang: nur die Dokumente mit anderem Text oder fehlenden Ständen.
+        if (!work.isEmpty()) {
+            forEachSection(item, extraction.get(), context, (document, index, text) -> {
+                if (!work.contains(document)) {
+                    return;
                 }
-                DocumentExtractions.DocumentSection section = found.next();
-                DocumentKey document = section.part().map(part -> attachment.child(part.id())).orElse(attachment);
-                PageText text = DocumentSectionText.project(section.section());
-                if (text.text().isBlank()) {
-                    continue;
-                }
-                int index = section.section().index();
-                seen.computeIfAbsent(document, key -> new HashSet<>()).add(index);
-                String revision = section.part().flatMap(EmbeddedEntry::sha256).map(DocumentEnrichments::prefixed)
-                        .orElse(item.sha256());
                 if (context != null) {
                     context.discovered(1);
                 }
-                Enrichments.Run run = enrichments.refreshDocument(document, index, revision, text,
+                // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
+                Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
                         stored.getOrDefault(document, List.of()), null);
                 if (context != null) {
                     context.written(run.computed() - run.failed());
                     context.failed(run.failed());
                     context.processed(1);
                 }
-            }
+            });
         }
-        // Alle Abschnitte durchgelaufen: was es nicht mehr gibt, fällt weg.
-        stored.forEach((document, results) -> {
+        // Alle Abschnitte durchliefen: Hash und Extraktion am Stand nachtragen, ohne zu rechnen; Weggefallenes fällt
+        // weg. Ein Abbruch kommt nicht hierher, ein halb gerechnetes Dokument trägt also nie die Extraktion.
+        Set<DocumentKey> documents = new LinkedHashSet<>(seen.keySet());
+        documents.addAll(stored.keySet());
+        for (DocumentKey document : documents) {
             Set<Integer> current = seen.getOrDefault(document, Set.of());
-            results.stream().map(Enrichment::section).distinct().filter(section -> !current.contains(section))
+            String hash = hashes.get(document);
+            Set<Integer> sections = new HashSet<>();
+            for (Enrichment result : enrichments.store().find(document)) {
+                sections.add(result.section());
+                if (!current.contains(result.section())) {
+                    continue;
+                }
+                if (!Objects.equals(result.revision(), hash) || !basis.equals(result.extraction())) {
+                    enrichments.store().save(result.withBasis(hash, basis));
+                }
+            }
+            sections.stream().filter(section -> !current.contains(section))
                     .forEach(section -> enrichments.store().removeSection(document, section));
-        });
+        }
         enrichments.flush();
     }
 
-    /** Inhalts-Hash in der Form der Anhänge ({@code sha256:<hex>}); Teile führen ihn ohne Präfix. */
-    private static String prefixed(String sha256) {
-        return sha256.startsWith("sha256:") ? sha256 : "sha256:" + sha256;
+    /**
+     * Ob der Analysestand eines Dokuments zu dieser Extraktion ({@code basis}) gehört: je zuständigem Prozessor Stände in
+     * seiner Version, alle mit dieser Extraktion.
+     */
+    private static boolean current(List<Enrichment> stored, Map<String, String> versions, String basis) {
+        if (stored == null || stored.isEmpty()) {
+            return versions.isEmpty();
+        }
+        for (Map.Entry<String, String> processor : versions.entrySet()) {
+            List<Enrichment> results = stored.stream()
+                    .filter(result -> result.processorId().equals(processor.getKey())).toList();
+            if (results.isEmpty() || results.stream().anyMatch(result -> !result.processorVersion()
+                    .equals(processor.getValue()) || !basis.equals(result.extraction()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Ob jeder Abschnitt mit Text ({@code sections}) je zuständigem Prozessor einen Stand in seiner Version für diesen
+     * Hash des Lesetextes hat; fehlt einer, etwa nach einem Abbruch mitten im Dokument, wird das Dokument gerechnet.
+     */
+    private static boolean covered(List<Enrichment> stored, Map<String, String> versions, String hash,
+                                   Set<Integer> sections) {
+        for (Map.Entry<String, String> processor : versions.entrySet()) {
+            Set<Integer> done = new HashSet<>();
+            if (stored != null) {
+                for (Enrichment result : stored) {
+                    if (result.processorId().equals(processor.getKey())
+                            && result.processorVersion().equals(processor.getValue())
+                            && hash.equals(result.revision())) {
+                        done.add(result.section());
+                    }
+                }
+            }
+            if (!done.containsAll(sections)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @FunctionalInterface
+    private interface SectionVisitor {
+        void visit(DocumentKey document, int index, PageText text);
+    }
+
+    /** Die Abschnitte mit Text in Reihenfolge, einzeln gelesen. */
+    private static void forEachSection(Pending item, StoredExtraction extraction, JobContext context,
+                                       SectionVisitor visitor) {
+        DocumentKey attachment = item.attachment();
+        try (Stream<DocumentExtractions.DocumentSection> sections =
+                     item.extractions().documentSections(extraction)) {
+            Iterator<DocumentExtractions.DocumentSection> found = sections.iterator();
+            while (found.hasNext()) {
+                if (context != null) {
+                    context.checkpoint();
+                }
+                DocumentExtractions.DocumentSection section = found.next();
+                PageText text = DocumentSectionText.project(section.section());
+                if (!text.text().isBlank()) {
+                    visitor.visit(section.part().map(part -> attachment.child(part.id())).orElse(attachment),
+                            section.section().index(), text);
+                }
+            }
+        }
+    }
+
+    /**
+     * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
+     * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
+     */
+    private static String basis(StoredExtraction extraction) {
+        ExtractionKey key = extraction.key();
+        return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
+                + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"
+                + extraction.chars();
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String partition(String sourceId, String spaceKey) {
