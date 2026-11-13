@@ -147,6 +147,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   kein Status, kein Name. Extraktor und Version gehören nicht zur Eingabe: Gleiche Blöcke bleiben aktuell (Abnahme 8).
   Die Freigabe gilt über die Seite. Weggefallene Teile und Abschnitte verlieren ihre Ergebnisse erst nach dem
   vollständigen Lauf, Anhänge, die die vollständige Liste der Seite nicht mehr nennt, sofort.
+  Die Arbeit ergibt sich aus dem Zustand, das Ereignis stößt nur an: Der Auftrag nach jedem Abgleich holt für die
+  abgelegten Dokument-Anhänge seiner Seiten, die im Volltextindex stehen, nach, was fehlt oder veraltet ist. Jeder Stand
+  eines Dokuments trägt den Hash seines Lesetextes (`revision`, SHA-256 über die Abschnitte der Ansicht) und die
+  Extraktion, für die er gebildet wurde (`extraction`). Gleiche Extraktion, alle zuständigen Prozessoren in ihrer
+  Version: aktuell, ohne einen Abschnitt zu lesen. Andere Extraktion: Der Hash wird einmal neu gebildet; ist er gleich,
+  wird nur die Extraktion nachgetragen, ohne zu rechnen und ohne KI-Dienst.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

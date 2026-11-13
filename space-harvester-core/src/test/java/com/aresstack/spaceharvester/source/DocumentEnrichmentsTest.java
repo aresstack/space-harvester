@@ -6,7 +6,10 @@ import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.DocumentInventory;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.assets.ExtractionKey;
+import com.aresstack.spaceharvester.application.assets.TextSection;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
@@ -36,11 +39,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,12 +69,14 @@ class DocumentEnrichmentsTest {
     private Recording recording;
     private Recording pageOnly;
     private boolean released;
+    private Counting reads;
+    private final List<Asset> inventory = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         store = new FileSystemAssetStore(directory.resolve("assets"));
-        extractions = new DocumentExtractions(new TikaDocumentStructure(),
-                new FileSystemExtractionStore(directory.resolve("extractions")), ExtractionLimits.DEFAULTS);
+        reads = new Counting(directory.resolve("extractions"));
+        extractions = new DocumentExtractions(new TikaDocumentStructure(), reads, ExtractionLimits.DEFAULTS);
         results = new InMemoryEnrichmentStore();
         recording = new Recording("recording", true);
         pageOnly = new Recording("page-only", false);
@@ -82,7 +90,19 @@ class DocumentEnrichmentsTest {
     private DocumentEnrichments documents(boolean enabled, Jobs jobs) {
         Enrichments enrichments = new Enrichments(snapshot -> Optional.empty(),
                 List.of(new OutlineProcessor(), recording, pageOnly), results, Clock.fixed(NOW, ZoneOffset.UTC));
-        return new DocumentEnrichments(enrichments, jobs, () -> enabled);
+        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs, () -> enabled);
+        documents.assets(new DocumentInventory() {
+            @Override
+            public Optional<DocumentExtractions> documentExtractions() {
+                return Optional.of(extractions);
+            }
+
+            @Override
+            public List<Asset> indexedDocuments(String sourceId, Collection<String> pageIds) {
+                return inventory.stream().filter(asset -> pageIds.contains(asset.pageId())).toList();
+            }
+        });
+        return documents;
     }
 
     @Test
@@ -198,6 +218,61 @@ class DocumentEnrichmentsTest {
         assertThat(results.findDocuments(PAGE)).isEmpty();
     }
 
+    @Test
+    void theRunAfterASyncBuildsMissingResultsWithoutAnEventAndASecondRunReadsNoSection() {
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil.", "zwei.txt", "Zweiter Teil."));
+        inventory.add(asset);
+        DocumentEnrichments documents = documents(true);
+
+        documents.catchUp("wiki", "DEV", List.of("101"), null);
+
+        assertThat(recording.inputs).containsExactlyInAnyOrder("Erster Teil.", "Zweiter Teil.");
+        assertThat(results.findDocuments(PAGE)).hasSize(4);
+        reads.sections.set(0);
+
+        documents.catchUp("wiki", "DEV", List.of("101"), null);
+
+        assertThat(recording.inputs).hasSize(2);
+        assertThat(reads.sections).as("aktuell, am Manifest erkannt").hasValue(0);
+        documents.catchUp("wiki", "DEV", List.of("102"), null);
+        assertThat(recording.inputs).as("andere Seiten haben keine Anhänge").hasSize(2);
+    }
+
+    @Test
+    void aNewExtractionWithTheSameBlocksComputesNothingAndOnlyRecordsItself() {
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+        inventory.add(asset);
+        DocumentEnrichments documents = documents(true);
+        documents.catchUp("wiki", "DEV", List.of("101"), null);
+        // Wie nach einer neuen Extraktorversion: der Stand nennt eine andere Extraktion.
+        for (Enrichment result : results.findDocuments(PAGE)) {
+            results.save(result.withBasis(result.revision(), "ältere Extraktion"));
+        }
+
+        documents.catchUp("wiki", "DEV", List.of("101"), null);
+
+        assertThat(recording.inputs).as("kein neuer Aufruf").hasSize(1);
+        assertThat(results.findDocuments(PAGE)).allSatisfy(result -> assertThat(result.extraction())
+                .isNotEqualTo("ältere Extraktion"));
+        reads.sections.set(0);
+        documents.catchUp("wiki", "DEV", List.of("101"), null);
+        assertThat(reads.sections).as("danach wieder am Manifest erkannt").hasValue(0);
+    }
+
+    @Test
+    void changedBlocksComputeExactlyThatDocument() {
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil.", "zwei.txt", "Zweiter Teil."));
+        DocumentEnrichments documents = documents(true);
+        documents.indexed(list(), asset, extractions);
+
+        Asset reread = stored("teile.zip", Map.of("eins.txt", "Erster Teil, geändert.", "zwei.txt",
+                "Zweiter Teil."));
+        documents.indexed(list(), reread, extractions);
+
+        assertThat(recording.inputs).containsExactlyInAnyOrder("Erster Teil.", "Zweiter Teil.",
+                "Erster Teil, geändert.");
+    }
+
     private Asset stored(String title, Map<String, String> files) {
         Map<String, byte[]> entries = new LinkedHashMap<>();
         files.entrySet().stream().sorted(Map.Entry.comparingByKey())
@@ -250,6 +325,35 @@ class DocumentEnrichmentsTest {
         public EnrichmentOutput process(PageText text) {
             inputs.add(text.text());
             return EnrichmentOutput.of("{}");
+        }
+    }
+
+    /** Zählt gelesene Abschnitte, des Dokuments und seiner Teile. */
+    private static final class Counting extends FileSystemExtractionStore {
+        private final AtomicInteger sections = new AtomicInteger();
+
+        Counting(Path root) {
+            super(root);
+        }
+
+        @Override
+        public Stream<TextSection> sections(ExtractionKey key) {
+            return super.sections(key).peek(section -> sections.incrementAndGet());
+        }
+
+        @Override
+        public Optional<PartSections> partSections(ExtractionKey key) {
+            return super.partSections(key).map(parts -> new PartSections() {
+                @Override
+                public Set<String> keys() {
+                    return parts.keys();
+                }
+
+                @Override
+                public Stream<TextSection> sections(String partKey) {
+                    return parts.sections(partKey).peek(section -> sections.incrementAndGet());
+                }
+            });
         }
     }
 }

@@ -155,6 +155,20 @@ public class Enrichments {
         return List.copyOf(processors.keySet());
     }
 
+    /**
+     * Die Prozessoren für Dokumente, die die Seite bearbeiten, mit ihrer aktuellen Version: was ein aktueller
+     * Analysestand eines Dokuments dieser Seite enthalten muss.
+     */
+    public Map<String, String> documentProcessorVersions(PageKey page) {
+        Map<String, String> versions = new LinkedHashMap<>();
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (processor.documents() && processor.appliesTo(page)) {
+                versions.put(processor.id(), processor.version());
+            }
+        }
+        return versions;
+    }
+
     /** Die Kennungen der Prozessoren, die auch Dokumente bearbeiten ({@link EnrichmentProcessor#documents()}). */
     public List<String> documentProcessorIds() {
         return processors.values().stream().filter(EnrichmentProcessor::documents).map(EnrichmentProcessor::id)
@@ -166,11 +180,12 @@ public class Enrichments {
      * sind (ADR 0026, AP9a), im aufrufenden Thread: Der Auftrag der Anreicherung ist hier selbst der Hintergrund. Nur
      * Prozessoren mit {@link EnrichmentProcessor#documents()}, nur solange sie die Seite des Dokuments bearbeiten.
      *
-     * @param revision Inhalts-Hash des Dokuments, aus dem der Abschnitt stammt
-     * @param stored   die gespeicherten Ergebnisse des Dokuments ({@link EnrichmentStore#find(DocumentKey)})
-     * @param only     nur dieser Prozessor oder {@code null} für alle
+     * @param revision   Hash des Lesetextes des ganzen Dokuments, aus dem der Abschnitt stammt
+     * @param extraction Kennung der Extraktion, für die {@code revision} gilt ({@link Enrichment#extraction()})
+     * @param stored     die gespeicherten Ergebnisse des Dokuments ({@link EnrichmentStore#find(DocumentKey)})
+     * @param only       nur dieser Prozessor oder {@code null} für alle
      */
-    public Run refreshDocument(DocumentKey document, int section, String revision, PageText text,
+    public Run refreshDocument(DocumentKey document, int section, String revision, String extraction, PageText text,
                                List<Enrichment> stored, String only) {
         Objects.requireNonNull(document, "document");
         if (document.isPage()) {
@@ -196,7 +211,7 @@ public class Enrichments {
                 current++;
                 continue;
             }
-            Enrichment result = compute(processor, document, section, revision, text, input);
+            Enrichment result = compute(processor, document, section, revision, extraction, text, input);
             if (!saveWhileApplies(processor, result)) {
                 continue;
             }
@@ -210,13 +225,13 @@ public class Enrichments {
 
     /** @return das Ergebnis oder {@code null}, wenn der Prozessor das Dokument nicht bearbeiten darf */
     private Enrichment compute(EnrichmentProcessor processor, DocumentKey document, int section, String revision,
-                               PageText text, String input) {
+                               String extraction, PageText text, String input) {
         PageKey key = document.page();
         try {
             EnrichmentOutput output = processor.process(document, text);
             String version = output.version() != null ? output.version() : processor.version();
             return new Enrichment(key, processor.id(), version, input, revision, Enrichment.Status.OK,
-                    output.payloadJson(), output.warnings(), null, clock.instant(), document, section);
+                    output.payloadJson(), output.warnings(), null, clock.instant(), document, section, extraction);
         } catch (ProcessingNotAllowedException e) {
             LOG.log(System.Logger.Level.DEBUG, "Prozessor {0} übersprungen, Quelle {1} nicht freigegeben",
                     processor.id(), key.sourceId());
@@ -226,7 +241,8 @@ public class Enrichments {
             LOG.log(System.Logger.Level.WARNING, "Prozessor {0} {1} scheiterte an einem Dokument in {2} ({3})",
                     processor.id(), processor.version(), key.sourceId(), e.getClass().getName());
             return new Enrichment(key, processor.id(), processor.version(), input, revision,
-                    Enrichment.Status.FAILED, "{}", List.of(), PROCESSOR_ERROR, clock.instant(), document, section);
+                    Enrichment.Status.FAILED, "{}", List.of(), PROCESSOR_ERROR, clock.instant(), document, section,
+                    extraction);
         }
     }
 

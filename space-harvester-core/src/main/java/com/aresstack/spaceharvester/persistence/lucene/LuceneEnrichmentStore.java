@@ -148,6 +148,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String ATTACHMENT_ID = "documentAttachmentId";
     private static final String PART_ID = "documentPartId";
     private static final String SECTION = "documentSection";
+    private static final String DOCUMENT_EXTRACTION = "documentExtraction";
     /** Vektoren eines Dokuments: die Seitensuche ({@link #nearest}) findet sie nicht. */
     private static final String VECTOR_DOCUMENT = "vectorDocument";
     private static final String VECTOR_DOCUMENT_KEY = "vectorDocumentKey";
@@ -1002,7 +1003,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         return new Enrichment(key, doc.get(PROCESSOR_ID),
                 doc.get(PROCESSOR_VERSION), doc.get(INPUT_SHA256), doc.get(REVISION),
                 Enrichment.Status.valueOf(doc.get(STATUS)), doc.get(PAYLOAD), List.of(doc.getValues(WARNING)),
-                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)), documentKey(key, doc), section(doc));
+                doc.get(ERROR_CODE), Instant.parse(doc.get(COMPUTED_AT)), documentKey(key, doc), section(doc),
+                doc.get(DOCUMENT_EXTRACTION));
     }
 
     /** Anhang, Teil und Abschnitt getrennt gespeichert (Schlüsselform, ADR 0026); nie aus einer Zeichenkette zerlegt. */
@@ -1010,6 +1012,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         enrichment.document().attachmentId().ifPresent(id -> doc.add(new StoredField(ATTACHMENT_ID, id)));
         enrichment.document().part().ifPresent(id -> doc.add(new StoredField(PART_ID, id.value())));
         doc.add(new StoredField(SECTION, enrichment.section()));
+        storeIfPresent(doc, DOCUMENT_EXTRACTION, enrichment.extraction());
     }
 
     private static DocumentKey documentKey(PageKey page, Document doc) {
