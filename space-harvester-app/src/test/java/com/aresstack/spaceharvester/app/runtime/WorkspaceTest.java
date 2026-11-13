@@ -583,7 +583,15 @@ class WorkspaceTest {
         byte[] needle = secret.getBytes(StandardCharsets.UTF_8);
         try (Stream<Path> files = Files.walk(directory)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
-                String content = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+                byte[] bytes;
+                try {
+                    bytes = Files.readAllBytes(file);
+                } catch (java.nio.file.NoSuchFileException e) {
+                    // Eine temporäre Datei eines laufenden Auftrags (etwa beim Entpacken eines Anhangs) ist schon
+                    // wieder weg; was bleibt, wird geprüft.
+                    continue;
+                }
+                String content = new String(bytes, StandardCharsets.ISO_8859_1);
                 assertThat(content).as(file.toString()).doesNotContain(new String(needle, StandardCharsets.ISO_8859_1));
             }
         }
