@@ -424,6 +424,12 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
 | alle übrigen (Mails `.eml`/`.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – (Mails mit AP7) |
 
+Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
+gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Ist ein Container größer als die Standardschranke (`*`), liest
+das Lesen eingebettete Dateien nur, wenn ihr Format ohne Schranke nachgewiesen ist oder es ein Bild ist; alle anderen
+eingebetteten Teile bleiben ungelesen, der Container wird `PARTIAL` mit `entries-not-readable`. Bis zur
+Standardschranke liest es eingebettete Dateien wie bisher.
+
 ## Einen Adapter ergänzen
 
 1. Fehlende Fähigkeiten upstream in `source-api` als optionale Capability-Interfaces ergänzen, nicht durch

@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.assets.StructureSink;
 import com.aresstack.spaceharvester.application.assets.StructuredDocument;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.tika.config.TikaConfig;
 import org.apache.tika.exception.EncryptedDocumentException;
+import org.apache.tika.extractor.EmbeddedDocumentExtractor;
+import org.apache.tika.extractor.ParsingEmbeddedDocumentExtractor;
 import org.apache.tika.io.TikaInputStream;
 import org.apache.tika.metadata.Message;
 import org.apache.tika.metadata.Metadata;
@@ -39,6 +42,7 @@ import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.Parser;
 import org.xml.sax.Attributes;
+import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
 
@@ -146,13 +150,17 @@ public final class TikaDocumentStructure implements DocumentStructure {
             if (ExtractionLimits.exceeds(size, limits.maxFileBytes())) {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.TOO_LARGE));
             }
-            if (ExtractionLimits.exceeds(size, limits.memoryLimit(mediaType))) {
+            AutoDetectParser tika = parser();
+            // Gelesen wird nach dem Inhalt; die Schranke gilt deshalb auch für den an der Datei erkannten Typ, bei
+            // Abweichung der strengere Wert (Architekt 13.11.2026).
+            long memoryLimit = stricter(limits.memoryLimit(mediaType),
+                    limits.memoryLimit(detect(tika, original, title)));
+            if (ExtractionLimits.exceeds(size, memoryLimit)) {
                 return empty(Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
             }
             if (limits.tempSpaceReserve() > 0 && usableTempSpace() < limits.tempSpaceReserve()) {
                 return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.TEMP_SPACE_LOW));
             }
-            AutoDetectParser tika = parser();
             if (!supported(tika, mediaType)) {
                 return empty(Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.UNSUPPORTED_FORMAT));
             }
@@ -247,6 +255,27 @@ public final class TikaDocumentStructure implements DocumentStructure {
         return false;
     }
 
+    /** Der an der Datei erkannte Typ ohne Parameter; leer, wenn die Erkennung scheitert. */
+    private static String detect(AutoDetectParser tika, Path original, String title) {
+        Metadata metadata = new Metadata();
+        if (title != null && !title.isBlank()) {
+            metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, title);
+        }
+        try (TikaInputStream in = TikaInputStream.get(original)) {
+            return tika.getDetector().detect(in, metadata).getBaseType().toString();
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** Die strengere zweier Schranken; {@code 0} heißt ohne Schranke. */
+    private static long stricter(long first, long second) {
+        if (first == 0) {
+            return second;
+        }
+        return second == 0 ? first : Math.min(first, second);
+    }
+
     private static long usableTempSpace() {
         try {
             return Files.getFileStore(Path.of(System.getProperty("java.io.tmpdir"))).getUsableSpace();
@@ -319,12 +348,21 @@ public final class TikaDocumentStructure implements DocumentStructure {
             ParseContext context = new ParseContext();
             // Enthaltene Dateien wie bisher im Text des Behälters (eigene Dokumente erst mit AP7).
             context.set(Parser.class, tika);
+            // Bis AP7 (Grenze je Teil): Ist der Behälter größer als die Standardschranke, bleiben enthaltene Teile
+            // nicht nachgewiesener Formate ungelesen, sonst umginge eine große eingebettete Mail die Schranke.
+            long standard = limits.memoryLimits().getOrDefault(ExtractionLimits.ANY_TYPE, 0L);
+            GuardedEmbedded guard = null;
+            if (ExtractionLimits.exceeds(size, standard)) {
+                guard = new GuardedEmbedded(context);
+                context.set(EmbeddedDocumentExtractor.class, guard);
+            }
             Outcome outcome;
             try (TikaInputStream in = TikaInputStream.get(original, metadata)) {
                 stream = in;
                 (parseWith == null ? tika : parseWith).parse(in, handler, metadata, context);
                 handler.flush();
-                outcome = embeddedFailure(metadata) ? partial(StatusReason.ENTRIES_NOT_READABLE) : null;
+                outcome = embeddedFailure(metadata) || guard != null && guard.skipped > 0
+                        ? partial(StatusReason.ENTRIES_NOT_READABLE) : null;
             } catch (Stop e) {
                 outcome = truncatedOrFailed(e.reason);
             } catch (EncryptedDocumentException e) {
@@ -385,6 +423,28 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 // Grenze erreicht: Der angenommene Teil bleibt.
             }
             return chars > before;
+        }
+
+        /** Liest enthaltene Teile nur in nachgewiesenen Formaten (ohne Schranke) und Bilder; zählt die übrigen. */
+        private final class GuardedEmbedded extends ParsingEmbeddedDocumentExtractor {
+
+            volatile int skipped;
+
+            GuardedEmbedded(ParseContext context) {
+                super(context);
+            }
+
+            @Override
+            public void parseEmbedded(InputStream stream, ContentHandler handler, Metadata metadata,
+                                      boolean outputHtml) throws SAXException, IOException {
+                TikaInputStream in = TikaInputStream.get(stream);
+                MediaType type = tika.getDetector().detect(in, metadata).getBaseType();
+                if (type.getType().equals("image") || limits.memoryLimit(type.toString()) == 0) {
+                    super.parseEmbedded(in, handler, metadata, outputHtml);
+                } else {
+                    skipped++;
+                }
+            }
         }
 
         /** Enthaltene Dateien, die Tika nicht lesen konnte, meldet es nur in den Metadaten des Behälters. */
