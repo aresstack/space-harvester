@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.passages;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.enrichment.DocumentPosition;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
@@ -97,6 +99,39 @@ public class PassageProcessor implements EnrichmentProcessor {
     public boolean outdated(Enrichment stored) {
         return !stored.document().isPage() && notApproved(stored) && embedding != null
                 && embedding.covers(stored.key().sourceId());
+    }
+
+    /**
+     * Ein Abschnitt eines Dokuments, der nicht ganz unter die Grenze für das Embedding-Modell fällt, wird vollständig
+     * nach Struktur zerlegt: Die Grenze greift vor jedem Aufruf des Modells, auch für die Satzvektoren der Absätze.
+     */
+    @Override
+    public EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
+        Optional<EmbeddingProcessor.Generation> generation = generation();
+        if (position.embeddingBudget() < text.text().length() && generation.isPresent()
+                && embedding.covers(document.page().sourceId())) {
+            return structure(text, PassagePayload.REASON_EMBEDDING_LIMIT, version(generation.get().modelId()),
+                    List.of("Grenze für das Embedding-Modell je Dokument erreicht, Absätze nach Struktur"));
+        }
+        return process(document.page(), text);
+    }
+
+    /**
+     * Wie {@link #outdated}, dazu für Dokumente: Liegt der Abschnitt jetzt anders zur Grenze als beim Rechnen, gilt der
+     * Stand nicht mehr, sofern das Modell überhaupt gefragt würde.
+     */
+    @Override
+    public boolean current(Enrichment stored, PageText text, DocumentPosition position) {
+        if (outdated(stored)) {
+            return false;
+        }
+        if (stored.document().isPage()) {
+            return true;
+        }
+        boolean limited = position.embeddingBudget() < text.text().length();
+        boolean recorded = stored.payloadJson().contains("\"reason\":\"" + PassagePayload.REASON_EMBEDDING_LIMIT
+                + "\"");
+        return limited == recorded || generation().isEmpty() || !embedding.covers(stored.key().sourceId());
     }
 
     static boolean notApproved(Enrichment stored) {

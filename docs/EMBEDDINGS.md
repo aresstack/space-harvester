@@ -158,7 +158,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   Grenze) begrenzt, was je Dokument an das Embedding-Modell geht; Absätze und Navigation gelten ohne Grenze. Beide
   Schlüssel lesen Dienst und App gleich, wirksam beim nächsten Lauf. Gezählt wird über die Abschnitte des Dokuments
   in Lesereihenfolge (`DocumentPosition`); eine Kürzung steht im Ergebnis von `embedding` als
-  `"cut":{"maxChars","offset","embeddedChars","chars"}` und als Warnung. Absätze zerlegen den Lesetext wie die
+  `"cut":{"maxChars","offset","embeddedChars","chars"}` und als Warnung. Die Grenze greift vor jedem Modellaufruf: Ein
+  Abschnitt, der nicht ganz darunter fällt, zerlegt `passages` vollständig nach Struktur (`embedding-limit`), ohne
+  Satzvektoren. Absätze zerlegen den Lesetext wie die
   Projektion einer Seite zeilenweise: Jede Tabellenzeile ist ein eigener Absatz, keiner reicht über eine Tabelle. Die
   Navigation nutzt die Embeddings je Absatz desselben Abschnitts; der Anzeigename des Dokuments geht nie an das
   Chat-Modell. Gesucht wird in den Vektoren der Dokumente noch nicht (folgt).

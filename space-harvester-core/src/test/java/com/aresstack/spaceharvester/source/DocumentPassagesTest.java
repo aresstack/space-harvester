@@ -156,20 +156,22 @@ class DocumentPassagesTest {
             last = Math.max(last, Integer.parseInt(ends.group(1)));
         }
         assertThat(last).as("Absätze ohne Grenze").isGreaterThan(60);
+        assertThat(processor(found, "passages").payloadJson()).as("hinter der Grenze kein Modellaufruf für Sätze")
+                .contains("\"reason\":\"embedding-limit\"");
+        assertThat(embedded).as("Grenze vor jedem Modellaufruf").allSatisfy(text -> assertThat(text.length())
+                .isLessThanOrEqualTo(20 + 40));
     }
 
     @Test
-    void anotherLimitRecomputesOnlyTheEmbeddings() {
+    void anotherLimitRecomputesWhatDependsOnIt() {
         Asset asset = stored(Map.of("bericht.html", HTML));
         documents(20).indexed(list(), asset, extractions);
-        Enrichment passages = processor(results.findDocuments(PAGE), "passages");
 
         documents(0).indexed(list(), asset, extractions);
 
         List<Enrichment> found = results.findDocuments(PAGE);
         assertThat(processor(found, "embedding").payloadJson()).doesNotContain("\"cut\"");
-        assertThat(processor(found, "passages").computedAt()).isEqualTo(passages.computedAt());
-        assertThat(processor(found, "passages").payloadJson()).isEqualTo(passages.payloadJson());
+        assertThat(processor(found, "passages").payloadJson()).contains("\"mode\":\"semantic\"");
         int calls = embedded.size();
         documents(0).indexed(list(), asset, extractions);
         assertThat(embedded).as("danach aktuell").hasSize(calls);
