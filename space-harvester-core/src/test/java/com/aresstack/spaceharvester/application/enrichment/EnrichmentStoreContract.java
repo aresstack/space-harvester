@@ -133,6 +133,33 @@ public abstract class EnrichmentStoreContract {
         assertThat(store.find(other)).as("die Seite samt ihren Dokumenten").isEmpty();
     }
 
+    @Test
+    void documentsOfAPageAreFoundTogetherAndSectionsRemovedOneByOne() {
+        EnrichmentStore store = store();
+        DocumentKey attachment = DocumentKey.attachment(PAGE, "a1");
+        DocumentKey part = attachment.child(new PartId.Content("ab".repeat(32), 1));
+        DocumentKey elsewhere = DocumentKey.attachment(OTHER, "a1");
+        store.save(ok(PAGE, "outline", "1", "{}"));
+        store.save(document(attachment, 0, "outline"));
+        store.save(document(attachment, 1, "outline"));
+        store.save(document(attachment, 1, "passages"));
+        store.save(document(part, 0, "outline"));
+        store.save(document(elsewhere, 0, "outline"));
+
+        assertThat(store.findDocuments(PAGE)).as("ohne die Seite selbst und ohne andere Seiten")
+                .extracting(Enrichment::document, Enrichment::section, Enrichment::processorId)
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple(attachment, 0, "outline"),
+                        org.assertj.core.groups.Tuple.tuple(attachment, 1, "outline"),
+                        org.assertj.core.groups.Tuple.tuple(attachment, 1, "passages"),
+                        org.assertj.core.groups.Tuple.tuple(part, 0, "outline"));
+
+        store.removeSection(attachment, 1);
+        assertThat(store.find(attachment)).extracting(Enrichment::section).containsExactly(0);
+        assertThat(store.find(part)).hasSize(1);
+        assertThat(store.find(PAGE)).hasSize(1);
+        assertThat(store.findDocuments(OTHER)).hasSize(1);
+    }
+
     private static Enrichment document(DocumentKey document, int section, String processor) {
         return new Enrichment(document.page(), processor, "1", "sha256:" + "d".repeat(64), null, Enrichment.Status.OK,
                 "{\"section\":" + section + "}", List.of(), null, Instant.parse("2026-11-13T12:00:00Z"), document,

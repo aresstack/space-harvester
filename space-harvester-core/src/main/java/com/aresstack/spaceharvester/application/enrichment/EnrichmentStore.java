@@ -39,6 +39,15 @@ public interface EnrichmentStore {
      */
     void removeDocument(DocumentKey document);
 
+    /**
+     * Alle Ergebnisse der Anhänge und enthaltenen Dateien einer Seite, ohne die der Seite selbst; etwa um nach dem
+     * Neulesen zu entfernen, was es nicht mehr gibt (ADR 0026, Schlüsselform Punkt 5).
+     */
+    List<Enrichment> findDocuments(PageKey key);
+
+    /** Entfernt die Ergebnisse eines Abschnitts eines Anhangs oder einer enthaltenen Datei, aller Prozessoren. */
+    void removeSection(DocumentKey document, int section);
+
     /** Macht die bisherigen Änderungen dauerhaft, wenn die Ablage sie bündelt. */
     default void flush() {
     }

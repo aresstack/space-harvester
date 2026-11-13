@@ -139,6 +139,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   Seiten-ID bleibt byte-gleich, IDs ohne diesen Teil sind Absätze der Seite. Ergebnisse von Dokumenten liegen in der
   Anreicherungsablage neben denen der Seite (Anhang, Teil und Abschnitt als eigene Felder) und erscheinen nicht in der
   Seitensuche.
+- Analysen je Dokument (ADR 0026, AP9a): Liegt ein Dokument-Anhang neu oder geändert im Volltextindex, plant
+  `DocumentEnrichments` einen Auftrag `ENRICHMENT` der Quelle und des Space ein (sichtbar, anhaltbar, abbrechbar wie
+  die Anreicherung der Seiten). Er rechnet je abgelegtem Abschnitt des Anhangs und seiner lesbaren Teile (`OK`,
+  `PARTIAL`) die Prozessoren mit `documents()`, derzeit `outline`. Eingabe ist `DocumentSectionText`
+  (`document-text/v1`): je Block eine Zeile, Tabellenzeilen mit ` | ` wie bei der Projektion einer Seite, kein Kopf,
+  kein Status, kein Name. Extraktor und Version gehören nicht zur Eingabe: Gleiche Blöcke bleiben aktuell (Abnahme 8).
+  Die Freigabe gilt über die Seite. Weggefallene Teile und Abschnitte verlieren ihre Ergebnisse erst nach dem
+  vollständigen Lauf, Anhänge, die die vollständige Liste der Seite nicht mehr nennt, sofort.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.
