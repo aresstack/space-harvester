@@ -78,4 +78,28 @@ public interface EnrichmentProcessor {
     default EnrichmentOutput process(DocumentKey document, PageText text) {
         return process(document.page(), text);
     }
+
+    /**
+     * Wie {@link #process(DocumentKey, PageText)} mit der Stelle des Abschnitts im Dokument und der Grenze für das
+     * Embedding-Modell; Vorgabe ohne beides.
+     */
+    default EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
+        return process(document, text);
+    }
+
+    /**
+     * Ob ein gespeicherter Stand eines Dokuments trotz gleichen Textes und gleicher Version neu gerechnet werden muss,
+     * weil sich außerhalb des Textes etwas geändert hat, etwa die Freigabe der Quelle; ohne den Text prüfbar.
+     */
+    default boolean outdated(Enrichment stored) {
+        return false;
+    }
+
+    /**
+     * Ob ein gespeicherter Stand mit gleichem Text und gleicher Version für diesen Abschnitt an dieser Stelle gilt;
+     * Vorgabe: wenn er nicht {@link #outdated(Enrichment)} ist.
+     */
+    default boolean current(Enrichment stored, PageText text, DocumentPosition position) {
+        return !outdated(stored);
+    }
 }

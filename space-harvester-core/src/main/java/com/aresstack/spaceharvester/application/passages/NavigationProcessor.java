@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.passages;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
@@ -36,6 +37,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     private final DocumentNavigationBuilder builder;
     private final EmbeddingProcessor embedding;
     private final Function<PageKey, List<Enrichment>> stored;
+    private final Function<DocumentKey, List<Enrichment>> documents;
     private final NavigationLabelModel labels;
 
     /**
@@ -53,9 +55,20 @@ public final class NavigationProcessor implements EnrichmentProcessor {
      */
     public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
                                Function<PageKey, List<Enrichment>> stored, NavigationLabelModel labels) {
+        this(builder, embedding, stored, null, labels);
+    }
+
+    /**
+     * @param documents die gespeicherten Anreicherungen eines Anhangs oder einer enthaltenen Datei, z. B.
+     *                  {@code EnrichmentStore::find}, oder {@code null}: dann nur Seiten (ADR 0026, AP9a)
+     */
+    public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
+                               Function<PageKey, List<Enrichment>> stored,
+                               Function<DocumentKey, List<Enrichment>> documents, NavigationLabelModel labels) {
         this.builder = Objects.requireNonNull(builder, "builder");
         this.embedding = embedding;
         this.stored = Objects.requireNonNull(stored, "stored");
+        this.documents = documents;
         this.labels = labels;
     }
 
@@ -102,10 +115,36 @@ public final class NavigationProcessor implements EnrichmentProcessor {
 
     @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
-        return process(key, null, text);
+        return process(key, null, text, stored.apply(key));
+    }
+
+    /** Wie bei {@code passages}: Überschriften ohne Freigabe gelten nicht mehr, sobald die Quelle freigegeben ist. */
+    @Override
+    public boolean outdated(Enrichment stored) {
+        return !stored.document().isPage() && PassageProcessor.notApproved(stored) && embedding != null
+                && embedding.covers(stored.key().sourceId());
+    }
+
+    /** Auch Anhänge und enthaltene Dateien, wenn ihre gespeicherten Anreicherungen erreichbar sind. */
+    @Override
+    public boolean documents() {
+        return documents != null;
+    }
+
+    /**
+     * Ein Abschnitt eines Dokuments aus den Embeddings je Absatz desselben Abschnitts (gleicher Lesetext); ohne Titel,
+     * denn der Anzeigename des Dokuments geht nie an das Chat-Modell.
+     */
+    @Override
+    public EnrichmentOutput process(DocumentKey document, PageText text) {
+        return process(document.page(), null, text, documents.apply(document));
     }
 
     private EnrichmentOutput process(PageKey key, String title, PageText text) {
+        return process(key, title, text, stored.apply(key));
+    }
+
+    private EnrichmentOutput process(PageKey key, String title, PageText text, List<Enrichment> candidates) {
         String version = version();
         if (embedding == null || !embedding.available()) {
             return headings(text, NavigationPayload.REASON_NO_MODEL, version);
@@ -122,7 +161,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
             // Wie im Client kein Clustern über Absätze aus dem Regel-Splitter; ein Satzmodell ändert die Version.
             return headings(text, NavigationPayload.REASON_NO_SENTENCE_MODEL, version);
         }
-        Enrichment current = stored.apply(key).stream()
+        Enrichment current = candidates.stream()
                 .filter(e -> e.processorId().equals(embedding.id())
                         && e.freshness(text.inputSha256(), embedding.version()) == Enrichment.Freshness.CURRENT)
                 .findFirst().orElse(null);

@@ -87,7 +87,7 @@ class EnrichmentConfiguration {
         // benennt das Chat-Modell (ADR 0020)
         EnrichmentStore enrichmentStore = store.getIfAvailable(InMemoryEnrichmentStore::new);
         processors.add(new NavigationProcessor(new DocumentNavigationBuilder(), embedding.getIfAvailable(),
-                enrichmentStore::find, labels.getIfAvailable()));
+                enrichmentStore::find, enrichmentStore::find, labels.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         // #108: Satzanalyse über das Chat-Modell, nur eingeschaltet (AiConfiguration), im Hintergrund
@@ -153,9 +153,9 @@ class EnrichmentConfiguration {
     @Bean
     DocumentEnrichments documentEnrichments(Enrichments enrichments, ObjectProvider<Jobs> jobs,
                                             ObjectProvider<Assets> assets, LiveConfiguration live) {
-        // enrichment.documents.enabled aus der wirksamen Konfiguration, beim nächsten Lauf wirksam.
+        // enrichment.documents.* aus der wirksamen Konfiguration, beim nächsten Lauf wirksam.
         DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(),
-                () -> live.current().enrichment().documents());
+                () -> live.current().enrichment());
         Assets target = assets.getIfAvailable();
         if (target != null) {
             target.indexedDocuments(documents);

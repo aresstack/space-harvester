@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.passages;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.enrichment.DocumentPosition;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -77,6 +80,62 @@ public class PassageProcessor implements EnrichmentProcessor {
     @Override
     public boolean background(PageKey key) {
         return background() && embedding.covers(key.sourceId());
+    }
+
+    /**
+     * Auch Anhänge und enthaltene Dateien (ADR 0026, AP9a): je Abschnitt aus dem Lesetext ({@code document-text/v1}),
+     * eine Zeile je Block, Tabellenzeilen eigene Blöcke; ohne Grenze, die Freigabe gilt über die Seite.
+     */
+    @Override
+    public boolean documents() {
+        return true;
+    }
+
+    /**
+     * Absätze eines Dokuments nach Struktur, weil die Quelle nicht freigegeben war, gelten nicht mehr, sobald sie es
+     * ist; bei Seiten erledigt das die Neuberechnung nach der Freigabe.
+     */
+    @Override
+    public boolean outdated(Enrichment stored) {
+        return !stored.document().isPage() && notApproved(stored) && embedding != null
+                && embedding.covers(stored.key().sourceId());
+    }
+
+    /**
+     * Ein Abschnitt eines Dokuments, der nicht ganz unter die Grenze für das Embedding-Modell fällt, wird vollständig
+     * nach Struktur zerlegt: Die Grenze greift vor jedem Aufruf des Modells, auch für die Satzvektoren der Absätze.
+     */
+    @Override
+    public EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
+        Optional<EmbeddingProcessor.Generation> generation = generation();
+        if (position.embeddingBudget() < text.text().length() && generation.isPresent()
+                && embedding.covers(document.page().sourceId())) {
+            return structure(text, PassagePayload.REASON_EMBEDDING_LIMIT, version(generation.get().modelId()),
+                    List.of("Grenze für das Embedding-Modell je Dokument erreicht, Absätze nach Struktur"));
+        }
+        return process(document.page(), text);
+    }
+
+    /**
+     * Wie {@link #outdated}, dazu für Dokumente: Liegt der Abschnitt jetzt anders zur Grenze als beim Rechnen, gilt der
+     * Stand nicht mehr, sofern das Modell überhaupt gefragt würde.
+     */
+    @Override
+    public boolean current(Enrichment stored, PageText text, DocumentPosition position) {
+        if (outdated(stored)) {
+            return false;
+        }
+        if (stored.document().isPage()) {
+            return true;
+        }
+        boolean limited = position.embeddingBudget() < text.text().length();
+        boolean recorded = stored.payloadJson().contains("\"reason\":\"" + PassagePayload.REASON_EMBEDDING_LIMIT
+                + "\"");
+        return limited == recorded || generation().isEmpty() || !embedding.covers(stored.key().sourceId());
+    }
+
+    static boolean notApproved(Enrichment stored) {
+        return stored.payloadJson().contains("\"reason\":\"" + PassagePayload.REASON_NOT_APPROVED + "\"");
     }
 
     /** Ohne Seite weiß der Prozessor nicht, ob die Quelle freigegeben ist: nur nach Struktur. */

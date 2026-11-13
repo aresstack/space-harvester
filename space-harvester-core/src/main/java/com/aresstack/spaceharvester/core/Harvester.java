@@ -461,7 +461,7 @@ public final class Harvester implements AutoCloseable {
             AiServiceSettings startAi = builder.ai;
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
             processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
-                    new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                    enrichmentStore::find, new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent)));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
@@ -697,7 +697,7 @@ public final class Harvester implements AutoCloseable {
             // der Lauf nach dem Abgleich holt den Bestand nach.
             EnrichmentSettings startEnrichment = builder.enrichment;
             DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
-                    () -> (this.settings != null ? this.settings.enrichment() : startEnrichment).documents());
+                    () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     List.of(acronymRelationRule::refresh), documentEnrichments);
