@@ -174,3 +174,16 @@ tasks.register('atlassianTextSpike', JavaExec) {
         args project.property('atlassianSpikeSpace').toString()
     }
 }
+
+// Analyze coherent, public German-language library workflows with the pinned MaltParser.
+tasks.register('germanLibraryTextSpike', JavaExec) {
+    group = 'verification'
+    description = 'Extract nouns, verbs, and evidence-based relations from German public library help texts.'
+    dependsOn tasks.named('testClasses')
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.aresstack.spaceharvester.app.spike.GermanLibraryTextSpike'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    def outputDirectory = layout.buildDirectory.dir('german-library-text-spike')
+    def parserModel = rootProject.layout.projectDirectory.dir('nlp-parser/build/nlp-model/maltparser-de-gsd-v1.0.0')
+    args outputDirectory.get().asFile.absolutePath, parserModel.asFile.absolutePath
+}
