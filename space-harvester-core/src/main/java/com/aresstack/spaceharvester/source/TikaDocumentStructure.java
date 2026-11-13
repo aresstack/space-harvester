@@ -25,6 +25,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.tika.config.TikaConfig;
 import org.apache.tika.exception.EncryptedDocumentException;
@@ -156,7 +157,18 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 return empty(Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.UNSUPPORTED_FORMAT));
             }
             try {
-                slots.acquire();
+                // Auch das Warten auf einen Platz endet an der Zeitgrenze: Hängende Läufe behalten ihren Platz.
+                long wait = limits.totalTimeout().isZero() ? limits.idleTimeout().toNanos()
+                        : limits.totalTimeout().toNanos();
+                boolean acquired = true;
+                if (wait > 0) {
+                    acquired = slots.tryAcquire(wait, TimeUnit.NANOSECONDS);
+                } else {
+                    slots.acquire();
+                }
+                if (!acquired) {
+                    return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.TIMEOUT));
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return empty(Outcome.of(ExtractionStatus.FAILED, StatusReason.TIMEOUT));
@@ -278,6 +290,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
         private final BlockSink target;
         final AtomicLong lastProgress = new AtomicLong(System.nanoTime());
         private volatile TikaInputStream stream;
+        private final Handler handler = new Handler();
         private long blocks;
         private long chars;
         private boolean stopped;
@@ -307,12 +320,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
             // Enthaltene Dateien wie bisher im Text des Behälters (eigene Dokumente erst mit AP7).
             context.set(Parser.class, tika);
             Outcome outcome;
-            Handler handler = new Handler();
             try (TikaInputStream in = TikaInputStream.get(original, metadata)) {
                 stream = in;
                 (parseWith == null ? tika : parseWith).parse(in, handler, metadata, context);
                 handler.flush();
-                outcome = null;
+                outcome = embeddedFailure(metadata) ? partial(StatusReason.ENTRIES_NOT_READABLE) : null;
             } catch (Stop e) {
                 outcome = truncatedOrFailed(e.reason);
             } catch (EncryptedDocumentException e) {
@@ -336,6 +348,13 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 if (stopped) {
                     return;
                 }
+                // Nach vollständigem Lesen ist der Puffer leer; drain betrifft nur Abbrüche.
+                StatusReason abort = outcome == null ? null : outcome.reason().orElse(StatusReason.CORRUPT);
+                if (abort != null && abort != StatusReason.TOO_LARGE && abort != StatusReason.TEXT_RATIO_EXCEEDED
+                        && drain()) {
+                    // Bis zum Abbruch gesammelten Text behalten; der Grund bleibt der Abbruch.
+                    outcome = truncatedOrFailed(abort);
+                }
                 if (outcome == null) {
                     outcome = chars == 0 ? Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT)
                             : Outcome.ok(new ReadExtent(size, chars));
@@ -350,10 +369,34 @@ public final class TikaDocumentStructure implements DocumentStructure {
             if (result != null) {
                 return result;
             }
+            drain();
             stopped = true;
             stopReason = reason;
             result = new StructuredDocument(DocumentHead.EMPTY, truncatedOrFailed(reason), List.of(), blocks, chars);
             return result;
+        }
+
+        /** Gibt den noch gepufferten Text aus (unter der Sperre); true, wenn dabei Zeichen dazukamen. */
+        private synchronized boolean drain() {
+            long before = chars;
+            try {
+                handler.flush();
+            } catch (SAXException | RuntimeException e) {
+                // Grenze erreicht: Der angenommene Teil bleibt.
+            }
+            return chars > before;
+        }
+
+        /** Enthaltene Dateien, die Tika nicht lesen konnte, meldet es nur in den Metadaten des Behälters. */
+        private static boolean embeddedFailure(Metadata metadata) {
+            return metadata.get(TikaCoreProperties.EMBEDDED_EXCEPTION) != null
+                    || metadata.get(TikaCoreProperties.EMBEDDED_BYTES_EXCEPTION) != null;
+        }
+
+        /** Vollständig gelesen, aber mit fehlenden Teilen: gekürzt; ohne jeden Text gescheitert. */
+        private Outcome partial(StatusReason reason) {
+            return chars == 0 ? Outcome.of(ExtractionStatus.FAILED, reason)
+                    : Outcome.truncated(reason, new ReadExtent(size, chars));
         }
 
         synchronized StructuredDocument result() {
@@ -432,11 +475,11 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     flush();
                 } else if (name.equals("td") || name.equals("th")) {
                     if (cellOpen) {
-                        buffer.append('\t');
+                        append('\t');
                     }
                     cellOpen = true;
                 } else if (name.equals("br")) {
-                    buffer.append('\n');
+                    append('\n');
                 }
             }
 
@@ -462,13 +505,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 }
                 int offset = start;
                 int end = start + length;
-                while (offset < end) {
-                    // Nie mehr als eine Blockgröße auf einmal anhängen: Der Puffer bleibt unter zwei Blockgrößen.
-                    int take = Math.min(end - offset, maxBlockChars);
-                    buffer.append(ch, offset, take);
-                    offset += take;
-                    while (buffer.length() > maxBlockChars) {
-                        splitLong();
+                // Unter der Sperre des Laufs, damit ein Abbruch von außen den Puffer ausgeben kann.
+                synchronized (Reader.this) {
+                    while (offset < end) {
+                        // Nie mehr als eine Blockgröße auf einmal anhängen: Der Puffer bleibt unter zwei Blockgrößen.
+                        int take = Math.min(end - offset, maxBlockChars);
+                        buffer.append(ch, offset, take);
+                        offset += take;
+                        while (buffer.length() > maxBlockChars) {
+                            splitLong();
+                        }
                     }
                 }
             }
@@ -476,6 +522,16 @@ public final class TikaDocumentStructure implements DocumentStructure {
             @Override
             public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
                 characters(ch, start, length);
+            }
+
+            /** Trennzeichen zählen zur Blockgröße wie Text. */
+            private void append(char separator) throws SAXException {
+                synchronized (Reader.this) {
+                    buffer.append(separator);
+                    while (buffer.length() > maxBlockChars) {
+                        splitLong();
+                    }
+                }
             }
 
             /** Gibt einen zu langen Absatz bis zum letzten Leerraum vor der Grenze aus, notfalls genau an der Grenze. */
@@ -496,11 +552,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
             }
 
             void flush() throws SAXException {
-                if (buffer.isEmpty()) {
-                    return;
+                String text;
+                synchronized (Reader.this) {
+                    if (buffer.isEmpty()) {
+                        return;
+                    }
+                    text = buffer.toString();
+                    buffer.setLength(0);
                 }
-                String text = buffer.toString();
-                buffer.setLength(0);
                 emitText(text);
             }
 

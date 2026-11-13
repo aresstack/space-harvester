@@ -219,6 +219,135 @@ class TikaDocumentStructureTest {
         assertThat(sink.text()).contains("vor dem Hängen").doesNotContain("zu spät");
     }
 
+    @Test
+    void textOfAnOpenParagraphSurvivesAParserFailure() throws Exception {
+        Path file = Files.writeString(directory.resolve("f.txt"), "egal");
+        TikaDocumentStructure failing = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            handler.startElement("", "p", "p", new org.xml.sax.helpers.AttributesImpl());
+            characters(handler, "schon gelesen");
+            throw new org.apache.tika.exception.TikaException("kaputt");
+        }));
+        Recording sink = new Recording();
+
+        StructuredDocument result = failing.extract(file, "f.txt", "text/plain", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
+        assertThat(result.outcome().reason()).contains(StatusReason.CORRUPT);
+        assertThat(sink.text()).contains("schon gelesen");
+        assertThat(result.chars()).isEqualTo("schon gelesen".length());
+    }
+
+    @Test
+    void lineBreaksAndCellTabsCountTowardsTheBlockSize() throws Exception {
+        Path file = Files.writeString(directory.resolve("b.txt"), "egal");
+        TikaDocumentStructure breaks = new TikaDocumentStructure(1, 100, scripted((handler, metadata) -> {
+            handler.startElement("", "p", "p", new org.xml.sax.helpers.AttributesImpl());
+            characters(handler, "Anfang");
+            for (int i = 0; i < 1_000; i++) {
+                handler.startElement("", "br", "br", new org.xml.sax.helpers.AttributesImpl());
+                handler.endElement("", "br", "br");
+            }
+            characters(handler, "Ende");
+            handler.endElement("", "p", "p");
+            handler.startElement("", "tr", "tr", new org.xml.sax.helpers.AttributesImpl());
+            for (int i = 0; i < 1_000; i++) {
+                handler.startElement("", "td", "td", new org.xml.sax.helpers.AttributesImpl());
+                handler.endElement("", "td", "td");
+            }
+            characters(handler, "Zelle");
+            handler.endElement("", "tr", "tr");
+        }));
+        Recording sink = new Recording();
+
+        StructuredDocument result = breaks.extract(file, "b.txt", "text/plain", ExtractionLimits.DEFAULTS, sink);
+
+        assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(sink.blocks).allSatisfy(block -> assertThat(block.chars()).isLessThanOrEqualTo(100));
+        assertThat(sink.text()).contains("Anfang", "Ende", "Zelle");
+    }
+
+    @Test
+    void anUnreadableEmbeddedFileMakesTheResultPartial() throws Exception {
+        Path file = Files.writeString(directory.resolve("e.txt"), "egal");
+        TikaDocumentStructure embedded = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            handler.startElement("", "p", "p", new org.xml.sax.helpers.AttributesImpl());
+            characters(handler, "Mailtext");
+            handler.endElement("", "p", "p");
+            metadata.add(org.apache.tika.metadata.TikaCoreProperties.EMBEDDED_EXCEPTION, "verschlüsselt");
+        }));
+
+        StructuredDocument result = embedded.extract(file, "e.txt", "text/plain", ExtractionLimits.DEFAULTS,
+                new Recording());
+
+        assertThat(result.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
+        assertThat(result.outcome().reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
+        assertThat(result.outcome().truncated()).isTrue();
+    }
+
+    @Test
+    void waitingForASlotEndsAtTheTimeLimitWhenAWorkerHangs() throws Exception {
+        Path file = Files.writeString(directory.resolve("w.txt"), "egal");
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        TikaDocumentStructure hanging = new TikaDocumentStructure(1, 1_000, scripted((handler, metadata) -> {
+            // Ignoriert Unterbrechungen wie ein hängender Parser.
+            while (release.getCount() > 0) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    // weiter warten
+                }
+            }
+        }));
+        ExtractionLimits quick = new ExtractionLimits(0, 0, 0, 0, 0, 0, 10, 10_000, Duration.ofMillis(200),
+                Duration.ofMillis(300), 0, 1, Map.of());
+        try {
+            hanging.extract(file, "w.txt", "text/plain", quick, new Recording());
+
+            long started = System.nanoTime();
+            StructuredDocument second = hanging.extract(file, "w.txt", "text/plain", quick, new Recording());
+
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(5));
+            assertThat(second.outcome().status()).isEqualTo(ExtractionStatus.FAILED);
+            assertThat(second.outcome().reason()).contains(StatusReason.TIMEOUT);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @FunctionalInterface
+    interface Script {
+        void run(ContentHandler handler, Metadata metadata) throws Exception;
+    }
+
+    private static Parser scripted(Script script) {
+        return new Parser() {
+            @Override
+            public Set<MediaType> getSupportedTypes(ParseContext context) {
+                return Set.of(MediaType.TEXT_PLAIN);
+            }
+
+            @Override
+            public void parse(InputStream stream, ContentHandler handler, Metadata metadata, ParseContext context)
+                    throws org.xml.sax.SAXException, org.apache.tika.exception.TikaException {
+                try {
+                    handler.startDocument();
+                    script.run(handler, metadata);
+                    handler.endDocument();
+                } catch (org.xml.sax.SAXException | org.apache.tika.exception.TikaException
+                         | RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new org.apache.tika.exception.TikaException("Skript", e);
+                }
+            }
+        };
+    }
+
+    private static void characters(ContentHandler handler, String text) throws org.xml.sax.SAXException {
+        char[] chars = text.toCharArray();
+        handler.characters(chars, 0, chars.length);
+    }
+
     private static ExtractionLimits limits(Map<String, Long> memory, long maxChars, long maxFileBytes) {
         return new ExtractionLimits(maxFileBytes, maxChars, 100, 100L * 1024 * 1024, 100, 1_000_000, 10, 10_000,
                 Duration.ofSeconds(30), Duration.ofMinutes(5), 0, 2, memory);
