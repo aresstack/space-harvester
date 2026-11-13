@@ -448,6 +448,10 @@ public final class SettingsView implements View {
     public void shown() {
         render();
         ai.render();
+        // Die Diagnose hält ihre Abfrage an, solange sie nicht sichtbar ist; steht ihre Seite noch an, läuft sie weiter.
+        if (DIAGNOSIS.equals(selected) && diagnosis != null) {
+            diagnosis.shown();
+        }
     }
 
     /** Öffnet den Reiter „KI-Dienst“, z. B. vom Hinweis an der semantischen Suche. */

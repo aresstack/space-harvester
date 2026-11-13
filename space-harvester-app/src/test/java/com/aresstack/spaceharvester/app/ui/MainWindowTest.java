@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.JLabel;
+import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
@@ -104,6 +105,27 @@ class MainWindowTest {
         assertThat(window[0].current()).as("Status führt zu Einstellungen › Diagnose").isEqualTo(AppContext.Section.SETTINGS);
         assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
                 .doesNotContain(AboutDialog.TAGLINE);
+        // Die Diagnose hält ihre Abfrage an, wenn der Bereich wechselt; kommt man über Einstellungen zurück und ihre
+        // Seite steht noch an, wird sie erneut gezeigt und fragt weiter ab.
+        int[] shown = new int[1];
+        View counting = new View() {
+            @Override
+            public JComponent component() {
+                return new JPanel();
+            }
+
+            @Override
+            public void shown() {
+                shown[0]++;
+            }
+        };
+        SwingUtilities.invokeAndWait(() -> {
+            window[0].settings().diagnosis(counting);
+            window[0].settings().select(SettingsView.DIAGNOSIS);
+            window[0].show(AppContext.Section.SEARCH);
+            window[0].show(AppContext.Section.SETTINGS);
+        });
+        assertThat(shown[0]).as("Seite gewählt, Bereich erneut sichtbar").isEqualTo(2);
 
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         String job = context.runtime().workspace().startSync("handbuch", space).id();
