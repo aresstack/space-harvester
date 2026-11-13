@@ -293,10 +293,6 @@ public final class DocumentExtractions {
         }
     }
 
-    private static boolean usable(Outcome outcome) {
-        return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
-    }
-
     /** Sammelt reinen Text bis zur Grenze. */
     private static final class TextCollector {
 
@@ -463,5 +459,9 @@ public final class DocumentExtractions {
             case Block.Code b -> new Block.Code(index, b.location(), b.links(), b.text(), b.language());
             case Block.Table b -> new Block.Table(index, b.location(), b.links(), b.cells(), b.continued());
         };
+    }
+
+    private static boolean usable(Outcome outcome) {
+        return outcome.status() == ExtractionStatus.OK || outcome.status() == ExtractionStatus.PARTIAL;
     }
 }
