@@ -188,6 +188,18 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      gesucht. Nie `RELATED`, nie Vorschläge oder Abgelehntes, nicht transitiv; ein Fehler beim Nachschlagen lässt die
      Suche ohne Erweiterung laufen.
 
+10. **Begriffe je Anhang und enthaltener Datei (ADR 0026, AP9b).** `terms` und `acronyms` rechnen auch je Abschnitt
+    eines Dokuments (`documents()`), über `DocumentEnrichments` mit dessen Regel für „aktuell“ (Hash des Lesetextes,
+    Ansicht `document-text/v1`, Prozessorversion; ein zweiter Lauf rechnet nichts) und nur für OK/PARTIAL. Ihre
+    Begriffsdokumente liegen in derselben Ablage, markiert als Dokument, mit `DocumentKey#value()` als undurchsichtigem
+    Schlüssel und Anhang, Teil und Abschnitt getrennt gespeichert; sie fallen mit Abschnitt, Teil, Anhang und Prozessor
+    weg. `TermIndex.Filter` hat eine Herkunft (`TermOrigin`: `pages` als Vorgabe, `documents`, `all`): Alles, was aus
+    Häufigkeiten folgt (Akronymregel, KI-Akronymauflösung, Fachglossar, Synonyme), liest weiter nur Seiten, damit ein
+    großer Anhang nichts überschwemmt. `GET /api/v1/terms` und `/terms/occurrences` nehmen `origin`; Vorkommen in
+    Dokumenten stehen getrennt (`documentOccurrences`, `documents`), Fundstellen nennen `attachmentId`, `partId` und
+    `documentSection` als eigene Felder. Ein Dokument hat die Rechte seiner Seite; sein Stand zählt erst, wenn der Lauf
+    über das Dokument durch ist, und ein Ausschnitt entsteht nur aus der am Stand vermerkten Extraktion.
+
 ## Grenzen
 
 - Je Seite höchstens 50 000 Fundstellen und 10 000 Begriffe; `count` zählt weiter alles, eine Warnung nennt die

@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
+import com.aresstack.spaceharvester.application.terms.TermOrigin;
 import com.aresstack.spaceharvester.application.terms.TermPosting;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -250,11 +251,21 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         List<TermPosting> found = new ArrayList<>();
+        List<Enrichment> candidates = new ArrayList<>();
         for (TreeMap<String, Enrichment> page : results.values()) {
             Enrichment result = page.get(TermPayload.PROCESSOR);
-            if (result == null) {
-                continue;
+            if (result != null) {
+                candidates.add(result);
             }
+        }
+        // ADR 0026, AP9b: Begriffe je Abschnitt eines Anhangs oder einer enthaltenen Datei; die Herkunft wählt der Filter.
+        if (filter.origin() != TermOrigin.PAGES) {
+            for (TreeMap<String, Enrichment> document : documents.values()) {
+                document.values().stream().filter(result -> TermPayload.PROCESSOR.equals(result.processorId()))
+                        .forEach(candidates::add);
+            }
+        }
+        for (Enrichment result : candidates) {
             for (TermPosting posting : TermPayload.postings(result)) {
                 if (filter.matches(posting) && (from == null || (inclusive ? ORDER.compare(posting.sortKey(), from) >= 0
                         : ORDER.compare(posting.sortKey(), from) > 0))) {

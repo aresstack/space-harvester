@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -49,6 +51,10 @@ import javax.crypto.spec.GCMParameterSpec;
  * <p>Aktuell heißt: Die Seite liegt im Cache, ihr Begriffsergebnis stammt von der aktuellen Version des Prozessors
  * {@code terms} und von der Revision, die der Cache für die Seite hält. Ältere Ergebnisse zählen nicht, bis der
  * nächste Lauf sie ersetzt.
+ *
+ * <p>Anhänge und enthaltene Dateien (ADR 0026, AP9b) zählen nur, wenn die Abfrage sie mit {@link TermOrigin} verlangt;
+ * ihre Vorkommen stehen getrennt von denen der Seiten. Ein Dokument hat die Rechte seiner Seite; sein Stand gilt, wenn
+ * die Seite sichtbar im Cache liegt und der Lauf über das Dokument durch ist (Extraktion am Stand vermerkt).
  */
 public class TermQueries {
 
@@ -69,6 +75,7 @@ public class TermQueries {
     private final Function<PageKey, Optional<PageSnapshot>> snapshots;
     private final PageTextProjector projector;
     private final String processorVersion;
+    private final DocumentTexts documentTexts;
     private final SecretKey cursorKey = newCursorKey();
 
     /**
@@ -81,6 +88,18 @@ public class TermQueries {
                        Function<PageKey, Optional<PageHeader>> headers,
                        Function<PageKey, Optional<PageSnapshot>> snapshots, PageTextProjector projector,
                        String processorVersion) {
+        this(catalog, index, access, headers, snapshots, projector, processorVersion, DocumentTexts.NONE);
+    }
+
+    /**
+     * @param documentTexts Lesetexte der Abschnitte von Anhängen für Snippets (ADR 0026, AP9b); nur gegen die am Stand
+     *                      vermerkte Extraktion, sonst kein Snippet
+     */
+    public TermQueries(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                       Function<PageKey, Optional<PageHeader>> headers,
+                       Function<PageKey, Optional<PageSnapshot>> snapshots, PageTextProjector projector,
+                       String processorVersion, DocumentTexts documentTexts) {
+        this.documentTexts = Objects.requireNonNull(documentTexts, "documentTexts");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -102,13 +121,23 @@ public class TermQueries {
      * @param cursor   {@code nextCursor} der vorigen Antwort derselben Suche oder {@code null}
      * @param startsWith nur Begriffe, deren Suchwert so beginnt (normalisiert, etwa ein Buchstabe der A–Z-Leiste),
      *                 oder {@code null}; anders als {@code q} nie ein Wort mitten im Begriff
+     * @param origin   Seiten (Vorgabe), Dokumente oder beides (ADR 0026, AP9b)
      */
     public record TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
-                             String cursor, String startsWith) {
+                             String cursor, String startsWith, TermOrigin origin) {
+
+        public TermSearch {
+            origin = origin == null ? TermOrigin.PAGES : origin;
+        }
+
+        public TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
+                          String cursor, String startsWith) {
+            this(sourceId, spaceKey, kind, q, exact, limit, cursor, startsWith, TermOrigin.PAGES);
+        }
 
         public TermSearch(String sourceId, String spaceKey, TermKind kind, String q, boolean exact, int limit,
                           String cursor) {
-            this(sourceId, spaceKey, kind, q, exact, limit, cursor, null);
+            this(sourceId, spaceKey, kind, q, exact, limit, cursor, null, TermOrigin.PAGES);
         }
     }
 
@@ -123,13 +152,23 @@ public class TermQueries {
      * @param sources     Zahl der Quellen dieser Seiten
      * @param spellings   verschiedene Schreibweisen der Seiten (je Seite die der ersten Fundstelle), höchstens fünf
      * @param expansions  verschiedene Ausschreibungen direkt neben dem Akronym, in Index-Reihenfolge, höchstens fünf
+     * @param documentOccurrences Zahl der Vorkommen in Anhängen und enthaltenen Dateien sichtbarer Seiten, getrennt von
+     *                    {@code occurrences}; 0, wenn die Abfrage nur Seiten verlangt (ADR 0026, AP9b)
+     * @param documents   Zahl dieser Dokumente
      */
     public record TermSummary(String term, String normalized, TermKind kind, int occurrences, int pages, int sources,
-                              List<String> spellings, List<String> expansions) {
+                              List<String> spellings, List<String> expansions, int documentOccurrences,
+                              int documents) {
 
         public TermSummary {
             spellings = List.copyOf(spellings);
             expansions = List.copyOf(expansions);
+        }
+
+        /** Nur Seiten, wie vor AP9b. */
+        public TermSummary(String term, String normalized, TermKind kind, int occurrences, int pages, int sources,
+                           List<String> spellings, List<String> expansions) {
+            this(term, normalized, kind, occurrences, pages, sources, spellings, expansions, 0, 0);
         }
     }
 
@@ -155,9 +194,19 @@ public class TermQueries {
      * @param limit        1 bis {@link #MAX_LIMIT}
      * @param cursor       {@code nextCursor} der vorigen Antwort oder {@code null}
      * @param snippetChars 0 für keine Snippets, sonst Zeichen Kontext je Seite, höchstens {@link #MAX_SNIPPET_CHARS}
+     * @param origin       Seiten (Vorgabe), Dokumente oder beides (ADR 0026, AP9b)
      */
     public record OccurrenceSearch(String term, TermKind kind, String sourceId, String spaceKey, int limit,
-                                   String cursor, int snippetChars) {
+                                   String cursor, int snippetChars, TermOrigin origin) {
+
+        public OccurrenceSearch {
+            origin = origin == null ? TermOrigin.PAGES : origin;
+        }
+
+        public OccurrenceSearch(String term, TermKind kind, String sourceId, String spaceKey, int limit,
+                                String cursor, int snippetChars) {
+            this(term, kind, sourceId, spaceKey, limit, cursor, snippetChars, TermOrigin.PAGES);
+        }
     }
 
     /**
@@ -166,10 +215,23 @@ public class TermQueries {
      * @param term    Wortlaut der ersten Fundstelle des Begriffs auf dieser Seite
      * @param start   Zeichenposition (UTF-16) im projizierten Text mit {@code inputSha256}
      * @param snippet Kontext, wenn verlangt und der Text noch derselbe ist, sonst {@code null}
+     * @param attachmentId Kennung des Anhangs bei der Quelle, bei der Seite selbst {@code null} (ADR 0026, AP9b)
+     * @param partId  Teilkennung der enthaltenen Datei ({@code PartId#value()}), sonst {@code null}
+     * @param documentSection Abschnitt des Dokuments, in dessen Lesetext {@code start}/{@code end} gelten; bei der
+     *                Seite {@code null}
      */
     public record Occurrence(String sourceId, String spaceKey, String pageId, String title, TermKind kind,
                              String term, String expansion, String section, int start, int end, String revision,
-                             String inputSha256, String processorVersion, Snippet snippet) {
+                             String inputSha256, String processorVersion, Snippet snippet, String attachmentId,
+                             String partId, Integer documentSection) {
+
+        /** Fundstelle auf der Seite selbst, wie vor AP9b. */
+        public Occurrence(String sourceId, String spaceKey, String pageId, String title, TermKind kind, String term,
+                          String expansion, String section, int start, int end, String revision, String inputSha256,
+                          String processorVersion, Snippet snippet) {
+            this(sourceId, spaceKey, pageId, title, kind, term, expansion, section, start, end, revision,
+                    inputSha256, processorVersion, snippet, null, null, null);
+        }
     }
 
     /**
@@ -213,11 +275,12 @@ public class TermQueries {
         String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
                 : TermText.normalize(search.startsWith());
         String fingerprint = fingerprint("terms", search.sourceId(), search.spaceKey(),
-                search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()), startsWith);
+                search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()), startsWith,
+                search.origin() == TermOrigin.PAGES ? null : search.origin().id());
         String after = search.cursor() == null ? null : decode(search.cursor(), fingerprint);
         Set<String> sourceIds = scope(caller, search.sourceId(), search.spaceKey());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
-                search.exact() ? null : q, processorVersion, startsWith);
+                search.exact() ? null : q, processorVersion, startsWith, search.origin());
         Visibility visibility = new Visibility(caller, search.spaceKey());
 
         List<TermSummary> found = new ArrayList<>();
@@ -280,7 +343,7 @@ public class TermQueries {
         }
         String normalized = TermText.normalize(search.term());
         String fingerprint = fingerprint("occurrences", normalized, search.kind() == null ? null : search.kind().id(),
-                search.sourceId(), search.spaceKey());
+                search.sourceId(), search.spaceKey(), search.origin() == TermOrigin.PAGES ? null : search.origin().id());
         String fromKey = null;
         int afterStart = -1;
         if (search.cursor() != null) {
@@ -297,9 +360,12 @@ public class TermQueries {
             }
         }
         Set<String> sourceIds = scope(caller, search.sourceId(), search.spaceKey());
-        TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), normalized, null, processorVersion);
+        TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), normalized, null, processorVersion,
+                null, search.origin());
         Visibility visibility = new Visibility(caller, search.spaceKey());
         Map<PageKey, Optional<PageText>> texts = new HashMap<>();
+        Map<String, Optional<PageText>> sectionTexts = new HashMap<>();
+        String lastKey = null;
 
         List<Occurrence> found = new ArrayList<>();
         String from = fromKey;
@@ -318,22 +384,28 @@ public class TermQueries {
                     }
                     if (found.size() == search.limit()) {
                         Occurrence last = found.get(found.size() - 1);
-                        return new OccurrenceList(normalized, found, encode(fingerprint,
-                                TermIndex.sortKey(normalized, last.kind(), new PageKey(last.sourceId(),
-                                        last.pageId())), Integer.toString(last.start())));
+                        return new OccurrenceList(normalized, found, encode(fingerprint, lastKey,
+                                Integer.toString(last.start())));
                     }
                     Snippet snippet = null;
                     if (search.snippetChars() > 0) {
-                        snippet = texts.computeIfAbsent(posting.page(), this::text)
-                                .filter(text -> text.inputSha256().equals(posting.inputSha256()))
-                                .map(text -> snippet(text.text(), occurrence, search.snippetChars()))
+                        Optional<PageText> text = posting.ofDocument()
+                                ? sectionTexts.computeIfAbsent(posting.sortKey(), key -> sectionText(posting))
+                                : texts.computeIfAbsent(posting.page(), this::text);
+                        snippet = text.filter(found1 -> found1.inputSha256().equals(posting.inputSha256())
+                                        && occurrence.end() <= found1.text().length())
+                                .map(found1 -> snippet(found1.text(), occurrence, search.snippetChars()))
                                 .orElse(null);
                     }
+                    DocumentKey document = posting.document();
                     found.add(new Occurrence(posting.page().sourceId(), header.get().metadata().partitionKey(),
                             posting.page().pageId(), header.get().metadata().title(), posting.kind(),
                             posting.term(), posting.expansion(), posting.section(), occurrence.start(),
                             occurrence.end(), posting.revision(), posting.inputSha256(), posting.processorVersion(),
-                            snippet));
+                            snippet, document.attachmentId().orElse(null),
+                            document.part().map(part -> part.value()).orElse(null),
+                            posting.ofDocument() ? posting.documentSection() : null));
+                    lastKey = posting.sortKey();
                 }
             }
             if (batch.size() < TermIndex.MAX_BATCH) {
@@ -398,6 +470,19 @@ public class TermQueries {
 
     private static String flat(String text) {
         return text.replace('\n', ' ').replace('\r', ' ');
+    }
+
+    /** Lesetext eines Abschnitts nur gegen die am Stand vermerkte Extraktion; sonst keiner statt eines falschen. */
+    private Optional<PageText> sectionText(TermPosting posting) {
+        if (posting.extraction() == null) {
+            return Optional.empty();
+        }
+        try {
+            return documentTexts.text(posting.document(), posting.documentSection(), posting.inputSha256(),
+                    posting.extraction());
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
     }
 
     private Optional<PageText> text(PageKey key) {
@@ -527,6 +612,10 @@ public class TermQueries {
                     .filter(found -> spaceKey == null || spaceKey.equals(found.metadata().partitionKey()))
                     .filter(found -> access.canRead(caller, key.sourceId(), found.metadata().partitionKey(),
                             key.pageId())));
+            if (posting.ofDocument()) {
+                // Ein Dokument hat die Rechte seiner Seite; aktuell ist sein Stand, wenn der Lauf durch ist.
+                return header.filter(found -> posting.extraction() != null);
+            }
             return header.filter(found -> posting.revision() != null && found.revision() != null
                     ? posting.revision().equals(found.revision())
                     : currentText(posting.page()).filter(sha -> sha.equals(posting.inputSha256())).isPresent());
@@ -547,9 +636,12 @@ public class TermQueries {
         final Set<String> sources = new TreeSet<>();
         final Set<String> spellings = new LinkedHashSet<>();
         final Set<String> expansions = new LinkedHashSet<>();
+        final Set<String> documentKeys = new java.util.HashSet<>();
         String term;
+        String documentTerm;
         int occurrences;
         int pages;
+        int documentOccurrences;
 
         Group(String key, String normalized, TermKind kind) {
             this.key = key;
@@ -558,6 +650,16 @@ public class TermQueries {
         }
 
         void count(TermPosting posting) {
+            if (posting.ofDocument()) {
+                // Getrennt gezählt: ein großer Anhang verändert die Zahlen der Seiten nicht (ADR 0026, AP9b).
+                if (documentTerm == null) {
+                    documentTerm = posting.term();
+                }
+                documentOccurrences += posting.count();
+                documentKeys.add(posting.document().value());
+                sources.add(posting.page().sourceId());
+                return;
+            }
             if (term == null) {
                 term = posting.term();
             }
@@ -574,11 +676,15 @@ public class TermQueries {
 
         /** Hängt den Begriff an, wenn er auf einer sichtbaren Seite vorkommt. */
         boolean add(List<TermSummary> found) {
-            if (pages == 0) {
+            if (pages == 0 && documentKeys.isEmpty()) {
                 return false;
             }
-            found.add(new TermSummary(term, normalized, kind, occurrences, pages, sources.size(),
-                    List.copyOf(spellings), List.copyOf(expansions)));
+            if (spellings.isEmpty() && documentTerm != null) {
+                spellings.add(documentTerm);
+            }
+            found.add(new TermSummary(term != null ? term : documentTerm, normalized, kind, occurrences, pages,
+                    sources.size(), List.copyOf(spellings), List.copyOf(expansions), documentOccurrences,
+                    documentKeys.size()));
             return true;
         }
     }
