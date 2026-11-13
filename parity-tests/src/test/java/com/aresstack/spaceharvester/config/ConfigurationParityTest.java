@@ -183,7 +183,7 @@ class ConfigurationParityTest {
         assertThat(extraction.unpackRatioFromBytes()).isEqualTo(200L * 1024 * 1024);
         assertThat(extraction.maxDepth()).isEqualTo(4);
         assertThat(extraction.maxEmbeddedFiles()).isEqualTo(500);
-        assertThat(extraction.memoryLimit("application/zip")).isEqualTo(40L * 1024 * 1024);
+        assertThat(extraction.memoryLimit("application/msword")).isEqualTo(40L * 1024 * 1024);
         assertThat(extraction.memoryLimit("message/rfc822")).isZero();
         assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
 

@@ -197,6 +197,237 @@ public final class LargeFiles {
         }
     }
 
+    /** Erste Zeile der Text- und CSV-Prüfdateien. */
+    public static final String FIRST_MARK = "DATEI-ANFANG";
+    /** Letzte Zeile der Text- und CSV-Prüfdateien. */
+    public static final String LAST_MARK = "DATEI-ENDE";
+    /** Etwas über {@link #MIB_300}, damit auch eine Hülle (ZIP, TAR, GZIP) darüber liegt. */
+    public static final long BYTES_OVER_300_MIB = MIB_300 + 10L * 1024 * 1024;
+    /** Folien für ein .pptx über 300 MiB mit {@link #pptx}: je Folie ein Rauschbild von rund 1 MiB. */
+    public static final int PPTX_OVER_300_MIB_SLIDES = 310;
+
+    /** Marke der Folie {@code slide} (ab 1) im .pptx, letzte Zeile der Folie. */
+    public static String slideMark(int slide) {
+        return "FOLIE-" + slide + "-ENDE";
+    }
+
+    /** Textdatei mit Zeilen zu rund 100 Zeichen bis mindestens {@code bytes} Bytes, erste und letzte Zeile Marken. */
+    public static Path text(Path target, long bytes) {
+        try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {
+            Random random = new Random(SEED);
+            write(out, FIRST_MARK + "\n");
+            long written = FIRST_MARK.length() + 1;
+            while (written < bytes) {
+                written += write(out, line(random, 100) + "\n");
+            }
+            write(out, LAST_MARK + "\n");
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** CSV mit Kopfzeile und vier Spalten bis mindestens {@code bytes} Bytes; erste und letzte Datenzeile Marken. */
+    public static Path csv(Path target, long bytes) {
+        try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {
+            Random random = new Random(SEED);
+            long written = write(out, "Kennung,Betrag,Status,Bemerkung\n");
+            written += write(out, FIRST_MARK + ",0,offen,Beginn\n");
+            long row = 1;
+            while (written < bytes) {
+                written += write(out, "Z" + row++ + "," + random.nextInt(1_000_000) / 100.0 + ","
+                        + line(random, 12) + "," + line(random, 60) + "\n");
+            }
+            write(out, LAST_MARK + ",0,erledigt,Ende\n");
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** ZIP mit der Datei {@code file} als einzigem Eintrag {@code name}, ungepackt, damit die Hülle so groß ist. */
+    public static Path zip(Path target, Path file, String name) {
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16))) {
+            zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
+            zip.putNextEntry(new java.util.zip.ZipEntry(name));
+            Files.copy(file, zip);
+            zip.closeEntry();
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** GZIP der Datei {@code file}, ungepackt, damit die Hülle so groß ist. */
+    public static Path gzip(Path target, Path file) {
+        try (OutputStream out = new java.util.zip.GZIPOutputStream(
+                new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16), 1 << 16) {
+            {
+                def.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
+            }
+        }) {
+            Files.copy(file, out);
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** TAR (ustar) mit der Datei {@code file} als einzigem Eintrag {@code name}. */
+    public static Path tar(Path target, Path file, String name) {
+        try (OutputStream out = new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16)) {
+            long size = Files.size(file);
+            byte[] header = new byte[512];
+            put(header, 0, name, 100);
+            put(header, 100, "0000644", 8);
+            put(header, 108, "0000000", 8);
+            put(header, 116, "0000000", 8);
+            put(header, 124, String.format("%011o", size), 12);
+            put(header, 136, String.format("%011o", 1_700_000_000L), 12);
+            java.util.Arrays.fill(header, 148, 156, (byte) ' ');
+            header[156] = '0';
+            put(header, 257, "ustar", 6);
+            header[263] = '0';
+            header[264] = '0';
+            long sum = 0;
+            for (byte b : header) {
+                sum += b & 0xff;
+            }
+            put(header, 148, String.format("%06o", sum), 7);
+            out.write(header);
+            Files.copy(file, out);
+            int pad = (int) ((512 - size % 512) % 512);
+            out.write(new byte[pad + 1024]);
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * PowerPoint (.pptx) mit {@code slides} Folien, je Folie wenig Text und ein Rauschbild von rund 1 MiB; ohne POI
+     * geschrieben, damit nie alle Bilder zugleich im Speicher liegen. Letzte Zeile jeder Folie {@link #slideMark}.
+     */
+    public static Path pptx(Path target, int slides) {
+        requirePositive(slides);
+        Random random = new Random(SEED);
+        String p = "http://schemas.openxmlformats.org/presentationml/2006/main";
+        String a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        String r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        String rel = "http://schemas.openxmlformats.org/package/2006/relationships";
+        String type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+        String head = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
+        String tree = "<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id=\"1\" name=\"\"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>"
+                + "<p:grpSpPr/>";
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                new java.io.BufferedOutputStream(Files.newOutputStream(target), 1 << 16))) {
+            StringBuilder types = new StringBuilder(head).append("<Types xmlns=\"http://schemas.openxmlformats.org/"
+                    + "package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd."
+                    + "openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\""
+                    + "application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/>"
+                    + "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"application/vnd.openxmlformats-"
+                    + "officedocument.presentationml.presentation.main+xml\"/><Override PartName=\"/ppt/slideMasters/"
+                    + "slideMaster1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml."
+                    + "slideMaster+xml\"/><Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\""
+                    + "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml\"/><Override "
+                    + "PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-"
+                    + "officedocument.theme+xml\"/>");
+            StringBuilder ids = new StringBuilder();
+            StringBuilder rels = new StringBuilder(head).append("<Relationships xmlns=\"").append(rel).append("\">")
+                    .append("<Relationship Id=\"rId1\" Type=\"").append(type).append("slideMaster\" Target=\""
+                            + "slideMasters/slideMaster1.xml\"/><Relationship Id=\"rId2\" Type=\"").append(type)
+                    .append("theme\" Target=\"theme/theme1.xml\"/>");
+            for (int n = 1; n <= slides; n++) {
+                types.append("<Override PartName=\"/ppt/slides/slide").append(n).append(".xml\" ContentType=\""
+                        + "application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>");
+                ids.append("<p:sldId id=\"").append(255 + n).append("\" r:id=\"rId").append(n + 2).append("\"/>");
+                rels.append("<Relationship Id=\"rId").append(n + 2).append("\" Type=\"").append(type)
+                        .append("slide\" Target=\"slides/slide").append(n).append(".xml\"/>");
+            }
+            entry(zip, "[Content_Types].xml", types.append("</Types>").toString());
+            entry(zip, "_rels/.rels", head + "<Relationships xmlns=\"" + rel + "\"><Relationship Id=\"rId1\" Type=\""
+                    + type + "officeDocument\" Target=\"ppt/presentation.xml\"/></Relationships>");
+            entry(zip, "ppt/presentation.xml", head + "<p:presentation xmlns:a=\"" + a + "\" xmlns:r=\"" + r
+                    + "\" xmlns:p=\"" + p + "\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId1\"/>"
+                    + "</p:sldMasterIdLst><p:sldIdLst>" + ids + "</p:sldIdLst><p:sldSz cx=\"9144000\" cy=\"6858000\"/>"
+                    + "<p:notesSz cx=\"6858000\" cy=\"9144000\"/></p:presentation>");
+            entry(zip, "ppt/_rels/presentation.xml.rels", rels.append("</Relationships>").toString());
+            entry(zip, "ppt/slideMasters/slideMaster1.xml", head + "<p:sldMaster xmlns:a=\"" + a + "\" xmlns:r=\""
+                    + r + "\" xmlns:p=\"" + p + "\">" + tree + "</p:spTree></p:cSld><p:clrMap bg1=\"lt1\" tx1=\"dk1\" "
+                    + "bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\""
+                    + "accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/>"
+                    + "<p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/></p:sldLayoutIdLst>"
+                    + "</p:sldMaster>");
+            entry(zip, "ppt/slideMasters/_rels/slideMaster1.xml.rels", head + "<Relationships xmlns=\"" + rel
+                    + "\"><Relationship Id=\"rId1\" Type=\"" + type + "slideLayout\" Target=\"../slideLayouts/"
+                    + "slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"" + type + "theme\" Target=\"../theme/"
+                    + "theme1.xml\"/></Relationships>");
+            entry(zip, "ppt/slideLayouts/slideLayout1.xml", head + "<p:sldLayout xmlns:a=\"" + a + "\" xmlns:r=\""
+                    + r + "\" xmlns:p=\"" + p + "\">" + tree + "</p:spTree></p:cSld></p:sldLayout>");
+            entry(zip, "ppt/slideLayouts/_rels/slideLayout1.xml.rels", head + "<Relationships xmlns=\"" + rel
+                    + "\"><Relationship Id=\"rId1\" Type=\"" + type + "slideMaster\" Target=\"../slideMasters/"
+                    + "slideMaster1.xml\"/></Relationships>");
+            entry(zip, "ppt/theme/theme1.xml", head + "<a:theme xmlns:a=\"" + a + "\" name=\"Leer\"><a:themeElements>"
+                    + "<a:clrScheme name=\"Leer\"><a:dk1><a:srgbClr val=\"000000\"/></a:dk1><a:lt1><a:srgbClr val=\""
+                    + "FFFFFF\"/></a:lt1><a:dk2><a:srgbClr val=\"000000\"/></a:dk2><a:lt2><a:srgbClr val=\"FFFFFF\"/>"
+                    + "</a:lt2><a:accent1><a:srgbClr val=\"000000\"/></a:accent1><a:accent2><a:srgbClr val=\"000000\"/>"
+                    + "</a:accent2><a:accent3><a:srgbClr val=\"000000\"/></a:accent3><a:accent4><a:srgbClr val=\""
+                    + "000000\"/></a:accent4><a:accent5><a:srgbClr val=\"000000\"/></a:accent5><a:accent6><a:srgbClr "
+                    + "val=\"000000\"/></a:accent6><a:hlink><a:srgbClr val=\"0000FF\"/></a:hlink><a:folHlink>"
+                    + "<a:srgbClr val=\"800080\"/></a:folHlink></a:clrScheme><a:fontScheme name=\"Leer\"><a:majorFont>"
+                    + "<a:latin typeface=\"Arial\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont><a:minorFont>"
+                    + "<a:latin typeface=\"Arial\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont>"
+                    + "</a:fontScheme><a:fmtScheme name=\"Leer\"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/>"
+                    + "<a:bgFillStyleLst/></a:fmtScheme></a:themeElements></a:theme>");
+            for (int n = 1; n <= slides; n++) {
+                StringBuilder text = new StringBuilder();
+                text.append("<a:p><a:r><a:t>Folie ").append(n).append("</a:t></a:r></a:p>");
+                for (int line = 0; line < 6; line++) {
+                    text.append("<a:p><a:r><a:t>").append(line(random, 100)).append("</a:t></a:r></a:p>");
+                }
+                text.append("<a:p><a:r><a:t>").append(slideMark(n)).append("</a:t></a:r></a:p>");
+                entry(zip, "ppt/slides/slide" + n + ".xml", head + "<p:sld xmlns:a=\"" + a + "\" xmlns:r=\"" + r
+                        + "\" xmlns:p=\"" + p + "\">" + tree + "<p:sp><p:nvSpPr><p:cNvPr id=\"2\" name=\"Text\"/>"
+                        + "<p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x=\"457200\" y=\"457200\"/>"
+                        + "<a:ext cx=\"8229600\" cy=\"2286000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/>"
+                        + "</a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>" + text + "</p:txBody></p:sp>"
+                        + "<p:pic><p:nvPicPr><p:cNvPr id=\"3\" name=\"Bild\"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>"
+                        + "<p:blipFill><a:blip r:embed=\"rId2\"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>"
+                        + "<p:spPr><a:xfrm><a:off x=\"457200\" y=\"3200400\"/><a:ext cx=\"8229600\" cy=\"2971800\"/>"
+                        + "</a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr></p:pic>"
+                        + "</p:spTree></p:cSld></p:sld>");
+                entry(zip, "ppt/slides/_rels/slide" + n + ".xml.rels", head + "<Relationships xmlns=\"" + rel
+                        + "\"><Relationship Id=\"rId1\" Type=\"" + type + "slideLayout\" Target=\"../slideLayouts/"
+                        + "slideLayout1.xml\"/><Relationship Id=\"rId2\" Type=\"" + type + "image\" Target=\"../media/"
+                        + "bild" + n + ".png\"/></Relationships>");
+                zip.putNextEntry(new java.util.zip.ZipEntry("ppt/media/bild" + n + ".png"));
+                ImageIO.write(noise(random, 1000, 360), "png", zip);
+                zip.closeEntry();
+            }
+            return target;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void entry(java.util.zip.ZipOutputStream zip, String name, String content) throws IOException {
+        zip.putNextEntry(new java.util.zip.ZipEntry(name));
+        zip.write(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        zip.closeEntry();
+    }
+
+    private static int write(OutputStream out, String text) throws IOException {
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        out.write(bytes);
+        return bytes.length;
+    }
+
+    private static void put(byte[] header, int offset, String value, int length) {
+        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        System.arraycopy(bytes, 0, header, offset, Math.min(bytes.length, length - 1));
+    }
+
     static String line(Random random, int chars) {
         StringBuilder text = new StringBuilder();
         while (text.length() < chars) {

@@ -554,7 +554,11 @@ Alle anderen behalten die bisherigen 20 MiB, bis ein Nachweis vorliegt.
 | Word (`.docx`) | keine | 60 000 Absätze mit 15 Bildern |
 | Excel (`.xlsx`) | keine | 1 Mio. Zeilen, auch mit 1 Mio. geteilten Zeichenketten |
 | Mail (`.eml`, `message/rfc822`) | keine | Mail mit PDF-Anhang über 300 MiB und weiterem Anhang |
-| alle übrigen (Outlook `.msg`, `.pst`, Archive, alte Office-Formate, HTML, Text …) | 20 MiB | – |
+| Text (`text/plain`), CSV (`text/csv`) | keine | je Datei über 300 MiB (AP3e) |
+| PowerPoint (`.pptx`) | keine | 310 Folien mit je einem Bild, über 300 MiB (AP3e) |
+| ZIP, GZIP, TAR | keine | je Hülle über 300 MiB mit einer Textdatei über 300 MiB (AP3e) |
+| HTML (`text/html`) | 20 MiB | gemessen (AP3e): Tikas `JSoupParser` baut den ganzen DOM-Baum, HTML über 300 MiB endet bei 256 MiB Heap mit `FAILED`/`memory-limit` |
+| alle übrigen (Outlook `.msg`, `.pst`, alte Office-Formate `.doc`, `.xls`, `.ppt` …) | 20 MiB | benannte Grenze (ADR 0026, Nachtrag) |
 
 Die Schranke gilt für den gemeldeten und für den in der Datei erkannten Typ; es gilt die strengere. Eine große Mail mit
 gemeldetem Typ PDF bleibt so `EXCLUDED`/`memory-limit`. Seit AP7a gilt die Schranke je enthaltener Datei; ein
