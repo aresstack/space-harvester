@@ -632,6 +632,15 @@ public final class Workspace {
         return harvester.knowledgeGraph().search(caller, term, limit);
     }
 
+    /**
+     * Wie {@link #searchKnowledgeGraph(String, int)}, nur auf diesen Seiten samt ihren Dokumenten, etwa einer Seite samt
+     * Unterseiten aus {@link #resolveSelection} (ADR 0029); Treffer und Zähler beziehen sich nur auf sie.
+     */
+    public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit,
+                                                      com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.knowledgeGraph().search(caller, term, limit, page -> pages.contains(page.key()));
+    }
+
     /** Ob „Analysieren“ im Baum angeboten werden kann (Analysator eingerichtet); lädt kein Modell. */
     public boolean statementAnalysisJobsAvailable() {
         return harvester.statementAnalysisJobs().available();
