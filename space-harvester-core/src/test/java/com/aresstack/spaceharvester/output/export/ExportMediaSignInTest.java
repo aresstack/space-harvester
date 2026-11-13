@@ -115,7 +115,7 @@ class ExportMediaSignInTest {
         }
         assertThat(files.keySet()).containsExactly("pages.json", "assets.json", "attachments.json",
                 "assets/100/ablauf.drawio",
-                "assets/100/ablauf.graph.json", "assets/100/ablauf.svg", "assets/100/foto.png", "raw/100.json", "tree.json",
+                "assets/100/ablauf.graph.json", "assets/100/foto.png", "raw/100.json", "tree.json",
                 "manifest.json");
         assertThat(files.get("assets/100/ablauf.drawio")).isEqualTo(MXFILE);
         assertThat(files.get("assets/100/foto.png")).isEqualTo(PNG);

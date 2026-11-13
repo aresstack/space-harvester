@@ -43,7 +43,7 @@ import tools.jackson.databind.json.JsonMapper;
  * pages.json                       wie {@link JsonArrayConverter}
  * assets.json                      Zuordnung Seite → Datei, Medientyp, Prüfsumme, Status, relative Pfade
  * assets/&lt;Seiten-ID&gt;/&lt;Datei&gt;       Bilder und Anhänge wie beschafft (draw.io: die Originaldatei)
- * assets/&lt;Seiten-ID&gt;/&lt;Name&gt;.svg    gezeichnete Grafik eines Diagramms
+ * assets/&lt;Seiten-ID&gt;/&lt;Name&gt;.png    gezeichnete Grafik eines Mermaid-Diagramms (draw.io: keine, json-package/4)
  * assets/&lt;Seiten-ID&gt;/&lt;Name&gt;.graph.json  draw.io als Knoten und Verbindungen für KI-Systeme
  * attachments.json                 Dokument-Anhänge (ADR 0023): Seite, Anhang, Typ, Prüfsumme, Status, Pfade
  * attachments/&lt;Seiten-ID&gt;/&lt;Datei&gt;  das Original des Anhangs
@@ -60,6 +60,10 @@ import tools.jackson.databind.json.JsonMapper;
  * Datenbestand verlustfrei: {@code rawSha256} jeder Seite passt zu ihrer Datei unter {@code raw/}, auch für
  * Antworten, die kein JSON sind (in {@code pages.json} dann {@code content: null}).
  *
+ * <p>draw.io steht nur als Text im Paket: Originaldatei und {@code *.graph.json}, ohne gezeichnete Grafik (ADR 0012,
+ * Textform vor Bild; Angelo 13.11.2026). Auch {@code manifest.json} nennt für draw.io keine Grafik; nach einem Import
+ * zeichnet die Leseansicht bei Bedarf aus den Quelldaten.
+ *
  * Keine Base64-Einbettung; Pfade sind relativ zum Paket. Was nicht abgelegt ist, steht nur mit Status und Grund in
  * {@code assets.json} ({@code REDUNDANT}: draw.io-Vorschau, bewusst weggelassen). Deterministisch: feste Zeitstempel,
  * Reihenfolge wie das Manifest.
@@ -67,7 +71,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class JsonPackageConverter implements ExportConverter {
 
     public static final String FORMAT = "json-package";
-    public static final String VERSION = "json-package/3";
+    public static final String VERSION = "json-package/4";
     /** Format von {@code manifest.json}: alles, was ein Import braucht, um den Datenbestand wiederherzustellen. */
     public static final String PACKAGE_FORMAT = "space-harvester/export-package/v1";
     public static final String ASSETS_FORMAT = "space-harvester/export-package-assets/v1";
@@ -109,7 +113,7 @@ public final class JsonPackageConverter implements ExportConverter {
         zip.closeEntry();
 
         ExportAssets assets = input.assets();
-        Optional<ExportAssetManifest> manifest = assets.manifest();
+        Optional<ExportAssetManifest> manifest = assets.manifest().map(JsonPackageConverter::withoutDrawioRenditions);
         List<Entry> entries = manifest.map(ExportAssetManifest::images).orElse(List.of());
         Set<String> used = new HashSet<>();
         entry(zip, "assets.json");
@@ -159,7 +163,7 @@ public final class JsonPackageConverter implements ExportConverter {
             } else {
                 generator.writeNullProperty("path");
             }
-            Optional<byte[]> rendition = assets.rendition(entry);
+            Optional<byte[]> rendition = entry.rendition() == null ? Optional.empty() : assets.rendition(entry);
             if (rendition.isPresent()) {
                 String extension = "image/svg+xml".equals(entry.rendition().mediaType()) ? ".svg" : ".png";
                 String path = unique(base + stem(name) + extension, used);
@@ -289,6 +293,15 @@ public final class JsonPackageConverter implements ExportConverter {
             ExportFileJson.writeReadingView(generator, view);
         }
         return out.toByteArray();
+    }
+
+    /** Der Datenbestand ohne gezeichnete Grafiken von draw.io-Diagrammen; Mermaid behält seine. */
+    static ExportAssetManifest withoutDrawioRenditions(ExportAssetManifest manifest) {
+        return new ExportAssetManifest(manifest.imagesComplete(), manifest.documentsComplete(),
+                manifest.assets().stream().map(entry -> entry.rendition() != null
+                        && entry.reference().kind() == Kind.ATTACHMENT && entry.reference().filename() != null
+                        && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename())
+                        ? entry.withRendition(null) : entry).toList());
     }
 
     /** Angaben einer Seite für {@code manifest.json}; ohne Payload. */

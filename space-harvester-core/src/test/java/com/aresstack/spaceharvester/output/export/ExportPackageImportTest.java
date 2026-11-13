@@ -141,8 +141,8 @@ class ExportPackageImportTest {
         assertThat(assets.content("laptop", "att-foto", "1")).contains(PNG);
         assertThat(assets.content("laptop", "att-pdf", "2")).contains(PDF);
         assertThat(assets.content("laptop", "att-drawio", "1")).contains(MXFILE);
-        assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION))
-                .contains(SVG);
+        // draw.io kommt seit json-package/4 nur als Text: keine gezeichnete Grafik im Paket, keine im Speicher
+        assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION)).isEmpty();
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
     }
 
@@ -160,7 +160,7 @@ class ExportPackageImportTest {
                 .isEqualTo(JobState.COMPLETED);
         String version = store.confirmed("laptop", "DEV").orElseThrow().pages().get("100").version();
         assertThat(remembered.find(new PageKey("laptop", "100"), version)).hasValueSatisfying(manifest -> {
-            assertThat(manifest.forPage("100")).containsExactly(media.image, media.drawio);
+            assertThat(manifest.forPage("100")).containsExactly(media.image, media.drawio.withRendition(null));
             assertThat(manifest.documents()).containsExactly(media.pdf);
         });
         // Auch eine Seite ohne Bilder ist gemerkt, damit der Export sie ohne Quelle als vollständig kennt.
@@ -171,7 +171,7 @@ class ExportPackageImportTest {
     }
 
     @Test
-    void aMissingDrawingKeepsTheRememberedOriginalOfTheDiagram() throws Exception {
+    void aDiagramWithoutDrawingKeepsTheRememberedOriginal() throws Exception {
         EnrichmentImportedAssets remembered = new EnrichmentImportedAssets(new InMemoryEnrichmentStore(), clock);
         ExportPackageImport withMemory = new ExportPackageImport(jobs,
                 new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, assets,
@@ -187,8 +187,7 @@ class ExportPackageImportTest {
                 .satisfies(entry -> {
                     assertThat(entry.stored()).isTrue();
                     assertThat(entry.sha256()).isEqualTo(sha256(MXFILE));
-                    assertThat(entry.rendition().drawn()).isFalse();
-                    assertThat(entry.rendition().problem()).isEqualTo("import-missing");
+                    assertThat(entry.rendition()).isNull();
                 });
     }
 
