@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
@@ -38,6 +39,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -326,6 +328,17 @@ public class KeywordSearch {
      */
     public Optional<Progress> progress(String id) {
         return prefetch == null || id == null ? Optional.empty() : prefetch.progress(id);
+    }
+
+    /**
+     * Meldet einen Empfänger für den Ladestand eines Stapels an (ADR 0027), statt {@link #progress} in Abständen zu
+     * lesen: nach jeder geladenen oder gescheiterten Seite und nach einem Abbruch der jüngste {@link Progress},
+     * gebündelt, zuletzt mit {@link Progress#done()}. Erst anmelden, dann {@link #progress} lesen; ohne Vorabladen oder
+     * ohne Stapel {@link Subscription#NONE}.
+     */
+    public Subscription subscribe(String progressId, Consumer<Progress> listener) {
+        Objects.requireNonNull(listener, "listener");
+        return prefetch == null || progressId == null ? Subscription.NONE : prefetch.subscribe(progressId, listener);
     }
 
     /**
@@ -1129,6 +1142,13 @@ public class KeywordSearch {
         /** Der laufende Stand eines Stapels ({@link Fill#progressId()}); leer, wenn unbekannt oder verdrängt. */
         default Optional<Progress> progress(String id) {
             return Optional.empty();
+        }
+
+        /**
+         * Meldet einen Empfänger für den Stand eines Stapels an (ADR 0027); ohne Fortschritt {@link Subscription#NONE}.
+         */
+        default Subscription subscribe(String id, Consumer<Progress> listener) {
+            return Subscription.NONE;
         }
 
         /** Kopfdaten einer Seite im Cache, ohne Rückfrage bei der Quelle; leer, wenn unbekannt. */

@@ -2,6 +2,9 @@ package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.time.Duration;
@@ -25,6 +28,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -64,6 +68,11 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
 
     /** So viele Stapel behält {@link #progress}. */
     static final int MAX_TRACKED = 256;
+
+    /** Empfänger des Fortschritts je Stapel (ADR 0027), gefiltert nach Stapel-ID. */
+    private final Listeners<Consumer<KeywordSearch.Progress>> listeners = new Listeners<>("Suchfortschritt");
+    private final Coalescer<String, Object> notifier = new Coalescer<>("search-progress",
+            (id, ignored) -> deliver(id));
 
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
@@ -195,7 +204,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
             }
         }
         Batch batch = new Batch(UUID.randomUUID().toString(), waiting.size() + pending.size(),
-                List.copyOf(waiting.values()));
+                List.copyOf(waiting.values()), this::changed);
         pending.forEach(hit -> batch.finished(false));
         // Gewartet wird auf die gezählte Fertigmeldung, nicht auf den Abruf: Sonst kehrte die Suche zurück, bevor der
         // Fortschritt den Abruf zählt, und ihr Fill wiche vom abgelegten Fortschritt ab.
@@ -269,6 +278,25 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         }
     }
 
+    @Override
+    public Subscription subscribe(String id, Consumer<KeywordSearch.Progress> listener) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(listener, "listener");
+        return listeners.add(listener, id::equals);
+    }
+
+    /** Merkt den Stapel zur Meldung vor; ohne Empfänger nichts. */
+    private void changed(String id) {
+        if (!listeners.isEmpty()) {
+            notifier.mark(id);
+        }
+    }
+
+    /** Auf dem Zustell-Thread: der jüngste Stand des Stapels an seine Empfänger; verdrängt, kommt nichts. */
+    private void deliver(String id) {
+        progress(id).ifPresent(progress -> listeners.deliver(id, listener -> listener.accept(progress)));
+    }
+
     /** Wie weit die Seiten eines Stapels geladen sind; zählt jede Seite genau einmal. */
     private static final class Batch {
 
@@ -276,14 +304,17 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         private final int total;
         /** Die Anfragen dieses Stapels; nur sie zieht {@link #cancel()} zurück. */
         private final List<AcquisitionScheduler.Ticket> own;
+        /** Meldet eine Änderung (ADR 0027); nie unter der Sperre des Stapels gerufen. */
+        private final Consumer<String> changed;
         private int loaded;
         private int failed;
         private boolean cancelled;
 
-        private Batch(String id, int total, List<AcquisitionScheduler.Ticket> own) {
+        private Batch(String id, int total, List<AcquisitionScheduler.Ticket> own, Consumer<String> changed) {
             this.id = id;
             this.total = total;
             this.own = own;
+            this.changed = changed;
         }
 
         /** Wartendes entfällt; ein schon laufender Abruf endet regulär. */
@@ -292,16 +323,21 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 cancelled = true;
             }
             own.forEach(AcquisitionScheduler.Ticket::cancel);
+            changed.accept(id);
         }
 
-        private synchronized void finished(boolean stored) {
-            if (loaded + failed < total) {
+        private void finished(boolean stored) {
+            synchronized (this) {
+                if (loaded + failed >= total) {
+                    return;
+                }
                 if (stored) {
                     loaded++;
                 } else {
                     failed++;
                 }
             }
+            changed.accept(id);
         }
 
         private synchronized KeywordSearch.Progress snapshot() {
@@ -348,6 +384,10 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
 
     @Override
     public void close() throws Exception {
-        stop.close();
+        try {
+            stop.close();
+        } finally {
+            notifier.close();
+        }
     }
 }

@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.application.acquisition;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -105,6 +109,17 @@ public final class AcquisitionScheduler implements AutoCloseable {
                          long promoted, AcquisitionStatus.Pause pause) {
     }
 
+    /** Empfänger des Stands (ADR 0027), angemeldet mit {@link #subscribe}. */
+    @FunctionalInterface
+    public interface Listener {
+
+        /**
+         * Der jüngste Stand nach einer Änderung von Warteschlangen, laufenden Abrufen oder Pause, höchstens alle
+         * {@link Coalescer#INTERVAL}; auf dem Zustell-Thread des Core, nie auf dem EDT.
+         */
+        void changed(Status status);
+    }
+
     /**
      * Der Beschaffungsweg einer Seite.
      */
@@ -139,6 +154,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private int pauses;
     private long promoted;
     private boolean closed;
+    private final Listeners<Listener> listeners = new Listeners<>("Beschaffungsplaner");
+    private final Coalescer<String, Object> notifier = new Coalescer<>("acquisition", (key, ignored) -> deliver());
+    private static final String STATUS = "status";
 
     /**
      * Lädt auf eigenen virtuellen Threads.
@@ -278,6 +296,38 @@ public final class AcquisitionScheduler implements AutoCloseable {
         }
     }
 
+    /**
+     * Meldet einen Empfänger für den Stand an (ADR 0027), statt {@link #status()} in Abständen zu lesen. Endet die
+     * Wartezeit nach dem Vordergrund ({@link AcquisitionStatus.Pause#COOLDOWN}), kommt auch das als Meldung. Erst
+     * anmelden, dann {@link #status()} lesen.
+     */
+    public Subscription subscribe(Listener listener) {
+        return listeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** Merkt den Stand zur Meldung vor; ohne Empfänger nichts. Nie unter einer Sperre, die eine Meldung braucht. */
+    private void changed() {
+        if (!listeners.isEmpty()) {
+            notifier.mark(STATUS);
+        }
+    }
+
+    /** Auf dem Zustell-Thread: der jüngste Stand; während der Wartezeit nach dem Vordergrund auch ihr Ende. */
+    private void deliver() {
+        Status status;
+        long cooldown;
+        synchronized (lock) {
+            status = new Status(foregroundQueue.size(), foregroundRunning, backgroundQueue.size(), backgroundRunning,
+                    promoted, pause());
+            cooldown = status.pause() == AcquisitionStatus.Pause.COOLDOWN
+                    ? Math.max(0, lastForeground + resumeDelayNanos - System.nanoTime()) : -1;
+        }
+        listeners.deliver(null, listener -> listener.changed(status));
+        if (cooldown >= 0) {
+            notifier.markLater(STATUS, Set.of(), Duration.ofNanos(cooldown).plusMillis(1));
+        }
+    }
+
     /** Warum der Hintergrund gerade keine neue Seite beginnt; {@code NONE}, wenn er darf. Unter {@link #lock}. */
     private AcquisitionStatus.Pause pause() {
         if (closed) {
@@ -303,6 +353,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         synchronized (lock) {
             pauses++;
         }
+        changed();
         boolean[] released = {false};
         return () -> {
             synchronized (lock) {
@@ -340,6 +391,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
             }
         }
         dropped.forEach(ticket -> ticket.done.cancel(false));
+        changed();
         try {
             synchronized (lock) {
                 long deadline = System.nanoTime() + timeout.toNanos();
@@ -450,6 +502,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 finish(entry, false);
             }
         }
+        // Jede Änderung von Warteschlange, Platz oder Pause endet hier: Anfrage, Ende, Rückzug, Freigabe, Wartezeit.
+        changed();
     }
 
     private void begin(Entry entry, Priority slot) {
@@ -529,6 +583,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
             // Kein Unterbrechen: es läuft nichts mehr.
             owned.shutdown();
         }
+        notifier.close();
     }
 
     /** Eine Seite und wer sie braucht. */

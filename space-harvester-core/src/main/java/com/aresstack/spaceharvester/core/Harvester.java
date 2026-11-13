@@ -73,6 +73,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.NavigationQueries;
@@ -224,6 +225,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -1343,6 +1345,19 @@ public final class Harvester implements AutoCloseable {
      */
     public AcquisitionStatus acquisitionStatus() {
         return backgroundFill != null ? backgroundFill.status() : BackgroundFill.withoutFill(acquisition);
+    }
+
+    /**
+     * Meldet einen Empfänger für den Stand der Beschaffung an (ADR 0027), statt {@link #acquisitionStatus()} in
+     * Abständen zu lesen: nach jeder Änderung von Planer und Hintergrundfüllung der jüngste Stand, gebündelt, auf dem
+     * Zustell-Thread des Core. Erst anmelden, dann {@link #acquisitionStatus()} lesen.
+     */
+    public Subscription subscribeAcquisition(Consumer<AcquisitionStatus> listener) {
+        Objects.requireNonNull(listener, "listener");
+        if (backgroundFill != null) {
+            return backgroundFill.subscribe(listener);
+        }
+        return acquisition.subscribe(status -> listener.accept(BackgroundFill.withoutFill(acquisition)));
     }
 
     /**

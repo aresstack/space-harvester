@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.application.acquisition;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Listeners;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import java.time.Clock;
@@ -17,6 +20,7 @@ import java.util.TreeSet;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -45,6 +49,9 @@ import java.util.function.Predicate;
  * noch wartet oder lädt, bleibt und kommt nach dem Neustart zuerst dran. Ist die Schlange leer, sucht die Füllung den
  * Katalog nach Lücken ab, höchstens alle {@link Timing#idle()}.
  *
+ * <p><b>Meldungen</b> (ADR 0027): {@link #subscribe} liefert den jüngsten {@link #status()} nach jeder Änderung von
+ * Füllung oder Planer, gebündelt; die App fragt nicht in Abständen.
+ *
  * <p>Protokolliert nur Zähler und Quellen, nie Seiten-IDs.
  */
 public final class BackgroundFill implements AutoCloseable {
@@ -52,6 +59,7 @@ public final class BackgroundFill implements AutoCloseable {
     private static final System.Logger LOG = System.getLogger(BackgroundFill.class.getName());
     /** So oft schaut die Füllung nach, solange etwas lädt. */
     private static final Duration POLL = Duration.ofSeconds(1);
+    private static final String STATUS = "status";
 
     /** Standard der Parallelität im Hintergrund. */
     public static final int DEFAULT_PARALLELISM = 2;
@@ -185,6 +193,10 @@ public final class BackgroundFill implements AutoCloseable {
      * sie erst nach {@link Timing#idle()} wieder ein, damit dauerhafte Fehlschläge die übrigen Lücken nicht blockieren.
      */
     private final LinkedHashMap<PageKey, Instant> failedAt = new LinkedHashMap<>();
+    private final Listeners<Consumer<AcquisitionStatus>> listeners = new Listeners<>("Hintergrundfüllung");
+    private final Coalescer<String, Object> notifier = new Coalescer<>("background-fill", (key, ignored) -> deliver());
+    /** Anmeldung beim Planer, ab dem ersten Empfänger; unter {@link #monitor}. */
+    private Subscription planner;
     private final Map<String, long[]> bySource = new TreeMap<>();
     private Instant lastScan;
     private Thread worker;
@@ -226,6 +238,33 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     /**
+     * Meldet einen Empfänger für den Stand an (ADR 0027): nach jeder Änderung der Warteschlange, der übergebenen und
+     * beendeten Abrufe, der Zähler, des Schalters und des Planers der jüngste {@link #status()}, höchstens alle
+     * {@link Coalescer#INTERVAL}, auf dem Zustell-Thread des Core. Erst anmelden, dann {@link #status()} lesen.
+     */
+    public Subscription subscribe(Consumer<AcquisitionStatus> listener) {
+        Subscription subscription = listeners.add(Objects.requireNonNull(listener, "listener"));
+        synchronized (monitor) {
+            if (planner == null && !closed) {
+                planner = scheduler.subscribe(status -> changed());
+            }
+        }
+        return subscription;
+    }
+
+    /** Merkt den Stand zur Meldung vor; ohne Empfänger nichts. */
+    private void changed() {
+        if (!listeners.isEmpty()) {
+            notifier.mark(STATUS);
+        }
+    }
+
+    private void deliver() {
+        AcquisitionStatus status = status();
+        listeners.deliver(null, listener -> listener.accept(status));
+    }
+
+    /**
      * Schaltet die Füllung ein oder aus. Aus zieht die übergebenen Anfragen zurück (laufende Abrufe enden regulär); die
      * Warteschlange bleibt und geht beim Einschalten weiter. An prüft die übergebenen Anfragen neu gegen
      * {@code eligible} und zieht die von Quellen zurück, deren Füllung inzwischen aus ist; nach einem Wechsel der
@@ -239,6 +278,7 @@ public final class BackgroundFill implements AutoCloseable {
             revalidate();
         }
         wake();
+        changed();
     }
 
     /** Zieht übergebene Anfragen von Quellen zurück, die nicht mehr geladen werden dürfen; laufende enden regulär. */
@@ -266,6 +306,9 @@ public final class BackgroundFill implements AutoCloseable {
                 }
             }
         });
+        if (!tickets.isEmpty()) {
+            changed();
+        }
     }
 
     /** Sucht bald wieder im Katalog, etwa nach einem Abgleich. */
@@ -301,6 +344,7 @@ public final class BackgroundFill implements AutoCloseable {
                     e.getClass().getName());
             return;
         }
+        changed();
         if (!warmedUp) {
             return;
         }
@@ -495,6 +539,9 @@ public final class BackgroundFill implements AutoCloseable {
                 cancel(Map.of(gap.key(), ticket));
             }
         }
+        if (again) {
+            changed();
+        }
         synchronized (monitor) {
             return again || !inFlight.isEmpty();
         }
@@ -543,6 +590,7 @@ public final class BackgroundFill implements AutoCloseable {
             signalled = true;
             monitor.notifyAll();
         }
+        changed();
     }
 
     /**
@@ -598,6 +646,7 @@ public final class BackgroundFill implements AutoCloseable {
             lastScan = clock.instant();
             rescan = more && added > 0;
         }
+        changed();
         perSource.forEach((sourceId, count) -> LOG.log(System.Logger.Level.INFO,
                 "Hintergrundfüllung: {0} Lücken in Quelle {1}", count, sourceId));
         return added;
@@ -619,11 +668,13 @@ public final class BackgroundFill implements AutoCloseable {
     @Override
     public void close() throws InterruptedException {
         Thread running;
+        Subscription subscribed;
         synchronized (monitor) {
             closed = true;
             signalled = true;
             monitor.notifyAll();
             running = worker;
+            subscribed = planner;
         }
         withdraw();
         if (running != null) {
@@ -631,5 +682,9 @@ public final class BackgroundFill implements AutoCloseable {
             running.join();
         }
         withdraw();
+        if (subscribed != null) {
+            subscribed.close();
+        }
+        notifier.close();
     }
 }

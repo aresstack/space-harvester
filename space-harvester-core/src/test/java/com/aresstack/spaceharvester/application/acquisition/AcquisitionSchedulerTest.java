@@ -5,15 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.UserCredential;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -78,6 +82,52 @@ class AcquisitionSchedulerTest {
 
     private static PageKey key(String pageId) {
         return new PageKey("wiki", pageId);
+    }
+
+    /** Wartet auf eine passende Meldung (ADR 0027). */
+    private static <T> T next(BlockingQueue<T> seen, Predicate<T> wanted) throws InterruptedException {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < until) {
+            T next = seen.poll(until - System.nanoTime(), TimeUnit.NANOSECONDS);
+            if (next != null && wanted.test(next)) {
+                return next;
+            }
+        }
+        throw new AssertionError("Keine passende Meldung");
+    }
+
+    @Test
+    void theStatusArrivesAfterEachChangeWithoutAnyQueryAndAClosedSubscriptionGetsNothingMore() throws Exception {
+        gate("1");
+        AcquisitionScheduler planner = scheduler(4, 1, 4);
+        BlockingQueue<AcquisitionScheduler.Status> seen = new LinkedBlockingQueue<>();
+        Subscription subscription = planner.subscribe(seen::add);
+
+        planner.request(SERVER, key("1"), AcquisitionScheduler.Priority.BACKGROUND);
+        awaitRunning("1");
+        assertThat(next(seen, status -> status.backgroundRunning() == 1)).isNotNull();
+        release("1");
+        assertThat(next(seen, status -> status.backgroundRunning() == 0 && status.backgroundQueued() == 0))
+                .isNotNull();
+
+        subscription.close();
+        assertThat(planner.request(SERVER, key("2"), AcquisitionScheduler.Priority.BACKGROUND).done()
+                .get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.poll(500, TimeUnit.MILLISECONDS)).as("abgemeldet").isNull();
+    }
+
+    @Test
+    void theEndOfTheWaitAfterTheForegroundArrivesWithoutAnyFurtherChange() throws Exception {
+        AcquisitionScheduler planner = scheduler(4, 1, 4, Duration.ofMillis(800));
+        BlockingQueue<AcquisitionScheduler.Status> seen = new LinkedBlockingQueue<>();
+        planner.subscribe(seen::add);
+
+        assertThat(planner.request(APP, key("f1"), AcquisitionScheduler.Priority.FOREGROUND).done()
+                .get(10, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(next(seen, status -> status.pause() == AcquisitionStatus.Pause.COOLDOWN)).isNotNull();
+        // Nichts wartet im Hintergrund: Das Ende der Wartezeit ändert keine Schlange, kommt aber trotzdem.
+        assertThat(next(seen, status -> status.pause() == AcquisitionStatus.Pause.NONE)).isNotNull();
     }
 
     @Test
