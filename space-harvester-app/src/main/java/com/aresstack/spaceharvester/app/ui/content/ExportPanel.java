@@ -102,6 +102,10 @@ public final class ExportPanel extends JPanel {
     static final String REFRESH = "Aktualisieren";
     static final String LOAD_SUBTREE = "Samt Unterseiten laden";
     static final String LOAD_PAGE = "Nur diese Seite laden";
+    static final String COLLECT = "Bilder/Anhänge beschaffen";
+    static final String NOTHING_LOCAL = "Nichts lokal gespeichert";
+    static final String COLLECT_TIP = "Holt Bilder und, bei eingeschalteten Anhängen, Anhänge der lokal gespeicherten "
+            + "Seiten dieser Auswahl; was schon im Bestand liegt, wird nicht erneut abgerufen";
     static final String NO_DATASET = "Noch nichts ausgegeben; die Format-Knöpfe geben die Auswahl aus dem Bestand "
             + "aus, ohne die Quelle zu lesen.";
     static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: erst laden.";
@@ -116,6 +120,8 @@ public final class ExportPanel extends JPanel {
             + "unter Aufträge");
     private final ComposerButton loadPage = Comic.button(LOAD_PAGE, "Nur diese Seite laden, ohne Unterseiten");
     private final ComposerButton showJob = Comic.button("Auftrag anzeigen", "Den Auftrag unter Aufträge zeigen");
+    /** „Bilder/Anhänge beschaffen“ für die Auswahl ohne Export (ADR 0029, Schritt 7): nur die lokal gespeicherten Seiten. */
+    private final ComposerButton collect = Comic.button(COLLECT, COLLECT_TIP);
     private final JComponent standPlate;
     private final Map<String, IconButton> formatButtons = new LinkedHashMap<>();
     /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
@@ -183,6 +189,7 @@ public final class ExportPanel extends JPanel {
         output.setForeground(Comic.INK);
         load.addActionListener(e -> load(true));
         loadPage.addActionListener(e -> load(false));
+        collect.addActionListener(e -> collect());
         showJob.addActionListener(e -> {
             JobStatus job = shown.running() != null ? shown.running() : shown.newest();
             if (job != null) {
@@ -202,7 +209,7 @@ public final class ExportPanel extends JPanel {
         JPanel standBody = new JPanel(new BorderLayout(0, 8));
         standBody.setOpaque(false);
         standBody.add(stand, BorderLayout.CENTER);
-        standBody.add(Comic.row(load, loadPage, showJob), BorderLayout.SOUTH);
+        standBody.add(Comic.row(load, loadPage, collect, showJob), BorderLayout.SOUTH);
         standPlate = Comic.plate("Stand", Comic.PETROL, standBody);
 
         JPanel formats = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
@@ -549,6 +556,9 @@ public final class ExportPanel extends JPanel {
         loadPage.setVisible(current.page());
         load.setEnabled(running == null);
         loadPage.setEnabled(running == null);
+        boolean stored = holdings != null && holdings.counts().stored() > 0;
+        collect.setEnabled(stored);
+        collect.setToolTipText(stored ? COLLECT_TIP : COLLECT_TIP + " · " + NOTHING_LOCAL + ", erst laden");
         showJob.setVisible(running != null || newest != null);
     }
 
@@ -634,6 +644,40 @@ public final class ExportPanel extends JPanel {
         } else {
             Downloads.start(context, current.sourceId(), List.of(current.spaceKey()), started, failed);
         }
+    }
+
+    /**
+     * Bilder und Anhänge der Auswahl beschaffen, ohne Export ({@code Workspace.collectAssets}): die Aufträge laufen
+     * unter Aufträge; ein offener kommt beim zweiten Klick zurück, ein beendeter läuft im selben Eintrag erneut. Ohne
+     * lokal gespeicherte Seiten meldet die Statuszeile „Nichts lokal gespeichert“.
+     */
+    void collect() {
+        AppRuntime runtime = context.runtime();
+        Selection current = selection;
+        if (runtime == null || current == null || current.spaceKey() == null) {
+            return;
+        }
+        collect.setEnabled(false);
+        feedback.working("Bilder und Anhänge werden eingeplant …");
+        Background.run(() -> runtime.workspace().collectAssets(current.toCore()), jobs -> {
+            collect.setEnabled(true);
+            if (!Objects.equals(current, selection)) {
+                return;
+            }
+            if (jobs.isEmpty()) {
+                feedback.info(NOTHING_LOCAL, "Erst laden; beschafft werden nur Bilder und Anhänge lokal gespeicherter Seiten");
+                return;
+            }
+            feedback.working(Texts.count(jobs.size(), "Auftrag", "Aufträge") + " eingeplant: "
+                    + jobs.stream().map(job -> Texts.type(job.type())).distinct()
+                            .collect(java.util.stream.Collectors.joining(", ")));
+            context.navigator().followJobs();
+        }, error -> {
+            collect.setEnabled(true);
+            if (Objects.equals(current, selection)) {
+                feedback.problem(error);
+            }
+        });
     }
 
     /**
