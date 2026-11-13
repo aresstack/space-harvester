@@ -100,7 +100,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
      */
     @Override
     public boolean background(PageKey key) {
-        return background() && embedding.covers(key.sourceId()) && embedding.passages() && embedding.sentenceModel();
+        return background() && embedding.covers(key) && embedding.passages() && embedding.sentenceModel();
     }
 
     @Override
@@ -122,7 +122,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     @Override
     public boolean outdated(Enrichment stored) {
         return !stored.document().isPage() && PassageProcessor.notApproved(stored) && embedding != null
-                && embedding.covers(stored.key().sourceId());
+                && embedding.covers(stored.key());
     }
 
     /** Auch Anhänge und enthaltene Dateien, wenn ihre gespeicherten Anreicherungen erreichbar sind. */
@@ -149,7 +149,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
         if (embedding == null || !embedding.available()) {
             return headings(text, NavigationPayload.REASON_NO_MODEL, version);
         }
-        if (!embedding.covers(key.sourceId())) {
+        if (!embedding.covers(key)) {
             // Wie bei passages: gilt, bis Text, Modell oder Verfahren wechseln.
             return headings(text, NavigationPayload.REASON_NOT_APPROVED, version);
         }
@@ -178,7 +178,9 @@ public final class NavigationProcessor implements EnrichmentProcessor {
             passages.add(new DocumentNavigationBuilder.Passage(chunk.charStart(), chunk.charEnd(), chunk.vector()));
         }
         boolean[] incomplete = {false};
-        SectionLabeler labeler = labels == null || !labels.available() || !labels.mayLabel(key.sourceId()) ? null
+        // Benennen darf das Modell, was seine Quelle oder die Liste freigegebener Seiten freigibt (ADR 0028).
+        boolean mayLabel = labels != null && (labels.mayLabel(key.sourceId()) || embedding.pageReleased(key));
+        SectionLabeler labeler = !mayLabel || !labels.available() ? null
                 : (named, texts) -> {
                     try {
                         NavigationLabelModel.Labels result = labels.labels(named, texts);

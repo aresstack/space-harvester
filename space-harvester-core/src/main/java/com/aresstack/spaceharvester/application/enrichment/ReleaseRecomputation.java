@@ -12,12 +12,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -120,6 +122,52 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         } catch (RejectedExecutionException e) {
             LOG.log(System.Logger.Level.INFO, "Neuberechnung nach Wechsel der Freigabe, Quelle {0}, nicht gestartet",
                     sourceId);
+        }
+    }
+
+    /**
+     * Reiht die Seiten ein, deren Freigabe sich über die Liste freigegebener Seiten änderte (ADR 0028), im selben
+     * Hintergrund wie die Läufe nach einem Wechsel je Quelle: Neu eingetragene rechnen mit Modell, entfernte ohne;
+     * Ergebnisse der Prozessoren, die die Seite danach nicht mehr bearbeiten (Embeddings, Satzanalyse), entfallen.
+     * Ob eine Berechnung das Modell fragen darf, entscheidet wie immer ihre Ausführung. Seiten ohne Snapshot im Cache
+     * haben nichts zu rechnen. Das Log nennt nur die Anzahl.
+     *
+     * @param keys   die Seiten; nur solche, deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts
+     * @param lookup der gespeicherte Snapshot einer Seite
+     */
+    public void recomputePages(Collection<PageKey> keys, Function<PageKey, Optional<PageSnapshot>> lookup) {
+        List<PageKey> pending = List.copyOf(keys);
+        Objects.requireNonNull(lookup, "lookup");
+        if (pending.isEmpty()) {
+            return;
+        }
+        try {
+            runs.execute(() -> {
+                int count = 0;
+                try {
+                    for (PageKey key : pending) {
+                        if (closed) {
+                            return;
+                        }
+                        Optional<PageSnapshot> snapshot = lookup.apply(key);
+                        if (snapshot.isPresent() && enrichments.recomputeInBackground(snapshot.get(),
+                                processorIds) > 0) {
+                            count++;
+                        }
+                    }
+                    enrichments.flush();
+                    LOG.log(System.Logger.Level.INFO, "Liste freigegebener Seiten geändert: {0} von {1} Seiten zur "
+                            + "Neuberechnung", count, pending.size());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Neuberechnung nach geänderter Liste freigegebener Seiten "
+                            + "nach {0} Seiten abgebrochen ({1})", count, e.getClass().getName());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            LOG.log(System.Logger.Level.INFO, "Neuberechnung nach geänderter Liste freigegebener Seiten nicht "
+                    + "gestartet");
         }
     }
 

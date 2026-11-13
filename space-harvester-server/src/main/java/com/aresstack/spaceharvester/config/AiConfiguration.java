@@ -22,6 +22,8 @@ import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleases;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -75,7 +77,7 @@ class AiConfiguration {
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
-                                          ObjectProvider<SentenceSegmenter> sentences) {
+                                          ObjectProvider<SentenceSegmenter> sentences, AiRelease release) {
         if (properties.embeddingModel() != null && !settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
@@ -107,7 +109,9 @@ class AiConfiguration {
                         properties.embeddingChunkOverlapSentences()),
                 sourceId -> model.get().ai().mayProcessExternally(sourceId))
                 .withPassages(new PassageChunks(new PassageSegmentation(sentences.getIfAvailable(
-                        () -> EnrichmentConfiguration.sentences(rules)), rules)));
+                        () -> EnrichmentConfiguration.sentences(rules)), rules)))
+                // ADR 0028: auch die Seiten der Liste freigegebener Seiten, gefragt bei jeder Seite.
+                .withPageReleases(release.pages()::contains);
     }
 
     /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
@@ -241,7 +245,7 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
     StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
-                                          SentenceSegmenter sentences,
+                                          SentenceSegmenter sentences, AiRelease release,
                                           @Value("${space-harvester.enrichment.statements.verify:"
                                                   + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
                                           @Value("${space-harvester.enrichment.statements.max-paragraphs:"
@@ -252,7 +256,8 @@ class AiConfiguration {
         StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
         StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
                 userAgent(build));
-        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally());
+        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally(),
+                release.pages()::contains);
     }
 
     /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */
@@ -270,7 +275,8 @@ class AiConfiguration {
     @Bean(destroyMethod = "close")
     ReleaseRecomputation releaseRecomputation(Enrichments enrichments, ObjectProvider<EmbeddingProcessor> embedding,
                                               ObjectProvider<StatementProcessor> statements,
-                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live,
+                                              AiRelease release) {
         LucenePageCache pages = cache.getIfAvailable();
         EmbeddingProcessor embeddings = embedding.getIfAvailable();
         boolean withStatements = statements.getIfAvailable() != null;
@@ -289,6 +295,13 @@ class AiConfiguration {
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
                 released, processorIds);
         live.listen(recomputation);
+        // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten, deren
+        // Quelle nicht als Ganzes freigegeben ist. Ohne Cache gibt es keine Seiten zu rechnen.
+        if (pages != null) {
+            release.pages().subscribe(change -> recomputation.recomputePages(java.util.stream.Stream.concat(
+                            change.added().stream(), change.removed().stream()).map(PageReleases.Entry::key)
+                    .filter(key -> !release.sourceReleased(key.sourceId())).toList(), pages::find));
+        }
         return recomputation;
     }
 

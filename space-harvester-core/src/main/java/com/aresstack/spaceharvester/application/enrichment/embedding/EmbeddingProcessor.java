@@ -57,6 +57,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     private final int maxChunkChars;
     private final TextSegmentation segmentation;
     private final Predicate<String> sources;
+    /** Seiten der Liste freigegebener Seiten (ADR 0028), auch aus nicht freigegebenen Quellen. */
+    private final Predicate<PageKey> pages;
     private final boolean remote;
     /** Absätze wie askai arch statt fester Stücke; {@code null}: Zerlegung nach Token-Budget. */
     private final PassageChunking passages;
@@ -95,6 +97,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                                TextSegmentation segmentation, Predicate<String> sources, boolean remote) {
         this.segmentation = Objects.requireNonNull(segmentation, "segmentation");
         this.sources = Objects.requireNonNull(sources, "sources");
+        this.pages = key -> false;
         this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
         if (maxChunkChars != 0 && maxChunkChars < 100) {
@@ -104,9 +107,10 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         this.passages = null;
     }
 
-    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages) {
+    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages, Predicate<PageKey> pages) {
         this.segmentation = base.segmentation;
         this.sources = base.sources;
+        this.pages = pages;
         this.remote = base.remote;
         this.provider = base.provider;
         this.maxChunkChars = base.maxChunkChars;
@@ -120,7 +124,15 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      * Die Version nennt die Zerlegung: Vorhandene Embeddings veralten und werden aus dem Cache neu berechnet.
      */
     public EmbeddingProcessor withPassages(PassageChunking value) {
-        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"));
+        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"), pages);
+    }
+
+    /**
+     * Derselbe Prozessor, der zusätzlich die Seiten der Liste freigegebener Seiten einbettet (ADR 0028), auch wenn ihre
+     * Quelle nicht freigegeben ist; die Liste wird bei jeder Seite neu gefragt.
+     */
+    public EmbeddingProcessor withPageReleases(Predicate<PageKey> released) {
+        return new EmbeddingProcessor(this, passages, Objects.requireNonNull(released, "released"));
     }
 
     /** Ob die Stücke semantische Absätze sind ({@link #withPassages}). */
@@ -178,12 +190,27 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     @Override
     public boolean appliesTo(PageKey key) {
-        return covers(key.sourceId());
+        return covers(key);
     }
 
-    /** Ob Inhalte dieser Quelle eingebettet werden; ohne Modell keine. */
+    /** Ob Inhalte dieser Quelle als Ganzes eingebettet werden; ohne Modell keine. */
     public boolean covers(String sourceId) {
         return available() && sources.test(sourceId);
+    }
+
+    /** Ob diese Seite eingebettet wird: ihre Quelle oder sie selbst ist freigegeben (ADR 0028); ohne Modell keine. */
+    public boolean covers(PageKey key) {
+        return available() && released(key);
+    }
+
+    /** Ob die Seite an den Dienst gehen darf, unabhängig vom Modell: Quelle freigegeben oder Seite auf der Liste. */
+    public boolean released(PageKey key) {
+        return sources.test(key.sourceId()) || pages.test(key);
+    }
+
+    /** Ob die Seite auf der Liste freigegebener Seiten steht (ADR 0028), gleich, ob ihre Quelle freigegeben ist. */
+    public boolean pageReleased(PageKey key) {
+        return pages.test(key);
     }
 
     @Override
@@ -210,8 +237,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      */
     @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
-        if (!sources.test(key.sourceId())) {
-            throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+        if (!released(key)) {
+            throw new ProcessingNotAllowedException("Seite nicht für den KI-Dienst freigegeben");
         }
         return process(text);
     }
@@ -231,8 +258,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      */
     @Override
     public EnrichmentOutput process(DocumentKey document, PageText text, DocumentPosition position) {
-        if (!sources.test(document.page().sourceId())) {
-            throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+        if (!released(document.page())) {
+            throw new ProcessingNotAllowedException("Seite nicht für den KI-Dienst freigegeben");
         }
         long budget = position.embeddingBudget();
         int length = text.text().length();

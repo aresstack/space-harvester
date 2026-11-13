@@ -118,6 +118,7 @@ import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleases;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -231,6 +232,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import java.util.function.UnaryOperator;
 
 /**
@@ -406,6 +408,8 @@ public final class Harvester implements AutoCloseable {
             // ADR 0028: die für die KI freigegebenen Seiten neben dem Cache, als Hash-Menge im Speicher.
             LucenePageReleases pageReleases = LucenePageReleases.open(cacheDirectory.resolve("page-releases"));
             opened.add(pageReleases);
+            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : builder.ai)
+                    .mayProcessExternally(sourceId), pageReleases);
             // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
             SearchRunLog runLog = SearchRunLog.NONE;
             if (builder.searchRuns) {
@@ -444,8 +448,9 @@ public final class Harvester implements AutoCloseable {
             TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
             SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
             if (embedding != null) {
+                // ADR 0028: auch die Seiten der Liste freigegebener Seiten, gefragt bei jeder Seite.
                 embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
-                        sentenceRules)));
+                        sentenceRules))).withPageReleases(pageReleases::contains);
             }
             this.embeddingModel = model;
             if (embedding != null || builder.statements.enabled()) {
@@ -471,8 +476,6 @@ public final class Harvester implements AutoCloseable {
             // Themenabschnitte benennt das Chat-Modell der wirksamen Konfiguration (ChatSectionLabeler), nur für
             // freigegebene Quellen und nur in der Anreicherung.
             AiServiceSettings startAi = builder.ai;
-            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : startAi)
-                    .mayProcessExternally(sourceId), pageReleases);
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
             processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
                     enrichmentStore::find, new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
@@ -492,7 +495,8 @@ public final class Harvester implements AutoCloseable {
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
                 statementsReleased = chats.mayProcessExternally();
-                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased);
+                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats,
+                        statementsReleased, pageReleases::contains);
                 processors.add(statementProcessor);
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
@@ -529,6 +533,12 @@ public final class Harvester implements AutoCloseable {
                         () -> embeddings != null && embeddings.available()
                                 || statementsOnStart != null && statementsOnStart.available(),
                         PassagePayload.REASON_NOT_APPROVED);
+                // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
+                // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
+                AiRelease release = this.aiRelease;
+                opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(Stream.concat(
+                                change.added().stream(), change.removed().stream()).map(PageReleases.Entry::key)
+                        .filter(key -> !release.sourceReleased(key.sourceId())).toList(), cache::find)));
                 this.releaseRecomputation = recomputation;
             } else {
                 this.releaseRecomputation = null;
