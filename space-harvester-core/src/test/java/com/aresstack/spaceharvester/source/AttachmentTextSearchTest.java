@@ -180,6 +180,37 @@ class AttachmentTextSearchTest {
         assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
     }
 
+    /**
+     * Eine Warnung zu einem einzelnen gelisteten Eintrag (Outlook: ausgelassene Teile eines angehängten Elements) macht
+     * die Liste nicht unvollständig; ein entfernter Anhang fällt weiter aus dem Index. Eine Warnung über fehlende
+     * Einträge der Liste verhindert das Bereinigen wie bisher.
+     */
+    @Test
+    void aWarningAboutOneListedEntryStillLetsTheIndexBeCleaned() {
+        files.put("att1", DocumentFixtures.pdf("Wartungsfenster Samstag"));
+        files.put("att2", DocumentFixtures.pdf("Notfallplan Sonntag"));
+        Assets assets = assets();
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF),
+                attachment("att2", "notfall.pdf", DocumentFixtures.PDF)));
+
+        PageAttachments partial = new PageAttachments("101", List.of(attachment("att1", "betrieb.pdf",
+                DocumentFixtures.PDF)), List.of(), "application/json", "test",
+                List.of("Anhangsliste nicht vollständig lieferbar"), NOW);
+        assets.harvest(new PageAttachmentList("wiki", "DEV", partial, NOW));
+        assertThat(partial.complete()).isFalse();
+        assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).as("nicht bereinigt")
+                .hasSize(1);
+
+        PageAttachments withEntryWarning = new PageAttachments("101", List.of(attachment("att1", "betrieb.pdf",
+                DocumentFixtures.PDF)), List.of(), "application/json", "test",
+                List.of("entries-not-readable;id=att1;count=2"), NOW);
+        assets.harvest(new PageAttachmentList("wiki", "DEV", withEntryWarning, NOW));
+
+        assertThat(withEntryWarning.complete()).isTrue();
+        assertThat(index.search("Notfallplan", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+    }
+
     @Test
     void harvestingAgainDoesNotRewriteAnUnchangedEntryAndAReopenedIndexKeepsIt() {
         files.put("att1", DocumentFixtures.pdf("Wartungsfenster Samstag"));

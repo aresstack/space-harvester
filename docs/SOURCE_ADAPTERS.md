@@ -152,7 +152,8 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
   `message/rfc822` (Titel mit `.eml`), nur aus Quelldaten; tiefer als 8 Ebenen bleibt es gelistet und sein Abruf
   meldet `UNSUPPORTED`, gekürzt wird nie. Verweise und OLE-Objekte haben keine Datei: direkt an der Nachricht
   gelistet mit `UNSUPPORTED` beim Abruf, in einem angehängten Element ausgelassen und gezählt, mit der Warnung
-  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen). Medientyp aus dem MIME-Tag des Anhangs,
+  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen; betrifft nur diesen Eintrag, die Liste bleibt
+  vollständig, `PageAttachments#complete`). Medientyp aus dem MIME-Tag des Anhangs,
   sonst aus der Endung (pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, md, htm, html, xml, json,
   zip, msg, eml, png, jpg, jpeg, gif, bmp, tif, tiff, svg), sonst `application/octet-stream`; was gelesen wird,
   entscheidet der Core. Im Core (OL2): `attachments(pageId)` übersetzt bei Quellen über `discover` die Seiten-ID
