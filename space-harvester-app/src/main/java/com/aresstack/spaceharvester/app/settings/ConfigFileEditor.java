@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -442,6 +443,32 @@ public final class ConfigFileEditor {
         if (newProblem || !settings.jobLimits().retry().equals(retry)) {
             throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*},
+     * #336), dieselben Schlüssel wie im Dienst; nur der Block {@code synonyms} unter {@code terms} ändert sich.
+     * {@code max-judged-pairs} über 0 schaltet die Prüfung der Kandidatenpaare durch das Text-Modell zu.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSynonymBudget(Path file, Draft base, SynonymBudget budget) {
+        String text = nested(base.text(), "terms", "synonyms", indent -> {
+            String inner = indent + "  ";
+            return indent + "synonyms:\n"
+                    + inner + SynonymBudget.MAX_TERMS + ": " + budget.maxTerms() + "\n"
+                    + inner + SynonymBudget.MAX_EMBEDDED_TERMS + ": " + budget.maxEmbeddedTerms() + "\n"
+                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n";
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.terms().synonyms().equals(budget)) {
+            throw new IllegalArgumentException("Das Budget der Synonymerkennung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.terms.synonyms von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);

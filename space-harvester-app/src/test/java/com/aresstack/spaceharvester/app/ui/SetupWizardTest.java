@@ -272,6 +272,9 @@ class SetupWizardTest {
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.MODELS);
             wizard[0].ai.visionModel.setText("vision-x");
             wizard[0].ai.rerankModel.setText("rerank-y");
+            wizard[0].ai.chatModel.setText("chat-z");
+            assertThat(wizard[0].ai.judgedPairs()).as("Standard: Chat-Prüfung aus").isZero();
+            wizard[0].ai.judgedPairs.setValue(30);
             wizard[0].next.doClick();
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
         });
@@ -287,11 +290,12 @@ class SetupWizardTest {
             }
             Thread.sleep(50);
         }
-        assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y",
-                "im Tresor").doesNotContain("fehlt");
+        assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y", "chat-z",
+                AiSettingsPanel.JUDGED_PAIRS_LABEL, "30 " + AiSettingsPanel.JUDGED_PAIRS_UNIT, "im Tresor")
+                .doesNotContain("fehlt");
         assertThat(String.join("\n", summary)).doesNotContain("sk-wizard-geheim");
         assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-x", "rerank-y",
-                "http://127.0.0.1:9/v1").doesNotContain("sk-wizard-geheim");
+                "http://127.0.0.1:9/v1", "max-judged-pairs: 30").doesNotContain("sk-wizard-geheim");
         SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].ai.modelRetry.active())
                 .as("„Modelle“ verlassen: keine Wiederholung").isFalse());
     }
