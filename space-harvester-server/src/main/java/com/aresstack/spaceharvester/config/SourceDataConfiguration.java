@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageReleases;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -45,6 +46,7 @@ class SourceDataConfiguration {
     @Bean
     SourceDataPurge sourceDataPurge(Jobs jobs, ConfiguredSourceCatalog catalog,
                                     ObjectProvider<LuceneFillQueue> fillQueue,
+                                    ObjectProvider<LucenePageReleases> pageReleases,
                                     ObjectProvider<LucenePageCache> cache,
                                     ObjectProvider<LucenePageTextIndex> texts,
                                     ObjectProvider<LuceneEnrichmentStore> enrichments,
@@ -58,7 +60,8 @@ class SourceDataConfiguration {
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
-        SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable());
+        SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable())
+                .pageReleases(pageReleases.getIfAvailable());
         cache.ifAvailable(stores::pageCache);
         texts.ifAvailable(stores::fullText);
         enrichments.ifAvailable(stores::enrichments);

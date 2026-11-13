@@ -117,6 +117,7 @@ import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -168,6 +169,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageReleases;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneHoldingsCatalog;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -282,6 +284,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFreshness freshness;
     private final PageQueries pages;
     private final Holdings holdings;
+    private final AiRelease aiRelease;
     private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
@@ -400,6 +403,9 @@ public final class Harvester implements AutoCloseable {
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
             opened.add(enrichmentStore);
+            // ADR 0028: die für die KI freigegebenen Seiten neben dem Cache, als Hash-Menge im Speicher.
+            LucenePageReleases pageReleases = LucenePageReleases.open(cacheDirectory.resolve("page-releases"));
+            opened.add(pageReleases);
             // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
             SearchRunLog runLog = SearchRunLog.NONE;
             if (builder.searchRuns) {
@@ -465,6 +471,8 @@ public final class Harvester implements AutoCloseable {
             // Themenabschnitte benennt das Chat-Modell der wirksamen Konfiguration (ChatSectionLabeler), nur für
             // freigegebene Quellen und nur in der Anreicherung.
             AiServiceSettings startAi = builder.ai;
+            this.aiRelease = new AiRelease(sourceId -> (liveAi ? this.settings.ai() : startAi)
+                    .mayProcessExternally(sourceId), pageReleases);
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
             processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
                     enrichmentStore::find, new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
@@ -852,6 +860,7 @@ public final class Harvester implements AutoCloseable {
             // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
             SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
                     .fillQueue(fillQueue)
+                    .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)
                     .enrichments(enrichmentStore)
@@ -1228,6 +1237,14 @@ public final class Harvester implements AutoCloseable {
     /** Bestand je Space mit Zählern je Teilbaum und Meldungen bei jeder Änderung (ADR 0027). */
     public Holdings holdings() {
         return holdings;
+    }
+
+    /**
+     * Die Freigabeprüfung für den KI-Dienst mit der Liste der freigegebenen Seiten (ADR 0028): Quelle in
+     * {@code ai.external-processing-sources} oder Seite auf der Liste.
+     */
+    public AiRelease aiRelease() {
+        return aiRelease;
     }
 
     /**
