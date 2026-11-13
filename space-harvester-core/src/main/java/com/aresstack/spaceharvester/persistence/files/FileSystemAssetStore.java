@@ -145,6 +145,9 @@ public class FileSystemAssetStore implements AssetStore {
             return Optional.empty();
         } catch (IOException e) {
             throw new AssetStoreException("Asset-Eintrag nicht lesbar", e);
+        } catch (IllegalArgumentException e) {
+            // Fehlerhafte Escape-Folge; ohne Ursache, deren Meldung Inhalt enthalten kann.
+            throw new AssetStoreException("Asset-Eintrag beschädigt", null);
         }
         try {
             Asset asset = new Asset(p.getProperty("sourceId"), p.getProperty("pageId"), p.getProperty("attachmentId"),
@@ -430,6 +433,9 @@ public class FileSystemAssetStore implements AssetStore {
             return Optional.empty();
         } catch (IOException e) {
             throw new AssetStoreException("Dokumenttext nicht lesbar", e);
+        } catch (IllegalArgumentException e) {
+            // Fehlerhafte Escape-Folge; ohne Ursache, deren Meldung Inhalt enthalten kann.
+            throw new AssetStoreException("Dokumenttext beschädigt", null);
         }
         try {
             return Optional.of(new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),

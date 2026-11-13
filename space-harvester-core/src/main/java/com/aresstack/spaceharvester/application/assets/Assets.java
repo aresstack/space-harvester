@@ -1268,9 +1268,12 @@ public class Assets {
     }
 
     /**
-     * Legt einen abgelegten Dokument-Anhang aus seiner abgelegten Extraktion neu in den Volltextindex, ohne Download und
-     * ohne die Quelle zu fragen (für „Neu lesen“): Seite und Anhang kommen aus dem Eintrag der Ablage, der Space vom
-     * Aufrufer. Sichert den Index nicht ({@link #flushTextIndex}).
+     * Ersetzt die Einträge eines abgelegten Dokument-Anhangs im Volltextindex aus seiner abgelegten Extraktion, ohne
+     * Download und ohne die Quelle zu fragen (für „Neu lesen“): Seite und Anhang kommen aus dem Eintrag der Ablage, der
+     * Space vom Aufrufer. Nur ein Anhang, der schon im Index liegt, bekommt neue Einträge; einer, den eine Ernte als
+     * nicht mehr zur Seite gehörig entfernt hat, bleibt draußen. Ersetzt auch bei gleicher Extraktion und Version, denn
+     * ein Neulesen unter anderen Grenzen ändert die Abschnitte, nicht den Schlüssel. Sichert den Index nicht
+     * ({@link #flushTextIndex}).
      *
      * @return ob der Index geändert wurde
      */
@@ -1278,10 +1281,14 @@ public class Assets {
         if (texts == null || asset.kind() != AssetKind.OTHER) {
             return false;
         }
+        if (texts.attachmentInputSha256(new PageKey(asset.sourceId(), asset.pageId()), asset.attachmentId())
+                .isEmpty()) {
+            return false;
+        }
         PageAttachmentList list = new PageAttachmentList(asset.sourceId(), spaceKey, new PageAttachments(
                 asset.pageId(), List.of(), List.of(), "application/json", "stored", List.of(), clock.instant()),
                 clock.instant());
-        return indexSections(list, asset).orElse(false);
+        return indexSections(list, asset, true).orElse(false);
     }
 
     /** Sichert Änderungen am Volltextindex dauerhaft, etwa nach {@link #reindexStored}. */
@@ -1307,6 +1314,11 @@ public class Assets {
      * @return leer, wenn es keine abgelegte Extraktion mit Text gibt; sonst ob der Index geändert wurde
      */
     private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset) {
+        return indexSections(list, asset, false);
+    }
+
+    /** @param replace ersetzt auch, wenn der abgelegte Stand im Index gleich aussieht (nach einem Neulesen) */
+    private Optional<Boolean> indexSections(PageAttachmentList list, Asset asset, boolean replace) {
         DocumentExtractions structured = extractions;
         if (texts == null || structured == null || asset.kind() != AssetKind.OTHER) {
             return Optional.empty();
@@ -1322,7 +1334,8 @@ public class Assets {
             String input = inputSha256(list, asset, title, textKey(key.extractor(), key.version()) + ":sections");
             try (java.util.stream.Stream<DocumentExtractions.IndexSection> stream =
                          structured.indexSections(extraction.get())) {
-                if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+                if (!replace && texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals)
+                        .isPresent()) {
                     return Optional.of(false);
                 }
                 java.util.Iterator<DocumentExtractions.IndexSection> found = stream.iterator();

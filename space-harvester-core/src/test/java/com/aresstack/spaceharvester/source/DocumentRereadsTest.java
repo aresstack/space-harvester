@@ -229,6 +229,55 @@ class DocumentRereadsTest {
     }
 
     @Test
+    void anAttachmentRemovedFromItsPageIsReadAgainButStaysOutOfTheIndex() {
+        files.put("att1", DocumentFixtures.docx("Abnahme der Schleuse"));
+        files.put("att2", DocumentFixtures.docx("Entfernter Pegelstand"));
+        String removed = Assets.sha256(files.get("att2"));
+        Assets old = assets(new TikaDocumentStructure());
+        old.harvest(list(attachment("att1", "protokoll.docx", DocumentFixtures.DOCX),
+                attachment("att2", "pegel.docx", DocumentFixtures.DOCX)));
+        old.harvest(list(attachment("att1", "protokoll.docx", DocumentFixtures.DOCX)));
+        assertThat(index.search("Pegelstand", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+
+        Versioned next = new Versioned(title -> false);
+        Assets upgraded = assets(next);
+        clock.advance();
+        Jobs jobs = jobs();
+        JobStatus done = jobs.status(rereads(jobs, upgraded).start("wiki", OWNER, Set.of()).id(), OWNER);
+
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(upgraded.storedText(removed)).map(AssetText::stale).contains(false);
+        assertThat(index.search("Pegelstand", Set.of("wiki"), SearchSpaces.all(), 10))
+                .as("nicht wieder in der Suche").isEmpty();
+        assertThat(index.search("Schleuse", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+    }
+
+    @Test
+    void aRereadUnderTheSameVersionWithWiderLimitsReplacesTheIndexEntries() {
+        ExtractionLimits tight = limits(0, 200);
+        files.put("att1", DocumentFixtures.rtf("Anfang " + "Lang ".repeat(1_000) + "Schleusenkammer"));
+        String big = Assets.sha256(files.get("att1"));
+        assets(new TikaDocumentStructure(), tight).harvest(list(attachment("att1", "lang.rtf",
+                DocumentFixtures.RTF)));
+        assertThat(extractions().all(big)).extracting(stored -> stored.document().outcome().status())
+                .containsExactly(ExtractionStatus.PARTIAL);
+        assertThat(index.search("Anfang", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+        assertThat(index.search("Schleusenkammer", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+
+        Assets wider = assets(new TikaDocumentStructure(), ExtractionLimits.DEFAULTS);
+        clock.advance();
+        Jobs jobs = jobs();
+        JobStatus done = jobs.status(rereads(jobs, wider).start("wiki", OWNER,
+                EnumSet.of(ExtractionStatus.PARTIAL)).id(), OWNER);
+
+        assertThat(done.progress().written()).isEqualTo(1);
+        assertThat(wider.storedText(big)).map(AssetText::text).hasValueSatisfying(text -> assertThat(text)
+                .contains("Schleusenkammer"));
+        assertThat(index.search("Schleusenkammer", Set.of("wiki"), SearchSpaces.all(), 10))
+                .as("gleiche Extraktion und Version, neue Abschnitte").hasSize(1);
+    }
+
+    @Test
     void anUnknownSourceIsRejectedAtTheStart() {
         Jobs jobs = jobs();
         DocumentRereads rereads = rereads(jobs, assets(new TikaDocumentStructure()));
@@ -236,6 +285,13 @@ class DocumentRereadsTest {
         Assertions.assertThatThrownBy(() -> rereads.start("unbekannt", OWNER, Set.of()))
                 .isInstanceOf(UnknownSourceException.class);
         assertThat(jobs.list(OWNER, JobType.REREAD)).isEmpty();
+    }
+
+    private static ExtractionLimits limits(long maxFileBytes, long maxChars) {
+        ExtractionLimits d = ExtractionLimits.DEFAULTS;
+        return new ExtractionLimits(maxFileBytes, maxChars, d.unpackRatio(), d.unpackRatioFromBytes(),
+                d.textRatio(), d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(),
+                d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
     }
 
     private Jobs jobs() {
@@ -258,11 +314,15 @@ class DocumentRereadsTest {
     }
 
     private Assets assets(DocumentStructure structure) {
+        return assets(structure, ExtractionLimits.DEFAULTS);
+    }
+
+    private Assets assets(DocumentStructure structure, ExtractionLimits limits) {
         if (index == null) {
             index = LucenePageTextIndex.open(directory.resolve("text"));
         }
         Assets assets = new Assets(catalog(), store(), 16_000_000, clock, null, new TikaDocumentText(), index);
-        assets.documentExtractions(new DocumentExtractions(structure, extractions(), ExtractionLimits.DEFAULTS));
+        assets.documentExtractions(new DocumentExtractions(structure, extractions(), limits));
         return assets;
     }
 
