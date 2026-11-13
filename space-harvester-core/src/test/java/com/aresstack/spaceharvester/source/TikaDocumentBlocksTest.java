@@ -217,30 +217,6 @@ class TikaDocumentBlocksTest {
     }
 
     @Test
-    void pptxSlidesGetNoSlideNumber() throws Exception {
-        Path pptx = directory.resolve("folien.pptx");
-        try (org.apache.poi.xslf.usermodel.XMLSlideShow show = new org.apache.poi.xslf.usermodel.XMLSlideShow()) {
-            for (String mark : new String[] {"FOLIE-EINS", "FOLIE-ZWEI"}) {
-                org.apache.poi.xslf.usermodel.XSLFTextBox box = show.createSlide().createTextBox();
-                box.setText(mark);
-                box.setAnchor(new java.awt.Rectangle(50, 50, 300, 50));
-            }
-            try (java.io.OutputStream out = Files.newOutputStream(pptx)) {
-                show.write(out);
-            }
-        }
-        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
-
-        structure.extract(pptx, "folien.pptx",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation", ExtractionLimits.DEFAULTS,
-                sink);
-
-        assertThat(sink.text()).contains("FOLIE-EINS", "FOLIE-ZWEI");
-        assertThat(sink.blocks).as("Reihenfolge von Tika nicht verlässlich").allSatisfy(block ->
-                assertThat(block.location().flatMap(Location::slide)).isEmpty());
-    }
-
-    @Test
     void wordListsStayParagraphsWithoutAnUnambiguousMarker() throws Exception {
         Path docx = directory.resolve("liste.docx");
         try (org.apache.poi.xwpf.usermodel.XWPFDocument document = new org.apache.poi.xwpf.usermodel.XWPFDocument()) {

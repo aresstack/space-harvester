@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s10";
+    public static final String VERSION = "3.3-s11";
 
     /** Tika-Konfiguration: alle Standard-Parser außer der Texterkennung. */
     private static final String CONFIG = """
@@ -1467,6 +1467,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private boolean sheetHeading;
                 private int page;
                 private int slide;
+                /** Folien von Tika in einem .pptx bisher und ihre Nummern ({@link PptxSlideOrder}). */
+                private int slides;
+                private int[] slideNumbers;
                 private String sheet;
                 private int tables;
                 private final List<Block.Cell> cells = new ArrayList<>();
@@ -1704,9 +1707,12 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     } else if (cls.equals("page") && pdf()) {
                         page++;
                     } else if (cls.equals("slide") && legacyPowerPoint()) {
-                        // Nur .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit). Bei
-                        // .pptx stimmt die Reihenfolge nicht, dort bleibt die Folie leer (Architekt 13.11.2026).
+                        // .ppt: Tika gibt die Folien dort in Folienreihenfolge aus (ausgeblendete zählen mit).
                         slide++;
+                    } else if (cls.equals("slide-content") && powerPoint()) {
+                        // .pptx (AP10): Tika gibt die Folien nicht in Folienreihenfolge aus; die Nummer kommt aus
+                        // PptxSlideOrder, sonst bleibt sie leer. Notizen danach gehören zu dieser Folie.
+                        slide = nextSlide();
                     }
                     resetKind();
                 }
@@ -1734,6 +1740,30 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     }
                     outlookStage = 2;
                     return false;
+                }
+
+                private boolean powerPoint() {
+                    String type = detectedType();
+                    return type.startsWith("application/vnd.openxmlformats-officedocument.presentationml.")
+                            || type.startsWith("application/vnd.ms-powerpoint.presentation.macroenabled")
+                            || type.startsWith("application/vnd.ms-powerpoint.slideshow.macroenabled");
+                }
+
+                /** Die Foliennummer der nächsten Folie von Tika; 0, wenn die Zuordnung fehlt oder nicht mehr passt. */
+                private int nextSlide() {
+                    if (slideNumbers == null) {
+                        TikaInputStream in = stream;
+                        Path file = null;
+                        try {
+                            file = in != null && in.hasFile() ? in.getPath() : null;
+                        } catch (IOException e) {
+                            file = null;
+                        }
+                        slideNumbers = PptxSlideOrder.of(file).orElse(new int[0]);
+                    }
+                    slides++;
+                    // Mehr Folien als zugeordnet: ab hier keine Nummer (lieber keine als eine falsche).
+                    return slides <= slideNumbers.length ? slideNumbers[slides - 1] : 0;
                 }
 
                 private boolean legacyPowerPoint() {

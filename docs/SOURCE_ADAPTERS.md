@@ -466,9 +466,15 @@ die physische Seite ab 1 (laufende Nummer der Seitenelemente, nicht die gedruckt
 `sheet` bei Excel der Blattname. Excel-Zeile und `cellRef` bleiben leer (Tika liefert die Zeile nicht), Word hat keine
 Seiten. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
 zählen mit (nicht getestet: ob Notizen in `.ppt` mitzählen; HSLF kann im Test keine Notizen anlegen, der Zähler
-reagiert nur auf Folienelemente). Bei `.pptx` bleibt `slide` leer, bekannte Grenze: Die Blöcke stehen in der Reihenfolge, die Tika
-liefert, nicht in Folienreihenfolge; ausgeblendete Folien sind enthalten, Notizen und Mastertext stehen als Absätze
-(Korrektur der Reihenfolge erst mit AP10 über POI). Word-Listen bleiben Absätze: Tika gibt Listenpunkte aus Word als Absatz mit vorangestelltem Zeichen aus, ohne
+reagiert nur auf Folienelemente). Bei `.pptx` (AP10) ist `slide` die Position der Folie in `p:sldIdLst` ab 1,
+ausgeblendete zählen mit, Notizen tragen die Nummer ihrer Folie. Tika liest eine pptx-Datei auf dem SAX-Weg und gibt die
+Folien in der Reihenfolge ihrer Beziehungskennungen als Text aus (`rId10` vor `rId6`); `PptxSlideOrder` liest nur
+`presentation.xml` und ihre Beziehungen (sicherer XML-Leser ohne DTD, je Teil höchstens 8 MiB, beim Lesen gezählt) und
+ordnet jeder ausgegebenen Folie ihre Nummer zu. Die Zuordnung gilt nur für die geprüften Fassungen (Tika 3.3.2, POI
+5.5.1; `PptxSlideOrderTest` bricht bei einer Anhebung). Keine Nummer, wenn etwas nicht eindeutig ist: andere Fassung,
+Teile fehlen oder sind zu groß, eine Folie fehlt in `p:sldIdLst`, doppelte Kennungen oder Ziele, mehr Folien von Tika als
+zugeordnet. Benannte Grenze: Die Blöcke bleiben in Tikas Reihenfolge, nicht in Folienreihenfolge; ein eigener SAX-Leser
+in Folienreihenfolge wird erst gebaut, wenn echte Dateien es brauchen. Word-Listen bleiben Absätze: Tika gibt Listenpunkte aus Word als Absatz mit vorangestelltem Zeichen aus, ohne
 eindeutige Auszeichnung. Tika-Artefakte fallen weg: leere Absätze, Kopfdaten (der Titel
 geht in den Kopf), Namen von Paketeinträgen wie `image1.png` und Verweise ohne Ziel. Enthaltene Dateien siehe unten
 (AP7a). Die Texterkennung ist abgeschaltet (die Tika-Konfiguration schließt
