@@ -214,7 +214,9 @@ public class Exports {
      * Startet eine Ausgabe aus dem Bestand oder gibt eine fertige zurück (ADR 0029): Das Artefakt eines beendeten
      * Auftrags desselben Auftraggebers wird wiederverwendet, wenn Quelle, Space, Startseite, Tiefe und Formate gleich
      * sind und die Seiten im Bestand denselben Stand haben wie bei seinem Start (Kopfdaten-Version, gespeicherte
-     * Version, Elternseite, gesperrt oder veraltet). Sonst wie {@link #start(ExportRequest)}.
+     * Version, Elternseite, gesperrt oder veraltet, Titel, Labels und Attribute, gespeicherter Inhalt) und der
+     * Auftraggeber dieselben Seiten lesen darf. Gilt seine Freigabe nicht mehr ({@link ExportRequest#authorized()}),
+     * wird nichts wiederverwendet. Sonst wie {@link #start(ExportRequest)}.
      *
      * @throws IllegalArgumentException wenn {@code request} keine Ausgabe aus dem Bestand ist
      * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format
@@ -226,7 +228,8 @@ public class Exports {
         }
         converters.select(request.formats());
         String state = holdingsState(request);
-        if (state != null) {
+        // Nur bei weiter gültiger Freigabe; sonst läuft der Auftrag und scheitert dort mit ACCESS_REVOKED.
+        if (state != null && request.authorized().getAsBoolean()) {
             for (JobStatus job : jobs.list(request.owner(), JobType.EXPORT)) {
                 if (job.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED
                         && state.equals(job.parameter(HOLDINGS_STATE)) && sameOutput(job, request)
@@ -252,7 +255,8 @@ public class Exports {
     /**
      * Fingerabdruck des Stands der Seiten einer Ausgabe aus dem Bestand: je Seite des Umfangs Elternseite, ob und in
      * welcher Version ihr Inhalt gespeichert ist, die Version der Kopfdaten und ob sie veraltet ist, dazu gesperrte
-     * Seiten. {@code null}, wenn der Bestand den Space nicht kennt; dann wird nichts wiederverwendet.
+     * Seiten; außerdem die Hashes von Kopfdaten und Attributen, der gespeicherte Inhalt und ob der Auftraggeber die
+     * Seite lesen darf. {@code null}, wenn der Bestand den Space nicht kennt; dann wird nichts wiederverwendet.
      */
     private String holdingsState(ExportRequest request) {
         Optional<HoldingsCatalog.Stock> found = holdings.stock(request.sourceId(), request.spaceKey());
@@ -277,6 +281,26 @@ public class Exports {
                 entries.putIfAbsent(page.pageId(), page.parentPageId() + "\u0000locked");
             }
         }
+        // Dazu je Seite, wie der Lauf sie liest: Kopfdaten (Titel, Labels, Attribute), gespeicherter Inhalt und ob der
+        // Auftraggeber sie lesen darf. Ändert sich eins davon, entsteht die Ausgabe neu.
+        Optional<CacheGeneration> generation = cache.currentGeneration(request.sourceId(), request.spaceKey());
+        if (generation.isEmpty()) {
+            return null;
+        }
+        String after = null;
+        List<ListedPage> batch;
+        do {
+            batch = cache.pages(request.sourceId(), request.spaceKey(), generation.get().id(), after, BATCH_SIZE);
+            for (ListedPage listed : batch) {
+                after = listed.pageId();
+                if (scope.contains(listed.pageId())) {
+                    PageHeader header = listed.header();
+                    entries.merge(listed.pageId(), "\u0000" + header.metadataHash() + "\u0000"
+                            + header.attributesHash() + "\u0000" + listed.rawSha256() + "\u0000"
+                            + request.visible().test(header), String::concat);
+                }
+            }
+        } while (batch.size() == BATCH_SIZE);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             entries.forEach((pageId, entry) -> {
@@ -340,7 +364,7 @@ public class Exports {
     /** Wiederanlauf-Angabe: abgeleitete Formate, durch Komma getrennt ({@link ExportRequest#formats()}). */
     static final String FORMATS = "formats";
     /** Angabe am Auftrag: Ausgabe aus dem Bestand ({@link ExportRequest#holdingsOnly()}), nur der Cache. */
-    public static final String HOLDINGS = "holdings";
+    public static final String HOLDINGS = com.aresstack.spaceharvester.application.jobs.JobLifecycleState.HOLDINGS;
     /** Angabe an einer Ausgabe aus dem Bestand: Fingerabdruck des Stands ihrer Seiten beim Start. */
     static final String HOLDINGS_STATE = "holdings-state";
 
@@ -944,8 +968,9 @@ public class Exports {
                         failures.size() + " Seiten fehlen im Export, etwa Seite " + failures.get(0).pageId() + ": "
                                 + failures.get(0).message()));
             }
-            // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
-            boolean complete = covered && failures.isEmpty() && unrefreshed == 0 && notHeld == 0;
+            // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation, im
+            // aktuellen Stand (eine Ausgabe aus dem Bestand mit veralteten Seiten ist es nicht).
+            boolean complete = covered && failures.isEmpty() && unrefreshed == 0 && notHeld == 0 && outdated == 0;
             if (!complete) {
                 context.incomplete();
             }

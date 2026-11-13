@@ -69,11 +69,11 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 
 - Eine Ausgabe aus dem Bestand liest nur den Seiten-Cache, nie die Quelle (`ExportRequest.holdingsOnly`). Sie enthält
   die gespeicherten Seiten der Auswahl (`LOCAL` und `OUTDATED`, Letztere im gespeicherten Stand); eine Warnung nennt
-  die Zahl der veralteten, und im Datensatz steht bei jeder Seite die aktuelle Version der Kopfdaten neben
-  `raw.revision` des gespeicherten Stands. Nur aus dem Katalog bekannte Seiten fehlen: Sie zählen als gefunden, nicht
-  als geschrieben und nicht als gescheitert, eine Warnung nennt ihre Zahl. Gesperrte Seiten zählt die Auflösung
-  (`counts`), die die Ansicht hält. Ohne Bestand scheitert der Auftrag (`NO_HOLDINGS`); „Neu erzwingen“ gibt es für
-  ihn nicht, „Nur Fehler neu versuchen“ liest wieder nur den Cache.
+  die Zahl der veralteten, die Ausgabe gilt dann nicht als vollständig, und im Datensatz steht bei jeder Seite die
+  aktuelle Version der Kopfdaten neben `raw.revision` des gespeicherten Stands. Nur aus dem Katalog bekannte Seiten
+  fehlen: Sie zählen als gefunden, nicht als geschrieben und nicht als gescheitert, eine Warnung nennt ihre Zahl.
+  Gesperrte Seiten zählt die Auflösung (`counts`), die die Ansicht hält. Ohne Bestand scheitert der Auftrag
+  (`NO_HOLDINGS`); „Neu erzwingen“ gibt es für ihn nicht, „Nur Fehler neu versuchen“ liest wieder nur den Cache.
 - Ein Auftrag je gewähltem Space, sonst je gewähltem Teilbaum (`Holdings.outputs`): Datensatz, Manifest und Konverter
   kennen genau eine Startseite. Ein Teilbaum in einem gewählten Space oder unter einem anderen gewählten Teilbaum
   fällt weg, weil er schon in dessen Ausgabe steckt; eine Quelle steht für ihre sichtbaren Spaces im Bestand. Die
@@ -81,7 +81,9 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 - Ein vorhandenes Artefakt wird wiederverwendet, wenn Auswahl (Fingerabdruck), Space und Stand der Seiten gleich sind
   (`Exports.startFromHoldings`): gleiche Startseite, Tiefe und Formate, und je Seite des Umfangs dieselbe
   Elternseite, gespeicherte Version, Version der Kopfdaten und dieselbe Markierung als veraltet oder gesperrt wie beim
-  Start der fertigen Ausgabe. Dann kommt deren Auftrag zurück, ohne neuen Lauf.
+  Start der fertigen Ausgabe, dazu dieselben Kopfdaten (Titel, Labels, Attribute), derselbe gespeicherte Inhalt und
+  dieselben für den Auftraggeber lesbaren Seiten. Dann kommt deren Auftrag zurück, ohne neuen Lauf; gilt die Freigabe
+  des Auftraggebers nicht mehr, wird nichts wiederverwendet.
 - Der bisherige Export-Auftrag mit Beschaffung (ADR 0010, auch über REST) bleibt; er entscheidet über das Neuladen
   künftig nach der Abdeckung seines Teilbaums im Bestand statt nach der bestätigten Generation: Sind alle Seiten des
   Teilbaums gespeichert und aktuell (dieselbe Regel wie die Zustände der Bestandsübersicht, nur nach einer Inventur

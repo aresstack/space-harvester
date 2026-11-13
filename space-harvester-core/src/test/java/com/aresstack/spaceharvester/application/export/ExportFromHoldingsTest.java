@@ -277,6 +277,70 @@ class ExportFromHoldingsTest {
     }
 
     @Test
+    void anOutputOfAConfirmedSpaceWithAnOutdatedPageIsNotComplete() {
+        List<PageSnapshot> pages = stored();
+        CacheGeneration confirmed = new CacheGeneration("g1", CacheState.CONFIRMED, SYNCED, SYNCED);
+        cache.publish("confluence", "DEV", confirmed, pages);
+        cache.updateHeader("DEV", newer(pages.get(1), "4"));
+        stock = new HoldingsCatalog.Stock(confirmed, List.of(local("1", null),
+                new HoldingsCatalog.CatalogPage("2", "1", true, "4", "3"), local("3", "1"), local("4", "2")),
+                Set.of(), List.of());
+
+        JobStatus status = run(fromHoldings());
+
+        RecordingExportArtifactWriter.Published published = writer.published.get(status.id());
+        assertThat(published.pageIds()).containsExactly("1", "2", "3", "4");
+        assertThat(published.summary().complete()).isFalse();
+        assertThat(status.incomplete()).isTrue();
+        assertThat(provisioned).isEmpty();
+    }
+
+    @Test
+    void aFinishedOutputIsOnlyReusedWhileTheReleaseHoldsAndTheSamePagesAreReadable() {
+        cache.publish("confluence", "DEV", new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null), stored());
+        stock = new HoldingsCatalog.Stock(new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null),
+                List.of(local("1", null), local("2", "1"), local("3", "1"), local("4", "2")), Set.of(), List.of());
+        Exports exports = exports();
+        String first = exports.startFromHoldings(fromHoldings()).id();
+
+        // Freigabe entzogen: kein Artefakt aus dem Vorrat, der neue Lauf scheitert an der Freigabe.
+        JobStatus revoked = exports.startFromHoldings(fromHoldings().withAuthorized(() -> false));
+        assertThat(revoked.id()).isNotEqualTo(first);
+        assertThat(jobs.status(revoked.id()).error().code()).isEqualTo("ACCESS_REVOKED");
+        // Eine Seite nicht mehr lesbar: die Ausgabe entsteht neu, ohne diese Seite.
+        String narrower = exports.startFromHoldings(fromHoldings()
+                .withVisible(header -> !header.key().pageId().equals("4"))).id();
+        assertThat(narrower).isNotEqualTo(first);
+        assertThat(writer.published.get(narrower).pageIds()).containsExactly("1", "2", "3");
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isEqualTo(first);
+    }
+
+    @Test
+    void aChangedTitleLabelOrAttributeMakesANewOutput() {
+        List<PageSnapshot> pages = stored();
+        cache.publish("confluence", "DEV", new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null), pages);
+        stock = new HoldingsCatalog.Stock(new CacheGeneration("g1", CacheState.INCOMPLETE, SYNCED, null),
+                List.of(local("1", null), local("2", "1"), local("3", "1"), local("4", "2")), Set.of(), List.of());
+        Exports exports = exports();
+        String first = exports.startFromHoldings(fromHoldings()).id();
+
+        // Gleiche Version, nur Titel neu: so aktualisiert ein Abgleich die Kopfdaten ohne neuen Inhalt.
+        PageMetadata m = pages.get(1).metadata();
+        PageMetadata renamed = new PageMetadata(m.pageId(), m.resourceId(), "Neuer Titel", m.partitionKey(),
+                m.parentPageId(), m.version(), m.modifiedAt(), m.url(), m.attributes());
+        cache.updateHeader("DEV", PageHeader.of("confluence", renamed, SYNCED));
+        String retitled = exports.startFromHoldings(fromHoldings()).id();
+        assertThat(retitled).isNotEqualTo(first);
+
+        java.util.SortedMap<String, String> labels = new java.util.TreeMap<>(m.attributes());
+        labels.put("labels", "neu");
+        PageMetadata labelled = new PageMetadata(m.pageId(), m.resourceId(), "Neuer Titel", m.partitionKey(),
+                m.parentPageId(), m.version(), m.modifiedAt(), m.url(), labels);
+        cache.updateHeader("DEV", PageHeader.of("confluence", labelled, SYNCED));
+        assertThat(exports.startFromHoldings(fromHoldings()).id()).isNotEqualTo(retitled);
+    }
+
+    @Test
     void aSubtreeExportWhosePagesAreAllStoredAndCurrentDoesNotReadTheSource() {
         List<PageSnapshot> pages = stored();
         // Nach einem Teilbaum-Export: Inventur bestätigt, der übrige Space nur katalogisiert.

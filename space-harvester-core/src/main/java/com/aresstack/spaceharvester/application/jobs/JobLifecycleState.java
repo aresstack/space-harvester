@@ -24,6 +24,11 @@ public sealed interface JobLifecycleState {
     String SYNC_MODE = "mode";
     /** Betriebsart „nur katalogisieren“ eines Abgleichs. */
     String CATALOG_ONLY = "CATALOG_ONLY";
+    /**
+     * Angabe in {@link JobStatus#parameters()} ({@code "true"}): Der Auftrag liest nur den Bestand, nie die Quelle
+     * (ADR 0029). Er hat keinen neuen Stand zu erzwingen; „Nur Fehler neu versuchen“ bleibt.
+     */
+    String HOLDINGS = "holdings";
 
     /** Stabiler Schlüssel des Zustands, etwa für Texte und REST, z. B. {@code WAITING}. */
     String key();
@@ -49,6 +54,8 @@ public sealed interface JobLifecycleState {
         boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
         boolean failures = forceable && status.progress().failed() > 0;
+        // Eine Ausgabe aus dem Bestand und ihre Bilder und Anhänge fragen die Quelle nie (ADR 0029).
+        boolean refreshable = forceable && !Boolean.parseBoolean(status.parameter(HOLDINGS));
         return switch (status.state()) {
             case QUEUED -> status.cancelRequested() ? stopping(status)
                     : status.stage() == JobStage.AWAITING ? new AwaitingExport() : new Waiting(resumable);
@@ -58,12 +65,13 @@ public sealed interface JobLifecycleState {
                     : new Running(resumable, failures);
             case PAUSED -> new Paused(status.pauseReason(), failures);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download || files, download || files) : new Completed(forceable);
+                    ? new CompletedWithErrors(download || files, (download || files) && refreshable)
+                    : new Completed(refreshable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
                     ? new CompletedWithErrors(true, true)
-                    : new Stopped(status.state(), resumable, forceable, failures && resumable);
-            case CANCELLED -> new Stopped(status.state(), resumable, forceable, failures && resumable);
+                    : new Stopped(status.state(), resumable, refreshable, failures && resumable);
+            case CANCELLED -> new Stopped(status.state(), resumable, refreshable, failures && resumable);
         };
     }
 
