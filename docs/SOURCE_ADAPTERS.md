@@ -475,8 +475,9 @@ waren belegt), einmal im Log mit dem Code `xlsx-cellref-unmatched` ohne Dokument
 Blatt beginnt neu. Formeln stehen mit ihrem gespeicherten Wert (ohne Wert keine Zelle), verbundene Zellen oben links,
 ausgeblendete Blätter zählen mit, Kommentare stehen im Text ihrer Zelle und tragen deren Bezug. Text außerhalb des
 Rasters (Textfelder, Kopf- und Fußzeilen, Diagrammblätter) ist keine Tabellenzeile und bekommt keinen Bezug. Gleiche
-Bindung an die geprüften Fassungen wie bei `.pptx`. Ohne Bezug bleiben `.xls`, `.xlsb`, `.ods` und `.csv`, ebenso
-Excel-Dateien in Archiven oder Anhängen. Die Markdown-Ansicht und der Export zeigen den Bezug nicht; er steht nur am
+Bindung an die geprüften Fassungen wie bei `.pptx`. Ohne Bezug bleiben `.xls`, `.xlsb`, `.ods` und `.csv`. Mappen,
+die als eigene Teile aus Mails oder Archiven gelesen werden, bekommen den Bezug aus ihrer temporären Datei ebenso (wie
+Foliennummern bei `.pptx`); ohne bleiben nur Mappen, die Tika innerhalb eines anderen Dokuments ausgibt. Die Markdown-Ansicht und der Export zeigen den Bezug nicht; er steht nur am
 Block. Kosten (gemessen, 256 MiB Heap): 1 Mio. Zeilen zu 9 Spalten 97 s statt 83 s samt Erzeugen der Datei, 1 Mio.
 geteilte Zeichenketten 7,6 s statt 7,1 s. Bei alten PowerPoint-Dateien (`.ppt`) ist `slide` die Folie ab 1 in Folienreihenfolge, ausgeblendete Folien
 zählen mit (nicht getestet: ob Notizen in `.ppt` mitzählen; HSLF kann im Test keine Notizen anlegen, der Zähler

@@ -185,6 +185,30 @@ class TikaXlsxCellRefsTest {
     }
 
     @Test
+    void aWorkbookReadAsAPartOfAnArchiveGetsItsReferencesToo() throws IOException {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+            workbook.createSheet("Teil").createRow(2).createCell(1).setCellValue("IM-ARCHIV");
+            workbook.write(bytes);
+        }
+        Path zip = directory.resolve("archiv.zip");
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
+            out.putNextEntry(new ZipEntry("mappe.xlsx"));
+            out.write(bytes.toByteArray());
+            out.closeEntry();
+        }
+        TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+
+        new TikaDocumentStructure().extract(zip, "archiv.zip", "application/zip", ExtractionLimits.DEFAULTS, sink);
+
+        // Ein eigener Teil wird aus seiner temporären Datei gelesen und dort zugeordnet (ADR 0026, Nachtrag Punkt 7).
+        List<Block.Cell> cells = sink.parts.values().stream().flatMap(List::stream)
+                .filter(Block.Table.class::isInstance).map(Block.Table.class::cast)
+                .flatMap(table -> table.cells().stream()).toList();
+        assertThat(cell(cells, "IM-ARCHIV").cellRef()).contains("B3");
+    }
+
+    @Test
     void referencesAreWrittenAsColumnLettersAndRow() {
         assertThat(XlsxCellRefs.ref(0, 1)).isEqualTo("A1");
         assertThat(XlsxCellRefs.ref(25, 7)).isEqualTo("Z7");
