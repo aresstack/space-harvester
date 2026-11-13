@@ -245,6 +245,29 @@ class HoldingsTest {
     }
 
     @Test
+    void theOutputsOfASelectionAreOnePerSpaceOrSubtreeWithoutNestedOnes() {
+        dev();
+        stocks.put("wiki/OPS", new Stock(INITIAL, List.of(new CatalogPage("o1", null, true, "1", "1"),
+                new CatalogPage("o2", "o1", true, "1", "1"), new CatalogPage("o3", null, true, "1", "1")), Set.of(),
+                List.of()));
+        Holdings holdings = holdings(ALLOW_ALL, 100);
+
+        // 3 liegt unter 1, und DEV ist ohnehin ganz gewählt; in OPS liegt o2 unter o1, o3 steht für sich.
+        List<Selection.Root> outputs = holdings.outputs(CALLER, Selection.of(Selection.Root.subtree("wiki", "OPS",
+                        "o2"), Selection.Root.subtree("wiki", "DEV", "3"), Selection.Root.subtree("wiki", "OPS", "o1"),
+                Selection.Root.space("wiki", "DEV"), Selection.Root.subtree("wiki", "OPS", "o3"),
+                Selection.Root.subtree("wiki", "OPS", "o1")));
+
+        assertThat(outputs).containsExactly(Selection.Root.space("wiki", "DEV"),
+                Selection.Root.subtree("wiki", "OPS", "o1"), Selection.Root.subtree("wiki", "OPS", "o3"));
+        // Eine Quelle steht für ihre Spaces im Bestand, die der Aufrufer sehen darf.
+        AccessPolicy withoutOps = (context, scope, kind) -> "OPS".equals(scope.spaceKey())
+                ? AccessDecision.DENY : AccessDecision.ALLOW;
+        assertThat(holdings(withoutOps, 100).outputs(CALLER, Selection.of(Selection.Root.source("wiki"))))
+                .containsExactly(Selection.Root.space("wiki", "DEV"));
+    }
+
+    @Test
     void aSelectionWithoutInventoryOrWithAnUnknownPageIsMarkedIncompleteAndHiddenPagesAreLeftOut() {
         dev();
         stocks.put("wiki/OPS", new Stock(INITIAL, List.of(new CatalogPage("o1", "fehlt", true, "1", "1")), Set.of(),

@@ -538,7 +538,8 @@ public final class Harvester implements AutoCloseable {
 
             this.access = new AccessGuard(builder.accessPolicy);
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
-            this.holdings = new Holdings(catalog, new LuceneHoldingsCatalog(cache), access, builder.maxTreeNodes);
+            LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
+            this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
             opened.add(holdings);
             cache.changes(holdings);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
@@ -745,7 +746,7 @@ public final class Harvester implements AutoCloseable {
                             sha256 -> assets().storedDescription(sha256))),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
-            this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
+            this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)

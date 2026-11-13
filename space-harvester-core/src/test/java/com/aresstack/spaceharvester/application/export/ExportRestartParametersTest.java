@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.export;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -37,6 +38,21 @@ class ExportRestartParametersTest {
         assertThat(replay.depth()).isZero();
         assertThat(replay.refresh()).isTrue();
         assertThat(replay.formats()).containsExactly("json", "md");
+    }
+
+    @Test
+    void anOutputFromTheHoldingsRestartsAsOneAndNeverReadsTheSource() {
+        ExportRequest original = ExportRequest.fromHoldings("confluence", "DEV", "client-a", List.of("json"))
+                .withRoot("100");
+
+        Map<String, String> parameters = Exports.parameters(original);
+        ExportRequest replay = Exports.request(stored("100", parameters));
+
+        assertThat(parameters).containsExactlyInAnyOrderEntriesOf(Map.of("holdings", "true", "formats", "json"));
+        assertThat(replay.holdingsOnly()).isTrue();
+        assertThat(replay.refresh()).isFalse();
+        assertThat(replay.rootPageId()).isEqualTo("100");
+        assertThatThrownBy(() -> original.withRefresh(true)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

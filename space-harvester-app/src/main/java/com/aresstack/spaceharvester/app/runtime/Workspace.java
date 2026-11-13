@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
+import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
@@ -895,6 +896,30 @@ public final class Workspace {
                 formats);
         activities.remember(status.id());
         return status;
+    }
+
+    /**
+     * Ausgabe der Auswahl aus dem Bestand starten (ADR 0029): je gewähltem Space bzw. Teilbaum ein Export-Auftrag
+     * ({@code Holdings.outputs}), der nur den Seiten-Cache liest, nie die Quelle; braucht je Space export und content,
+     * geprüft vor dem ersten Auftrag. Gespeicherte Seiten kommen mit, veraltete im gespeicherten Stand; nur aus dem
+     * Katalog bekannte fehlen und stehen mit ihrer Zahl in den Warnungen des Ergebnisses. Artefakt, Dateien, Formate
+     * und Folgeaufträge wie bei {@link #startExport(String, String, List)}.
+     *
+     * @return die angenommenen Aufträge, erst ganze Spaces, dann Teilbäume
+     */
+    public List<JobStatus> startExportFromHoldings(
+            com.aresstack.spaceharvester.application.holdings.Selection selection, List<String> formats) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
+        List<JobStatus> started = new ArrayList<>(outputs.size());
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            JobStatus status = harvester.exports().start(ExportRequest.fromHoldings(root.sourceId(), root.spaceKey(),
+                    Harvester.OWNER, formats).withRoot(root.pageId()));
+            activities.remember(status.id());
+            started.add(status);
+        }
+        return started;
     }
 
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
