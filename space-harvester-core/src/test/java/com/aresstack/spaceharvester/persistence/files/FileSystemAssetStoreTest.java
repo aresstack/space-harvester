@@ -53,8 +53,12 @@ class FileSystemAssetStoreTest {
             Path imported = files.filter(path -> path.toString().contains("pimport")).filter(Files::isRegularFile)
                     .findFirst().orElseThrow();
             Files.writeString(imported, "createdAt=kaputt\n");
+            assertThat(store.latestText(sha)).map(AssetText::text).contains("alt");
+            // Auch eine fehlerhafte Escape-Folge sperrt den Rückfall nicht.
+            Files.writeString(imported, "text=\\u12\n");
         }
         assertThat(store.latestText(sha)).map(AssetText::text).contains("alt");
+        assertThatThrownBy(() -> store.text(sha, "import", "unbekannt")).isInstanceOf(AssetStoreException.class);
     }
 
     @Test

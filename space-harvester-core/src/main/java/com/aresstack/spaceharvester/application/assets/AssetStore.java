@@ -93,6 +93,22 @@ public interface AssetStore {
         return Optional.empty();
     }
 
+    /**
+     * Entfernt die Texte dieser Bytes aus allen anderen Extraktionen und Versionen, nachdem das Original erfolgreich neu
+     * gelesen ist (ADR 0026, Punkt 11); der Text von {@code extractor}/{@code version} bleibt. Der Standard entfernt
+     * nichts.
+     */
+    default void removeOtherTexts(String sha256, String extractor, String version) {
+    }
+
+    /**
+     * Alle abgelegten Einträge einer Quelle in allen Versionen, ohne Inhalte zu lesen („Neu lesen“, ADR 0026,
+     * Punkt 11); beschädigte Einträge fehlen. Der Strom muss geschlossen werden. Der Standard kennt keine.
+     */
+    default java.util.stream.Stream<Asset> entries(String sourceId) {
+        return java.util.stream.Stream.empty();
+    }
+
     /** Ablage für einen Dienst ohne Asset-Verzeichnis: findet nichts, jedes Schreiben scheitert. */
     static AssetStore unavailable() {
         return new AssetStore() {

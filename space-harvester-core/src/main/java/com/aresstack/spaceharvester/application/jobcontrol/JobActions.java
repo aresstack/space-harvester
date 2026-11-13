@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.jobcontrol;
 
+import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
@@ -17,8 +18,8 @@ import java.util.function.UnaryOperator;
 /**
  * Zentraler Einstieg für alle Aktionen auf Aufträgen ({@link JobAction}). Prüft zuerst am Zustandsobjekt
  * ({@link JobStatus#lifecycle()}), ob die Aktion erlaubt ist, und gibt sie dann an den zuständigen Anwendungsfall
- * weiter: Abgleiche an {@link SpaceSyncJobs}, Exporte an {@link Exports}, Bilder an {@link ExportConversions}, alles
- * andere an {@link Jobs}. Die Oberfläche bietet nur an, was {@link JobLifecycleState#actions()} nennt, und ruft dann
+ * weiter: Abgleiche an {@link SpaceSyncJobs}, Exporte an {@link Exports}, Bilder an {@link ExportConversions}, „Neu
+ * lesen“ an {@link DocumentRereads}, alles andere an {@link Jobs}. Die Oberfläche bietet nur an, was {@link JobLifecycleState#actions()} nennt, und ruft dann
  * {@link #perform}; eigene Zustandslogik braucht sie nicht.
  *
  * <p>Fortsetzen, „Nur Fehler neu versuchen“ und „Neu erzwingen“ bleiben immer im selben Eintrag, auch nach einem Neustart (dann aus
@@ -30,16 +31,28 @@ public class JobActions {
     private final Exports exports;
     private final SpaceSyncJobs syncs;
     private final ExportConversions conversions;
+    private final DocumentRereads rereads;
 
     /**
      * @param syncs       Abgleiche oder {@code null}, wenn kein Abgleich angebunden ist
      * @param conversions Bilder der Exporte oder {@code null}
      */
     public JobActions(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions) {
+        this(jobs, exports, syncs, conversions, null);
+    }
+
+    /**
+     * @param syncs       Abgleiche oder {@code null}, wenn kein Abgleich angebunden ist
+     * @param conversions Bilder der Exporte oder {@code null}
+     * @param rereads     „Neu lesen“ oder {@code null}, wenn keine strukturierte Extraktion angebunden ist
+     */
+    public JobActions(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions,
+                      DocumentRereads rereads) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.exports = Objects.requireNonNull(exports, "exports");
         this.syncs = syncs;
         this.conversions = conversions;
+        this.rereads = rereads;
     }
 
     /** Der wirksame Zustand des eigenen Auftrags mit den jetzt erlaubten Aktionen. */
@@ -148,6 +161,12 @@ public class JobActions {
                     throw new JobNotResumableException(current.id(), "keine Bild- oder Anhangbeschaffung angebunden");
                 }
                 yield conversions.resumeImages(current.id(), owner);
+            }
+            case REREAD -> {
+                if (rereads == null) {
+                    throw new JobNotResumableException(current.id(), "kein „Neu lesen“ angebunden");
+                }
+                yield rereads.resume(current.id(), owner);
             }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };

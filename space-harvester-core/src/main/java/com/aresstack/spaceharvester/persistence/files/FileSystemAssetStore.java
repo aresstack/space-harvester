@@ -104,7 +104,40 @@ public class FileSystemAssetStore implements AssetStore {
         if (version == null) {
             return Optional.empty();
         }
-        Path entry = entry(sourceId, attachmentId, version);
+        return readEntry(entry(sourceId, attachmentId, version)).filter(asset -> asset.sourceId().equals(sourceId)
+                && asset.attachmentId().equals(attachmentId) && version.equals(asset.version()));
+    }
+
+    /**
+     * Alle Einträge unter {@code index/<Quelle>/}, je Anhang und Version; ein Eintrag muss zu seinem Pfad passen, und
+     * sein Inhalt muss abgelegt sein. Beschädigte Einträge fehlen.
+     */
+    @Override
+    public Stream<Asset> entries(String sourceId) {
+        Path dir = root.resolve("index").resolve(name(sourceId));
+        Stream<Path> paths;
+        try {
+            paths = Files.walk(dir, 2);
+        } catch (NoSuchFileException e) {
+            return Stream.empty();
+        } catch (IOException e) {
+            throw new AssetStoreException("Asset-Einträge nicht lesbar", e);
+        }
+        return paths.filter(path -> dir.relativize(path).getNameCount() == 2)
+                .filter(path -> path.getFileName().toString().endsWith(".properties"))
+                .filter(path -> !path.getFileName().toString().startsWith("."))
+                .flatMap(path -> {
+                    try {
+                        return readEntry(path).filter(asset -> asset.sourceId().equals(sourceId)
+                                && asset.version() != null
+                                && path.equals(entry(sourceId, asset.attachmentId(), asset.version()))).stream();
+                    } catch (AssetStoreException e) {
+                        return Stream.empty();
+                    }
+                });
+    }
+
+    private Optional<Asset> readEntry(Path entry) {
         Properties p = new Properties();
         try (var in = Files.newBufferedReader(entry, StandardCharsets.UTF_8)) {
             p.load(in);
@@ -112,6 +145,9 @@ public class FileSystemAssetStore implements AssetStore {
             return Optional.empty();
         } catch (IOException e) {
             throw new AssetStoreException("Asset-Eintrag nicht lesbar", e);
+        } catch (IllegalArgumentException e) {
+            // Fehlerhafte Escape-Folge; ohne Ursache, deren Meldung Inhalt enthalten kann.
+            throw new AssetStoreException("Asset-Eintrag beschädigt", null);
         }
         try {
             Asset asset = new Asset(p.getProperty("sourceId"), p.getProperty("pageId"), p.getProperty("attachmentId"),
@@ -119,9 +155,7 @@ public class FileSystemAssetStore implements AssetStore {
                     AssetKind.valueOf(p.getProperty("kind")), Long.parseLong(p.getProperty("size")),
                     p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")),
                     Integer.parseInt(p.getProperty("partsWithoutFile", "0")));
-            if (!asset.sourceId().equals(sourceId) || !asset.attachmentId().equals(attachmentId)
-                    || !version.equals(asset.version()) || !HEX_SHA.matcher(asset.sha256()).matches()
-                    || !Files.isRegularFile(blob(asset.sha256()))) {
+            if (!HEX_SHA.matcher(asset.sha256()).matches() || !Files.isRegularFile(blob(asset.sha256()))) {
                 return Optional.empty();
             }
             return Optional.of(asset);
@@ -362,6 +396,35 @@ public class FileSystemAssetStore implements AssetStore {
         return Optional.ofNullable(latest);
     }
 
+    /** Löscht unter {@code texts/<sha256-hex>/} alle Dateien außer der von {@code extractor}/{@code version}. */
+    @Override
+    public void removeOtherTexts(String sha256, String extractor, String version) {
+        if (!HEX_SHA.matcher(sha256).matches()) {
+            throw new IllegalArgumentException("Ungültiger Hash");
+        }
+        Path dir = root.resolve("texts").resolve(sha256.substring("sha256:".length()));
+        Path keep = textFile(sha256, extractor, version);
+        try (Stream<Path> paths = Files.walk(dir)) {
+            for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) {
+                if (path.equals(dir) || path.equals(keep) || path.equals(keep.getParent())) {
+                    continue;
+                }
+                if (Files.isDirectory(path)) {
+                    try (Stream<Path> children = Files.list(path)) {
+                        if (children.findAny().isPresent()) {
+                            continue;
+                        }
+                    }
+                }
+                Files.deleteIfExists(path);
+            }
+        } catch (NoSuchFileException e) {
+            // nichts abgelegt
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Alte Dokumenttexte nicht entfernbar", e);
+        }
+    }
+
     private static Optional<AssetText> readText(Path file) {
         Properties p = new Properties();
         try (var in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -370,6 +433,9 @@ public class FileSystemAssetStore implements AssetStore {
             return Optional.empty();
         } catch (IOException e) {
             throw new AssetStoreException("Dokumenttext nicht lesbar", e);
+        } catch (IllegalArgumentException e) {
+            // Fehlerhafte Escape-Folge; ohne Ursache, deren Meldung Inhalt enthalten kann.
+            throw new AssetStoreException("Dokumenttext beschädigt", null);
         }
         try {
             return Optional.of(new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),

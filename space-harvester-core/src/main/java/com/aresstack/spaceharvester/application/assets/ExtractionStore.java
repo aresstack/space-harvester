@@ -26,6 +26,13 @@ public interface ExtractionStore {
     }
 
     /**
+     * Entfernt alle Extraktionen dieser Bytes außer {@code keep}, nachdem das Original erfolgreich neu gelesen ist
+     * (ADR 0026, Punkt 11: alte Stände erst danach). Der Standard entfernt nichts.
+     */
+    default void removeOthers(ExtractionKey keep) {
+    }
+
+    /**
      * Beginnt eine neue Extraktion; die vorhandene gilt, bis sie bestätigt ist.
      *
      * @param sectionChars Höchstgröße eines Abschnitts in Zeichen, mindestens 1

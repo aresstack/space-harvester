@@ -108,17 +108,27 @@ public final class DocumentExtractions {
      * @throws AssetStoreException wenn das Original fehlt oder die Ablage nicht schreiben kann
      */
     public StoredExtraction extract(Asset asset, AssetStore store) {
+        return extract(asset, store, false);
+    }
+
+    /**
+     * @param fresh liest auch, wenn schon eine Extraktion abgelegt ist („Neu lesen“ auf Dokumente mit Status), und legt
+     *              das Ergebnis nur ab, wenn es Text hat: Bis dahin gilt der bisherige Stand (ADR 0026, Punkt 11)
+     */
+    private StoredExtraction extract(Asset asset, AssetStore store, boolean fresh) {
         ExtractionKey key = key(asset.sha256());
-        Optional<StoredExtraction> known = extractions.find(key);
-        if (known.isPresent()) {
-            return known.get();
+        if (!fresh) {
+            Optional<StoredExtraction> known = extractions.find(key);
+            if (known.isPresent()) {
+                return known.get();
+            }
         }
         try (ExtractionWriter writer = extractions.writer(key)) {
             Target target = new Target(writer);
             StructuredDocument document = read(asset, store, target);
             // Auch ein Teil an einer vorübergehenden Grenze verhindert das Ablegen: Behälter und Teile werden nur
             // zusammen neu gelesen (Punkt 5, Verzeichnis als Ganzes), der Teil würde sonst nie erneut gelesen.
-            if (transientFailure(document).isPresent()) {
+            if (transientFailure(document).isPresent() || fresh && !usable(document.outcome())) {
                 return new StoredExtraction(key, document, 0, document.blocks(), document.chars(), Instant.now());
             }
             // Behälter und Teile werden zusammen gültig (AP7b).
@@ -232,7 +242,30 @@ public final class DocumentExtractions {
      *                               vorübergehenden Grenze {@code TIMEOUT}, ohne etwas abzulegen
      */
     public AssetText text(Asset asset, AssetStore store, Instant now) {
-        StoredExtraction extraction = extract(asset, store);
+        return text(asset, store, now, false);
+    }
+
+    /**
+     * Liest ein abgelegtes Dokument erneut, auch wenn schon eine Extraktion dieser Version abgelegt ist („Neu lesen“ auf
+     * Dokumente mit Status, ADR 0026, Punkt 11), und ersetzt Extraktion und Text nur, wenn das Ergebnis Text hat; sonst
+     * bleibt der bisherige Stand.
+     *
+     * @throws DocumentTextException wie {@link #text}; dann ist nichts ersetzt
+     */
+    public AssetText reread(Asset asset, AssetStore store, Instant now) {
+        return text(asset, store, now, true);
+    }
+
+    /**
+     * Entfernt die Extraktionen dieser Bytes aus anderen Extraktionen, Versionen und Strukturmodellen, nachdem das
+     * Original erfolgreich gelesen ist (ADR 0026, Punkt 11: alte Stände erst danach).
+     */
+    public void removeOlderVersions(String sha256) {
+        extractions.removeOthers(key(sha256));
+    }
+
+    private AssetText text(Asset asset, AssetStore store, Instant now, boolean fresh) {
+        StoredExtraction extraction = extract(asset, store, fresh);
         Outcome outcome = extraction.document().outcome();
         // Vorher prüfen: Eine nicht abgelegte Extraktion hat keine Abschnitte, ihr Text wäre leer.
         Optional<Outcome> transientPart = transientFailure(extraction.document());
