@@ -9,7 +9,6 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
-import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicTheme;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
@@ -42,7 +41,7 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste in zwei Gruppen
- * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Begriffe, Aufträge und Status,
+ * (Tooltip mit Namen, Strg+1 … Strg+6): links die Arbeitsbereiche Suche, Inhalte, Begriffe und Aufträge,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
  * Statusleiste die feste Aktionszeile des Bereichs ({@link View#actions()}). Der Fortschritt der Aufträge füllt den
@@ -130,7 +129,8 @@ public final class MainWindow implements AppContext.Navigator {
                 explorer.revealPage(position);
             }
         });
-        views.put(AppContext.Section.STATUS, statusView);
+        // Die Diagnose ist kein eigener Bereich mehr, sondern die Seite „Diagnose“ der Einstellungen.
+        settings.diagnosis(statusView);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
@@ -225,6 +225,9 @@ public final class MainWindow implements AppContext.Navigator {
                 Comic.LINE), BorderFactory.createEmptyBorder(0, 8, 0, 0)));
         int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
+            if (!section.toolbar()) {
+                continue;
+            }
             ComposerToggleButton button = navButton(section, number++);
             group.add(button);
             nav.put(section, button);
@@ -321,6 +324,9 @@ public final class MainWindow implements AppContext.Navigator {
     private void installShortcuts(JComponent surface) {
         int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
+            if (!section.toolbar()) {
+                continue;
+            }
             String key = "section-" + section.name();
             surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
                     java.awt.event.KeyEvent.VK_0 + number++, java.awt.event.InputEvent.CTRL_DOWN_MASK), key);
@@ -339,6 +345,12 @@ public final class MainWindow implements AppContext.Navigator {
                 findBar.focus();
             }
         });
+    }
+
+    @Override
+    public void showGeneralSettings() {
+        show(AppContext.Section.SETTINGS);
+        settings.select(SettingsView.GENERAL);
     }
 
     /** Einstellungen mit dem Bereich „KI-Dienst“. */
@@ -363,6 +375,11 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void show(AppContext.Section section) {
+        if (section == AppContext.Section.STATUS) {
+            show(AppContext.Section.SETTINGS);
+            settings.select(SettingsView.DIAGNOSIS);
+            return;
+        }
         cards.show(deck, section.name());
         boolean changed = section != current;
         if (changed && current != AppContext.Section.SETTINGS) {
@@ -543,13 +560,25 @@ public final class MainWindow implements AppContext.Navigator {
 
     private static Icon icon(AppContext.Section section) {
         return switch (section) {
-            case STATUS -> SidebarIcons.compass();
+            case STATUS -> Glyph.PULSE;
             case SOURCES -> database();
             case CONTENT -> ComposerIcons.openBook();
             case TERMS -> ComposerIcons.marker();
-            case ACTIVITIES -> ComposerIcons.refresh();
+            case ACTIVITIES -> stack();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();
+        };
+    }
+
+    /** Der Stapel (drei Blätter übereinander, Stapelverarbeitung) für „Aufträge“; neutral, ohne Farbe. */
+    static StrokeIcon stack() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(4, 1, 9, 3, 2, 2);
+                g2.drawRoundRect(3, 6, 9, 3, 2, 2);
+                g2.drawRoundRect(2, 11, 9, 3, 2, 2);
+            }
         };
     }
 

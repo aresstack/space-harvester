@@ -42,6 +42,8 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
+    /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
+    static final String DIAGNOSIS = "Diagnose";
     /** Tooltip der Tresor-Zeilen, deren Wert nur in KeePass liegt: lokal gibt es nichts zu löschen. */
     static final String KEEPASS_TIP = "Die Zugangsdaten liegen nur in KeePass und werden bei Bedarf über die Kopplung "
             + "gelesen; lokal ist nichts gespeichert. Die Verbindung trennt „Entkoppeln“ im Abschnitt KeePass.";
@@ -217,6 +219,7 @@ public final class SettingsView implements View {
         vault.add(securityFeedback, BorderLayout.SOUTH);
         page(SECURITY, Comic.column(Comic.plate(KeePassPairingPanel.HEADING, Comic.BLUE, keePass.component()),
                 Comic.plate("Tresor", Comic.RED, vault)));
+        page(DIAGNOSIS, diagnosisHolder);
         page(LIBRARIES, Comic.column(Comic.plate(LibrariesView.HEADING, Comic.DARK, libraries.component())),
                 bottomRows);
         pageDeck.setOpaque(false);
@@ -282,6 +285,19 @@ public final class SettingsView implements View {
     }
 
     /** Zeigt rechts den Bereich {@code name} und markiert ihn links im Drawer. */
+    /** Seite „Diagnose“: nimmt den Status-Bereich auf, sobald das Hauptfenster ihn übergibt. */
+    private final JPanel diagnosisHolder = new JPanel(new BorderLayout());
+    private View diagnosis;
+
+    /** Hängt die Diagnose ({@link StatusView}) als Seite ein; beim Öffnen der Seite lädt sie neu. */
+    public void diagnosis(View view) {
+        diagnosis = view;
+        diagnosisHolder.setOpaque(false);
+        diagnosisHolder.removeAll();
+        diagnosisHolder.add(view.component(), BorderLayout.CENTER);
+        diagnosisHolder.revalidate();
+    }
+
     void select(String name) {
         if (!rows.containsKey(name)) {
             return;
@@ -289,6 +305,9 @@ public final class SettingsView implements View {
         selected = name;
         rows.forEach((title, row) -> row.setSelected(title.equals(name)));
         pages.show(pageDeck, name);
+        if (DIAGNOSIS.equals(name) && diagnosis != null) {
+            diagnosis.shown();
+        }
         if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
             ai.render();
         }
@@ -429,6 +448,10 @@ public final class SettingsView implements View {
     public void shown() {
         render();
         ai.render();
+        // Die Diagnose hält ihre Abfrage an, solange sie nicht sichtbar ist; steht ihre Seite noch an, läuft sie weiter.
+        if (DIAGNOSIS.equals(selected) && diagnosis != null) {
+            diagnosis.shown();
+        }
     }
 
     /** Öffnet den Reiter „KI-Dienst“, z. B. vom Hinweis an der semantischen Suche. */

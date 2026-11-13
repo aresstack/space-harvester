@@ -18,12 +18,12 @@ import java.awt.geom.RoundRectangle2D;
  * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
  * Übernehmen (Haken), Verwerfen (Kreuz),
  * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen), Einpassen (Ecken), Tabelle (Raster),
- * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
+ * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus), Puls (Diagnose). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
  */
 public enum Glyph implements Icon {
 
     REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
-    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE, EXPAND_ALL;
+    GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE, EXPAND_ALL, PULSE;
 
     private static final int SIZE = 16;
 
@@ -85,6 +85,17 @@ public enum Glyph implements Icon {
                     arrow.lineTo(8, 10.5);
                     arrow.lineTo(12, 6);
                     g.draw(arrow);
+                }
+                case PULSE -> {
+                    // Pulslinie für die Diagnose: flach, Ausschlag hoch und tief, flach.
+                    Path2D pulse = new Path2D.Double();
+                    pulse.moveTo(1, 8.5);
+                    pulse.lineTo(4.5, 8.5);
+                    pulse.lineTo(6.5, 3.5);
+                    pulse.lineTo(9.5, 13);
+                    pulse.lineTo(11.5, 8.5);
+                    pulse.lineTo(15, 8.5);
+                    g.draw(pulse);
                 }
                 case ACCEPT -> {
                     Path2D tick = new Path2D.Double();

@@ -1005,7 +1005,7 @@ public final class ActivitiesView implements View {
     private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
             FormatIcon.of("docx"), "markdown-package", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"),
             "analysis", FormatIcon.of("analysis"));
-    private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
+    private static final javax.swing.Icon DIAGNOSIS = Glyph.PULSE;
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
     private static final javax.swing.Icon START_NOW = ComposerIcons.chevronRight();
