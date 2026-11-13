@@ -354,7 +354,7 @@ public final class JsonPackageConverter implements ExportConverter {
     }
 
     /** Dateiname eines Anhangs im Paket: sein Titel, nur mit sicheren Zeichen, sonst {@code anhang}. */
-    private static String attachmentName(Entry entry) {
+    static String attachmentName(Entry entry) {
         String name = entry.reference().filename();
         if (name == null || name.isBlank()) {
             name = entry.title();
@@ -362,7 +362,7 @@ public final class JsonPackageConverter implements ExportConverter {
         return safeAttachment(name == null || name.isBlank() ? "anhang" : name);
     }
 
-    private static String safeAttachment(String value) {
+    static String safeAttachment(String value) {
         String cleaned = UNSAFE_ATTACHMENT.matcher(value).replaceAll("_").replace("..", "_");
         cleaned = cleaned.replaceAll("^[._]+(?=.)", "");
         if (cleaned.isEmpty() || cleaned.equals(".") || cleaned.equals("_")) {
@@ -433,7 +433,7 @@ public final class JsonPackageConverter implements ExportConverter {
      *
      * @return leer, wenn er fehlt, nicht lesbar ist oder nicht zur Prüfsumme passt
      */
-    private static OptionalLong checked(ExportAssets assets, Entry entry) {
+    static OptionalLong checked(ExportAssets assets, Entry entry) {
         Optional<InputStream> opened = assets.open(entry);
         if (opened.isEmpty()) {
             return OptionalLong.empty();
@@ -516,7 +516,7 @@ public final class JsonPackageConverter implements ExportConverter {
         return cleaned.isEmpty() ? "_" : cleaned.length() > 120 ? cleaned.substring(0, 120) : cleaned;
     }
 
-    private static String unique(String path, Set<String> used) {
+    static String unique(String path, Set<String> used) {
         if (used.add(path)) {
             return path;
         }

@@ -80,6 +80,30 @@ public final class MarkdownConverter implements ExportConverter {
     /** {@code pages.md} mit den Abbildungen dort, wohin {@code links} sie legt ({@link MarkdownPackageConverter}). */
     static void write(ConversionInput input, OutputStream out, MarkdownExportWriter.FigureLinks links, String version)
             throws IOException {
+        write(input, out, links, null, version);
+    }
+
+    /**
+     * Wohin ein Anhangslink {@code [Titel](attachment:<Datei>)} einer Seite im Paket zeigt
+     * ({@link MarkdownPackageConverter}).
+     */
+    interface AttachmentLinks {
+
+        /** @return relativer Pfad der Datei im Paket, oder {@code null}: der Anhang liegt nicht darin */
+        String path(String pageId, String filename);
+    }
+
+    /** Anhangslink außerhalb eines Bildes: {@code [Titel](attachment:Datei)} oder {@code [Titel](<attachment:Datei>)}. */
+    private static final Pattern ATTACHMENT_LINK = Pattern.compile(
+            "(?<!!)\\[((?:[^\\]\\\\]|\\\\.)*)\\]\\((?:<attachment:([^>]*)>|attachment:([^)\\s]*))\\)");
+
+    /**
+     * Wie {@link #write(ConversionInput, OutputStream, MarkdownExportWriter.FigureLinks, String)}; mit
+     * {@code attachments} zeigen Anhangslinks auf die Datei im Paket, ein Anhang außerhalb des Pakets wird Text mit
+     * Hinweis. Ohne ({@code null}) bleiben sie {@code attachment:}-Verweise.
+     */
+    static void write(ConversionInput input, OutputStream out, MarkdownExportWriter.FigureLinks links,
+                      AttachmentLinks attachments, String version) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         ExportGraphics graphics = ExportGraphics.rendering();
         MarkdownExportWriter markdown = new MarkdownExportWriter(graphics, links);
@@ -95,7 +119,9 @@ public final class MarkdownConverter implements ExportConverter {
                     ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                     figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
-                            layout.text(input, page, figures.markdown(), version), figures.images(),
+                            layout.text(input, page, attachments == null ? figures.markdown()
+                                    : relink(figures.markdown(), page.pageId(), attachments), version),
+                            figures.images(),
                             layout.depth(page)));
                     ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                 } catch (IOException e) {
@@ -106,6 +132,91 @@ public final class MarkdownConverter implements ExportConverter {
             throw e.getCause();
         }
         writer.flush();
+    }
+
+    /**
+     * Die Anhangslinks von {@code markdown} auf die Dateien im Paket; Bilder bleiben für den Writer, Codeblöcke und
+     * Code-Spannen bleiben wörtlich.
+     */
+    static String relink(String markdown, String pageId, AttachmentLinks attachments) {
+        boolean[] code = codeMask(markdown);
+        Matcher link = ATTACHMENT_LINK.matcher(markdown);
+        StringBuilder out = new StringBuilder();
+        while (link.find()) {
+            if (code[link.start()]) {
+                continue; // ein Beispiel im Code: der nächste Ersatz übernimmt den Text unverändert
+            }
+            String file = link.group(2) != null ? link.group(2).replace("%3C", "<").replace("%3E", ">")
+                    : link.group(3);
+            String path = attachments.path(pageId, file);
+            String label = link.group(1);
+            link.appendReplacement(out, Matcher.quoteReplacement(path == null
+                    ? label + " *(Anhang nicht im Paket)*"
+                    : "[" + label + "](" + destination(path) + ")"));
+        }
+        link.appendTail(out);
+        return out.toString();
+    }
+
+    /** Zaunzeile eines Codeblocks, auch in Zitaten und Listen (eingerückt oder mit {@code >} davor). */
+    private static final Pattern FENCE = Pattern.compile("^[ \\t>]*(`{3,})(.*)$");
+
+    /** Welche Zeichen in einem Codeblock oder einer Code-Spanne liegen. */
+    static boolean[] codeMask(String text) {
+        boolean[] mask = new boolean[text.length() + 1];
+        int fence = 0;
+        int start = 0;
+        while (start < text.length()) {
+            int end = text.indexOf('\n', start);
+            end = end < 0 ? text.length() : end + 1;
+            Matcher line = FENCE.matcher(text.substring(start, end).stripTrailing());
+            boolean isFence = line.find();
+            if (fence > 0 || isFence) {
+                java.util.Arrays.fill(mask, start, end, true);
+                if (fence == 0) {
+                    fence = line.group(1).length();
+                } else if (isFence && line.group(1).length() >= fence && line.group(2).isBlank()) {
+                    fence = 0;
+                }
+            }
+            start = end;
+        }
+        int i = 0;
+        while (i < text.length()) {
+            if (mask[i] || text.charAt(i) != '`' || (i > 0 && text.charAt(i - 1) == '\\')) {
+                i++;
+                continue;
+            }
+            int run = tickRun(text, i);
+            int close = -1;
+            for (int j = i + run; j < text.length() && !mask[j]; ) {
+                if (text.charAt(j) == '`') {
+                    int other = tickRun(text, j);
+                    if (other == run) {
+                        close = j + other;
+                        break;
+                    }
+                    j += other;
+                } else {
+                    j++;
+                }
+            }
+            if (close < 0) {
+                i += run;
+            } else {
+                java.util.Arrays.fill(mask, i, close, true);
+                i = close;
+            }
+        }
+        return mask;
+    }
+
+    private static int tickRun(String text, int from) {
+        int end = from;
+        while (end < text.length() && text.charAt(end) == '`') {
+            end++;
+        }
+        return end - from;
     }
 
     /** Blöcke, durch Leerzeilen getrennt; Überschriften im Inhalt liegen unter der Seitenüberschrift. */
