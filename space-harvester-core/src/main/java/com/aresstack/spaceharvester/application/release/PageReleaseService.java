@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.holdings.Holdings;
 import com.aresstack.spaceharvester.application.holdings.Selection;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Clock;
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -30,7 +32,9 @@ import java.util.function.Predicate;
  * Seiten einer Auswahl, die neu auf die Liste kämen. Änderungen meldet die Liste selbst ({@link PageReleases#subscribe},
  * ADR 0027); was ein Eintragen oder Entfernen an KI-Ergebnissen auslöst, hängt dort an.
  *
- * <p>Nur Seiten in Spaces, die der Aufrufer sehen darf ({@code metadata}), erscheinen und lassen sich entfernen.
+ * <p>Nur Seiten, die der Aufrufer sehen darf ({@code metadata} auf die Seite, wie im Bestand), erscheinen, lassen sich
+ * entfernen und kommen in seinen Meldungen ({@link #subscribe}) vor; den Titel eines Knotens nennt sie nur, wenn er
+ * den Knoten sehen darf.
  */
 public final class PageReleaseService {
 
@@ -127,7 +131,8 @@ public final class PageReleaseService {
         Map<GroupKey, List<PageReleases.Entry>> grouped = grouped(caller);
         List<Group> groups = new ArrayList<>(grouped.size());
         grouped.forEach((key, entries) -> groups.add(new Group(key.sourceId(), key.spaceKey(), key.node(),
-                key.node() == null ? null : title(new PageKey(key.sourceId(), key.node())), entries.size(),
+                key.node() == null || !visible(caller, key.sourceId(), key.spaceKey(), key.node()) ? null
+                        : title(new PageKey(key.sourceId(), key.node())), entries.size(),
                 entries.stream().map(PageReleases.Entry::releasedAt).max(Comparator.naturalOrder()).orElseThrow())));
         groups.sort(Comparator.comparing(Group::sourceId).thenComparing(Group::spaceKey)
                 .thenComparing(group -> group.node() != null)
@@ -183,19 +188,35 @@ public final class PageReleaseService {
         return grouped;
     }
 
-    /** Die Einträge in Spaces, die der Aufrufer sehen darf; je Space einmal geprüft. */
+    /**
+     * Meldet einen Empfänger für Änderungen der Liste an (ADR 0027), nur mit den Seiten, die der Aufrufer sehen darf;
+     * eine Änderung ganz ohne solche Seiten meldet sie nicht. Zugestellt auf dem Thread, der die Liste änderte.
+     */
+    public Subscription subscribe(AccessContext caller, Consumer<PageReleases.Change> listener) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(listener, "listener");
+        return pages.subscribe(change -> {
+            List<PageReleases.Entry> added = change.added().stream().filter(entry -> visible(caller, entry)).toList();
+            List<PageReleases.Entry> removed = change.removed().stream().filter(entry -> visible(caller, entry))
+                    .toList();
+            if (!added.isEmpty() || !removed.isEmpty()) {
+                listener.accept(new PageReleases.Change(added, removed));
+            }
+        });
+    }
+
+    /** Die Einträge, die der Aufrufer sehen darf. */
     private List<PageReleases.Entry> visible(AccessContext caller) {
         Objects.requireNonNull(caller, "caller");
-        Map<String, Boolean> permitted = new LinkedHashMap<>();
-        List<PageReleases.Entry> visible = new ArrayList<>();
-        for (PageReleases.Entry entry : pages.entries()) {
-            String sourceId = entry.key().sourceId();
-            if (permitted.computeIfAbsent(sourceId + "\u0000" + entry.spaceKey(), ignored -> access.permits(caller,
-                    ResourceScope.space(sourceId, entry.spaceKey()), AccessKind.METADATA))) {
-                visible.add(entry);
-            }
-        }
-        return visible;
+        return pages.entries().stream().filter(entry -> visible(caller, entry)).toList();
+    }
+
+    private boolean visible(AccessContext caller, PageReleases.Entry entry) {
+        return visible(caller, entry.key().sourceId(), entry.spaceKey(), entry.key().pageId());
+    }
+
+    private boolean visible(AccessContext caller, String sourceId, String spaceKey, String pageId) {
+        return access.permits(caller, ResourceScope.page(sourceId, spaceKey, pageId), AccessKind.METADATA);
     }
 
     private String title(PageKey key) {

@@ -82,6 +82,11 @@ class PageReleaseServiceTest {
 
     /** DEV: 1 lokal mit 2 (nur Quelle) und 3 (veraltet), unter 3 die veraltete 4 und die gesperrte 6; OPS: 8 lokal. */
     private PageReleaseService service(boolean opsVisible) {
+        return service(new AccessGuard((context, scope, kind) -> !opsVisible && kind == AccessKind.METADATA
+                && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW));
+    }
+
+    private PageReleaseService service(AccessGuard access) {
         stocks.put("wiki/DEV", new Stock(CONFIRMED, List.of(
                 new CatalogPage("1", null, true, "3", "3"),
                 new CatalogPage("2", "1", false, "1", null),
@@ -90,12 +95,36 @@ class PageReleaseServiceTest {
                 Set.of("4"), List.of(new LockedPage("6", "3"))));
         stocks.put("wiki/OPS", new Stock(CONFIRMED, List.of(new CatalogPage("8", null, true, "1", "1")), Set.of(),
                 List.of()));
-        AccessGuard access = new AccessGuard((context, scope, kind) -> !opsVisible && kind == AccessKind.METADATA
-                && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW);
         close();
         holdings = new Holdings(SOURCES, catalog, access, 100);
         return new PageReleaseService(releases, holdings, access, PageReleaseServiceTest::header,
                 key -> key.pageId().equals("3"), Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    @Test
+    void aPageTheCallerMayNotSeeInAVisibleSpaceIsNeitherShownNorRemovedNorReported() {
+        PageReleaseService open = service(true);
+        open.release(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
+        // Der Space ist sichtbar, Seite 3 (zugleich der Knoten) nicht.
+        PageReleaseService restricted = service(new AccessGuard((context, scope, kind) -> kind == AccessKind.METADATA
+                && "3".equals(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW));
+        List<PageReleases.Change> changes = new java.util.ArrayList<>();
+        restricted.subscribe(CALLER, changes::add);
+
+        assertThat(restricted.groups(CALLER)).extracting(group -> group.node() + "/" + group.nodeTitle() + "/"
+                + group.count()).containsExactly("3/null/1");
+        assertThat(restricted.pages(CALLER, "wiki", "DEV", "3")).extracting(PageReleaseService.ReleasedPage::title)
+                .containsExactly("Seite 4");
+        assertThat(restricted.remove(CALLER, List.of(key("3")))).isEmpty();
+        assertThat(releases.contains(key("3"))).isTrue();
+
+        open.remove(CALLER, List.of(key("3")));
+        assertThat(changes).as("nur verborgene Seiten geändert: keine Meldung").isEmpty();
+        open.remove(CALLER, List.of(key("4")));
+        assertThat(changes).singleElement().satisfies(change -> {
+            assertThat(change.added()).isEmpty();
+            assertThat(change.removed()).extracting(entry -> entry.key().pageId()).containsExactly("4");
+        });
     }
 
     private static Optional<PageHeader> header(PageKey key) {

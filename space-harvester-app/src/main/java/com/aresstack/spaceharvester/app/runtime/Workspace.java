@@ -1293,12 +1293,13 @@ public final class Workspace {
 
     /**
      * Meldet einen Empfänger für jede Änderung der Liste freigegebener Seiten an (ADR 0027): neu eingetragene und
-     * entfernte Seiten, nach dem Speichern, auf dem Thread, der die Liste änderte (nie über den EDT gereicht).
+     * entfernte Seiten, die diese App sehen darf, nach dem Speichern, auf dem Thread, der die Liste änderte (nie über
+     * den EDT gereicht).
      */
     public Subscription subscribePageReleases(
             java.util.function.Consumer<com.aresstack.spaceharvester.application.release.PageReleases.Change>
                     listener) {
-        return harvester.aiRelease().pages().subscribe(listener);
+        return harvester.pageReleaseService().subscribe(caller, listener);
     }
 
     /**
