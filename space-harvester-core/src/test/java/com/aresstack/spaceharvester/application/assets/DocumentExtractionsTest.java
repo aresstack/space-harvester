@@ -125,6 +125,22 @@ class DocumentExtractionsTest {
     }
 
     @Test
+    void aPartAtATransientLimitKeepsTheContainerFromBeingStored() {
+        Lines structure = new Lines().withPart(Outcome.of(ExtractionStatus.FAILED, StatusReason.TEMP_SPACE_LOW));
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "eins\n");
+        DocumentExtractions extractions = new DocumentExtractions(structure, new FileSystemExtractionStore(directory),
+                ExtractionLimits.DEFAULTS);
+
+        for (int i = 0; i < 2; i++) {
+            assertThatThrownBy(() -> extractions.text(asset, store, NOW))
+                    .isInstanceOf(DocumentTextException.class);
+        }
+        assertThat(structure.calls).hasValue(2);
+        assertThat(extractions.stored(asset.sha256())).isEmpty();
+    }
+
+    @Test
     void markdownComesFromTheSameExtractionAsTheText() {
         Lines structure = new Lines();
         FileSystemAssetStore store = new FileSystemAssetStore(directory);
@@ -197,6 +213,14 @@ class DocumentExtractionsTest {
         final AtomicInteger calls = new AtomicInteger();
         boolean readFromFile;
         private Outcome ending;
+        private List<EmbeddedEntry> directory = List.of();
+
+        Lines withPart(Outcome outcome) {
+            this.directory = List.of(new EmbeddedEntry(new PartId.Position("a".repeat(64), "/1"), Optional.empty(),
+                    Optional.of("anhang.pdf"), Optional.of("application/pdf"), "/1", Optional.empty(), 1,
+                    Optional.empty(), outcome));
+            return this;
+        }
 
         Lines ending(Outcome outcome) {
             this.ending = outcome;
@@ -226,7 +250,7 @@ class DocumentExtractionsTest {
                     chars += line.length();
                 }
                 Outcome outcome = ending != null ? ending : Outcome.ok(new ReadExtent(Files.size(original), chars));
-                return new StructuredDocument(DocumentHead.EMPTY, outcome, List.of(), index, chars);
+                return new StructuredDocument(DocumentHead.EMPTY, outcome, directory, index, chars);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             } catch (Exception e) {

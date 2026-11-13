@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.Block;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
+import com.aresstack.spaceharvester.application.assets.DocumentHead;
 import com.aresstack.spaceharvester.application.assets.BlockSink;
 import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
@@ -147,18 +148,22 @@ class TikaDocumentStructureTest {
     }
 
     @Test
-    void thePackedArchiveStopsAtTheTextRatioInsteadOfFillingTheStore() {
+    void thePackedArchiveStopsAtTheUnpackRatioInsteadOfFillingTheStore() {
         Path zip = Archives.packed(directory.resolve("gepackt.zip"), 4L * 1024 * 1024);
-        ExtractionLimits ratio = new ExtractionLimits(0, 0, 0, 0, 10, 1000, 10, 10_000, Duration.ofSeconds(30),
+        ExtractionLimits ratio = new ExtractionLimits(0, 0, 10, 1000, 10, 1000, 10, 10_000, Duration.ofSeconds(30),
                 Duration.ofMinutes(5), 0, 2, Map.of());
         Counting sink = new Counting();
 
         StructuredDocument result = structure.extract(zip, "gepackt.zip", Archives.ZIP, ratio, sink);
 
-        assertThat(result.outcome().truncated()).isTrue();
-        assertThat(result.outcome().reason().orElseThrow()).isIn(StatusReason.TEXT_RATIO_EXCEEDED,
-                StatusReason.UNPACKED_TOO_LARGE);
-        assertThat(sink.chars).isLessThan(4L * 1024 * 1024);
+        assertThat(result.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+        assertThat(result.directory()).singleElement().satisfies(entry -> {
+            assertThat(entry.outcome().reason()).contains(StatusReason.UNPACKED_TOO_LARGE);
+            assertThat(entry.id()).as("Bytes nicht vollständig gelesen").isInstanceOf(
+                    com.aresstack.spaceharvester.application.assets.PartId.Position.class);
+            assertThat(entry.size().orElseThrow()).isLessThan(4L * 1024 * 1024);
+        });
+        assertThat(sink.chars + sink.partChars).isZero();
     }
 
     @Test
@@ -365,7 +370,7 @@ class TikaDocumentStructureTest {
     }
 
     @Test
-    void aLargeContainerSkipsEmbeddedFilesOfFormatsWithoutProof() throws Exception {
+    void anEmbeddedFileAboveItsMemoryLimitIsExcludedAndTheContainerStaysReadable() throws Exception {
         Path pdf = pdfWithAttachment(directory.resolve("mit-mail.pdf"), "nachricht.eml",
                 ("From: a@example.org\r\nTo: b@example.org\r\nSubject: Anhang\r\nMIME-Version: 1.0\r\n"
                         + "Content-Type: text/plain\r\n\r\nMARKE-EINGEBETTET\r\n").getBytes(StandardCharsets.UTF_8));
@@ -377,11 +382,21 @@ class TikaDocumentStructureTest {
         StructuredDocument small = structure.extract(pdf, "mit-mail.pdf", "application/pdf",
                 limits(Map.of(ExtractionLimits.ANY_TYPE, 100L * 1024 * 1024, "application/pdf", 0L), 0, 0), open);
 
-        assertThat(large.outcome().status()).isEqualTo(ExtractionStatus.PARTIAL);
-        assertThat(large.outcome().reason()).contains(StatusReason.ENTRIES_NOT_READABLE);
+        // Die Schranke gilt je Teil (AP7): Nur der Teil endet, der Behälter bleibt vollständig.
+        assertThat(large.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(large.directory()).singleElement().satisfies(entry -> {
+            assertThat(entry.outcome().status()).isEqualTo(ExtractionStatus.EXCLUDED);
+            assertThat(entry.outcome().reason()).contains(StatusReason.MEMORY_LIMIT);
+            assertThat(entry.displayName()).contains("nachricht.eml");
+        });
         assertThat(guarded.text()).contains("MARKE-SEITE").doesNotContain("MARKE-EINGEBETTET");
-        assertThat(small.outcome().status()).as("unter der Standardschranke wie bisher").isEqualTo(ExtractionStatus.OK);
-        assertThat(open.text()).contains("MARKE-SEITE", "MARKE-EINGEBETTET");
+        assertThat(guarded.partText()).isEmpty();
+        assertThat(small.outcome().status()).isEqualTo(ExtractionStatus.OK);
+        assertThat(small.directory()).singleElement().satisfies(entry ->
+                assertThat(entry.outcome().status()).isEqualTo(ExtractionStatus.OK));
+        assertThat(open.text()).as("nie im Strom des Behälters").contains("MARKE-SEITE")
+                .doesNotContain("MARKE-EINGEBETTET");
+        assertThat(open.partText("nachricht.eml")).contains("MARKE-EINGEBETTET");
     }
 
     private static Path pdfWithAttachment(Path target, String name, byte[] content) throws Exception {
@@ -478,13 +493,50 @@ class TikaDocumentStructureTest {
             };
         }
 
+        /** Enthaltene Dateien mit ihren Blöcken, in der Reihenfolge ihres Beginns. */
+        final java.util.Map<EmbeddedEntry, List<Block>> parts = new java.util.LinkedHashMap<>();
+        final java.util.Map<EmbeddedEntry, DocumentHead> heads = new java.util.HashMap<>();
+        int openParts;
+
         @Override
         public PartSink part(EmbeddedEntry entry) {
-            throw new AssertionError("Enthaltene Dateien erst mit AP7");
+            List<Block> partBlocks = new ArrayList<>();
+            parts.put(entry, partBlocks);
+            openParts++;
+            return new PartSink() {
+                @Override
+                public void accept(Block block) {
+                    partBlocks.add(block);
+                }
+
+                @Override
+                public void head(DocumentHead head) {
+                    heads.put(entry, head);
+                }
+
+                @Override
+                public void close() {
+                    openParts--;
+                }
+            };
         }
 
+        /** Nur der Text des äußeren Dokuments. */
         String text() {
             return blocks.stream().map(DocumentExtractions::plain).collect(Collectors.joining("\n"));
+        }
+
+        /** Der Text aller enthaltenen Dateien. */
+        String partText() {
+            return parts.values().stream().flatMap(List::stream).map(DocumentExtractions::plain)
+                    .collect(Collectors.joining("\n"));
+        }
+
+        /** Text des Teils, dessen Anzeigename passt. */
+        String partText(String displayName) {
+            return parts.entrySet().stream().filter(e -> e.getKey().displayName().filter(displayName::equals)
+                            .isPresent()).flatMap(e -> e.getValue().stream()).map(DocumentExtractions::plain)
+                    .collect(Collectors.joining("\n"));
         }
     }
 
@@ -516,9 +568,13 @@ class TikaDocumentStructureTest {
             };
         }
 
+        final List<EmbeddedEntry> entries = new ArrayList<>();
+        long partChars;
+
         @Override
         public PartSink part(EmbeddedEntry entry) {
-            throw new AssertionError("Enthaltene Dateien erst mit AP7");
+            entries.add(entry);
+            return block -> partChars += block.chars();
         }
     }
 
