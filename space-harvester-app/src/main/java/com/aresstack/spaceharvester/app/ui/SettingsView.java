@@ -702,7 +702,7 @@ public final class SettingsView implements View {
     }
 
     /** Öffnet einen Ordner oder den Ordner einer Datei im Dateimanager; legt einen fehlenden Ordner an. */
-    static void open(Path path, Feedback feedback) {
+    public static void open(Path path, Feedback feedback) {
         if (path == null) {
             return;
         }

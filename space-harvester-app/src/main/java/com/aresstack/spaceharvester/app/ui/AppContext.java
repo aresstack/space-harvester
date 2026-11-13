@@ -101,6 +101,14 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /**
+         * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
+         * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.
+         */
+        default void openExport(String sourceId, String spaceKey, String rootPageId) {
+            openSpace(sourceId, spaceKey);
+        }
+
         /** Zeigt eine Seite im Explorer (aufgeklappt und gewählt), ohne sie zu öffnen; ohne Explorer ohne Wirkung. */
         default void revealPage(String sourceId, String pageId) {
         }

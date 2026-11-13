@@ -163,7 +163,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
@@ -179,8 +179,26 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
+        // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
+        // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
+        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        onEdt(() -> {
+            detail.tabs().select("Export");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().isVisible())).isTrue();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
+        onEdt(() -> {
+            detail.tabs().select("Leseansicht");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
         assertThat(onEdt(() -> view.tools())).as("unten in der Werkzeugleiste steht nichts mehr").isNull();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.

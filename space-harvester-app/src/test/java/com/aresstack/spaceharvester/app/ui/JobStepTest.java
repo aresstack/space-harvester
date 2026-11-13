@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -66,32 +65,11 @@ class JobStepTest {
     }
 
     @Test
-    void collectingImagesCountsCheckedAndStoredImagesAndTheCardSaysExportingStillWorks() {
+    void collectingImagesCountsCheckedAndStoredImages() {
         assertThat(ActivitiesView.Step.of(JobType.ASSETS, "Bilder beschaffen", new JobProgress(12, 5, 4, 1)))
                 .isEqualTo(new ActivitiesView.Step("Bilder beschaffen · 5 von 12 Bildern geprüft, 4 abgelegt", 5, 12));
         assertThat(ActivitiesView.Counters.of(JobType.ASSETS))
                 .isEqualTo(new ActivitiesView.Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend"));
-        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.COLLECTING))
-                .startsWith("Bilder: werden beschafft").contains("noch ohne Bilder");
-        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.COMPLETE)).isEqualTo("Bilder: vollständig");
-        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE)).startsWith("Bilder: unvollständig");
-    }
-
-    @Test
-    void theCardCountsStoredMissingSignInAndDeliberatelySkippedMediaInPlainWords() {
-        // Bewusst Ausgelassenes getrennt nach Grund (Angelo 13.11.2026): Diagramm-Vorschauen und nach Einstellung.
-        ExportDatasetInfo.Media media = new ExportDatasetInfo.Media(7, 2, 1, 3, 4);
-        assertThat(ActivitiesView.media(media)).isEqualTo("7 gesichert · 2 fehlen · 1 Anmeldung erforderlich · "
-                + "3 Diagramm-Vorschauen nicht verwendet (aus Quelle gezeichnet) · 4 nach Einstellung ausgelassen");
-        assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(1, 1, 0, 0))).isEqualTo("1 gesichert · 1 fehlt");
-        assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(0, 0, 0, 1)))
-                .isEqualTo("1 Diagramm-Vorschau nicht verwendet (aus Quelle gezeichnet)");
-        assertThat(media.total()).isEqualTo(17);
-        assertThat(media.skipped()).isEqualTo(7);
-        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE, media))
-                .startsWith("Bilder: unvollständig").endsWith("\nMedien: " + ActivitiesView.media(media));
-        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED, ExportDatasetInfo.Media.NONE))
-                .isEqualTo(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED));
     }
 
     @Test

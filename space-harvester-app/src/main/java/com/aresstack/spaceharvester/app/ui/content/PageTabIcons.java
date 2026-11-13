@@ -48,6 +48,18 @@ final class PageTabIcons {
         };
     }
 
+    /** Export: ein Fach mit Pfeil heraus nach oben (Ausgabe in den Ausgabeordner). */
+    static Icon export() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawPolyline(new int[] {2, 2, 13, 13}, new int[] {9, 13, 13, 9}, 4);
+                g2.drawLine(7, 2, 7, 10);
+                g2.drawPolyline(new int[] {4, 7, 10}, new int[] {5, 2, 5}, 3);
+            }
+        };
+    }
+
     /** Erweitert: spitze Klammern mit Schrägstrich (Quelltext, technische Angaben). */
     static Icon advanced() {
         return new StrokeIcon() {

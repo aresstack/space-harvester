@@ -6,10 +6,8 @@ import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 import com.aresstack.spaceharvester.app.runtime.AllJobs;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
-import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
-import com.aresstack.spaceharvester.application.convert.ConversionNotice;
-import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
+import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
@@ -30,7 +28,6 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -41,14 +38,12 @@ import java.awt.Container;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.time.Instant;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -56,12 +51,14 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Aufträge: Abgleiche und Downloads dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Oben die
- * Auftragsliste über die volle Breite, je Zeile rechtsbündig die Symbolaktionen ({@link RowActions}): Exportieren als
- * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, danach genau die Aktionen,
- * die der Zustand des Auftrags im Core anbietet ({@link JobLifecycleState#actions()}: Jetzt starten, Anhalten,
- * Fortsetzen, Abbrechen, Löschen; Anhalten und Fortsetzen nie zugleich). Darunter links die Kachel „Auftrag“, rechts
- * „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Mittig in der Kopfzeile stehen „Alle
+ * Aufträge: der Download-Manager dieser App (Angelo, 13.11.2026). Abgleiche, Downloads und Folgeaufträge mit
+ * Fortschritt, Teilfehlern und Abbruch. Oben die Auftragsliste über die volle Breite, je Zeile rechtsbündig die
+ * Symbolaktionen ({@link RowActions}): ein Fortschrittsbalken, Diagnose, Inhalte (öffnet Inhalte › Export für den
+ * Space bzw. die Startseite des Auftrags), danach genau die Aktionen, die der Zustand des Auftrags im Core anbietet
+ * ({@link JobLifecycleState#actions()}: Jetzt starten, Anhalten, Fortsetzen, Abbrechen, Löschen; Anhalten und
+ * Fortsetzen nie zugleich). Darunter die Kachel „Auftrag“ mit allen Zahlen des Laufs. Format-Knöpfe, erzeugte Dateien
+ * und Ausgabeordner stehen unter Inhalte › Export ({@link com.aresstack.spaceharvester.app.ui.content.ExportPanel}),
+ * nicht mehr hier. Mittig in der Kopfzeile stehen „Alle
  * anhalten“ (wird „Alle fortsetzen“, sobald alles angehalten ist) und das rote „Alle abbrechen“ für alle Aufträge
  * zugleich (Angelo 11.11.2026). Der Gesamtstand aller Aufträge steht im Balken der Statuszeile ({@link OverallProgress});
  * hinter jedem laufenden Export liegt derselbe hellblaue Balken, aufgeklappt auch hinter seinen Bildern und Anhängen.
@@ -76,44 +73,15 @@ public final class ActivitiesView implements View {
     private final JTable table = Comic.table(new JobsTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
     private final Facts facts = new Facts();
-    private final Facts result = new Facts();
     private final Feedback feedback = new Feedback();
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
-    /** Kachel „Exportieren“ eines fertigen Downloads: Datenbestand, erzeugte Dateien, Ausgabeordner, Hinweise. */
-    final JPanel card = new JPanel(new BorderLayout(0, 6));
-    private final JComponent cardPlate;
     /** Die Einmalcode-Abfrage des gewählten Auftrags, ohne Auswahl die älteste offene (ADR 0018). */
     final SignInSlot signIn;
     private final JComponent details;
-    private final JLabel cardTitle = new JLabel();
-    private final JLabel cardLine = new JLabel();
-    /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
-    final JTextArea cardImages = Comic.note("");
-    /** Die Dateien dieses Downloads im Ausgabeordner und laufende Exporte, eine Zeile je Datei. */
-    final JTextArea files = Comic.note("");
-    private final JLabel output = new JLabel();
-    private final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner anzeigen");
-    /** Datenbestand, den die Kachel gerade zeigt. */
-    private ExportDatasetInfo shownDataset;
-    /** Datenbestand je fertigem Download, für die Format-Symbole in der Liste. */
-    private final Map<String, ExportDatasetInfo> datasets = new HashMap<>();
     /** Globaler Durchschnitt je geladener Datei für Bilder und Anhänge (Core), beim Abruf aufgefrischt. */
     private final Map<JobType, java.time.Duration> averages = new java.util.EnumMap<>(JobType.class);
     /** Zuletzt gelesene Zahl paralleler Downloads; bei 0 keine Restzeit. */
     private int parallelNow = JobLimits.DEFAULT_PARALLEL_DOWNLOADS;
-    /** Dateien des gewählten Downloads im Ausgabeordner (Name enthält die Export-ID). */
-    private List<String> outputFiles = List.of();
-    /** Format, das je Download gerade erzeugt wird. */
-    private final Map<String, String> convertingFormat = new HashMap<>();
-    /** Hinweise der letzten Konvertierung des gezeigten Downloads (fehlende Bilder, Diagramme …), aufklappbar. */
-    final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
-    final JTextArea noticeList = Comic.note("");
-    /** Letzte erzeugte Datei je Download, für ihre Hinweise. */
-    private final Map<String, ExportConversions.ConvertedFile> lastFile = new HashMap<>();
-    /** Letzte Rückmeldung von „Exportieren“ je Download; sie bleibt stehen, während die Ansicht auffrischt. */
-    private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
-    /** Downloads, deren Konvertierung gerade läuft; ihre Format-Symbole bleiben gesperrt. */
-    private final Set<String> converting = new HashSet<>();
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteAll = new IconButton(Glyph.BROOM, "Alle Aufträge löschen");
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
@@ -264,37 +232,6 @@ public final class ActivitiesView implements View {
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
         again.addActionListener(e -> restart());
-        openOutput.addActionListener(e -> {
-            if (context.settings() != null) {
-                SettingsView.open(context.settings().outputDirectory(), feedback);
-            }
-        });
-        cardTitle.setFont(Comic.semiBold(15f));
-        cardTitle.setForeground(Comic.INK);
-        cardLine.setFont(Comic.regular(13f));
-        cardLine.setForeground(Comic.INK);
-        output.setFont(Comic.regular(13f));
-        output.setForeground(Comic.INK);
-        JPanel cardHead = new JPanel(new BorderLayout(0, 2));
-        cardHead.setOpaque(false);
-        cardHead.add(cardTitle, BorderLayout.NORTH);
-        cardHead.add(cardLine, BorderLayout.CENTER);
-        cardHead.add(cardImages, BorderLayout.SOUTH);
-        card.setOpaque(false);
-        card.add(cardHead, BorderLayout.NORTH);
-        toggleNotices.setVisible(false);
-        noticeList.setVisible(false);
-        toggleNotices.addActionListener(e -> {
-            noticeList.setVisible(!noticeList.isVisible());
-            renderNotices();
-        });
-        JPanel produced = new JPanel(new BorderLayout(0, 4));
-        produced.setOpaque(false);
-        produced.add(files, BorderLayout.NORTH);
-        produced.add(Comic.row(toggleNotices), BorderLayout.CENTER);
-        produced.add(noticeList, BorderLayout.SOUTH);
-        card.add(produced, BorderLayout.CENTER);
-        card.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
         deleteAll.addActionListener(e -> deleteAll());
 
         JPanel head = new JPanel(new BorderLayout(0, 6));
@@ -307,12 +244,8 @@ public final class ActivitiesView implements View {
         head.add(signIn, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
 
-        cardPlate = Comic.plate("Exportieren", Comic.GREEN, card);
-        cardPlate.setVisible(false);
-        JPanel tiles = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
-        tiles.setOpaque(false);
-        tiles.add(stack(Comic.plate("Auftrag", Comic.PETROL, facts)));
-        tiles.add(stack(Comic.plate("Ergebnis", Comic.ORANGE, result), cardPlate));
+        // Eine Kachel über die volle Breite; Ergebnis und Ausgabe stehen unter Inhalte › Export.
+        JComponent tiles = stack(Comic.plate("Auftrag", Comic.PETROL, facts));
         JPanel details = new JPanel(new BorderLayout(0, 8));
         details.setOpaque(false);
         details.setBorder(BorderFactory.createEmptyBorder(4, 12, 12, 12));
@@ -417,20 +350,10 @@ public final class ActivitiesView implements View {
             return;
         }
         String id = selectedId;
-        Set<String> known = Set.copyOf(datasets.keySet());
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Background.run(() -> {
             List<JobStatus> jobs = runtime.workspace().jobs();
-            // Datenbestand je fertigem Download einmal holen, für die Format-Symbole der Liste.
-            Map<String, ExportDatasetInfo> found = new HashMap<>();
-            for (JobStatus job : jobs) {
-                if (job.type() == JobType.EXPORT && job.state() == JobState.COMPLETED && !known.contains(job.id())) {
-                    runtime.workspace().exportDataset(job.id()).ifPresent(info -> found.put(job.id(), info));
-                }
-            }
             Object current = null;
             String currentPhase = null;
-            List<String> produced = List.of();
             if (id != null) {
                 JobStatus status = runtime.workspace().job(id);
                 if (!status.state().terminal()) {
@@ -439,22 +362,13 @@ public final class ActivitiesView implements View {
                 }
                 current = status.type() == JobType.SYNC ? runtime.workspace().syncStatus(id) : status;
                 if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
-                    ExportDatasetInfo dataset = runtime.workspace().exportDataset(id).orElse(null);
-                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null), dataset);
-                    if (dataset != null) {
-                        found.put(id, dataset);
-                    }
-                    produced = outputFiles(directory, id);
+                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
                 }
             }
-            return new Object[] {jobs, current, currentPhase, found, produced};
+            return new Object[] {jobs, current, currentPhase};
         }, data -> {
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
-            @SuppressWarnings("unchecked")
-            Map<String, ExportDatasetInfo> found = (Map<String, ExportDatasetInfo>) data[3];
-            datasets.putAll(found);
-            datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
             for (JobType type : new JobType[] {JobType.ASSETS, JobType.ATTACHMENTS}) {
                 averages.put(type, runtime.workspace().averageDownload(type));
             }
@@ -473,9 +387,6 @@ public final class ActivitiesView implements View {
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
-                @SuppressWarnings("unchecked")
-                List<String> produced = (List<String>) data[4];
-                outputFiles = produced;
                 detail = id == null ? null : data[1];
                 phase = (String) data[2];
                 render();
@@ -490,33 +401,11 @@ public final class ActivitiesView implements View {
         });
     }
 
-    /**
-     * Dateien dieses Downloads im Ausgabeordner, neueste zuerst: Name {@code <Space>-<erste 8 Zeichen der
-     * Export-ID>[-n].<Endung>} wie {@code ExportConversions}; halbfertige {@code .part}-Dateien zählen nicht.
-     */
-    static List<String> outputFiles(Path directory, String exportId) {
-        if (directory == null || !java.nio.file.Files.isDirectory(directory)) {
-            return List.of();
-        }
-        String mark = "-" + exportId.substring(0, Math.min(8, exportId.length()));
-        try (java.util.stream.Stream<Path> entries = java.nio.file.Files.list(directory)) {
-            return entries.filter(java.nio.file.Files::isRegularFile)
-                    .filter(file -> !file.getFileName().toString().startsWith(".")
-                            && file.getFileName().toString().contains(mark))
-                    .sorted(Comparator.comparing((Path file) -> file.toFile().lastModified()).reversed())
-                    .map(file -> file.getFileName().toString()).toList();
-        } catch (java.io.IOException e) {
-            return List.of();
-        }
-    }
-
     private void select(String id) {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
             toTop = true;
-            // Die Karte gehört zum bisherigen Auftrag: sofort ausblenden, nicht erst nach dem nächsten Abruf.
-            renderCard();
             details.revalidate();
             details.repaint();
             feedback.clear();
@@ -589,13 +478,11 @@ public final class ActivitiesView implements View {
     private Object drawn;
 
     /**
-     * Alles, wovon {@link #draw()} abhängt: auch die Dauer eines laufenden Auftrags und der Ausgabeordner, den die
-     * Karte nennt (änderbar in den Einstellungen ohne Neustart).
+     * Alles, wovon {@link #draw()} abhängt: auch die Dauer eines laufenden Auftrags.
      */
     private Object drawnState() {
         Optional<JobStatus> current = currentStatus();
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-        return java.util.Arrays.asList(selectedId, detail, phase, outputFiles, directory, model.rows.isEmpty(),
+        return java.util.Arrays.asList(selectedId, detail, phase, model.rows.isEmpty(),
                 current.map(s -> waitingForSignIn(s.id())).orElse(false),
                 current.map(s -> Texts.duration(s.startedAt(), s.finishedAt())).orElse(null));
     }
@@ -604,10 +491,8 @@ public final class ActivitiesView implements View {
         signIn.refresh();
         Optional<JobStatus> current = currentStatus();
         facts.reset();
-        result.reset();
         if (current.isEmpty()) {
             title.setText(model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
-            renderCard();
             details.revalidate();
             details.repaint();
             updateButtons();
@@ -648,15 +533,15 @@ public final class ActivitiesView implements View {
         } else {
             renderTerminal(status, true);
         }
-        renderCard();
         details.revalidate();
         details.repaint();
         updateButtons();
         root.revalidate();
     }
 
+    /** Das Ergebnis eines Abgleichs steht unter den Zahlen des Laufs in derselben Kachel. */
     private void renderSync(JobStatus status, SyncSummary summary) {
-        result.add("Gelistet", String.valueOf(summary.listed()))
+        facts.add("Gelistet", String.valueOf(summary.listed()))
                 .add("Neu", String.valueOf(summary.added()))
                 .add("Nur im Katalog", String.valueOf(summary.notLoaded()))
                 .add("Veraltet", String.valueOf(summary.outdated()))
@@ -679,10 +564,10 @@ public final class ActivitiesView implements View {
                 .add("Generation", summary.generation() == null ? "keine bestätigt" : String.valueOf(summary.generation()))
                 .add("Space-Fingerabdruck", summary.spaceFingerprint());
         if (!summary.failedPageIds().isEmpty()) {
-            result.add("Fehlgeschlagene Seiten", String.join(", ", summary.failedPageIds()), Comic.RED);
+            facts.add("Fehlgeschlagene Seiten", String.join(", ", summary.failedPageIds()), Comic.RED);
         }
         if (!summary.missingPageIds().isEmpty()) {
-            result.add("Fehlende Seiten", String.join(", ", summary.missingPageIds()), Comic.RED);
+            facts.add("Fehlende Seiten", String.join(", ", summary.missingPageIds()), Comic.RED);
         }
         if (!status.state().terminal()) {
             feedback.working("Abgleich läuft …");
@@ -713,22 +598,8 @@ public final class ActivitiesView implements View {
             feedback.warning("Download fertig, aber kein Datenbestand", "Die Ablage kennt diesen Download nicht mehr.");
             return;
         }
-        ExportDatasetInfo dataset = export.dataset();
-        if (dataset != null) {
-            result.add("Seiten", String.valueOf(dataset.pages()))
-                    .add("Datenbestand", "JSON vorhanden")
-                    .add("Bilder", images(dataset.images()), dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
-                            ? Comic.RED : Comic.INK);
-            if (dataset.media().total() > 0) {
-                result.add("Medien", media(dataset.media()), dataset.media().missing()
-                        + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
-            }
-        }
-        Consumer<Feedback> conversion = converted.get(export.status().id());
-        if (conversion != null) {
-            conversion.accept(feedback);
-        } else if (artifact.complete()) {
-            feedback.success("Download vollständig");
+        if (artifact.complete()) {
+            feedback.success("Download vollständig · Ausgabe unter Inhalte › Export");
         } else {
             feedback.warning("Export unvollständig", "Einzelne Seiten ließen sich nicht aus der Quelle lesen oder "
                     + "die Quelle war nicht erreichbar und der Export nutzt einen unbestätigten Stand; das Manifest "
@@ -751,164 +622,6 @@ public final class ActivitiesView implements View {
         }
     }
 
-    /** Zeigt die Kachel „Exportieren“, solange der gewählte Download einen Datenbestand hat. */
-    private void renderCard() {
-        ExportDatasetInfo dataset = detail instanceof ExportDetail export ? export.dataset() : null;
-        cardPlate.setVisible(dataset != null);
-        if (dataset == null) {
-            shownDataset = null;
-            return;
-        }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-        output.setText("Ausgabeordner: " + (directory == null ? "–" : name(directory)));
-        output.setToolTipText(directory == null ? null : directory.toString());
-        renderFiles(dataset.exportId());
-        if (dataset.equals(shownDataset)) {
-            return;
-        }
-        boolean otherDownload = shownDataset == null || !shownDataset.exportId().equals(dataset.exportId());
-        shownDataset = dataset;
-        if (otherDownload) {
-            noticeList.setVisible(false);
-        }
-        renderNotices();
-        cardTitle.setText("Export · " + dataset.spaceKey());
-        cardImages.setText(cardImages(dataset.images(), dataset.media()));
-        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
-                || dataset.media().missing() + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
-        cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
-                + (dataset.complete() ? "" : " · unvollständig"));
-    }
-
-    /** Erzeugte Dateien und ein laufender Export des gezeigten Downloads. */
-    private void renderFiles(String exportId) {
-        StringBuilder text = new StringBuilder();
-        String running = convertingFormat.get(exportId);
-        if (running != null) {
-            text.append(Format.title(running)).append(": wird erzeugt …");
-        }
-        for (String name : outputFiles) {
-            if (!text.isEmpty()) {
-                text.append('\n');
-            }
-            text.append(name);
-        }
-        files.setText(text.isEmpty() ? "Noch nichts exportiert; die Format-Symbole in der Liste erzeugen die Datei."
-                : text.toString());
-        files.setForeground(text.isEmpty() ? Comic.MUTED : Comic.INK);
-    }
-
-    /**
-     * Exportiert einen fertigen Download sofort im Format (Symbol in der Liste): die Datei entsteht aus dem
-     * vorhandenen Datenbestand im Ausgabeordner, ohne die Quelle erneut zu lesen. Je Download läuft höchstens ein
-     * Export; weitere Klicks sind gesperrt, bis er endet.
-     */
-    void exportAs(String exportId, String format) {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || context.settings() == null || !converting.add(exportId)) {
-            return;
-        }
-        Path directory = context.settings().outputDirectory();
-        convertingFormat.put(exportId, format);
-        select(exportId);
-        table.repaint();
-        showConverted(exportId, f -> f.working(Format.title(format) + " wird erzeugt …"));
-        Background.run(() -> runtime.workspace().convertExport(exportId, format, directory), file -> {
-            converting.remove(exportId);
-            convertingFormat.remove(exportId);
-            table.repaint();
-            lastFile.put(exportId, file);
-            String notices = file.noticeCount() == 0 ? ""
-                    : ", " + Texts.count(file.noticeCount(), "Hinweis", "Hinweise");
-            showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)
-                    + notices));
-            poll();
-        }, error -> {
-            converting.remove(exportId);
-            convertingFormat.remove(exportId);
-            table.repaint();
-            showConverted(exportId, f -> f.problem(error));
-        });
-    }
-
-    /** Merkt die Rückmeldung für ihren Download und zeigt sie nur, wenn die Karte gerade diesen Download zeigt. */
-    private void showConverted(String exportId, Consumer<Feedback> show) {
-        converted.put(exportId, show);
-        if (shownDataset == null || !shownDataset.exportId().equals(exportId)) {
-            return;
-        }
-        renderFiles(exportId);
-        noticeList.setVisible(false);
-        renderNotices();
-        show.accept(feedback);
-    }
-
-    /** Knopf und Liste der Hinweise zur zuletzt erzeugten Datei des gezeigten Downloads. */
-    private void renderNotices() {
-        ExportConversions.ConvertedFile file = shownDataset == null ? null : lastFile.get(shownDataset.exportId());
-        boolean any = file != null && file.noticeCount() > 0;
-        toggleNotices.setVisible(any);
-        if (!any) {
-            noticeList.setVisible(false);
-            return;
-        }
-        toggleNotices.setText(noticeList.isVisible() ? "Hinweise ausblenden"
-                : Texts.count(file.noticeCount(), "Hinweis", "Hinweise") + " anzeigen");
-        noticeList.setText(notices(file));
-    }
-
-    /** Die Hinweise in verständlichen Worten, eine Zeile je Hinweis. */
-    static String notices(ExportConversions.ConvertedFile file) {
-        StringBuilder text = new StringBuilder();
-        for (ConversionNotice notice : file.notices()) {
-            if (!text.isEmpty()) {
-                text.append('\n');
-            }
-            text.append("Seite ").append(notice.pageId()).append(": ").append(kind(notice.kind()))
-                    .append(" „").append(notice.reference()).append('“');
-            String reason = reason(notice.reason());
-            if (reason != null) {
-                text.append(" (").append(reason).append(')');
-            }
-        }
-        int more = file.noticeCount() - file.notices().size();
-        if (more > 0) {
-            text.append("\n… und ").append(Texts.count(more, "weiterer Hinweis", "weitere Hinweise"));
-        }
-        return text.toString();
-    }
-
-    private static String kind(ConversionNotice.Kind kind) {
-        return switch (kind) {
-            case MISSING_IMAGE -> "fehlendes Bild";
-            case MISSING_DIAGRAM -> "fehlendes Diagramm";
-            case MISSING_ATTACHMENT -> "fehlender Anhang";
-            case OMITTED_CONTENT -> "ausgelassener Inhalt";
-        };
-    }
-
-    private static String reason(String reason) {
-        if (reason == null || reason.isBlank()) {
-            return null;
-        }
-        return switch (reason) {
-            case "missing" -> "bei der Quelle nicht gefunden";
-            case "forbidden" -> "keine Berechtigung";
-            case "too-large" -> "zu groß";
-            case "unavailable" -> "Quelle nicht erreichbar";
-            case "not-collected" -> "Bilder noch nicht beschafft";
-            case "render-failed" -> "Darstellung fehlgeschlagen";
-            case "not-rendered" -> "von der Quelle nicht dargestellt";
-            case "view-count-mismatch" -> "Darstellung der Quelle unvollständig";
-            default -> reason;
-        };
-    }
-
-    private static String name(Path directory) {
-        Path name = directory.getFileName();
-        return name == null ? directory.toString() : name.toString();
-    }
-
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
     static String where(JobStatus status) {
         String where = status.sourceId() + " / " + status.partitionKey();
@@ -923,80 +636,6 @@ public final class ActivitiesView implements View {
         return status.rootTitle() == null ? "Seite " + status.rootPageId() : status.rootTitle();
     }
 
-    /** Zeile der Karte; Exportieren bleibt in jedem Stand möglich. */
-    static String cardImages(ExportDatasetInfo.Images images) {
-        return switch (images) {
-            case NOT_COLLECTED -> "Bilder: nicht beschafft, Dokumente enthalten nur Verweise";
-            case COLLECTING -> "Bilder: werden beschafft · Dokumente, die du jetzt exportierst, entstehen noch ohne "
-                    + "Bilder";
-            case COMPLETE -> "Bilder: vollständig";
-            case INCOMPLETE -> "Bilder: unvollständig · fehlende Bilder nennt das Dokument";
-        };
-    }
-
-    /** Wie {@link #cardImages(ExportDatasetInfo.Images)}, dazu die Zählung der Medien, sobald welche bekannt sind. */
-    static String cardImages(ExportDatasetInfo.Images images, ExportDatasetInfo.Media media) {
-        String line = cardImages(images);
-        return media.total() == 0 ? line : line + "\nMedien: " + media(media);
-    }
-
-    /** Die Medien eines Downloads in Worten; nur Zähler über null erscheinen. */
-    static String media(ExportDatasetInfo.Media media) {
-        List<String> parts = new ArrayList<>();
-        if (media.stored() > 0) {
-            parts.add(media.stored() + " gesichert");
-        }
-        if (media.missing() > 0) {
-            parts.add(media.missing() + (media.missing() == 1 ? " fehlt" : " fehlen"));
-        }
-        if (media.signInRequired() > 0) {
-            parts.add(media.signInRequired() + " Anmeldung erforderlich");
-        }
-        // Bewusst Ausgelassenes getrennt nach Grund, damit es nicht wie ein Fehler wirkt (Angelo, 13.11.2026).
-        if (media.redundant() > 0) {
-            parts.add(media.redundant() + (media.redundant() == 1 ? " Diagramm-Vorschau" : " Diagramm-Vorschauen")
-                    + " nicht verwendet (aus Quelle gezeichnet)");
-        }
-        if (media.excluded() > 0) {
-            parts.add(media.excluded() + " nach Einstellung ausgelassen");
-        }
-        return parts.isEmpty() ? "keine" : String.join(" · ", parts);
-    }
-
-    private static String images(ExportDatasetInfo.Images images) {
-        return switch (images) {
-            case NOT_COLLECTED -> "noch nicht beschafft, Dokumente enthalten nur Verweise";
-            case COLLECTING -> "werden beschafft …";
-            case COMPLETE -> "vollständig";
-            case INCOMPLETE -> "unvollständig, fehlende Bilder nennt das Dokument";
-        };
-    }
-
-    /** Zielformat mit Anzeigenamen in der Reihenfolge aus Angelos Skizze; unbekannte folgen mit ihrem Kürzel. */
-    record Format(String id, String title) {
-
-        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "markdown-package", "json-package",
-                "json", "analysis");
-        private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
-                "markdown", "Markdown", "markdown-package", "Markdown mit Medien", "json-package", "JSON mit Medien",
-                "json", "JSON", "analysis", "Analyse");
-
-        static String title(String format) {
-            return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
-        }
-
-        static List<Format> ordered(List<String> formats) {
-            return formats.stream().sorted(Comparator.comparingInt((String f) -> ORDER.contains(f) ? ORDER.indexOf(f)
-                    : ORDER.size())).map(f -> new Format(f, TITLES.getOrDefault(f, f.toUpperCase(Locale.ROOT))))
-                    .toList();
-        }
-
-        @Override
-        public String toString() {
-            return title;
-        }
-    }
-
     private void updateButtons() {
         Optional<JobStatus> current = currentStatus();
         boolean running = current.map(s -> !s.state().terminal()).orElse(false);
@@ -1004,15 +643,8 @@ public final class ActivitiesView implements View {
         again.setEnabled(!running);
     }
 
-    /** Formate der Symbole in der Liste, in der Reihenfolge aus Angelos Skizze. */
-    static final List<String> FORMATS = List.of("pdf", "docx", "markdown-package", "json-package", "analysis");
-    private static final Map<String, String> EXPORT_TIPS = Map.of("pdf", "Als PDF exportieren", "docx",
-            "Als Word-Dokument exportieren", "markdown-package", "Als Markdown exportieren (ZIP mit Seiten und Bildern)", "json-package",
-            "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)", "analysis",
-            "Analyse exportieren (analysis.json: Analysedaten je Seite, Originaldaten unverändert)");
-    private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
-            FormatIcon.of("docx"), "markdown-package", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"),
-            "analysis", FormatIcon.of("analysis"));
+    /** Plätze des Fortschrittsbalkens je Zeile (früher die fünf Format-Symbole, jetzt unter Inhalte › Export). */
+    static final int PROGRESS_SLOTS = 5;
     private static final javax.swing.Icon DIAGNOSIS = Glyph.PULSE;
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
@@ -1023,11 +655,11 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon RETRY_FAILED = ComposerIcons.refresh();
     private static final javax.swing.Icon FORCE_REFRESH = ComposerIcons.download();
     /**
-     * Feste Plätze je Zeile (Angelo 10.11.2026), damit Formate und Aktionen in jeder Zeile untereinander stehen: fünf
-     * Formate, ein freier Platz als Abstand, Diagnose, Inhalte, dann die Zustandsplätze {@link Slot}. Was ein Zustand
-     * nicht anbietet, steht blass da; jeder Platz ist immer belegt.
+     * Feste Plätze je Zeile (Angelo 10.11.2026), damit Aktionen in jeder Zeile untereinander stehen: der
+     * Fortschrittsbalken über {@link #PROGRESS_SLOTS} Plätze, ein freier Platz als Abstand, Diagnose, Inhalte, dann die
+     * Zustandsplätze {@link Slot}. Was ein Zustand nicht anbietet, steht blass da; jeder Platz ist immer belegt.
      */
-    static final int SLOTS = 5 + 1 + 2 + Slot.values().length;
+    static final int SLOTS = PROGRESS_SLOTS + 1 + 2 + Slot.values().length;
 
     /**
      * Die Zustandsplätze rechts, von links nach rechts, alle immer sichtbar (Angelo 10.11.2026): Ein Platz wechselt
@@ -1092,29 +724,23 @@ public final class ActivitiesView implements View {
         }
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
-        if (showsProgress(job)) {
-            actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow)));
-        } else {
-            for (String format : FORMATS) {
-                String blocked = exportBlocked(job, format);
-                actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
-                        : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
-            }
-        }
+        actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow)));
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
         actions.add(new RowActions.Action(DIAGNOSIS, failed ? "Fehler diagnostizieren" : "Diagnose ansehen", true,
                 () -> context.navigator().showDiagnosis(job.id())));
         boolean space = job.sourceId() != null && job.partitionKey() != null;
-        actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
-                () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
+        // Öffnet Inhalte › Export für den Space bzw. die Startseite des Auftrags (Angelo, 13.11.2026).
+        actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen · Stand und Ausgabe unter Export"
+                : "Inhalte öffnen · kein Space", space,
+                () -> context.navigator().openExport(job.sourceId(), job.partitionKey(), job.rootPageId())));
         actions.addAll(stateActions(job));
         return actions;
     }
 
     /**
-     * Bilder und Anhänge haben keine Formate (Angelo 11.11.2026): Statt fünf blasser Formatknöpfe steht auf diesen
-     * Plätzen ein Fortschrittsbalken.
+     * Ob die Zeile ein Bilder- oder Anhängeauftrag ist: nur sie haben eine Restzeit und hängen an ihrem Export. Den
+     * Fortschrittsbalken zeigen seit 13.11.2026 alle Zeilen (die Formate stehen unter Inhalte › Export).
      */
     static boolean showsProgress(JobStatus job) {
         return job.type() == JobType.ASSETS || job.type() == JobType.ATTACHMENTS;
@@ -1161,9 +787,9 @@ public final class ActivitiesView implements View {
                         + (p.failed() > 0 ? " · " + p.failed() + " " + counters.failed().toLowerCase(java.util.Locale.GERMAN) : "")
                         + (eta == null ? "" : " · noch " + eta.replace("≈ ", "etwa ").replace("< 1 min", "unter einer Minute"));
         List<RowActions.Action> slots = new ArrayList<>();
-        slots.add(new RowActions.Action(new ProgressIcon(FORMATS.size() * RowActions.SLOT - 8, p.discovered(),
+        slots.add(new RowActions.Action(new ProgressIcon(PROGRESS_SLOTS * RowActions.SLOT - 8, p.discovered(),
                 p.processed(), p.failed(), skipped, eta), tip, true, () -> { }));
-        for (int i = 1; i < FORMATS.size(); i++) {
+        for (int i = 1; i < PROGRESS_SLOTS; i++) {
             slots.add(RowActions.EMPTY);
         }
         return slots;
@@ -1352,37 +978,6 @@ public final class ActivitiesView implements View {
     /** Für Tests. */
     JTable table() {
         return table;
-    }
-
-    /** Für Tests: ob das Format-Symbol dieses Auftrags in der Liste anklickbar ist, sonst der Grund. */
-    String exportBlocked(String jobId, String format) {
-        for (JobStatus job : model.rows) {
-            if (job.id().equals(jobId)) {
-                return exportBlocked(job, format);
-            }
-        }
-        return "unbekannter Auftrag";
-    }
-
-    /** Warum dieses Format für den Auftrag gerade nicht geht, oder {@code null}. */
-    private String exportBlocked(JobStatus job, String format) {
-        if (job.type() != JobType.EXPORT) {
-            return "nur für Downloads";
-        }
-        if (!job.state().terminal()) {
-            return "Download läuft noch";
-        }
-        if (job.state() != JobState.COMPLETED) {
-            return "Download nicht abgeschlossen";
-        }
-        if (converting.contains(job.id())) {
-            return Format.title(convertingFormat.getOrDefault(job.id(), format)) + " wird gerade erzeugt";
-        }
-        ExportDatasetInfo dataset = datasets.get(job.id());
-        if (dataset == null) {
-            return "kein Datenbestand vorhanden";
-        }
-        return dataset.formats().contains(format) ? null : "Format nicht angeboten";
     }
 
     /**
@@ -1867,7 +1462,7 @@ public final class ActivitiesView implements View {
                 started -> show(started.id()), feedback::problem);
     }
 
-    private record ExportDetail(JobStatus status, ExportArtifact artifact, ExportDatasetInfo dataset) {
+    private record ExportDetail(JobStatus status, ExportArtifact artifact) {
     }
 
     /**

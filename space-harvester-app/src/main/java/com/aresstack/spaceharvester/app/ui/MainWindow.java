@@ -126,6 +126,8 @@ public final class MainWindow implements AppContext.Navigator {
         settings.onLeave(() -> show(beforeSettings));
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
+        // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
+        explorer.onSelection(content::selection);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -472,6 +474,19 @@ public final class MainWindow implements AppContext.Navigator {
         show(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
+    }
+
+    @Override
+    public void openExport(String sourceId, String spaceKey, String rootPageId) {
+        show(AppContext.Section.CONTENT);
+        if (rootPageId == null) {
+            content.openSpace(sourceId, spaceKey);
+            explorer.reveal(sourceId, spaceKey);
+        } else {
+            revealOpened = true;
+            content.openPage(sourceId, rootPageId);
+        }
+        content.showExport();
     }
 
     @Override
