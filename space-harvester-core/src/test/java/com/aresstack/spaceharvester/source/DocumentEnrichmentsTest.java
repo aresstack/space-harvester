@@ -204,6 +204,25 @@ class DocumentEnrichmentsTest {
     }
 
     @Test
+    void aQueuedJobStartedAfterSwitchingOffComputesNothing() {
+        List<Runnable> held = new ArrayList<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        java.util.concurrent.atomic.AtomicBoolean on = new java.util.concurrent.atomic.AtomicBoolean(true);
+        Enrichments enrichments = new Enrichments(snapshot -> Optional.empty(),
+                List.of(new OutlineProcessor(), recording, pageOnly), results, Clock.fixed(NOW, ZoneOffset.UTC));
+        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs, on::get);
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+        documents.indexed(list(), asset, extractions);
+
+        on.set(false);
+        new ArrayList<>(held).forEach(Runnable::run);
+
+        assertThat(recording.inputs).isEmpty();
+        assertThat(results.findDocuments(PAGE)).isEmpty();
+    }
+
+    @Test
     void anAttachmentRemovedWhileQueuedIsNotComputedLater() {
         List<Runnable> held = new ArrayList<>();
         Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),

@@ -152,8 +152,10 @@ class EnrichmentConfiguration {
      */
     @Bean
     DocumentEnrichments documentEnrichments(Enrichments enrichments, ObjectProvider<Jobs> jobs,
-                                            ObjectProvider<Assets> assets) {
-        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(), () -> true);
+                                            ObjectProvider<Assets> assets, LiveConfiguration live) {
+        // enrichment.documents.enabled aus der wirksamen Konfiguration, beim nächsten Lauf wirksam.
+        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(),
+                () -> live.current().enrichment().documents());
         Assets target = assets.getIfAvailable();
         if (target != null) {
             target.indexedDocuments(documents);

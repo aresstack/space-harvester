@@ -252,7 +252,8 @@ public final class AppRuntime implements AutoCloseable {
                 new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
                 NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
-                .withLocalFiles(settings.localFiles()).withTerms(settings.terms());
+                .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
+                .withEnrichment(settings.enrichment());
     }
 
     /**

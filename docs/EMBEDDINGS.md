@@ -153,6 +153,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   Extraktion, für die er gebildet wurde (`extraction`). Gleiche Extraktion, alle zuständigen Prozessoren in ihrer
   Version: aktuell, ohne einen Abschnitt zu lesen. Andere Extraktion: Der Hash wird einmal neu gebildet; ist er gleich,
   wird nur die Extraktion nachgetragen, ohne zu rechnen und ohne KI-Dienst.
+  `space-harvester.enrichment.documents.enabled` (Standard `true`) schaltet das ab: Es entsteht nichts Neues,
+  Vorhandenes bleibt lesbar. `space-harvester.enrichment.documents.embedding-max-chars` (Standard 2 000 000, `0` ohne
+  Grenze) begrenzt, was je Dokument an das Embedding-Modell geht; Absätze und Navigation gelten ohne Grenze. Beide
+  Schlüssel lesen Dienst und App gleich, wirksam beim nächsten Lauf.
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

@@ -139,6 +139,7 @@ import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.application.terms.ResolutionCache;
 import com.aresstack.spaceharvester.application.terms.SynonymCandidates;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -694,7 +695,9 @@ public final class Harvester implements AutoCloseable {
             LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
             // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten;
             // der Lauf nach dem Abgleich holt den Bestand nach.
-            DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs, () -> true);
+            EnrichmentSettings startEnrichment = builder.enrichment;
+            DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
+                    () -> (this.settings != null ? this.settings.enrichment() : startEnrichment).documents());
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     List.of(acronymRelationRule::refresh), documentEnrichments);
@@ -1971,6 +1974,7 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private StatementSettings statements = StatementSettings.DEFAULT;
         private TermSettings terms = TermSettings.DEFAULT;
+        private EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 0;
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
@@ -2234,6 +2238,15 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder terms(TermSettings terms) {
             this.terms = Objects.requireNonNull(terms, "terms");
+            return this;
+        }
+
+        /**
+         * Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a, {@code enrichment.documents.*}) für eine feste
+         * Konfiguration; mit {@link #configuration} folgen sie der wirksamen Konfiguration.
+         */
+        public Builder enrichment(EnrichmentSettings enrichment) {
+            this.enrichment = Objects.requireNonNull(enrichment, "enrichment");
             return this;
         }
 

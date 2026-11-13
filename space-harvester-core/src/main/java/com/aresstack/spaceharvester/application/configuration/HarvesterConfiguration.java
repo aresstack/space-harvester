@@ -34,10 +34,11 @@ import java.util.regex.Pattern;
  * @param localFiles freigegebene Ordner für lokale Dateien
  * @param export  Dateianhänge im Export (ADR 0023)
  * @param terms   Begriffsindex: Budget der Synonymerkennung (#336)
+ * @param enrichment Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a)
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
                                      NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
-                                     ExportSettings export, TermSettings terms) {
+                                     ExportSettings export, TermSettings terms, EnrichmentSettings enrichment) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
@@ -45,7 +46,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     /** Ohne KI-Dienst, Schlagwortsuche, bedarfsgesteuerter Abgleich, ohne Proxy. */
     public static final HarvesterConfiguration DEFAULT = new HarvesterConfiguration(AiServiceSettings.NONE,
             SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
-            LocalFileSettings.DEFAULT, ExportSettings.DEFAULT, TermSettings.DEFAULT);
+            LocalFileSettings.DEFAULT, ExportSettings.DEFAULT, TermSettings.DEFAULT, EnrichmentSettings.DEFAULT);
 
     /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
     public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
@@ -66,6 +67,13 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         this(ai, search, sync, network, storage, localFiles, export, TermSettings.DEFAULT);
     }
 
+    /** Mit den Standardwerten der Analysen je Dokument ({@link EnrichmentSettings#DEFAULT}); {@link #withEnrichment}. */
+    public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
+                                  NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles,
+                                  ExportSettings export, TermSettings terms) {
+        this(ai, search, sync, network, storage, localFiles, export, terms, EnrichmentSettings.DEFAULT);
+    }
+
     public HarvesterConfiguration {
         ai = ai == null ? AiServiceSettings.NONE : ai;
         search = search == null ? SearchSettings.DEFAULT : search;
@@ -75,6 +83,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
         export = export == null ? ExportSettings.DEFAULT : export;
         terms = terms == null ? TermSettings.DEFAULT : terms;
+        enrichment = enrichment == null ? EnrichmentSettings.DEFAULT : enrichment;
     }
 
     /** Ob die semantische Suche tatsächlich läuft: Haken gesetzt und Embedding-Modell eingestellt. */
@@ -108,35 +117,39 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     }
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
-        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export, terms);
+        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
-        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export, terms);
+        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
-        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export, terms);
+        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export, terms);
+        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export, terms);
+        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, value, export, terms);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, value, export, terms, enrichment);
     }
 
     public HarvesterConfiguration withExport(ExportSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value, terms);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, value, terms, enrichment);
     }
 
     public HarvesterConfiguration withTerms(TermSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, value);
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, value, enrichment);
+    }
+
+    public HarvesterConfiguration withEnrichment(EnrichmentSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, localFiles, export, terms, value);
     }
 
     /**
@@ -311,8 +324,16 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(TermSettings.SYNONYMS_MAX_TERMS, e.getMessage()));
         }
+        EnrichmentSettings enrichment = EnrichmentSettings.DEFAULT;
+        try {
+            enrichment = new EnrichmentSettings(read.bool(EnrichmentSettings.DOCUMENTS_ENABLED, true),
+                    read.longNumber(EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
+                            EnrichmentSettings.DEFAULT_EMBEDDING_MAX_CHARS));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, e.getMessage()));
+        }
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage, localFiles, export, terms);
+                storage, localFiles, export, terms, enrichment);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);
@@ -435,6 +456,19 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             }
             try {
                 return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                problems.add(new ConfigurationProblem(key, "Erwartet eine ganze Zahl"));
+                return fallback;
+            }
+        }
+
+        long longNumber(String key, long fallback) {
+            String value = value(key);
+            if (value == null) {
+                return fallback;
+            }
+            try {
+                return Long.parseLong(value);
             } catch (NumberFormatException e) {
                 problems.add(new ConfigurationProblem(key, "Erwartet eine ganze Zahl"));
                 return fallback;

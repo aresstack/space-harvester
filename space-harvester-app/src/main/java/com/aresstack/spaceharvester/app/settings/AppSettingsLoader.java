@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
+import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -220,7 +221,8 @@ public final class AppSettingsLoader {
                 sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
                 inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
-                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems));
+                consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
+                enrichment(map(get(root, "enrichment")), problems));
     }
 
     /**
@@ -247,6 +249,23 @@ public final class AppSettingsLoader {
             return ConsoleOutput.DEFAULT;
         }
         return output;
+    }
+
+    /** {@code space-harvester.enrichment.documents.*}: Analysen je Anhang (ADR 0026, AP9a), wie beim Dienst. */
+    private EnrichmentSettings enrichment(Map<?, ?> enrichment, List<String> problems) {
+        Map<?, ?> documents = map(get(enrichment, "documents"));
+        EnrichmentSettings d = EnrichmentSettings.DEFAULT;
+        boolean enabled = flag(get(documents, "enabled"), d.documents(),
+                ROOT + "." + EnrichmentSettings.DOCUMENTS_ENABLED, problems);
+        String maxKey = ROOT + "." + EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS;
+        long maxChars = longNumber(get(documents, "embedding-max-chars"), d.documentEmbeddingMaxChars(), maxKey,
+                problems);
+        try {
+            return new EnrichmentSettings(enabled, maxChars);
+        } catch (IllegalArgumentException e) {
+            problems.add(maxKey + ": " + e.getMessage());
+            return new EnrichmentSettings(enabled, d.documentEmbeddingMaxChars());
+        }
     }
 
     /** {@code space-harvester.terms.synonyms.*}: Budget der Synonymerkennung (#336), dieselben Schlüssel wie beim Dienst. */
