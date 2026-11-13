@@ -118,8 +118,14 @@ class SourcesViewTest {
         assertThat(actions.getComponent(actions.getComponentCount() - 2)).isSameAs(arrow);
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
-        SwingUtilities.invokeAndWait(arrow::doClick);
-        assertThat(arrow.isEnabled()).as("grau, solange die Aufträge laufen").isFalse();
+        // Im selben EDT-Durchlauf wie der Klick prüfen: Ordner-Aufträge enden in Millisekunden, und das Wieder-
+        // freigeben kommt per invokeLater – von außen gelesen wäre der Knopf sonst manchmal schon wieder aktiv.
+        boolean[] greyWhileRunning = new boolean[1];
+        SwingUtilities.invokeAndWait(() -> {
+            arrow.doClick();
+            greyWhileRunning[0] = !arrow.isEnabled();
+        });
+        assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen").isTrue();
         await(() -> !context.runtime().workspace().jobs().isEmpty());
         assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()))
                 .as("Betriebsart der Quelle, hier die Vorgabe").allMatch(job -> "CATALOG_ONLY".equals(
