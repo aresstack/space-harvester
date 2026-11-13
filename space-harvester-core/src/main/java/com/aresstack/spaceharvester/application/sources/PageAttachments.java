@@ -36,9 +36,18 @@ public record PageAttachments(String pageId, List<PageAttachment> attachments, L
         return copies(responses);
     }
 
-    /** {@code true}, wenn die Quelle keinen Eintrag auslassen musste. */
+    /**
+     * Fester Code einer Warnung zu einem einzelnen, gelisteten Eintrag ({@code entries-not-readable;id=…;count=…}): Die
+     * Quelle musste beim Erzeugen seiner Datei Teile auslassen (ADR 0026, AP7c). Der Eintrag selbst steht in der Liste.
+     */
+    public static final String ENTRY_WARNING = "entries-not-readable;";
+
+    /**
+     * {@code true}, wenn die Quelle keinen Eintrag der Liste auslassen musste. Eine Warnung zu einem gelisteten Eintrag
+     * ({@link #ENTRY_WARNING}) macht die Liste nicht unvollständig (Architekt 13.11.2026).
+     */
     public boolean complete() {
-        return warnings.isEmpty();
+        return warnings.stream().allMatch(warning -> warning.startsWith(ENTRY_WARNING));
     }
 
     private static List<byte[]> copies(List<byte[]> payloads) {

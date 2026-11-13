@@ -152,7 +152,8 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
   `message/rfc822` (Titel mit `.eml`), nur aus Quelldaten; tiefer als 8 Ebenen bleibt es gelistet und sein Abruf
   meldet `UNSUPPORTED`, gekürzt wird nie. Verweise und OLE-Objekte haben keine Datei: direkt an der Nachricht
   gelistet mit `UNSUPPORTED` beim Abruf, in einem angehängten Element ausgelassen und gezählt, mit der Warnung
-  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen). Medientyp aus dem MIME-Tag des Anhangs,
+  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen; betrifft nur diesen Eintrag, die Liste bleibt
+  vollständig, `PageAttachments#complete`). Medientyp aus dem MIME-Tag des Anhangs,
   sonst aus der Endung (pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, md, htm, html, xml, json,
   zip, msg, eml, png, jpg, jpeg, gif, bmp, tif, tiff, svg), sonst `application/octet-stream`; was gelesen wird,
   entscheidet der Core. Im Core (OL2): `attachments(pageId)` übersetzt bei Quellen über `discover` die Seiten-ID
@@ -397,7 +398,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s7`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s8`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -467,7 +468,7 @@ Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablege
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s7`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s8`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 
@@ -498,7 +499,7 @@ Teil über seiner Schranke wird `EXCLUDED`/`memory-limit`, die übrigen Teile we
 Mails (`.eml`): Tikas Mail-Parser kopiert von sich aus jeden Teil der ersten Ebene in ein Byte-Array. Er ist deshalb so
 eingestellt, dass er alle Teile als Strom durchreicht (`extractAllAlternatives`); Anhänge gehen zählend in eine
 temporäre Datei. Namenlose Textteile (`text/plain`, `text/html` ohne `attachment`) ordnet der Adapter selbst der Mail
-zu: Sie bekommen keine Position, von Alternativen zählt die beste (HTML vor Text, bei Gleichstand die spätere), und der
+zu: Sie bekommen keine Position, von Alternativen zählt die beste (HTML vor Text, bei Gleichstand die frühere, wie Tika; ein HTML-Teil in einem verschachtelten Teil der Alternativen verdrängt die Textfassung), und der
 angegebene Zeichensatz gilt.
 
 ## Einen Adapter ergänzen

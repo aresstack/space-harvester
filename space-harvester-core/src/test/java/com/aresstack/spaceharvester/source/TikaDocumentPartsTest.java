@@ -211,6 +211,72 @@ class TikaDocumentPartsTest {
         assertThat(result.directory()).isEmpty();
     }
 
+    /**
+     * Die Wahl unter Alternativen ist dieselbe wie bei Tika ohne {@code extractAllAlternatives} (Architekt): HTML vor
+     * Text, bei Gleichstand die frühere, und eine verschachtelte HTML-Fassung ({@code multipart/related}) verdrängt die
+     * Textfassung. Verglichen wird mit Tikas eigenem Mail-Parser in der Standardeinstellung.
+     */
+    @Test
+    void theChoiceAmongAlternativesIsTikasChoice() throws Exception {
+        String related = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Rel\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-TEXTFASSUNG\r\n"
+                + "--A\r\nContent-Type: multipart/related; boundary=\"R\"\r\n\r\n"
+                + "--R\r\nContent-Type: text/html\r\n\r\n<html><body><p>MARKE-HTMLFASSUNG</p></body></html>\r\n"
+                + "--R\r\nContent-Type: image/png\r\nContent-Disposition: inline\r\nContent-ID: <bild>\r\n"
+                + "Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n"
+                + "--R--\r\n--A--\r\n";
+        String tie = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Gleich\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ERSTE\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ZWEITE\r\n--A--\r\n";
+        // Codex #720: Eine Alternative nur mit Text, danach ein eigener HTML-Teil (Fußzeile): beide bleiben.
+        String footer = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Fuss\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/mixed; boundary=\"M\"\r\n\r\n"
+                + "--M\r\nContent-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-ERSTE\r\n--A--\r\n"
+                + "--M\r\nContent-Type: text/html\r\n\r\n<html><body><p>MARKE-FUSS</p></body></html>\r\n"
+                + "--M--\r\n";
+        // Alternativen mit verschachteltem Teil zuerst, dann Text: der verschachtelte Teil zählt (Wert 4).
+        String relatedFirst = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Rel2\r\nMIME-Version: 1.0\r\n"
+                + "Content-Type: multipart/alternative; boundary=\"A\"\r\n\r\n"
+                + "--A\r\nContent-Type: multipart/related; boundary=\"R\"\r\n\r\n"
+                + "--R\r\nContent-Type: text/html\r\n\r\n<html><body><p>MARKE-HTMLFASSUNG</p></body></html>\r\n"
+                + "--R--\r\n"
+                + "--A\r\nContent-Type: text/plain\r\n\r\nMARKE-TEXTFASSUNG\r\n--A--\r\n";
+        List<String> marks = List.of("MARKE-TEXTFASSUNG", "MARKE-HTMLFASSUNG", "MARKE-ERSTE", "MARKE-ZWEITE",
+                "MARKE-FUSS");
+        for (String mail : List.of(related, tie, footer, relatedFirst)) {
+            byte[] bytes = mail.getBytes(StandardCharsets.UTF_8);
+            TikaDocumentStructureTest.Recording sink = new TikaDocumentStructureTest.Recording();
+            read("alt.eml", bytes, ExtractionLimits.DEFAULTS, sink);
+            org.apache.tika.sax.BodyContentHandler tika = new org.apache.tika.sax.BodyContentHandler(-1);
+            // Tika in der Standardeinstellung; enthaltene Dateien (das Bild) werden dabei nicht gelesen.
+            org.apache.tika.metadata.Metadata metadata = new org.apache.tika.metadata.Metadata();
+            metadata.set(org.apache.tika.metadata.Metadata.CONTENT_TYPE, "message/rfc822");
+            org.apache.tika.parser.ParseContext context = new org.apache.tika.parser.ParseContext();
+            context.set(org.apache.tika.extractor.EmbeddedDocumentExtractor.class,
+                    new org.apache.tika.extractor.EmbeddedDocumentExtractor() {
+                        @Override
+                        public boolean shouldParseEmbedded(org.apache.tika.metadata.Metadata m) {
+                            return false;
+                        }
+
+                        @Override
+                        public void parseEmbedded(java.io.InputStream in, org.xml.sax.ContentHandler h,
+                                                  org.apache.tika.metadata.Metadata m, boolean html) {
+                        }
+                    });
+            org.apache.tika.parser.AutoDetectParser auto = new org.apache.tika.parser.AutoDetectParser();
+            context.set(org.apache.tika.parser.Parser.class, auto);
+            auto.parse(new java.io.ByteArrayInputStream(bytes), tika, metadata, context);
+
+            List<String> ours = marks.stream().filter(sink.text()::contains).toList();
+            List<String> theirs = marks.stream().filter(tika.toString()::contains).toList();
+            assertThat(ours).as("wie Tika").isEqualTo(theirs).isNotEmpty();
+        }
+    }
+
     @Test
     void bothVersionsOfAnAlternativeMailGiveItsTextOnce() throws IOException {
         String alternative = "From: a@example.org\r\nTo: b@example.org\r\nSubject: Alt\r\nMIME-Version: 1.0\r\n"
