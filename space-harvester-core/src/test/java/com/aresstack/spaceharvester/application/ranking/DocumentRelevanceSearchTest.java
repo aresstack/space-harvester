@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -72,6 +73,7 @@ class DocumentRelevanceSearchTest {
     private static final List<String> AXES = List.of("betrieb", "architektur", "urlaub");
     private static final String EMBEDDED = "sha256:" + "1".repeat(64);
     private static final String SECTION_TEXT = "sha256:" + "5".repeat(64);
+    private static final String DOCUMENT_TEXT = "sha256:" + "d".repeat(64);
     private static final PartId PART = new PartId.Content("c".repeat(64), 1);
     private static final DocumentKey ATTACHMENT = DocumentKey.attachment(new PageKey("wiki", "10"), "att-1");
     private static final DocumentKey CONTAINED = ATTACHMENT.child(PART);
@@ -149,9 +151,29 @@ class DocumentRelevanceSearchTest {
         assertThat(best.charStart()).as("Stelle im Lesetext des Abschnitts").isEqualTo(10);
         assertThat(best.charEnd()).isEqualTo(20);
         assertThat(best.freshness()).isEqualTo(RelevanceSearch.Freshness.CURRENT);
-        assertThat(best.passageId()).as("Passage-IDs von Dokumenten folgen mit dem Absatz-Abruf").isNull();
+        assertThat(best.passageId()).as("ohne Absätze des Dokuments").isNull();
         assertThat(results.hits().get(0).relevance().attachmentId()).as("Seite selbst").isNull();
         assertThat(results.hits().get(0).relevance().section()).isNull();
+    }
+
+    @Test
+    void aHitInADocumentNamesThePassageIdOfItsPassage() {
+        embed(CONTAINED, 2, "[0,0,1]", "[1,0.05,0]");
+        String passage = ",\"firstSentence\":0,\"sentences\":1,\"section\":null,\"kind\":\"paragraph\","
+                + "\"boundary\":\"structure\",\"similarity\":null}";
+        store.save(new Enrichment(CONTAINED.page(), "passages", "passages@1", SECTION_TEXT, DOCUMENT_TEXT,
+                Enrichment.Status.OK, "{\"mode\":\"structure\",\"reason\":\"no-model\",\"model\":null,"
+                        + "\"segmentation\":\"passages;eac\",\"sentences\":2,\"textSha256\":\"x\",\"passages\":["
+                        + "{\"start\":0,\"end\":10" + passage + ",{\"start\":10,\"end\":20" + passage + "]}",
+                List.of(), null, Instant.parse("2026-10-17T07:00:00Z"), CONTAINED, 2));
+
+        RelevanceSearch.Relevance best = search(ALLOW_ALL, true).search(CALLER, query(), "Betrieb", 10).hits().get(1)
+                .relevance();
+
+        PassageId id = PassageId.parse(best.passageId());
+        assertThat(id.capture()).isEqualTo("d".repeat(64));
+        assertThat(id.document()).contains(CONTAINED.fileName());
+        assertThat(id.position()).isEqualTo(1);
     }
 
     @Test
@@ -173,7 +195,7 @@ class DocumentRelevanceSearchTest {
     void anExcerptNeedsExactlyTheTextTheChunkCameFrom() {
         embed(ATTACHMENT, 0, "[1,0.05,0]");
         store.save(new Enrichment(ATTACHMENT.page(), "embedding", processor.version(), "sha256:" + "6".repeat(64),
-                "sha256:doc", Enrichment.Status.OK, json("[1,0.05,0]"), List.of(), null,
+                DOCUMENT_TEXT, Enrichment.Status.OK, json("[1,0.05,0]"), List.of(), null,
                 Instant.parse("2026-10-17T07:00:00Z"), ATTACHMENT, 0));
         RelevanceSearch search = search(ALLOW_ALL, true);
 
@@ -331,7 +353,7 @@ class DocumentRelevanceSearchTest {
 
     /** Embedding eines Abschnitts eines Dokuments aus dem Lesetext {@link #SECTION_TEXT}. */
     private void embed(DocumentKey document, int section, String... vectors) {
-        store.save(new Enrichment(document.page(), "embedding", processor.version(), SECTION_TEXT, "sha256:doc",
+        store.save(new Enrichment(document.page(), "embedding", processor.version(), SECTION_TEXT, DOCUMENT_TEXT,
                 Enrichment.Status.OK, json(vectors), List.of(), null, Instant.parse("2026-10-17T07:00:00Z"),
                 document, section));
     }

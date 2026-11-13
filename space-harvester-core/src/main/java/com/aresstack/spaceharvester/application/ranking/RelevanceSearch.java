@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.passages.DocumentPassages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
@@ -730,7 +731,8 @@ public class RelevanceSearch {
         // Das beste Stück aus Seite und Dokumenten zusammen; bei Gleichstand bleibt die Seite.
         Enrichment bestDocument = null;
         Chunk bestDocumentChunk = null;
-        for (Enrichment found : store.findDocuments(header.key())) {
+        List<Enrichment> documentResults = store.findDocuments(header.key());
+        for (Enrichment found : documentResults) {
             if (!"embedding".equals(found.processorId()) || found.status() != Enrichment.Status.OK
                     || !found.processorVersion().equals(model.version())) {
                 continue;
@@ -746,11 +748,13 @@ public class RelevanceSearch {
         }
         DocumentKey document = bestDocument.document();
         PageTextIndex.DocumentTitles titles = titles(document);
-        // Wie aktuell, sagt die Seite: Ihre Version prüft die Live-Prüfung; die Passage-ID eines Dokuments folgt.
+        // Wie aktuell, sagt die Seite: Ihre Version prüft die Live-Prüfung.
         Freshness freshness = best != null ? best.freshness() : Freshness.CURRENT;
+        // Die Passage-ID aus den schon geladenen Absatz-Ständen des Dokuments, ohne seinen Text zu lesen.
         return new Score(bestDocumentChunk.similarity(), bestDocumentChunk.start(), bestDocumentChunk.end(),
-                freshness, bestDocument.inputSha256(), null, document, bestDocument.section(), titles.title(),
-                titles.partTitle());
+                freshness, bestDocument.inputSha256(), DocumentPassages.idAt(document, documentResults,
+                bestDocument.section(), bestDocument.inputSha256(), bestDocumentChunk.start(),
+                bestDocumentChunk.end()), document, bestDocument.section(), titles.title(), titles.partTitle());
     }
 
     /** Das ähnlichste Stück eines Embedding-Ergebnisses oder {@code null}. */
@@ -946,8 +950,8 @@ public class RelevanceSearch {
      * @param charEnd    Ende (exklusiv)
      * @param freshness  ob das Embedding aus der aktuellen Revision stammt
      * @param passageId  stabile Adresse des Absatzes, der dieses Stück enthält ({@code PassageId}, EAC-Lücke 5), oder
-     *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen; bei einem Stück in
-     *                   einem Dokument vorerst {@code null}
+     *                   {@code null}, wenn die Absätze der Seite (bzw. des Dokuments, {@link DocumentPassages}) nicht
+     *                   aus demselben Text stammen
      * @param attachmentId Anhang, in dem das Stück liegt (ADR 0026, AP9a), {@code null} für die Seite selbst; dann
      *                   beziehen sich {@code charStart}/{@code charEnd} auf den Lesetext des Abschnitts
      * @param partId     enthaltene Datei im Anhang ({@code PartId#value()}), {@code null} für den Anhang selbst

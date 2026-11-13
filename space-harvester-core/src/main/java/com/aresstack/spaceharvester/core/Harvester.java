@@ -37,6 +37,7 @@ import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
@@ -541,7 +542,11 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
-            this.passages = new PassageQueries(pages, enrichments, projector);
+            // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
+            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
+            DocumentTexts documentTexts = (document, section, inputSha256) -> sectionTexts.get() == null
+                    ? Optional.empty() : sectionTexts.get().sectionText(document, section, inputSha256);
+            this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
             this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
@@ -676,13 +681,10 @@ public final class Harvester implements AutoCloseable {
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
             EnrichmentSettings searchEnrichment = builder.enrichment;
-            java.util.concurrent.atomic.AtomicReference<DocumentEnrichments> sectionTexts =
-                    new java.util.concurrent.atomic.AtomicReference<>();
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, reranker, textIndex, preparation, runLog,
                     () -> (this.settings != null ? this.settings.enrichment() : searchEnrichment).documents(),
-                    (document, section, inputSha256) -> sectionTexts.get() == null ? Optional.empty()
-                            : sectionTexts.get().sectionText(document, section, inputSha256));
+                    documentTexts);
             // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
             // Seite an ihrem Space im Cache.
             FileFactEditStore factEditStore = new FileFactEditStore(builder.dataDirectory.resolve("facts"));
