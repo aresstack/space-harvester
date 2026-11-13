@@ -24,8 +24,8 @@ import java.util.regex.Pattern;
  * Eingabe ergibt dieselben Bytes (feste Grenzen je Tiefe, keine Zufallswerte). Die Mail enthält nur Daten der
  * Quelle, keine erzeugten Hinweise: Ohne Namen in der Postfachdatei bleibt der Teil ohne Dateinamen. Gekürzt wird
  * nie: Ein unlesbarer Teil lässt das Schreiben scheitern, und tiefer als {@link #MAX_DEPTH} verschachtelte Elemente
- * schreibt der Aufrufer gar nicht ({@link #depth}). Verweise und OLE-Objekte haben keine Dateibytes in der
- * Postfachdatei und erscheinen nicht als Teil.</p>
+ * schreibt der Aufrufer gar nicht ({@link #depth}). Verweise und OLE-Objekte erscheinen nicht als Teil; ihre Zahl
+ * nennt die Anhangsliste ({@link #partsWithoutFile}, Code {@code entries-not-readable}).</p>
  */
 final class OutlookMessageWriter {
 
@@ -128,6 +128,11 @@ final class OutlookMessageWriter {
             String name = OutlookKnowledgeSource.sourceName(attachment);
             if (method == PSTAttachment.ATTACHMENT_METHOD_BY_VALUE) {
                 InputStream in = OutlookKnowledgeSource.fileStream(attachment);
+                if (in == null) {
+                    // Ohne Datenfeld fehlen die Bytes: nie als leere Datei ausgeben (ein leerer Anhang hat ein leeres
+                    // Datenfeld und damit einen Strom).
+                    throw new IOException("Anhang " + (i + 1) + " ohne Dateibytes");
+                }
                 String type = contentType(OutlookKnowledgeSource.mediaType(attachment, name));
                 boundary(out, boundary, false);
                 header(out, "Content-Type", name.isEmpty() ? type : type + "; " + parameter("name", name));
@@ -135,11 +140,6 @@ final class OutlookMessageWriter {
                         : "attachment; " + parameter("filename", name));
                 header(out, "Content-Transfer-Encoding", "base64");
                 out.write(CRLF);
-                if (in == null) {
-                    // Ohne Datenfeld hat der Anhang in der Postfachdatei keine Bytes.
-                    base64(out, new byte[0]);
-                    continue;
-                }
                 try {
                     base64(out, in);
                 } finally {
@@ -161,6 +161,37 @@ final class OutlookMessageWriter {
             // Verweise und OLE-Objekte haben keine Dateibytes in der Postfachdatei.
         }
         boundary(out, boundary, true);
+    }
+
+    /**
+     * Teile ohne Datei (Verweise, OLE-Objekte und jede andere Art außer Wert und Element), die die geschriebene Mail
+     * auslässt, über alle geschriebenen Ebenen. Tiefer als {@link #MAX_DEPTH} wird nichts geschrieben; das meldet der
+     * Abruf.
+     */
+    static int partsWithoutFile(PSTMessage message) throws IOException, PSTException {
+        return partsWithoutFile(message, 0);
+    }
+
+    private static int partsWithoutFile(PSTMessage message, int depth) throws IOException, PSTException {
+        if (depth >= MAX_DEPTH) {
+            return 0;
+        }
+        int count = attachmentCount(message);
+        int parts = 0;
+        for (int i = 0; i < count; i++) {
+            PSTAttachment attachment = message.getAttachment(i);
+            int method = attachment.getAttachMethod();
+            if (method == PSTAttachment.ATTACHMENT_METHOD_EMBEDDED) {
+                PSTMessage inner = attachment.getEmbeddedPSTMessage();
+                if (inner == null) {
+                    throw new IOException("Angehängtes Element nicht lesbar");
+                }
+                parts += partsWithoutFile(inner, depth + 1);
+            } else if (method != PSTAttachment.ATTACHMENT_METHOD_BY_VALUE) {
+                parts++;
+            }
+        }
+        return parts;
     }
 
     /**

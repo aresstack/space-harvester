@@ -141,18 +141,23 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
   Listen, Codeblöcke), statt auf fehlendes Storage-Format hinzuweisen.
 - **Fehler:** nur die Art (`Quelle: NOT_FOUND` …), ohne die Meldung des Adapters, die Seitentitel, Pfade oder Jobnamen
   nennen kann.
-- **Outlook-Anhänge** (ADR 0026 Punkt 9, Paket OL1, enterprise-ai-client#220, Stand `42b047aa`):
-  `OutlookKnowledgeSource` ist `AttachmentListSource` und `PageViewSource`. Anhangskennung `mail:<Postfach>/<Datei>/<Node-ID>/<Token>`, Token =
-  Base64url ohne Auffüllung über Datei, Node-ID und Anhangsnummer (`getAttachNum`). Es fehlt kein Eintrag: eine
-  doppelte Nummer bekommt einen Zähler in Listenreihenfolge, eine unlesbare Tabellenzeile eine Kennung nach Position
-  (ihr Abruf scheitert), beides als Warnung ohne Dateinamen. Dateibytes fließen als Strom aus der Postfachdatei; ein
-  angehängtes Outlook-Element kommt als `message/rfc822` (Titel mit `.eml`), nur aus Quelldaten; tiefer als 8 Ebenen
-  bleibt es gelistet und sein Abruf meldet `UNSUPPORTED`, gekürzt wird nie. Verweise und OLE-Objekte haben keine Datei
-  (`UNSUPPORTED`). Medientyp aus dem MIME-Tag des Anhangs, sonst aus der Endung (pdf, doc, docx, xls, xlsx, ppt, pptx,
-  odt, ods, odp, rtf, txt, csv, md, htm, html, xml, json, zip, msg, eml, png, jpg, jpeg, gif, bmp, tif, tiff, svg),
-  sonst `application/octet-stream`; was gelesen wird, entscheidet der Core. Bis OL2 übersetzt der Core die Seiten-ID
-  (Base64url) nicht in die Nachrichten-ID: `attachments(pageId)` bleibt `UNSUPPORTED` wie vorher, die Fähigkeiten
-  nennen aber schon `PAGE_ATTACHMENTS` und `ATTACHMENT_PREVIEWS` (OL2 nimmt die Vorschauen für Outlook heraus).
+- **Outlook-Anhänge** (ADR 0026 Punkt 9, Pakete OL1 und OL2, enterprise-ai-client#220 und #221):
+  `OutlookKnowledgeSource` ist `AttachmentListSource` und `PageViewSource`. Anhangskennung
+  `mail:<Postfach>/<Datei>/<Node-ID>/<Token>`, Token = Base64url ohne Auffüllung über Datei, Node-ID und
+  Anhangsnummer (`getAttachNum`); als `attachmentId` gilt das Token, es taugt als Dateiname. Es fehlt kein Eintrag:
+  eine doppelte Nummer bekommt einen Zähler in Listenreihenfolge, eine unlesbare Tabellenzeile eine Kennung nach
+  Position (ihr Abruf scheitert), beides als Warnung ohne Dateinamen; eine unlesbare Anhangstabelle ist ein Fehler
+  (`INVALID_RESPONSE`), keine leere Liste. Dateibytes fließen als Strom aus der Postfachdatei; ein fehlendes
+  Datenfeld ist ein Fehler, ein leerer Anhang eine leere Datei. Ein angehängtes Outlook-Element kommt als
+  `message/rfc822` (Titel mit `.eml`), nur aus Quelldaten; tiefer als 8 Ebenen bleibt es gelistet und sein Abruf
+  meldet `UNSUPPORTED`, gekürzt wird nie. Verweise und OLE-Objekte haben keine Datei: direkt an der Nachricht
+  gelistet mit `UNSUPPORTED` beim Abruf, in einem angehängten Element ausgelassen und gezählt, mit der Warnung
+  `entries-not-readable;id=<Token>;count=<n>` (fester Code, ohne Namen). Medientyp aus dem MIME-Tag des Anhangs,
+  sonst aus der Endung (pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp, rtf, txt, csv, md, htm, html, xml, json,
+  zip, msg, eml, png, jpg, jpeg, gif, bmp, tif, tiff, svg), sonst `application/octet-stream`; was gelesen wird,
+  entscheidet der Core. Im Core (OL2): `attachments(pageId)` übersetzt bei Quellen über `discover` die Seiten-ID
+  (Base64url) zurück in die Ressourcen-ID, bevor es `storedAttachments` aufruft. `ATTACHMENT_PREVIEWS` meldet nur
+  eine Quelle, die `loadAttachmentPreview` selbst umsetzt, Outlook also nicht. Test: `OutlookAttachmentsTest`.
 
 Die Rechte je Seite gelten wie bei jeder Quelle über die `AccessPolicy`; nicht lesbare Seiten fehlen in Listen,
 Suche und Export.

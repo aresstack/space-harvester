@@ -79,6 +79,16 @@ final class OutlookKnowledgeSource implements KnowledgeSourcePort, AttachmentLis
     static final String EMBEDDED_MEDIA_TYPE = "message/rfc822";
     static final String METADATA_ATTACHMENT_NUMBER = "mail.attachment.number";
     static final String METADATA_ATTACHMENT_METHOD = "mail.attachment.method";
+    /**
+     * Bei einem angehängten Element: Zahl der Teile ohne Datei (Verweise, OLE-Objekte), die seine Mail auslässt. Fehlt
+     * bei null.
+     */
+    static final String METADATA_PARTS_WITHOUT_FILE = "mail.attachment.partsWithoutFile";
+    /**
+     * Fester Code der Warnung zu einem solchen Element, ohne Namen:
+     * {@code entries-not-readable;id=<letztes Segment der Anhangs-ID>;count=<Zahl>}.
+     */
+    static final String WARNING_ENTRIES_NOT_READABLE = "entries-not-readable";
 
     private static final Logger LOG = Logger.getLogger(OutlookKnowledgeSource.class.getName());
     /** Schutz gegen sehr tiefe Ordnerbäume (aus MainframeMate). */
@@ -281,7 +291,13 @@ final class OutlookKnowledgeSource implements KnowledgeSourcePort, AttachmentLis
                 listing.warnings.add("Anhang " + (i + 1) + ": Anhangsnummer in der Nachricht doppelt; Kennung mit "
                         + "Zähler in Listenreihenfolge");
             }
-            listing.resources.add(attachmentResource(file, message, messageId, attachment, occurrence));
+            KnowledgeResource resource = attachmentResource(file, message, messageId, attachment, occurrence);
+            String parts = resource.metadata().asMap().get(METADATA_PARTS_WITHOUT_FILE);
+            if (parts != null) {
+                listing.warnings.add(WARNING_ENTRIES_NOT_READABLE + ";id=" + lastSegment(resource.id()) + ";count="
+                        + parts);
+            }
+            listing.resources.add(resource);
         }
         return listing;
     }
@@ -342,6 +358,12 @@ final class OutlookKnowledgeSource implements KnowledgeSourcePort, AttachmentLis
                 metadata.put(KnowledgeMetadata.FILE_SIZE, String.valueOf(size));
             }
         }
+        if (embedded) {
+            int parts = partsWithoutFile(attachment);
+            if (parts > 0) {
+                metadata.put(METADATA_PARTS_WITHOUT_FILE, String.valueOf(parts));
+            }
+        }
         // Ein angehängtes Element wird erst beim Abruf zur Mail; ändert sich die Darstellung, ändert sich die Revision.
         String version = (embedded ? OutlookMessageWriter.VERSION + "-" : "") + attachment.getAttachSize();
         String key = occurrence == 0 ? String.valueOf(number) : number + "/" + occurrence;
@@ -353,6 +375,16 @@ final class OutlookKnowledgeSource implements KnowledgeSourcePort, AttachmentLis
                 .scope(sourceId.value())
                 .metadata(KnowledgeMetadata.of(metadata))
                 .build();
+    }
+
+    /** Teile ohne Datei in einem angehängten Element; ist es nicht lesbar, meldet das der Abruf, nicht die Liste. */
+    private static int partsWithoutFile(PSTAttachment attachment) {
+        try {
+            PSTMessage inner = attachment.getEmbeddedPSTMessage();
+            return inner == null ? 0 : OutlookMessageWriter.partsWithoutFile(inner);
+        } catch (IOException | PSTException | RuntimeException e) {
+            return 0;
+        }
     }
 
     private SourceFile readAttachment(KnowledgeResourceId attachment, long maxBytes) throws KnowledgeSourceException {
