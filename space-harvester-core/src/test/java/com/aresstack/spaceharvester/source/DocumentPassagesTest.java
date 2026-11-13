@@ -8,6 +8,11 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentExtractions;
 import com.aresstack.spaceharvester.application.assets.DocumentInventory;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
+import com.aresstack.spaceharvester.application.passages.DocumentPassages;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageLookup;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -227,6 +232,66 @@ class DocumentPassagesTest {
                 .as("anderer Abschnitt").isEmpty();
         assertThat(documents.sectionText(DocumentKey.attachment(PAGE, "a2"), vectors.section(),
                 vectors.inputSha256())).as("anderer Anhang").isEmpty();
+    }
+
+    @Test
+    void aPassageIdOfTheDocumentResolvesToItsPassageUntilTheTextChanges() {
+        Asset asset = stored(Map.of("bericht.html", HTML));
+        DocumentEnrichments documents = documents(0);
+        documents.indexed(list(), asset, extractions);
+        documents.assets(new DocumentInventory() {
+            @Override
+            public Optional<DocumentExtractions> documentExtractions() {
+                return Optional.of(extractions);
+            }
+
+            @Override
+            public List<Asset> indexedDocuments(String sourceId, java.util.Collection<String> pageIds) {
+                return List.of(asset);
+            }
+        });
+        List<Enrichment> found = results.findDocuments(PAGE);
+        Enrichment vectors = processor(found, "embedding");
+        EmbeddingPayload.Chunk chunk = EmbeddingPayload.parse(vectors.payloadJson()).chunks().getLast();
+
+        String id = DocumentPassages.idAt(vectors.document(), found, vectors.section(), vectors.inputSha256(),
+                chunk.charStart(), chunk.charEnd());
+
+        assertThat(id).startsWith("wiki:101@" + PassageId.captureOf(vectors.revision()) + "~"
+                + vectors.document().fileName() + "#p");
+        PassageLookup lookup = DocumentPassages.resolve(PassageId.parse(id), found, documents::sectionText, 1);
+        assertThat(lookup.match()).isEqualTo(PassageLookup.Match.FOUND);
+        assertThat(lookup.passages()).extracting(PagePassages.Passage::id).contains(id);
+        assertThat(lookup.passages()).filteredOn(passage -> passage.id().equals(id)).singleElement()
+                .satisfies(passage -> assertThat(passage.text()).isNotBlank());
+
+        // Anderer Text des Dokuments (andere Capture): fest „nicht mehr vorhanden“, ohne Absätze.
+        PassageId requested = PassageId.parse(id);
+        PassageId older = PassageId.of(requested.sourceId(), requested.pageId(), "9".repeat(64),
+                requested.document().orElseThrow(), requested.position(), requested.segmentation(),
+                requested.embedding());
+        assertThat(DocumentPassages.resolve(older, found, documents::sectionText, 1))
+                .satisfies(gone -> {
+                    assertThat(gone.match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
+                    assertThat(gone.passages()).isEmpty();
+                });
+        // Der Stand gehört zu einer anderen Extraktion (ein anderer Abschnitt kann sich geändert haben): kein Text.
+        assertThat(vectors.extraction()).isNotNull();
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256(),
+                vectors.extraction())).isPresent();
+        assertThat(documents.sectionText(vectors.document(), vectors.section(), vectors.inputSha256(),
+                "andere|extraktion")).isEmpty();
+        List<Enrichment> otherExtraction = found.stream().map(result -> result.withBasis(result.revision(),
+                "andere|extraktion")).toList();
+        assertThat(DocumentPassages.resolve(requested, otherExtraction, documents::sectionText, 1).match())
+                .isEqualTo(PassageLookup.Match.UNAVAILABLE);
+        // Ohne lesbaren Text des Abschnitts nichts Falsches, sondern gerade nicht verfügbar.
+        assertThat(DocumentPassages.resolve(requested, found, DocumentTexts.NONE, 1).match())
+                .isEqualTo(PassageLookup.Match.UNAVAILABLE);
+        // Das Dokument gibt es nicht mehr, etwa nach dem Neulesen des Behälters: ebenfalls nicht mehr vorhanden.
+        results.removeDocument(vectors.document());
+        assertThat(DocumentPassages.resolve(requested, results.findDocuments(PAGE), documents::sectionText, 1)
+                .match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
     }
 
     private static Enrichment processor(List<Enrichment> found, String id) {
