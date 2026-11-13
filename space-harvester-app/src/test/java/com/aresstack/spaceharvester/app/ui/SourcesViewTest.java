@@ -100,6 +100,32 @@ class SourcesViewTest {
         assertThat(spaces.getRowCount()).isEqualTo(1);
     }
 
+    @Test
+    void theCircleArrowsOnTheCardCatchUpEverySpaceAndStayGreyUntilTheJobsEnd() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        Container root = all(view[0]);
+        List<IconButton> arrows = buttons(root, "Änderungen seit dem letzten Lauf nachholen");
+        assertThat(arrows).as("je Karte ein Kreispfeil").hasSize(2);
+        List<StatusMark> marks = find(root, StatusMark.class);
+        await(() -> marks.get(0).state() == StatusMark.State.CONNECTED
+                && marks.get(1).state() == StatusMark.State.CONNECTED);
+        IconButton arrow = view[0].syncButton("kurz");
+        await(arrow::isEnabled);
+        // Die Reihenfolge der Knöpfe: Stift, Papierkorb, Kreispfeile, drei Punkte.
+        Container actions = arrow.getParent();
+        assertThat(actions.getComponent(actions.getComponentCount() - 2)).isSameAs(arrow);
+        assertThat(context.runtime().workspace().jobs()).isEmpty();
+
+        SwingUtilities.invokeAndWait(arrow::doClick);
+        assertThat(arrow.isEnabled()).as("grau, solange die Aufträge laufen").isFalse();
+        await(() -> !context.runtime().workspace().jobs().isEmpty());
+        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()));
+        await(arrow::isEnabled);
+        assertThat(context.runtime().workspace().jobs()).allMatch(job -> job.state().terminal());
+    }
+
     private static List<IconButton> buttons(Container root, String tooltip) throws Exception {
         List<IconButton> found = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> find(root, IconButton.class).stream()
