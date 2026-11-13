@@ -36,4 +36,13 @@ public interface ExtractionStore {
      * Leer, wenn die Extraktion fehlt.
      */
     Stream<TextSection> sections(ExtractionKey key);
+
+    /** Die Teile im gültigen Stand, in der Reihenfolge ihres Beginns; leer, wenn die Extraktion fehlt (AP7b). */
+    java.util.List<StoredPart> parts(ExtractionKey key);
+
+    /**
+     * Die Abschnitte eines Teils in Reihenfolge, einzeln gelesen; der Strom muss geschlossen werden. Leer, wenn
+     * Extraktion oder Teil fehlen.
+     */
+    Stream<TextSection> partSections(ExtractionKey key, String partKey);
 }

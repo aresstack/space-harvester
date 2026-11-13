@@ -158,6 +158,61 @@ class DocumentExtractionsTest {
     }
 
     @Test
+    void partsHaveTheirOwnStorageTheTextStillContainsThemOnceAndMarkdownShowsOnlyTheDocument() {
+        String sha = "cd".repeat(32);
+        DocumentStructure withParts = new DocumentStructure() {
+            @Override
+            public String id() {
+                return "teile";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                              StructureSink sink) {
+                try (BlockSink document = sink.document()) {
+                    document.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Mailtext"));
+                }
+                List<EmbeddedEntry> entries = new java.util.ArrayList<>();
+                for (int ordinal = 1; ordinal <= 2; ordinal++) {
+                    EmbeddedEntry entry = new EmbeddedEntry(new PartId.Content(sha, ordinal), Optional.of(sha),
+                            Optional.of("kopie-" + ordinal + ".txt"), Optional.of("text/plain"), "/" + ordinal,
+                            Optional.empty(), 1, Optional.of(7L), Outcome.ok(new ReadExtent(7, 7)));
+                    entries.add(entry);
+                    try (PartSink part = sink.part(entry)) {
+                        part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Anhang"));
+                        part.head(new DocumentHead(Optional.of("Anhang"), Optional.empty(), Optional.empty(),
+                                List.of(), Optional.empty()));
+                    }
+                }
+                return new StructuredDocument(DocumentHead.EMPTY, Outcome.ok(new ReadExtent(10, 8)), entries, 1, 8);
+            }
+        };
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "egal\n");
+        FileSystemExtractionStore stored = new FileSystemExtractionStore(directory);
+        DocumentExtractions extractions = new DocumentExtractions(withParts, stored, ExtractionLimits.DEFAULTS);
+
+        AssetText text = extractions.text(asset, store, NOW);
+        StringBuilder markdown = new StringBuilder();
+        extractions.markdown(asset, store, markdown);
+
+        assertThat(text.text()).isEqualTo("Mailtext\n\nAnhang");
+        assertThat(markdown).hasToString("Mailtext\n");
+        StoredExtraction extraction = extractions.stored(asset.sha256()).orElseThrow();
+        assertThat(extraction.chars()).as("nur das Dokument selbst").isEqualTo(8);
+        assertThat(stored.parts(extraction.key())).singleElement().satisfies(part -> {
+            assertThat(part.key()).isEqualTo(sha);
+            assertThat(part.blocks()).as("Blöcke nicht doppelt").isEqualTo(1);
+            assertThat(part.head().title()).contains("Anhang");
+        });
+    }
+
+    @Test
     void aDocumentWithoutTextIsStoredWithItsStatusAndNotReadAgain() {
         Lines structure = new Lines().ending(Outcome.of(ExtractionStatus.UNSUPPORTED, StatusReason.NO_TEXT));
         FileSystemAssetStore store = new FileSystemAssetStore(directory);

@@ -19,6 +19,16 @@ public interface ExtractionWriter extends BlockSink {
      */
     StoredExtraction commit(StructuredDocument document);
 
+    /**
+     * Beginnt einen Teil im selben Stand (ADR 0026, AP7b). Teile laufen gestapelt: Ein Teil darf offen bleiben, während
+     * seine eigenen Teile geschrieben werden.
+     *
+     * @param key Schlüssel ({@link PartId#storageKey()})
+     * @return leer, wenn unter diesem Schlüssel in diesem Stand schon ein Teil liegt (inhaltsgleich: seine Blöcke werden
+     *         nicht ein zweites Mal geschrieben)
+     */
+    java.util.Optional<PartWriter> part(String key);
+
     /** Verwirft das Geschriebene, wenn noch nicht bestätigt. */
     @Override
     void close();

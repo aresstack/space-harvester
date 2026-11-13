@@ -394,7 +394,7 @@ Fortschritt, 30 min insgesamt, Platzreserve 1 GiB, 2 gleichzeitige Läufe.
 
 ### Eigener Tika-Adapter (ADR 0026, Stufe 2a)
 
-`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s6`) liest das Original aus der Datei
+`source.TikaDocumentStructure` (Kennung `tika`, Version `3.3-s7`) liest das Original aus der Datei
 (`TikaInputStream.get(Path)`), nie als Byte-Array, und gibt Blöcke fortlaufend an den Empfänger: Überschriften (`h1`
 bis `h6`), Listenpunkte (`ul`/`ol`, Ebene nach Verschachtelung), Tabellen (Zeile und Spalte ab 0, Kopfzellen aus
 `th`), vorformatierten Text als Code, sonst Absätze; Verweisziele mit Beschriftung stehen am Block. Kein Block ist
@@ -436,16 +436,24 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   stehen mit `EXCLUDED`/`media-type-excluded` im Verzeichnis, Archive und Mails werden trotzdem geöffnet.
 - Ein Archiv hat keinen eigenen Text (Namen der Einträge sind Tika-Artefakte). Erreicht eine Mail ihre Zeichengrenze,
   bleibt sie gekürzt, ihre Anhänge werden weiter gelesen.
-- Übergang bis AP4: `DocumentExtractions` legt die Blöcke der Teile in Lesereihenfolge mit in die Extraktion des
-  Behälters, damit Suche, Index und Export nichts verlieren (Suchtest über den Korpus: `CorpusSearchParityTest`). Ein
-  Archiv mit Einträgen gilt dafür trotz `no-text` als lesbar. Eigene Ablage der Teile folgt mit AP7b.
+- Ein Behälter ohne eigenen Text, aber mit Einträgen (Archiv, Mail nur mit Anhängen) ist `OK`; `no-text` gilt nur
+  ohne Text und ohne Einträge. Betreff und Von/An einer Outlook-Mail stehen nur in den Kopfdaten.
+- Ablage (AP7b): Jeder Teil liegt im Stand seines äußeren Behälters unter `parts/<Schlüssel>/` mit eigenen
+  Abschnitten und eigenem Kopf in `document.json`. Schlüssel ist der SHA-256 des Teils (inhaltsgleiche Einträge
+  desselben Behälters teilen sich die Ablage, ihre Blöcke werden einmal geschrieben) oder ohne vollständige Bytes
+  `PartId#fileName()` (`pos-<Behälter>-1-3`, nur `[0-9a-z-]`). Behälter und Teile werden zusammen gültig und beim
+  Neulesen zusammen ersetzt. Derselbe Anhang in verschiedenen Behältern wird je Behälter gelesen und abgelegt.
+- Übergang bis AP4: Der Text des Behälters (`AssetText`) ist sein eigener Text, danach der seiner Teile in der
+  Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
+  über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer
+  vorübergehenden Grenze (`timeout`, `temp-space-low`) verhindert das Ablegen des Behälters.
 
 Angeschlossen über `application.assets.DocumentExtractions` (AP3b): Beim Ablegen, beim Nachholen und auf Abruf liest
 `Assets` Dokumente aus der abgelegten Datei mit diesem Adapter und legt die Extraktion unter `extractions/` ab; die
 bisherige Grenze von 20 MiB für den Text (`Assets.IN_MEMORY_BYTES`) gilt dafür nicht mehr, es gelten die Schutzgrenzen
 oben. Eine abgelegte Extraktion wird nicht erneut gelesen, auch nicht eine ohne Text; nur eine an einer
 vorübergehenden Grenze (`timeout`, `temp-space-low`) wird nicht abgelegt und beim nächsten Lauf erneut versucht.
-Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s6`: Blöcke mit
+Volltextindex, Export und REST bekommen daraus bis AP4 einen Text unter Kennung `tika`, Version `3.3-s7`: Blöcke mit
 Leerzeile getrennt, höchstens 1 Mio. Zeichen, darüber und bei gekürzter Extraktion als gekürzt markiert. Der alte Text
 (Version `3.3-1`) bleibt liegen; das Nachholen bei der nächsten Ernte liest die Ablage unter der neuen Version.
 

@@ -2,9 +2,12 @@ package com.aresstack.spaceharvester.persistence.files;
 
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.Block;
+import com.aresstack.spaceharvester.application.assets.DocumentHead;
 import com.aresstack.spaceharvester.application.assets.ExtractionKey;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ExtractionWriter;
+import com.aresstack.spaceharvester.application.assets.PartWriter;
+import com.aresstack.spaceharvester.application.assets.StoredPart;
 import com.aresstack.spaceharvester.application.assets.StoredExtraction;
 import com.aresstack.spaceharvester.application.assets.StructuredDocument;
 import com.aresstack.spaceharvester.application.assets.TextSection;
@@ -21,7 +24,9 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,6 +46,8 @@ import tools.jackson.databind.node.ObjectNode;
  *       Stands</li>
  *   <li>{@code …/g-<uuid>/document.json}: Schema, Kopfdaten, Status, Verzeichnis, Zähler und Abschnitte</li>
  *   <li>{@code …/g-<uuid>/s000000.ndjson}: die Blöcke eines Abschnitts, je Zeile einer</li>
+ *   <li>{@code …/g-<uuid>/parts/<Schlüssel>/s000000.ndjson}: die Abschnitte eines enthaltenen Teils (AP7b);
+ *       Kopf und Zähler stehen in {@code document.json}. Behälter und Teile werden zusammen gültig.</li>
  * </ul>
  *
  * <p>Ein neuer Stand wird vollständig in ein eigenes Verzeichnis geschrieben und erst dann durch atomares Ersetzen von
@@ -58,6 +65,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
     private static final String CURRENT = "current";
     private static final int MOVE_ATTEMPTS = 5;
     private static final String DOCUMENT = "document.json";
+    private static final String PARTS = "parts";
     private static final Pattern GENERATION = Pattern.compile("g-[0-9a-f-]{36}");
 
     private final Path root;
@@ -79,6 +87,15 @@ public class FileSystemExtractionStore implements ExtractionStore {
             if (!Files.isRegularFile(dir.get().resolve(sectionName(i)))) {
                 invalidate(key, dir.get());
                 return Optional.empty();
+            }
+        }
+        for (PartInfo part : manifest.get().parts()) {
+            Path partDir = partDir(dir.get(), part.stored().key());
+            for (int i = 0; i < part.sections().size(); i++) {
+                if (!Files.isRegularFile(partDir.resolve(sectionName(i)))) {
+                    invalidate(key, dir.get());
+                    return Optional.empty();
+                }
             }
         }
         return Optional.of(manifest.get().stored());
@@ -131,6 +148,38 @@ public class FileSystemExtractionStore implements ExtractionStore {
                 throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
             }
         });
+    }
+
+    @Override
+    public List<StoredPart> parts(ExtractionKey key) {
+        return generation(key).flatMap(path -> manifest(key, path))
+                .map(manifest -> manifest.parts().stream().map(PartInfo::stored).toList()).orElse(List.of());
+    }
+
+    @Override
+    public Stream<TextSection> partSections(ExtractionKey key, String partKey) {
+        StoredPart.checkKey(partKey);
+        Optional<Path> dir = generation(key);
+        Optional<PartInfo> part = dir.flatMap(path -> manifest(key, path))
+                .flatMap(manifest -> manifest.parts().stream().filter(p -> p.stored().key().equals(partKey))
+                        .findFirst());
+        if (part.isEmpty()) {
+            return Stream.empty();
+        }
+        Path partDir = partDir(dir.get(), partKey);
+        List<SectionInfo> infos = part.get().sections();
+        return IntStream.range(0, infos.size()).mapToObj(i -> {
+            try {
+                return read(partDir, i, infos.get(i));
+            } catch (DamagedSection e) {
+                invalidate(key, dir.get());
+                throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
+            }
+        });
+    }
+
+    private static Path partDir(Path generation, String partKey) {
+        return generation.resolve(PARTS).resolve(StoredPart.checkKey(partKey));
     }
 
     /**
@@ -192,21 +241,42 @@ public class FileSystemExtractionStore implements ExtractionStore {
                     || !key.model().equals(node.path("model").asString(null))) {
                 return Optional.empty();
             }
-            List<SectionInfo> sections = new ArrayList<>();
-            for (JsonNode s : node.path("sections")) {
-                sections.add(new SectionInfo(s.path("firstBlock").asLong(), s.path("blocks").asInt(),
-                        s.path("chars").asLong()));
+            List<SectionInfo> sections = sectionInfos(node.path("sections"));
+            List<PartInfo> parts = new ArrayList<>();
+            for (JsonNode p : node.path("parts")) {
+                List<SectionInfo> partSections = sectionInfos(p.path("sections"));
+                parts.add(new PartInfo(new StoredPart(p.path("key").asString(), ExtractionJson.head(p.path("head")),
+                        partSections.size(), p.path("totalBlocks").asLong(), p.path("totalChars").asLong()),
+                        partSections));
             }
             StructuredDocument document = ExtractionJson.document(node.path("document"));
             return Optional.of(new Manifest(new StoredExtraction(key, document, sections.size(),
                     node.path("totalBlocks").asLong(), node.path("totalChars").asLong(),
-                    Instant.parse(node.path("createdAt").asString())), sections));
+                    Instant.parse(node.path("createdAt").asString())), sections, List.copyOf(parts)));
         } catch (NoSuchFileException e) {
             return Optional.empty();
         } catch (IOException e) {
             throw new AssetStoreException("Extraktion nicht lesbar", e);
         } catch (JacksonException | IllegalArgumentException | java.time.DateTimeException e) {
             return Optional.empty();
+        }
+    }
+
+    private static List<SectionInfo> sectionInfos(JsonNode list) {
+        List<SectionInfo> sections = new ArrayList<>();
+        for (JsonNode s : list) {
+            sections.add(new SectionInfo(s.path("firstBlock").asLong(), s.path("blocks").asInt(),
+                    s.path("chars").asLong()));
+        }
+        return sections;
+    }
+
+    private static void sectionInfos(ArrayNode list, List<SectionInfo> sections) {
+        for (SectionInfo info : sections) {
+            ObjectNode s = list.addObject();
+            s.put("firstBlock", info.firstBlock());
+            s.put("blocks", info.blocks());
+            s.put("chars", info.chars());
         }
     }
 
@@ -258,16 +328,17 @@ public class FileSystemExtractionStore implements ExtractionStore {
         }
     }
 
-    private record Manifest(StoredExtraction stored, List<SectionInfo> sections) {
+    private record Manifest(StoredExtraction stored, List<SectionInfo> sections, List<PartInfo> parts) {
     }
 
-    /** Schreibt einen Stand in sein eigenes Verzeichnis, Abschnitt für Abschnitt. */
-    private final class Writer implements ExtractionWriter {
+    private record PartInfo(StoredPart stored, List<SectionInfo> sections) {
+    }
 
-        private final ExtractionKey key;
-        private final int sectionChars;
-        private final Path base;
+    /** Schreibt Blöcke lückenlos ab 0 in Abschnitte eines Verzeichnisses. */
+    private static final class SectionSink {
+
         private final Path dir;
+        private final int sectionChars;
         private final List<SectionInfo> sections = new ArrayList<>();
         private BufferedWriter out;
         private long sectionFirst;
@@ -275,21 +346,13 @@ public class FileSystemExtractionStore implements ExtractionStore {
         private long sectionCharCount;
         private long blocks;
         private long chars;
-        private boolean done;
 
-        Writer(ExtractionKey key, int sectionChars) throws IOException {
-            this.key = key;
+        SectionSink(Path dir, int sectionChars) {
+            this.dir = dir;
             this.sectionChars = sectionChars;
-            this.base = base(key);
-            this.dir = base.resolve("g-" + UUID.randomUUID());
-            Files.createDirectories(dir);
         }
 
-        @Override
-        public void accept(Block block) {
-            if (done) {
-                throw new IllegalStateException("Extraktion schon abgeschlossen");
-            }
+        void accept(Block block) {
             if (block.index() != blocks) {
                 throw new IllegalArgumentException("Blöcke lückenlos ab 0 erwartet");
             }
@@ -299,6 +362,7 @@ public class FileSystemExtractionStore implements ExtractionStore {
                     finishSection();
                 }
                 if (out == null) {
+                    Files.createDirectories(dir);
                     out = Files.newBufferedWriter(dir.resolve(sectionName(sections.size())), StandardCharsets.UTF_8);
                     sectionFirst = block.index();
                 }
@@ -313,6 +377,19 @@ public class FileSystemExtractionStore implements ExtractionStore {
             chars += size;
         }
 
+        void finish() throws IOException {
+            if (out != null) {
+                finishSection();
+            }
+        }
+
+        void abandon() throws IOException {
+            if (out != null) {
+                out.close();
+                out = null;
+            }
+        }
+
         private void finishSection() throws IOException {
             out.close();
             out = null;
@@ -320,20 +397,107 @@ public class FileSystemExtractionStore implements ExtractionStore {
             sectionBlocks = 0;
             sectionCharCount = 0;
         }
+    }
+
+    /** Ein Teil im Stand: seine Abschnitte und sein Kopf. */
+    private static final class PartState {
+
+        final String key;
+        final SectionSink sink;
+        DocumentHead head = DocumentHead.EMPTY;
+        boolean closed;
+
+        PartState(String key, SectionSink sink) {
+            this.key = key;
+            this.sink = sink;
+        }
+    }
+
+    /** Schreibt einen Stand in sein eigenes Verzeichnis, Abschnitt für Abschnitt; Teile darunter. */
+    private final class Writer implements ExtractionWriter {
+
+        private final ExtractionKey key;
+        private final int sectionChars;
+        private final Path base;
+        private final Path dir;
+        private final SectionSink document;
+        private final Map<String, PartState> parts = new LinkedHashMap<>();
+        private boolean done;
+
+        Writer(ExtractionKey key, int sectionChars) throws IOException {
+            this.key = key;
+            this.sectionChars = sectionChars;
+            this.base = base(key);
+            this.dir = base.resolve("g-" + UUID.randomUUID());
+            Files.createDirectories(dir);
+            this.document = new SectionSink(dir, sectionChars);
+        }
 
         @Override
-        public StoredExtraction commit(StructuredDocument document) {
+        public synchronized void accept(Block block) {
             if (done) {
                 throw new IllegalStateException("Extraktion schon abgeschlossen");
             }
-            if (document.blocks() != blocks || document.chars() != chars) {
+            document.accept(block);
+        }
+
+        @Override
+        public synchronized Optional<PartWriter> part(String partKey) {
+            if (done) {
+                throw new IllegalStateException("Extraktion schon abgeschlossen");
+            }
+            StoredPart.checkKey(partKey);
+            if (parts.containsKey(partKey)) {
+                return Optional.empty();
+            }
+            PartState part = new PartState(partKey, new SectionSink(partDir(dir, partKey), sectionChars));
+            parts.put(partKey, part);
+            return Optional.of(new PartWriter() {
+                @Override
+                public void accept(Block block) {
+                    synchronized (Writer.this) {
+                        if (done || part.closed) {
+                            throw new IllegalStateException("Teil schon abgeschlossen");
+                        }
+                        part.sink.accept(block);
+                    }
+                }
+
+                @Override
+                public void head(DocumentHead head) {
+                    synchronized (Writer.this) {
+                        part.head = Objects.requireNonNull(head, "head");
+                    }
+                }
+
+                @Override
+                public void close() {
+                    synchronized (Writer.this) {
+                        if (part.closed || done) {
+                            return;
+                        }
+                        part.closed = true;
+                        try {
+                            part.sink.finish();
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    }
+                }
+            });
+        }
+
+        @Override
+        public synchronized StoredExtraction commit(StructuredDocument structured) {
+            if (done) {
+                throw new IllegalStateException("Extraktion schon abgeschlossen");
+            }
+            if (structured.blocks() != document.blocks || structured.chars() != document.chars) {
                 throw new IllegalArgumentException("Zähler passen nicht zu den geschriebenen Blöcken");
             }
             Instant createdAt = Instant.now();
             try {
-                if (out != null) {
-                    finishSection();
-                }
+                document.finish();
                 ObjectNode node = ExtractionJson.JSON.createObjectNode();
                 node.put("schema", SCHEMA);
                 node.put("sha256", key.sha256());
@@ -341,16 +505,23 @@ public class FileSystemExtractionStore implements ExtractionStore {
                 node.put("version", key.version());
                 node.put("model", key.model());
                 node.put("createdAt", createdAt.toString());
-                node.put("totalBlocks", blocks);
-                node.put("totalChars", chars);
-                ArrayNode list = node.putArray("sections");
-                for (SectionInfo info : sections) {
-                    ObjectNode s = list.addObject();
-                    s.put("firstBlock", info.firstBlock());
-                    s.put("blocks", info.blocks());
-                    s.put("chars", info.chars());
+                node.put("totalBlocks", document.blocks);
+                node.put("totalChars", document.chars);
+                sectionInfos(node.putArray("sections"), document.sections);
+                ArrayNode partList = node.putArray("parts");
+                for (PartState part : parts.values()) {
+                    if (!part.closed) {
+                        part.closed = true;
+                        part.sink.finish();
+                    }
+                    ObjectNode p = partList.addObject();
+                    p.put("key", part.key);
+                    p.set("head", ExtractionJson.head(part.head));
+                    p.put("totalBlocks", part.sink.blocks);
+                    p.put("totalChars", part.sink.chars);
+                    sectionInfos(p.putArray("sections"), part.sink.sections);
                 }
-                node.set("document", ExtractionJson.document(document));
+                node.set("document", ExtractionJson.document(structured));
                 Files.writeString(dir.resolve(DOCUMENT), ExtractionJson.JSON.writeValueAsString(node),
                         StandardCharsets.UTF_8);
                 Optional<Path> previous = generation(key);
@@ -361,18 +532,20 @@ public class FileSystemExtractionStore implements ExtractionStore {
                 close();
                 throw new AssetStoreException("Extraktion nicht ablegbar", e);
             }
-            return new StoredExtraction(key, document, sections.size(), blocks, chars, createdAt);
+            return new StoredExtraction(key, structured, document.sections.size(), document.blocks, document.chars,
+                    createdAt);
         }
 
         @Override
-        public void close() {
+        public synchronized void close() {
             if (done) {
                 return;
             }
             done = true;
             try {
-                if (out != null) {
-                    out.close();
+                document.abandon();
+                for (PartState part : parts.values()) {
+                    part.sink.abandon();
                 }
                 deleteTree(dir);
             } catch (IOException e) {
