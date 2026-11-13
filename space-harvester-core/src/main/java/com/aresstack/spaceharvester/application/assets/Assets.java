@@ -1019,7 +1019,17 @@ public class Assets {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
         return store.text(asset.sha256(), textExtractor(), textVersion())
-                .map(text -> DocumentExtractions.withSource(text, asset));
+                .map(text -> DocumentExtractions.withSource(withStoredOutcome(text, asset), asset));
+    }
+
+    /** Der abgelegte Text trägt keinen Status; er steht in der abgelegten Extraktion (AP4a). */
+    private AssetText withStoredOutcome(AssetText text, Asset asset) {
+        DocumentExtractions structured = extractions;
+        if (text.outcome().isPresent() || structured == null) {
+            return text;
+        }
+        return structured.stored(asset.sha256()).map(extraction -> text.withOutcome(extraction.document().outcome()))
+                .orElse(text);
     }
 
     /** Wie {@link #extract(DocumentText, AssetContent, boolean)}; ohne Bytes im Speicher {@code TOO_LARGE}. */

@@ -215,10 +215,11 @@ public final class DocumentExtractions {
 
     /** Der Text gilt als gekürzt, wenn die Quelle Teile auslassen musste; abgelegt wird er ohne diese Angabe. */
     static AssetText withSource(AssetText text, Asset asset) {
-        if (asset.partsWithoutFile() == 0 || text.truncated()) {
+        if (asset.partsWithoutFile() == 0) {
             return text;
         }
-        return new AssetText(text.sha256(), text.extractor(), text.version(), text.text(), true, text.createdAt());
+        return new AssetText(text.sha256(), text.extractor(), text.version(), text.text(), true, text.createdAt(),
+                text.outcome().map(outcome -> withSource(outcome, asset)));
     }
 
     /**
@@ -352,7 +353,7 @@ public final class DocumentExtractions {
 
         AssetText result(Asset asset, String extractor, String version, Outcome outcome, Instant now) {
             return new AssetText(asset.sha256(), extractor, version, text.toString(), cut || outcome.truncated(),
-                    now);
+                    now, Optional.of(outcome));
         }
     }
 

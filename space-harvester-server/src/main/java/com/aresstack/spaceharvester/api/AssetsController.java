@@ -9,7 +9,10 @@ import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.Outcome;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
+import com.aresstack.spaceharvester.application.assets.ReadExtent;
+import com.aresstack.spaceharvester.application.assets.StatusReason;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -27,6 +30,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -428,15 +432,29 @@ public class AssetsController {
      *
      * @param sha256    Inhalt, aus dem der Text gelesen ist
      * @param extractor Kennung und {@code extractorVersion} Version der Extraktion
-     * @param truncated ob der Text an der Zeichengrenze der Extraktion abgeschnitten wurde
+     * @param truncated ob der Text gekürzt ist: an der Zeichengrenze oder weil die Extraktion gekürzt ist
+     * @param status    Status der Extraktion (ADR 0026): {@code OK} oder {@code PARTIAL}; leer ohne strukturierte
+     *                  Extraktion
+     * @param reason    fester Grund zu {@code PARTIAL} (Codes in docs/SOURCE_ADAPTERS.md), sonst leer
+     * @param bytesRead gelesene Bytes, wenn die Extraktion sie kennt
+     * @param charsRead gelesene Zeichen, wenn die Extraktion sie kennt
      */
     public record AssetTextResponse(String attachmentId, @Schema(nullable = true) String version, String title,
                                     String sha256, String extractor, String extractorVersion, boolean truncated,
-                                    Instant createdAt, String text) {
+                                    Instant createdAt, String text,
+                                    @Schema(nullable = true, allowableValues = {"OK", "PARTIAL"}) String status,
+                                    @Schema(nullable = true, example = "timeout") String reason,
+                                    @Schema(nullable = true) Long bytesRead,
+                                    @Schema(nullable = true) Long charsRead) {
 
         static AssetTextResponse of(PageAttachment attachment, AssetText text) {
+            Optional<Outcome> outcome = text.outcome();
+            Optional<ReadExtent> extent = outcome.flatMap(Outcome::extent);
             return new AssetTextResponse(attachment.attachmentId(), attachment.version(), attachment.title(),
-                    text.sha256(), text.extractor(), text.version(), text.truncated(), text.createdAt(), text.text());
+                    text.sha256(), text.extractor(), text.version(), text.truncated(), text.createdAt(), text.text(),
+                    outcome.map(o -> o.status().name()).orElse(null),
+                    outcome.flatMap(Outcome::reason).map(StatusReason::code).orElse(null),
+                    extent.map(ReadExtent::bytes).orElse(null), extent.map(ReadExtent::chars).orElse(null));
         }
     }
 
