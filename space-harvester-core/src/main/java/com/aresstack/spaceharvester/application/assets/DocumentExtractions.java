@@ -273,22 +273,11 @@ public final class DocumentExtractions {
         if (extraction.document().directory().isEmpty() || !text.open()) {
             return;
         }
-        java.util.Set<String> stored = new java.util.HashSet<>();
-        extractions.parts(extraction.key()).forEach(part -> stored.add(part.key()));
-        java.util.Set<String> seen = new java.util.HashSet<>();
-        for (EmbeddedEntry entry : extraction.document().directory()) {
-            String partKey = entry.id().storageKey();
-            if (!text.open()) {
-                return;
-            }
-            if (!stored.contains(partKey) || !seen.add(partKey)) {
-                continue;
-            }
-            try (Stream<TextSection> sections = extractions.partSections(extraction.key(), partKey)) {
-                var iterator = sections.iterator();
-                while (iterator.hasNext() && text.open()) {
-                    iterator.next().blocks().forEach(text::accept);
-                }
+        // Die Teile stehen im Stand in Verzeichnisreihenfolge, inhaltsgleiche nur einmal; der Stand wird einmal gelesen.
+        try (Stream<TextSection> sections = extractions.allPartSections(extraction.key())) {
+            var iterator = sections.iterator();
+            while (iterator.hasNext() && text.open()) {
+                iterator.next().blocks().forEach(text::accept);
             }
         }
     }
@@ -418,7 +407,9 @@ public final class DocumentExtractions {
 
         @Override
         public PartSink part(EmbeddedEntry entry) {
-            Optional<PartWriter> part = writer.part(entry.id().storageKey());
+            // Ein abgewiesener Teil (Status schon am Eintrag) belegt keine Ablage; ein lesbarer gleicher Teil füllt sie.
+            Optional<PartWriter> part = usable(entry.outcome()) ? writer.part(entry.id().storageKey())
+                    : Optional.empty();
             if (part.isEmpty()) {
                 return block -> {
                     // inhaltsgleich: schon abgelegt

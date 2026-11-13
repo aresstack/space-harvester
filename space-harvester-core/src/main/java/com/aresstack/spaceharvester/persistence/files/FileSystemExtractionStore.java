@@ -178,6 +178,27 @@ public class FileSystemExtractionStore implements ExtractionStore {
         });
     }
 
+    @Override
+    public Stream<TextSection> allPartSections(ExtractionKey key) {
+        Optional<Path> dir = generation(key);
+        Optional<Manifest> manifest = dir.flatMap(path -> manifest(key, path));
+        if (manifest.isEmpty()) {
+            return Stream.empty();
+        }
+        return manifest.get().parts().stream().flatMap(part -> {
+            Path partDir = partDir(dir.get(), part.stored().key());
+            List<SectionInfo> infos = part.sections();
+            return IntStream.range(0, infos.size()).mapToObj(i -> {
+                try {
+                    return read(partDir, i, infos.get(i));
+                } catch (DamagedSection e) {
+                    invalidate(key, dir.get());
+                    throw new AssetStoreException("Abschnitt beschädigt; Extraktion verworfen", null);
+                }
+            });
+        });
+    }
+
     private static Path partDir(Path generation, String partKey) {
         return generation.resolve(PARTS).resolve(StoredPart.checkKey(partKey));
     }

@@ -45,4 +45,10 @@ public interface ExtractionStore {
      * Extraktion oder Teil fehlen.
      */
     Stream<TextSection> partSections(ExtractionKey key, String partKey);
+
+    /**
+     * Die Abschnitte aller Teile, Teil für Teil in der Reihenfolge von {@link #parts}, mit einmal gelesenem Stand; der
+     * Strom muss geschlossen werden. Leer, wenn die Extraktion fehlt.
+     */
+    Stream<TextSection> allPartSections(ExtractionKey key);
 }

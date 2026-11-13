@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -210,6 +211,51 @@ class DocumentExtractionsTest {
             assertThat(part.blocks()).as("Blöcke nicht doppelt").isEqualTo(1);
             assertThat(part.head().title()).contains("Anhang");
         });
+    }
+
+    /** Codex #715: Ein abgewiesener erster Teil belegt die Ablage nicht; der lesbare gleiche Teil füllt sie. */
+    @Test
+    void aRefusedPartLeavesTheStorageToAReadableCopy() {
+        String sha = "ef".repeat(32);
+        DocumentStructure refusedFirst = new DocumentStructure() {
+            @Override
+            public String id() {
+                return "teile";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public StructuredDocument extract(Path original, String title, String mediaType, ExtractionLimits limits,
+                                              StructureSink sink) {
+                try (BlockSink document = sink.document()) {
+                    document.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Mailtext"));
+                }
+                EmbeddedEntry refused = new EmbeddedEntry(new PartId.Content(sha, 1), Optional.of(sha),
+                        Optional.of("gross.bin"), Optional.of("application/octet-stream"), "/1", Optional.empty(), 1,
+                        Optional.of(7L), Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.MEMORY_LIMIT));
+                try (PartSink part = sink.part(refused)) {
+                    Objects.requireNonNull(part);
+                }
+                EmbeddedEntry readable = new EmbeddedEntry(new PartId.Content(sha, 2), Optional.of(sha),
+                        Optional.of("gross.pdf"), Optional.of("application/pdf"), "/2", Optional.empty(), 1,
+                        Optional.of(7L), Outcome.ok(new ReadExtent(7, 7)));
+                try (PartSink part = sink.part(readable)) {
+                    part.accept(new Block.Paragraph(0, Optional.empty(), List.of(), "Anhang"));
+                }
+                return new StructuredDocument(DocumentHead.EMPTY, Outcome.ok(new ReadExtent(10, 8)),
+                        List.of(refused, readable), 1, 8);
+            }
+        };
+        FileSystemAssetStore store = new FileSystemAssetStore(directory);
+        Asset asset = put(store, "egal\n");
+        DocumentExtractions extractions = new DocumentExtractions(refusedFirst,
+                new FileSystemExtractionStore(directory), ExtractionLimits.DEFAULTS);
+
+        assertThat(extractions.text(asset, store, NOW).text()).isEqualTo("Mailtext\n\nAnhang");
     }
 
     @Test
