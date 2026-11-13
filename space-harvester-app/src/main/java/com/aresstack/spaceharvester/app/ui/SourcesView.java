@@ -1056,6 +1056,96 @@ public final class SourcesView implements View {
      * Startet für die angehakten Spaces, sonst den gewählten, je einen Auftrag: Kreispfeil (vollständiger Abgleich),
      * Initialisieren oder Änderungen prüfen. Ohne Auswahl startet nichts, auch nicht der erste Space der Liste.
      */
+    static final String SYNC_CARD_TOOLTIP = "Änderungen seit dem letzten Lauf nachholen: je Space dieser Quelle ein "
+            + "Auftrag im Hintergrund; die Kreispfeile bleiben grau, bis alle durch sind";
+
+    /** Quellen, deren Nachholen läuft; so lange bleiben die Kreispfeile ihrer Karte ausgegraut. */
+    private final java.util.Set<String> catchingUp = new java.util.HashSet<>();
+
+    /** Für Tests: die Kreispfeile an der Karte dieser Quelle. */
+    IconButton syncButton(String sourceId) {
+        SourceCard card = cards.get(sourceId);
+        return card == null ? null : card.sync;
+    }
+
+    /**
+     * Kreispfeile an der Quellenkarte: je Space der Quelle die Änderungen seit dem letzten bestätigten Stand nachholen
+     * ({@link Workspace#catchUp}), in der Betriebsart der Quelle; Spaces ohne bestätigten Stand bekommen einen ersten.
+     * Der Knopf bleibt ausgegraut, bis jeder gestartete Auftrag beendet ist, auch gescheitert; das Ergebnis steht in
+     * der Statuszeile und unter Aufträge.
+     */
+    private void catchUp(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        AppRuntime runtime = context.runtime();
+        List<String> keys = context.connection(id).spaces().stream().map(Partition::key).toList();
+        if (runtime == null || keys.isEmpty()) {
+            feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
+                    + "die Änderungen nach.");
+            return;
+        }
+        if (!catchingUp.add(id)) {
+            return;
+        }
+        cards.values().forEach(SourceCard::update);
+        // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
+        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
+                : SyncMode.CATALOG_ONLY;
+        feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
+        Background.run(() -> {
+            List<String> jobs = new ArrayList<>();
+            Map<String, Exception> failed = new LinkedHashMap<>();
+            for (String key : keys) {
+                try {
+                    jobs.add(runtime.workspace().catchUp(id, key, mode).id());
+                } catch (RuntimeException e) {
+                    failed.put(key, e);
+                }
+            }
+            int broken = 0;
+            while (true) {
+                boolean running = false;
+                broken = 0;
+                for (String job : jobs) {
+                    JobStatus status = runtime.workspace().job(job);
+                    if (status == null || status.state().terminal()) {
+                        if (status != null && status.state() != com.aresstack.spaceharvester.application.jobs.JobState
+                                .COMPLETED) {
+                            broken++;
+                        }
+                    } else {
+                        running = true;
+                    }
+                }
+                if (!running) {
+                    break;
+                }
+                Thread.sleep(1000);
+            }
+            return new CatchUpResult(jobs.size(), broken, failed);
+        }, result -> {
+            catchingUp.remove(id);
+            cards.values().forEach(SourceCard::update);
+            String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
+            if (result.failed().isEmpty() && result.broken() == 0) {
+                feedback.success(done);
+            } else {
+                int notOk = result.failed().size() + result.broken();
+                feedback.warning(Texts.count(result.started() - result.broken(), "Space", "Spaces") + " nachgeholt, "
+                        + Texts.count(notOk, "Space", "Spaces") + " nicht",
+                        result.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                .collect(java.util.stream.Collectors.joining("\n"))
+                                + (result.broken() == 0 ? "" : "\nEinzelheiten unter Aufträge"));
+            }
+        }, error -> {
+            catchingUp.remove(id);
+            cards.values().forEach(SourceCard::update);
+            feedback.problem(error);
+        });
+    }
+
+    private record CatchUpResult(int started, int broken, Map<String, Exception> failed) {
+    }
+
     private void startSpaces(String one, String many, SpaceStart action) {
         List<String> keys = spaceTargets();
         String id = selectedId();
@@ -1295,6 +1385,8 @@ public final class SourcesView implements View {
         private final IconButton edit = new IconButton(Glyph.PENCIL, "Einstellungen der Quelle öffnen");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
+        /** Kreispfeile vor den drei Punkten: Änderungen seit dem letzten bestätigten Stand je Space nachholen. */
+        final IconButton sync = new IconButton(Glyph.REFRESH, SYNC_CARD_TOOLTIP);
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
 
         private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
@@ -1319,6 +1411,7 @@ public final class SourcesView implements View {
             actions.setOpaque(false);
             actions.add(edit);
             actions.add(remove);
+            actions.add(sync);
             actions.add(more);
             add(actions);
 
@@ -1329,6 +1422,10 @@ public final class SourcesView implements View {
             remove.addActionListener(e -> {
                 select(entry.id());
                 SourcesView.this.remove(entry);
+            });
+            sync.addActionListener(e -> {
+                select(entry.id());
+                SourcesView.this.catchUp(entry);
             });
             more.addActionListener(e -> {
                 select(entry.id());
@@ -1439,6 +1536,9 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
+            // Ausgegraut, bis alle gestarteten Aufträge durch oder gescheitert sind, wie die Knöpfe beim Export.
+            sync.setEnabled(!disabled(entry) && !waiting && connection.state() == AppContext.Connection.State.CONNECTED
+                    && !catchingUp.contains(entry.id()));
             revalidate();
             repaint();
         }
