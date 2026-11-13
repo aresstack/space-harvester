@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
+import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -142,6 +143,21 @@ class EnrichmentConfiguration {
         List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
                 texts.getIfAvailable(), followUps);
+    }
+
+    /**
+     * ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei, sobald ein Dokument neu oder geändert im Volltextindex
+     * liegt; als Auftrag ENRICHMENT wie bei Seiten.
+     */
+    @Bean
+    DocumentEnrichments documentEnrichments(Enrichments enrichments, ObjectProvider<Jobs> jobs,
+                                            ObjectProvider<Assets> assets) {
+        DocumentEnrichments documents = new DocumentEnrichments(enrichments, jobs.getIfAvailable(), () -> true);
+        Assets target = assets.getIfAvailable();
+        if (target != null) {
+            target.indexedDocuments(documents);
+        }
+        return documents;
     }
     /**
      * Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der Dienst

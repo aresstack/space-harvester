@@ -34,6 +34,7 @@ import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
+import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
@@ -728,6 +729,8 @@ public final class Harvester implements AutoCloseable {
             assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
                     builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
+            // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten.
+            assets.indexedDocuments(new DocumentEnrichments(enrichments, jobs, () -> true));
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);

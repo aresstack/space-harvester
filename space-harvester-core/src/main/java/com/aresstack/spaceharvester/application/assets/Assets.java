@@ -176,6 +176,8 @@ public class Assets {
     private int downloadLimit = MAX_CONCURRENT_DOWNLOADS;
     /** Strukturierte Extraktion aus der Datei (ADR 0026, AP3b); ohne sie gilt der bisherige Weg über Byte-Arrays. */
     private volatile DocumentExtractions extractions;
+    /** Hört auf neu indexierte Dokumente (ADR 0026, AP9a), etwa für ihre Analysen; ohne ihn geschieht nichts. */
+    private volatile IndexedDocuments indexedDocuments;
 
     /** Eine Schranke, deren Plätze sich zur Laufzeit ändern lassen ({@link #downloadLimit(int)}). */
     private static final class Downloads extends Semaphore {
@@ -215,6 +217,11 @@ public class Assets {
      */
     public void documentExtractions(DocumentExtractions extractions) {
         this.extractions = extractions;
+    }
+
+    /** Schließt den Hörer auf neu indexierte Dokumente an (ADR 0026, AP9a). */
+    public void indexedDocuments(IndexedDocuments listener) {
+        this.indexedDocuments = listener;
     }
 
     /** Kennung der Extraktion, unter der Texte liegen. */
@@ -1246,6 +1253,7 @@ public class Assets {
                     // bisher nur der Dateiname.
                     texts.replaceAttachment(page, asset.attachmentId(), List.of(new PageTextIndex.AttachmentEntry(
                             page, list.spaceKey(), asset.attachmentId(), title, "", input)));
+                    indexed(list, asset, structured);
                     return Optional.of(true);
                 }
                 Iterable<PageTextIndex.AttachmentEntry> entries = () -> new java.util.Iterator<>() {
@@ -1262,6 +1270,7 @@ public class Assets {
                     }
                 };
                 texts.replaceAttachment(page, asset.attachmentId(), entries);
+                indexed(list, asset, structured);
                 return Optional.of(true);
             }
         } catch (RuntimeException e) {
@@ -1269,6 +1278,19 @@ public class Assets {
             LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Dokuments in {0} nicht aktualisiert ({1})",
                     list.sourceId(), e.getClass().getName());
             return Optional.of(false);
+        }
+    }
+
+    private void indexed(PageAttachmentList list, Asset asset, DocumentExtractions structured) {
+        IndexedDocuments listener = indexedDocuments;
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.indexed(list, asset, structured);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Analysen eines Dokuments in {0} nicht eingeplant ({1})",
+                    list.sourceId(), e.getClass().getName());
         }
     }
 
@@ -1319,8 +1341,13 @@ public class Assets {
             if (list.attachments().complete()) {
                 Set<String> current = new HashSet<>();
                 list.attachments().attachments().forEach(a -> current.add(a.attachmentId()));
-                texts.retainAttachments(new PageKey(list.sourceId(), list.attachments().pageId()), current);
+                PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+                texts.retainAttachments(page, current);
                 indexed = true;
+                IndexedDocuments listener = indexedDocuments;
+                if (listener != null) {
+                    listener.retained(page, Set.copyOf(current));
+                }
             }
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Volltextindex der Anhänge in {0} nicht bereinigt ({1})",

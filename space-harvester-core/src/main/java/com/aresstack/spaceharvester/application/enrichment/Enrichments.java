@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
@@ -152,6 +153,81 @@ public class Enrichments {
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */
     public List<String> processorIds() {
         return List.copyOf(processors.keySet());
+    }
+
+    /** Die Kennungen der Prozessoren, die auch Dokumente bearbeiten ({@link EnrichmentProcessor#documents()}). */
+    public List<String> documentProcessorIds() {
+        return processors.values().stream().filter(EnrichmentProcessor::documents).map(EnrichmentProcessor::id)
+                .toList();
+    }
+
+    /**
+     * Berechnet für einen Abschnitt eines Anhangs oder einer enthaltenen Datei die Ergebnisse, die fehlen oder veraltet
+     * sind (ADR 0026, AP9a), im aufrufenden Thread: Der Auftrag der Anreicherung ist hier selbst der Hintergrund. Nur
+     * Prozessoren mit {@link EnrichmentProcessor#documents()}, nur solange sie die Seite des Dokuments bearbeiten.
+     *
+     * @param revision Inhalts-Hash des Dokuments, aus dem der Abschnitt stammt
+     * @param stored   die gespeicherten Ergebnisse des Dokuments ({@link EnrichmentStore#find(DocumentKey)})
+     * @param only     nur dieser Prozessor oder {@code null} für alle
+     */
+    public Run refreshDocument(DocumentKey document, int section, String revision, PageText text,
+                               List<Enrichment> stored, String only) {
+        Objects.requireNonNull(document, "document");
+        if (document.isPage()) {
+            throw new IllegalArgumentException("Seiten über refresh(PageSnapshot)");
+        }
+        String input = text.inputSha256();
+        Map<String, Enrichment> previous = new HashMap<>();
+        for (Enrichment enrichment : stored) {
+            if (enrichment.section() == section) {
+                previous.put(enrichment.processorId(), enrichment);
+            }
+        }
+        int computed = 0;
+        int current = 0;
+        int failed = 0;
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (!processor.documents() || only != null && !only.equals(processor.id())
+                    || !processor.appliesTo(document.page())) {
+                continue;
+            }
+            Enrichment old = previous.get(processor.id());
+            if (old != null && old.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
+                current++;
+                continue;
+            }
+            Enrichment result = compute(processor, document, section, revision, text, input);
+            if (!saveWhileApplies(processor, result)) {
+                continue;
+            }
+            computed++;
+            if (result.status() == Enrichment.Status.FAILED) {
+                failed++;
+            }
+        }
+        return new Run(true, computed, current, failed);
+    }
+
+    /** @return das Ergebnis oder {@code null}, wenn der Prozessor das Dokument nicht bearbeiten darf */
+    private Enrichment compute(EnrichmentProcessor processor, DocumentKey document, int section, String revision,
+                               PageText text, String input) {
+        PageKey key = document.page();
+        try {
+            EnrichmentOutput output = processor.process(document, text);
+            String version = output.version() != null ? output.version() : processor.version();
+            return new Enrichment(key, processor.id(), version, input, revision, Enrichment.Status.OK,
+                    output.payloadJson(), output.warnings(), null, clock.instant(), document, section);
+        } catch (ProcessingNotAllowedException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Prozessor {0} übersprungen, Quelle {1} nicht freigegeben",
+                    processor.id(), key.sourceId());
+            return null;
+        } catch (RuntimeException e) {
+            // Keine Meldung, kein Anhang, keine Seite: sie könnten Text oder Dateinamen enthalten.
+            LOG.log(System.Logger.Level.WARNING, "Prozessor {0} {1} scheiterte an einem Dokument in {2} ({3})",
+                    processor.id(), processor.version(), key.sourceId(), e.getClass().getName());
+            return new Enrichment(key, processor.id(), processor.version(), input, revision,
+                    Enrichment.Status.FAILED, "{}", List.of(), PROCESSOR_ERROR, clock.instant(), document, section);
+        }
     }
 
     /**
