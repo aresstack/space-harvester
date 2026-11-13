@@ -302,7 +302,22 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * anmelden, dann {@link #status()} lesen.
      */
     public Subscription subscribe(Listener listener) {
-        return listeners.add(Objects.requireNonNull(listener, "listener"));
+        Subscription subscription = listeners.add(Objects.requireNonNull(listener, "listener"));
+        // Läuft die Wartezeit schon, hat sie ohne Empfänger niemand vorgemerkt: ihr Ende sonst nie gemeldet.
+        long cooldown;
+        synchronized (lock) {
+            cooldown = remainingCooldown();
+        }
+        if (cooldown >= 0) {
+            notifier.markLater(STATUS, Set.of(), Duration.ofNanos(cooldown).plusMillis(1));
+        }
+        return subscription;
+    }
+
+    /** Restzeit der Wartezeit nach dem Vordergrund in Nanosekunden; {@code -1} außerhalb. Unter {@link #lock}. */
+    private long remainingCooldown() {
+        return pause() == AcquisitionStatus.Pause.COOLDOWN
+                ? Math.max(0, lastForeground + resumeDelayNanos - System.nanoTime()) : -1;
     }
 
     /** Merkt den Stand zur Meldung vor; ohne Empfänger nichts. Nie unter einer Sperre, die eine Meldung braucht. */
@@ -319,8 +334,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         synchronized (lock) {
             status = new Status(foregroundQueue.size(), foregroundRunning, backgroundQueue.size(), backgroundRunning,
                     promoted, pause());
-            cooldown = status.pause() == AcquisitionStatus.Pause.COOLDOWN
-                    ? Math.max(0, lastForeground + resumeDelayNanos - System.nanoTime()) : -1;
+            cooldown = remainingCooldown();
         }
         listeners.deliver(null, listener -> listener.changed(status));
         if (cooldown >= 0) {
