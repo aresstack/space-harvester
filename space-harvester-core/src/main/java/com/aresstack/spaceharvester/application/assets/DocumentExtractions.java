@@ -67,6 +67,11 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
+    /** Die Grenzen, unter denen gelesen wird. */
+    public ExtractionLimits limits() {
+        return limits;
+    }
+
     /** Der Schlüssel der Extraktion eines Inhalts. */
     public ExtractionKey key(String sha256) {
         return ExtractionKey.of(sha256, structure);

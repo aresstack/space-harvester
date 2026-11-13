@@ -219,6 +219,11 @@ public class Assets {
         this.extractions = extractions;
     }
 
+    /** Die angeschlossene strukturierte Extraktion; leer ohne. */
+    public Optional<DocumentExtractions> documentExtractions() {
+        return Optional.ofNullable(extractions);
+    }
+
     /** Kennung der Extraktion, unter der Texte liegen. */
     private String textExtractor() {
         DocumentExtractions current = extractions;

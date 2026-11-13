@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.assets;
 
+import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -11,6 +13,7 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +40,12 @@ import java.util.stream.Stream;
  * Fehler. Angehalten oder abgebrochen setzt er im selben Eintrag fort und überspringt, was schon neu gelesen ist, auch
  * nach einem Neustart (aus {@link JobStatus#parameters()}).
  *
+ * <p>Von selbst ({@link #afterChange}, AP5c): Beim Start vergleicht der Dienst je Quelle den eingestellten Stand der
+ * Extraktion ({@link ReadState}) mit dem zuletzt vollständig gelesenen ({@link ReadStates}). Nach einem Wechsel von
+ * Extraktion, Version oder Strukturmodell liest er alle veralteten Stände neu, nach geänderten Grenzen nur Dokumente,
+ * die an einer Grenze enden konnten ({@link #LIMITED}). Den neuen Stand merkt er sich erst, wenn der Auftrag
+ * durchgelaufen ist; ein unterbrochener Lauf setzt beim nächsten Start fort.
+ *
  * <p>Rechte prüft der Aufrufer, wie bei {@code SourceDataPurge}. Meldungen nennen nie Dateinamen oder Inhalte.
  */
 public final class DocumentRereads {
@@ -47,28 +56,51 @@ public final class DocumentRereads {
     public static final String STATUSES = "statuses";
     /** Angabe des Auftrags: Beginn des ersten Laufs; mit Status gilt eine Extraktion ab dann als neu gelesen. */
     public static final String SINCE = "since";
+    /**
+     * Angabe eines Auftrags, der von selbst startete ({@link #afterChange}): der Stand, den er herstellt; nach seinem
+     * Durchlauf gemerkt.
+     */
+    public static final String AUTO = "auto";
+    /**
+     * Status, auf die „Neu lesen“ nach geänderten Grenzen beschränkt ist: was an einer Grenze teilweise gelesen,
+     * gescheitert oder ausgelassen ist.
+     */
+    public static final Set<ExtractionStatus> LIMITED = Set.copyOf(EnumSet.of(ExtractionStatus.PARTIAL,
+            ExtractionStatus.FAILED, ExtractionStatus.EXCLUDED));
     /** So viele neu gelesene Dokumente, dann wird der Volltextindex gesichert. */
     static final int FLUSH_EVERY = 50;
+    private static final System.Logger LOG = System.getLogger(DocumentRereads.class.getName());
+    /** Fehlercode eines Auftrags, den ein Neustart unterbrach ({@code Jobs}). */
+    private static final String INTERRUPTED = "INTERRUPTED";
 
     private final Jobs jobs;
     private final Assets assets;
     private final AssetStore store;
     private final Predicate<String> configured;
     private final Function<PageKey, Optional<String>> spaceKeys;
+    private final ReadStates states;
     private final Clock clock;
+
+    /** Ohne gemerkten Stand: startet nie von selbst. */
+    public DocumentRereads(Jobs jobs, Assets assets, AssetStore store, Predicate<String> configured,
+                           Function<PageKey, Optional<String>> spaceKeys, Clock clock) {
+        this(jobs, assets, store, configured, spaceKeys, ReadStates.NONE, clock);
+    }
 
     /**
      * @param configured ob eine Quelle eingerichtet ist
      * @param spaceKeys  Space einer Seite aus dem Cache, für die Einträge im Volltextindex; leer für eine unbekannte
      *                   Seite (dann bleibt ihr Indexeintrag bis zur nächsten Ernte)
+     * @param states     je Quelle der zuletzt vollständig gelesene Stand, für {@link #afterChange}
      */
     public DocumentRereads(Jobs jobs, Assets assets, AssetStore store, Predicate<String> configured,
-                           Function<PageKey, Optional<String>> spaceKeys, Clock clock) {
+                           Function<PageKey, Optional<String>> spaceKeys, ReadStates states, Clock clock) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.assets = Objects.requireNonNull(assets, "assets");
         this.store = Objects.requireNonNull(store, "store");
         this.configured = Objects.requireNonNull(configured, "configured");
         this.spaceKeys = Objects.requireNonNull(spaceKeys, "spaceKeys");
+        this.states = Objects.requireNonNull(states, "states");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -80,6 +112,10 @@ public final class DocumentRereads {
      * @throws UnknownSourceException ohne eingerichtete Quelle dieser ID
      */
     public JobStatus start(String sourceId, String owner, Set<ExtractionStatus> statuses) {
+        return start(sourceId, owner, statuses, null);
+    }
+
+    private JobStatus start(String sourceId, String owner, Set<ExtractionStatus> statuses, String auto) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(statuses, "statuses");
         if (!configured.test(sourceId)) {
@@ -91,8 +127,76 @@ public final class DocumentRereads {
             parameters.put(STATUSES, statuses.stream().map(Enum::name).sorted().collect(Collectors.joining(",")));
         }
         parameters.put(SINCE, since.toString());
+        if (auto != null) {
+            parameters.put(AUTO, auto);
+        }
         Set<ExtractionStatus> copy = statuses.isEmpty() ? Set.of() : EnumSet.copyOf(statuses);
-        return jobs.submit(JobType.REREAD, sourceId, null, null, owner, parameters, task(sourceId, copy, since));
+        return jobs.submit(JobType.REREAD, sourceId, null, null, owner, parameters,
+                task(sourceId, copy, since, auto));
+    }
+
+    /**
+     * Startet „Neu lesen“ für jede dieser Quellen, deren abgelegte Dokumente nicht mit dem eingestellten Stand der
+     * Extraktion gelesen sind (AP5c, beim Start des Dienstes): nach einem Wechsel von Extraktion, Version oder
+     * Strukturmodell ohne Beschränkung, nach geänderten Grenzen beschränkt auf {@link #LIMITED}. Ohne gemerkten Stand
+     * gilt der eingestellte, wenn die Quelle noch keine Dokumente abgelegt hat; sonst wird neu gelesen. Läuft für eine
+     * Quelle schon ein solcher Auftrag oder hat der Benutzer ihn angehalten oder abgebrochen, startet kein zweiter; einen
+     * durch einen Neustart unterbrochenen setzt er im selben Eintrag fort. Wirft nie: Eine Quelle, für die das nicht
+     * gelingt, versucht der nächste Start erneut.
+     *
+     * @return die gestarteten oder fortgesetzten Aufträge
+     */
+    public List<JobStatus> afterChange(Collection<String> sourceIds, String owner) {
+        Optional<ReadState> wanted = ReadState.of(assets);
+        if (wanted.isEmpty() || !states.remembers()) {
+            return List.of();
+        }
+        String current = wanted.get().encoded();
+        List<JobStatus> started = new ArrayList<>();
+        for (String sourceId : sourceIds) {
+            try {
+                afterChange(sourceId, owner, wanted.get(), current).ifPresent(started::add);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "„Neu lesen“ für {0} nicht gestartet ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        }
+        return List.copyOf(started);
+    }
+
+    private Optional<JobStatus> afterChange(String sourceId, String owner, ReadState wanted, String current) {
+        Optional<ReadState> known = states.get(sourceId).flatMap(ReadState::decode);
+        if (known.filter(wanted::equals).isPresent() || !configured.test(sourceId)) {
+            return Optional.empty();
+        }
+        Optional<JobStatus> open = jobs.list(owner, JobType.REREAD).stream()
+                .filter(job -> sourceId.equals(job.sourceId()) && job.parameter(AUTO) != null
+                        && job.state() != JobState.COMPLETED)
+                .findFirst();
+        if (open.isPresent()) {
+            JobStatus job = open.get();
+            boolean interrupted = job.state() == JobState.FAILED && job.error() != null
+                    && INTERRUPTED.equals(job.error().code());
+            return interrupted ? Optional.of(resume(job.id(), owner)) : Optional.empty();
+        }
+        if (known.isEmpty() && !hasDocuments(sourceId)) {
+            states.put(sourceId, current);
+            return Optional.empty();
+        }
+        boolean extractionChanged = known.isEmpty() || !known.get().extraction().equals(wanted.extraction());
+        try {
+            return Optional.of(start(sourceId, owner, extractionChanged ? Set.of() : LIMITED, current));
+        } catch (JobCapacityExceededException e) {
+            LOG.log(System.Logger.Level.INFO, "„Neu lesen“ für {0} wartet auf den nächsten Start (kein Platz)",
+                    sourceId);
+            return Optional.empty();
+        }
+    }
+
+    private boolean hasDocuments(String sourceId) {
+        try (Stream<Asset> entries = store.entries(sourceId)) {
+            return entries.anyMatch(asset -> asset.kind() == AssetKind.OTHER);
+        }
     }
 
     /**
@@ -109,7 +213,8 @@ public final class DocumentRereads {
         if (jobs.resumable(jobId, owner)) {
             return jobs.resume(jobId, owner);
         }
-        return jobs.rerun(jobId, owner, task(current.sourceId(), statuses(current), since(current)));
+        return jobs.rerun(jobId, owner, task(current.sourceId(), statuses(current), since(current),
+                current.parameter(AUTO)));
     }
 
     /** Die Status, auf die ein Auftrag beschränkt ist; leer ohne Beschränkung. */
@@ -130,8 +235,14 @@ public final class DocumentRereads {
         return value == null ? job.createdAt() : Instant.parse(value);
     }
 
-    private JobTask task(String sourceId, Set<ExtractionStatus> statuses, Instant since) {
-        return JobTask.blocking(context -> run(sourceId, statuses, since, context));
+    private JobTask task(String sourceId, Set<ExtractionStatus> statuses, Instant since, String auto) {
+        return JobTask.blocking(context -> {
+            run(sourceId, statuses, since, context);
+            if (auto != null) {
+                // Durchgelaufen: Dieser Stand gilt jetzt als gelesen, auch wenn einzelne Dokumente scheiterten.
+                states.put(sourceId, auto);
+            }
+        });
     }
 
     private void run(String sourceId, Set<ExtractionStatus> statuses, Instant since, JobContext context) {
@@ -188,5 +299,48 @@ public final class DocumentRereads {
         latest.values().forEach(asset -> byContent.computeIfAbsent(asset.sha256(), sha -> new ArrayList<>())
                 .add(asset));
         return byContent;
+    }
+
+    /**
+     * Der Stand der Extraktion, mit dem abgelegte Dokumente gelesen sind: Extraktion, Version und Strukturmodell sowie
+     * die Grenzen, die ein abgelegtes Ergebnis bestimmen. Laufzeitgrenzen, Reserve und Plätze fehlen: Was an ihnen
+     * abbricht, wird nie abgelegt und ohnehin neu gelesen.
+     *
+     * @param extraction {@code <Extraktion>/<Version>/<Strukturmodell>}
+     * @param limits     die übrigen Grenzen in fester Reihenfolge
+     */
+    public record ReadState(String extraction, String limits) {
+
+        private static final String SEPARATOR = "|";
+
+        public ReadState {
+            Objects.requireNonNull(extraction, "extraction");
+            Objects.requireNonNull(limits, "limits");
+        }
+
+        /** Der eingestellte Stand; leer ohne strukturierte Extraktion. */
+        static Optional<ReadState> of(Assets assets) {
+            return assets.documentExtractions().map(found -> {
+                ExtractionLimits l = found.limits();
+                String memory = new java.util.TreeMap<>(l.memoryLimits()).entrySet().stream()
+                        .map(entry -> entry.getKey() + "=" + entry.getValue()).collect(Collectors.joining(","));
+                return new ReadState(found.id() + "/" + found.version() + "/" + DocumentStructure.MODEL_VERSION,
+                        "file=" + l.maxFileBytes() + ";chars=" + l.maxChars() + ";unpack=" + l.unpackRatio() + "@"
+                                + l.unpackRatioFromBytes() + ";text=" + l.textRatio() + "@" + l.textRatioFromChars()
+                                + ";depth=" + l.maxDepth() + ";files=" + l.maxEmbeddedFiles() + ";memory=" + memory);
+            });
+        }
+
+        /** Für {@link ReadStates}. */
+        public String encoded() {
+            return extraction + SEPARATOR + limits;
+        }
+
+        /** Aus {@link #encoded()}; leer, wenn der Wert nicht lesbar ist. */
+        public static Optional<ReadState> decode(String value) {
+            int at = value == null ? -1 : value.indexOf(SEPARATOR);
+            return at < 1 ? Optional.empty() : Optional.of(new ReadState(value.substring(0, at),
+                    value.substring(at + 1)));
+        }
     }
 }

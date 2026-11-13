@@ -150,6 +150,7 @@ import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter
 import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
+import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -804,7 +805,8 @@ public final class Harvester implements AutoCloseable {
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,
                     sourceId -> catalog.config(sourceId).isPresent(),
-                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()), clock);
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
+                    new FileReadStates(builder.assetDirectory()), clock);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
@@ -859,6 +861,9 @@ public final class Harvester implements AutoCloseable {
             if (backgroundFill != null) {
                 backgroundFill.start();
             }
+            // ADR 0026, Punkt 11 (AP5c): nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein
+            // eigener Auftrag die abgelegten Dokumente neu, ohne den Start aufzuhalten.
+            rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);

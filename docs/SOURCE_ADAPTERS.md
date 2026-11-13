@@ -382,7 +382,18 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `since`), dabei wird übersprungen, was schon neu gelesen ist. Desktop-App: `Harvester.reread(sourceId, statuses)`
   und die üblichen Auftragsaktionen. Dienst: `POST /api/v1/sources/{sourceId}/data/rereads?status=failed,partial`
   → 202, Stand unter `…/data/rereads/{jobId}`, nur für Clients mit `manage-configuration` wie Import und „Daten
-  bereinigen“. Den Start nach einem Versionswechsel oder geänderten Grenzen von selbst bringt AP5c.
+  bereinigen“.
+- **„Neu lesen“ von selbst (AP5c):** Beim Start (Desktop-App beim Bauen des Harvesters, Dienst bei
+  `ApplicationReadyEvent`) vergleicht `DocumentRereads#afterChange` je Quelle den eingestellten Stand der Extraktion
+  (Extraktion, Version, Strukturmodell und die Grenzen, die ein abgelegtes Ergebnis bestimmen: Dateigröße, Zeichen,
+  Verhältnisse, Tiefe, Zahl enthaltener Dateien, Speicherschranken je Medientyp; nicht Laufzeit, Reserve und Plätze)
+  mit dem zuletzt vollständig gelesenen aus `reread-state.properties` im Asset-Verzeichnis. Nach einem Wechsel von
+  Extraktion, Version oder Strukturmodell startet ein Auftrag ohne Beschränkung, nach geänderten Grenzen einer
+  beschränkt auf `PARTIAL`, `FAILED` und `EXCLUDED`. Ohne gemerkten Stand gilt der eingestellte, solange die Quelle
+  keine Dokumente abgelegt hat; sonst wird neu gelesen (etwa beim ersten Start nach dem Update). Den neuen Stand merkt
+  er sich erst, wenn der Auftrag durchgelaufen ist, auch wenn einzelne Dokumente scheiterten. Läuft schon ein solcher
+  Auftrag oder hat der Benutzer ihn angehalten oder abgebrochen, startet kein zweiter; einen durch einen Neustart
+  unterbrochenen setzt der Start im selben Eintrag fort. Im Dienst ist der Auftrag intern (ohne Eigentümer).
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle
