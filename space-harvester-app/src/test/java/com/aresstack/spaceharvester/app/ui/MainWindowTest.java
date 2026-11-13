@@ -95,7 +95,7 @@ class MainWindowTest {
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
                 .containsSubsequence("Suche", "Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen",
-                        "Erweitert", "Begriffe", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                        "Erweitert", "Export", "Begriffe", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");

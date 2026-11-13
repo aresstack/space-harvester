@@ -97,6 +97,33 @@ public final class Explorer {
         public static final Scope ALL = new Scope(null, null);
     }
 
+    /** Meldet jede Änderung der Auswahl als Quelle, Space oder Seite (für den Reiter „Export“); {@code null} ohne. */
+    public void onSelection(Consumer<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> listener) {
+        this.selectionListener = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Die erste gewählte Zeile als Quelle, Space oder Seite; {@code null} ohne Auswahl oder auf einem Hinweis. */
+    public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection selection() {
+        TreePath[] paths = tree.getSelectionPaths();
+        for (TreePath path : paths == null ? new TreePath[0] : paths) {
+            if (path.getLastPathComponent() instanceof Node node) {
+                var selection = switch (node.item()) {
+                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            source.sourceId(), null, null, source.title());
+                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            space.sourceId(), space.spaceKey(), null, space.name());
+                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                            page.sourceId(), page.spaceKey(), page.pageId(), page.title());
+                    default -> null;
+                };
+                if (selection != null) {
+                    return selection;
+                }
+            }
+        }
+        return null;
+    }
+
     sealed interface Item permits SourceItem, SpaceItem, PageItem, MoreItem, Note {
     }
 
@@ -180,6 +207,8 @@ public final class Explorer {
     private final Timer debounce = new Timer(300, e -> runFilter());
     private List<String> shownSources = List.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
+    private Consumer<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> selectionListener =
+            selection -> { };
     private int filterRequest;
     /** Während {@link #revealPage} wählt der Baum selbst; der Suchumfang bleibt dann, wie er ist. */
     private boolean revealing;
@@ -269,6 +298,8 @@ public final class Explorer {
             if (!revealing) {
                 scopeListener.accept(scopes());
             }
+            // Der Export folgt auch einer Auswahl, die ein geöffneter Treffer oder Auftrag gesetzt hat.
+            selectionListener.accept(selection());
         });
         MouseAdapter mouse = new MouseAdapter() {
             @Override

@@ -193,6 +193,19 @@ public final class ContentView implements View {
         detail.tabs().showSelection(active);
     }
 
+    /**
+     * Die Auswahl links im Explorer (Quelle, Space oder Seite samt Unterseiten) bestimmt den Reiter „Export“ (Angelo,
+     * 13.11.2026); {@code null} ohne Auswahl.
+     */
+    public void selection(ExportPanel.Selection selection) {
+        detail.export().selection(selection);
+    }
+
+    /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
+    public void showExport() {
+        detail.showExport();
+    }
+
     PageDetailPanel detail() {
         return detail;
     }

@@ -119,8 +119,9 @@ class ActivitiesActionsTest {
     }
 
     /**
-     * Bilder und Anhänge zeigen statt der blassen Formatknöpfe einen Fortschrittsbalken über dieselben fünf Plätze
-     * (Angelo 11.11.2026); Exporte behalten ihre Formate. Die Platzzahl bleibt gleich, damit alles untereinander steht.
+     * Jede Zeile zeigt auf den ersten fünf Plätzen einen Fortschrittsbalken (seit 13.11.2026 auch Exporte: die Formate
+     * stehen unter Inhalte › Export); Bilder und Anhänge haben dazu eine Restzeit. Die Platzzahl bleibt gleich, damit
+     * alles untereinander steht.
      */
     @Test
     void imageAndAttachmentRowsShowAProgressBarInsteadOfFormats() {
@@ -130,7 +131,7 @@ class ActivitiesActionsTest {
                     Map.of(), false, false, null);
             assertThat(ActivitiesView.showsProgress(job)).isTrue();
             List<RowActions.Action> slots = ActivitiesView.progressSlots(job);
-            assertThat(slots).hasSize(ActivitiesView.FORMATS.size());
+            assertThat(slots).hasSize(ActivitiesView.PROGRESS_SLOTS);
             assertThat(RowActions.wide(slots.get(0))).isTrue();
             assertThat(slots.subList(1, slots.size())).allMatch(RowActions.Action::empty);
             assertThat(RowActions.covering(slots, 4)).as("Tooltip auch am rechten Ende").isSameAs(slots.get(0));
@@ -142,7 +143,10 @@ class ActivitiesActionsTest {
             assertThat(icon.failed()).isEqualTo(3);
             assertThat(ActivitiesView.progressText(job)).isEqualTo("629/630 · 26 ausgelassen · 3 Fehler");
         }
-        assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
+        assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false)))
+                .as("nur Bilder und Anhänge haben eine Restzeit").isFalse();
+        assertThat(ActivitiesView.progressSlots(job(JobType.EXPORT, JobState.RUNNING, false)))
+                .as("auch Exporte zeigen den Balken, keine Formate").hasSize(ActivitiesView.PROGRESS_SLOTS);
         JobStatus export = new JobStatus("j2", JobType.EXPORT, "wiki", "OPS", "local", JobState.COMPLETED,
                 new JobProgress(100, 100, 90, 2), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null,
                 Map.of(), false, false, null);
