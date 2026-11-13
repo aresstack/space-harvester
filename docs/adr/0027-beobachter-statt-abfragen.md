@@ -65,6 +65,12 @@ Paket `com.aresstack.spaceharvester.application.observe`:
 | Beschaffungsplaner | `AcquisitionScheduler.subscribe(listener)`; mit Hintergrundfüllung `BackgroundFill.subscribe(listener)`, für die App `Harvester.subscribeAcquisition` bzw. `Workspace.subscribeAcquisition` | jüngster `Status` bzw. `AcquisitionStatus`, auch das Ende der Wartezeit nach dem Vordergrund | Hintergrundladen |
 | Suchfortschritt | `KeywordSearch.subscribe(progressId, listener)`, für die App `Workspace.subscribeSearchProgress` | jüngster `Progress` nach jeder Seite und nach einem Abbruch, zuletzt mit Ende | Suche |
 
+Auch im Core fragt nichts in Abständen: Die Hintergrundfüllung wartet auf einen beendeten Abruf, neue Lücken, den
+Schalter, freien Platz im Planer und jeden Commit des Seiten-Cache (`HoldingsChanges.andThen`), statt jede Sekunde und
+alle zehn Minuten nachzusehen. Fristen bleiben nur für den verzögerten Start, die Wiederholung einer gescheiterten Seite
+und die Pause nach einem unerwarteten Fehler; nach einer Änderung des Katalogs sucht sie erst, wenn er eine Sekunde ruht
+(Entprellen).
+
 Das Glossar meldet seine eigenen Änderungen schon (`Glossary.subscribe`) und bleibt so. Die Verbindungsprüfungen in
 der Diagnose sind Zustand der App (`AppContext.Connection`) und werden dort gemeldet, nicht im Core.
 
