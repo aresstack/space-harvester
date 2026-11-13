@@ -177,7 +177,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
@@ -193,7 +193,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -227,6 +227,44 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.tabs().button("Leseansicht").isSelected())).isTrue();
+    }
+
+    @Test
+    void theChatFollowsTheSelectionAndSendingOnlySaysThatTheChatIsStillToCome() throws Exception {
+        PageDetailPanel detail = view.detail();
+        ChatPanel chat = detail.chat();
+        assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        onEdt(() -> {
+            detail.tabs().select("Chat");
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(chat::isVisible)).isTrue();
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces"));
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
+        // Senden im Click-Dummy: die eigene Nachricht als Sprechblase, der Composer leer, Status „Chat folgt“.
+        onEdt(() -> {
+            chat.attach(home.resolve("notiz.txt"));
+            ((javax.swing.text.JTextComponent) chat.editor()).setText("Was steht im Handbuch?");
+            chat.send();
+            return null;
+        });
+        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.FOLLOWS);
+        assertThat(onEdt(chat::attachments)).isEmpty();
+        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText())).isEmpty();
+        // Leer sendet nichts.
+        onEdt(() -> {
+            chat.send();
+            return null;
+        });
+        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        onEdt(() -> {
+            view.selection(null);
+            return null;
+        });
+        await(() -> ChatPanel.NO_SELECTION.equals(chat.knowledge()));
         onEdt(() -> {
             detail.tabs().button("Text").doClick();
             return null;

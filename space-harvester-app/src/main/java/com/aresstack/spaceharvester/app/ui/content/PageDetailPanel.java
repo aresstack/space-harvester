@@ -102,12 +102,14 @@ public final class PageDetailPanel extends JPanel {
     private static final String ADVANCED = "Erweitert";
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
     static final String EXPORT = "Export";
+    static final String CHAT = "Chat";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
     private static final String EXPORT_CARD = "export";
+    private static final String CHAT_CARD = "chat";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
@@ -117,6 +119,7 @@ public final class PageDetailPanel extends JPanel {
     /** Welche Karte Seite oder Hinweis zeigt, solange nicht der Reiter „Export“ gewählt ist. */
     private String pageCard = EMPTY;
     private final ExportPanel export;
+    private final ChatPanel chat;
     private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
@@ -233,6 +236,7 @@ public final class PageDetailPanel extends JPanel {
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
+        this.chat = new ChatPanel(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(17f));
@@ -327,7 +331,9 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
-                .tab(EXPORT, new JPanel());
+                .tab(EXPORT, new JPanel())
+                // Der Chat ebenso: sein Wissen ist die Auswahl links, nicht die gezeigte Seite.
+                .tab(CHAT, new JPanel());
         // Die Hauptreiter wandern als Symbolknöpfe in die Icon-Leiste oben (Angelo, 13.11.2026);
         // die Unterreiter von „Analysen“ rücken dadurch an die Stelle der bisherigen Reiterzeile.
         java.util.Map<String, Icon> icons = new java.util.LinkedHashMap<>();
@@ -338,6 +344,7 @@ public final class PageDetailPanel extends JPanel {
         icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.advanced());
         icons.put(EXPORT, PageTabIcons.export());
+        icons.put(CHAT, ChatIcons.chat());
         tabIcons = tabs.iconBar(icons);
         // Nachladen nur für den sichtbaren Reiter: beim Wechsel des Haupt- wie des Unterreiters.
         tabs.onSelect(name -> {
@@ -440,6 +447,7 @@ public final class PageDetailPanel extends JPanel {
         deck.add(empty, EMPTY);
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
+        deck.add(chat, CHAT_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -540,19 +548,25 @@ public final class PageDetailPanel extends JPanel {
         return star;
     }
 
-    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn nicht der Reiter „Export“ gewählt ist. */
+    /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
     private void showCard(String card) {
         pageCard = card;
         showDeck();
     }
 
     private void showDeck() {
-        cards.show(deck, EXPORT.equals(tabs.selected()) ? EXPORT_CARD : pageCard);
+        String selected = tabs.selected();
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : pageCard);
     }
 
     /** Der Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links. */
     public ExportPanel export() {
         return export;
+    }
+
+    /** Der Reiter „Chat“ (Angelo, 13.11.2026), vorerst ein Click-Dummy; sein Wissen ist die Auswahl links. */
+    public ChatPanel chat() {
+        return chat;
     }
 
     /** Zeigt den Reiter „Export“, etwa aus „Inhalte öffnen“ eines Auftrags. */

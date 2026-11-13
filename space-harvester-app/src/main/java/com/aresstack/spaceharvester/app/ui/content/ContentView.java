@@ -194,11 +194,12 @@ public final class ContentView implements View {
     }
 
     /**
-     * Die Auswahl links im Explorer (Quelle, Space oder Seite samt Unterseiten) bestimmt den Reiter „Export“ (Angelo,
-     * 13.11.2026); {@code null} ohne Auswahl.
+     * Die Auswahl links im Explorer (Quelle, Space oder Seite samt Unterseiten) bestimmt die Reiter „Export“ und
+     * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
      */
     public void selection(ExportPanel.Selection selection) {
         detail.export().selection(selection);
+        detail.chat().selection(selection);
         if (selection != null) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
