@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.persistence.lucene;
 import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HEADER_FIELDS;
 
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
+import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -17,6 +18,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -76,6 +78,11 @@ import org.apache.lucene.store.LockObtainFailedException;
  * {@code rawSha256} verglichen; eine Abweichung ist ein {@link PageCacheException}, nie stillschweigend eine andere
  * Payload. Ein unlesbarer Index oder ein Index mit anderem Schema ({@link PageCacheSchema}) wird nicht geöffnet.
  *
+ * <p><b>Meldungen.</b> Nach jedem Commit meldet der Lauf dem Bestand ({@link #changes}, ADR 0027), welche Seiten
+ * welcher Spaces er geschrieben, entfernt oder gesperrt hat; eine neue Generation meldet ihren Space, das Entfernen
+ * einer Quelle die Quelle. Eine verschobene Seite meldet auch ihren bisherigen Space. Ohne Empfänger merkt sich ein
+ * Lauf nichts dafür.
+ *
  * <p>Keine relationalen Transaktionen: ein Batch ist atomar gegenüber Lesern und Abstürzen, aber es gibt nur einen
  * Schreiber zur Zeit und keine Isolation zwischen mehreren gleichzeitigen Läufen.
  */
@@ -86,6 +93,10 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     /** Obergrenze einer Seite in Listenabfragen. */
     public static final int MAX_PAGE_SIZE = 1000;
     private static final int SNAPSHOT_BATCH = 500;
+    private static final System.Logger LOG = System.getLogger(LucenePageCache.class.getName());
+    /** Nur der Space einer Seite, um eine Verschiebung zu melden. */
+    private static final Set<String> SPACE_ONLY = Set.of(PageCacheSchema.SPACE_KEY);
+    private static final String WITHHELD_SPACE = PageCacheSchema.WITHHELD + "." + PageCacheSchema.SPACE_KEY;
 
     private final Path path;
     private final Directory directory;
@@ -94,6 +105,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     private final ReentrantLock writeLock = new ReentrantLock();
     private IndexWriter writer;
     private volatile boolean closed;
+    private volatile HoldingsChanges changes = HoldingsChanges.NONE;
     /** Writer und Verzeichnis sind freigegeben; nur unter {@link #writeLock}. */
     private boolean released;
 
@@ -154,6 +166,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     /** Verzeichnis des Index. */
     public Path path() {
         return path;
+    }
+
+    /**
+     * Wem jeder Commit seine Änderungen meldet (Bestand, ADR 0027). Gilt für Schreibläufe, die danach beginnen; die
+     * Meldung kommt nach dem Commit, wenn die Schreibsperre des Laufs frei ist, und darf nur vormerken.
+     */
+    public void changes(HoldingsChanges changes) {
+        this.changes = Objects.requireNonNull(changes, "changes");
     }
 
     // --- SnapshotRepository ---------------------------------------------------------------------------------------
@@ -610,6 +630,12 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         private final Set<String> confirmedSpaces = new HashSet<>();
         /** Quellen, deren Suchgeneration dieser Lauf mit dem Commit erhöht. */
         private final Set<String> touchedSources = new HashSet<>();
+        /** Empfänger der Meldungen nach dem Commit, fest ab Beginn des Laufs. */
+        private final HoldingsChanges observer = changes;
+        /** Für die Meldung: geänderte Seiten je Space, ganze Spaces (neue Generation), ganze Quellen. */
+        private final Map<SyncBaselineStore.SpaceRef, Set<String>> changedPages = new HashMap<>();
+        private final Set<SyncBaselineStore.SpaceRef> changedSpaces = new HashSet<>();
+        private final Set<String> changedSources = new HashSet<>();
         private DirectoryReader uncommitted;
         private boolean done;
         private boolean dirty;
@@ -627,6 +653,13 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             if (snapshot.payload().length() > maxPayloadBytes) {
                 throw new IllegalArgumentException("Payload von " + snapshot.key() + " ist " + snapshot.payload()
                         .length() + " Bytes groß, zulässig sind " + maxPayloadBytes + "; sie wird nicht gekürzt");
+            }
+            if (observed()) {
+                // Aus dem bestätigten Stand: eine verschobene Seite fehlt danach in ihrem bisherigen Space.
+                first(new TermQuery(PageCacheSchema.pageTerm(snapshot.key())), SPACE_ONLY,
+                        doc -> doc.get(PageCacheSchema.SPACE_KEY))
+                        .ifPresent(previous -> changed(snapshot.key(), previous));
+                changed(snapshot.key(), snapshot.header().metadata().partitionKey());
             }
             dirty = true;
             touchedSources.add(snapshot.key().sourceId());
@@ -647,6 +680,10 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             Document existing = lookup(header.key());
             PageSnapshot snapshot = existing != null && PageCacheSchema.hasSnapshot(existing)
                     ? PageCacheSchema.snapshot(existing) : null;
+            if (existing != null) {
+                changed(header.key(), existing.get(PageCacheSchema.SPACE_KEY));
+            }
+            changed(header.key(), header.metadata().partitionKey());
             dirty = true;
             touchedSources.add(header.key().sourceId());
             write(() -> writer.updateDocument(PageCacheSchema.pageTerm(header.key()),
@@ -662,7 +699,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public boolean remove(PageKey key) {
             Objects.requireNonNull(key, "key");
             requireActive();
-            boolean existed = lookup(key) != null;
+            Document existing = lookup(key);
+            boolean existed = existing != null;
+            if (existing != null) {
+                changed(key, existing.get(PageCacheSchema.SPACE_KEY));
+            } else if (observed()) {
+                first(new TermQuery(PageCacheSchema.withheldTerm(key)), Set.of(WITHHELD_SPACE),
+                        doc -> doc.get(WITHHELD_SPACE)).ifPresent(space -> changed(key, space));
+            }
             dirty = true;
             touchedSources.add(key.sourceId());
             write(() -> {
@@ -683,6 +727,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             Objects.requireNonNull(key, "key");
             requireActive();
             Document existing = lookup(key);
+            if (existing != null) {
+                changed(key, existing.get(PageCacheSchema.SPACE_KEY));
+            }
             dirty = true;
             touchedSources.add(key.sourceId());
             write(() -> {
@@ -700,6 +747,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public void removeSource(String sourceId) {
             Objects.requireNonNull(sourceId, "sourceId");
             requireActive();
+            if (observed()) {
+                changedSources.add(sourceId);
+            }
             dirty = true;
             touchedSources.add(sourceId);
             write(() -> writer.deleteDocuments(PageCacheSchema.ofSource(sourceId)));
@@ -727,6 +777,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             if (next.generation() != current + 1) {
                 throw new SyncConflictException("Generation " + next.generation() + " von " + next.sourceId() + "/"
                         + next.spaceKey() + " folgt nicht auf die bestätigte " + current);
+            }
+            if (observed()) {
+                changedSpaces.add(new SyncBaselineStore.SpaceRef(next.sourceId(), next.spaceKey()));
             }
             dirty = true;
             touchedSources.add(next.sourceId());
@@ -770,6 +823,47 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 throw new PageCacheException("Cache " + path + " ist geschrieben, aber nicht neu lesbar", e);
             } finally {
                 finish();
+                publish();
+            }
+        }
+
+        private boolean observed() {
+            return observer != HoldingsChanges.NONE;
+        }
+
+        /** Merkt eine Seite in einem Space für die Meldung nach dem Commit vor. */
+        private void changed(PageKey key, String spaceKey) {
+            if (observed() && spaceKey != null) {
+                changedPages.computeIfAbsent(new SyncBaselineStore.SpaceRef(key.sourceId(), spaceKey),
+                        space -> new HashSet<>()).add(key.pageId());
+            }
+        }
+
+        /**
+         * Nach dem Commit, ohne die Schreibsperre dieses Laufs: was er geändert hat. Ein ganzer Space oder eine ganze
+         * Quelle schließt die einzelnen Seiten darin ein. Ein Fehler des Empfängers ändert nichts am Commit.
+         */
+        private void publish() {
+            if (!observed()) {
+                return;
+            }
+            try {
+                for (String sourceId : changedSources) {
+                    observer.sourceChanged(sourceId);
+                }
+                for (SyncBaselineStore.SpaceRef space : changedSpaces) {
+                    if (!changedSources.contains(space.sourceId())) {
+                        observer.spaceChanged(space.sourceId(), space.spaceKey());
+                    }
+                }
+                changedPages.forEach((space, pageIds) -> {
+                    if (!changedSources.contains(space.sourceId()) && !changedSpaces.contains(space)) {
+                        observer.pagesChanged(space.sourceId(), space.spaceKey(), pageIds);
+                    }
+                });
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Meldung an den Bestand scheiterte ({0})",
+                        e.getClass().getName());
             }
         }
 

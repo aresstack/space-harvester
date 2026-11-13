@@ -1126,6 +1126,39 @@ public final class Workspace {
     }
 
     /**
+     * Bestandsübersicht eines Space (ADR 0027): je Seite des Katalogs der eigene Zustand (nur in der Quelle, lokal,
+     * veraltet, gesperrt) und die Zähler ihres Teilbaums, dazu Generation und Stand vom; ohne Quellenzugriff. Einmal
+     * beim Aufklappen lesen, danach nur nach Meldungen von {@link #subscribeHoldings}.
+     */
+    public com.aresstack.spaceharvester.application.holdings.SpaceHoldings holdings(String sourceId, String spaceKey) {
+        return harvester.holdings().overview(caller, sourceId, spaceKey);
+    }
+
+    /**
+     * Nach einer Meldung nur diese Seiten samt ihrer Vorfahren, damit nur der Pfad nach oben neu gezeichnet wird; eine
+     * Seite, die es im Space nicht mehr gibt, steht dort als entfernt.
+     */
+    public com.aresstack.spaceharvester.application.holdings.SpaceHoldings holdings(String sourceId, String spaceKey,
+                                                                                java.util.Collection<String> pageIds) {
+        return harvester.holdings().overview(caller, sourceId, spaceKey, pageIds);
+    }
+
+    /** Je Space der Quelle, den der Cache kennt, Zähler und Stand vom, ohne Seitenliste (Zeilen einer Quelle). */
+    public List<com.aresstack.spaceharvester.application.holdings.SpaceSummary> holdingSpaces(String sourceId) {
+        return harvester.holdings().spaces(caller, sourceId);
+    }
+
+    /**
+     * Meldet einen Empfänger für den Bestand eines Space an, mit leerem {@code spaceKey} für alle Spaces der Quelle
+     * (ADR 0027). Meldungen kommen gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann
+     * {@link #holdings} lesen.
+     */
+    public Subscription subscribeHoldings(String sourceId, String spaceKey,
+                                          com.aresstack.spaceharvester.application.holdings.HoldingsListener listener) {
+        return harvester.holdings().subscribe(caller, sourceId, spaceKey, listener);
+    }
+
+    /**
      * Meldet einen Empfänger für die Aufträge dieser App an (ADR 0027), statt die Liste in Abständen zu lesen: jede
      * Änderung von Zustand, Zählern, Phase oder Pause, jede Löschung und jedes neue Diagnoseereignis, gebündelt auf dem
      * Zustell-Thread des Core (nie auf dem EDT). Wie bei {@link #jobs()} und {@link #recentEvents} nur sichtbare

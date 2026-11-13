@@ -75,15 +75,21 @@ der Diagnose sind Zustand der App (`AppContext.Connection`) und werden dort geme
   Baseline, denn „veraltet“ entsteht ohne Schreiben einer Seite (Bestätigen einer Generation, Änderungssuche,
   `keepLoaded`). Wo ein Weg keine Einzelliste hat (Quelle entfernt, Generation als Ganzes ersetzt), kommt
   `spaceChanged`, ebenso, wenn eine Zustellung mehr als 1000 Seiten eines Space nennen würde (etwa nach einer großen
-  Generation); die App liest dann einmal neu. Beginnt der Beschaffungsplaner, ein Abgleich oder ein Export eine Seite,
-  kommt `loading`; ihr Ende kommt als `pagesChanged`.
+  Generation); die App liest dann einmal neu. Wird eine ganze Quelle entfernt oder geleert, bekommt jeder Empfänger
+  der Quelle `spaceChanged` für seinen Space, ein Empfänger für alle Spaces mit leerem `spaceKey`. Eine verschobene
+  Seite meldet auch ihren bisherigen Space. Beginnt der Beschaffungsplaner, ein Abgleich oder ein Export eine Seite,
+  kommt `loading`; ihr Ende kommt als `pagesChanged`, in derselben Zustellung nach `loading`.
 - **Abfrage „Bestandsübersicht je Space“.** `Holdings.overview(sourceId, spaceKey)` liefert je Seite des Katalogs
   den eigenen Zustand und die Zähler ihres Teilbaums, gerechnet im Core über den Katalogbaum, ohne Quellenzugriff:
   - Zustand `REMOTE` (nur Katalog, kein Inhalt lokal), `LOCAL` (Inhalt lokal und aktuell, gleich ob durch Laden,
     Lesen, Suche oder Hintergrundfüllung), `OUTDATED` (Inhalt lokal, laut Baseline neuere Version), `LOCKED` (für das
     Konto nicht sichtbar);
   - Zähler `pages`, `local`, `outdated`, `locked` je Teilbaum einschließlich der Seite selbst und für den Space, dazu
-    Generation und Stand vom.
+    Generation und Stand vom. Ohne bestätigte Inventur (Generation `g0`) kennt der Cache nur einzelne Seiten, deren
+    Elternseiten oft fehlen; die Übersicht sagt das ausdrücklich („keine Inventur“, nicht „nichts lokal“).
+  - Gerechnet über denselben Baum wie der Seitenbaum: Eine Seite, deren Elternseite der Cache nicht kennt, und die
+    Seite, an der ein Zyklus aufgebrochen wird, sind Wurzeln. Gesperrte Seiten hängen an der Elternseite aus ihrem
+    zurückgehaltenen Stand. Seiten ohne Leserecht fehlen in Übersicht und Meldungen.
   `Holdings.overview(sourceId, spaceKey, pageIds)` liefert nach einer Meldung nur die genannten Seiten samt ihrer
   Vorfahren, damit die App nur den Pfad nach oben neu zeichnet; eine genannte Seite, die es nicht mehr gibt, steht dort
   ausdrücklich als entfernt. Es gilt dieselbe Obergrenze wie für den Seitenbaum (`query.max-tree-nodes`).
