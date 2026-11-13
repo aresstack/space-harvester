@@ -53,6 +53,10 @@ import java.util.stream.Stream;
  * AssetStoreFullException}, nichts wird verdrängt. Gezählt wird beim ersten Schreiben einmal über {@code blobs/},
  * danach je neuem Inhalt; Einträge, Beschreibungen und Texte zählen nicht mit (ein Text ist durch die Zeichengrenze der
  * Extraktion begrenzt).
+ *
+ * <p>Prüfen, Reservieren und Ablegen eines Inhalts laufen je Inhalt nacheinander ({@link #contentLock}): Legen mehrere
+ * Aufträge denselben Inhalt gleichzeitig ab, zählt er einmal, und keiner scheitert an der Grenze, obwohl der Platz
+ * reicht. Verschiedene Inhalte schreiben weiter nebeneinander.
  */
 public class FileSystemAssetStore implements AssetStore {
 
@@ -66,6 +70,8 @@ public class FileSystemAssetStore implements AssetStore {
     private final long maxTotalBytes;
     /** Belegte Bytes in {@code blobs/}; {@code -1}, solange noch nicht gezählt. Geschützt durch {@code this}. */
     private long usedBytes = -1;
+    /** Sperren je Inhalt, verteilt über den Hash; siehe {@link #contentLock}. */
+    private final Object[] contentLocks = new Object[64];
 
     public FileSystemAssetStore(Path root) {
         this(root, DEFAULT_MAX_TOTAL_BYTES);
@@ -77,6 +83,18 @@ public class FileSystemAssetStore implements AssetStore {
             throw new IllegalArgumentException("maxTotalBytes muss positiv sein");
         }
         this.maxTotalBytes = maxTotalBytes;
+        for (int i = 0; i < contentLocks.length; i++) {
+            contentLocks[i] = new Object();
+        }
+    }
+
+    /**
+     * Die Sperre für einen Inhalt. Wer sie hält, darf {@code this} nehmen ({@link #reserve}), nie umgekehrt.
+     *
+     * @param sha256 geprüft gegen {@link #HEX_SHA}
+     */
+    private Object contentLock(String sha256) {
+        return contentLocks[Math.floorMod(sha256.hashCode(), contentLocks.length)];
     }
 
     @Override
@@ -117,13 +135,15 @@ public class FileSystemAssetStore implements AssetStore {
         }
         try {
             Path blob = blob(asset.sha256());
-            if (!Files.isRegularFile(blob) || Files.size(blob) != content.length) {
-                reserve(content.length);
-                try {
-                    write(blob, content);
-                } catch (IOException | RuntimeException e) {
-                    release(content.length);
-                    throw e;
+            synchronized (contentLock(asset.sha256())) {
+                if (!Files.isRegularFile(blob) || Files.size(blob) != content.length) {
+                    reserve(content.length);
+                    try {
+                        write(blob, content);
+                    } catch (IOException | RuntimeException e) {
+                        release(content.length);
+                        throw e;
+                    }
                 }
             }
             putEntry(asset);
@@ -152,18 +172,21 @@ public class FileSystemAssetStore implements AssetStore {
                 throw new IllegalArgumentException("sha256 oder size passen nicht zum Inhalt");
             }
             Path blob = blob(asset.sha256());
-            if (!Files.isRegularFile(blob) || Files.size(blob) != asset.size()) {
-                reserve(asset.size());
-                try {
-                    Files.createDirectories(blob.getParent());
+            synchronized (contentLock(asset.sha256())) {
+                if (!Files.isRegularFile(blob) || Files.size(blob) != asset.size()) {
+                    reserve(asset.size());
                     try {
-                        Files.move(file, blob, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (AtomicMoveNotSupportedException e) {
-                        Files.move(file, blob, StandardCopyOption.REPLACE_EXISTING);
+                        Files.createDirectories(blob.getParent());
+                        try {
+                            Files.move(file, blob, StandardCopyOption.ATOMIC_MOVE,
+                                    StandardCopyOption.REPLACE_EXISTING);
+                        } catch (AtomicMoveNotSupportedException e) {
+                            Files.move(file, blob, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    } catch (IOException | RuntimeException e) {
+                        release(asset.size());
+                        throw e;
                     }
-                } catch (IOException | RuntimeException e) {
-                    release(asset.size());
-                    throw e;
                 }
             }
             putEntry(asset);
