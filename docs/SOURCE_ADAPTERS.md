@@ -356,7 +356,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ein einzelnes Dokument ersetzt `replaceDocument` (Anhang + Teilkennung); `Assets#reindex` legt einen abgelegten
   Anhang ohne Download neu in den Index (für „Neu lesen“). Je Seite bleibt ein Treffer; ein Treffer in einer
   enthaltenen Datei nennt zusätzlich `attachment.partId` und `attachment.partTitle` (sonst `null`). Der Text unter
-  `…/text` und im Export `attachments/v1` bleibt bis AP4c der Gesamttext aus Behälter und Teilen.
+  `…/text` bleibt der Gesamttext aus Behälter und Teilen; der Export (`attachments/v2`, AP4c) trennt ihn: eigener
+  Text und Markdown des Behälters, jede enthaltene Datei als eigener Eintrag mit Status (`DocumentExport`).
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle
@@ -470,6 +471,10 @@ Dateien, ist das Ergebnis `PARTIAL` mit `entries-not-readable`.
   (`PartUnavailableException`): `part-without-hash` (Kennung nach Position, kein vollständiges Original),
   `container-missing` (Original des Behälters nicht mehr in der Ablage), `part-not-found` (kein Teil mit dieser
   Kennung, oder unter den Grenzen nicht lesbar).
+- Viele Originale (Export, Auflage zu AP4c): `DocumentExtractions#copyParts` bzw. `DocumentStructure#copyParts` lesen
+  den Behälter genau einmal und geben jeden verlangten Teil mit Inhaltskennung nacheinander als Strom an einen
+  Abnehmer (aus seiner temporären Datei, die danach wegfällt; nichts im Speicher gesammelt, dieselben Schutzgrenzen);
+  scheitert der Abnehmer, endet der Lauf mit seinem Fehler. `openPart` für einen einzelnen Teil bleibt daneben.
 - Übergang bis AP4: Der Text des Behälters (`AssetText`) ist sein eigener Text, danach der seiner Teile in der
   Reihenfolge des Verzeichnisses (inhaltsgleiche einmal), damit Suche, Index und Export nichts verlieren (Suchtest
   über den Korpus: `CorpusSearchParityTest`). Die Markdown-Ansicht zeigt nur das Dokument selbst. Ein Teil an einer

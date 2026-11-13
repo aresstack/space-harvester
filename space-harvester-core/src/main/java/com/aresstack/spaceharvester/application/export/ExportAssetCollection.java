@@ -659,6 +659,15 @@ public class ExportAssetCollection {
             }
 
             @Override
+            public Optional<com.aresstack.spaceharvester.application.assets.DocumentExport> document(
+                    ExportAssetManifest.Entry entry) {
+                if (!entry.document() || !entry.stored()) {
+                    return Optional.empty();
+                }
+                return assets.documentExport(sourceId, entry.attachmentId(), entry.version(), entry.sha256());
+            }
+
+            @Override
             public Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
                 if (entry.rendition() == null || !entry.rendition().drawn() || entry.sha256() == null) {
                     return Optional.empty();

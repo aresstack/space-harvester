@@ -88,7 +88,7 @@ class JsonPackageConverterTest {
 
         JsonNode manifest = json.readTree(zip.get("manifest.json"));
         assertThat(manifest.path("format").asString()).isEqualTo(JsonPackageConverter.PACKAGE_FORMAT);
-        assertThat(manifest.path("converter").asString()).isEqualTo("json-package/4");
+        assertThat(manifest.path("converter").asString()).isEqualTo("json-package/5");
         assertThat(manifest.path("sourceId").asString()).isEqualTo("confluence");
         assertThat(manifest.path("spaceKey").asString()).isEqualTo("DEV");
         assertThat(manifest.path("pageCount").asInt()).isEqualTo(4);

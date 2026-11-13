@@ -57,18 +57,30 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
 
     /** Grenze für {@code manifest.json}, Lese-Ansichten und Texte. */
     static final long MAX_JSON_BYTES = 256L * 1024 * 1024;
+    /** Höchstens so viel Text wird je Anhang eingelesen (eigener Text und Teile zusammen). */
+    static final long MAX_TEXT_BYTES = 256L * 1024 * 1024;
 
     private final JsonMapper json = JsonMapper.builder().build();
     private final long maxPayloadBytes;
     private final long maxAssetBytes;
+    private final long maxTextBytes;
 
     /**
      * @param maxPayloadBytes größte Payload einer Seite, wie der Cache sie annimmt
      * @param maxAssetBytes   größte Datei eines Bildes oder Anhangs, wie die Asset-Ablage sie annimmt
      */
     public ZipExportPackageReader(long maxPayloadBytes, long maxAssetBytes) {
+        this(maxPayloadBytes, maxAssetBytes, MAX_TEXT_BYTES);
+    }
+
+    /** Wie oben; {@code maxTextBytes}: höchstens so viel Text je Anhang wird eingelesen, der Rest gekürzt. */
+    public ZipExportPackageReader(long maxPayloadBytes, long maxAssetBytes, long maxTextBytes) {
+        if (maxTextBytes < 1) {
+            throw new IllegalArgumentException("maxTextBytes muss positiv sein");
+        }
         this.maxPayloadBytes = maxPayloadBytes;
         this.maxAssetBytes = maxAssetBytes;
+        this.maxTextBytes = maxTextBytes;
     }
 
     @Override
@@ -285,7 +297,7 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
             }
             Map<String, String> files = new HashMap<>();
             Map<String, String> renditions = new HashMap<>();
-            Map<String, String> textFiles = new HashMap<>();
+            Map<String, List<String>> textFiles = new HashMap<>();
             if (zip.getEntry("assets.json") != null) {
                 for (JsonNode asset : tree("assets.json", MAX_JSON_BYTES).path("assets")) {
                     if (asset.hasNonNull("path") && asset.hasNonNull("sha256")) {
@@ -299,12 +311,27 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
                 }
             }
             if (zip.getEntry("attachments.json") != null) {
+                // attachments/v1 und v2: in v2 folgen einem Behälter seine enthaltenen Dateien (mit partId); sein Text
+                // ist dann der eigene und danach der seiner Teile in Verzeichnisreihenfolge (ADR 0026, AP4c). Teile
+                // werden nie zu eigenen Assets; eine strukturierte Extraktion entsteht beim Einlesen nicht.
+                List<String> container = null;
                 for (JsonNode attachment : tree("attachments.json", MAX_JSON_BYTES).path("attachments")) {
+                    if (attachment.hasNonNull("partId")) {
+                        if (container != null && attachment.hasNonNull("textPath")) {
+                            container.add(attachment.path("textPath").asString());
+                        }
+                        continue;
+                    }
+                    container = null;
                     if (attachment.hasNonNull("path") && attachment.hasNonNull("sha256")) {
                         String sha = attachment.path("sha256").asString();
                         files.putIfAbsent(sha, attachment.path("path").asString());
-                        if (attachment.hasNonNull("textPath")) {
-                            textFiles.putIfAbsent(sha, attachment.path("textPath").asString());
+                        if (!textFiles.containsKey(sha)) {
+                            container = new ArrayList<>();
+                            textFiles.put(sha, container);
+                            if (attachment.hasNonNull("textPath")) {
+                                container.add(attachment.path("textPath").asString());
+                            }
                         }
                     }
                 }
@@ -346,11 +373,45 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
 
                 @Override
                 public Optional<String> text(ExportAssetManifest.Entry entry) {
-                    String path = entry.stored() ? textFiles.get(entry.sha256()) : null;
-                    if (path == null || zip.getEntry(path) == null) {
+                    return documentText(entry).map(DocumentText::text);
+                }
+
+                @Override
+                public Optional<DocumentText> documentText(ExportAssetManifest.Entry entry) {
+                    List<String> paths = entry.stored() ? textFiles.get(entry.sha256()) : null;
+                    if (paths == null) {
                         return Optional.empty();
                     }
-                    return Optional.of(new String(read(path, MAX_JSON_BYTES), StandardCharsets.UTF_8));
+                    // Der Export schreibt Texte ohne Zeichengrenze; eingelesen wird höchstens MAX_TEXT_BYTES je
+                    // Anhang (eigener Text und Teile zusammen), der Rest bleibt weg, statt das Paket abzulehnen.
+                    // Gekürzt wird nie still: der Text sagt es selbst (truncated, gelesene Bytes); das Paket bleibt.
+                    List<String> texts = new ArrayList<>();
+                    long budget = maxTextBytes;
+                    long read = 0;
+                    boolean truncated = false;
+                    for (String path : paths) {
+                        ZipEntry file = zip.getEntry(path);
+                        if (file == null || file.isDirectory()) {
+                            continue;
+                        }
+                        if (budget <= 0) {
+                            truncated |= file.getSize() != 0;
+                            continue;
+                        }
+                        byte[] bytes = prefix(file, budget + 1);
+                        if (bytes.length > budget) {
+                            bytes = java.util.Arrays.copyOf(bytes, (int) budget);
+                            truncated = true;
+                        }
+                        budget -= bytes.length;
+                        read += bytes.length;
+                        String text = new String(bytes, StandardCharsets.UTF_8);
+                        if (!text.isBlank()) {
+                            texts.add(text);
+                        }
+                    }
+                    return texts.isEmpty() ? Optional.empty()
+                            : Optional.of(new DocumentText(String.join("\n\n", texts), truncated, read));
                 }
             };
         }
@@ -399,6 +460,16 @@ public final class ZipExportPackageReader implements ExportPackage.Reader {
         }
 
         /** Liest einen Eintrag ganz, höchstens {@code limit} Bytes; mehr ist ein Fehler, nie gekürzt. */
+        /** Die ersten höchstens {@code limit} Bytes einer Datei des Pakets. */
+        private byte[] prefix(ZipEntry entry, long limit) {
+            try (InputStream in = zip.getInputStream(entry)) {
+                return in.readNBytes((int) Math.min(limit, Integer.MAX_VALUE - 8));
+            } catch (IOException e) {
+                throw new ExportPackageException(ExportPackageException.DAMAGED, entry.getName()
+                        + " ist nicht lesbar", e);
+            }
+        }
+
         private byte[] read(String path, long limit) {
             ZipEntry entry = zip.getEntry(path);
             if (entry == null || entry.isDirectory()) {

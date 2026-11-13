@@ -878,6 +878,28 @@ public class Assets {
         }
     }
 
+    /**
+     * Das abgelegte Dokument eines Anhangs mit seinen enthaltenen Dateien für den Export (ADR 0026, AP4c); liest nichts
+     * neu und fragt die Quelle nicht. Leer ohne strukturierte Extraktion dieser Bytes.
+     */
+    public Optional<DocumentExport> documentExport(String sourceId, String attachmentId, String version,
+                                                   String sha256) {
+        DocumentExtractions structured = extractions;
+        if (structured == null || sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256))
+                .orElse(null);
+        if (asset == null || asset.kind() != AssetKind.OTHER) {
+            return Optional.empty();
+        }
+        try {
+            return structured.export(asset, store);
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
     /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
@@ -1713,10 +1735,22 @@ public class Assets {
      * @return ob er abgelegt wurde; ohne Extraktion oder ohne Text nicht
      */
     public boolean adoptText(String sha256, String text) {
+        return adoptText(sha256, text, false, 0);
+    }
+
+    /**
+     * Wie {@link #adoptText(String, String)}; ein beim Einlesen gekürzter Text trägt das selbst: {@code truncated} und
+     * Status {@code PARTIAL} mit Grund {@code too-large} und gelesenem Umfang (nie stilles Kürzen, ADR 0026).
+     */
+    public boolean adoptText(String sha256, String text, boolean truncated, long bytesRead) {
         if (documents == null || sha256 == null || text == null || text.isBlank()) {
             return false;
         }
-        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, false, clock.instant()));
+        Optional<Outcome> outcome = truncated
+                ? Optional.of(Outcome.truncated(StatusReason.TOO_LARGE, new ReadExtent(bytesRead, text.length())))
+                : Optional.empty();
+        store.putText(new AssetText(sha256, textExtractor(), textVersion(), text, truncated, clock.instant(),
+                outcome));
         return true;
     }
 

@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.DocumentExport;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
@@ -61,6 +62,8 @@ import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Import eines JSON-Pakets wie ein Abgleich ohne Quelle: Seiten, Generation, Dateien und Texte. */
 class ExportPackageImportTest {
@@ -82,10 +85,17 @@ class ExportPackageImportTest {
     private final InMemorySyncStore store = new InMemorySyncStore(repository);
     private final MemoryAssets assets = new MemoryAssets();
     private final Map<String, String> texts = new HashMap<>();
+    /** Beim Einlesen gekürzte Texte mit gelesenen Bytes. */
+    private final Map<String, Long> cut = new HashMap<>();
     private final List<SpaceSync.SyncRun> committed = new ArrayList<>();
     private final ExportPackageImport imports = new ExportPackageImport(jobs,
             new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop", "confluence")::contains,
-            assets, (sha, text) -> texts.put(sha, text) == null, null, List.of(committed::add), clock);
+            assets, (sha, text, truncated, bytes) -> {
+                if (truncated) {
+                    cut.put(sha, bytes);
+                }
+                return texts.put(sha, text) == null;
+            }, null, List.of(committed::add), clock);
 
     @Test
     void importsPagesAsANewGenerationOfTheTargetSourceAndKeepsTheRawBytes() throws Exception {
@@ -144,6 +154,49 @@ class ExportPackageImportTest {
         // draw.io kommt seit json-package/4 nur als Text: keine gezeichnete Grafik im Paket, keine im Speicher
         assertThat(assets.content("laptop", Assets.renditionId(sha256(MXFILE)), Assets.DRAWIO_RENDITION)).isEmpty();
         assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles");
+    }
+
+    @Test
+    void attachmentsV2BringTheContainerTextFollowedByThePartTextsWithoutAStructuredExtraction() throws Exception {
+        Path pkg = pkg(pages("100"), new PackageAssets(true, true));
+        JsonNode attachments = JsonMapper.builder().build().readTree(entry(pkg, "attachments.json"));
+        assertThat(attachments.path("format").asString()).isEqualTo("attachments/v2");
+        assertThat(attachments.path("attachments")).hasSize(3);
+
+        JobStatus job = imports.start(pkg, "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).as(String.valueOf(jobs.status(job.id())))
+                .isEqualTo(JobState.COMPLETED);
+        // Eigener Text, danach die Teile mit Text in Verzeichnisreihenfolge; der Teil ohne Text fehlt.
+        assertThat(texts).containsEntry(sha256(PDF), "Bericht über alles\n\nAnlage eins");
+        // Der Teil wird kein eigenes Asset: nur die drei Anhänge des Pakets liegen in der Ablage.
+        assertThat(assets.content("laptop", "att-pdf", "2")).contains(PDF);
+        assertThat(assets.entries).hasSize(3);
+        assertThat(cut).isEmpty();
+    }
+
+    @Test
+    void aTextCutWhileImportingSaysSoAndThePackageStaysAsItIs() throws Exception {
+        Path pkg = pkg(pages("100"), new PackageAssets(true, true));
+        byte[] before = Files.readAllBytes(pkg);
+        Map<String, String> adopted = new HashMap<>();
+        Map<String, Long> truncated = new HashMap<>();
+        ExportPackageImport tight = new ExportPackageImport(jobs,
+                new ZipExportPackageReader(1024 * 1024, 1024 * 1024, 10), store, Set.of("laptop")::contains, assets,
+                (sha, text, cutOff, bytes) -> {
+                    if (cutOff) {
+                        truncated.put(sha, bytes);
+                    }
+                    return adopted.put(sha, text) == null;
+                }, null, List.of(committed::add), clock);
+
+        JobStatus job = tight.start(pkg, "laptop", false, "client-a");
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        // Zehn Bytes: „Bericht “ und das zweibytige „ü“; die Teile fehlen, und der Text sagt es selbst.
+        assertThat(adopted).containsEntry(sha256(PDF), "Bericht ü");
+        assertThat(truncated).containsEntry(sha256(PDF), 10L);
+        assertThat(Files.readAllBytes(pkg)).isEqualTo(before);
     }
 
     @Test
@@ -520,8 +573,16 @@ class ExportPackageImportTest {
         }
 
         PackageAssets(boolean drawn) {
-            this.drawn = drawn;
+            this(drawn, false);
         }
+
+        PackageAssets(boolean drawn, boolean structured) {
+            this.drawn = drawn;
+            this.structured = structured;
+        }
+
+        /** Ob der Bericht als strukturiertes Dokument mit enthaltenen Dateien kommt (attachments/v2). */
+        private final boolean structured;
 
         private final ExportAssetManifest.Entry image = new ExportAssetManifest.Entry("100",
                 ExportAssetManifest.Reference.attachment("att-foto", "foto.png"), "att-foto", "1", "foto.png",
@@ -553,6 +614,71 @@ class ExportPackageImportTest {
         @Override
         public Optional<String> text(ExportAssetManifest.Entry entry) {
             return entry == pdf ? Optional.of("Bericht über alles") : Optional.empty();
+        }
+
+        @Override
+        public Optional<DocumentExport> document(ExportAssetManifest.Entry entry) {
+            return structured && entry == pdf ? Optional.of(new Structured()) : Optional.empty();
+        }
+    }
+
+    /** Ein Bericht mit eigenem Text, einem Teil mit Text und einem unlesbaren Teil. */
+    private static final class Structured implements DocumentExport {
+
+        private static final DocumentExport.Extraction OK = new DocumentExport.Extraction("OK", null, false, 16L,
+                18L, "tika", "3.3-s9", "1");
+        private final DocumentExport.Part eins = new DocumentExport.Part("sha256:" + "a".repeat(64) + ":0", null,
+                "/1", 1, "eins.txt", "text/plain", 11L, "sha256:" + "a".repeat(64), "a".repeat(64) + "-0", OK, true,
+                true);
+        private final DocumentExport.Part kaputt = new DocumentExport.Part("pos:" + "b".repeat(64) + ":/2", null,
+                "/2", 1, "kaputt.pdf", "application/pdf", null, null, "pos-" + "b".repeat(64) + "-2",
+                new DocumentExport.Extraction("FAILED", "parse-failed", false, null, null, "tika", "3.3-s9", "1"),
+                false, false);
+
+        @Override
+        public DocumentExport.Extraction extraction() {
+            return OK;
+        }
+
+        @Override
+        public boolean hasText() {
+            return true;
+        }
+
+        @Override
+        public void writeText(OutputStream out) throws IOException {
+            out.write("Bericht über alles".getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override
+        public void writeMarkdown(OutputStream out) throws IOException {
+            out.write("# Bericht über alles".getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override
+        public List<DocumentExport.Part> parts() {
+            return List.of(eins, kaputt);
+        }
+
+        @Override
+        public void writeText(DocumentExport.Part part, OutputStream out) throws IOException {
+            out.write("Anlage eins".getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override
+        public void writeMarkdown(DocumentExport.Part part, OutputStream out) throws IOException {
+            out.write("Anlage eins".getBytes(StandardCharsets.UTF_8));
+        }
+
+        @Override
+        public void copyOriginals(DocumentExport.Originals originals) throws IOException {
+            originals.accept(eins, new java.io.ByteArrayInputStream("Anlage eins".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        @Override
+        public Optional<InputStream> openOriginal(DocumentExport.Part part) {
+            return part == eins ? Optional.of(new java.io.ByteArrayInputStream(
+                    "Anlage eins".getBytes(StandardCharsets.UTF_8))) : Optional.empty();
         }
     }
 

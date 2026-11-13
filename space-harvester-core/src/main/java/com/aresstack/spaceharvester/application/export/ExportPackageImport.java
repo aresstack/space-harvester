@@ -55,7 +55,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
 /**
@@ -92,12 +91,21 @@ public final class ExportPackageImport {
 
     private static final System.Logger LOG = System.getLogger(ExportPackageImport.class.getName());
 
+    /**
+     * Legt den mitgebrachten Text eines Anhangs zu seinem SHA-256 ab ({@link Assets#adoptText}); {@code truncated}
+     * mit gelesenem Umfang, wenn er beim Einlesen gekürzt wurde (nie still).
+     */
+    @FunctionalInterface
+    public interface Texts {
+        boolean adopt(String sha256, String text, boolean truncated, long bytesRead);
+    }
+
     private final Jobs jobs;
     private final ExportPackage.Reader reader;
     private final SyncBaselineStore store;
     private final Predicate<String> configured;
     private final AssetStore assets;
-    private final BiPredicate<String, String> texts;
+    private final Texts texts;
     private final ReadingViewStore views;
     private final ImportedAssets imported;
     private final List<SyncCommitted> committed;
@@ -114,7 +122,7 @@ public final class ExportPackageImport {
      * @param committed  Folgeschritte nach der neuen Generation, wie nach einem Abgleich
      */
     public ExportPackageImport(Jobs jobs, ExportPackage.Reader reader, SyncBaselineStore store,
-                               Predicate<String> configured, AssetStore assets, BiPredicate<String, String> texts,
+                               Predicate<String> configured, AssetStore assets, Texts texts,
                                ReadingViewStore views, List<SyncCommitted> committed, Clock clock) {
         this(jobs, reader, store, configured, assets, texts, views, null, committed, clock);
     }
@@ -124,7 +132,7 @@ public final class ExportPackageImport {
      * Quelle mitnimmt ({@link ImportedAssets}), {@code null} ohne.
      */
     public ExportPackageImport(Jobs jobs, ExportPackage.Reader reader, SyncBaselineStore store,
-                               Predicate<String> configured, AssetStore assets, BiPredicate<String, String> texts,
+                               Predicate<String> configured, AssetStore assets, Texts texts,
                                ReadingViewStore views, ImportedAssets imported, List<SyncCommitted> committed,
                                Clock clock) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
@@ -469,8 +477,9 @@ public final class ExportPackageImport {
                     stored++;
                     original = true;
                     if (entry.document() && texts != null) {
-                        files.text(entry).filter(text -> !text.isBlank())
-                                .ifPresent(text -> texts.test(entry.sha256(), text));
+                        files.documentText(entry).filter(text -> !text.text().isBlank())
+                                .ifPresent(text -> texts.adopt(entry.sha256(), text.text(), text.truncated(),
+                                        text.bytesRead()));
                     }
                 }
                 if (entry.rendition() != null && entry.rendition().drawn()) {
