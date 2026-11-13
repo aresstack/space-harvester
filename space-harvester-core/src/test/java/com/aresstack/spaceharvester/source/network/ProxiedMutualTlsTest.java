@@ -76,11 +76,15 @@ class ProxiedMutualTlsTest {
     }
 
     private static HarvestSource source(ClientCertificate certificate) {
+        return source(certificate, Map.of());
+    }
+
+    private static HarvestSource source(ClientCertificate certificate, Map<String, String> options) {
         URI base = URI.create(mtlsServer.baseUrl().toString().replace("127.0.0.1", "secure.proxied.test"));
         ProxySettings settings = new ProxySettings(ProxySettings.Mode.PAC_URL_MANUAL, pac.url(), null, null, null,
                 null, null, null);
         return ConfiguredSourceCatalog.of(List.of(new SourceSettingsConfig("wiki", "confluence", null, base,
-                new Auth(AuthType.PAT, null, null, "pat-token"), Map.of(), certificate, "confluence-ca")), "test",
+                new Auth(AuthType.PAT, null, null, "pat-token"), options, certificate, "confluence-ca")), "test",
                 bundles, settings).find("wiki").orElseThrow();
     }
 
@@ -98,9 +102,13 @@ class ProxiedMutualTlsTest {
                 .containsEntry("Authorization", "Bearer pat-token"));
     }
 
+    /**
+     * Der Fehlschlag ist hier das Ergebnis: ohne Wiederholung und mit kurzer Lesezeit, sonst wartet der Test dreimal
+     * die 60 Sekunden des Standards ab (Audit 13.11.2026: 182 Sekunden).
+     */
     @Test
     void withoutClientCertificateTheTunnelAloneIsNotEnough() {
-        HarvestSource source = source(null);
+        HarvestSource source = source(null, Map.of("maxRetries", "0", "readTimeoutMillis", "2000"));
 
         assertThatThrownBy(source::partitions).isInstanceOf(Exception.class);
         assertThat(proxy.requestLines()).isNotEmpty()
