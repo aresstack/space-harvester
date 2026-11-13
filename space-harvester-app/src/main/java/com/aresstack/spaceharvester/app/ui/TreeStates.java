@@ -58,6 +58,9 @@ final class TreeStates {
     /** Vorfahren ladender Seiten je Space; neu berechnet, wenn sich Übersicht oder Ladeliste ändern. */
     private final Map<String, Set<String>> loadingAbove = new HashMap<>();
     private final Map<String, Subscription> subscriptions = new LinkedHashMap<>();
+    /** Spaces, deren Übersicht gerade gelesen wird; eine Meldung währenddessen merkt den Space als veraltet. */
+    private final Set<String> reading = new HashSet<>();
+    private final Set<String> stale = new HashSet<>();
     private AppRuntime subscribed;
 
     TreeStates(AppContext context, Runnable changed) {
@@ -74,12 +77,19 @@ final class TreeStates {
     /** Die Quellen des Baums: je Quelle eine Anmeldung für alle Spaces und einmal der Stand je Space. EDT. */
     void watch(List<String> sourceIds) {
         AppRuntime runtime = context.runtime();
+        List<String> open = List.of();
         if (runtime != subscribed) {
+            // Neue Laufzeit, womöglich mit denselben Quellen: alles neu anmelden, aufgeklappte Spaces neu lesen.
+            open = new ArrayList<>(spaces.keySet());
             close();
             subscribed = runtime;
         }
         if (runtime == null) {
             return;
+        }
+        for (String key : open) {
+            int cut = key.indexOf('\u0000');
+            readSpace(runtime, key.substring(0, cut), key.substring(cut + 1));
         }
         for (String sourceId : sourceIds) {
             if (subscriptions.containsKey(sourceId)) {
@@ -120,6 +130,8 @@ final class TreeStates {
         }
         subscriptions.clear();
         spaces.clear();
+        reading.clear();
+        stale.clear();
         summaries.clear();
         loading.clear();
         loadingAbove.clear();
@@ -130,6 +142,14 @@ final class TreeStates {
             if (runtime != subscribed) {
                 return;
             }
+            // Der Stand der Quelle wird ersetzt, nicht ergänzt: nach „Daten bereinigen“ kennt der Cache Spaces
+            // nicht mehr, deren Zeichen sonst stehen blieben. Aufgeklappte Spaces behalten ihren eigenen Stand.
+            Set<String> known = new HashSet<>();
+            for (SpaceSummary summary : list) {
+                known.add(key(sourceId, summary.spaceKey()));
+            }
+            summaries.keySet().removeIf(key -> key.startsWith(sourceId + "\u0000") && !known.contains(key)
+                    && !spaces.containsKey(key));
             for (SpaceSummary summary : list) {
                 summaries.put(key(sourceId, summary.spaceKey()), summary);
             }
@@ -140,17 +160,28 @@ final class TreeStates {
     }
 
     private void readSpace(AppRuntime runtime, String sourceId, String spaceKey) {
+        String key = key(sourceId, spaceKey);
+        if (!reading.add(key)) {
+            // Läuft schon: das Ergebnis könnte älter sein als der Anlass, also danach noch einmal lesen.
+            stale.add(key);
+            return;
+        }
         Background.run(() -> runtime.workspace().holdings(sourceId, spaceKey), holdings -> {
+            reading.remove(key);
             if (runtime != subscribed) {
                 return;
             }
-            String key = key(sourceId, spaceKey);
             spaces.put(key, holdings);
             summaries.put(key, holdings.space());
             loadingAbove.remove(key);
             changed.run();
+            if (stale.remove(key)) {
+                readSpace(runtime, sourceId, spaceKey);
+            }
         }, error -> {
             // Zu groß für einen Baum oder kein Zugriff: die Seiten dieses Space bleiben ohne Zeichen.
+            reading.remove(key);
+            stale.remove(key);
         });
     }
 
@@ -166,15 +197,14 @@ final class TreeStates {
         if (runtime == null || runtime != subscribed) {
             return;
         }
+        if (reading.contains(key)) {
+            // Die erste Übersicht ist unterwegs und könnte die Meldung noch nicht enthalten: danach noch einmal lesen.
+            stale.add(key);
+            return;
+        }
         if (known == null) {
-            // Nicht aufgeklappt: nur der Stand des Space ändert sich.
-            Background.run(() -> runtime.workspace().holdings(sourceId, spaceKey, pageIds), part -> {
-                if (runtime == subscribed) {
-                    summaries.put(key, part.space());
-                    changed.run();
-                }
-            }, error -> {
-            });
+            // Nicht aufgeklappt: nur der Stand des Space ändert sich, ohne Baum, denn der kann zu groß sein.
+            readSummaries(runtime, sourceId);
             return;
         }
         Background.run(() -> runtime.workspace().holdings(sourceId, spaceKey, pageIds), part -> {

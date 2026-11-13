@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
@@ -303,8 +304,9 @@ public final class ChatPanel extends JPanel {
         if (key == null) {
             return;
         }
-        subscription = runtime.workspace().subscribeHoldings(current.sourceId(),
-                current.spaceKey() == null ? "" : current.spaceKey(), new HoldingsListener() {
+        try {
+            subscription = runtime.workspace().subscribeHoldings(current.sourceId(),
+                    current.spaceKey() == null ? "" : current.spaceKey(), new HoldingsListener() {
                     @Override
                     public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
                         scheduleRefresh();
@@ -320,6 +322,11 @@ public final class ChatPanel extends JPanel {
                         scheduleRefresh();
                     }
                 });
+        } catch (RuntimeException gone) {
+            // Die gewählte Quelle gibt es in dieser Laufzeit nicht mehr (etwa entfernt): der Baum räumt die Auswahl
+            // gleich weg; bis dahin ohne Meldungen, das Lesen meldet den Fehler selbst.
+            subscription = null;
+        }
     }
 
     /** Vom Zustell-Thread des Core: einmal auf dem EDT auffrischen, auch bei mehreren Meldungen hintereinander. */
@@ -431,8 +438,16 @@ public final class ChatPanel extends JPanel {
         load.setEnabled(false);
         feedback.working("Download wird gestartet …");
         java.util.function.Consumer<Downloads.Started> started = result -> {
-            feedback.working(current.page() ? "Download der Seite samt Unterseiten gestartet"
-                    : current.spaceKey() == null ? "Download aller Spaces gestartet" : "Download des Space gestartet");
+            if (!result.failed().isEmpty()) {
+                feedback.warning(Texts.count(result.failed().size(), "Download ließ", "Downloads ließen")
+                        + " sich nicht starten", String.join("; ", result.failed()));
+            } else if (result.jobs().isEmpty()) {
+                feedback.info("Kein Space zum Herunterladen", null);
+            } else {
+                feedback.working(current.page() ? "Download der Seite samt Unterseiten gestartet"
+                        : current.spaceKey() == null ? "Download aller Spaces gestartet"
+                        : "Download des Space gestartet");
+            }
             load.setEnabled(true);
         };
         java.util.function.Consumer<Throwable> failed = error -> {
