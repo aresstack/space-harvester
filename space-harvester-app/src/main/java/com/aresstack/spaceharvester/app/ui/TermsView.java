@@ -71,7 +71,6 @@ public final class TermsView implements View {
     static final String RULES_ONLY = "Ohne Embedding-Modell nur Regelvorschläge";
     static final String CANCELLED = "Synonymerkennung abgebrochen; bisherige Vorschläge bleiben";
     private static final int NOTICE_MS = 8000;
-    private static final int POLL_MS = 400;
 
     private final JPanel root = new JPanel(new BorderLayout());
     private final PillTabs tabs = new PillTabs();
@@ -84,7 +83,8 @@ public final class TermsView implements View {
             + "Formulierungen im Text als Regelvorschläge; mit Chat-Modell werden Kandidatenpaare anhand kurzer "
             + "Fundstellen aus freigegebenen Quellen geprüft. Nur Vorschläge, nichts wird bestätigt");
     private BusyOverlay synonymOverlay;
-    private javax.swing.Timer synonymPoll;
+    /** Anmeldung bei den Aufträgen, solange die Synonymerkennung läuft (ADR 0027, kein Zeitgeber). */
+    private com.aresstack.spaceharvester.application.observe.Subscription synonymSubscription;
     private String synonymJob;
     private boolean synonymRulesOnly;
     private final ComposerButton occurrences = Comic.button("Fundstellen …", SHOW_OCCURRENCES
@@ -236,7 +236,7 @@ public final class TermsView implements View {
         Dialogs.show(dialog, PROPOSE_SYNONYMS, form, cancel, start);
     }
 
-    /** Startet den Lauf und zeigt ihn über dem Reiter; der Stand kommt alle {@link #POLL_MS} aus dem Core. */
+    /** Startet den Lauf und zeigt ihn über dem Reiter; jeden neuen Stand meldet der Core (ADR 0027). */
     void startSynonymRun(SynonymDiscovery.Request request) {
         AppRuntime runtime = context == null ? null : context.runtime();
         if (runtime == null || synonymJob != null) {
@@ -251,8 +251,10 @@ public final class TermsView implements View {
             return workspace.startSynonymDiscovery(request.scope(), request.maxJudgedPairs());
         }, status -> {
             synonymJob = status.id();
-            synonymPoll = new javax.swing.Timer(POLL_MS, e -> pollSynonymRun(workspace));
-            synonymPoll.start();
+            // Erst anmelden, dann einmal lesen: was zwischen Start und Anmeldung geschah, bringt das Lesen.
+            synonymSubscription = workspace.subscribeSynonymJob(status.id(),
+                    changed -> SwingUtilities.invokeLater(() -> showSynonymRun(changed)));
+            pollSynonymRun(workspace);
         }, failure -> {
             synonymOverlay.setBusy(false);
             proposeSynonyms.setEnabled(true);
@@ -265,15 +267,18 @@ public final class TermsView implements View {
         if (jobId == null) {
             return;
         }
-        Background.run(() -> workspace.synonymJob(jobId), status -> {
-            if (!jobId.equals(synonymJob)) {
-                return;
-            }
-            synonymOverlay.setText(progressText(status));
-            if (status.state().terminal()) {
-                finishSynonymRun(status);
-            }
-        }, failure -> finishSynonymRun(null));
+        Background.run(() -> workspace.synonymJob(jobId), this::showSynonymRun, failure -> finishSynonymRun(null));
+    }
+
+    /** Ein Stand des laufenden Auftrags, auf dem EDT; ein Stand eines anderen Auftrags zählt nicht. */
+    private void showSynonymRun(JobStatus status) {
+        if (!status.id().equals(synonymJob)) {
+            return;
+        }
+        synonymOverlay.setText(progressText(status));
+        if (status.state().terminal()) {
+            finishSynonymRun(status);
+        }
     }
 
     static String progressText(JobStatus status) {
@@ -285,9 +290,9 @@ public final class TermsView implements View {
     }
 
     private void finishSynonymRun(JobStatus status) {
-        if (synonymPoll != null) {
-            synonymPoll.stop();
-            synonymPoll = null;
+        if (synonymSubscription != null) {
+            synonymSubscription.close();
+            synonymSubscription = null;
         }
         synonymJob = null;
         synonymOverlay.setBusy(false);

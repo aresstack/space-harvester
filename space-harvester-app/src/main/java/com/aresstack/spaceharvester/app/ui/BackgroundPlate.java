@@ -1,51 +1,86 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.app.runtime.Acquisition;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.app.runtime.Acquisition.Pause;
 import com.aresstack.spaceharvester.app.runtime.Acquisition.SourceCounts;
 
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
-import javax.swing.Timer;
+import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
  * Die Hintergrundbefüllung (ADR 0016) unter Status: in Worten, ob und warum sie gerade lädt oder pausiert, dazu
  * Warteschlange, laufende Abrufe, Geladenes und Gescheitertes, gesamt und je Quelle. Die Zahlen kommen aus dem
  * Beschaffungsplaner des Core ({@code source}, außerhalb des EDT abgefragt); ohne Laufzeit ist die Tafel leer. Solange
- * sie sichtbar ist, fragt sie alle {@value #POLL_MILLIS} ms neu. Nur auf dem EDT.
+ * sie sichtbar ist, ist sie beim Planer angemeldet und zeichnet jede Meldung (ADR 0027, Angelo 13.11.2026: kein
+ * Zeitgeber). Nur auf dem EDT.
  */
 final class BackgroundPlate extends JPanel {
 
-    static final int POLL_MILLIS = 2000;
-
     private final Supplier<Optional<Acquisition>> source;
+    /** Meldet einen Empfänger beim Planer an; {@link Subscription#NONE} ohne Laufzeit. Nie auf dem EDT blockierend. */
+    private final Function<Consumer<Acquisition>, Subscription> subscriber;
     private final Facts facts = new Facts();
-    private final Timer poll = new Timer(POLL_MILLIS, e -> refresh());
+    private Subscription subscription = Subscription.NONE;
     private boolean loading;
+    /** Zählt Abfragen und Meldungen: eine Abfrage zeigt ihr Ergebnis nur, wenn keine Meldung sie überholt hat. */
+    private int generation;
     private Acquisition shown;
 
-    /** @param source der Stand des Planers, leer ohne Laufzeit oder ohne Planer; blockiert, nie auf dem EDT gerufen */
-    BackgroundPlate(Supplier<Optional<Acquisition>> source) {
+    /**
+     * @param source     der Stand des Planers, leer ohne Laufzeit oder ohne Planer; blockiert, nie auf dem EDT gerufen
+     * @param subscriber meldet den Empfänger an, solange die Tafel sichtbar ist; der Empfänger wird auf dem
+     *                   Zustell-Thread des Core gerufen
+     */
+    BackgroundPlate(Supplier<Optional<Acquisition>> source, Function<Consumer<Acquisition>, Subscription> subscriber) {
         super(new BorderLayout());
         this.source = Objects.requireNonNull(source, "source");
+        this.subscriber = Objects.requireNonNull(subscriber, "subscriber");
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
         add(facts, BorderLayout.CENTER);
-        poll.setRepeats(true);
         addHierarchyListener(e -> {
             if (isShowing()) {
+                subscribe();
                 refresh();
-                poll.start();
             } else {
-                poll.stop();
+                unsubscribe();
             }
         });
         render(null);
+    }
+
+    /** Erst anmelden, dann einmal lesen: so geht keine Meldung verloren. */
+    private void subscribe() {
+        unsubscribe();
+        Subscription opened = subscriber.apply(status -> SwingUtilities.invokeLater(() -> {
+            if (subscription != Subscription.NONE) {
+                generation++;
+                render(status);
+            }
+        }));
+        subscription = opened == null ? Subscription.NONE : opened;
+    }
+
+    /** Die Laufzeit hat gewechselt (Start, Neu laden): solange sichtbar neu anmelden und einmal lesen. */
+    void rebind() {
+        if (isShowing()) {
+            subscribe();
+            refresh();
+        }
+    }
+
+    private void unsubscribe() {
+        subscription.close();
+        subscription = Subscription.NONE;
     }
 
     /** Fragt den Stand im Hintergrund ab; nie zwei Abfragen zugleich. */
@@ -54,12 +89,17 @@ final class BackgroundPlate extends JPanel {
             return;
         }
         loading = true;
+        int ticket = ++generation;
         Background.run(source::get, current -> {
             loading = false;
-            render(current.orElse(null));
+            if (ticket == generation) {
+                render(current.orElse(null));
+            }
         }, failure -> {
             loading = false;
-            render(null);
+            if (ticket == generation) {
+                render(null);
+            }
         });
     }
 
