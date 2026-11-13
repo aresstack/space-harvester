@@ -322,6 +322,46 @@ public class FileSystemExtractionStore implements ExtractionStore {
         }
     }
 
+    /**
+     * Löscht unter {@code extractions/<sha256-hex>/} alle Stände außer denen von {@code keep}, samt leer gewordenen
+     * Verzeichnissen. Ein Stand, den gerade ein Leser offen hat, kann unter Windows liegen bleiben; dann räumt ihn das
+     * nächste Neulesen weg.
+     */
+    @Override
+    public void removeOthers(ExtractionKey keep) {
+        Path dir = root.resolve(keep.sha256().substring("sha256:".length()));
+        Path kept = base(keep);
+        List<Path> others;
+        try (Stream<Path> paths = Files.walk(dir, 3)) {
+            others = paths.filter(path -> dir.relativize(path).getNameCount() == 3).filter(Files::isDirectory)
+                    .filter(path -> !path.equals(kept)).toList();
+        } catch (NoSuchFileException e) {
+            return;
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Alte Extraktionen nicht entfernbar", e);
+        }
+        IOException failed = null;
+        for (Path other : others) {
+            try {
+                deleteTree(other);
+                for (Path parent = other.getParent(); parent != null && !parent.equals(dir); parent =
+                        parent.getParent()) {
+                    try (Stream<Path> children = Files.list(parent)) {
+                        if (children.findAny().isPresent()) {
+                            break;
+                        }
+                    }
+                    Files.deleteIfExists(parent);
+                }
+            } catch (IOException e) {
+                failed = e;
+            }
+        }
+        if (failed != null) {
+            throw new AssetStoreException("Alte Extraktionen nicht entfernbar", failed);
+        }
+    }
+
     /** Entfernt alle Extraktionen eines Inhalts, etwa wenn der Inhalt die Ablage verlässt. */
     public void remove(String sha256) {
         if (!sha256.matches("sha256:[0-9a-f]{64}")) {

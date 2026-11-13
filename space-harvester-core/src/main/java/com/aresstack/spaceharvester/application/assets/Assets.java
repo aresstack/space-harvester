@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeExcept
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -29,6 +30,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -1204,6 +1206,89 @@ public class Assets {
             flushIndex();
         }
         return changed;
+    }
+
+    /**
+     * Ausgang von {@link #reread}.
+     *
+     * @param read   ob das Original jetzt gelesen wurde
+     * @param text   ob die neue Extraktion Text hat und den bisherigen Stand ersetzt hat
+     * @param code   fester Code, wenn kein Text entstand ({@link DocumentTextException.Reason#code()} oder
+     *               {@code rate-limited}); sonst {@code null}
+     */
+    public record Reread(boolean read, boolean text, String code) {
+
+        /** Nichts zu tun: schon aktuell oder nicht betroffen. */
+        public static final Reread SKIPPED = new Reread(false, false, null);
+    }
+
+    /**
+     * Liest ein abgelegtes Dokument ohne Download neu („Neu lesen“, ADR 0026, Punkt 11, Abnahme 8), wenn es betroffen
+     * ist: ohne {@code statuses} jedes Dokument ohne Extraktion der eingestellten Version (Versionswechsel, Import,
+     * vorübergehend gescheitert), mit {@code statuses} nur Dokumente, deren aktuelle Extraktion einen dieser Status hat
+     * (etwa nach geänderten Grenzen), sofern sie nicht nach {@code since} entstand. Der bisherige Stand gilt, bis das
+     * Lesen Text liefert; erst dann werden Texte und Extraktionen anderer Versionen derselben Bytes entfernt. Ein
+     * gescheitertes Lesen lässt ihn stehen. Den Volltextindex ersetzt {@link #reindexStored}.
+     *
+     * @param since bei {@code statuses}: Extraktionen ab diesem Zeitpunkt gelten als schon neu gelesen; sonst egal
+     * @throws DocumentTextException {@code NOT_CONFIGURED} ohne strukturierte Extraktion
+     */
+    public Reread reread(Asset asset, Set<ExtractionStatus> statuses, Instant since) {
+        DocumentExtractions structured = extractions;
+        if (structured == null || documents == null) {
+            throw new DocumentTextException(DocumentTextException.Reason.NOT_CONFIGURED,
+                    "Keine strukturierte Extraktion konfiguriert", null);
+        }
+        if (asset.kind() != AssetKind.OTHER) {
+            return Reread.SKIPPED;
+        }
+        Optional<StoredExtraction> current = structured.stored(asset.sha256());
+        boolean fresh = !statuses.isEmpty();
+        if (fresh ? current.isEmpty() || !statuses.contains(current.get().document().outcome().status())
+                || !current.get().createdAt().isBefore(since) : current.isPresent()) {
+            return Reread.SKIPPED;
+        }
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            AssetText text = fresh ? structured.reread(asset, store, clock.instant())
+                    : structured.text(asset, store, clock.instant());
+            try {
+                store.removeOtherTexts(asset.sha256(), text.extractor(), text.version());
+                structured.removeOlderVersions(asset.sha256());
+            } catch (AssetStoreException | IllegalArgumentException e) {
+                // Der neue Stand gilt; alte Stände räumt das nächste Neulesen weg.
+                LOG.log(System.Logger.Level.WARNING, "Alte Stände eines Dokuments in {0} nicht entfernt ({1})",
+                        asset.sourceId(), e.getClass().getName());
+            }
+            return new Reread(true, true, null);
+        } catch (DocumentTextException e) {
+            return new Reread(true, false, e.reason().code());
+        } catch (SourceAccessException e) {
+            return new Reread(false, false, code(e.reason()));
+        }
+    }
+
+    /**
+     * Legt einen abgelegten Dokument-Anhang aus seiner abgelegten Extraktion neu in den Volltextindex, ohne Download und
+     * ohne die Quelle zu fragen (für „Neu lesen“): Seite und Anhang kommen aus dem Eintrag der Ablage, der Space vom
+     * Aufrufer. Sichert den Index nicht ({@link #flushTextIndex}).
+     *
+     * @return ob der Index geändert wurde
+     */
+    public boolean reindexStored(Asset asset, String spaceKey) {
+        if (texts == null || asset.kind() != AssetKind.OTHER) {
+            return false;
+        }
+        PageAttachmentList list = new PageAttachmentList(asset.sourceId(), spaceKey, new PageAttachments(
+                asset.pageId(), List.of(), List.of(), "application/json", "stored", List.of(), clock.instant()),
+                clock.instant());
+        return indexSections(list, asset).orElse(false);
+    }
+
+    /** Sichert Änderungen am Volltextindex dauerhaft, etwa nach {@link #reindexStored}. */
+    public void flushTextIndex() {
+        if (texts != null) {
+            flushIndex();
+        }
     }
 
     /** Ein Dokument mit Text: aus den Abschnitten der abgelegten Extraktion, sonst sein bisheriger Text. */

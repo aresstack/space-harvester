@@ -369,6 +369,19 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Er hat keine strukturierte Extraktion und gilt deshalb als veraltet, bis „Neu lesen“ oder die nächste Ernte das
   abgelegte Original liest. Ein Text der eingestellten Extraktion ohne abgelegte strukturierte Extraktion (Ablage
   verworfen) gilt ebenso als veraltet.
+- **„Neu lesen“ (ADR 0026, Punkt 11, Abnahme 8, AP5b):** Auftrag `REREAD` je Quelle (`DocumentRereads`), liest die
+  abgelegten Dokument-Anhänge ohne Download neu, je Anhang die jüngste abgelegte Version, je Inhalt einmal. Ohne
+  Beschränkung ist Arbeit genau das, was keine Extraktion der eingestellten Version hat (veraltete Stände nach einem
+  Versionswechsel oder Import, vorübergehend gescheiterte); beschränkt auf Status (`OK`, `PARTIAL`, `UNSUPPORTED`,
+  `FAILED`) nur Dokumente, deren aktuelle Extraktion diesen Status hat und vor dem Start entstand, etwa nach geänderten
+  Grenzen; dann ersetzt nur ein lesbares Ergebnis den bisherigen Stand. Erst nach erfolgreichem Lesen ersetzt er die
+  Einträge im Volltextindex (Space aus dem Seiten-Cache) und räumt Texte und Extraktionen anderer Versionen ab; ein
+  gescheitertes Lesen lässt den alten Stand stehen und zählt als Fehler (Auftrag fertig mit Fehlern). Eingeplant wie
+  ein Folgeauftrag, anhaltbar, Fortsetzen im selben Eintrag auch nach einem Neustart (aus den Angaben `statuses` und
+  `since`), dabei wird übersprungen, was schon neu gelesen ist. Desktop-App: `Harvester.reread(sourceId, statuses)`
+  und die üblichen Auftragsaktionen. Dienst: `POST /api/v1/sources/{sourceId}/data/rereads?status=failed,partial`
+  → 202, Stand unter `…/data/rereads/{jobId}`, nur für Clients mit `manage-configuration` wie Import und „Daten
+  bereinigen“. Den Start nach einem Versionswechsel oder geänderten Grenzen von selbst bringt AP5c.
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated` (an der
   Zeichengrenze oder weil die Extraktion gekürzt ist), dazu seit ADR 0026 (AP4a) `status` (`OK`, `PARTIAL`), `reason`
   (fester Code, nur bei `PARTIAL`), `bytesRead` und `charsRead` aus der abgelegten Extraktion samt dem, was die Quelle

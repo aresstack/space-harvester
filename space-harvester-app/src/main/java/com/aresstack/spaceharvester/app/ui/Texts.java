@@ -127,6 +127,7 @@ public final class Texts {
             case KNOWLEDGE_GRAPH_EXPORT -> "Graph-Export";
             case GLOSSARY -> "Fachbegriffe ermitteln";
             case IMPORT -> "Import";
+            case REREAD -> "Neu lesen";
         };
     }
 

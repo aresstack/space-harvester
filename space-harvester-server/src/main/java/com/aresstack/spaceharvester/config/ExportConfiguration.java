@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ConnectionBudget;
+import com.aresstack.spaceharvester.application.assets.DocumentRereads;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -182,8 +183,9 @@ class ExportConfiguration {
      * selbst wieder an ({@code jobs.retry.resume-initial-delay} bis {@code resume-max-delay}).
      */
     @Bean
-    JobRecovery jobRecovery(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions) {
-        JobActions actions = new JobActions(jobs, exports, syncs, conversions);
+    JobRecovery jobRecovery(Jobs jobs, Exports exports, SpaceSyncJobs syncs, ExportConversions conversions,
+                            ObjectProvider<DocumentRereads> rereads) {
+        JobActions actions = new JobActions(jobs, exports, syncs, conversions, rereads.getIfAvailable());
         JobRecovery recovery = new ServerJobRecovery(jobs,
                 (status, action) -> actions.perform(status.id(), status.owner(), action));
         jobs.recovery(recovery);
