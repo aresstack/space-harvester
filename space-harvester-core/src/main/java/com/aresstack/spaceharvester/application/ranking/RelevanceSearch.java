@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.DocumentTexts;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
@@ -42,7 +43,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -931,18 +931,6 @@ public class RelevanceSearch {
         }
     }
 
-    /**
-     * Lesetext eines Abschnitts eines Dokuments (ADR 0026, AP9a) für Ausschnitte von Treffern, nur wenn er genau der
-     * Text ist, aus dem ein Ergebnis entstand.
-     */
-    @FunctionalInterface
-    public interface DocumentTexts {
-
-        /** Ohne Lesetexte: Treffer in Dokumenten haben keinen Ausschnitt. */
-        DocumentTexts NONE = (document, section, inputSha256) -> Optional.empty();
-
-        Optional<PageText> text(DocumentKey document, int section, String inputSha256);
-    }
 
     /** Ob das Embedding hinter einer Ähnlichkeit zur aktuellen Revision der Seite gehört. */
     public enum Freshness {
