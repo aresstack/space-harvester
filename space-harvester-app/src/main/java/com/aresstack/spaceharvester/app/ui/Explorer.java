@@ -81,6 +81,8 @@ public final class Explorer {
     private static final int TREE_LIMIT = 5_000;
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
+    /** Spalte des Bestandszeichens links vom Stern. */
+    private static final int BADGE_WIDTH = 22;
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
     static final String PAGE_ONLY = "Nur diese Seite herunterladen";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
@@ -200,6 +202,8 @@ public final class Explorer {
     private final Node top = new Node(new Note("Wissensquellen"));
     private final DefaultTreeModel model = new DefaultTreeModel(top);
     private final JTree tree = new JTree(model);
+    /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
+    private final TreeStates states;
     private final DefaultListModel<Match> matchModel = new DefaultListModel<>();
     private final JList<Match> matches = new JList<>(matchModel);
     private final CardLayout cards = new CardLayout();
@@ -282,6 +286,7 @@ public final class Explorer {
 
     public Explorer(AppContext context) {
         this.context = context;
+        this.states = new TreeStates(context, tree::repaint);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setToggleClickCount(0);
@@ -355,7 +360,7 @@ public final class Explorer {
             public void mouseMoved(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
-                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : null);
+                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : onBadge(path, event.getPoint()) ? badgeTip(path) : null);
                 if (row != hoverRow) {
                     hoverRow = row;
                     tree.repaint();
@@ -711,6 +716,7 @@ public final class Explorer {
             return;
         }
         shownSources = ids;
+        states.watch(ids);
         top.removeAllChildren();
         for (HarvestSource source : sources) {
             top.add(expandable(new SourceItem(source.id(), source.title())));
@@ -739,6 +745,11 @@ public final class Explorer {
         }
         node.loading = true;
         Item item = node.item();
+        if (item instanceof SpaceItem space) {
+            states.open(space.sourceId(), space.spaceKey());
+        } else if (item instanceof PageItem page) {
+            states.open(page.sourceId(), page.spaceKey());
+        }
         Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
@@ -1029,6 +1040,9 @@ public final class Explorer {
         private boolean action;
         /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
         private boolean starred;
+        private TreeStates.Badge badge = TreeStates.Badge.NONE;
+        /** Trägt die Farbe des Zeichens; {@link Glyph} malt in der Vordergrundfarbe seines Wirts. */
+        private final JLabel badgeHost = new JLabel();
         private boolean favorite;
         private int row = -1;
         private int width;
@@ -1065,10 +1079,11 @@ public final class Explorer {
             action = downloadable(item);
             starred = starrable(item);
             favorite = starred && isFavorite(item);
+            badge = badge(item);
             this.row = row;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             int text = super.getPreferredSize().width;
-            width = Math.max(text + (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH : 0),
+            width = Math.max(text + (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH + BADGE_WIDTH : 0),
                     tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
             return this;
         }
@@ -1100,6 +1115,13 @@ public final class Explorer {
                     int sx = x - ACTION_WIDTH;
                     star.paintIcon(this, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
                             (getHeight() - star.getIconHeight()) / 2);
+                }
+                // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …).
+                if (badge.kind() != TreeStates.Kind.NONE) {
+                    int bx = x - ACTION_WIDTH - BADGE_WIDTH;
+                    badgeHost.setForeground(badge.color());
+                    badge.glyph().paintIcon(badgeHost, g, bx + (BADGE_WIDTH - badge.glyph().getIconWidth()) / 2,
+                            (getHeight() - badge.glyph().getIconHeight()) / 2);
                 }
             } finally {
                 g.dispose();
@@ -1136,6 +1158,35 @@ public final class Explorer {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
         return bounds != null && path.getLastPathComponent() instanceof Node node && downloadable(node.item())
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
+    }
+
+    /** Ob der Punkt auf dem Bestandszeichen der Zeile liegt (links vom Stern). */
+    private boolean onBadge(TreePath path, java.awt.Point point) {
+        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
+        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+                && point.x >= bounds.x + bounds.width - 2 * ACTION_WIDTH - BADGE_WIDTH
+                && point.x < bounds.x + bounds.width - 2 * ACTION_WIDTH;
+    }
+
+    private String badgeTip(TreePath path) {
+        TreeStates.Badge badge = path.getLastPathComponent() instanceof Node node ? badge(node.item())
+                : TreeStates.Badge.NONE;
+        return badge.tooltip();
+    }
+
+    /** Das Bestandszeichen einer Zeile: Spaces nach ihrem Stand, Seiten nach Zustand bzw. Teilbaum. */
+    TreeStates.Badge badge(Item item) {
+        return switch (item) {
+            case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
+            case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
+                    !Boolean.FALSE.equals(page.hasChildren()));
+            case null, default -> TreeStates.Badge.NONE;
+        };
+    }
+
+    /** Für Tests: der Bestand. */
+    TreeStates states() {
+        return states;
     }
 
     /** Ob der Punkt auf dem Stern der Zeile liegt (links vom Download-Symbol). */
