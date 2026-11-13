@@ -76,8 +76,14 @@ final class FileAccessEditor {
         boolean confirm(Component parent);
     }
 
+    /** Prüft abseits des EDT, ob ein Ordner erreichbar ist; Tests ersetzen die Prüfung, um Verzögerungen zu stellen. */
+    interface Probe {
+        boolean reachable(Path folder) throws Exception;
+    }
+
     private final AppContext context;
     private final Confirmation confirmation;
+    private final Probe probe;
     private final List<String> roots = new ArrayList<>();
     /** Die vorübergehend abgeschalteten Ordner aus {@link #roots}. */
     private final java.util.Set<String> inactive = new java.util.LinkedHashSet<>();
@@ -87,6 +93,13 @@ final class FileAccessEditor {
      * Netzlaufwerk nicht dauerhaft als „Nicht erreichbar“ steht.
      */
     private final Map<String, String> status = new HashMap<>();
+    /**
+     * Die laufende Prüfung je Ordner. Eine Prüfung wird erst angestoßen, wenn keine läuft, und nur das Ergebnis der
+     * zuletzt gestarteten zählt: Wird ein Ordner entfernt, wieder aufgenommen oder die Tabelle neu geladen, während
+     * eine ältere Prüfung noch läuft, darf deren verspätetes Ergebnis die frische Zeile nicht überschreiben.
+     */
+    private final Map<String, Integer> running = new HashMap<>();
+    private int ticket;
     private final DefaultTableModel model = new DefaultTableModel(
             new Object[] {ACTIVE_COLUMN, PATH_COLUMN, STATUS_COLUMN, ""}, 0) {
         @Override
@@ -115,8 +128,13 @@ final class FileAccessEditor {
     }
 
     FileAccessEditor(AppContext context, Confirmation confirmation) {
+        this(context, confirmation, Files::isDirectory);
+    }
+
+    FileAccessEditor(AppContext context, Confirmation confirmation, Probe probe) {
         this.context = context;
         this.confirmation = confirmation;
+        this.probe = probe;
         panel.setOpaque(false);
         allowAll.setToolTipText(ALLOW_ALL_HELP);
 
@@ -205,8 +223,10 @@ final class FileAccessEditor {
             }
         }
         allowAll.setSelected(savedAllowAll());
-        // Erreichbarkeit ist kein Dauerzustand (Netzlaufwerk verbunden/getrennt): bei jedem Neuaufbau neu prüfen.
+        // Erreichbarkeit ist kein Dauerzustand (Netzlaufwerk verbunden/getrennt): bei jedem Neuaufbau neu prüfen;
+        // laufende Prüfungen verfallen, ihr Ergebnis zählt nicht mehr.
         status.clear();
+        running.clear();
         refresh();
     }
 
@@ -247,7 +267,7 @@ final class FileAccessEditor {
     void revoke(String folder) {
         if (roots.remove(folder)) {
             inactive.remove(folder);
-            status.remove(folder);
+            forget(folder);
             refresh();
         }
     }
@@ -283,7 +303,7 @@ final class FileAccessEditor {
         }
         roots.removeAll(doomed);
         doomed.forEach(inactive::remove);
-        doomed.forEach(status::remove);
+        doomed.forEach(this::forget);
         refresh();
     }
 
@@ -381,23 +401,37 @@ final class FileAccessEditor {
         model.setRowCount(0);
         for (String root : roots) {
             model.addRow(new Object[] {!inactive.contains(root), root, status(root), null});
-            if (!status.containsKey(root)) {
+            if (!status.containsKey(root) && !running.containsKey(root)) {
                 check(root);
             }
         }
     }
 
+    /** Vergisst Status und laufende Prüfung eines entfernten Ordners; ein verspätetes Ergebnis verfällt. */
+    private void forget(String root) {
+        status.remove(root);
+        running.remove(root);
+    }
+
     private void check(String root) {
+        int mine = ++ticket;
+        running.put(root, mine);
         Background.run(() -> {
             try {
-                return Files.isDirectory(Path.of(root)) ? STATUS_REACHABLE : STATUS_UNREACHABLE;
+                return probe.reachable(Path.of(root)) ? STATUS_REACHABLE : STATUS_UNREACHABLE;
             } catch (InvalidPathException e) {
                 return STATUS_INVALID;
             }
-        }, result -> show(root, result), error -> show(root, STATUS_UNREACHABLE));
+        }, result -> show(root, mine, result), error -> show(root, mine, STATUS_UNREACHABLE));
     }
 
-    private void show(String root, String result) {
+    /** Übernimmt das Ergebnis nur, wenn es von der zuletzt gestarteten Prüfung dieses Ordners stammt. */
+    private void show(String root, int mine, String result) {
+        Integer current = running.get(root);
+        if (current == null || current != mine) {
+            return;
+        }
+        running.remove(root);
         status.put(root, result);
         int row = roots.indexOf(root);
         if (row >= 0 && row < model.getRowCount()) {
