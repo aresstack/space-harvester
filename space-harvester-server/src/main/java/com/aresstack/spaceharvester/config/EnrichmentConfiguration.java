@@ -136,13 +136,14 @@ class EnrichmentConfiguration {
     @Bean
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
                                               ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts,
-                                              ObjectProvider<AcronymRelationRule> acronymRule) {
+                                              ObjectProvider<AcronymRelationRule> acronymRule,
+                                              ObjectProvider<DocumentEnrichments> documents) {
         // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
         // Volltextindex nach (#180) und danach die Regelvorschläge der Begriffsbeziehungen (#120).
         AcronymRelationRule rule = acronymRule.getIfAvailable();
         List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
-                texts.getIfAvailable(), followUps);
+                texts.getIfAvailable(), followUps, documents.getIfAvailable());
     }
 
     /**
@@ -156,6 +157,7 @@ class EnrichmentConfiguration {
         Assets target = assets.getIfAvailable();
         if (target != null) {
             target.indexedDocuments(documents);
+            documents.assets(target);
         }
         return documents;
     }

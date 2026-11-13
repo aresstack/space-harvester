@@ -23,10 +23,13 @@ import java.util.Objects;
  * @param computedAt       Zeitpunkt der Berechnung
  * @param document         das Dokument; {@link DocumentKey#page()} ist {@code key}
  * @param section          Abschnitt eines großen Dokuments ab 0, sonst 0
+ * @param extraction       nur bei Dokumenten: undurchsichtige Kennung der Extraktion, für die {@code revision} (Hash
+ *                         des Lesetextes des Dokuments) gebildet wurde; ändert sie sich, wird der Hash einmal neu
+ *                         gebildet (ADR 0026, AP9a); sonst {@code null}
  */
 public record Enrichment(PageKey key, String processorId, String processorVersion, String inputSha256,
                          String revision, Status status, String payloadJson, List<String> warnings, String errorCode,
-                         Instant computedAt, DocumentKey document, int section) {
+                         Instant computedAt, DocumentKey document, int section, String extraction) {
 
     public enum Status {
         OK,
@@ -52,6 +55,20 @@ public record Enrichment(PageKey key, String processorId, String processorVersio
         if (section < 0) {
             throw new IllegalArgumentException("section darf nicht negativ sein");
         }
+    }
+
+    /** Ohne Kennung der Extraktion. */
+    public Enrichment(PageKey key, String processorId, String processorVersion, String inputSha256, String revision,
+                      Status status, String payloadJson, List<String> warnings, String errorCode, Instant computedAt,
+                      DocumentKey document, int section) {
+        this(key, processorId, processorVersion, inputSha256, revision, status, payloadJson, warnings, errorCode,
+                computedAt, document, section, null);
+    }
+
+    /** Dasselbe Ergebnis mit anderem Hash des Lesetextes und anderer Kennung der Extraktion, ohne neu zu rechnen. */
+    public Enrichment withBasis(String revision, String extraction) {
+        return new Enrichment(key, processorId, processorVersion, inputSha256, revision, status, payloadJson, warnings,
+                errorCode, computedAt, document, section, extraction);
     }
 
     /** Ergebnis für die Seite selbst (wie vor ADR 0026). */

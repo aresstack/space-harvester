@@ -691,9 +691,12 @@ public final class Harvester implements AutoCloseable {
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
+            // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten;
+            // der Lauf nach dem Abgleich holt den Bestand nach.
+            DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs, () -> true);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                    List.of(acronymRelationRule::refresh));
+                    List.of(acronymRelationRule::refresh), documentEnrichments);
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock, List.of(afterSync),
                     retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
@@ -732,8 +735,8 @@ public final class Harvester implements AutoCloseable {
             assets.documentExtractions(new DocumentExtractions(new TikaDocumentStructure(
                     builder.extractionLimits.parallel(), ExtractionStore.DEFAULT_SECTION_CHARS),
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
-            // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten.
-            assets.indexedDocuments(new DocumentEnrichments(enrichments, jobs, () -> true));
+            assets.indexedDocuments(documentEnrichments);
+            documentEnrichments.assets(assets);
             // Import eines JSON-Pakets wie ein Abgleich ohne Quelle; danach Volltext und Anreicherungen. Die
             // mitgebrachten Bilder und Anhänge je Seite nimmt ein Export, wenn die Quelle nicht erreichbar ist.
             EnrichmentImportedAssets importedAssets = new EnrichmentImportedAssets(enrichmentStore, clock);

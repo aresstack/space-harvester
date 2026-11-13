@@ -61,7 +61,7 @@ import java.util.concurrent.TimeoutException;
  * bisher beim Ablegen ({@link #harvest}) und auf Abruf ({@link #text}, {@link #describe}); der Index übernimmt nur, was
  * abgelegt ist, und prüft nie Rechte: die Suche gibt einen Anhangstreffer nur mit seiner lesbaren Seite aus.
  */
-public class Assets {
+public class Assets implements DocumentInventory {
 
     private static final System.Logger LOG = System.getLogger(Assets.class.getName());
 
@@ -219,6 +219,37 @@ public class Assets {
      */
     public void documentExtractions(DocumentExtractions extractions) {
         this.extractions = extractions;
+    }
+
+    @Override
+    public Optional<DocumentExtractions> documentExtractions() {
+        return Optional.ofNullable(extractions);
+    }
+
+    /**
+     * Die abgelegten Dokument-Anhänge dieser Seiten, die im Volltextindex ihrer Seite stehen (also nicht aus der
+     * vollständigen Liste entfernt sind), je Anhang in der zuletzt abgelegten Version (ADR 0026, AP9a: Bestand der
+     * Analysen je Dokument). Liest nur die Einträge der Ablage, nichts von der Quelle.
+     */
+    @Override
+    public List<Asset> indexedDocuments(String sourceId, java.util.Collection<String> pageIds) {
+        if (texts == null || pageIds.isEmpty()) {
+            return List.of();
+        }
+        Set<String> pages = Set.copyOf(pageIds);
+        Map<String, Asset> latest = new java.util.LinkedHashMap<>();
+        try (java.util.stream.Stream<Asset> entries = store.entries(sourceId)) {
+            entries.filter(asset -> asset.kind() == AssetKind.OTHER && pages.contains(asset.pageId()))
+                    .forEach(asset -> latest.merge(asset.attachmentId(), asset,
+                            (a, b) -> b.retrievedAt().isAfter(a.retrievedAt()) ? b : a));
+        }
+        List<Asset> indexed = new java.util.ArrayList<>();
+        for (Asset asset : latest.values()) {
+            if (texts.attachmentInputSha256(new PageKey(sourceId, asset.pageId()), asset.attachmentId()).isPresent()) {
+                indexed.add(asset);
+            }
+        }
+        return List.copyOf(indexed);
     }
 
     /** Schließt den Hörer auf neu indexierte Dokumente an (ADR 0026, AP9a). */

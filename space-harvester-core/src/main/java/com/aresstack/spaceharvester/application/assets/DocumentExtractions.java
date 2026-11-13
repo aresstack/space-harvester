@@ -528,6 +528,31 @@ public final class DocumentExtractions {
         return Stream.concat(own, parts);
     }
 
+    /**
+     * Welche Dokumente {@link #documentSections} liefern würde, ohne einen Abschnitt zu lesen (nur das Manifest): das
+     * Dokument selbst ({@link Optional#empty()}), wenn es Abschnitte hat, dann je lesbarem Teil mit abgelegtem Text
+     * einer, inhaltsgleiche einmal.
+     */
+    public java.util.List<Optional<EmbeddedEntry>> documents(StoredExtraction extraction) {
+        java.util.List<Optional<EmbeddedEntry>> documents = new java.util.ArrayList<>();
+        if (extraction.sections() > 0) {
+            documents.add(Optional.empty());
+        }
+        java.util.List<EmbeddedEntry> directory = extraction.document().directory();
+        if (directory.isEmpty()) {
+            return documents;
+        }
+        Optional<ExtractionStore.PartSections> reader = extractions.partSections(extraction.key());
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (EmbeddedEntry entry : directory) {
+            String key = entry.id().storageKey();
+            if (usable(entry.outcome()) && reader.isPresent() && reader.get().keys().contains(key) && seen.add(key)) {
+                documents.add(Optional.of(entry));
+            }
+        }
+        return documents;
+    }
+
     /** Ein Teil mit einem seiner Abschnitte, oder ohne Abschnitt ({@code null}), wenn er keinen Text hat. */
     private record Piece(EmbeddedEntry entry, TextSection section) {
     }
