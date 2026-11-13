@@ -252,11 +252,8 @@ public final class TermsView implements View {
         }, status -> {
             synonymJob = status.id();
             // Erst anmelden, dann einmal lesen: was zwischen Start und Anmeldung geschah, bringt das Lesen.
-            synonymSubscription = workspace.subscribeJobs(changed -> {
-                if (changed.id().equals(status.id())) {
-                    SwingUtilities.invokeLater(() -> showSynonymRun(changed));
-                }
-            });
+            synonymSubscription = workspace.subscribeSynonymJob(status.id(),
+                    changed -> SwingUtilities.invokeLater(() -> showSynonymRun(changed)));
             pollSynonymRun(workspace);
         }, failure -> {
             synonymOverlay.setBusy(false);
