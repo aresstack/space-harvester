@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import java.awt.Component;
 import java.awt.Container;
 import java.nio.file.Files;
@@ -118,14 +120,52 @@ class SourcesViewTest {
         assertThat(actions.getComponent(actions.getComponentCount() - 2)).isSameAs(arrow);
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
-        SwingUtilities.invokeAndWait(arrow::doClick);
-        assertThat(arrow.isEnabled()).as("grau, solange die Aufträge laufen").isFalse();
+        // Im selben EDT-Durchlauf wie der Klick prüfen: Ordner-Aufträge enden in Millisekunden, und das Wieder-
+        // freigeben kommt per invokeLater – von außen gelesen wäre der Knopf sonst manchmal schon wieder aktiv.
+        boolean[] greyWhileRunning = new boolean[1];
+        String[] why = new String[1];
+        SwingUtilities.invokeAndWait(() -> {
+            arrow.doClick();
+            greyWhileRunning[0] = !arrow.isEnabled();
+            why[0] = "Verbindung=" + context.connection("kurz") + " · Laufzeit=" + (context.runtime() != null)
+                    + " · Knopf aktuell=" + (view[0].syncButton("kurz") == arrow) + " · Meldung="
+                    + find(root, Feedback.class).get(0).text();
+        });
+        assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen: " + why[0]).isTrue();
         await(() -> !context.runtime().workspace().jobs().isEmpty());
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()))
-                .as("Betriebsart der Quelle, hier die Vorgabe").allMatch(job -> "CATALOG_ONLY".equals(
-                        job.parameters().get("mode")));
+        // Der Core hängt an einen Abgleich eigene Folgeaufträge (Anreicherung) ohne Parameter; geprüft wird der
+        // Abgleich selbst, den die Kreispfeile gestartet haben.
+        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()));
+        List<JobStatus> syncs = context.runtime().workspace().jobs().stream()
+                .filter(job -> job.type() == JobType.SYNC).toList();
+        assertThat(syncs).hasSize(1);
+        assertThat(syncs.get(0).parameters()).as("Betriebsart der Quelle, hier die Vorgabe")
+                .containsEntry("mode", "CATALOG_ONLY");
         await(arrow::isEnabled);
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> job.state().terminal());
+        assertThat(context.runtime().workspace().job(syncs.get(0).id()).state().terminal()).isTrue();
+    }
+
+    @Test
+    void cardsAreGroupedByTypeUnderCollapsibleHeadersAndSelectingReopensAGroup() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        // Beide Quellen sind Ordner: eine Gruppe, nur Typen mit Quellen erscheinen.
+        List<com.aresstack.spaceharvester.app.ui.controls.SectionHeader> headers = view[0].typeHeaders();
+        assertThat(headers).hasSize(1);
+        assertThat(headers.get(0).title()).isEqualTo("Lokale Dateien");
+        assertThat(headers.get(0).isOpen()).isTrue();
+        Container root = all(view[0]);
+        List<StatusMark> marks = find(root, StatusMark.class);
+        assertThat(marks).allMatch(mark -> mark.getParent().isVisible());
+
+        SwingUtilities.invokeAndWait(headers.get(0)::toggle);
+        assertThat(headers.get(0).isOpen()).isFalse();
+        assertThat(marks).as("zugeklappt: keine Karte sichtbar").allMatch(mark -> !mark.getParent().isVisible());
+
+        SwingUtilities.invokeAndWait(() -> view[0].select("kurz"));
+        assertThat(headers.get(0).isOpen()).as("gewählte Quelle klappt ihre Gruppe auf").isTrue();
+        assertThat(marks).allMatch(mark -> mark.getParent().isVisible());
     }
 
     private static List<IconButton> buttons(Container root, String tooltip) throws Exception {
