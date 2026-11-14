@@ -335,7 +335,7 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> {
             AiSettingsPanel panel = new AiSettingsPanel(context);
             javax.swing.JComponent models = panel.modelsComponent();
-            models.setSize(700, 600);
+            models.setSize(700, 700);
             layout(models);
             assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
             assertThat(panel.chunkTokens.isVisible()).isFalse();

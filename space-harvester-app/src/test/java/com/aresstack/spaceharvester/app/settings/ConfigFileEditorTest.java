@@ -740,6 +740,25 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theOutputLimitOfTheChatModelGoesIntoTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "gpt-oss-120b", null, null, null, java.util.List.of())
+                .withChatMaxTokens("16384");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("chat-max-tokens: 16384");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().chatMaxTokens()).isEqualTo(16384);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(new AiDraft("https://ki.firma.de/v1", "gpt-oss-120b", null, null, null, java.util.List.of())
+                .yaml("")).doesNotContain("chat-max-tokens");
+        assertThat(ai.withChatMaxTokens("0").problems()).anyMatch(p -> p.contains("Ausgabelimit"));
+        assertThat(ai.withChatMaxTokens("viel").problems()).anyMatch(p -> p.contains("Ausgabelimit"));
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");

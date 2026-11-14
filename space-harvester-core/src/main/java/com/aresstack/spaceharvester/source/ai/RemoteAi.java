@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysis;
 import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysisCache;
 import com.aresstack.enterpriseai.astu.acropolis.image.SourceImageAnalysisUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.navigation.ChatSectionLabeler;
+import com.aresstack.enterpriseai.astu.chat.ChatFinishReason;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
@@ -171,16 +172,15 @@ public final class RemoteAi {
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
             try {
-                return adapter.complete(new ChatRequest(
-                        List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)).content();
+                return complete(adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)),
+                        MAX_VARIANT_TOKENS, false);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
         };
     }
 
-    /** Obergrenze der Antwort des Chat-Modells für Akronym-Ausschreibungen in Tokens (#122). */
-    static final int MAX_EXPANSION_TOKENS = 4096;
     /** Eigene Frist je Anfrage der Akronymauflösung, unabhängig von {@code ai.timeout} (#122). */
     public static final Duration EXPANSION_TIMEOUT = Duration.ofSeconds(90);
 
@@ -198,8 +198,11 @@ public final class RemoteAi {
 
     /**
      * Dasselbe Chat-Modell für die Bedeutungsprüfung der Synonymerkennung (#336): Anweisung und JSON-Eingabe hinein,
-     * der Text der Antwort heraus; geprüft wird die Antwort in {@code SynonymDiscovery}. Frist und Obergrenze wie
-     * {@link #acronymExpansions()}.
+     * der Text der Antwort heraus; geprüft wird die Antwort in {@code SynonymDiscovery}. Frist wie
+     * {@link #acronymExpansions()}; das Ausgabelimit ist {@code ai.chat-max-tokens} (Standard 8192) und geht als
+     * {@code max_tokens} mit. Endet die Antwort an diesem Limit ({@code finish_reason = length}), ist ihr JSON
+     * abgeschnitten: Das Modell meldet {@code INVALID_RESPONSE} mit dem Hinweis auf die Einstellung, statt den
+     * Rest als vollständige Antwort weiterzugeben.
      *
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
      */
@@ -209,11 +212,12 @@ public final class RemoteAi {
         }
         OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
                 (int) EXPANSION_TIMEOUT.toMillis()));
-        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_EXPANSION_TOKENS).build();
+        int maxTokens = settings.chatMaxTokens();
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
         return (instructions, input) -> {
             try {
-                return adapter.complete(new ChatRequest(
-                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)).content();
+                return complete(adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
@@ -495,6 +499,27 @@ public final class RemoteAi {
     }
 
     /** Nur Art und Status: Die Meldung des Adapters kann gekürzte Serverantworten enthalten, die die Frage zitieren. */
+    /** Meldung einer am Ausgabelimit abgeschnittenen Antwort; der Text der Antwort steht nie darin. */
+    static final String TRUNCATED = "Chat-Dienst: Antwort am Ausgabelimit abgeschnitten (finish_reason=length, "
+            + "max_tokens=";
+    static final String TRUNCATED_ADVICE = "; Ausgabelimit unter Einstellungen › KI erhöhen ("
+            + AiServiceSettings.PREFIX + AiServiceSettings.CHAT_MAX_TOKENS + ")";
+
+    /**
+     * Der Text einer vollständigen Antwort. Hat der Dienst sie am Ausgabelimit beendet, ist sie unvollständig und
+     * kein Ergebnis: ein abgeschnittenes JSON sähe sonst wie eine fertige Antwort aus.
+     *
+     * @param configurable ob das Limit die Einstellung {@code ai.chat-max-tokens} ist (dann nennt die Meldung sie)
+     * @throws AiServiceException {@code INVALID_RESPONSE} bei {@code finish_reason = length}
+     */
+    static String complete(ChatResponse response, int maxTokens, boolean configurable) {
+        if (response.finishReason() == ChatFinishReason.LENGTH) {
+            throw new AiServiceException(AiServiceException.Reason.INVALID_RESPONSE, TRUNCATED + maxTokens + ")"
+                    + (configurable ? TRUNCATED_ADVICE : ""));
+        }
+        return response.content();
+    }
+
     private static AiServiceException chatFailure(ChatCompletionException e) {
         AiServiceException.Reason reason = switch (e.kind()) {
             case AUTHENTICATION -> AiServiceException.Reason.UNAUTHORIZED;

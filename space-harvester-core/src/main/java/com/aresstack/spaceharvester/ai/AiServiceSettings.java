@@ -35,10 +35,14 @@ import java.util.Set;
  * @param visionModel               Vision-Modell für Bildbeschreibungen ({@code POST /chat/completions} mit Bild,
  *                                  ADR 0021) oder {@code null}; wie {@code model.vision} im Enterprise AI Client. Ohne
  *                                  bleibt die Bildanalyse aus; Bilder gehen nur aus freigegebenen Quellen an den Dienst
+ * @param chatMaxTokens             Ausgabelimit einer Antwort des Chat-Modells in Tokens, gesendet als
+ *                                  {@code max_tokens}; {@code null} heißt {@link #DEFAULT_CHAT_MAX_TOKENS}. Endet eine
+ *                                  Antwort an diesem Limit ({@code finish_reason = length}), ist sie unvollständig
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
-                                Set<String> externalProcessingSources, String rerankModel, String visionModel) {
+                                Set<String> externalProcessingSources, String rerankModel, String visionModel,
+                                Integer chatMaxTokens) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -53,13 +57,19 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String EXTERNAL_PROCESSING_SOURCES = "external-processing-sources";
     public static final String RERANK_MODEL = "rerank-model";
     public static final String VISION_MODEL = "vision-model";
+    public static final String CHAT_MAX_TOKENS = "chat-max-tokens";
+
+    /** Standard des Ausgabelimits: OpenAI-kompatible Dienste setzen ohne {@code max_tokens} oft ein knappes eigenes. */
+    public static final int DEFAULT_CHAT_MAX_TOKENS = 8192;
+    /** Obergrenze von {@link #CHAT_MAX_TOKENS}. */
+    public static final int MAX_CHAT_MAX_TOKENS = 1_000_000;
 
     /** Standard der Lesefrist. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 
     /** Kein Dienst eingerichtet. */
     public static final AiServiceSettings NONE = new AiServiceSettings(null, null, null, null, null, null, null,
-            Set.of(), null, null);
+            Set.of(), null, null, null);
 
     public AiServiceSettings {
         if (baseUrl != null && !("https".equalsIgnoreCase(baseUrl.getScheme())
@@ -84,6 +94,19 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 : Set.copyOf(externalProcessingSources);
         rerankModel = blankToNull(rerankModel);
         visionModel = blankToNull(visionModel);
+        chatMaxTokens = chatMaxTokens == null ? DEFAULT_CHAT_MAX_TOKENS : chatMaxTokens;
+        if (chatMaxTokens < 1 || chatMaxTokens > MAX_CHAT_MAX_TOKENS) {
+            throw new IllegalArgumentException(PREFIX + CHAT_MAX_TOKENS + " muss zwischen 1 und "
+                    + MAX_CHAT_MAX_TOKENS + " liegen");
+        }
+    }
+
+    /** Mit dem Standard des Ausgabelimits. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources, String rerankModel, String visionModel) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, null);
     }
 
     /** Ohne Vision-Modell, wie vor ADR 0021. */
@@ -136,9 +159,16 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         if (sources != null) {
             Arrays.stream(sources.split(",")).map(String::strip).filter(id -> !id.isEmpty()).forEach(allowed::add);
         }
+        String maxTokens = value(properties, CHAT_MAX_TOKENS);
+        Integer parsedMaxTokens;
+        try {
+            parsedMaxTokens = maxTokens == null ? null : Integer.valueOf(maxTokens);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(PREFIX + CHAT_MAX_TOKENS + " ist keine Zahl");
+        }
         return new AiServiceSettings(baseUrl, value(properties, API_KEY), value(properties, CHAT_MODEL),
                 value(properties, EMBEDDING_MODEL), parsedDimensions, parsedTimeout, value(properties, TRUST_BUNDLE),
-                allowed, value(properties, RERANK_MODEL), value(properties, VISION_MODEL));
+                allowed, value(properties, RERANK_MODEL), value(properties, VISION_MODEL), parsedMaxTokens);
     }
 
     /** Ob ein Dienst eingerichtet ist ({@link #baseUrl}). */
@@ -174,25 +204,31 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Dieselben Einstellungen mit dem API-Key aus einem Tresor oder Secret-Speicher. */
     public AiServiceSettings withApiKey(String key) {
         return new AiServiceSettings(baseUrl, key, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
     public AiServiceSettings withEmbedding(String model, Integer dimensions) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, model, dimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens);
     }
 
     /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
     public AiServiceSettings withRerankModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, model, visionModel);
+                externalProcessingSources, model, visionModel, chatMaxTokens);
     }
 
     /** Dieselben Einstellungen mit anderem Vision-Modell (ADR 0021). */
     public AiServiceSettings withVisionModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, model);
+                externalProcessingSources, rerankModel, model, chatMaxTokens);
+    }
+
+    /** Dieselben Einstellungen mit anderem Ausgabelimit des Chat-Modells; {@code null} heißt Standard. */
+    public AiServiceSettings withChatMaxTokens(Integer maxTokens) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, maxTokens);
     }
 
     /** Ohne API-Key, damit nichts davon in Logs oder Fehlermeldungen gelangt. */
@@ -210,6 +246,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("externalProcessingSources=" + externalProcessingSources);
         parts.add("rerankModel=" + rerankModel);
         parts.add("visionModel=" + visionModel);
+        parts.add("chatMaxTokens=" + chatMaxTokens);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";
     }
 
