@@ -78,6 +78,13 @@ public interface AssetStore {
     /** Legt eine Beschreibung ab; eine vorhandene für dasselbe Bild und Modell wird ersetzt. */
     void putDescription(ImageDescription description);
 
+    /**
+     * Entfernt alle Beschreibungen dieser Bildbytes, gleich welcher Beschreiber und welches Modell (ADR 0028: die
+     * Freigabe für den KI-Dienst ist zurückgenommen). Die Bytes und ihre Texte bleiben. Der Standard entfernt nichts.
+     */
+    default void removeDescriptions(String imageSha256) {
+    }
+
     /** Der Text genau dieser Bytes aus genau dieser Extraktion (#183). */
     Optional<AssetText> text(String sha256, String extractor, String version);
 

@@ -67,15 +67,29 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 
 ### 3. Ausgabe aus dem Bestand
 
-- Eine Ausgabe aus dem Bestand liest nur den Seiten-Cache, nie die Quelle. Sie enthält die gespeicherten Seiten der
-  Auswahl (`LOCAL` und `OUTDATED`, Letztere im gespeicherten Stand und als veraltet markiert); nur aus dem Katalog
-  bekannte oder gesperrte Seiten fehlen und stehen mit ihrer Zahl in der Abdeckung der Ausgabe.
-- Ein Auftrag je Space der Auswahl, begrenzt auf deren Seiten in diesem Space (der Export-Datensatz bleibt je Space).
-  Die Konverter lesen wie heute aus dem Cache; „einmal beschaffen, beliebig konvertieren“ bleibt.
-- Ein vorhandenes Artefakt wird wiederverwendet, wenn Auswahl (Fingerabdruck), Space und Stand der Seiten gleich sind.
+- Eine Ausgabe aus dem Bestand liest nur den Seiten-Cache, nie die Quelle (`ExportRequest.holdingsOnly`). Sie enthält
+  die gespeicherten Seiten der Auswahl (`LOCAL` und `OUTDATED`, Letztere im gespeicherten Stand); eine Warnung nennt
+  die Zahl der veralteten, die Ausgabe gilt dann nicht als vollständig, und im Datensatz steht bei jeder Seite die
+  aktuelle Version der Kopfdaten neben `raw.revision` des gespeicherten Stands. Nur aus dem Katalog bekannte Seiten
+  fehlen: Sie zählen als gefunden, nicht als geschrieben und nicht als gescheitert, eine Warnung nennt ihre Zahl.
+  Gesperrte Seiten zählt die Auflösung (`counts`), die die Ansicht hält. Ohne Bestand scheitert der Auftrag
+  (`NO_HOLDINGS`); „Neu erzwingen“ gibt es für ihn nicht, „Nur Fehler neu versuchen“ liest wieder nur den Cache.
+- Ein Auftrag je gewähltem Space, sonst je gewähltem Teilbaum (`Holdings.outputs`): Datensatz, Manifest und Konverter
+  kennen genau eine Startseite. Ein Teilbaum in einem gewählten Space oder unter einem anderen gewählten Teilbaum
+  fällt weg, weil er schon in dessen Ausgabe steckt; eine Quelle steht für ihre sichtbaren Spaces im Bestand. Die
+  Konverter lesen wie heute aus dem Cache; „einmal beschaffen, beliebig konvertieren“ bleibt.
+- Ein vorhandenes Artefakt wird wiederverwendet, wenn Auswahl (Fingerabdruck), Space und Stand der Seiten gleich sind
+  (`Exports.startFromHoldings`): gleiche Startseite, Tiefe und Formate, und je Seite des Umfangs dieselbe
+  Elternseite, gespeicherte Version, Version der Kopfdaten und dieselbe Markierung als veraltet oder gesperrt wie beim
+  Start der fertigen Ausgabe, dazu dieselben Kopfdaten (Titel, Labels, Attribute), derselbe gespeicherte Inhalt und
+  dieselben für den Auftraggeber lesbaren Seiten, außerdem dieselben Verzeichnisse der Bilder und Anhänge und dieselbe
+  Lese-Ansicht zur gespeicherten Version (Abschnitt 4). Dann kommt deren Auftrag zurück, ohne neuen Lauf; gilt die
+  Freigabe des Auftraggebers nicht mehr oder ist der Bestand nicht lesbar, wird nichts wiederverwendet.
 - Der bisherige Export-Auftrag mit Beschaffung (ADR 0010, auch über REST) bleibt; er entscheidet über das Neuladen
   künftig nach der Abdeckung seines Teilbaums im Bestand statt nach der bestätigten Generation: Sind alle Seiten des
-  Teilbaums gespeichert und aktuell, liest auch er nur den Cache.
+  Teilbaums gespeichert und aktuell (dieselbe Regel wie die Zustände der Bestandsübersicht, nur nach einer Inventur
+  des Space), liest auch er nur den Cache, und sein Ergebnis gilt als vollständig. Der ganze Space braucht weiter eine
+  bestätigte Generation.
 
 ### 4. Bilder und Anhänge am Bestand
 
@@ -86,8 +100,27 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   `assets.json` und `attachments.json` aus diesen Verzeichnissen und kopiert die Dateien; nichts wird für eine Ausgabe
   neu geladen.
 - Ein Mechanismus für alle Bildzugriffe: Auch der bisherige Export-Auftrag liest und schreibt dieselben Verzeichnisse.
+  Das Verzeichnis ist die schon vorhandene Ablage der mitgebrachten Dateien eines Imports (`ImportedAssets`, in der
+  Lucene-Ablage der Anreicherungen, mit der Seite entfernt); jede Beschaffung, deren Auftraggeber die ganze Quelle
+  lesen darf, legt dort ihre fertig geprüften Seiten ab, die Lese-Ansicht zur Version daneben (`ReadingViewStore`).
+  Läufe ohne dieses Recht legen nichts ab, damit gesperrte Einträge niemandem fehlen.
+- Ein Ausschluss nach den Einstellungen eines Exports (`export.attachments.*`, Status `EXCLUDED`) ersetzt im
+  Verzeichnis nie einen schon abgelegten Eintrag; der Ausschluss gilt nur für das Manifest dieses Exports. Eine Ausgabe
+  aus dem Bestand filtert nach den heutigen Einstellungen: Was damals ausgeschlossen und nie abgelegt wurde, heute aber
+  zugelassen ist, liegt nicht im Bestand (`UNAVAILABLE`, Grund `not-in-holdings`), und der Auftrag endet
+  unvollständig.
+- Die Folgeaufträge einer Ausgabe aus dem Bestand tragen `holdings=true` und lesen nur die Verzeichnisse, nie die
+  Quelle; Seiten ohne Verzeichnis zu ihrer Version nennt der Auftrag mit ihrer Zahl (`NOT_IN_HOLDINGS`) und endet
+  unvollständig statt anzuhalten. „Neu erzwingen“ gibt es für sie nicht.
 - Eine neue Version der Seite macht ihr Verzeichnis veraltet; der nächste Lauf von „Bilder beschaffen“ bzw. „Anhänge
   beschaffen“ für die Auswahl ergänzt nur, was fehlt.
+- Ohne Export: `ExportAssetCollection.collect` je Wurzel in einem Space, in der App `Workspace.collectAssets` für eine
+  Auswahl (aufgeteilt wie die Ausgabe, `Holdings.outputs`, mit sync-Freigabe je Space). Die Aufträge sind dieselben
+  Arten „Bilder beschaffen“ und „Anhänge beschaffen“ mit `selection=true` und, für einen Teilbaum, `selectionRoot`,
+  ohne `exportId`; sie laden die lokal gespeicherten Seiten in ihrer gespeicherten Version. Seiten, deren Verzeichnis
+  nach den heutigen Einstellungen schon vollständig ist, rufen sie nicht ab; „Neu erzwingen“ lädt alles. Ihr Manifest
+  bleibt im Speicher, was bleibt, steht im Verzeichnis je Seite. Ein zweiter Klick auf dieselbe Wurzel liefert den
+  offenen Auftrag oder lässt den beendeten im selben Eintrag erneut laufen.
 
 ### 5. Nicht Teil dieser Entscheidung
 
@@ -104,8 +137,9 @@ Je ein kleiner Pull Request, Core zuerst:
 2. Suche: Cache, Live-Suche, Titelsuche, Cursor.
 3. Begriffe und Vorkommen.
 4. Aussagen und Graph.
-5. Ausgabe aus dem Bestand; Export-Auftrag entscheidet nach Abdeckung.
-6. Verzeichnis der Bilder und Anhänge je Seite und Version; Beschaffen auf einer Auswahl; Export daraus.
+5. Ausgabe aus dem Bestand samt Wiederverwendung; Export-Auftrag entscheidet nach Abdeckung.
+6. Verzeichnis der Bilder und Anhänge je Seite und Version, Folgeaufträge der Ausgabe aus dem Bestand daraus.
+7. Beschaffen auf einer Auswahl ohne Export-Auftrag.
 
 ## Folgen
 

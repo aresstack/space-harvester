@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
@@ -33,6 +34,7 @@ import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -106,10 +108,29 @@ class EnrichmentConfiguration {
         return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
     }
 
-    /** Bildanalyse auf Abruf (ADR 0021, #362). */
+    /**
+     * Bildanalyse auf Abruf (ADR 0021, #362). Verliert eine Seite die Freigabe für den KI-Dienst (Liste oder Quelle,
+     * ADR 0028), entfallen auch ihre Bildbeschreibungen, und die Analysen ihrer Anhänge, die mit Modell entstanden,
+     * rechnen ohne neu.
+     */
     @Bean
-    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments) {
-        return new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
+    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments,
+                                        ObjectProvider<ReleaseRecomputation> recomputation,
+                                        ObjectProvider<AiRelease> release,
+                                        ObjectProvider<DocumentEnrichments> documents) {
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
+        ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
+        AiRelease pages = release.getIfAvailable();
+        if (withdrawals != null && pages != null) {
+            withdrawals.withdrawal(snapshots -> {
+                analysis.withdraw(snapshots, pages::mayProcess);
+                DocumentEnrichments found = documents.getIfAvailable();
+                if (found != null) {
+                    found.withdrawn(snapshots, pages::mayProcess);
+                }
+            });
+        }
+        return analysis;
     }
 
     /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */

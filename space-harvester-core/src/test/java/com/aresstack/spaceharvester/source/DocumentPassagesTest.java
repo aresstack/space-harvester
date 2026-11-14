@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
@@ -40,6 +41,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -182,6 +184,44 @@ class DocumentPassagesTest {
         int calls = embedded.size();
         documents(0).indexed(list(), asset, extractions);
         assertThat(embedded).as("danach aktuell").hasSize(calls);
+    }
+
+    @Test
+    void losingTheReleaseRecomputesPassagesAndNavigationOfTheDocumentsByStructureWithoutTheModel() {
+        Asset asset = stored(Map.of("bericht.html", HTML));
+        DocumentEnrichments documents = documents(0);
+        documents.assets(new DocumentInventory() {
+            @Override
+            public Optional<DocumentExtractions> documentExtractions() {
+                return Optional.of(extractions);
+            }
+
+            @Override
+            public List<Asset> indexedDocuments(String sourceId, Collection<String> pageIds) {
+                return pageIds.contains(PAGE.pageId()) ? List.of(asset) : List.of();
+            }
+        });
+        documents.indexed(list(), asset, extractions);
+        assertThat(processor(results.findDocuments(PAGE), "passages").payloadJson())
+                .contains("\"mode\":\"semantic\"");
+        embedded.clear();
+
+        // Die Seite verliert ihre Freigabe (ADR 0028): Was mit Modell entstand, rechnet ohne Modell neu.
+        released = false;
+        documents.withdrawn(List.of(EnrichmentTestPages.text("wiki", "101", "1", "Seite")), key -> released);
+
+        assertThat(embedded).as("kein Aufruf des Embedding-Modells").isEmpty();
+        List<Enrichment> found = results.findDocuments(PAGE);
+        assertThat(processor(found, "passages").payloadJson()).contains("\"mode\":\"structure\"")
+                .contains("source-not-approved");
+        assertThat(processor(found, "navigation").payloadJson()).contains("source-not-approved");
+
+        // Eine noch freigegebene Seite bleibt unberührt.
+        released = true;
+        documents.indexed(list(), asset, extractions);
+        String passages = processor(results.findDocuments(PAGE), "passages").payloadJson();
+        documents.withdrawn(List.of(EnrichmentTestPages.text("wiki", "101", "1", "Seite")), key -> true);
+        assertThat(processor(results.findDocuments(PAGE), "passages").payloadJson()).isEqualTo(passages);
     }
 
     @Test

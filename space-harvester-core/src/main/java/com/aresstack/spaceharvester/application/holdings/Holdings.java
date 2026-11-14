@@ -212,16 +212,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         HoldingCounts counts = HoldingCounts.ZERO;
         boolean complete = true;
         for (Selection.Root root : selection.roots()) {
-            List<String> spaceKeys;
-            if (root.spaceKey() == null) {
-                access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
-                requireSource(root.sourceId());
-                spaceKeys = catalog.spaceKeys(root.sourceId()).stream().filter(spaceKey -> access.permits(caller,
-                        ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)).toList();
-            } else {
-                spaceKeys = List.of(root.spaceKey());
-            }
-            for (String spaceKey : spaceKeys) {
+            for (String spaceKey : spaceKeys(caller, root)) {
                 Resolved resolved = resolve(caller, root.sourceId(), spaceKey, root.pageId());
                 spaces.putIfAbsent(new Space(root.sourceId(), spaceKey), resolved.summary());
                 complete &= resolved.summary().inventoried() && resolved.found();
@@ -234,6 +225,129 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
             }
         }
         return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
+    }
+
+    /** Die Spaces einer Wurzel: ihr eigener oder alle der Quelle, die der Aufrufer sehen darf. */
+    private List<String> spaceKeys(AccessContext caller, Selection.Root root) {
+        if (root.spaceKey() != null) {
+            return List.of(root.spaceKey());
+        }
+        access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
+        requireSource(root.sourceId());
+        return catalog.spaceKeys(root.sourceId()).stream().filter(spaceKey -> access.permits(caller,
+                ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)).toList();
+    }
+
+    /**
+     * Eine lokal gespeicherte Seite einer Auswahl.
+     *
+     * @param key        Quelle und Seite
+     * @param spaceKey   ihr Space
+     * @param rootPageId die Seite der Wurzel, über die sie zur Auswahl gehört, {@code null} für einen ganzen Space bzw.
+     *                   eine ganze Quelle
+     */
+    public record StoredPage(PageKey key, String spaceKey, String rootPageId) {
+
+        public StoredPage {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(spaceKey, "spaceKey");
+        }
+    }
+
+    /**
+     * Die lokal gespeicherten Seiten einer Auswahl (lokal oder veraltet, nie nur aus der Quelle bekannte oder
+     * gesperrte), je mit Space und der Wurzel, über die sie dazugehört; liegt eine Seite unter mehreren Wurzeln, gilt
+     * die erste. Für die Liste freigegebener Seiten (ADR 0028: der Chat trägt beim Senden nur Lokales ein). Wie
+     * {@link #resolve} ohne Quellenzugriff, Seiten ohne Leserecht fehlen.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
+     * @throws UnknownSourceException wie {@link #resolve}
+     */
+    public List<StoredPage> storedPages(AccessContext caller, Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        Set<PageKey> seen = new HashSet<>();
+        List<StoredPage> stored = new ArrayList<>();
+        for (Selection.Root root : selection.roots()) {
+            for (String spaceKey : spaceKeys(caller, root)) {
+                for (Map.Entry<String, HoldingState> page : resolve(caller, root.sourceId(), spaceKey, root.pageId())
+                        .pages().entrySet()) {
+                    HoldingState state = page.getValue();
+                    PageKey key = new PageKey(root.sourceId(), page.getKey());
+                    if ((state == HoldingState.LOCAL || state == HoldingState.OUTDATED) && seen.add(key)) {
+                        stored.add(new StoredPage(key, spaceKey, root.pageId()));
+                    }
+                }
+            }
+        }
+        return List.copyOf(stored);
+    }
+
+    /**
+     * Die Ausgaben einer Auswahl aus dem Bestand (ADR 0029, „Ausgabe aus dem Bestand“): je gewähltem Space eine Wurzel
+     * für den ganzen Space, eine Quelle steht für ihre Spaces im Bestand, die der Aufrufer sehen darf; dann je
+     * gewähltem Teilbaum eine Wurzel, außer er liegt in einem gewählten Space oder unter einem anderen gewählten
+     * Teilbaum, denn dann steckt er schon in dessen Ausgabe. Jede Wurzel nennt ihren Space. Erst die Spaces, dann die
+     * Teilbäume, je in der Reihenfolge der Auswahl, ohne Doppelte.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
+     * @throws UnknownSourceException wie {@link #resolve}
+     */
+    public List<Selection.Root> outputs(AccessContext caller, Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        Set<Space> wholeSpaces = new LinkedHashSet<>();
+        Map<Space, List<String>> subtrees = new LinkedHashMap<>();
+        for (Selection.Root root : selection.roots()) {
+            if (root.spaceKey() == null) {
+                access.require(caller, ResourceScope.source(root.sourceId()), AccessKind.METADATA);
+                requireSource(root.sourceId());
+                for (String spaceKey : catalog.spaceKeys(root.sourceId())) {
+                    if (access.permits(caller, ResourceScope.space(root.sourceId(), spaceKey), AccessKind.METADATA)) {
+                        wholeSpaces.add(new Space(root.sourceId(), spaceKey));
+                    }
+                }
+                continue;
+            }
+            access.require(caller, ResourceScope.space(root.sourceId(), root.spaceKey()), AccessKind.METADATA);
+            requireSource(root.sourceId());
+            Space space = new Space(root.sourceId(), root.spaceKey());
+            if (root.pageId() == null) {
+                wholeSpaces.add(space);
+            } else {
+                List<String> pages = subtrees.computeIfAbsent(space, key -> new ArrayList<>());
+                if (!pages.contains(root.pageId())) {
+                    pages.add(root.pageId());
+                }
+            }
+        }
+        List<Selection.Root> outputs = new ArrayList<>();
+        wholeSpaces.forEach(space -> outputs.add(Selection.Root.space(space.sourceId(), space.spaceKey())));
+        for (Map.Entry<Space, List<String>> entry : subtrees.entrySet()) {
+            Space space = entry.getKey();
+            if (wholeSpaces.contains(space)) {
+                continue;
+            }
+            List<String> roots = entry.getValue();
+            // Nur bei mehreren Teilbäumen im Space lohnt das Auflösen: eine Seite unter einem anderen gewählten
+            // Teilbaum fällt weg.
+            Set<String> nested = new HashSet<>();
+            if (roots.size() > 1) {
+                for (String pageId : roots) {
+                    for (String below : resolve(caller, space.sourceId(), space.spaceKey(), pageId).pages().keySet()) {
+                        if (!below.equals(pageId) && roots.contains(below)) {
+                            nested.add(below);
+                        }
+                    }
+                }
+            }
+            for (String pageId : roots) {
+                if (!nested.contains(pageId)) {
+                    outputs.add(Selection.Root.subtree(space.sourceId(), space.spaceKey(), pageId));
+                }
+            }
+        }
+        return List.copyOf(outputs);
     }
 
     /** Eine Wurzel in einem Space: die Seite samt Nachkommen, ohne Seite der ganze Space. */
@@ -293,8 +407,13 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
     private record Resolved(SpaceSummary summary, Map<String, HoldingState> pages, boolean found) {
     }
 
-    /** Zustand einer Seite des Katalogs; dieselbe Regel wie die Lücken der Hintergrundfüllung (ADR 0016). */
-    static HoldingState state(HoldingsCatalog.CatalogPage page, Set<String> stale) {
+    /**
+     * Zustand einer Seite des Katalogs; dieselbe Regel wie die Lücken der Hintergrundfüllung (ADR 0016) und wie die
+     * Entscheidung eines Teilbaum-Exports, ob er die Quelle braucht (ADR 0029).
+     *
+     * @param stale Seiten, die die bestätigte Generation als veraltet führt ({@link HoldingsCatalog.Stock#stale()})
+     */
+    public static HoldingState state(HoldingsCatalog.CatalogPage page, Set<String> stale) {
         if (!page.loaded()) {
             return HoldingState.REMOTE;
         }

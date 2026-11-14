@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.StoredReadingView;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -245,6 +246,87 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void aPageOnTheListOfReleasedPagesIsDescribedAlthoughItsSourceIsNot() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", PNG);
+        describer.released = false;
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(new PageKey("wiki", "1")));
+        Assets assets = assets();
+        assets.pageReleases(released::contains);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(analysis.released(new PageKey("wiki", "1"))).isTrue();
+        assertThat(analysis.released(new PageKey("wiki", "2"))).isFalse();
+        assertThat(analysis.released("wiki")).as("die Quelle bleibt gesperrt").isFalse();
+        assertThat(analysis.read(page("1", "Text")).reason()).isNotEqualTo(PageImages.SOURCE_NOT_RELEASED);
+        assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(analysis.read(page("2", "Text")).reason()).isEqualTo(PageImages.SOURCE_NOT_RELEASED);
+        assertThatThrownBy(() -> analysis.describe(page("2", "Text")))
+                .isInstanceOfSatisfying(ImageDescriptionException.class,
+                        e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_RELEASED));
+        assertThat(describer.calls).isEqualTo(1);
+    }
+
+    @Test
+    void withdrawingTheReleaseRemovesTheDescriptionsUnlessAReleasedPageCarriesTheSameImage() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "kopie.png", PNG);
+        describer.released = false;
+        PageKey one = new PageKey("wiki", "1");
+        PageKey two = new PageKey("wiki", "2");
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(one, two));
+        Assets assets = assets();
+        assets.pageReleases(released::contains);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+        analysis.describe(page("1", "Text"));
+        analysis.describe(page("2", "Text"));
+        assertThat(describer.calls).isEqualTo(1);
+
+        // Seite 2 verliert die Freigabe; Seite 1 trägt dasselbe Bild und bleibt freigegeben.
+        released.remove(two);
+        assertThat(analysis.withdraw(List.of(page("1", "Text"), page("2", "Text")), released::contains))
+                .as("nur Seite 2").isEqualTo(1);
+        assertThat(store.find(two)).isEmpty();
+        assertThat(store.find(one)).extracting(e -> e.processorId()).containsExactly(ImagePayload.PROCESSOR);
+        assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(describer.calls).as("die Beschreibung blieb für Seite 1").isEqualTo(1);
+
+        // Jetzt auch Seite 1: Die Beschreibung selbst entfällt, eine neue Freigabe fragt das Modell erneut.
+        released.remove(one);
+        assertThat(analysis.withdraw(List.of(page("1", "Text")), released::contains)).isEqualTo(1);
+        assertThat(store.find(one)).isEmpty();
+        released.add(one);
+        assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(describer.calls).isEqualTo(2);
+    }
+
+    @Test
+    void aReleaseWithdrawnWhileTheModelDescribesLeavesNothingBehind() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        describer.released = false;
+        PageKey one = new PageKey("wiki", "1");
+        java.util.Set<PageKey> released = new java.util.HashSet<>(List.of(one));
+        Assets assets = assets();
+        assets.pageReleases(released::contains);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments(), Clock.fixed(NOW, ZoneOffset.UTC));
+        // Die Rücknahme (ADR 0028) läuft, während das Modell noch beschreibt, und findet noch nichts.
+        describer.during = () -> {
+            released.remove(one);
+            analysis.withdraw(List.of(page("1", "Text")), released::contains);
+        };
+
+        assertThatThrownBy(() -> analysis.describe(page("1", "Text")))
+                .isInstanceOfSatisfying(ImageDescriptionException.class,
+                        e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_RELEASED));
+
+        assertThat(store.find(one)).isEmpty();
+        describer.during = () -> { };
+        released.add(one);
+        assertThat(analysis.describe(page("1", "Text")).describedCount()).isEqualTo(1);
+        assertThat(describer.calls).as("die Beschreibung von eben blieb nicht liegen").isEqualTo(2);
+    }
+
+    @Test
     void diagramPreviewsAndSvgAreSkippedBecauseTheirTextualSourceCounts() {
         source.image("1", null, "ablauf.png", PNG);
         source.image("1", "att2", "skizze.svg", "<svg/>".getBytes(StandardCharsets.UTF_8));
@@ -335,6 +417,7 @@ class PageImageAnalysisTest {
         boolean available = true;
         boolean released = true;
         boolean fail;
+        Runnable during = () -> { };
 
         @Override
         public String id() {
@@ -349,6 +432,7 @@ class PageImageAnalysisTest {
         @Override
         public String describe(byte[] image, String mediaType) {
             calls++;
+            during.run();
             if (fail) {
                 throw new IllegalStateException("Modell nicht erreichbar");
             }

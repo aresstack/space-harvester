@@ -144,8 +144,8 @@ veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder A
 | `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite, höchstens 200 |
 | `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge, höchstens 8000 |
 
-- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` an den Dienst, sonst nie, auch
-  nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
+- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` und von Seiten auf der Liste
+  freigegebener Seiten (ADR 0028) an den Dienst, sonst nie, auch nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
 - Die Schlüssel wirken beim Start (in der Bibliothek `Harvester.builder().statements(…)`); Chat-Modell und Freigabe
   folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
 - `MENTION`, `EVENT` und `RELATION` entstehen dann doppelt, regelbasiert und aus `statements`, mit eigenen Kennungen.
@@ -454,6 +454,14 @@ diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embed
 (PR #401, ADR 0020), nur in der Anreicherung und nur für freigegebene Quellen, mit fester Frist von 60 s und
 höchstens zwei Benennungen zugleich (nicht einstellbar); ohne Chat-Modell bleibt der erste Satz, bei Ausfall des
 Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht gespeicherte Navigationen alt.
+
+**Liste freigegebener Seiten (ADR 0028):** Neben der Freigabe je Quelle gibt es eine Liste einzelner Seiten, die der
+Benutzer über den Chat freigibt; sie liegt unter `<cache>/page-releases` (im Server
+`space-harvester.cache.directory/page-releases`), nicht in der YAML. Eine Seite der Liste bekommt Embeddings, Absätze,
+Navigation samt Themenüberschriften und, eingeschaltet, die Satzanalyse wie eine Seite einer freigegebenen Quelle.
+Eintragen reiht diese Prozessoren für die Seite im selben gedrosselten Hintergrund ein; Entfernen rechnet sie ohne
+Modell neu, ihr Embedding und ihre Satzanalyse entfallen. Seiten einer als Ganzes freigegebenen Quelle ändern sich
+dabei nicht.
 
 **Wechsel der Freigabe (`ai.external-processing-sources`):** Wird eine Quelle neu freigegeben oder ihre Freigabe
 entzogen, reiht der Dienst (im Core der Harvester mit `Harvester.Builder.configuration`, im Server mit

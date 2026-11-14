@@ -102,6 +102,8 @@ public class SynonymCandidates {
     private final Supplier<Optional<EmbeddingProvider>> embeddings;
     private final Predicate<String> released;
     private final String processorVersion;
+    /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
+    private volatile Predicate<PageKey> pageReleases = key -> false;
 
     /**
      * @param texts      aktueller projizierter Text einer Seite im Cache
@@ -120,6 +122,20 @@ public class SynonymCandidates {
         this.embeddings = Objects.requireNonNull(embeddings, "embeddings");
         this.released = Objects.requireNonNull(released, "released");
         this.processorVersion = Objects.requireNonNull(processorVersion, "processorVersion");
+    }
+
+    /**
+     * Schließt die Liste freigegebener Seiten an (ADR 0028): Fundstellen einer Seite darauf gehen auch aus einer nicht
+     * freigegebenen Quelle in die semantische Vorauswahl.
+     */
+    public void pageReleases(Predicate<PageKey> released) {
+        this.pageReleases = Objects.requireNonNull(released, "released");
+    }
+
+    /** Ob die Fundstelle an den KI-Dienst darf: ihre Quelle oder ihre Seite ist freigegeben. */
+    private boolean released(RelationEvidence evidence) {
+        return released.test(evidence.sourceId())
+                || evidence.pageId() != null && pageReleases.test(new PageKey(evidence.sourceId(), evidence.pageId()));
     }
 
     /**
@@ -616,12 +632,12 @@ public class SynonymCandidates {
             return true;
         }
 
-        /** Begriff und Fundstellen aus freigegebenen Quellen oder {@code null} ohne solche. */
+        /** Begriff und Fundstellen aus freigegebenen Quellen oder Seiten oder {@code null} ohne solche. */
         private String embeddingInput(Term term) {
             StringBuilder input = new StringBuilder(term.term).append(": ");
             boolean any = false;
             for (SynonymCandidate.Context context : contexts(term)) {
-                if (!released.test(context.evidence().sourceId())) {
+                if (!released(context.evidence())) {
                     continue;
                 }
                 if (any) {

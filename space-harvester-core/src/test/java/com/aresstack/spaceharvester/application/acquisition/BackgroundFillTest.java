@@ -495,6 +495,7 @@ class BackgroundFillTest {
         AutoCloseable pause = scheduler.pauseBackground();
         AtomicReference<BackgroundFill> fill = new AtomicReference<>();
         AtomicBoolean withdrawn = new AtomicBoolean();
+        AtomicInteger checkedAfter = new AtomicInteger();
         // Die Füllung der Quelle geht aus, nachdem feed() sie geprüft, aber bevor es die Anfrage eingetragen hat;
         // revalidate() läuft genau dazwischen und sieht die Anfrage deshalb noch nicht.
         Predicate<String> eligibleUntilFeed = sourceId -> {
@@ -506,6 +507,10 @@ class BackgroundFillTest {
                 fill.get().revalidate();
                 return true;
             }
+            if (inFeed) {
+                // Die Prüfung nach dem Eintragen: Erst danach zieht feed() die Anfrage zurück.
+                checkedAfter.incrementAndGet();
+            }
             return eligible.contains(sourceId);
         };
         BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
@@ -515,7 +520,9 @@ class BackgroundFillTest {
         fill.set(started);
         started.start();
 
-        eventually(() -> withdrawn.get() && started.status().inFlight() == 0);
+        // Nicht schon zwischen Rückzug und Eintragen weitermachen: Dann wäre noch nichts übergeben, der Planer liefe nach
+        // pause.close() an und lüde die Anfrage, bevor feed() sie zurückziehen kann.
+        eventually(() -> checkedAfter.get() > 0 && started.status().inFlight() == 0);
         pause.close();
         assertThat(loaded).isEmpty();
     }

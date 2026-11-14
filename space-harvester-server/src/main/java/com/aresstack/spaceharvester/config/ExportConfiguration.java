@@ -154,7 +154,11 @@ class ExportConfiguration {
         // Nach einem Import ohne erreichbare Quelle: Bilder und Anhänge aus dem Paket (ImportConfiguration).
         LuceneEnrichmentStore store = enrichments.getIfAvailable();
         if (store != null) {
-            images.imported(new EnrichmentImportedAssets(store, Clock.systemUTC()), new ReadingViewStore(store));
+            EnrichmentImportedAssets collected = new EnrichmentImportedAssets(store, Clock.systemUTC());
+            ReadingViewStore views = new ReadingViewStore(store);
+            images.imported(collected, views);
+            // Ihr Stand gehört zum Fingerabdruck einer Ausgabe aus dem Bestand (ADR 0029).
+            exports.imported(collected, views);
         }
         // Bilder und Anhänge entstehen mit dem Export und warten auf seinen Text (Angelo 11.11.2026).
         exports.onSubmitted(images::announce);

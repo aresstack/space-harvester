@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.enrichment;
 import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages.text;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.nio.charset.StandardCharsets;
@@ -118,6 +119,84 @@ class ReleaseRecomputationTest {
         assertThat(navigation.calls).containsOnlyKeys("p2");
         assertThat(embedding.calls).isEmpty();
         assertThat(store.find(page.key())).extracting(Enrichment::processorId).contains("embedding");
+    }
+
+    @Test
+    void aWithdrawnSourceHandsAllItsPagesToTheWithdrawalButTheStartNever() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = new java.util.ArrayList<>();
+        for (int i = 0; i < ReleaseRecomputation.WITHDRAWAL_BATCH + 1; i++) {
+            pages.add(text("intern", "p" + i, "1", "Seite " + i));
+        }
+        List<List<String>> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                "wiki"::equals, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> withdrawn.add(batch.stream().map(page -> page.key().pageId())
+                    .toList()));
+            // Der Start nimmt nie etwas zurück: „einmalig beschreiben“ in einer gesperrten Quelle bleibt erhalten.
+            recomputation.reconcileOnStart(List.of("intern"), () -> true, NOT_APPROVED);
+            recomputation.recompute("intern", false);
+            // Schließen beendet laufende Läufe nach der aktuellen Seite: vorher auf beide Teile warten.
+            awaitUntil(() -> withdrawn.size() == 2);
+        }
+
+        assertThat(withdrawn).extracting(List::size).containsExactly(ReleaseRecomputation.WITHDRAWAL_BATCH, 1);
+        assertThat(withdrawn.stream().flatMap(List::stream)).hasSize(pages.size()).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void withOnlyAVisionModelAWithdrawnSourceOnlyHandsItsPagesToTheWithdrawal() throws Exception {
+        AiServiceSettings before = new AiServiceSettings(java.net.URI.create("http://localhost:8080/v1"), null, null,
+                null, null, null, null, java.util.Set.of("wiki", "intern")).withVisionModel("vision-1");
+        AiServiceSettings after = new AiServiceSettings(java.net.URI.create("http://localhost:8080/v1"), null, null,
+                null, null, null, null, java.util.Set.of("wiki")).withVisionModel("vision-1");
+        assertThat(ReleaseRecomputation.changes(before, after)).as("kein Embedding- und kein Chat-Modell").isEmpty();
+        assertThat(ReleaseRecomputation.withdrawnImages(before, after, Map.of())).containsExactly("intern");
+        assertThat(ReleaseRecomputation.withdrawnImages(before, after, Map.of("intern", false))).isEmpty();
+        assertThat(ReleaseRecomputation.withdrawnImages(after, before, Map.of())).as("neu freigegeben").isEmpty();
+
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("intern", "p1", "1", "Eins"), text("intern", "p2", "1", "Zwei"));
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.withdraw("intern");
+            awaitUntil(() -> withdrawn.size() == 2);
+        }
+
+        assertThat(withdrawn).containsExactly("p1", "p2");
+        assertThat(navigation.calls).as("nichts neu gerechnet").isEmpty();
+    }
+
+    @Test
+    void pagesRemovedFromTheListGoToTheWithdrawalAddedOnesNot() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        PageSnapshot added = text("intern", "neu", "1", "Neu");
+        PageSnapshot removed = text("intern", "alt", "1", "Alt");
+        Map<PageKey, PageSnapshot> cache = Map.of(added.key(), added, removed.key(), removed);
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.recomputePages(List.of(added.key()), List.of(removed.key(), new PageKey("intern", "weg")),
+                    key -> Optional.ofNullable(cache.get(key)));
+            awaitUntil(() -> !withdrawn.isEmpty());
+        }
+
+        assertThat(withdrawn).containsExactly("alt");
+    }
+
+    private static void awaitUntil(java.util.function.BooleanSupplier condition) {
+        long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!condition.getAsBoolean() && System.nanoTime() < end) {
+            Thread.onSpinWait();
+        }
     }
 
     /** Zählt seine Aufrufe je Seite. */

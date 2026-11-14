@@ -102,8 +102,14 @@ public final class ExportPanel extends JPanel {
     static final String REFRESH = "Aktualisieren";
     static final String LOAD_SUBTREE = "Samt Unterseiten laden";
     static final String LOAD_PAGE = "Nur diese Seite laden";
-    static final String NO_DATASET = "Für die Ausgabe erst laden: die Formate arbeiten auf dem Datenbestand des "
-            + "jüngsten fertigen Downloads dieser Auswahl.";
+    static final String COLLECT = "Bilder/Anhänge beschaffen";
+    static final String NOTHING_LOCAL = "Nichts lokal gespeichert";
+    static final String COLLECT_TIP = "Holt Bilder und, bei eingeschalteten Anhängen, Anhänge der lokal gespeicherten "
+            + "Seiten dieser Auswahl; was schon im Bestand liegt, wird nicht erneut abgerufen";
+    static final String NO_DATASET = "Noch nichts ausgegeben; die Format-Knöpfe geben die Auswahl aus dem Bestand "
+            + "aus, ohne die Quelle zu lesen.";
+    static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: erst laden.";
+    static final String NOT_AVAILABLE = "kein Datenbestand vorhanden";
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
@@ -114,6 +120,8 @@ public final class ExportPanel extends JPanel {
             + "unter Aufträge");
     private final ComposerButton loadPage = Comic.button(LOAD_PAGE, "Nur diese Seite laden, ohne Unterseiten");
     private final ComposerButton showJob = Comic.button("Auftrag anzeigen", "Den Auftrag unter Aufträge zeigen");
+    /** „Bilder/Anhänge beschaffen“ für die Auswahl ohne Export (ADR 0029, Schritt 7): nur die lokal gespeicherten Seiten. */
+    private final ComposerButton collect = Comic.button(COLLECT, COLLECT_TIP);
     private final JComponent standPlate;
     private final Map<String, IconButton> formatButtons = new LinkedHashMap<>();
     /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
@@ -153,6 +161,21 @@ public final class ExportPanel extends JPanel {
     private String holdingsKey;
     /** Eine Auffrischung ist schon angestoßen; weitere Meldungen bis dahin verfallen. */
     private boolean refreshPending;
+    /** Der Bestand der gezeigten Auswahl; {@code null} ohne Auswahl oder für eine Quelle. */
+    private PageSelection shownHoldings;
+    /**
+     * Ausgaben aus dem Bestand, die noch laufen, je Auftrag mit Auswahl und Format; sie gehören zum Auftrag, nicht zur
+     * gezeigten Auswahl: ein Auswahlwechsel verbirgt nur die Rückmeldung, die Datei entsteht trotzdem.
+     */
+    private final Map<String, Pending> pending = new LinkedHashMap<>();
+    /** Eine Ausgabe, deren Auftrag gerade erst angefordert wird (ID noch unbekannt). */
+    private Pending starting;
+    /** Je Auswahl der jüngste Auftrag einer Ausgabe aus dem Bestand: die Karte zeigt seinen Datenbestand. */
+    private final Map<Selection, String> lastOutput = new HashMap<>();
+
+    /** Eine laufende Ausgabe aus dem Bestand. */
+    record Pending(Selection selection, String format) {
+    }
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
     private int request;
 
@@ -166,6 +189,7 @@ public final class ExportPanel extends JPanel {
         output.setForeground(Comic.INK);
         load.addActionListener(e -> load(true));
         loadPage.addActionListener(e -> load(false));
+        collect.addActionListener(e -> collect());
         showJob.addActionListener(e -> {
             JobStatus job = shown.running() != null ? shown.running() : shown.newest();
             if (job != null) {
@@ -185,7 +209,7 @@ public final class ExportPanel extends JPanel {
         JPanel standBody = new JPanel(new BorderLayout(0, 8));
         standBody.setOpaque(false);
         standBody.add(stand, BorderLayout.CENTER);
-        standBody.add(Comic.row(load, loadPage, showJob), BorderLayout.SOUTH);
+        standBody.add(Comic.row(load, loadPage, collect, showJob), BorderLayout.SOUTH);
         standPlate = Comic.plate("Stand", Comic.PETROL, standBody);
 
         JPanel formats = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
@@ -193,11 +217,7 @@ public final class ExportPanel extends JPanel {
         for (String format : FORMATS) {
             IconButton button = new IconButton(FormatIcon.of(format.equals("markdown-package") ? "markdown"
                     : format.equals("json-package") ? "json" : format), EXPORT_TIPS.get(format));
-            button.addActionListener(e -> {
-                if (shownDataset != null) {
-                    exportAs(shownDataset.exportId(), format);
-                }
-            });
+            button.addActionListener(e -> output(format));
             formatButtons.put(format, button);
             formats.add(button);
         }
@@ -357,7 +377,9 @@ public final class ExportPanel extends JPanel {
             return;
         }
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-        Background.run(() -> gather(runtime, current, directory), data -> {
+        Set<String> watched = Set.copyOf(pending.keySet());
+        String preferred = lastOutput.get(current);
+        Background.run(() -> gather(runtime, current, directory, watched, preferred), data -> {
             if (ticket == request) {
                 render(data);
             }
@@ -370,23 +392,29 @@ public final class ExportPanel extends JPanel {
     }
 
     /** Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien; je Space einer Quelle. */
-    private static Data gather(AppRuntime runtime, Selection selection, Path directory) {
+    private static Data gather(AppRuntime runtime, Selection selection, Path directory, Set<String> watched,
+                               String preferred) {
         List<JobStatus> jobs = runtime.workspace().jobs();
+        List<JobStatus> finished = jobs.stream().filter(job -> watched.contains(job.id()) && job.state().terminal())
+                .toList();
         if (selection.spaceKey() == null) {
             List<SpaceRow> rows = new ArrayList<>();
             for (Partition space : runtime.workspace().spaces(selection.sourceId())) {
                 Selection whole = new Selection(selection.sourceId(), space.key(), null, space.name());
                 rows.add(new SpaceRow(space, newest(jobs, whole), running(jobs, whole)));
             }
-            return new Data(selection, null, null, null, List.of(), rows, null);
+            return new Data(selection, null, null, null, List.of(), rows, null, finished);
         }
-        JobStatus newest = newest(jobs, selection);
+        // Die jüngste Ausgabe aus dem Bestand dieser Auswahl hat Vorrang: der Core kann einen älteren, unveränderten
+        // Auftrag wiederverwenden, dessen Datenbestand dann die Datei liefert, nicht der jüngste Download.
+        JobStatus newest = jobs.stream().filter(job -> job.id().equals(preferred) && selection.matches(job)
+                && job.state() == JobState.COMPLETED).findFirst().orElseGet(() -> newest(jobs, selection));
         ExportDatasetInfo dataset = newest == null ? null
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, nicht nur die Startseite.
         PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore());
-        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings);
+        return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings, finished);
     }
 
     /** „120 von 127 Seiten lokal“, bei lückenhafter Auflösung mit Hinweis; ohne bekannte Seiten „keine Seite bekannt“. */
@@ -413,8 +441,8 @@ public final class ExportPanel extends JPanel {
 
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
-                List<String> files, List<SpaceRow> spaces, PageSelection holdings) {
-        static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null);
+                List<String> files, List<SpaceRow> spaces, PageSelection holdings, List<JobStatus> finished) {
+        static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, List.of());
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
@@ -423,6 +451,7 @@ public final class ExportPanel extends JPanel {
 
     private void render(Data data) {
         shown = data;
+        shownHoldings = data.holdings();
         Selection current = data.selection();
         boolean none = current == null;
         boolean source = !none && current.spaceKey() == null;
@@ -452,6 +481,7 @@ public final class ExportPanel extends JPanel {
         }
         revalidate();
         repaint();
+        data.finished().forEach(this::finishOutput);
     }
 
     private void renderSpaces(List<SpaceRow> rows) {
@@ -526,6 +556,9 @@ public final class ExportPanel extends JPanel {
         loadPage.setVisible(current.page());
         load.setEnabled(running == null);
         loadPage.setEnabled(running == null);
+        boolean stored = holdings != null && holdings.counts().stored() > 0;
+        collect.setEnabled(stored);
+        collect.setToolTipText(stored ? COLLECT_TIP : COLLECT_TIP + " · " + NOTHING_LOCAL + ", erst laden");
         showJob.setVisible(running != null || newest != null);
     }
 
@@ -541,15 +574,12 @@ public final class ExportPanel extends JPanel {
         if (other) {
             noticeList.setVisible(false);
         }
-        for (Map.Entry<String, IconButton> entry : formatButtons.entrySet()) {
-            String blocked = exportBlocked(entry.getKey());
-            entry.getValue().setEnabled(blocked == null);
-            entry.getValue().setToolTipText(blocked == null ? EXPORT_TIPS.get(entry.getKey())
-                    : EXPORT_TIPS.get(entry.getKey()) + " · " + blocked);
-        }
+        renderButtons();
         if (dataset == null) {
             cardImages.setVisible(false);
-            files.setText(NO_DATASET);
+            Pending running = pendingFor(selection);
+            files.setText(running != null ? Format.title(running.format()) + ": Ausgabe aus dem Bestand läuft …"
+                    : shownHoldings == null || shownHoldings.counts().stored() == 0 ? NO_HOLDINGS : NO_DATASET);
             files.setForeground(Comic.MUTED);
             toggleNotices.setVisible(false);
             noticeList.setVisible(false);
@@ -617,6 +647,40 @@ public final class ExportPanel extends JPanel {
     }
 
     /**
+     * Bilder und Anhänge der Auswahl beschaffen, ohne Export ({@code Workspace.collectAssets}): die Aufträge laufen
+     * unter Aufträge; ein offener kommt beim zweiten Klick zurück, ein beendeter läuft im selben Eintrag erneut. Ohne
+     * lokal gespeicherte Seiten meldet die Statuszeile „Nichts lokal gespeichert“.
+     */
+    void collect() {
+        AppRuntime runtime = context.runtime();
+        Selection current = selection;
+        if (runtime == null || current == null || current.spaceKey() == null) {
+            return;
+        }
+        collect.setEnabled(false);
+        feedback.working("Bilder und Anhänge werden eingeplant …");
+        Background.run(() -> runtime.workspace().collectAssets(current.toCore()), jobs -> {
+            collect.setEnabled(true);
+            if (!Objects.equals(current, selection)) {
+                return;
+            }
+            if (jobs.isEmpty()) {
+                feedback.info(NOTHING_LOCAL, "Erst laden; beschafft werden nur Bilder und Anhänge lokal gespeicherter Seiten");
+                return;
+            }
+            feedback.working(Texts.count(jobs.size(), "Auftrag", "Aufträge") + " eingeplant: "
+                    + jobs.stream().map(job -> Texts.type(job.type())).distinct()
+                            .collect(java.util.stream.Collectors.joining(", ")));
+            context.navigator().followJobs();
+        }, error -> {
+            collect.setEnabled(true);
+            if (Objects.equals(current, selection)) {
+                feedback.problem(error);
+            }
+        });
+    }
+
+    /**
      * Dateien dieses Downloads im Ausgabeordner, neueste zuerst: Name {@code <Space>-<erste 8 Zeichen der
      * Export-ID>[-n].<Endung>} wie {@code ExportConversions}; halbfertige {@code .part}-Dateien zählen nicht.
      */
@@ -638,13 +702,96 @@ public final class ExportPanel extends JPanel {
 
     /** Warum dieses Format für den gezeigten Datenbestand gerade nicht geht, oder {@code null}. */
     String exportBlocked(String format) {
-        if (shownDataset == null) {
-            return "kein Datenbestand vorhanden";
+        Pending running = pendingFor(selection);
+        if (running != null) {
+            return Format.title(running.format()) + " wird gerade erzeugt";
         }
-        if (converting.contains(shownDataset.exportId())) {
+        if (shownDataset == null && (shownHoldings == null || shownHoldings.counts().stored() == 0)) {
+            return NOT_AVAILABLE;
+        }
+        if (shownDataset != null && converting.contains(shownDataset.exportId())) {
             return Format.title(convertingFormat.getOrDefault(shownDataset.exportId(), format)) + " wird gerade erzeugt";
         }
-        return shownDataset.formats().contains(format) ? null : "Format nicht angeboten";
+        return shownDataset == null || shownDataset.formats().contains(format) ? null : "Format nicht angeboten";
+    }
+
+    /**
+     * Ausgabe der Auswahl aus dem Bestand (ADR 0029, Angelo: „Ausgabe nur aus dem Bestand“): startet
+     * {@code Workspace.startExportFromHoldings} für Space bzw. Seite samt Unterseiten, der nur den Seiten-Cache liest;
+     * hat sich nichts geändert, kommt der fertige Auftrag zurück. Sobald er beendet ist, entsteht die Datei im Format
+     * aus seinem Datenbestand ({@link #exportAs}). Je Auswahl läuft höchstens eine Ausgabe zugleich.
+     */
+    void output(String format) {
+        AppRuntime runtime = context.runtime();
+        Selection current = selection;
+        if (runtime == null || context.settings() == null || current == null || current.spaceKey() == null
+                || pendingFor(current) != null) {
+            return;
+        }
+        starting = new Pending(current, format);
+        feedback.working(Format.title(format) + " wird aus dem Bestand erzeugt …");
+        renderButtons();
+        Background.run(() -> {
+            List<JobStatus> jobs = runtime.workspace().startExportFromHoldings(current.toCore(),
+                    List.of(Downloads.FORMAT));
+            if (jobs.isEmpty()) {
+                throw new IllegalStateException("Kein Space in der Auswahl");
+            }
+            return jobs.get(0);
+        }, job -> {
+            starting = null;
+            pending.put(job.id(), new Pending(current, format));
+            lastOutput.put(current, job.id());
+            finishOutput(job);
+            if (pending.containsKey(job.id())) {
+                // Noch nicht fertig: die Auftragsmeldungen frischen auf, der Stand prüft dabei die laufenden Ausgaben.
+                renderButtons();
+            }
+            refresh();
+        }, error -> {
+            starting = null;
+            if (Objects.equals(current, selection)) {
+                feedback.problem(error);
+            }
+            renderButtons();
+        });
+    }
+
+    /** Die laufende Ausgabe dieser Auswahl, oder {@code null}. */
+    private Pending pendingFor(Selection selection) {
+        if (selection == null) {
+            return null;
+        }
+        if (starting != null && starting.selection().equals(selection)) {
+            return starting;
+        }
+        return pending.values().stream().filter(p -> p.selection().equals(selection)).findFirst().orElse(null);
+    }
+
+    /**
+     * Ist der Auftrag einer laufenden Ausgabe beendet, entsteht jetzt die Datei aus seinem Datenbestand; scheiterte
+     * er, steht der Grund in der Rückmeldung, sofern die Karte noch diese Auswahl zeigt.
+     */
+    private void finishOutput(JobStatus job) {
+        Pending output = job == null || !job.state().terminal() ? null : pending.remove(job.id());
+        if (output == null) {
+            return;
+        }
+        if (job.state() == JobState.COMPLETED) {
+            exportAs(job.id(), output.format());
+        } else if (Objects.equals(output.selection(), selection)) {
+            feedback.warning("Ausgabe aus dem Bestand " + Texts.state(job).toLowerCase(Locale.GERMAN), null);
+        }
+        renderButtons();
+    }
+
+    private void renderButtons() {
+        for (Map.Entry<String, IconButton> entry : formatButtons.entrySet()) {
+            String blocked = exportBlocked(entry.getKey());
+            entry.getValue().setEnabled(blocked == null);
+            entry.getValue().setToolTipText(blocked == null ? EXPORT_TIPS.get(entry.getKey())
+                    : EXPORT_TIPS.get(entry.getKey()) + " · " + blocked);
+        }
     }
 
     /** Der gezeigte Datenbestand, für Tests. */

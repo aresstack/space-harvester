@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.export.ExportPackageImport;
+import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
@@ -579,6 +580,14 @@ public final class Workspace {
     }
 
     /**
+     * Ob die Bilder dieser Seite an das Vision-Modell dürfen: ihre Quelle ist freigegeben oder sie steht auf der Liste
+     * freigegebener Seiten (ADR 0028).
+     */
+    public boolean imagesReleased(String sourceId, String pageId) {
+        return harvester.imageAnalysis().released(new PageKey(sourceId, pageId));
+    }
+
+    /**
      * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
      * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
      */
@@ -912,6 +921,57 @@ public final class Workspace {
         return status;
     }
 
+    /**
+     * Ausgabe der Auswahl aus dem Bestand starten (ADR 0029): je gewähltem Space bzw. Teilbaum ein Export-Auftrag
+     * ({@code Holdings.outputs}), der nur den Seiten-Cache liest, nie die Quelle; braucht je Space export und content,
+     * geprüft vor dem ersten Auftrag. Gespeicherte Seiten kommen mit, veraltete im gespeicherten Stand; nur aus dem
+     * Katalog bekannte fehlen und stehen mit ihrer Zahl in den Warnungen des Ergebnisses. Artefakt, Dateien, Formate
+     * und Folgeaufträge wie bei {@link #startExport(String, String, List)}. Haben die Seiten einer Ausgabe denselben
+     * Stand wie bei einer fertigen mit gleichem Umfang und gleichen Formaten, kommt deren Auftrag zurück, ohne neuen Lauf
+     * ({@code Exports.startFromHoldings}).
+     *
+     * @return die Aufträge, erst ganze Spaces, dann Teilbäume; ein wiederverwendeter ist schon beendet
+     */
+    public List<JobStatus> startExportFromHoldings(
+            com.aresstack.spaceharvester.application.holdings.Selection selection, List<String> formats) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
+        List<JobStatus> started = new ArrayList<>(outputs.size());
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            JobStatus status = harvester.exports().startFromHoldings(ExportRequest.fromHoldings(root.sourceId(),
+                    root.spaceKey(), Harvester.OWNER, formats).withRoot(root.pageId()));
+            activities.remember(status.id());
+            started.add(status);
+        }
+        return started;
+    }
+
+    /**
+     * Bilder und Anhänge einer Auswahl beschaffen, ohne Export-Auftrag (ADR 0029, Schritt 7): je gewähltem Space bzw.
+     * Teilbaum ({@code Holdings.outputs}) ein Auftrag „Bilder beschaffen“ und, bei eingeschalteten Anhängen, ein Auftrag
+     * „Anhänge beschaffen“ für die lokal gespeicherten Seiten; braucht je Space die sync-Freigabe, geprüft vor dem
+     * ersten Auftrag. Was schon im Bestand liegt, ruft der Lauf nicht ab. Danach findet eine Ausgabe aus dem Bestand
+     * die Dateien ({@link #startExportFromHoldings}). Die Aufträge tragen {@code selection=true} und, für einen
+     * Teilbaum, {@code selectionRoot}, aber keine {@code exportId}.
+     *
+     * @return die eingeplanten Aufträge; ein schon offener für dieselbe Wurzel kommt zurück
+     */
+    public List<JobStatus> collectAssets(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> access.require(caller, ResourceScope.space(root.sourceId(), root.spaceKey()),
+                AccessKind.SYNC));
+        List<JobStatus> started = new ArrayList<>();
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            for (JobStatus status : harvester.assetCollection().collect(Harvester.OWNER, root)) {
+                activities.remember(status.id());
+                started.add(status);
+            }
+        }
+        return started;
+    }
+
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
         ownExport(exportId);
@@ -1201,6 +1261,70 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
             com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return harvester.holdings().resolve(caller, selection);
+    }
+
+    // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------
+
+    /**
+     * Trägt die lokal gespeicherten Seiten der links gewählten Auswahl in die Liste freigegebener Seiten ein, mit der
+     * Wurzel der Auswahl als Knoten; so beim Senden im Chat. Was nicht lokal ist, kommt nicht auf die Liste. Die
+     * KI-Auswertungen der neuen Seiten laufen danach im gedrosselten Hintergrund. Schreibt in die Ablage: nie auf dem
+     * EDT aufrufen.
+     *
+     * @return die neu eingetragenen Seiten
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.pageReleaseService().release(caller, selection);
+    }
+
+    /** Wie viele Seiten der Auswahl neu auf die Liste freigegebener Seiten kämen, für den Hinweis vor dem Senden. */
+    public int newPageReleases(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.pageReleaseService().newPages(caller, selection);
+    }
+
+    /**
+     * Die Liste freigegebener Seiten gebündelt nach Quelle, Space und Knoten, für die Tabelle unter Einstellungen ›
+     * Sicherheit. Einmal lesen, danach nur nach Meldungen von {@link #subscribePageReleases}.
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleaseService.Group> pageReleaseGroups() {
+        return harvester.pageReleaseService().groups(caller);
+    }
+
+    /**
+     * Die Seiten einer Gruppe mit Titel, Zeitpunkt und ob sie indexiert sind.
+     *
+     * @param node Seite des Knotens oder {@code null} für den ganzen Space
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleaseService.ReleasedPage> releasedPages(
+            String sourceId, String spaceKey, String node) {
+        return harvester.pageReleaseService().pages(caller, sourceId, spaceKey, node);
+    }
+
+    /** Entfernt Seiten von der Liste; ihre KI-Ergebnisse entfallen im Hintergrund. Nie auf dem EDT. */
+    public int removePageReleases(java.util.Collection<PageKey> pages) {
+        return harvester.pageReleaseService().remove(caller, pages).size();
+    }
+
+    /** Entfernt eine Gruppe der Liste ({@code node} wie bei {@link #releasedPages}). Nie auf dem EDT. */
+    public int removePageReleaseGroup(String sourceId, String spaceKey, String node) {
+        return harvester.pageReleaseService().removeGroup(caller, sourceId, spaceKey, node).size();
+    }
+
+    /** Entfernt alle Seiten eines Space von der Liste. Nie auf dem EDT. */
+    public int removePageReleaseSpace(String sourceId, String spaceKey) {
+        return harvester.pageReleaseService().removeSpace(caller, sourceId, spaceKey).size();
+    }
+
+    /**
+     * Meldet einen Empfänger für jede Änderung der Liste freigegebener Seiten an (ADR 0027): neu eingetragene und
+     * entfernte Seiten, die diese App sehen darf, nach dem Speichern, auf dem Thread, der die Liste änderte (nie über
+     * den EDT gereicht).
+     */
+    public Subscription subscribePageReleases(
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.release.PageReleases.Change>
+                    listener) {
+        return harvester.pageReleaseService().subscribe(caller, listener);
     }
 
     /**
