@@ -51,12 +51,14 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
      */
     public record Ai(String baseUrl, boolean apiKeySet, String chatModel, String embeddingModel,
                      Integer embeddingDimensions, String timeout, String trustBundle,
-                     List<String> externalProcessingSources, String rerankModel, String visionModel) {
+                     List<String> externalProcessingSources, String rerankModel, String visionModel,
+                     int chatMaxTokens) {
 
         static Ai of(AiServiceSettings ai) {
             return new Ai(withoutSecrets(ai.baseUrl()), ai.apiKey() != null, ai.chatModel(), ai.embeddingModel(),
                     ai.embeddingDimensions(), text(ai.timeout()), ai.trustBundle(),
-                    List.copyOf(new TreeSet<>(ai.externalProcessingSources())), ai.rerankModel(), ai.visionModel());
+                    List.copyOf(new TreeSet<>(ai.externalProcessingSources())), ai.rerankModel(), ai.visionModel(),
+                    ai.chatMaxTokens());
         }
     }
 

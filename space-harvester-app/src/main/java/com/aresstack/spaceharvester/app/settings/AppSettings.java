@@ -331,16 +331,27 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * KI-Dienst ({@code space-harvester.ai}, ADR 0011): OpenAI-kompatible Basisadresse, gewählte Modelle und die für
      * externe Verarbeitung freigegebenen Quellen. Der API-Key steht nie in der Datei, sondern im Tresor der App.
      *
-     * @param timeout {@code null} für den Standard des Core
+     * @param timeout       {@code null} für den Standard des Core
+     * @param chatMaxTokens Ausgabelimit einer Antwort des Chat-Modells in Tokens ({@code chat-max-tokens});
+     *                      {@code null} für den Standard des Core (8192)
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
+                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                             Integer chatMaxTokens) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+        }
+
+        /** Mit dem Ausgabelimit des Core. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, null);
         }
 
         /** Ohne Vision-Modell: keine Bildbeschreibung (#362). */

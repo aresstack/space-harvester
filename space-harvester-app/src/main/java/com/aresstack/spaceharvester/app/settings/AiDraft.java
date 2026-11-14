@@ -22,10 +22,15 @@ import java.util.List;
  * @param chunkOverlapSentences     überlappende Sätze zwischen Abschnitten als Text oder leer (Core: 1)
  * @param visionModel               Modell, das Bilder beschreibt ({@code vision-model}, #362), oder leer: keine
  *                                  Bildbeschreibung
+ * @param chatMaxTokens             Ausgabelimit einer Antwort des Text-Modells in Tokens als Text
+ *                                  ({@code chat-max-tokens}, gesendet als {@code max_tokens}) oder leer (Core: 8192)
  */
 public record AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
                       Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                      String chunkTokens, String chunkOverlapSentences, String visionModel) {
+                      String chunkTokens, String chunkOverlapSentences, String visionModel, String chatMaxTokens) {
+
+    /** Größtes Ausgabelimit, wie im Core ({@code AiServiceSettings.MAX_CHAT_MAX_TOKENS}). */
+    public static final int MAX_CHAT_MAX_TOKENS = 1_000_000;
 
     /** Kleinste Obergrenze je Abschnitt, wie im Core ({@code KnowledgeChunkingPolicy}). */
     public static final int MIN_CHUNK_TOKENS = 8;
@@ -40,8 +45,17 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         chunkTokens = trim(chunkTokens);
         chunkOverlapSentences = trim(chunkOverlapSentences);
         visionModel = trim(visionModel);
+        chatMaxTokens = trim(chatMaxTokens);
         externalProcessingSources = externalProcessingSources == null ? List.of() : externalProcessingSources
                 .stream().map(AiDraft::trim).filter(id -> id != null).distinct().toList();
+    }
+
+    /** Mit dem Ausgabelimit des Core. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, null);
     }
 
     /** Ohne Vision-Modell. */
@@ -65,7 +79,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 settings.timeout(), settings.externalProcessingSources(), settings.rerankModel(),
                 settings.chunkTokens() == null ? null : String.valueOf(settings.chunkTokens()),
                 settings.chunkOverlapSentences() == null ? null : String.valueOf(settings.chunkOverlapSentences()),
-                settings.visionModel());
+                settings.visionModel(),
+                settings.chatMaxTokens() == null ? null : String.valueOf(settings.chatMaxTokens()));
     }
 
     /**
@@ -74,26 +89,37 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
     public AiDraft withModels(String chatModel, String embeddingModel, String embeddingDimensions,
                               String rerankModel, String chunkTokens, String chunkOverlapSentences) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
-                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens);
     }
 
     /** Dieselben Eingaben mit anderem Vision-Modell. */
     public AiDraft withVisionModel(String visionModel) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
-                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens);
+    }
+
+    /** Dieselben Eingaben mit anderem Ausgabelimit des Text-Modells. */
+    public AiDraft withChatMaxTokens(String chatMaxTokens) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens);
     }
 
     /** Dieselben Modelle mit anderem Dienst und anderen Freigaben (Reiter „KI-Dienst“). */
     public AiDraft withService(String baseUrl, List<String> externalProcessingSources) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
-                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens);
     }
 
     /** Ob nichts eingetragen ist; dann wird der Block entfernt. */
     public boolean empty() {
         return baseUrl == null && chatModel == null && embeddingModel == null && embeddingDimensions == null
                 && timeout == null && externalProcessingSources.isEmpty() && rerankModel == null
-                && chunkTokens == null && chunkOverlapSentences == null && visionModel == null;
+                && chunkTokens == null && chunkOverlapSentences == null && visionModel == null
+                && chatMaxTokens == null;
     }
 
     /** Was nicht passt; leer, wenn die Eingaben so in die Datei können. */
@@ -102,7 +128,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         if (baseUrl == null) {
             // Freigaben je Quelle dürfen ohne Dienst stehen: Sie wirken, sobald einer eingetragen ist.
             if (chatModel != null || embeddingModel != null || embeddingDimensions != null || rerankModel != null
-                    || visionModel != null || chunkTokens != null || chunkOverlapSentences != null) {
+                    || visionModel != null || chunkTokens != null || chunkOverlapSentences != null
+                    || chatMaxTokens != null) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
         } else if (looksLikeKey(baseUrl)) {
@@ -119,6 +146,10 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         }
         if (chunkOverlapSentences != null && overlap() == null) {
             problems.add("Die Überlappung ist eine ganze Zahl ab 0 oder bleibt leer.");
+        }
+        if (chatMaxTokens != null && maxTokens() == null) {
+            problems.add("Das Ausgabelimit ist eine ganze Zahl von 1 bis " + MAX_CHAT_MAX_TOKENS
+                    + " oder bleibt leer.");
         }
         return problems;
     }
@@ -156,6 +187,15 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         return number(chunkOverlapSentences);
     }
 
+    /** Das Ausgabelimit des Text-Modells als Zahl oder {@code null}, wenn leer oder ungültig. */
+    public Integer maxTokens() {
+        if (chatMaxTokens == null || !chatMaxTokens.matches("\\d{1,7}")) {
+            return null;
+        }
+        int value = Integer.parseInt(chatMaxTokens);
+        return value >= 1 && value <= MAX_CHAT_MAX_TOKENS ? value : null;
+    }
+
     private static Integer number(String text) {
         return text == null || !text.matches("\\d{1,6}") ? null : Integer.parseInt(text);
     }
@@ -166,6 +206,9 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         String inner = indent + "  ";
         append(yaml, inner, "base-url", baseUrl);
         append(yaml, inner, "chat-model", chatModel);
+        if (maxTokens() != null) {
+            yaml.append(inner).append("chat-max-tokens: ").append(maxTokens()).append('\n');
+        }
         append(yaml, inner, "embedding-model", embeddingModel);
         if (dimensions() != null) {
             yaml.append(inner).append("embedding-dimensions: ").append(dimensions()).append('\n');

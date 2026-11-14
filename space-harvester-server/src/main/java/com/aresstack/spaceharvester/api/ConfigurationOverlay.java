@@ -82,6 +82,7 @@ public final class ConfigurationOverlay {
         }
         put(properties, "ai." + AiServiceSettings.RERANK_MODEL, ai.rerankModel());
         put(properties, "ai." + AiServiceSettings.VISION_MODEL, ai.visionModel());
+        put(properties, "ai." + AiServiceSettings.CHAT_MAX_TOKENS, ai.chatMaxTokens());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());
