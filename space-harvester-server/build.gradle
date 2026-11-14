@@ -26,6 +26,8 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-starter-config'
     // Fachlogik, Quellenadapter, Cache und Export (#100)
     implementation project(':space-harvester-core')
+    // draw.io-XML-Schablonen (BPMN-Tasks/-Events, Flowchart, Basic, Pfeile) für drawio-java im Core
+    runtimeOnly libs.drawio.stencils
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5

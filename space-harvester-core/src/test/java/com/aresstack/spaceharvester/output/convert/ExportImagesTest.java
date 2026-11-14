@@ -302,7 +302,7 @@ class ExportImagesTest {
 
     @Test
     void diagramsThatCannotBeDrawnAreReportedInEveryFormat() throws Exception {
-        // draw.io, das JGraphX nicht lesen kann und für das keine Vorschau abgelegt ist; Mermaid, das nicht zeichnet
+        // draw.io, das drawio-java nicht lesen kann und für das keine Vorschau abgelegt ist; Mermaid, das nicht zeichnet
         String storage = "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">kaputt"
                 + "</ac:parameter></ac:structured-macro>"
                 + "<ac:structured-macro ac:name=\"mermaid\"><ac:plain-text-body><![CDATA[" + BROKEN_MERMAID

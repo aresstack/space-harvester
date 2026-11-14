@@ -40,7 +40,10 @@ jsoup = "1.17.2"
 # Dokument-Extraktion (deigma/document-tika, #183). Der Upstream nutzt Tika 2.9.1 (Java 8, PDFBox 2.0); hier Tika 3.3,
 # weil der Space Harvester PDFBox 3 und POI 5.5 nutzt und Tika 2.9 gegen PDFBox 3 nicht läuft. Java 21 genügt Tika 3.
 tika = "3.3.2"
-jgraphx = "4.2.2"
+# draw.io-Diagramme ohne Browser (drawio-java: Original-draw.io-JavaScript auf GraalJS 21.3, Java2D/Batik 1.20, MIT),
+# wie im Enterprise AI Client. Gradle hebt GraalJS von mermaid-java/win-proxy-java (21.2) auf 21.3.20.0.3 an; GraalJS-
+# Module nicht zurückzwingen, gemischte Truffle-Fassungen scheitern zur Laufzeit.
+drawioJava = "0.1.0"
 # Git-Quelle (source-git, #187): dieselbe Fassung wie im Enterprise AI Client
 jgit = "5.13.5.202508271544-r"
 # FTP/JES-Quelle (source-ftp, #187): dieselbe Fassung wie im Enterprise AI Client
@@ -68,7 +71,11 @@ springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starte
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 java-websocket = { module = "org.java-websocket:Java-WebSocket", version.ref = "javaWebsocket" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
-jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
+drawio-java = { module = "com.aresstack:drawio-java", version.ref = "drawioJava" }
+# draw.io-XML-Schablonen (BPMN-Tasks/-Events, Flowchart, Basic, Pfeile; Apache-2.0 mit dem draw.io-Hinweis zu
+# Atlassian-Produkten). Nur in den ausgelieferten Anwendungen (App, Dienst) und in Tests, nicht in den POMs der
+# Bibliotheksmodule auf Maven Central; Entscheidung Angelo 2026-11-13 (eigenständige Anwendung, kein Atlassian-Produkt).
+drawio-stencils = { module = "com.aresstack:drawio-java-stencils", version.ref = "drawioJava" }
 jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
 commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
 java-libpst = { module = "com.pff:java-libpst", version.ref = "javaLibpst" }

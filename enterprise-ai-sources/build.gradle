@@ -19,8 +19,10 @@ java {
 dependencies {
     implementation libs.gson
     implementation libs.jsoup
-    // draw.io-Diagramme als SVG (DrawioDiagramRenderer)
-    implementation libs.jgraphx
+    // draw.io-Diagramme als SVG (DrawioDiagramRenderer über drawio-java)
+    implementation libs.drawio.java
+    // Die Upstream-Tests zeichnen auch XML-Schablonen (BPMN-Tasks); ausgeliefert werden sie von App und Dienst
+    testRuntimeOnly libs.drawio.stencils
     // Git-Quelle (source-git, #187): JGit nur adapterintern und nur lesend, dieselbe Version wie im Upstream
     implementation libs.jgit
     // FTP/JES-Quelle (source-ftp, #187): Apache Commons Net nur adapterintern, wie im Upstream

@@ -206,9 +206,10 @@ ihn nur aus. Keiner der drei interpretiert die Seiten selbst.
   Tabellenzellen, nie ein Platzhalter, der wie ein Bild aussieht. SVG rastert Batik.
 - **Diagramme.** Der Diagramm-Dienst des Core (`application.diagrams.Diagrams`, #190) zeichnet offline mit denselben
   Renderern wie der Enterprise AI Client: Mermaid aus dem Diagrammtext der Seite (mermaid-java; Markdown behält
-  zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (JGraphX, auch `inc-drawio` von einer
+  zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (drawio-java, auch `inc-drawio` von einer
   anderen Seite; Markdown schreibt draw.io stattdessen als Codeblock ```` ```drawio ```` mit dem XML, siehe Tabelle).
-  Was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte PNG-Vorschau des Plugins.
+  Was drawio-java nicht vollständig darstellen kann (etwa AWS- oder Azure-Symbole, nicht eingebettete Bilder),
+  ersetzt die abgelegte PNG-Vorschau des Plugins.
   Ist das Diagramm beim Beschaffen gezeichnet, wird die Vorschau gar nicht erst geladen (`REDUNDANT` in
   `assets.json`, [ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)).
   PlantUML bleibt Codeblock, Gliffy ein Hinweis. Die textuelle Quelle bleibt für Suche und KI maßgeblich.
@@ -288,7 +289,7 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: eingebettet, wenn der Datenbestand es abgelegt hat (Markdown als `data:`-URI), sonst „[Abbildung nicht verfügbar: …]“ mit Grund; ein externes Bild (`ri:url`) ohne abgelegte Kopie zusätzlich mit Link „Adresse“ |
 | Mermaid | gezeichnetes Diagramm (Word, PDF, Markdown) und in Markdown zusätzlich der Codeblock mit der Textquelle |
 | PlantUML | Codeblock mit der Textquelle des Diagramms |
-| draw.io (auch `inc-drawio`) | Markdown (seit `markdown/8`, `markdown-package/3`): Codeblock ```` ```drawio ```` mit dem XML der abgelegten Quelldaten statt eines Bildes (Textform vor Bild, ADR 0012; Betrachter mit draw.io-Viewer wie TinyMD zeichnen ihn); nur ohne lesbare Quelldaten oder mitten in einer Tabellen- oder Listenzeile wie Word und PDF. Word und PDF: die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
+| draw.io (auch `inc-drawio`) | Markdown (seit `markdown/8`, `markdown-package/3`): Codeblock ```` ```drawio ```` mit dem XML der abgelegten Quelldaten statt eines Bildes (Textform vor Bild, ADR 0012; Betrachter mit draw.io-Viewer wie TinyMD zeichnen ihn); nur ohne lesbare Quelldaten oder mitten in einer Tabellen- oder Listenzeile wie Word und PDF. Word und PDF: die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (drawio-java, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
 | Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include`, `children` und jedes andere berechnete Makro (z. B. `toc`, `contentbylabel`, Jira-Abfrage) | Inhalt aus der abgelegten Lese-Ansicht: das n-te Makro eines Namens ist das n-te äußerste Element mit diesem `data-macro-name`, nur wenn Speicherformat und Ansicht gleich viele davon haben; eine Jira-Abfrage mit Tabelle wird ein eigener Block. Selbst umgesetzte Makros (Code, Diagramme, Panels, Status, einzelnes Jira-Ticket …) bleiben, wie sie sind; Unsichtbares (`display:none`, Skripte) entfällt, Bilder der Ansicht über ihre Adresse. Ohne verfügbare Ansicht Hinweis auf die eingebundene Seite bzw. die berechnete Liste, gemeldet als `OMITTED_CONTENT` (Verweis: Seitentitel oder `children`; Grund `not-collected`, `foreign-content`, `no-reading-view`, `page-changed`, `source-unavailable`, `not-rendered`, `view-count-mismatch`). Andere berechnete Makros ohne Ansicht behalten ihren Hinweis ohne Meldung |
 | `toc` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |

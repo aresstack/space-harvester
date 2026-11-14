@@ -9,6 +9,16 @@ allprojects {
     group = 'com.aresstack.spaceharvester'
     // Gemeinsame Release-Version aller Module (Workflow Release: -PreleaseVersion=0.1.0-beta.3); sonst SNAPSHOT
     version = providers.gradleProperty('releaseVersion').getOrElse('0.1.0-SNAPSHOT')
+
+    // drawio-java braucht Batik 1.20, mermaid-java bringt 1.17 mit: eine Batik-Linie im Klassenpfad.
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'org.apache.xmlgraphics' && details.requested.name.startsWith('batik-')) {
+                details.useVersion '1.20'
+                details.because 'drawio-java needs Batik 1.20; keep one Batik line on the classpath'
+            }
+        }
+    }
 }
 
 // Die Bibliotheksliste von Einstellungen › Bibliotheken (oss-licenses.json in den Ressourcen der Desktop-App).

@@ -865,7 +865,7 @@ final class ConfluenceRestClient {
                 return drawioSvg(session, fragment);
             } catch (KnowledgeSourceException | DrawioDiagramRenderer.Unsupported e) {
                 drawio = e.getMessage();
-                LOG.info("[Confluence] draw.io: JGraphX nicht möglich (" + drawio + "), verwende PNG-Vorschau: "
+                LOG.info("[Confluence] draw.io: Zeichnung nicht möglich (" + drawio + "), verwende PNG-Vorschau: "
                         + logPath(preview == null ? "" : preview));
             }
         }
