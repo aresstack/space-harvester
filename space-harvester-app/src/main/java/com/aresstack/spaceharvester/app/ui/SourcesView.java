@@ -424,9 +424,25 @@ public final class SourcesView implements View {
         if (selected == null || !cards.containsKey(selected)) {
             selected = sources.isEmpty() ? null : sources.get(0).id();
         }
+        dropStaleWatches();
         cards.values().forEach(SourceCard::update);
         showSelected();
         updateSpaceActions();
+    }
+
+    /**
+     * Ein Neustart der Laufzeit beendet die alten Aufträge ohne Meldung an die Wartenden; eine Wache auf eine
+     * geschlossene Laufzeit würde nie fertig und ließe die Kreispfeile grau. Sie gibt deshalb auf, und die Statuszeile
+     * sagt es.
+     */
+    private void dropStaleWatches() {
+        AppRuntime current = context.runtime();
+        for (CatchUpWatch watch : new ArrayList<>(watches.values())) {
+            if (watch.runtime != current && watch.abandon()) {
+                feedback.warning("Nachholen abgebrochen", "Die Verbindungen wurden neu gestartet; die Aufträge dazu "
+                        + "stehen unter Aufträge.");
+            }
+        }
     }
 
     /** Reiter „Synchronisierung“: Erkennung, Aktualisierung, Bereinigung, wie sie für die gewählte Quelle gelten. */
@@ -1108,6 +1124,8 @@ public final class SourcesView implements View {
 
     /** Quellen, deren Nachholen läuft; so lange bleiben die Kreispfeile ihrer Karte ausgegraut. */
     private final java.util.Set<String> catchingUp = new java.util.HashSet<>();
+    /** Laufende Wachen auf die Nachhol-Aufträge, je Quelle eine; bei Neustart der Laufzeit geben sie auf. */
+    private final Map<String, CatchUpWatch> watches = new java.util.HashMap<>();
 
     /** Für Tests: die Kreispfeile an der Karte dieser Quelle. */
     IconButton syncButton(String sourceId) {
@@ -1148,49 +1166,153 @@ public final class SourcesView implements View {
                     failed.put(key, e);
                 }
             }
-            int broken = 0;
-            while (true) {
-                boolean running = false;
-                broken = 0;
-                for (String job : jobs) {
-                    JobStatus status = runtime.workspace().job(job);
-                    if (status == null || status.state().terminal()) {
-                        if (status != null && status.state() != com.aresstack.spaceharvester.application.jobs.JobState
-                                .COMPLETED) {
-                            broken++;
-                        }
-                    } else {
-                        running = true;
-                    }
-                }
-                if (!running) {
-                    break;
-                }
-                Thread.sleep(1000);
+            return new CatchUpStarted(jobs, failed);
+        }, started -> {
+            if (started.jobs().isEmpty()) {
+                finishCatchUp(id, new CatchUpResult(0, 0, started.failed()));
+                return;
             }
-            return new CatchUpResult(jobs.size(), broken, failed);
-        }, result -> {
-            catchingUp.remove(id);
-            cards.values().forEach(SourceCard::update);
-            String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
-            if (result.failed().isEmpty() && result.broken() == 0) {
-                feedback.success(done);
-            } else {
-                int notOk = result.failed().size() + result.broken();
-                feedback.warning(Texts.count(result.started() - result.broken(), "Space", "Spaces") + " nachgeholt, "
-                        + Texts.count(notOk, "Space", "Spaces") + " nicht",
-                        result.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
-                                .collect(java.util.stream.Collectors.joining("\n"))
-                                + (result.broken() == 0 ? "" : "\nEinzelheiten unter Aufträge"));
+            if (context.runtime() != runtime) {
+                // Die Laufzeit wurde zwischen Start und Rückkehr neu gestartet; ihre Aufträge sind beendet.
+                finishCatchUp(id, new CatchUpResult(started.jobs().size(), started.jobs().size(), started.failed()));
+                return;
             }
-        }, error -> {
-            catchingUp.remove(id);
-            cards.values().forEach(SourceCard::update);
-            feedback.problem(error);
-        });
+            CatchUpWatch watch = new CatchUpWatch(runtime, id, started);
+            watches.put(id, watch);
+            watch.begin();
+        }, error -> finishCatchUp(id, error));
+    }
+
+    private void finishCatchUp(String id, CatchUpResult result) {
+        watches.remove(id);
+        catchingUp.remove(id);
+        cards.values().forEach(SourceCard::update);
+        String done = Texts.count(result.started(), "Space", "Spaces") + " nachgeholt";
+        if (result.failed().isEmpty() && result.broken() == 0) {
+            feedback.success(done);
+        } else {
+            int notOk = result.failed().size() + result.broken();
+            feedback.warning(Texts.count(result.started() - result.broken(), "Space", "Spaces") + " nachgeholt, "
+                    + Texts.count(notOk, "Space", "Spaces") + " nicht",
+                    result.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                            .collect(java.util.stream.Collectors.joining("\n"))
+                            + (result.broken() == 0 ? "" : "\nEinzelheiten unter Aufträge"));
+        }
+    }
+
+    private void finishCatchUp(String id, Throwable error) {
+        watches.remove(id);
+        catchingUp.remove(id);
+        cards.values().forEach(SourceCard::update);
+        feedback.problem(error);
+    }
+
+    private record CatchUpStarted(List<String> jobs, Map<String, Exception> failed) {
     }
 
     private record CatchUpResult(int started, int broken, Map<String, Exception> failed) {
+    }
+
+    /**
+     * Wartet auf das Ende der Nachhol-Aufträge einer Quelle ohne Abfragen (ADR 0027): erst beim Core anmelden
+     * ({@link Workspace#subscribeJobs}), dann den Stand jedes Auftrags einmal lesen, danach nur Meldungen. Sobald jeder
+     * Auftrag beendet ist (auch gescheitert oder gelöscht), meldet die Statuszeile das Ergebnis.
+     */
+    private final class CatchUpWatch implements com.aresstack.spaceharvester.application.jobs.JobListener {
+
+        private final AppRuntime runtime;
+        private final String sourceId;
+        private final CatchUpStarted started;
+        /** Noch nicht beendete Aufträge. */
+        private final java.util.Set<String> open;
+        private int broken;
+        private boolean finished;
+        private com.aresstack.spaceharvester.application.observe.Subscription subscription =
+                com.aresstack.spaceharvester.application.observe.Subscription.NONE;
+
+        CatchUpWatch(AppRuntime runtime, String sourceId, CatchUpStarted started) {
+            this.runtime = runtime;
+            this.sourceId = sourceId;
+            this.started = started;
+            this.open = new java.util.HashSet<>(started.jobs());
+        }
+
+        void begin() {
+            subscription = runtime.workspace().subscribeJobs(this);
+            // Was zwischen Start und Anmeldung schon endete, holt das einmalige Lesen nach.
+            Background.run(() -> {
+                List<JobStatus> current = new ArrayList<>();
+                for (String job : started.jobs()) {
+                    current.add(runtime.workspace().job(job));
+                }
+                return current;
+            }, current -> {
+                for (int i = 0; i < current.size(); i++) {
+                    JobStatus status = current.get(i);
+                    if (status == null) {
+                        ended(started.jobs().get(i), false);
+                    } else {
+                        changed(status);
+                    }
+                }
+            }, error -> {
+                subscription.close();
+                synchronized (this) {
+                    finished = true;
+                }
+                finishCatchUp(sourceId, error);
+            });
+        }
+
+        /**
+         * Gibt die Wache auf, ohne ein Ergebnis zu melden (EDT); die Kreispfeile werden wieder frei.
+         *
+         * @return ob sie noch lief
+         */
+        boolean abandon() {
+            synchronized (this) {
+                if (finished) {
+                    return false;
+                }
+                finished = true;
+            }
+            subscription.close();
+            watches.remove(sourceId);
+            catchingUp.remove(sourceId);
+            return true;
+        }
+
+        @Override
+        public void changed(JobStatus status) {
+            if (status.state().terminal()) {
+                ended(status.id(), status.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            }
+        }
+
+        @Override
+        public void removed(JobStatus last) {
+            ended(last.id(), last.state() == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        }
+
+        /** Vom Zustell-Thread des Core oder vom EDT; das Ergebnis kommt einmal, auf dem EDT. */
+        private void ended(String jobId, boolean ok) {
+            boolean done;
+            synchronized (this) {
+                if (finished || !open.remove(jobId)) {
+                    return;
+                }
+                if (!ok) {
+                    broken++;
+                }
+                done = open.isEmpty();
+                finished = done;
+            }
+            if (done) {
+                subscription.close();
+                CatchUpResult result = new CatchUpResult(started.jobs().size(), broken, started.failed());
+                javax.swing.SwingUtilities.invokeLater(() -> finishCatchUp(sourceId, result));
+            }
+        }
     }
 
     private void startSpaces(String one, String many, SpaceStart action) {
