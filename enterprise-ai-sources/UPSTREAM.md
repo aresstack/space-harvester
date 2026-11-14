@@ -5,7 +5,7 @@ Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aress
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`f0681f6fbd19f003d1f770d7621b820802526fea`, der Stand von enterprise-ai-client#222 (draw.io-Diagramme mit drawio-java statt
+`065530010155ad03be68a3f9bf0d9964566e9087`, der Merge von enterprise-ai-client#222 (draw.io-Diagramme mit drawio-java statt
 JGraphX: `DrawioDiagramRenderer` als Adapter auf das Original-draw.io-JavaScript auf GraalJS, Meldungen nur mit Fehlercode und
 Fähigkeit; im Space Harvester liefern App und Dienst `drawio-java-stencils` mit, die Tests dieses Moduls haben es im
 Testklassenpfad); davor `89002c11632fb7c3ab7f8a86ed5826600f7ad150`, der Merge von enterprise-ai-client#221 (Outlook: fehlendes Datenfeld eines Anhangs im angehängten Element ist ein Fehler, unlesbare Anhangstabelle ebenso; Teile ohne Datei mit dem Warncode `entries-not-readable`) auf `main`; davor `42b047aa`, der Merge von enterprise-ai-client#220 (Outlook-Anhänge, ADR 0026 Paket OL1: `OutlookKnowledgeSource` ist `AttachmentListSource` und `PageViewSource`, Anhangskennung aus Postfachdatei, Nachricht und `getAttachNum`, Dateibytes als Strom, angehängte Elemente als `message/rfc822`; Testpostfach `PstTestMailbox` als Fixture) auf `main`; davor `fb85f380`, der Merge von enterprise-ai-client#219 (Zwei-Faktor-Sitzung: fehlende Datei
