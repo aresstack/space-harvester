@@ -8,9 +8,17 @@ Entscheidung und Alternativen: [ADR 0008](adr/0008-desktop-app.md).
 
 ## Starten unter Windows
 
-Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21). Ist `java` auf dem Rechner noch ein
-älteres Java (z. B. 1.8), die App mit dem vollen Pfad zur `java.exe` des JDK 21 starten:
-`"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar`.
+Voraussetzung ist ein installiertes Java 21 (z. B. Eclipse Temurin 21 oder Red Hat OpenJDK 21). Es muss nicht das
+registrierte `java` sein: Das JAR startet per **Doppelklick** oder mit `java -jar` auch unter Java 8. Sein Einstieg
+(`Main-Class`) ist ein für Java 8 übersetzter Launcher (`com.aresstack.spaceharvester.launcher.Launcher`, Vorbild
+Audio Studio und 3d4j). Läuft er unter Java 21 oder neuer, startet er die App in derselben JVM; sonst sucht er ein
+Java 21 und startet damit dasselbe JAR mit denselben Argumenten (unter `javaw` ohne Konsolenfenster). Gesucht wird
+in dieser Reihenfolge: das beim letzten Mal gefundene (gemerkt in `%USERPROFILE%\.space-harvester\launcher.properties`),
+`-Dspace-harvester.java=…`, die Umgebungsvariable `SPACE_HARVESTER_JAVA` (Ordner oder `java.exe`), `JAVA_HOME`, jedes
+`java` im `PATH` und die üblichen Installationsordner (`C:\Program Files\Java`, `…\Eclipse Adoptium`, `…\RedHat`,
+`…\Microsoft`, `…\Zulu`, `%USERPROFILE%\.jdks`, Scoop, SDKMAN, `/usr/lib/jvm` u. a.). Findet er keins, meldet ein
+Dialog „Space Harvester braucht Java 21 …“ samt dieser Hinweise. Der Start mit dem vollen Pfad
+`"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar` geht weiterhin.
 
 1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) die gewünschte Version öffnen
    (reguläre Releases wie `v0.1.0` sind als *Latest* markiert, die Testversion `beta` als *Pre-release*, `snapshot` ist der letzte Stand eines
@@ -18,7 +26,7 @@ Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21). 
    sowie `SHA256SUMS` herunterladen.
 2. Optional die Prüfsumme vergleichen: `certutil -hashfile space-harvester-app-<version>.jar SHA256` muss den Wert aus
    `SHA256SUMS` ergeben.
-3. Starten:
+3. Starten: Doppelklick auf das JAR oder
 
 ```bat
 java -jar space-harvester-app-<version>.jar

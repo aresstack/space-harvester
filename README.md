@@ -42,18 +42,15 @@ Die Desktop-Anwendung läuft eigenständig mit direktem Core-Zugriff – **ohne 
 
 1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
    `space-harvester-app-<version>.jar` und bei Bedarf `SHA256SUMS` herunterladen.
-2. Mit Java 21 starten:
+2. Per Doppelklick oder so starten (ein Java 21 muss installiert sein, das registrierte `java` darf älter sein):
 
 ```bash
 java -jar space-harvester-app-<version>.jar
 ```
 
-**Windows:** Zeigt `java -version` noch ein älteres Java (z. B. 1.8), die App mit dem vollen Pfad zur `java.exe` des
-JDK 21 starten (Einzelheiten unter [Starten unter Windows](docs/DESKTOP_APP.md#starten-unter-windows)):
-
-```bat
-"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar
-```
+Der Einstieg des JARs ist ein für Java 8 übersetzter Launcher: Läuft das JAR unter einem älteren Java (unter Windows
+oft 1.8), sucht er ein Java 21 und startet die App damit, Argumente wie `--config` reicht er durch
+([Starten unter Windows](docs/DESKTOP_APP.md#starten-unter-windows)).
 
 Beim ersten Start führt der Einrichtungsassistent durch Quellen, Netzwerk, KI-Dienst und Modelle. Die App bietet
 Suche, Explorer, Leseansicht, Quellenverwaltung, Synchronisierung, Downloads, Aufträge, Begriffe, Analysen, Status
