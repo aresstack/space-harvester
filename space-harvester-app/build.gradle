@@ -9,6 +9,29 @@ plugins {
 
 description = 'Space Harvester Desktop – Wissensquellen, Inhalte, Abgleich, Export und Suche als Swing-Anwendung.'
 
+sourceSets {
+    // Der Launcher ist für Java 8 übersetzt, damit ein schlichtes „java -jar“ oder ein Doppelklick ihn mit dem Java
+    // laden kann, das der Rechner hat (bei Angelo ist Java 8 registriert). Er sucht dann ein Java 21 und startet die
+    // App damit. Eine Klassendatei trägt ihre eigene Version, und eine JVM prüft nur die der Klassen, die sie lädt;
+    // deshalb teilen sich beide Arten das JAR. Vorbild: aresstack/audio (Audio Studio) und aresstack/3d4j.
+    launcher {
+        java {
+            srcDir 'src/launcher/java'
+        }
+    }
+}
+
+def launcherClass = 'com.aresstack.spaceharvester.launcher.Launcher'
+
+// Mit eigener Main-Class legt das Spring-Boot-Plugin seinen Loader nicht mehr ins JAR (nur bei JarLauncher als
+// Main-Class); der Launcher startet ihn aber unter Java 21. Deshalb kommt derselbe Loader hier ausdrücklich hinein.
+configurations {
+    bootLoader {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
@@ -51,11 +74,19 @@ dependencies {
     // Kleines MaltParser-Testmodell (nicht das GSD-Modell) für den Adapter-Test
     testImplementation testFixtures(project(':nlp-parser'))
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation sourceSets.launcher.output
+
+    bootLoader "org.springframework.boot:spring-boot-loader:${libs.versions.springBoot.get()}"
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.compilerArgs << '-parameters'
+}
+
+tasks.named('compileLauncherJava') {
+    options.release = 8
+    options.compilerArgs += ['-Xlint:-options'] // Java 8 als Ziel ist veraltet, und hier gewollt
 }
 
 tasks.withType(AbstractArchiveTask).configureEach {
@@ -70,8 +101,15 @@ springBoot {
 // Das ausführbare App-JAR: space-harvester-app-<version>.jar
 tasks.named('bootJar') {
     archiveBaseName = 'space-harvester-app'
+    // Launcher-Klassen in die oberste Ebene (nicht BOOT-INF/classes), damit Java 8 sie ohne den Loader findet
+    from sourceSets.launcher.output
+    from({ configurations.bootLoader.filter { it.name.endsWith('.jar') }.collect { zipTree(it) } }) {
+        exclude 'META-INF/**'
+    }
     manifest {
-        attributes 'Implementation-Title': 'Space Harvester Desktop', 'Implementation-Version': project.version
+        // Spring Boot setzt Main-Class nur, wenn keine angegeben ist; Start-Class bleibt SpaceHarvesterApp.
+        attributes 'Main-Class': launcherClass,
+                'Implementation-Title': 'Space Harvester Desktop', 'Implementation-Version': project.version
     }
 }
 
@@ -134,6 +172,24 @@ def appJarCheck = tasks.register('appJarCheck') {
                 throw new GradleException("App-JAR ${args} endete mit ${result.result.get().exitValue}:\n${text}")
             }
             return text
+        }
+        // Doppelklick mit Java 8: Main-Class ist der Launcher, als Java-8-Klassendatei (Version 52) in der obersten Ebene
+        new java.util.jar.JarFile(jar.get().asFile).withCloseable { zip ->
+            def mainClass = zip.manifest.mainAttributes.getValue('Main-Class')
+            if (mainClass != launcherClass) {
+                throw new GradleException("Main-Class ist ${mainClass}, erwartet ${launcherClass}")
+            }
+            ['Launcher', 'JavaRuntimeFinder'].each { name ->
+                def entry = zip.getEntry("com/aresstack/spaceharvester/launcher/${name}.class")
+                if (entry == null) {
+                    throw new GradleException("${name}.class fehlt in der obersten Ebene des App-JARs")
+                }
+                def bytes = zip.getInputStream(entry).withCloseable { it.readNBytes(8) }
+                int major = ((bytes[6] & 0xff) << 8) | (bytes[7] & 0xff)
+                if (major != 52) {
+                    throw new GradleException("${name}.class hat Klassendatei-Version ${major}, Java 8 braucht 52")
+                }
+            }
         }
         def version = run(['--version'])
         if (!version.contains('Space Harvester Desktop')) {
