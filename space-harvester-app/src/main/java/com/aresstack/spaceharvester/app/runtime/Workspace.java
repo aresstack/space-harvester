@@ -1029,14 +1029,15 @@ public final class Workspace {
     }
 
     /**
-     * „Analytics exportieren“ (Angelo 16.11.2026): wie {@link #startMetadataExport}, aber Seitenaufrufe über die
-     * Endpunkte des Confluence-Analytics-Plugins ({@code AnalyticsQueries.DEFAULT}); antwortet die Quelle nicht,
-     * scheitert nur dieser Auftrag.
+     * „Analytics exportieren“ (Angelo 16.11.2026): wie {@link #startMetadataExport}, aber Aktivität und Seitenaufrufe
+     * über die Endpunkte des Confluence-Analytics-Plugins ({@code queries}, aus Einstellungen › Analytics-Export);
+     * antwortet die Quelle nicht, scheitert nur dieser Auftrag.
      */
     public List<JobStatus> startAnalyticsExport(
-            com.aresstack.spaceharvester.application.holdings.Selection selection, Path directory) {
+            com.aresstack.spaceharvester.application.holdings.Selection selection, Path directory,
+            com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries) {
         List<JobStatus> started = harvester.sourceQueryExports().startAnalytics(caller, selection, directory,
-                com.aresstack.spaceharvester.application.metadata.AnalyticsQueries.DEFAULT);
+                queries);
         started.forEach(status -> activities.remember(status.id()));
         return started;
     }

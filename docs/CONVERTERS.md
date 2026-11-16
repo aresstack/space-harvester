@@ -226,29 +226,46 @@ Labels, Erstellung, letzte Änderung, letzter Bearbeiter und Änderungskommentar
 
 ### Analytics
 
-`confluence-analytics-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-analytics-export/v1`.
-Seitenaufrufe über die Endpunkte des Confluence-Analytics-Plugins (Data Center ab 7.11). Dafür gibt es keine
-dokumentierte Schnittstelle; die Pfade unter `/rest/confanalytics/1.0/` sind die der Analytics-Oberfläche und können
-je Confluence-Version abweichen. Deshalb nennt `AnalyticsQueries` sie als austauschbare Vorlagen mit den
-Platzhaltern `{spaceKey}`, `{pageId}`, `{from}`, `{to}` (ISO-8601, UTC; Zeitraum `days`, Standard 365 wie die
-Standard-Aufbewahrung von Analytics), und die Datei schreibt die verwendeten Vorlagen unter `queries`. Vorgabe:
-`space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&period=day&type=total&timezone=UTC` einmal
-je Space und `content/viewsByDate?contentId={pageId}&contentType=page&…` je Seite. Gefragt wird nur nach Summen,
-nie nach den Namen der Leser.
+`confluence-analytics-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-analytics-export/v2`.
+Aktivität des Space und Aufrufe je Seite über die Endpunkte des Confluence-Analytics-Plugins (Data Center ab 7.11).
+Dafür gibt es keine dokumentierte Schnittstelle; die Pfade unter `/rest/confanalytics/1.0/` sind die, die die
+Analytics-Oberfläche selbst aufruft (mitgeschnitten an Confluence 10.2.19, Angelo 16.11.2026), und können je
+Confluence-Version abweichen. Deshalb stehen sie nicht fest im Code: `AnalyticsQueries` nennt die Vorgaben, die App
+liest Abweichungen aus `space-harvester-app.analytics` (Einstellungen › Allgemein › Analytics-Export: der Platzhalter
+jedes Feldes ist die Vorgabe, eine Eingabe ersetzt sie, gilt für den nächsten Export). Platzhalter `{spaceKey}`,
+`{from}`, `{to}` (ISO-8601 mit Millisekunden, UTC, wie die Oberfläche; Zeitraum `period`, Standard 365 Tage wie die
+Standard-Aufbewahrung von Analytics). Die Datei schreibt die verwendeten Vorlagen unter `queries`.
 
-Antwortet das Plugin schon bei der ersten Seite auf keine Abfrage (404: Plugin fehlt oder andere Pfade; 403: für
-dieses Konto gesperrt), scheitert der Auftrag mit `ANALYTICS_UNAVAILABLE`, statt jede Seite zu versuchen; alles
-andere in der App ist davon nicht betroffen. `summary.views` je Seite ist die Summe aller Felder `views` der
-Antworten, `null` wenn keine Antwort ein solches Feld hat (nicht erhoben ist nie 0).
+| Schlüssel | Vorgabe | Antwort |
+|---|---|---|
+| `details` | `space/details?spaceKey={spaceKey}` | Name, Anlage des Space, Installation des Plugins |
+| `activity-by-date` | `space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog` | `activityByDate.creates/updates/views[]` je Woche |
+| `content-views` | `space/paginated/contentViews?spaceKey={spaceKey}&…&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100` | `contentViews[]` je Seite: `id`, `title`, `createdAt`, `lastModifiedAt`, `lastViewedAt`, `usersViewed`, `views`, `commentActivityCount`; `nextPageToken` |
+
+Die Aufrufe je Seite kommen aus der **Seitenliste des Space**, nicht aus einer Abfrage je Seite: Sie wird über
+`nextPageToken` (als Parameter `nextPageToken`) zu Ende geblättert, so kostet ein Space wenige Anfragen. Wiederholt
+die Quelle ein Token oder dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig
+(`contentViews.complete: false`) statt endlos. Gefragt wird nur nach Summen, nie nach den Namen der Leser.
+
+Antwortet das Plugin auf keine der Abfragen (404: Plugin fehlt oder andere Pfade; 403: für dieses Konto gesperrt),
+scheitert der Auftrag mit `ANALYTICS_UNAVAILABLE`; alles andere in der App ist davon nicht betroffen. Je Seite der
+Auswahl steht `content` (der Listeneintrag unverändert oder `null`) und `summary.views`/`summary.lastViewedAt`;
+ohne Eintrag ist beides `null`, denn eine Seite ohne Aufrufe im Zeitraum fehlt in der Liste, und nicht erhoben ist
+nie 0.
 
 ```json
-{ "schema": "space-harvester/confluence-analytics-export/v1", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
+{ "schema": "space-harvester/confluence-analytics-export/v2", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
   "spaceKey": "DEV", "period": { "from": "…", "to": "…", "days": 365 },
-  "queries": { "space": { "spaceViewsByDate": "/rest/confanalytics/1.0/space/activityByDate?…" },
-               "page": { "viewsByDate": "/rest/confanalytics/1.0/content/viewsByDate?…" } },
-  "space": { "spaceViewsByDate": { "status": "ok", "requests": 1, "data": { … } } },
-  "pages": [{ "pageId": "100", "queries": { "viewsByDate": { "status": "ok", "requests": 1, "data": { … } } },
-              "summary": { "views": 42 } }],
+  "queries": { "space": { "details": "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}",
+                          "activityByDate": "/rest/confanalytics/1.0/space/activityByDate?…" },
+               "contentViews": "/rest/confanalytics/1.0/space/paginated/contentViews?…" },
+  "space": { "details": { "status": "ok", "requests": 1, "data": { … } },
+             "activityByDate": { "status": "ok", "requests": 1, "data": { "activityByDate": { … } } } },
+  "contentViews": { "status": "ok", "requests": 3, "entries": 240, "complete": true },
+  "pages": [{ "pageId": "100", "content": { "id": 100, "title": "…", "lastViewedAt": "…", "usersViewed": 67,
+                                             "views": 1325, … },
+              "summary": { "views": 1325, "lastViewedAt": "…" } },
+            { "pageId": "101", "content": null, "summary": { "views": null, "lastViewedAt": null } }],
   "summary": { "pages": 120, "withData": 120, "failed": 0 } }
 ```
 

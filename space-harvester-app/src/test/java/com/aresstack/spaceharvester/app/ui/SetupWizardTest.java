@@ -146,6 +146,37 @@ class SetupWizardTest {
     }
 
     @Test
+    void theAnalyticsExportIsEditedUnderGeneralWithTheDefaultsAsPlaceholdersAndShownOnTheSummary()
+            throws Exception {
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SettingsView(context);
+            assertThat(view[0].analyticsDetails.getText()).as("ohne Angabe leer, die Vorgabe ist Platzhalter")
+                    .isEmpty();
+            assertThat(view[0].analyticsContentViews.placeholder()).startsWith("/rest/confanalytics/1.0/space/"
+                    + "paginated/contentViews?");
+            assertThat(view[0].analyticsPeriod.value()).isEqualTo(java.time.Duration.ofDays(365));
+            view[0].analyticsContentViews.setText("/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey="
+                    + "{spaceKey}");
+            view[0].analyticsContentViews.postActionEvent();
+        });
+        await(() -> context.settings().analytics().contentViews() != null);
+        assertThat(context.settings().analytics().contentViews()).startsWith("/rest/confanalytics/2.0/");
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("  analytics:\n    content-views: "
+                + "\"/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}\"\n",
+                "# Kommentar bleibt stehen");
+        SwingUtilities.invokeAndWait(() -> {
+            // Ein Pfad außerhalb von /rest/ wird gemeldet, nicht gespeichert.
+            view[0].analyticsDetails.setText("https://example.org/rest/x");
+            view[0].analyticsDetails.postActionEvent();
+            assertThat(context.settings().analytics().details()).isNull();
+            SetupWizard wizard = new SetupWizard(context);
+            wizard.show(SetupWizard.SUMMARY);
+            assertThat(texts(wizard.summary)).containsSubsequence(SettingsView.ANALYTICS_TITLE, "angepasst · 365 Tage");
+        });
+    }
+
+    @Test
     void theSecurityTabNamesWhereSecretsLiveButNeverTheirValues() throws Exception {
         SettingsView[] view = new SettingsView[1];
         // Gelesen wird auf dem EDT: Meldet die Laufzeit inzwischen einen neuen Stand (etwa eine pausierte Quelle),

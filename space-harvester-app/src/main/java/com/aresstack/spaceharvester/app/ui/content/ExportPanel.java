@@ -990,11 +990,13 @@ public final class ExportPanel extends JPanel {
             return;
         }
         Path directory = context.settings().outputDirectory();
+        com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries =
+                context.settings().analytics().toQueries();
         sourceStarting = new Pending(current, kind);
         feedback.working(sourceTitle(kind) + " werden aus der Quelle geholt …");
         renderButtons();
         Background.run(() -> kind.equals("analytics")
-                        ? runtime.workspace().startAnalyticsExport(current.toCore(runtime), directory)
+                        ? runtime.workspace().startAnalyticsExport(current.toCore(runtime), directory, queries)
                         : runtime.workspace().startMetadataExport(current.toCore(runtime), directory), jobs -> {
             sourceStarting = null;
             for (JobStatus job : jobs) {

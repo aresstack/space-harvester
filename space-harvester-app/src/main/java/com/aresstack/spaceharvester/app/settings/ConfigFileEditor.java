@@ -545,6 +545,43 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Entwurf {@code base} mit dem Export „Analytics“ ({@code space-harvester-app.analytics}, nur die App, Angelo
+     * 16.11.2026): Zeitraum und die drei Pfade; nur Angaben, die von der Vorgabe abweichen, stehen in der Datei, alles
+     * Vorgabe entfernt den Block. Pfade stehen in Anführungszeichen, denn sie enthalten {@code {} und {@code :}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAnalytics(Path file, Draft base, AnalyticsSettings analytics) {
+        String value = null;
+        if (!analytics.isDefault()) {
+            StringBuilder block = new StringBuilder("analytics:");
+            if (analytics.period() != null) {
+                block.append("\n  period: ").append(duration(analytics.period()));
+            }
+            if (analytics.details() != null) {
+                block.append("\n  details: ").append(quoted(analytics.details()));
+            }
+            if (analytics.activityByDate() != null) {
+                block.append("\n  activity-by-date: ").append(quoted(analytics.activityByDate()));
+            }
+            if (analytics.contentViews() != null) {
+                block.append("\n  content-views: ").append(quoted(analytics.contentViews()));
+            }
+            value = block.toString();
+        }
+        String text = appValue(base.text(), "analytics", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.analytics().equals(analytics)) {
+            throw new IllegalArgumentException("Der Export „Analytics“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + AnalyticsSettings.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
     /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
     public static String delay(java.time.Duration delay) {
         return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";
@@ -875,7 +912,10 @@ public final class ConfigFileEditor {
         if (root < 0) {
             if (value != null) {
                 // Oben in der Datei, wie im Beispiel; der Rest bleibt unverändert.
-                lines.addAll(0, List.of("space-harvester-app:", "  " + value, ""));
+                List<String> fresh = new ArrayList<>(List.of("space-harvester-app:"));
+                fresh.addAll(valueLines(value, "  "));
+                fresh.add("");
+                lines.addAll(0, fresh);
             }
             return String.join(newline, lines) + newline;
         }
@@ -893,9 +933,18 @@ public final class ConfigFileEditor {
             lines.subList(line, blockEnd(lines, line, childIndent)).clear();
         }
         if (value != null) {
-            lines.add(line >= 0 ? line : root + 1, " ".repeat(childIndent) + value);
+            lines.addAll(line >= 0 ? line : root + 1, valueLines(value, " ".repeat(childIndent)));
         }
         return String.join(newline, lines) + newline;
+    }
+
+    /** Ein Wert mit Zeilenumbrüchen ist ein Block: jede Zeile bekommt den Einzug des Schlüssels davor. */
+    private static List<String> valueLines(String value, String indent) {
+        List<String> result = new ArrayList<>();
+        for (String line : value.split("\n", -1)) {
+            result.add(indent + line);
+        }
+        return result;
     }
 
     /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */
