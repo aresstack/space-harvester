@@ -123,6 +123,16 @@ class ChangeLogTest {
     }
 
     @Test
+    void theLatestMarkIsReadWithoutRowsAndChecksTheSource() {
+        assertThat(log.latestMark(CALLER, "wiki")).isEmpty();
+        twoUpdatesAndAnOpenOne();
+
+        assertThat(log.latestMark(CALLER, "wiki")).contains(marks.get(1));
+        assertThat(log.latestMark(CALLER, "other")).isEmpty();
+        assertThatThrownBy(() -> log.latestMark(CALLER, "nirgends")).isInstanceOf(UnknownSourceException.class);
+    }
+
+    @Test
     void updatesRunFromMarkToMarkNewestFirstWithTheOpenOneInFront() {
         twoUpdatesAndAnOpenOne();
 

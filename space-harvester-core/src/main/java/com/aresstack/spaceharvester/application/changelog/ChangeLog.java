@@ -116,6 +116,20 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /**
+     * Die jüngste Update-Marke der Quelle, ohne Zeilen zu lesen; für Beobachter, die nach jeder Meldung nur wissen
+     * wollen, ob ein neues Update abgeschlossen ist (etwa „Nach dem Update Änderungen anzeigen“). Rechte wie
+     * {@link #updates}.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId) {
+        Objects.requireNonNull(caller, "caller");
+        requireReadable(caller, sourceId);
+        List<UpdateMark> marks = store.marks(sourceId);
+        return marks.isEmpty() ? Optional.empty() : Optional.of(marks.getLast());
+    }
+
+    /**
      * Die Updates einer Quelle, neuestes zuerst; das offene nach der letzten Marke vorn, wenn es Änderungen hat, die
      * der Aufrufer sehen darf.
      *
