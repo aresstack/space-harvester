@@ -90,16 +90,39 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void aMessageFromTheChangeLogReloadsAndKeepsTheChosenUpdate() throws Exception {
+    void aMessageLeavesAFinishedUpdateAloneAndKeepsTheChoice() throws Exception {
         view.source("wiki", "Confluence HaVdB");
         view.clickUpdate("16.11.2026, 18:30 · angelo");
-        int before = actions.updateCalls;
+        int updates = actions.updateCalls;
+        int reports = actions.reportCalls;
+        int renders = view.reportRenders();
 
         actions.listener.changed("wiki");
         javax.swing.SwingUtilities.invokeAndWait(() -> { });
 
-        assertThat(actions.updateCalls).isEqualTo(before + 1);
+        assertThat(actions.updateCalls).isEqualTo(updates + 1);
         assertThat(view.selectedUpdate()).as("die Ansicht springt nicht").isEqualTo(actions.second().id());
+        assertThat(actions.reportCalls).as("ein abgeschlossenes Update ändert sich nie mehr").isEqualTo(reports);
+        assertThat(view.reportRenders()).isEqualTo(renders);
+    }
+
+    @Test
+    void aMessageRereadsTheOpenUpdateButRedrawsOnlyWhenItChanged() throws Exception {
+        view.source("wiki", "Confluence HaVdB");
+        int reports = actions.reportCalls;
+        int renders = view.reportRenders();
+
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.reportCalls).isEqualTo(reports + 1);
+        assertThat(view.reportRenders()).as("unverändert: nichts neu gezeichnet").isEqualTo(renders);
+
+        actions.openGrows = true;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(view.reportRenders()).isEqualTo(renders + 1);
+        assertThat(view.reportTexts()).contains("Noch eine Seite");
+        assertThat(view.selectedUpdate()).isEqualTo(ChangeUpdate.OPEN);
     }
 
     @Test
@@ -152,6 +175,8 @@ class SourceUpdatesViewTest {
         boolean none;
         boolean closed;
         int updateCalls;
+        int reportCalls;
+        boolean openGrows;
         ChangeLogListener listener;
 
         ChangeUpdate open() {
@@ -186,12 +211,17 @@ class SourceUpdatesViewTest {
 
         @Override
         public ChangeReport report(String sourceId, String updateId) {
+            reportCalls++;
             if (updateId.equals(initial().id())) {
                 return new ChangeReport(initial(), List.of());
             }
             if (updateId.equals(ChangeUpdate.OPEN)) {
-                return new ChangeReport(open(), List.of(page("20", ChangeKind.NEW, "Neue Seite", List.of("CLUK"),
-                        null, null, null, false)));
+                List<ReportedPage> pages = new ArrayList<>(List.of(page("20", ChangeKind.NEW, "Neue Seite",
+                        List.of("CLUK"), null, null, null, false)));
+                if (openGrows) {
+                    pages.add(page("21", ChangeKind.NEW, "Noch eine Seite", List.of("CLUK"), null, null, null, false));
+                }
+                return new ChangeReport(open(), pages);
             }
             return new ChangeReport(second(), List.of(
                     page("11", ChangeKind.CONTENT_CHANGED, "Betriebshandbuch", List.of("CLUK", "Fachverfahren"),

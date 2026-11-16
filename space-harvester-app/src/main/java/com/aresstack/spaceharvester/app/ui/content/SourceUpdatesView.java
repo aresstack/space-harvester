@@ -41,8 +41,8 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Die Quellenseite (ADR 0030, Stufe 4): Wird im Explorer eine Wissensquelle gewählt, zeigt der Reiter „Leseansicht“ ihre
- * Updates. Links die Updates (das offene „seit dem letzten Update“ zuerst, dann je manueller Synchronisierung), rechts
+ * Die Quellenseite (ADR 0030, Stufe 4): Wird im Explorer eine Wissensquelle gewählt, zeigt der erste Hauptreiter, dann
+ * „Updates“ genannt, ihre Updates. Links die Updates (das offene „seit dem letzten Update“ zuerst, dann je manueller Synchronisierung), rechts
  * die Änderungen des gewählten Updates nach Art; ein Klick auf eine Seite öffnet sie. Neue Zeilen und Marken meldet der
  * Core (ADR 0027), die Ansicht fragt nie in Abständen nach.
  */
@@ -52,6 +52,9 @@ final class SourceUpdatesView extends JPanel {
             + "jeder manuellen Synchronisierung; was im Hintergrund dazukommt, zählt zum nächsten.";
     static final String NO_PAGES = "In diesem Update gibt es keine Änderung, die du sehen darfst.";
     static final String NOT_RUNNING = "Die Updates erscheinen, sobald der Dienst läuft.";
+    static final String HELP = "Ein Update ist alles, was sich in der Quelle seit der vorigen manuellen "
+            + "Synchronisierung geändert hat, auch was im Hintergrund geholt wurde. Oben steht, was seit dem letzten "
+            + "Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet sie.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
     private final Supplier<Actions> actions;
@@ -60,6 +63,7 @@ final class SourceUpdatesView extends JPanel {
     private final JPanel list = new JPanel();
     private final ScrollColumn report = new ScrollColumn(new BorderLayout());
     private final JPanel reportBody = new JPanel();
+    private final JComponent reportScroll;
     private Consumer<ReportedPage> onOpen = page -> { };
     private ZoneId zone = ZoneId.systemDefault();
 
@@ -85,8 +89,9 @@ final class SourceUpdatesView extends JPanel {
         this.runner = Objects.requireNonNull(runner, "runner");
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
-        head.note("Was sich in der Quelle geändert hat, je manueller Synchronisierung");
+        // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
         head.copy(this::copyText);
+        head.tool(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setOpaque(false);
@@ -103,7 +108,8 @@ final class SourceUpdatesView extends JPanel {
 
         add(head, BorderLayout.NORTH);
         add(listScroll, BorderLayout.WEST);
-        add(Comic.scroll(report), BorderLayout.CENTER);
+        reportScroll = Comic.scroll(report);
+        add(reportScroll, BorderLayout.CENTER);
         source(null, null);
     }
 
@@ -159,16 +165,25 @@ final class SourceUpdatesView extends JPanel {
             if (mine != generation) {
                 return;
             }
-            updates = List.copyOf(found);
+            List<ChangeUpdate> fresh = List.copyOf(found);
+            boolean changed = !fresh.equals(updates);
+            updates = fresh;
             String keep = updates.stream().map(ChangeUpdate::id).filter(u -> u.equals(selected)).findFirst()
                     .orElse(updates.isEmpty() ? null : updates.getFirst().id());
-            renderList();
             if (keep == null) {
                 selected = null;
                 shown = null;
+                renderList();
                 message(NO_UPDATES);
-            } else {
-                select(keep);
+                return;
+            }
+            // Während eines Abgleichs kommen laufend Meldungen: Ein abgeschlossenes Update ändert sich nie mehr, sein
+            // Bericht bleibt samt Rollposition stehen; neu gelesen wird nur das offene oder eine neue Auswahl.
+            boolean reread = !keep.equals(selected) || shown == null || ChangeUpdate.OPEN.equals(keep);
+            if (reread) {
+                select(keep, keep.equals(selected));
+            } else if (changed) {
+                renderList();
             }
         }, failure -> {
             if (mine == generation) {
@@ -179,6 +194,11 @@ final class SourceUpdatesView extends JPanel {
 
     /** Wählt ein Update und lädt seinen Bericht. */
     void select(String updateId) {
+        select(updateId, false);
+    }
+
+    /** {@code keepPosition}: dasselbe Update neu gelesen, die Rollposition im Bericht bleibt. */
+    private void select(String updateId, boolean keepPosition) {
         Actions current = actions.get();
         String id = sourceId;
         if (current == null || id == null || updateId == null) {
@@ -191,13 +211,30 @@ final class SourceUpdatesView extends JPanel {
             if (mine != generation) {
                 return;
             }
+            if (keepPosition && found.equals(shown)) {
+                return;
+            }
+            java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
             shown = found;
             renderReport(found);
+            restore(position);
         }, failure -> {
             if (mine == generation) {
                 message("Änderungen nicht geladen: " + Problems.describe(failure).title());
             }
         });
+    }
+
+    private java.awt.Point viewPosition() {
+        javax.swing.JViewport port = reportScroll instanceof javax.swing.JScrollPane pane ? pane.getViewport() : null;
+        return port == null ? new java.awt.Point() : port.getViewPosition();
+    }
+
+    private void restore(java.awt.Point position) {
+        if (reportScroll instanceof javax.swing.JScrollPane pane) {
+            report.validate();
+            pane.getViewport().setViewPosition(position);
+        }
     }
 
     private void renderList() {
@@ -226,7 +263,10 @@ final class SourceUpdatesView extends JPanel {
         return row;
     }
 
+    private int reportRenders;
+
     private void renderReport(ChangeReport found) {
+        reportRenders++;
         reportBody.removeAll();
         ChangeUpdate update = found.update();
         JLabel title = new JLabel(heading(update));
@@ -560,6 +600,11 @@ final class SourceUpdatesView extends JPanel {
             }
         }
         return false;
+    }
+
+    /** Wie oft der Bericht gezeichnet wurde. */
+    int reportRenders() {
+        return reportRenders;
     }
 
     boolean subscribed() {

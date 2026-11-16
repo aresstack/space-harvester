@@ -294,6 +294,8 @@ class ContentViewTest {
         // Stattdessen die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der Quelle, sonst leer.
         assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().sourceId())).isEqualTo("handbuch");
+        assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText()))
+                .as("der erste Reiter heißt auf der Quellenseite „Updates“").isEqualTo("Updates");
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         onEdt(() -> {
@@ -320,6 +322,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
         assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
+        assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
     }
 
     @Test

@@ -113,8 +113,10 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
-    static final String EMPTY_SOURCE = "Für eine Wissensquelle gibt es hier nichts. Ihre Updates stehen unter "
-            + "„Leseansicht“.";
+    static final String EMPTY_SOURCE = "Für eine Wissensquelle gibt es hier nichts. Ihre Änderungen stehen unter "
+            + "„Updates“.";
+    /** Name des ersten Hauptreiters, solange eine Quelle gewählt ist (sonst „Leseansicht“). */
+    static final String UPDATES = "Updates";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
@@ -575,6 +577,7 @@ public final class PageDetailPanel extends JPanel {
             // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
             sourceView.source(null, null);
             empty.setText(EMPTY_PAGE);
+            nameFirstTab(false);
         }
         pageCard = card;
         showDeck();
@@ -599,11 +602,27 @@ public final class PageDetailPanel extends JPanel {
         title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        nameFirstTab(true);
         pageCard = SOURCE_CARD;
         showDeck();
     }
 
-    /** Zeigt die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle). */
+    /**
+     * Der erste Hauptreiter heißt auf der Quellenseite „Updates“ (Symbol: Kreispfeile), sonst „Leseansicht“; Tooltip,
+     * zugänglicher Name und Symbol wechseln, die Umschaltung bleibt dieselbe.
+     */
+    private void nameFirstTab(boolean source) {
+        javax.swing.AbstractButton first = tabs.button(READING);
+        if (first == null) {
+            return;
+        }
+        String name = source ? UPDATES : READING;
+        first.setIcon(source ? PageTabIcons.updates() : PageTabIcons.reading());
+        first.setToolTipText(name);
+        first.getAccessibleContext().setAccessibleName(name);
+    }
+
+    /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */
     public void showReading() {
         tabs.select(READING);
     }
