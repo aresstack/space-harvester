@@ -66,9 +66,17 @@ final class TreeStates {
     private final Set<String> staleSources = new HashSet<>();
     private AppRuntime subscribed;
 
+    /** Erfährt je Core-Meldung „Space hat neuen Stand“ Quelle und Space ({@code null} = alle Spaces der Quelle). */
+    private java.util.function.BiConsumer<String, String> spaceListener = (source, space) -> { };
+
     TreeStates(AppContext context, Runnable changed) {
         this.context = context;
         this.changed = changed;
+    }
+
+    /** Der Baum liest nach einer solchen Meldung seine geladenen Knoten des Space nach (Codex zu #802). */
+    void onSpaceChanged(java.util.function.BiConsumer<String, String> listener) {
+        this.spaceListener = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     static String key(String sourceId, String spaceKey) {
@@ -253,6 +261,7 @@ final class TreeStates {
         if (runtime == null || runtime != subscribed) {
             return;
         }
+        spaceListener.accept(sourceId, spaceKey == null || spaceKey.isEmpty() ? null : spaceKey);
         if (spaceKey == null || spaceKey.isEmpty()) {
             // Alle Spaces der Quelle: Übersichten vergessen, Stand neu lesen; aufgeklappte lesen beim nächsten Zeichnen.
             List<String> open = new ArrayList<>();

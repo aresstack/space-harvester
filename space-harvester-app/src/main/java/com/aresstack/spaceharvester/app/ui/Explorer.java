@@ -334,6 +334,7 @@ public final class Explorer {
     public Explorer(AppContext context) {
         this.context = context;
         this.states = new TreeStates(context, this::statesChanged);
+        states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setToggleClickCount(0);
@@ -1066,6 +1067,101 @@ public final class Explorer {
 
     /** Ein Stapel Kinder; im Hintergrund. */
     record Batch(List<Node> nodes, String nextCursor) {
+    }
+
+    /**
+     * Ein Space hat laut Core einen neuen Stand (etwa nach dem Nachholen über die Kreispfeile, Codex zu #802): die
+     * geladenen Knoten dieses Space (oder aller Spaces der Quelle, {@code spaceKey} null) lesen ihre Kinder nach.
+     * Vorhandene Knoten bleiben samt Aufklappung und Auswahl, neue kommen hinzu, verschwundene gehen, geänderte Titel
+     * werden übernommen; die Ansicht springt nicht.
+     */
+    private void spaceStructureChanged(String sourceId, String spaceKey) {
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(sourceId));
+        if (source == null) {
+            return;
+        }
+        for (int i = 0; i < source.getChildCount(); i++) {
+            if (source.getChildAt(i) instanceof Node space && space.item() instanceof SpaceItem item
+                    && (spaceKey == null || item.spaceKey().equals(spaceKey))) {
+                reread(space);
+            }
+        }
+    }
+
+    /** Liest die Kinder eines geladenen Knotens nach und gleicht sie ab ({@link #merge}); danach seine geladenen Kinder. */
+    private void reread(Node node) {
+        AppRuntime runtime = context.runtime();
+        Item item = node.item();
+        if (runtime == null || !node.loaded || node.loading || !(item instanceof SpaceItem || item instanceof PageItem)) {
+            return;
+        }
+        node.loading = true;
+        Background.run(() -> children(runtime, item, null), batch -> {
+            node.loading = false;
+            merge(node, batch);
+        }, error -> node.loading = false);
+    }
+
+    /** Schlüssel eines Knotens für den Abgleich; Hinweise und „Weitere laden“ haben keinen. */
+    private static String key(Item item) {
+        return switch (item) {
+            case SpaceItem space -> "s" + space.spaceKey();
+            case PageItem page -> "p" + page.pageId();
+            default -> null;
+        };
+    }
+
+    /** Gleicht die Kinder von {@code parent} mit dem frischen Stapel ab, mit einzelnen Modell-Ereignissen statt Neuaufbau. */
+    private void merge(Node parent, Batch batch) {
+        java.util.Map<String, Node> existing = new java.util.LinkedHashMap<>();
+        for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+            Node child = (Node) parent.getChildAt(i);
+            String key = key(child.item());
+            if (key == null) {
+                model.removeNodeFromParent(child);
+            } else {
+                existing.put(key, child);
+            }
+        }
+        List<Node> kept = new ArrayList<>();
+        int index = 0;
+        for (Node fresh : batch.nodes()) {
+            Node current = existing.remove(key(fresh.item()));
+            if (current == null) {
+                model.insertNodeInto(fresh, parent, index);
+            } else {
+                if (!current.item().equals(fresh.item())) {
+                    current.setUserObject(fresh.item());
+                    model.nodeChanged(current);
+                }
+                if (!current.loaded && current.getChildCount() == 0 && fresh.getChildCount() > 0) {
+                    // Hat jetzt Kinder: den Platzhalter fürs Aufklappen nachtragen.
+                    model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
+                } else if (!current.loaded && current.getChildCount() > 0 && fresh.getChildCount() == 0) {
+                    model.removeNodeFromParent((Node) current.getFirstChild());
+                }
+                if (parent.getIndex(current) != index) {
+                    model.removeNodeFromParent(current);
+                    model.insertNodeInto(current, parent, index);
+                }
+                kept.add(current);
+            }
+            index++;
+        }
+        for (Node gone : existing.values()) {
+            model.removeNodeFromParent(gone);
+        }
+        if (batch.nextCursor() != null) {
+            model.insertNodeInto(new Node(new MoreItem(batch.nextCursor())), parent, parent.getChildCount());
+        }
+        if (parent.getChildCount() == 0) {
+            Node empty = new Node(new Note(parent.item() instanceof SourceItem ? "Keine Spaces" : "Keine Seiten"));
+            empty.loaded = true;
+            model.insertNodeInto(empty, parent, 0);
+        }
+        for (Node child : kept) {
+            reread(child);
+        }
     }
 
     static Batch children(AppRuntime runtime, Item item, String cursor) {

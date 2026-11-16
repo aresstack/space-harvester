@@ -542,8 +542,12 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void refresh(String sourceId, String spaceKey, String pageId) {
         if (pageId == null) {
-            notice("Nachholen wird gestartet …", Comic.MUTED);
-            sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey));
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+                notice("Nachholen wird gestartet …", Comic.MUTED);
+            } else {
+                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
+                        Comic.ORANGE);
+            }
             return;
         }
         notice("Aktualisierung wird gestartet …", Comic.MUTED);

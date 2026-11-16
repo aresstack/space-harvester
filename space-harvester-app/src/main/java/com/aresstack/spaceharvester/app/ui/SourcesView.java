@@ -1141,21 +1141,28 @@ public final class SourcesView implements View {
      */
     /**
      * Holt die Änderungen einer Quelle nach, je Space ein Auftrag; {@code spaceKeys} leer heißt alle Spaces, die die
-     * Verbindung kennt. Auch aus dem Baum (Kreispfeile an Quelle oder Space, Angelo 16.11.2026).
+     * Verbindung kennt. Auch aus dem Baum (Kreispfeile an Quelle oder Space, Angelo 16.11.2026). Die ganze Quelle
+     * läuft nur einmal zugleich (die Karte zeigt es); einzelne Spaces starten unabhängig davon, damit kein Klick
+     * verloren geht (Codex zu #802).
+     *
+     * @return ob gestartet wurde; {@code false} ohne Spaces oder solange die ganze Quelle schon nachholt
      */
-    void catchUp(String id, List<String> spaceKeys) {
+    boolean catchUp(String id, List<String> spaceKeys) {
         AppRuntime runtime = context.runtime();
         List<String> keys = spaceKeys.isEmpty()
                 ? context.connection(id).spaces().stream().map(Partition::key).toList() : spaceKeys;
         if (runtime == null || keys.isEmpty()) {
             feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
                     + "die Änderungen nach.");
-            return;
+            return false;
         }
-        if (!catchingUp.add(id)) {
-            return;
+        boolean whole = spaceKeys.isEmpty();
+        if (whole) {
+            if (!catchingUp.add(id)) {
+                return false;
+            }
+            cards.values().forEach(SourceCard::update);
         }
-        cards.values().forEach(SourceCard::update);
         // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
         SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
                 : SyncMode.CATALOG_ONLY;
@@ -1172,6 +1179,17 @@ public final class SourcesView implements View {
             }
             return new CatchUpStarted(jobs, failed);
         }, started -> {
+            if (!whole) {
+                // Einzelne Spaces: keine Karten-Sperre, keine Beobachtung; der Auftrag steht unter Aufträge.
+                if (started.failed().isEmpty()) {
+                    feedback.success(Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " nachgeholt");
+                } else {
+                    feedback.warning(Texts.count(started.failed().size(), "Space", "Spaces") + " nicht gestartet",
+                            started.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                    .collect(java.util.stream.Collectors.joining("\n")));
+                }
+                return;
+            }
             if (started.jobs().isEmpty()) {
                 finishCatchUp(id, new CatchUpResult(0, 0, started.failed()));
                 return;
@@ -1184,7 +1202,14 @@ public final class SourcesView implements View {
             CatchUpWatch watch = new CatchUpWatch(runtime, id, started);
             watches.put(id, watch);
             watch.begin();
-        }, error -> finishCatchUp(id, error));
+        }, error -> {
+            if (whole) {
+                finishCatchUp(id, error);
+            } else {
+                feedback.problem(error);
+            }
+        });
+        return true;
     }
 
     private void finishCatchUp(String id, CatchUpResult result) {
