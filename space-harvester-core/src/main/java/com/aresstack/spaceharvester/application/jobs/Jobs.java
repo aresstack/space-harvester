@@ -431,6 +431,28 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Wie {@link #await}, wartet aber auch, bis die abgekoppelte Arbeit eines nach der Anhaltefrist für beendet
+     * erklärten Laufs wirklich geendet hat; erst dann liest sie nichts mehr und der Eintrag lässt sich neu starten.
+     *
+     * @throws TimeoutException wenn der Auftrag oder seine abgekoppelte Arbeit nach {@code timeout} noch läuft
+     */
+    public JobStatus awaitSettled(String jobId, String owner, Duration timeout)
+            throws java.util.concurrent.TimeoutException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        JobStatus status = await(jobId, owner, timeout);
+        synchronized (lock) {
+            while (lingering.contains(jobId)) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " beendet noch seinen hängenden Schritt");
+                }
+                TimeUnit.NANOSECONDS.timedWait(lock, left);
+            }
+        }
+        return status;
+    }
+
+    /**
      * Wartet, bis der eigene Auftrag einen Endzustand erreicht hat ({@link JobState#terminal()}), ohne Abfrage im Takt
      * (ADR 0027): Ein Auftrag verlässt die offenen Aufträge genau mit seinem Ende, und jedes Verlassen weckt hier. Auch
      * {@link #close()} weckt, damit niemand nach dem Abbruch der wartenden Aufträge bis zur Frist hängt.
@@ -812,6 +834,31 @@ public class Jobs implements AutoCloseable {
         }
         dispatch();
         return status;
+    }
+
+    /**
+     * Prüft ohne Wirkung, ob {@link #rerun} diesen Auftrag jetzt annähme: beendet, kein nachlaufender Schritt und Platz
+     * frei. Für Aufrufer, die vor dem Neustart andere Aufträge anhalten und das nicht umsonst tun wollen.
+     *
+     * @throws UnknownJobException         wenn es keinen eigenen Auftrag mit dieser ID gibt
+     * @throws JobNotResumableException    wenn er wartet, läuft, noch nachläuft oder sich nicht neu starten lässt
+     * @throws JobCapacityExceededException wenn kein Platz frei ist
+     */
+    public void requireRerunnable(String jobId, String owner) {
+        JobStatus current = requireOwner(status(jobId), owner);
+        if (!current.type().resumable()) {
+            throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
+        }
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
+            }
+            if (open.containsKey(jobId)) {
+                throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
+            }
+            requireNotLingering(jobId);
+            requireCapacity(current.type(), current.owner());
+        }
     }
 
     /** Unter dem Sperrobjekt: kein neuer Lauf, solange die abgekoppelte Arbeit des Eintrags noch läuft. */

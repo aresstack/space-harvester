@@ -31,6 +31,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -155,6 +156,32 @@ class FileSystemExportArtifactWriterTest {
             assertThat(session.written(new com.aresstack.spaceharvester.application.snapshot.PageKey("confluence",
                     "2"))).isEmpty();
         }
+    }
+
+    @Test
+    void aFolderLockedForAMomentIsMovedOnTheNextAttempt() throws Exception {
+        int[] calls = {0};
+        List<Long> waited = new ArrayList<>();
+
+        FileSystemExportArtifactWriter.retryWhileLocked(() -> {
+            if (calls[0]++ < 2) {
+                throw new java.nio.file.AccessDeniedException("export");
+            }
+        }, waited::add);
+
+        assertThat(calls[0]).isEqualTo(3);
+        assertThat(waited).containsExactly(100L, 200L);
+    }
+
+    @Test
+    void aFolderThatStaysLockedFailsAfterTheLastAttempt() {
+        int[] calls = {0};
+
+        assertThatThrownBy(() -> FileSystemExportArtifactWriter.retryWhileLocked(() -> {
+            calls[0]++;
+            throw new java.nio.file.AccessDeniedException("export");
+        }, millis -> { })).isInstanceOf(java.nio.file.AccessDeniedException.class);
+        assertThat(calls[0]).isEqualTo(FileSystemExportArtifactWriter.LOCK_RETRY_MILLIS.length + 1);
     }
 
     @Test

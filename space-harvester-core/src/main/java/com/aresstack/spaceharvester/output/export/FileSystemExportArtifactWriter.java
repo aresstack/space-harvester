@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -753,11 +754,50 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     }
 
     private static void move(Path from, Path to) throws IOException {
-        try {
-            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(from, to);
+        retryWhileLocked(() -> {
+            try {
+                Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(from, to);
+            }
+        }, Thread::sleep);
+    }
+
+    /** Wartezeiten zwischen den Versuchen, einen gesperrten Ordner umzubenennen: zusammen gut zehn Sekunden. */
+    static final long[] LOCK_RETRY_MILLIS = {100, 200, 400, 800, 1500, 2500, 5000};
+
+    /**
+     * Unter Windows sperrt jeder offene Griff in einem Ordner sein Umbenennen ({@link AccessDeniedException}), etwa
+     * Virenscanner, Suchindex oder Explorer, die eine eben geschriebene Datei ansehen. Das gibt sich meist nach
+     * Sekundenbruchteilen; erst wenn es nach allen Versuchen noch gesperrt ist, scheitert das Ablegen.
+     */
+    static void retryWhileLocked(IoAction action, Sleeper sleeper) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                action.run();
+                return;
+            } catch (AccessDeniedException e) {
+                if (attempt >= LOCK_RETRY_MILLIS.length) {
+                    throw e;
+                }
+                try {
+                    sleeper.sleep(LOCK_RETRY_MILLIS[attempt]);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
         }
+    }
+
+    @FunctionalInterface
+    interface IoAction {
+        void run() throws IOException;
+    }
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long millis) throws InterruptedException;
     }
 
     @Override
