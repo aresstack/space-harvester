@@ -43,7 +43,8 @@ class ChangeLogDialogTest {
             List<ChangeEntry> found = rows.stream().filter(row -> (filter.kinds().isEmpty()
                     || filter.kinds().contains(row.kind())) && (filter.sourceId() == null
                     || filter.sourceId().equals(row.sourceId())) && (filter.text() == null
-                    || String.valueOf(row.newTitle()).contains(filter.text()))).toList();
+                    || String.valueOf(row.newTitle()).contains(filter.text())) && (filter.from() == null
+                    || !row.at().isBefore(filter.from()))).toList();
             int from = Math.min(filter.offset(), found.size());
             int to = Math.min(found.size(), from + filter.limit());
             return new ChangeEntries(found.subList(from, to), found.size(), filter.offset(), filter.limit());
@@ -154,6 +155,52 @@ class ChangeLogDialogTest {
                 .isFalse();
         assertThat(ChangeLogDialog.openable(entry("1", ChangeKind.MOVED, ChangeTrigger.MANUAL, "Da", "Da")))
                 .isTrue();
+    }
+
+    @Test
+    void newRowsArriveOnTopWithoutMovingSelectionOrTheVisiblePart() throws Exception {
+        Log log = new Log();
+        for (int i = 0; i < 200; i++) {
+            log.rows.add(entry(String.valueOf(i), ChangeKind.NEW, ChangeTrigger.MANUAL, null, "Seite " + i));
+        }
+        ChangeLogDialog[] dialog = new ChangeLogDialog[1];
+        SwingUtilities.invokeAndWait(() -> {
+            dialog[0] = new ChangeLogDialog((source, page) -> { }, () -> log);
+            dialog[0].refresh();
+        });
+        await(() -> dialog[0].rowCount() == 200);
+        int[] before = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            ChangeLogDialog d = dialog[0];
+            javax.swing.JViewport viewport = (javax.swing.JViewport) d.table.getParent();
+            viewport.getParent().setSize(900, 300);
+            layoutAll(viewport.getParent());
+            d.table.setRowSelectionInterval(120, 120);
+            viewport.setViewPosition(new java.awt.Point(0, 100 * d.table.getRowHeight()));
+            before[0] = viewport.getViewPosition().y;
+            assertThat(before[0]).isPositive();
+            // Zwei neue Zeilen, wie sie ein Abgleich laufend schreibt; der Core meldet sie.
+            log.rows.add(0, new ChangeEntry("wiki", "DEV", "n1", AT.plusSeconds(5), ChangeKind.LOADED,
+                    ChangeTrigger.BACKGROUND, "1", "1", "Neu 1", "Neu 1", null, null, null, null, null, false));
+            log.rows.add(0, new ChangeEntry("wiki", "DEV", "n2", AT.plusSeconds(9), ChangeKind.LOADED,
+                    ChangeTrigger.BACKGROUND, "1", "1", "Neu 2", "Neu 2", null, null, null, null, null, false));
+            d.loadNew();
+        });
+        await(() -> dialog[0].rowCount() == 202);
+        SwingUtilities.invokeAndWait(() -> {
+            ChangeLogDialog d = dialog[0];
+            javax.swing.JViewport viewport = (javax.swing.JViewport) d.table.getParent();
+            assertThat(d.cell(0, ChangeLogDialog.PAGE_TITLE)).isEqualTo("Neu 2");
+            assertThat(d.cell(1, ChangeLogDialog.PAGE_TITLE)).isEqualTo("Neu 1");
+            assertThat(d.table.getSelectedRow()).as("dieselbe Zeile bleibt gewählt").isEqualTo(122);
+            assertThat(d.cell(122, ChangeLogDialog.PAGE_TITLE)).isEqualTo("Seite 120");
+            assertThat(viewport.getViewPosition().y).as("derselbe Ausschnitt, zwei Zeilen tiefer")
+                    .isEqualTo(before[0] + 2 * d.table.getRowHeight());
+            assertThat(d.count.getText()).isEqualTo("202 Zeilen");
+            d.loadNew();
+        });
+        Thread.sleep(300);
+        SwingUtilities.invokeAndWait(() -> assertThat(dialog[0].rowCount()).as("nichts doppelt").isEqualTo(202));
     }
 
     @Test

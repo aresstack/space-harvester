@@ -316,10 +316,71 @@ final class ChangeLogDialog {
                 refreshPending = false;
             }
             if (root.isShowing()) {
-                // Neue Zeilen kommen oben dazu; so viele wie bisher bleiben stehen.
-                load(0, Math.max(PAGE, Math.min(ChangeFilter.MAX_LIMIT, shown.size())));
+                loadNew();
             }
         });
+    }
+
+    /**
+     * Holt auf Meldung des Core nur die Zeilen, die seit der obersten gezeigten dazukamen, und setzt sie oben ein.
+     * Tabelle, Auswahl und Rollposition bleiben stehen: Wer nicht am Anfang steht, sieht denselben Ausschnitt weiter
+     * (Ansichten springen nie von selbst). Ohne gezeigte Zeile liest es die erste Seite.
+     */
+    void loadNew() {
+        Access current = access.get();
+        if (shown.isEmpty() || current == null || current != subscribed) {
+            load(0);
+            return;
+        }
+        int ticket = ++request;
+        Instant newest = shown.get(0).at();
+        ChangeFilter base = filter(0, ChangeFilter.MAX_LIMIT);
+        Instant from = base.from() == null || base.from().isBefore(newest) ? newest : base.from();
+        ChangeFilter filter = new ChangeFilter(base.sourceId(), base.text(), base.kinds(), base.triggers(),
+                base.spaceKey(), from, null, 0, ChangeFilter.MAX_LIMIT);
+        Background.run(() -> current.entries(filter), entries -> {
+            if (ticket == request) {
+                prepend(entries.entries());
+            }
+        }, error -> {
+            if (ticket == request) {
+                feedback.problem(error);
+            }
+        });
+    }
+
+    private void prepend(List<ChangeEntry> entries) {
+        java.util.Set<ChangeEntry> known = new java.util.HashSet<>(shown);
+        List<ChangeEntry> fresh = entries.stream().filter(entry -> !known.contains(entry)).toList();
+        if (fresh.isEmpty()) {
+            return;
+        }
+        javax.swing.JViewport viewport = table.getParent() instanceof javax.swing.JViewport port ? port : null;
+        java.awt.Point position = viewport == null ? null : viewport.getViewPosition();
+        shown.addAll(0, fresh);
+        // insertRow verschiebt die Auswahl mit; die gewählte Zeile bleibt dieselbe.
+        for (int i = 0; i < fresh.size(); i++) {
+            model.insertRow(i, row(fresh.get(i)));
+        }
+        total += fresh.size();
+        if (position != null && position.y > 0) {
+            // Nicht am Anfang: denselben Ausschnitt halten, die neuen Zeilen liegen darüber.
+            table.setSize(table.getWidth(), table.getPreferredSize().height);
+            viewport.setViewPosition(new java.awt.Point(position.x, position.y + fresh.size() * table.getRowHeight()));
+        }
+        counts();
+    }
+
+    private Object[] row(ChangeEntry entry) {
+        return new Object[] {Texts.time(entry.at()), titles.getOrDefault(entry.sourceId(), entry.sourceId()),
+                entry.spaceKey(), page(entry), kind(entry.kind()), trigger(entry.trigger()), ""};
+    }
+
+    private void counts() {
+        boolean any = !shown.isEmpty();
+        count.setText(!any ? " " : shown.size() >= total ? Texts.count(shown.size(), "Zeile", "Zeilen")
+                : shown.size() + " von " + Texts.count(total, "Zeile", "Zeilen"));
+        more.setVisible(shown.size() < total);
     }
 
     /** Liest die erste Seite neu, etwa nach einer Änderung von Suche oder Filter. Erst anmelden, dann lesen. */
@@ -389,10 +450,13 @@ final class ChangeLogDialog {
             shown.clear();
             model.setRowCount(0);
         }
+        // Kamen zwischen zwei Abrufen Zeilen dazu, liefert das Nachladen schon gezeigte noch einmal: nicht doppeln.
+        java.util.Set<ChangeEntry> known = new java.util.HashSet<>(shown);
         for (ChangeEntry entry : entries.entries()) {
-            shown.add(entry);
-            model.addRow(new Object[] {Texts.time(entry.at()), titles.getOrDefault(entry.sourceId(), entry.sourceId()),
-                    entry.spaceKey(), page(entry), kind(entry.kind()), trigger(entry.trigger()), ""});
+            if (known.add(entry)) {
+                shown.add(entry);
+                model.addRow(row(entry));
+            }
         }
         total = entries.total();
         boolean any = !shown.isEmpty();
@@ -401,9 +465,7 @@ final class ChangeLogDialog {
         empty.setText(filtered ? NO_MATCH : EMPTY);
         empty.setVisible(!any);
         scroll.setVisible(any);
-        count.setText(!any ? " " : shown.size() == total ? Texts.count(total, "Zeile", "Zeilen")
-                : shown.size() + " von " + Texts.count(total, "Zeile", "Zeilen"));
-        more.setVisible(shown.size() < total);
+        counts();
         root.revalidate();
         root.repaint();
     }
