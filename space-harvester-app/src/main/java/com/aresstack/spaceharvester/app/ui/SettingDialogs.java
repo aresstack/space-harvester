@@ -861,7 +861,8 @@ final class SettingDialogs {
         Supplier<AppSettings.Cache> cacheDraft = () -> {
             boolean always = chosenStrategy.get() == RefreshStrategy.ALWAYS_CHECK_VERSION;
             return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
-                    always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value());
+                    always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value(),
+                    cache.changeLog());
         };
         Supplier<SyncSettings> syncDraft = () -> new SyncSettings(ON.equals(events.getSelectedItem()),
                 changeSearch.value(), sync.spaces(), ON.equals(beforeSearch.getSelectedItem()), retention.value(),

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -395,14 +396,21 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * {@code space-harvester.cache.version-check} und {@code space-harvester.sync.withheld-retention} (wie lange eine
      * gesperrte Seite im Bestand bleibt, ADR 0014).
      */
-    public record Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention) {
+    public record Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention,
+                        ChangeLogSettings changeLog) {
 
         public static final Duration DEFAULT_RETENTION = Duration.ofDays(30);
         public static final Cache DEFAULT = new Cache(Duration.ZERO, true, DEFAULT_RETENTION);
 
+        /** Mit der Vorgabe des Änderungsprotokolls ({@link ChangeLogSettings#DEFAULT}). */
+        public Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention) {
+            this(maxAge, versionCheck, withheldRetention, ChangeLogSettings.DEFAULT);
+        }
+
         public Cache {
             maxAge = maxAge == null ? Duration.ZERO : maxAge;
             withheldRetention = withheldRetention == null ? DEFAULT_RETENTION : withheldRetention;
+            changeLog = changeLog == null ? ChangeLogSettings.DEFAULT : changeLog;
         }
     }
 }

@@ -500,7 +500,7 @@ public final class PageCacheSchema {
         return value == null ? null : Instant.parse(value);
     }
 
-    private static String id(String type, String... parts) {
+    static String id(String type, String... parts) {
         StringBuilder id = new StringBuilder(type);
         for (String part : parts) {
             if (part.indexOf(SEPARATOR) >= 0) {
