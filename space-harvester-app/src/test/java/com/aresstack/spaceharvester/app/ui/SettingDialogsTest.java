@@ -298,7 +298,10 @@ class SettingDialogsTest {
             assertThat(find(shell[0].body(), JComboBox.class))
                     .noneMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
             List<DurationField> durations = find(shell[0].body(), DurationField.class);
-            assertThat(durations).hasSize(4);
+            assertThat(durations).as("dazu die Aufbewahrung des Änderungsprotokolls").hasSize(5);
+            assertThat(durations.get(4).value()).as("Standard ein Jahr").isEqualTo(java.time.Duration.ofDays(365));
+            assertThat(durations.get(4).units().getSelectedItem()).isEqualTo("Jahre");
+            assertThat(durations.get(4).units().getItemAt(0)).isEqualTo(SettingDialogs.UNLIMITED);
             assertThat(durations.get(0).isNone()).as("Änderungssuche aus").isTrue();
             assertThat(durations.get(0).units().getItemAt(0)).isEqualTo(SettingDialogs.OFF);
             assertThat(durations.get(3).value()).as("Sperrfrist 30 Tage").isEqualTo(java.time.Duration.ofDays(30));
@@ -318,10 +321,14 @@ class SettingDialogsTest {
             durations.get(2).spinner().setValue(6);
             durations.get(2).units().setSelectedItem("Stunden");
             combo(shell[0].body(), SettingDialogs.CATALOG_ONLY).setSelectedItem(SettingDialogs.FULL);
+            durations.get(4).spinner().setValue(90);
+            durations.get(4).units().setSelectedItem("Tage");
             shell[0].save();
         });
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.settings().cache().changeLog().retention()).isEqualTo(java.time.Duration.ofDays(90));
         assertThat(Files.readString(config)).contains("    interval: 30m", "    mode: full", "    max-age: 6h",
+                "    change-log:\n      retention: 90d",
                 "    version-check: true", "    withheld-retention: 30d", "# Kommentar bleibt stehen")
                 .doesNotContain("inventory-interval:", "    sources:", "\n\n    interval");
         assertThat(context.settings().problems()).isEmpty();

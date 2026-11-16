@@ -350,7 +350,9 @@ public final class ConfigFileEditor {
     /**
      * Der Entwurf {@code base} mit neuer Cache-Frische ({@code space-harvester.cache.max-age}, {@code version-check})
      * und Sperrfrist ({@code space-harvester.sync.withheld-retention}, ADR 0014); dieselben Schlüssel wie im Server.
-     * Nur diese drei Werte ändern sich.
+     * Nur diese drei Werte ändern sich, dazu die Aufbewahrung des Änderungsprotokolls
+     * ({@code space-harvester.cache.change-log.retention}, ADR 0030; {@code 0} heißt unbegrenzt), wenn sie von dem
+     * abweicht, was die Datei schon liest.
      */
     public Draft withCache(Path file, Draft base, AppSettings.Cache cache) {
         String text = nested(base.text(), "cache", "max-age", indent -> indent + "max-age: " + duration(cache.maxAge())
@@ -360,6 +362,12 @@ public final class ConfigFileEditor {
         text = nested(text, "sync", "withheld-retention", indent -> indent + "withheld-retention: "
                 + duration(cache.withheldRetention()) + "\n");
         AppSettings settings = loader.read(file, text);
+        if (!settings.cache().changeLog().equals(cache.changeLog())) {
+            String retention = cache.changeLog().unlimited() ? "0" : duration(cache.changeLog().retention());
+            text = nested(text, "cache", "change-log", indent -> indent + "change-log:\n" + indent + "  retention: "
+                    + retention + "\n");
+            settings = loader.read(file, text);
+        }
         if (!settings.cache().equals(cache)) {
             throw new IllegalArgumentException("Die Cache-Einstellungen ließen sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.cache und space-harvester.sync von Hand "

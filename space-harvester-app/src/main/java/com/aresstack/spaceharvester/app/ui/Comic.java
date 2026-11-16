@@ -405,6 +405,11 @@ public final class Comic {
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setFillsViewportHeight(true);
         table.setAutoCreateRowSorter(false);
+        // Zellen zeigen Text aus den Quellen (Seitentitel) wörtlich: Ein Titel, der mit „<html>“ beginnt, würde sonst
+        // als HTML gezeichnet und könnte etwa ein Bild von außen laden.
+        DefaultTableCellRenderer plain = new DefaultTableCellRenderer();
+        plain.putClientProperty("html.disable", Boolean.TRUE);
+        table.setDefaultRenderer(Object.class, plain);
         JTableHeader header = table.getTableHeader();
         header.setFont(semiBold(12.5f));
         header.setForeground(INK);

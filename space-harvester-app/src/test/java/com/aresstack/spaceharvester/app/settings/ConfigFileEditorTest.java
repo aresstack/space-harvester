@@ -464,6 +464,30 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theChangeLogRetentionIsWrittenOnlyWhenItChangesAndZeroMeansUnlimited() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AppSettings.Cache.DEFAULT));
+        assertThat(Files.readString(file)).as("Vorgabe ein Jahr: kein Schlüssel nötig").doesNotContain("change-log");
+
+        var days = new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(Duration.ofDays(90));
+        AppSettings.Cache cache = new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), days);
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null), cache));
+        assertThat(Files.readString(file)).contains("    search-timeout: 5s   # bleibt",
+                "    change-log:\n      retention: 90d");
+        assertThat(loader.load(file).cache().changeLog()).isEqualTo(days);
+
+        var unlimited = com.aresstack.spaceharvester.application.configuration.ChangeLogSettings.UNLIMITED;
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), unlimited)));
+        assertThat(Files.readString(file)).contains("      retention: 0").doesNotContain("90d");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.cache().changeLog().unlimited()).isTrue();
+    }
+
+    @Test
     void cacheFreshnessAndWithheldRetentionUseTheServerKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");

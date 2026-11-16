@@ -82,6 +82,8 @@ public final class SettingsView implements View {
     private final ComposerButton editCache = Comic.button(Glyph.PENCIL, "Alle Quellen anpassen …",
             "Erkennung, Aktualisierung und Bereinigung für alle Quellen ändern; je Quelle unter Wissensquellen › "
                     + "Synchronisierung");
+    final ComposerButton viewChangeLog = Comic.button(Glyph.TABLE, ChangeLogDialog.TITLE + " …",
+            "Jede protokollierte Seitenänderung einsehen und durchsuchen");
     /** Rechts: der gewählte Bereich. */
     private final java.awt.CardLayout pages = new java.awt.CardLayout();
     private final JPanel pageDeck = new JPanel(pages);
@@ -206,6 +208,7 @@ public final class SettingsView implements View {
                 () -> feedback.success("Wiederholungen übernommen")).open());
         editCache.addActionListener(e -> SettingDialogs.syncRules(root, context, null,
                 () -> feedback.success("Regeln aller Quellen übernommen")).open());
+        viewChangeLog.addActionListener(e -> ChangeLogDialog.open(root, context));
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -251,7 +254,7 @@ public final class SettingsView implements View {
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
-                withButtons(cache, editCache))));
+                withButtons(cache, editCache, viewChangeLog))));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
@@ -619,6 +622,7 @@ public final class SettingsView implements View {
                     ? Texts.count(kept.toDays(), "Tag", "Tagen") : ConfigFileEditor.duration(kept));
             cache.add(SettingDialogs.BACKGROUND_TITLE, settings.sync().backgroundFill()
                     ? "an · " + settings.sync().backgroundParallelism() + " gleichzeitig" : "aus");
+            cache.add(SettingDialogs.CHANGE_LOG_RETENTION, SettingDialogs.changeLogRetention(c.changeLog()));
         }
         runtime.reset();
         AppRuntime current = context.runtime();

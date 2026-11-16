@@ -62,4 +62,22 @@ class DurationFieldTest {
             assertThat(field.units().isEnabled()).isFalse();
         });
     }
+
+    @Test
+    void withYearsShowsWholeYearsAndCountsAYearAs365Days() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            DurationField field = DurationField.withYears("Unbegrenzt", 9_999);
+            assertThat(field.isNone()).isTrue();
+            field.value(Duration.ofDays(365));
+            assertThat(field.spinner().getValue()).isEqualTo(1);
+            assertThat(field.units().getSelectedItem()).isEqualTo("Jahre");
+            field.value(Duration.ofDays(90));
+            assertThat(field.units().getSelectedItem()).isEqualTo("Tage");
+            field.spinner().setValue(2);
+            field.units().setSelectedItem("Jahre");
+            assertThat(field.value()).isEqualTo(Duration.ofDays(730));
+            field.value(null);
+            assertThat(field.value()).as("Unbegrenzt").isNull();
+        });
+    }
 }
