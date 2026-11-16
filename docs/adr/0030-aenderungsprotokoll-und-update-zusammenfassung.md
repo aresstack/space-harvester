@@ -49,8 +49,11 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
   der YAML.
 - **Eine Schreibstelle.** Geschrieben wird dort, wo der Cache eine Seite speichert, ihre Kopfdaten ändert, sie
   entfernt oder sperrt, also an der Stelle, die auch die Beobachter aus ADR 0027 speist. So schreibt jeder Weg,
-  auch ein künftiger, ohne eigenen Code. Ein Abgleich schreibt seine Zeilen mit dem Bestätigen seiner Generation;
-  ein abgebrochener Lauf schreibt nichts.
+  auch ein künftiger, ohne eigenen Code. Eine Zeile entsteht mit dem Schreiben in den Cache. Ein Abgleich legt
+  Seiten vor dem Bestätigen ab; deren Zeilen tragen keine Generation und bleiben auch stehen, wenn der Lauf danach
+  abbricht. Entfernen und Sperren geschehen mit dem Bestätigen und tragen die Generation. Ein verworfener
+  Schreiblauf schreibt nichts. Der Bericht eines Updates stützt sich deshalb nur auf Zeitpunkt und Marke, nie auf
+  die Generation.
 - **Zeile je Änderung:** Quelle, Space, Seiten-ID, Zeitpunkt, Art, Auslöser, alte und neue Version, alter und neuer
   Titel, alte und neue Elternseite, alter und neuer Space, Generation, falls vorhanden. Kein Inhalt.
 - **Arten.** Die Quelle hat sich geändert: `NEW`, `CONTENT_CHANGED`, `RENAMED`, `MOVED`, `LABELS_CHANGED`, `REMOVED`,
