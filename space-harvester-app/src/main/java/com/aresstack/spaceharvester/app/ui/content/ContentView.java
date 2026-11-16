@@ -26,7 +26,13 @@ public final class ContentView implements View {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
-    private final JLabel crumbs = new JLabel(" ");
+    private final LocationBar crumbs = new LocationBar();
+    /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat: die Vorfahren in der Bereichsanzeige. */
+    private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position;
+    private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position>
+            positionListener = shown -> { };
+    /** Markiert Quelle ({@code spaceKey} {@code null}) oder Space im Baum, ohne die Seite zu wechseln. */
+    private java.util.function.BiConsumer<String, String> locate = (source, space) -> { };
     private final PageDetailPanel detail;
     /** Stand des gezeigten Reiters (etwa „50 Knoten, 51 Kanten“) links in der Statuszeile des Hauptfensters. */
     private final JLabel statusInfo = Comic.muted(" ");
@@ -48,8 +54,11 @@ public final class ContentView implements View {
         signIn.onAccepted(detail::reloadShown);
         root.setBackground(Comic.SURFACE);
 
-        crumbs.setFont(Comic.regular(13f));
-        crumbs.setForeground(Comic.MUTED);
+        detail.onPosition(shown -> {
+            position = shown;
+            renderCrumbs();
+            positionListener.accept(shown);
+        });
 
         JPanel top = new JPanel(new BorderLayout(12, 0));
         top.setBackground(Comic.SURFACE);
@@ -124,7 +133,15 @@ public final class ContentView implements View {
     /** Meldet den Pfad jeder angezeigten Seite, etwa damit der Explorer sie zeigt. */
     public void onPosition(java.util.function.Consumer<
             com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {
-        detail.onPosition(listener);
+        positionListener = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Ein Klick auf Quelle oder Space in der Bereichsanzeige: {@code listener} markiert den Knoten im Baum
+     * ({@code spaceKey} {@code null} für die Quelle).
+     */
+    public void onLocate(java.util.function.BiConsumer<String, String> listener) {
+        locate = Objects.requireNonNull(listener, "listener");
     }
 
     /** Nach dem Laden kennt die Seite ihren Space. */
@@ -147,10 +164,36 @@ public final class ContentView implements View {
         signIn.refresh();
         String source = currentSource();
         if (source == null) {
-            crumbs.setText(sources().isEmpty() ? "Keine Wissensquelle" : "Seite im Explorer wählen");
+            crumbs.show(List.of(new LocationBar.Part(sources().isEmpty() ? "Keine Wissensquelle"
+                    : "Seite im Explorer wählen", null, null)));
             return;
         }
-        crumbs.setText(spaceKey == null ? title(source) : title(source) + " › " + spaceKey);
+        List<LocationBar.Part> parts = new java.util.ArrayList<>();
+        parts.add(new LocationBar.Part(title(source), "Wissensquelle im Baum zeigen",
+                () -> locate.accept(source, null)));
+        String space = spaceKey;
+        if (space != null) {
+            parts.add(new LocationBar.Part(space, "Space im Baum zeigen", () -> locate.accept(source, space)));
+        }
+        // Die Vorfahren der gezeigten Seite, sobald ihr Pfad da ist und zur gezeigten Quelle gehört.
+        if (position != null && source.equals(position.sourceId()) && Objects.equals(space, position.spaceKey())) {
+            for (HarvestSource.PageNode ancestor : position.ancestors()) {
+                String pageId = ancestor.pageId();
+                parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Seite öffnen und im Baum zeigen",
+                        () -> open(source, pageId)));
+            }
+        }
+        crumbs.show(parts);
+    }
+
+    /** Öffnet eine Seite aus der Bereichsanzeige; über den Navigator zeigt der Baum sie aufgeklappt und gewählt. */
+    private void open(String source, String pageId) {
+        AppContext.Navigator navigator = context.navigator();
+        if (navigator != null) {
+            navigator.openPage(source, pageId);
+        } else {
+            openPage(source, pageId);
+        }
     }
 
     private String title(String id) {
@@ -176,7 +219,11 @@ public final class ContentView implements View {
     }
 
     String crumbs() {
-        return crumbs.getText();
+        return crumbs.text();
+    }
+
+    LocationBar locationBar() {
+        return crumbs;
     }
 
     @Override
