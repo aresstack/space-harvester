@@ -157,9 +157,13 @@ final class LocationBar extends JPanel {
         int first = 0;
         // Wie viele Teile am Anfang (einer) und am Ende sichtbar bleiben; ohne Platznot alle.
         int tail = count;
+        // Bei Platznot bekommt der erste Teil höchstens die Hälfte dessen, was neben „…“ bleibt, und kürzt sich
+        // selbst; sonst drängte ein langer Quellenname „…“ und die letzte Ebene aus der Zeile.
+        int firstMax = Integer.MAX_VALUE;
         if (fullWidth() > available && count > 1) {
-            int fixed = labels.get(0).getPreferredSize().width + ellipsisSeparator.getPreferredSize().width
-                    + ellipsis.getPreferredSize().width;
+            int dots = ellipsisSeparator.getPreferredSize().width + ellipsis.getPreferredSize().width;
+            firstMax = Math.max(0, (available - dots) / 2);
+            int fixed = Math.min(labels.get(0).getPreferredSize().width, firstMax) + dots;
             first = 1;
             tail = 0;
             int used = fixed;
@@ -208,7 +212,7 @@ final class LocationBar extends JPanel {
                 x = place(separator, x, height, Integer.MAX_VALUE);
             }
             label.setVisible(true);
-            x = place(label, x, height, Math.max(0, available - x));
+            x = place(label, x, height, i == 0 ? firstMax : Math.max(0, available - x));
         }
         ellipsis.setVisible(collapsed);
         ellipsisSeparator.setVisible(collapsed);

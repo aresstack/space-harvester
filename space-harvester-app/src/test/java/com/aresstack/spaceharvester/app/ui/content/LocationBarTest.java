@@ -70,4 +70,29 @@ class LocationBarTest {
         });
         assertThat(seen).containsExactly("Seite im Explorer wählen", 0);
     }
+
+    @Test
+    void aLongFirstPartShortensItselfAndLeavesRoomForTheEllipsisAndTheLastLevel() throws Exception {
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            LocationBar bar = new LocationBar();
+            List<LocationBar.Part> parts = new ArrayList<>();
+            for (String name : List.of("Corporate Engineering Documentation and Knowledge Base", "SPACE", "Start",
+                    "Kapitel")) {
+                parts.add(new LocationBar.Part(name, null, () -> { }));
+            }
+            bar.show(parts);
+            bar.setSize(180, 20);
+            bar.doLayout();
+            seen.add(bar.visibleTexts());
+            for (java.awt.Component component : bar.getComponents()) {
+                if (component.isVisible()) {
+                    seen.add(component.getWidth() > 0 && component.getX() + component.getWidth() <= 180);
+                }
+            }
+        });
+        assertThat(seen.get(0)).isEqualTo(List.of("Corporate Engineering Documentation and Knowledge Base", "…",
+                "Kapitel"));
+        assertThat(seen.subList(1, seen.size())).isNotEmpty().containsOnly(true);
+    }
 }
