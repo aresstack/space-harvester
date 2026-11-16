@@ -77,6 +77,10 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     java.time.Instant now = java.time.Instant.parse("2026-10-18T12:00:00Z");
     /** Fehler für die nächsten Anfragen, in Reihenfolge: HTTP-Status ({@link Integer}) oder {@link IOException}. */
     final Deque<Object> scriptedFailures = new ArrayDeque<Object>();
+    /** Feste JSON-Antworten je Pfad samt Query ({@code RestQuerySource}), etwa {@code /rest/api/content/1/history}. */
+    final Map<String, String> stubs = new LinkedHashMap<String, String>();
+    /** Feste Fehlerstatus je Pfad samt Query. */
+    final Map<String, Integer> stubStatus = new LinkedHashMap<String, Integer>();
 
     public FakePage page(String id, String title, String spaceKey, String html) {
         FakePage page = new FakePage(id, title, spaceKey, html);
@@ -144,6 +148,18 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     }
 
     /** Die nächsten {@code times} Anfragen beantworten mit {@code status} (z. B. 429, 503) statt mit Daten. */
+    /** Antwortet auf genau diesen Pfad samt Query mit diesem JSON (200). */
+    public FakeConfluence stub(String pathAndQuery, String json) {
+        stubs.put(pathAndQuery, json);
+        return this;
+    }
+
+    /** Antwortet auf genau diesen Pfad samt Query mit diesem Status und einem JSON-Fehlerkörper. */
+    public FakeConfluence stubStatus(String pathAndQuery, int status) {
+        stubStatus.put(pathAndQuery, status);
+        return this;
+    }
+
     public FakeConfluence failNext(int status, int times) {
         for (int i = 0; i < times; i++) {
             scriptedFailures.add(Integer.valueOf(status));
@@ -205,6 +221,16 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         path = path.substring(base.length());
         Map<String, String> query = query(uri.getRawQuery());
         String[] parts = path.split("/");
+        String pathAndQuery = uri.getRawQuery() == null ? path : path + "?" + uri.getRawQuery();
+        if (stubStatus.containsKey(pathAndQuery)) {
+            int status = stubStatus.get(pathAndQuery);
+            return new ConfluenceHttpResponse(status, "application/json",
+                    ("{\"statusCode\":" + status + "}").getBytes(StandardCharsets.UTF_8));
+        }
+        if (stubs.containsKey(pathAndQuery)) {
+            return new ConfluenceHttpResponse(200, "application/json;charset=UTF-8",
+                    stubs.get(pathAndQuery).getBytes(StandardCharsets.UTF_8));
+        }
         if (path.startsWith("/rest/api/space/") && parts.length == 5) {
             String key = decode(parts[4]);
             if (!spaceHomepages.containsKey(key) && !spaceNames.containsKey(key)) {
