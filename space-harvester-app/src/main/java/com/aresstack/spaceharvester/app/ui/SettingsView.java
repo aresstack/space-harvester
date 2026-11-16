@@ -763,6 +763,11 @@ public final class SettingsView implements View {
             return;
         }
         java.time.Duration period = analyticsPeriod.value();
+        if (period != null && !AnalyticsSettings.wholeDays(period)) {
+            feedback.problem(new IllegalArgumentException(ANALYTICS_TITLE + ": der Zeitraum muss ganze Tage "
+                    + "umfassen, mindestens einen; nicht gespeichert"));
+            return;
+        }
         AnalyticsSettings chosen = new AnalyticsSettings(
                 period == null || period.equals(AnalyticsSettings.DEFAULT_PERIOD) ? null : period,
                 analyticsDetails.getText(), analyticsActivity.getText(), analyticsContentViews.getText());
@@ -775,11 +780,6 @@ public final class SettingsView implements View {
                         + "unter /rest/ (ohne Leerzeichen); nicht gespeichert"));
                 return;
             }
-        }
-        if (chosen.days() < 1) {
-            feedback.problem(new IllegalArgumentException(ANALYTICS_TITLE + ": der Zeitraum muss mindestens einen "
-                    + "Tag umfassen"));
-            return;
         }
         shownAnalytics = chosen;
         context.analytics(chosen, () -> feedback.success(ANALYTICS_TITLE + (chosen.isDefault() ? ": Vorgaben"

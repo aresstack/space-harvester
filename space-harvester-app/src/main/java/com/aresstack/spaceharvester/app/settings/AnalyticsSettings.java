@@ -24,7 +24,9 @@ public record AnalyticsSettings(Duration period, String details, String activity
     public static final Duration DEFAULT_PERIOD = Duration.ofDays(AnalyticsQueries.DEFAULT_DAYS);
 
     public AnalyticsSettings {
-        period = period == null || period.isZero() || period.isNegative() ? null : period;
+        if (period != null && !wholeDays(period)) {
+            throw new IllegalArgumentException("Der Zeitraum muss ganze Tage umfassen, mindestens einen");
+        }
         details = blankToNull(details);
         activityByDate = blankToNull(activityByDate);
         contentViews = blankToNull(contentViews);
@@ -39,10 +41,15 @@ public record AnalyticsSettings(Duration period, String details, String activity
         return AnalyticsQueries.of(details, activityByDate, contentViews, period == null ? null : days());
     }
 
-    /** Der Zeitraum in Tagen, mindestens 1; ohne Angabe die Vorgabe. */
+    /** Ob die Dauer als Zeitraum taugt: ganze Tage, mindestens einer; die Abfragen rechnen in Tagen. */
+    public static boolean wholeDays(Duration duration) {
+        return duration != null && !duration.isNegative() && !duration.isZero()
+                && duration.toSeconds() % 86_400 == 0 && duration.toDays() <= Integer.MAX_VALUE;
+    }
+
+    /** Der Zeitraum in Tagen; ohne Angabe die Vorgabe. */
     public int days() {
-        Duration effective = period == null ? DEFAULT_PERIOD : period;
-        return (int) Math.max(1, Math.min(Integer.MAX_VALUE, effective.toDays()));
+        return (int) effectivePeriod().toDays();
     }
 
     /** Der wirksame Zeitraum. */

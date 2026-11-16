@@ -204,12 +204,30 @@ class SourceQueryExportsTest {
                 AnalyticsQueries.DEFAULT));
 
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).as("unvollständige Liste macht den Auftrag unvollständig").isTrue();
         JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(list(out).get(0)));
         assertThat(doc.get("contentViews").get("complete").asBoolean()).isFalse();
         assertThat(doc.get("contentViews").get("requests").asInt()).isEqualTo(2);
         assertThat(doc.get("pages").get(0).get("summary").get("views").asLong()).isEqualTo(3);
         // Die Space-Abfragen fehlten (404), nur die Liste antwortete: der Auftrag läuft trotzdem.
         assertThat(doc.get("space").get("details").get("status").asString()).isEqualTo("error");
+    }
+
+    @Test
+    void aRepeatedTokenWithNewEntriesIsIncompleteTooAndEveryListPageIsACheckpoint() {
+        String period = period(CLOCK.instant(), AnalyticsQueries.DEFAULT_DAYS);
+        wiki.stub(contentViews(period, null), "{\"contentViews\":[{\"id\":1,\"views\":3}],\"nextPageToken\":\"x\"}");
+        wiki.stub(contentViews(period, "x"), "{\"contentViews\":[{\"id\":2,\"views\":4}],\"nextPageToken\":\"x\"}");
+        int[] checkpoints = {0};
+
+        SourceQueryExports.ContentViews views = SourceQueryExports.contentViews(wiki, "DEV", AnalyticsQueries.DEFAULT,
+                CLOCK.instant(), () -> checkpoints[0]++);
+
+        assertThat(views.result().ok()).isTrue();
+        assertThat(views.byId()).containsKeys("1", "2");
+        assertThat(views.truncated()).isTrue();
+        assertThat(views.requests()).isEqualTo(2);
+        assertThat(checkpoints[0]).isEqualTo(2);
     }
 
     @Test

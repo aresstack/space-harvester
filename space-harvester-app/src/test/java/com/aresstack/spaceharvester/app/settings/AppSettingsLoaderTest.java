@@ -230,7 +230,7 @@ class AppSettingsLoaderTest {
         AppSettings bad = load("""
                 space-harvester-app:
                   analytics:
-                    period: 0d
+                    period: 36h
                     details: https://example.org/rest/x
                     activity-by-date: "/rest/a b"
                 """, Map.of());

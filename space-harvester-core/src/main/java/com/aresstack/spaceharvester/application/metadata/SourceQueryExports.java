@@ -161,6 +161,7 @@ public class SourceQueryExports {
         context.phase(COMPONENT, type == JobType.ANALYTICS_EXPORT ? "Aufrufe abfragen" : "Metadaten abfragen");
         long written = 0;
         long failed = 0;
+        ContentViews views = null;
         try {
             Files.createDirectories(directory);
             if (Files.exists(target)) {
@@ -180,11 +181,10 @@ public class SourceQueryExports {
                 if (root.pageId() != null) {
                     json.writeStringProperty("rootPageId", root.pageId());
                 }
-                ContentViews views = null;
                 if (type == JobType.ANALYTICS_EXPORT) {
                     writeAnalyticsHead(json, queries, now);
                     ObjectNode space = spaceAnalytics(source, root.spaceKey(), queries, now);
-                    views = contentViews(source, root.spaceKey(), queries, now);
+                    views = contentViews(source, root.spaceKey(), queries, now, context::checkpoint);
                     if (!views.result().ok() && !space.has("ok")) {
                         throw unavailable(views.result());
                     }
@@ -250,6 +250,12 @@ public class SourceQueryExports {
             } catch (IOException ignored) {
                 // Aufräumen ist best effort; die unsichtbare Datei beginnt mit einem Punkt.
             }
+        }
+        if (views != null && views.truncated()) {
+            context.incomplete();
+            context.record(JobEvent.Draft.warning(JobEvent.Category.SOURCE, COMPONENT, "CONTENT_VIEWS_INCOMPLETE",
+                    "Die Seitenliste des Space wurde nicht zu Ende geblättert (" + views.requests() + " Anfragen); "
+                            + "Seiten ohne Eintrag haben deshalb keine Aufrufe in der Datei"));
         }
         if (failed > 0) {
             context.incomplete();
@@ -333,7 +339,8 @@ public class SourceQueryExports {
      * Parameter {@link AnalyticsQueries#PAGE_TOKEN}, bis kein Token mehr kommt. Wiederholt die Quelle ein Token oder
      * dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig statt endlos.
      */
-    static ContentViews contentViews(HarvestSource source, String spaceKey, AnalyticsQueries queries, Instant now) {
+    static ContentViews contentViews(HarvestSource source, String spaceKey, AnalyticsQueries queries, Instant now,
+                                     Runnable checkpoint) {
         Map<String, JsonNode> byId = new java.util.LinkedHashMap<>();
         AnalyticsQueries.Query query = queries.contentViews();
         Instant from = queries.from(now);
@@ -344,6 +351,8 @@ public class SourceQueryExports {
         RestJson.Result last = null;
         for (int page = 0; page < RestJson.MAX_LIST_PAGES; page++) {
             String path = token == null ? query.path(spaceKey, from, now) : query.path(spaceKey, from, now, token);
+            // Vor jeder Listenseite: Abbruch und Frist des Auftrags gelten auch mitten in der Liste.
+            checkpoint.run();
             RestJson.Result result = RestJson.get(source, path);
             requests++;
             failIfSourceGone(Map.of(query.name(), result));
@@ -377,8 +386,13 @@ public class SourceQueryExports {
             }
             JsonNode next = result.data().get("nextPageToken");
             String nextToken = next == null || next.isNull() ? null : next.asString();
-            if (nextToken == null || nextToken.isBlank() || nextToken.equals(token) || entries.isEmpty()) {
+            if (nextToken == null || nextToken.isBlank() || entries.isEmpty()) {
                 return new ContentViews(last, byId, false, requests);
+            }
+            if (nextToken.equals(token)) {
+                // Dasselbe Token noch einmal: die Liste kommt nicht voran, also unvollständig statt endlos.
+                truncated = true;
+                break;
             }
             token = nextToken;
             if (page == RestJson.MAX_LIST_PAGES - 1) {

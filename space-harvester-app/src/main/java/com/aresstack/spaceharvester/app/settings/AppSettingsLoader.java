@@ -235,8 +235,8 @@ public final class AppSettingsLoader {
             return AnalyticsSettings.DEFAULT;
         }
         Duration period = duration(get(raw, "period"), null, AnalyticsSettings.KEY + ".period", problems);
-        if (period != null && (period.isZero() || period.isNegative())) {
-            problems.add(AnalyticsSettings.KEY + ".period muss mindestens 1d sein");
+        if (period != null && !AnalyticsSettings.wholeDays(period)) {
+            problems.add(AnalyticsSettings.KEY + ".period muss ganze Tage umfassen, mindestens 1d");
             period = null;
         }
         return new AnalyticsSettings(period, analyticsPath(get(raw, "details"), "details", problems),
