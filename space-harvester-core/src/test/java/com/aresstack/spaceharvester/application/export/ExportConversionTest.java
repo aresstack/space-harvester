@@ -185,8 +185,9 @@ class ExportConversionTest {
     }
 
     @Test
-    void pageChangedBeforeConversionFailsTheExport() {
+    void aPageChangedInTheCacheBeforeConversionIsConvertedAsItWasExported() {
         publishTree();
+        PageSnapshot exportedSnapshot = cache.page(new PageKey("confluence", "103")).orElseThrow().snapshot();
         List<String> reads = new ArrayList<>();
         PageCacheReader changing = new ForwardingPageCache(cache) {
             @Override
@@ -201,10 +202,41 @@ class ExportConversionTest {
                 return super.page(key);
             }
         };
+        Map<String, String> converted = new java.util.LinkedHashMap<>();
+        ExportConverter payloads = new ExportConverter() {
+            @Override
+            public String format() {
+                return "payloads";
+            }
 
-        JobStatus job = exports(changing).start("confluence", "DEV", "client-a", List.of("outline"));
+            @Override
+            public String version() {
+                return "payloads/1";
+            }
 
-        assertThat(jobs.status(job.id()).error().code()).isEqualTo("CHANGED_DURING_EXPORT");
-        assertThat(writer.published).isEmpty();
+            @Override
+            public String mediaType() {
+                return "text/plain";
+            }
+
+            @Override
+            public String fileName() {
+                return "payloads.txt";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) {
+                input.forEachPage(page -> converted.put(page.pageId(), page.snapshot().payload().rawSha256()));
+            }
+        };
+
+        JobStatus job = new Exports(jobs, changing, writer, new ExportConverters(List.of(payloads),
+                ExportConverters.DEFAULT_MAX_BYTES), clock).start("confluence", "DEV", "client-a", List.of("payloads"));
+
+        JobStatus status = jobs.status(job.id());
+        assertThat(status.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(writer.published).containsKey(job.id());
+        assertThat(converted).containsKeys("100", "101", "102", "103", "200");
+        assertThat(converted.get("103")).isEqualTo(exportedSnapshot.payload().rawSha256());
     }
 }

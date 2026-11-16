@@ -141,6 +141,23 @@ class FileSystemExportArtifactWriterTest {
     }
 
     @Test
+    void aWrittenPageComesBackExactlyAsItWasWritten() {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        PageSnapshot stored = snapshot("100", null, PRETTY);
+        try (ExportArtifactWriter.Session session = writer.begin("job-w", SCOPE)) {
+            write(session, stored);
+
+            PageSnapshot back = session.written(stored.key()).orElseThrow();
+            assertThat(back.payload().rawSha256()).isEqualTo(stored.payload().rawSha256());
+            assertThat(back.payload().mediaType()).isEqualTo(stored.payload().mediaType());
+            assertThat(back.metadataHash()).isEqualTo(stored.metadataHash());
+            assertThat(back.retrievedAt()).isEqualTo(stored.retrievedAt());
+            assertThat(session.written(new com.aresstack.spaceharvester.application.snapshot.PageKey("confluence",
+                    "2"))).isEmpty();
+        }
+    }
+
+    @Test
     void artifactIsInvisibleUntilPublishedAndDiscardedOnClose() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         try (ExportArtifactWriter.Session session = writer.begin("job-2", SCOPE)) {

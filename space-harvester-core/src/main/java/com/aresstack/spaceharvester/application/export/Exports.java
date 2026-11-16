@@ -29,6 +29,7 @@ import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.SyncUnavailableException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -1244,7 +1245,7 @@ public class Exports {
             return;
         }
         String inputSha256 = inputSha256(tree, exported, scope.rootPageId());
-        ConversionInput input = new CachedConversionInput(context, scope, tree, exported);
+        ConversionInput input = new CachedConversionInput(context, session, scope, tree, exported);
         for (ExportConverter converter : selected) {
             context.checkpoint();
             context.phase(COMPONENT, "Konvertieren (" + converter.format() + ")");
@@ -1347,16 +1348,23 @@ public class Exports {
         void visit(String pageId, int depth);
     }
 
-    /** Liest die exportierten Seiten einzeln aus dem Cache und besteht darauf, dass sie unverändert sind. */
+    /**
+     * Liest die exportierten Seiten einzeln aus dem Cache. Hat der Cache eine Seite seit dem Schreiben geändert, etwa
+     * weil ein Abgleich sie gerade neu geladen hat, kommt sie so aus dem Artefakt, wie sie geschrieben wurde: Formate
+     * und Datenbestand zeigen dieselbe Fassung, und der Export scheitert nicht an einer einzelnen Seite.
+     */
     private final class CachedConversionInput implements ConversionInput {
 
         private final JobContext context;
+        private final ExportArtifactWriter.Session session;
         private final ExportScope scope;
         private final PageTree tree;
         private final Map<String, ListedPage> exported;
 
-        CachedConversionInput(JobContext context, ExportScope scope, PageTree tree, Map<String, ListedPage> exported) {
+        CachedConversionInput(JobContext context, ExportArtifactWriter.Session session, ExportScope scope,
+                              PageTree tree, Map<String, ListedPage> exported) {
             this.context = context;
+            this.session = session;
             this.scope = scope;
             this.tree = tree;
             this.exported = exported;
@@ -1404,13 +1412,19 @@ public class Exports {
             walk(tree, (pageId, depth) -> {
                 context.checkpoint();
                 ListedPage listed = exported.get(pageId);
-                CachedPage page = cache.page(listed.header().key())
+                Optional<CachedPage> unchanged = cache.page(listed.header().key())
                         .filter(cached -> cached.generation().id().equals(scope.generation().id()))
                         .filter(cached -> cached.snapshot().payload().rawSha256().equals(listed.rawSha256()))
-                        .filter(cached -> cached.header().metadataHash().equals(listed.header().metadataHash()))
+                        .filter(cached -> cached.header().metadataHash().equals(listed.header().metadataHash()));
+                if (unchanged.isPresent()) {
+                    action.accept(new ConvertiblePage(unchanged.get().header(), unchanged.get().snapshot(), depth));
+                    return;
+                }
+                PageSnapshot written = session.written(listed.header().key())
+                        .filter(snapshot -> snapshot.payload().rawSha256().equals(listed.rawSha256()))
                         .orElseThrow(() -> new JobFailedException("CHANGED_DURING_EXPORT",
                                 "Seite " + pageId + " wurde während der Konvertierung im Cache geändert"));
-                action.accept(new ConvertiblePage(page.header(), page.snapshot(), depth));
+                action.accept(new ConvertiblePage(listed.header(), written, depth));
             });
         }
     }
