@@ -40,7 +40,8 @@ class LuceneHoldingsCatalogTest {
                 batch.withhold(new PageKey("wiki", "6"));
                 batch.confirm(new SyncBaseline("wiki", "DEV", 1, CONFIRMED,
                         baseline("wiki", "DEV", 1, root, child, stale).pages(), new TreeSet<>(java.util.Set.of("4")),
-                        new TreeSet<>(), new TreeMap<>(Map.of("6", CONFIRMED))));
+                        // 7 ist gelistet, aber nie in den Cache gekommen; 2 hat Kopfdaten und bleibt, wie sie ist.
+                        new TreeSet<>(java.util.Set.of("2", "7")), new TreeMap<>(Map.of("6", CONFIRMED))));
                 batch.commit();
             }
             cache.saveHeader(page("wiki", "9", "OPS", null, "1", json("{}")).header());
@@ -56,7 +57,7 @@ class LuceneHoldingsCatalogTest {
             assertThat(dev.pages()).extracting(page -> page.pageId() + ":" + page.parentPageId() + ":" + page.loaded()
                             + ":" + page.version() + ":" + page.loadedVersion())
                     .containsExactlyInAnyOrder("1:null:true:3:3", "2:1:false:1:null", "3:1:true:4:3",
-                            "4:3:true:2:2");
+                            "4:3:true:2:2", "7:null:false:null:null");
             assertThat(dev.stale()).containsExactly("4");
             assertThat(dev.locked()).containsExactly(new HoldingsCatalog.LockedPage("6", "3"));
             assertThat(dev.generation().id()).isEqualTo("g1");

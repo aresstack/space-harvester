@@ -29,7 +29,9 @@ public interface HoldingsCatalog {
      * Rohstand eines Space.
      *
      * @param generation Generation wie beim Seitenbaum ({@code g0} ohne bestätigte Inventur)
-     * @param pages      Seiten des Katalogs nach ihren aktuellen Kopfdaten
+     * @param pages      Seiten des Katalogs nach ihren aktuellen Kopfdaten, dazu die Seiten, die die bestätigte
+     *                   Generation als fehlend führt (gelistet, aber ohne Stand im Cache): nicht geladen, ohne
+     *                   Elternseite und Version
      * @param stale      Seiten, die die bestätigte Generation als veraltet führt
      * @param locked     gesperrte Seiten der bestätigten Generation; sie haben kein Seitendokument mehr
      */
