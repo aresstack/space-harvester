@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -209,6 +211,48 @@ class SourceQueryExportsTest {
         assertThat(list(out)).hasSize(1);
         assertThat(SourceQueryExports.fileName(JobType.METADATA_EXPORT, "Mein Space!", "12", "abcdefghijk"))
                 .isEqualTo("confluence-metadaten-mein-space-12-abcdefgh.json");
+    }
+
+    @Test
+    void exportsNeedTheExportPermissionLikeEveryOtherExport() {
+        pagesOfSpace.put("DEV", List.of("1"));
+        SourceQueryExports guarded = new SourceQueryExports(jobs, catalog, new SourceQueryExports.Scopes() {
+            @Override
+            public List<Selection.Root> outputs(AccessContext caller, Selection selection) {
+                return selection.roots();
+            }
+
+            @Override
+            public List<String> pages(AccessContext caller, Selection.Root root) {
+                return pagesOfSpace.getOrDefault(root.spaceKey(), List.of());
+            }
+        }, new AccessGuard((context, scope, kind) -> kind == AccessKind.EXPORT ? AccessDecision.DENY
+                : AccessDecision.ALLOW), CLOCK, "desktop");
+        assertThatThrownBy(() -> guarded.startMetadata(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> guarded.startAnalytics(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out,
+                AnalyticsQueries.DEFAULT))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThat(jobs.list("desktop", JobType.METADATA_EXPORT)).isEmpty();
+        assertThat(jobs.list("desktop", JobType.ANALYTICS_EXPORT)).isEmpty();
+        assertThat(list(out)).isEmpty();
+    }
+
+    @Test
+    void aListThatNeverEndsIsAnErrorInsteadOfASilentlyShortenedResult() {
+        for (int page = 0; page < RestJson.MAX_LIST_PAGES; page++) {
+            StringBuilder results = new StringBuilder();
+            for (int i = 0; i < RestJson.LIST_LIMIT; i++) {
+                results.append(i == 0 ? "" : ",").append("{\"n\":").append(page * RestJson.LIST_LIMIT + i).append("}");
+            }
+            wiki.stub("/rest/experimental/content/1/version?start=" + page * RestJson.LIST_LIMIT + "&limit="
+                    + RestJson.LIST_LIMIT, "{\"results\":[" + results + "],\"_links\":{\"next\":\"/weiter\"}}");
+        }
+        RestJson.Result result = RestJson.list(wiki, "/rest/experimental/content/1/version");
+        assertThat(result.ok()).isFalse();
+        assertThat(result.requests()).isEqualTo(RestJson.MAX_LIST_PAGES);
+        assertThat(result.reason()).isEqualTo(SourceAccessException.Reason.INVALID_RESPONSE);
+        assertThat(result.message()).contains("nicht zu Ende");
     }
 
     private JobStatus run(List<JobStatus> started) {

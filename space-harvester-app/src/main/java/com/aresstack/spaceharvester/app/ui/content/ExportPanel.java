@@ -329,6 +329,12 @@ public final class ExportPanel extends JPanel {
             @Override
             public void removed(JobStatus last) {
                 if (affects(last)) {
+                    // Ein in den Aufträgen gelöschter Auftrag endet nie mehr: nicht weiter als laufend führen, sonst
+                    // bliebe der Knopf dieser Auswahl gesperrt.
+                    SwingUtilities.invokeLater(() -> {
+                        pending.remove(last.id());
+                        sourceJobs.remove(last.id());
+                    });
                     scheduleRefresh();
                 }
             }

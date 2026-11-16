@@ -112,7 +112,11 @@ public class SourceQueryExports {
         Objects.requireNonNull(directory, "directory");
         List<Selection.Root> outputs = scopes.outputs(caller, selection);
         for (Selection.Root root : outputs) {
-            access.require(caller, ResourceScope.space(root.sourceId(), root.spaceKey()), AccessKind.METADATA);
+            // Wie jeder Export (Harvester.requireExport): EXPORT ist eigens vergeben; dazu METADATA, weil die Datei
+            // Metadaten der Quelle und keine Seiteninhalte enthält.
+            ResourceScope space = ResourceScope.space(root.sourceId(), root.spaceKey());
+            access.require(caller, space, AccessKind.EXPORT);
+            access.require(caller, space, AccessKind.METADATA);
             if (!source(root.sourceId()).restQueries()) {
                 throw new SourceAccessException(root.sourceId(), SourceAccessException.Reason.UNSUPPORTED,
                         "Quelle beantwortet keine REST-Abfragen; der Export gibt es nur für Confluence", null);

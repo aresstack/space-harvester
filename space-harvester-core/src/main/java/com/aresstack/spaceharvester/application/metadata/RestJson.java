@@ -57,8 +57,9 @@ final class RestJson {
         ArrayNode all = JSON.createArrayNode();
         int requests = 0;
         int start = 0;
+        boolean more = true;
         try {
-            for (int page = 0; page < MAX_LIST_PAGES; page++) {
+            for (int page = 0; page < MAX_LIST_PAGES && more; page++) {
                 String separator = pathAndQuery.contains("?") ? "&" : "?";
                 JsonNode node = parse(source, pathAndQuery + separator + "start=" + start + "&limit=" + LIST_LIMIT);
                 requests++;
@@ -70,14 +71,17 @@ final class RestJson {
                 results.forEach(all::add);
                 int size = results.size();
                 JsonNode links = node.get("_links");
-                boolean more = links != null && links.has("next") ? true : size >= LIST_LIMIT && size > 0;
-                if (!more) {
-                    break;
-                }
+                more = links != null && links.has("next") ? true : size >= LIST_LIMIT && size > 0;
                 start += size;
             }
         } catch (SourceAccessException e) {
             return Result.failed(e, requests + 1);
+        }
+        if (more) {
+            // Lieber ein klarer Fehler als eine stillschweigend gekürzte Liste mit „ok“.
+            return new Result(null, requests, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Liste nach " + MAX_LIST_PAGES + " Seiten zu je " + LIST_LIMIT + " Einträgen nicht zu Ende; "
+                            + "die Quelle blättert endlos oder die Liste ist zu lang");
         }
         return new Result(all, requests, null, null);
     }
