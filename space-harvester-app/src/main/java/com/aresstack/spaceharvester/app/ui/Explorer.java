@@ -76,6 +76,7 @@ public final class Explorer {
     static final String FAVORITE = "Favorit";
     static final String UNFAVORITE = "Favorit entfernen";
     static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
+    static final String STAR_TIP = "Favorit setzen oder entfernen";
     static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int TREE_LIMIT = 5_000;
@@ -261,6 +262,8 @@ public final class Explorer {
     private int revealRequest;
     /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
     private int hoverRow = -1;
+    /** Zeile, über deren Stern die Maus steht; -1 sonst (Angelo, 16.11.2026: Hervorhebung nur auf dem Stern). */
+    private int hoverStarRow = -1;
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
@@ -396,17 +399,21 @@ public final class Explorer {
             public void mouseMoved(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
-                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : onBadge(path, event.getPoint()) ? badgeTip(path) : null);
-                if (row != hoverRow) {
+                int starRow = onStar(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
+                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : starRow >= 0 ? STAR_TIP
+                        : onBadge(path, event.getPoint()) ? badgeTip(path) : null);
+                if (row != hoverRow || starRow != hoverStarRow) {
                     hoverRow = row;
+                    hoverStarRow = starRow;
                     tree.repaint();
                 }
             }
 
             @Override
             public void mouseExited(MouseEvent event) {
-                if (hoverRow >= 0) {
+                if (hoverRow >= 0 || hoverStarRow >= 0) {
                     hoverRow = -1;
+                    hoverStarRow = -1;
                     tree.repaint();
                 }
             }
@@ -1277,7 +1284,7 @@ public final class Explorer {
                 // als Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
                 if (starred) {
                     Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
-                    badgeHost.setForeground(favorite || row == hoverRow ? Comic.INK : Comic.MUTED);
+                    badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
                     int sx = x - ACTION_WIDTH;
                     star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
                             (getHeight() - star.getIconHeight()) / 2);
@@ -1675,6 +1682,16 @@ public final class Explorer {
     /** Für Tests. */
     JTree tree() {
         return tree;
+    }
+
+    /** Für Tests: Zeile, über deren Stern die Maus steht. */
+    int hoverStarRow() {
+        return hoverStarRow;
+    }
+
+    /** Für Tests: Zeile, über deren Download-Symbol die Maus steht. */
+    int hoverRow() {
+        return hoverRow;
     }
 
     /** Für Tests: das Bestandszeichen der Kopfzeile. */
