@@ -215,4 +215,84 @@ class ExplorerTest {
             assertThat(explorer[0].showCurrentButton().isEnabled()).isFalse();
         });
     }
+
+    /**
+     * Lange Titel schieben die Spalten rechts nicht aus dem sichtbaren Bereich: jede Zeile endet am rechten Rand des
+     * Ausschnitts, Bestandszeichen, Stern und Download-Symbol stehen in festen Spalten, der Titel wird mit „…“
+     * gekürzt (Angelo, 16.11.2026).
+     */
+    @Test
+    void longTitlesAreCutBeforeTheColumnsOnTheRight() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        String title = "Programm Modernisierung der Haushaltsaufstellung und des Haushaltsvollzugs samt Rechnungslegung";
+        Files.writeString(files.resolve(title + ".md"), "# " + title + "\n\nText.\n");
+        Files.writeString(files.resolve("kurz.md"), "# Kurz\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
+                null);
+        Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
+        Explorer.PageItem target = Explorer.children(context.runtime(), space, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .filter(page -> page.title().contains("Modernisierung")).findFirst().orElseThrow();
+        PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
+                List.of(), new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false));
+
+        int visible = 260;
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            explorer[0].tree().getParent().setSize(visible, 400);
+            explorer[0].remeasure();
+            explorer[0].revealPage(position);
+        });
+        Object[] selected = new Object[1];
+        for (int i = 0; i < 200; i++) {
+            SwingUtilities.invokeAndWait(() -> {
+                javax.swing.tree.TreePath path = explorer[0].tree().getSelectionPath();
+                selected[0] = path == null ? null : ((Explorer.Node) path.getLastPathComponent()).item();
+            });
+            if (selected[0] instanceof Explorer.PageItem page && page.pageId().equals(target.pageId())) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertThat(selected[0]).isInstanceOf(Explorer.PageItem.class);
+
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTree tree = explorer[0].tree();
+            assertThat(tree.getRowCount()).isGreaterThanOrEqualTo(3);
+            for (int row = 0; row < tree.getRowCount(); row++) {
+                java.awt.Rectangle bounds = tree.getRowBounds(row);
+                assertThat(bounds.x + bounds.width).as("Zeile %d endet im sichtbaren Bereich", row)
+                        .isLessThanOrEqualTo(visible);
+            }
+            assertThat(tree.getPreferredSize().width).as("keine waagerechte Scrollleiste").isLessThanOrEqualTo(visible);
+            // Die lange Zeile: Label mit rechtem Rand für die drei Spalten, Titel breiter als der Platz davor.
+            javax.swing.tree.TreePath path = tree.getSelectionPath();
+            javax.swing.JLabel label = (javax.swing.JLabel) tree.getCellRenderer().getTreeCellRendererComponent(tree,
+                    path.getLastPathComponent(), true, false, true, tree.getRowForPath(path), false);
+            java.awt.Rectangle bounds = tree.getPathBounds(path);
+            assertThat(label.getInsets().right).isEqualTo(30 + 30 + 22);
+            label.setSize(bounds.width, bounds.height);
+            int available = bounds.width - label.getInsets().right - label.getIcon().getIconWidth()
+                    - label.getIconTextGap();
+            assertThat(label.getFontMetrics(label.getFont()).stringWidth(label.getText())).isGreaterThan(available);
+        });
+    }
 }
