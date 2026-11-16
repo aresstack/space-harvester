@@ -295,11 +295,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
-          # Das jeweils neueste Release ist „Latest“ (Angelo 16.11.): ein getaggtes reguläres Release, bis der nächste
-          # main-Lauf das rollierende „latest“ wieder zum Latest macht
+          # Keine Pre-Releases mehr (Angelo 16.11., wie aresstack/audio): das jeweils neueste Release ist „Latest“, also
+          # ein getaggtes, bis der nächste main-Lauf das rollierende „latest“ wieder zum Latest macht
           # Beim Tag-Push existiert der Tag schon; sonst legt gh ihn auf dem gebauten Commit an
           ref=--verify-tag
           [ "$MODE" = "tag" ] || ref="--target=$GITHUB_SHA"
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester $VERSION" \
-            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" \
-            --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" *.jar SHA256SUMS
+            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease=false --latest *.jar SHA256SUMS
