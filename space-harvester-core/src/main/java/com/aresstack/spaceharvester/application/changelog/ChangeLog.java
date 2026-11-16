@@ -120,6 +120,15 @@ public final class ChangeLog implements AutoCloseable {
      * @throws UnknownUpdateException wenn die Quelle kein solches Update hat
      */
     public ChangeReport report(AccessContext caller, String sourceId, String update) {
+        return report(caller, sourceId, update, false);
+    }
+
+    /**
+     * Wie {@link #report(AccessContext, String, String)}; mit {@code withDiffs} trägt jede geänderte Seite ihren
+     * Unterschied ({@link ReportedPage#diff()}, ADR 0030, CL5). Nur auf Wunsch: je Seite eine Abfrage und bis zu
+     * {@value #MAX_DIFF_STEPS} Schritte, ohne bleibt {@code diff} {@code null}.
+     */
+    public ChangeReport report(AccessContext caller, String sourceId, String update, boolean withDiffs) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         requireReadable(caller, sourceId);
@@ -134,7 +143,8 @@ public final class ChangeLog implements AutoCloseable {
         }
         List<ReportedPage> pages = new ArrayList<>();
         for (ReportedPage page : consolidated.pages()) {
-            pages.add(withDiff(caller, withDirectory(page, visible), span.from(), span.to()));
+            ReportedPage located = withDirectory(page, visible);
+            pages.add(withDiffs ? withDiff(caller, located, span.from(), span.to()) : located);
         }
         pages.sort(Comparator.comparing(ReportedPage::kind)
                 .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)

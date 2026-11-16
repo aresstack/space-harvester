@@ -84,11 +84,14 @@ final class ChangeRows {
      */
     boolean replacesContent(PageKey key, State state) {
         State was = before.get(key);
-        if (was == null || !was.content() || !state.content() || Objects.equals(was.rawSha256(), state.rawSha256())) {
+        if (was == null || !was.content() || !state.content()) {
             return false;
         }
-        return was.contentVersion() == null || state.contentVersion() == null
-                || !was.contentVersion().equals(state.contentVersion());
+        if (was.contentVersion() == null || state.contentVersion() == null) {
+            return !Objects.equals(was.rawSha256(), state.rawSha256());
+        }
+        // Neue Version mit gleichen Bytes: ein leerer Unterschied, kein fehlender.
+        return !was.contentVersion().equals(state.contentVersion());
     }
 
     void present(PageKey key, State state) {

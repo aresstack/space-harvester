@@ -331,7 +331,7 @@ class ChangeLogTest {
     }
 
     private ReportedPage reported(String update, String pageId) {
-        return log.report(CALLER, "wiki", update).pages().stream().filter(page -> page.pageId().equals(pageId))
+        return log.report(CALLER, "wiki", update, true).pages().stream().filter(page -> page.pageId().equals(pageId))
                 .findFirst().orElseThrow();
     }
 
@@ -351,6 +351,16 @@ class ChangeLogTest {
                         org.assertj.core.groups.Tuple.tuple("2", "3"));
         assertThat(diff.steps().getLast().paragraphs())
                 .containsExactly(new ParagraphChange(ParagraphChange.Kind.CHANGED, "Mittel", "Neu"));
+    }
+
+    @Test
+    void theReportCarriesDiffsOnlyOnRequest() {
+        twoUpdatesAndAnOpenOne();
+        diff(20, "100", "1", "3", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alt", "Neu"));
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        assertThat(log.report(CALLER, "wiki", id).pages()).extracting(ReportedPage::diff).containsOnlyNulls();
+        assertThat(reported(id, "100").diff().status()).isEqualTo(ContentDiff.Status.AVAILABLE);
     }
 
     @Test

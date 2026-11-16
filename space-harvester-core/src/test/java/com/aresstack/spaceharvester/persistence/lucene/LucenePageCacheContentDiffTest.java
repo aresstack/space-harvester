@@ -221,4 +221,44 @@ class LucenePageCacheContentDiffTest {
         assertThat(diffs(cache)).isEmpty();
         assertThat(cache.findHeader(KEY)).map(PageHeader::metadata).map(PageMetadata::version).contains("2");
     }
+
+    @Test
+    void aRunHoldsOnlyABoundedNumberOfPagesAndBytesForDiffsAndStillCommitsEverything() {
+        LucenePageCache cache = open();
+        for (int i = 1; i <= 4; i++) {
+            cache.save(page("wiki", "10" + i, "DEV", null, "1", json("Alt " + i)));
+        }
+        cache.diffBudget(2, 1024);
+
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            for (int i = 1; i <= 4; i++) {
+                batch.save(page("wiki", "10" + i, "DEV", null, "2", json("Neu " + i), LATER));
+            }
+            batch.commit();
+        }
+
+        List<Integer> diffed = new ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            if (!cache.contentChanges(new PageKey("wiki", "10" + i), null, 10).isEmpty()) {
+                diffed.add(i);
+            }
+            assertThat(cache.findHeader(new PageKey("wiki", "10" + i))).map(PageHeader::metadata)
+                    .map(PageMetadata::version).contains("2");
+        }
+        assertThat(diffed).containsExactly(1, 2);
+
+        cache.diffBudget(10, 6);
+        cache.save(page("wiki", "101", "DEV", null, "3", json("Zu lang")));
+        assertThat(cache.contentChanges(new PageKey("wiki", "101"), null, 10)).hasSize(1);
+    }
+
+    @Test
+    void aNewVersionWithIdenticalBytesIsAnEmptyDiff() {
+        LucenePageCache cache = open();
+        cache.save(version("1", "Gleich"));
+
+        cache.save(page("wiki", "101", "DEV", null, "2", json("Gleich"), LATER));
+
+        assertThat(diffs(cache)).singleElement().satisfies(change -> assertThat(change.paragraphs()).isEmpty());
+    }
 }

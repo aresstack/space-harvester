@@ -122,6 +122,12 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     private volatile HoldingsChanges changes = HoldingsChanges.NONE;
     /** Wem neue Zeilen und Marken gemeldet werden (ADR 0030), je Quelle nach dem Commit. */
     private volatile ContentDiffer contentDiffer = ContentDiffer.NONE;
+    /**
+     * Obergrenze der Seiten und Payload-Bytes, die ein Schreiblauf bis zum Commit für Unterschiede vorhält (CL5);
+     * darüber bekommen weitere Seiten des Laufs keinen Unterschied, der Lauf selbst geht weiter.
+     */
+    private volatile int diffPageBudget = 500;
+    private volatile long diffByteBudget = 64L * 1024 * 1024;
     private volatile java.util.function.Consumer<String> changeLogRecorded = sourceId -> {
     };
     /** Writer und Verzeichnis sind freigegeben; nur unter {@link #writeLock}. */
@@ -716,6 +722,12 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         this.contentDiffer = Objects.requireNonNull(differ, "differ");
     }
 
+    /** Für Tests: Obergrenze der vorgehaltenen Seiten und Bytes je Schreiblauf (CL5). */
+    void diffBudget(int pages, long bytes) {
+        this.diffPageBudget = pages;
+        this.diffByteBudget = bytes;
+    }
+
     @Override
     public void changeLogRecorded(java.util.function.Consumer<String> recorded) {
         this.changeLogRecorded = Objects.requireNonNull(recorded, "recorded");
@@ -839,6 +851,8 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         private final ChangeRows changeRows = new ChangeRows();
         /** Neuer Inhalt je Seite, der einen schon gespeicherten anderen ersetzt; für den Unterschied (CL5). */
         private final Map<PageKey, PageSnapshot> replacedContent = new LinkedHashMap<>();
+        /** Payload-Bytes in {@link #replacedContent}, begrenzt durch {@code diffByteBudget}. */
+        private long replacedBytes;
         private final java.util.Set<String> recordedSources = new java.util.LinkedHashSet<>();
         private final ChangeTrigger trigger = ChangeTrigger.current();
         private DirectoryReader uncommitted;
@@ -871,10 +885,15 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
             }
             ChangeRows.State state = ChangeRows.State.of(snapshot.header(), snapshot);
             changeRows.present(snapshot.key(), state);
-            if (changeRows.replacesContent(snapshot.key(), state)) {
+            PageSnapshot held = replacedContent.remove(snapshot.key());
+            if (held != null) {
+                replacedBytes -= held.payload().length();
+            }
+            if (changeRows.replacesContent(snapshot.key(), state) && contentDiffer != ContentDiffer.NONE
+                    && replacedContent.size() < diffPageBudget
+                    && replacedBytes + snapshot.payload().length() <= diffByteBudget) {
                 replacedContent.put(snapshot.key(), snapshot);
-            } else {
-                replacedContent.remove(snapshot.key());
+                replacedBytes += snapshot.payload().length();
             }
             dirty = true;
             touchedSources.add(snapshot.key().sourceId());
@@ -921,7 +940,7 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
             Document existing = lookup(key);
             boolean existed = existing != null;
             changeRows.removed(key);
-            replacedContent.remove(key);
+            forgetReplaced(key);
             if (existing != null) {
                 changedFrom(key, existing.get(PageCacheSchema.SPACE_KEY), existing.get(PageCacheSchema.PARENT_ID));
             } else if (observed()) {
@@ -953,7 +972,7 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
             rememberBefore(key);
             Document existing = lookup(key);
             changeRows.withheld(key);
-            replacedContent.remove(key);
+            forgetReplaced(key);
             if (existing != null) {
                 changed(key, existing.get(PageCacheSchema.SPACE_KEY));
             }
@@ -981,7 +1000,8 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
             }
             // Das Protokoll der Quelle verschwindet mit ihr (ADR 0030), auch Zeilen dieses Laufs von vorher.
             changeRows.sourceRemoved(sourceId);
-            replacedContent.keySet().removeIf(key -> key.sourceId().equals(sourceId));
+            List.copyOf(replacedContent.keySet()).stream().filter(key -> key.sourceId().equals(sourceId))
+                    .forEach(this::forgetReplaced);
             dirty = true;
             touchedSources.add(sourceId);
             write(() -> {
@@ -1073,6 +1093,13 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                 finish();
                 publish();
                 recorded(recordedSources);
+            }
+        }
+
+        private void forgetReplaced(PageKey key) {
+            PageSnapshot held = replacedContent.remove(key);
+            if (held != null) {
+                replacedBytes -= held.payload().length();
             }
         }
 

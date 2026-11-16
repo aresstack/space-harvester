@@ -17,7 +17,7 @@ import java.util.Set;
  * @param contentPending neue Version bekannt, Inhalt noch nicht geladen
  * @param at             Zeitpunkt der letzten Änderung
  * @param diff           Unterschied des Inhalts, wenn die Seite unter ihren Arten {@link ChangeKind#CONTENT_CHANGED} hat
- *                       und noch da ist; sonst {@code null}
+ *                       und noch da ist und der Bericht mit Unterschieden angefordert wurde; sonst {@code null}
  */
 public record ReportedPage(String sourceId, String spaceKey, String pageId, ChangeKind kind, Set<ChangeKind> kinds,
                            String title, List<String> path, URI url, String oldVersion, String newVersion,

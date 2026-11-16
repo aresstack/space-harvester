@@ -102,7 +102,10 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
     derselben Version (dynamische Makros) ergeben keinen Unterschied. Abgelegt wird nur der Unterschied (Dokumentart
     `diff`, höchstens 50 Absätze, 500 Zeichen je Absatz, 8000 Zeichen gesamt, sonst `truncated`), nie eine alte
     Payload. Unterschiede gibt es erst für Ersetzungen ab Einführung von CL5.
-  - Der Bericht trägt je Seite mit `CONTENT_CHANGED` einen `diff` mit Zustand `AVAILABLE` (Schritte von der alten bis
+  - Ein Schreiblauf hält für Unterschiede höchstens 500 Seiten und 64 MiB neuer Payload bis zum Commit vor; weitere
+    Seiten des Laufs bekommen keinen Unterschied (`PREVIOUS_MISSING`), der Lauf selbst geht weiter.
+  - Nur auf Wunsch (`report(…, withDiffs)`, REST `?diff=true`) trägt der Bericht je Seite mit `CONTENT_CHANGED` einen
+    `diff` mit Zustand `AVAILABLE` (Schritte von der alten bis
     zur neuen Version), `CONTENT_PENDING`, `PREVIOUS_MISSING` oder `NOT_PERMITTED`. Ein Schritt ohne Absätze heißt:
     Der Lesetext ist gleich, geändert haben sich nur Unsichtbares oder Anhänge; Anhänge sind eigene Dokumente
     (ADR 0026) und nicht Teil des Unterschieds. Rechte: `METADATA` wie der Bericht und `CONTENT` an der Seite; die

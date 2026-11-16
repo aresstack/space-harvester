@@ -62,14 +62,18 @@ public class ChangeLogController {
     @GetMapping(path = UPDATES + "/{updateId}", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Änderungsbericht eines Updates",
             description = "Die geänderten Seiten nach Art und Titel, mehrere Änderungen derselben Seite zu einer "
-                    + "zusammengefasst, mit Pfad und Verweis. Bei der Erstbefüllung nur Zähler.")
+                    + "zusammengefasst, mit Pfad und Verweis. Bei der Erstbefüllung nur Zähler. Mit diff=true trägt "
+                    + "jede Seite mit Inhaltsänderung ihren Textunterschied (Absätze alt gegen neu), sofern der "
+                    + "Client ihren Inhalt lesen darf.")
     @ApiResponse(responseCode = "200", description = "Änderungsbericht")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder kein solches Update "
             + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ChangeReport report(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId,
-                               @PathVariable String updateId) {
-        return changeLog.report(caller, sourceId, updateId);
+                               @PathVariable String updateId,
+                               @Parameter(description = "Textunterschied je geänderter Seite mitliefern")
+                               @RequestParam(name = "diff", defaultValue = "false") boolean diff) {
+        return changeLog.report(caller, sourceId, updateId, diff);
     }
 
     @GetMapping(path = ENTRIES, produces = MediaType.APPLICATION_JSON_VALUE)
