@@ -293,6 +293,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | --- | --- | --- |
 | KI-Dienst, Adresse, API-Key, Frist | `ai.base-url`, `ai.api-key`, `ai.timeout`, `ai.trust-bundle` | ja, neue Client-Instanzen |
 | Modelle je Funktion, global für alle Quellen | `ai.chat-model`, `ai.embedding-model`, `ai.embedding-dimensions`, `ai.rerank-model`, `ai.vision-model` | ja, neue Anfragen |
+| Ausgabelimit einer Antwort des Chat-Modells in Tokens, gesendet als `max_tokens` (Standard 8192, 1 bis 1000000; App: Einstellungen › KI › „Ausgabelimit“). Gilt für Akronymauflösung und Synonymprüfung. Endet eine Antwort am Limit (`finish_reason=length`), gilt sie als unvollständig: Der Aufruf meldet das mit dem Hinweis auf diese Einstellung, statt ein abgeschnittenes JSON auszuwerten | `ai.chat-max-tokens` | ja, neue Anfragen |
 | Freigabe für externe Verarbeitung | `ai.external-processing-sources` | ja; die Seiten der Quelle im Cache werden neu angereichert (siehe unten) |
 | Semantische Suche (Haken, Standard aus) | `search.semantic` | ja; ohne Embedding-Modell bleibt sie aus |
 | Reranking, wenn ein Modell eingestellt ist | `search.rerank` (Standard `true`) | ja |

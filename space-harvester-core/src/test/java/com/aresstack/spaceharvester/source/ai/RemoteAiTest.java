@@ -209,6 +209,47 @@ class RemoteAiTest {
     }
 
     @Test
+    void sendsTheConfiguredOutputLimitAsMaxTokens() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        remote(settings).termCompletions().apply("Anweisung", "{}");
+        remote(settings.withChatMaxTokens(16384)).termCompletions().apply("Anweisung", "{}");
+
+        assertThat(bodies).hasSize(2);
+        assertThat(bodies.get(0)).contains("\"max_tokens\":8192");
+        assertThat(bodies.get(1)).contains("\"max_tokens\":16384");
+    }
+
+    @Test
+    void anAnswerCutAtTheOutputLimitIsReportedAndNeverPassedOnAsComplete() {
+        chatAnswer = """
+                {"choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant",
+                  "content":"{\\"expansions\\":[{\\"acronym\\":\\"geheimes Akro"}}]}""";
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of())
+                .withChatMaxTokens(256);
+
+        assertThatThrownBy(() -> remote(settings).termCompletions().apply("Anweisung", "{}"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> {
+                    assertThat(e.reason()).isEqualTo(AiServiceException.Reason.INVALID_RESPONSE);
+                    assertThat(e.getMessage()).contains("finish_reason=length", "max_tokens=256",
+                            "space-harvester.ai.chat-max-tokens").doesNotContain("geheimes").doesNotContain(KEY);
+                });
+        assertThatThrownBy(() -> remote(settings).queryVariants().complete("Anweisung", "Frage"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.getMessage())
+                        .contains("finish_reason=length", "max_tokens=" + RemoteAi.MAX_VARIANT_TOKENS)
+                        .doesNotContain("chat-max-tokens"));
+    }
+
+    @Test
+    void anAnswerThatEndsRegularlyIsPassedOn() {
+        chatAnswer = """
+                {"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"fertig"}}]}""";
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        assertThat(remote(settings).termCompletions().apply("Anweisung", "{}")).isEqualTo("fertig");
+    }
+
+    @Test
     void describesAnImageWithTheVisionModelAndThePromptOfTheEnterpriseAiClient() {
         AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of(),
                 null, "qwen-vl");
