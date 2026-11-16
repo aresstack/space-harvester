@@ -6,6 +6,12 @@ import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
 import com.aresstack.spaceharvester.application.changelog.ReportedPage;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
+import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -163,19 +169,29 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void summarizingShowsTheSummaryAboveTheKindsWithLinksToItsPages() {
+    void summarizingRunsAsAJobAndShowsTheSummaryAboveTheKindsWithLinksToItsPages() throws Exception {
         view.source("wiki", "Confluence HaVdB");
         view.clickUpdate("16.11.2026, 18:30 · angelo");
 
         view.clickSummarize();
 
         assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(view.busy()).as("BusyOverlay über dem Bericht").isTrue();
+        assertThat(view.summarizeOffered()).as("nie zwei zugleich").isFalse();
+        assertThat(status).contains(SourceUpdatesView.SUMMARIZING);
+        view.clickUpdate("10.11.2026, 08:00 · angelo");
+        assertThat(view.busy()).as("nur über dem Update, das zusammengefasst wird").isFalse();
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+        assertThat(view.busy()).isTrue();
+
+        actions.finish(JobState.COMPLETED);
+
         assertThat(view.busy()).isFalse();
         List<String> texts = view.reportTexts();
         assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00 mit gpt-test",
                 "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch", "Geändert (1)");
         assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
-        assertThat(status).contains(SourceUpdatesView.SUMMARIZING, "Zusammenfassung erstellt");
+        assertThat(status).last().isEqualTo("Zusammenfassung erstellt");
         assertThat(view.copyText()).contains("Zusammenfassung (Erstellt am").contains("überarbeitet");
 
         assertThat(view.clickSummaryLink("Betriebshandbuch")).isTrue();
@@ -197,17 +213,41 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void cancellingKeepsThePreviousSummary() {
+    void cancellingEndsTheJobAndKeepsThePreviousSummary() throws Exception {
         view.source("wiki", "Confluence HaVdB");
         view.clickUpdate("16.11.2026, 18:30 · angelo");
-        actions.onSummarize = view::cancelRunningSummary;
-
         view.clickSummarize();
 
+        view.cancelRunningSummary();
+
+        assertThat(actions.cancelled).isEqualTo("job-1");
         assertThat(view.busy()).isFalse();
         assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
         assertThat(status).last().isEqualTo("Abgebrochen; die bisherige Zusammenfassung bleibt.");
         assertThat(view.summarizeOffered()).isTrue();
+    }
+
+    @Test
+    void aFailedJobSaysWhyAndOffersItAgain() throws Exception {
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+        view.clickSummarize();
+
+        actions.finish(JobState.FAILED);
+
+        assertThat(status).last().isEqualTo("Zusammenfassung fehlgeschlagen: Modell nicht erreichbar");
+        assertThat(view.busy()).isFalse();
+        assertThat(view.summarizeOffered()).isTrue();
+    }
+
+    @Test
+    void withoutAChatModelSummarizingIsNotOffered() {
+        actions.available = false;
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        assertThat(view.summarizeOffered()).isFalse();
+        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.NO_MODEL);
     }
 
     /** Bildschirmfoto der Quellenseite zur Sichtprüfung; nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}. */
@@ -220,6 +260,7 @@ class SourceUpdatesViewTest {
             view.source("wiki", "Confluence HaVdB");
             view.clickUpdate("16.11.2026, 18:30 · angelo");
             view.clickSummarize();
+            actions.finishNow(JobState.COMPLETED);
             AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-updates.png"));
         });
     }
@@ -248,8 +289,37 @@ class SourceUpdatesViewTest {
         int reportCalls;
         boolean openGrows;
         int summarizeCalls;
-        Runnable onSummarize = () -> { };
+        boolean available = true;
+        String cancelled;
+        JobListener jobs;
         SourceUpdatesView.Summary stored;
+
+        static JobStatus job(JobState state) {
+            return new JobStatus("job-1", JobType.EXPORT, "wiki", null, "local", state, new JobProgress(1, 0, 0, 0),
+                    state == JobState.FAILED ? new JobError("X", "Modell nicht erreichbar") : null, false, SECOND,
+                    null, null, null, null, Map.of(), false, false, null);
+        }
+
+        /** Der Core beendet den Auftrag: Ablage, Meldung des Auftrags (Zustell-Thread), dann EDT. */
+        void finish(JobState state) throws Exception {
+            finishNow(state);
+            javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        }
+
+        void finishNow(JobState state) {
+            if (state == JobState.COMPLETED) {
+                stored = summaryOf();
+            }
+            jobs.changed(job(state));
+        }
+
+        private static SourceUpdatesView.Summary summaryOf() {
+            return new SourceUpdatesView.Summary(List.of(
+                    new SourceUpdatesView.Statement("Das Betriebshandbuch wurde überarbeitet.", List.of("11")),
+                    new SourceUpdatesView.Statement("Eine alte Seite ist weggefallen, eine andere heißt jetzt "
+                            + "„Kurzbeschreibung DATENH“.", List.of("13", "12"))),
+                    "gpt-test", SECOND.plusSeconds(1800), 0, false);
+        }
         ChangeLogListener listener;
 
         ChangeUpdate open() {
@@ -310,19 +380,31 @@ class SourceUpdatesViewTest {
         }
 
         @Override
-        public SourceUpdatesView.Summary summarize(String sourceId, String updateId,
-                                                   java.util.function.BooleanSupplier cancelled) {
+        public boolean summariesAvailable() {
+            return available;
+        }
+
+        @Override
+        public JobStatus summarize(String sourceId, String updateId) {
             summarizeCalls++;
-            onSummarize.run();
-            if (cancelled.getAsBoolean()) {
-                throw new java.util.concurrent.CancellationException();
-            }
-            stored = new SourceUpdatesView.Summary(List.of(
-                    new SourceUpdatesView.Statement("Das Betriebshandbuch wurde überarbeitet.", List.of("11")),
-                    new SourceUpdatesView.Statement("Eine alte Seite ist weggefallen, eine andere heißt jetzt "
-                            + "„Kurzbeschreibung DATENH“.", List.of("13", "12"))),
-                    "gpt-test", SECOND.plusSeconds(1800), 0, false);
-            return stored;
+            return job(JobState.QUEUED);
+        }
+
+        @Override
+        public JobStatus job(String jobId) {
+            return job(JobState.RUNNING);
+        }
+
+        @Override
+        public JobStatus cancelJob(String jobId) {
+            cancelled = jobId;
+            return job(JobState.CANCELLED);
+        }
+
+        @Override
+        public Subscription subscribeJobs(JobListener listener) {
+            jobs = listener;
+            return () -> jobs = null;
         }
 
         @Override

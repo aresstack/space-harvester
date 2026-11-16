@@ -13,6 +13,9 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
 import com.aresstack.spaceharvester.application.changelog.ReportedPage;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 
 import javax.swing.BorderFactory;
@@ -38,9 +41,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -65,6 +65,9 @@ final class SourceUpdatesView extends JPanel {
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
     static final String SUMMARIZING = "Wird zusammengefasst …";
+    static final String SUMMARIZE_TIP = "Lässt das Chat-Modell das gewählte Update als Auftrag zusammenfassen; nur "
+            + "Seiten mit KI-Freigabe";
+    static final String NO_MODEL = "Kein Chat-Modell eingestellt; unter Einstellungen › Modelle wählen";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
     private final Supplier<Actions> actions;
@@ -76,7 +79,7 @@ final class SourceUpdatesView extends JPanel {
     private final JComponent reportScroll;
     private final BusyOverlay busy;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton summarize = Comic.button(SUMMARIZE,
-            "Lässt das Chat-Modell das gewählte Update zusammenfassen; nur Seiten mit KI-Freigabe");
+            SUMMARIZE_TIP);
     private Consumer<String> onStatus = text -> { };
     private Consumer<ReportedPage> onOpen = page -> { };
     private ZoneId zone = ZoneId.systemDefault();
@@ -88,8 +91,11 @@ final class SourceUpdatesView extends JPanel {
     private ChangeReport shown;
     /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
     private Summary summary;
-    /** Laufende Zusammenfassung; bleibt nach „Abbrechen“ gesetzt, bis ihr Lauf wirklich endet. */
-    private AtomicBoolean running;
+    /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
+    private Run running;
+    private Subscription jobWatch = Subscription.NONE;
+    /** Ob ein Chat-Modell eingestellt ist. */
+    private boolean available = true;
     private int generation;
 
     SourceUpdatesView(Supplier<Workspace> workspace) {
@@ -157,7 +163,7 @@ final class SourceUpdatesView extends JPanel {
         selected = null;
         shown = null;
         summary = null;
-        cancelSummary();
+        forgetRun();
         offerSummary();
         head.title(title == null || title.isBlank() ? "Updates" : "Updates · " + title);
         list.removeAll();
@@ -245,7 +251,8 @@ final class SourceUpdatesView extends JPanel {
         renderList();
         offerSummary();
         int mine = ++generation;
-        runner.run(() -> new Loaded(current.report(id, updateId), current.summary(id, updateId)), found -> {
+        runner.run(() -> new Loaded(current.report(id, updateId), current.summary(id, updateId),
+                current.summariesAvailable()), found -> {
             if (mine != generation) {
                 return;
             }
@@ -255,6 +262,7 @@ final class SourceUpdatesView extends JPanel {
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
             shown = found.report();
             summary = found.summary();
+            available = found.available();
             renderReport(shown);
             offerSummary();
             restore(position);
@@ -265,24 +273,42 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private record Loaded(ChangeReport report, Summary summary) {
+    private record Loaded(ChangeReport report, Summary summary, boolean available) {
+    }
+
+    /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
+    private record Run(String jobId, String sourceId, String updateId) {
     }
 
     private static ChangeUpdate entry(List<ChangeUpdate> in, String id) {
         return id == null ? null : in.stream().filter(u -> u.id().equals(id)).findFirst().orElse(null);
     }
 
-    /** „Zusammenfassen“ gibt es für ein gewähltes Update mit Änderungen, nicht für die Erstbefüllung. */
+    /**
+     * „Zusammenfassen“ gibt es für ein gewähltes Update mit Änderungen, nicht für die Erstbefüllung, und nur mit
+     * eingestelltem Chat-Modell. Läuft der Auftrag für das gezeigte Update, liegt das BusyOverlay über dem Bericht.
+     */
     private void offerSummary() {
         ChangeUpdate update = shown != null && shown.update().id().equals(selected) ? shown.update()
                 : entry(updates, selected);
         boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
         summarize.setText(summary == null ? SUMMARIZE : RESUMMARIZE);
         summarize.setVisible(sourceId != null);
-        summarize.setEnabled(possible && running == null);
+        summarize.setEnabled(possible && available && running == null);
+        summarize.setToolTipText(available ? SUMMARIZE_TIP : NO_MODEL);
+        boolean mine = running != null && Objects.equals(running.sourceId(), sourceId)
+                && Objects.equals(running.updateId(), selected);
+        if (mine != busy.isBusy()) {
+            busy.setText(SUMMARIZING);
+            busy.setBusy(mine);
+        }
     }
 
-    /** Startet die Zusammenfassung des gewählten Updates im Hintergrund; nie zwei zugleich. */
+    /**
+     * Startet den Auftrag „Zusammenfassen“ für das gewählte Update (ADR 0030, Abschnitt 5). Er läuft im Core und steht
+     * in der Auftragsliste; fertig meldet er sich über die Auftragsmeldungen, die Zusammenfassung selbst kommt mit der
+     * Meldung des Änderungsprotokolls. Nie zwei zugleich aus dieser Ansicht.
+     */
     private void summarize() {
         Actions current = actions.get();
         String id = sourceId;
@@ -290,46 +316,87 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || id == null || updateId == null || running != null) {
             return;
         }
-        AtomicBoolean cancelled = new AtomicBoolean();
-        running = cancelled;
+        Run starting = new Run(null, id, updateId);
+        running = starting;
         offerSummary();
-        busy.setText(SUMMARIZING);
-        busy.setBusy(true);
         onStatus.accept(SUMMARIZING);
-        runner.run(() -> current.summarize(id, updateId, cancelled::get), result -> {
-            finished(cancelled);
-            onStatus.accept("Zusammenfassung erstellt");
-            if (Objects.equals(id, sourceId) && updateId.equals(selected) && shown != null) {
-                java.awt.Point position = viewPosition();
-                summary = result;
-                renderReport(shown);
-                offerSummary();
-                restore(position);
+        runner.run(() -> current.summarize(id, updateId), status -> {
+            if (running != starting) {
+                return;
             }
+            Run run = new Run(status.id(), id, updateId);
+            running = run;
+            watch(current, run);
         }, failure -> {
-            finished(cancelled);
-            onStatus.accept(failure instanceof CancellationException || cancelled.get()
-                    ? "Abgebrochen; die bisherige Zusammenfassung bleibt."
-                    : "Zusammenfassung fehlgeschlagen: " + Problems.describe(failure).title());
+            if (running == starting) {
+                running = null;
+                offerSummary();
+            }
+            onStatus.accept("Zusammenfassen nicht möglich: " + Problems.describe(failure).title());
         });
     }
 
-    /** Der Lauf ist wirklich zu Ende: erst jetzt ist „Zusammenfassen“ wieder möglich. */
-    private void finished(AtomicBoolean run) {
-        if (running == run) {
-            running = null;
-            busy.setBusy(false);
-            offerSummary();
+    /** Erst anmelden, dann den Stand lesen: so geht das Ende des Auftrags nicht verloren (ADR 0027). */
+    private void watch(Actions current, Run run) {
+        jobWatch.close();
+        try {
+            jobWatch = current.subscribeJobs(new JobListener() {
+                @Override
+                public void changed(JobStatus status) {
+                    if (status.id().equals(run.jobId())) {
+                        SwingUtilities.invokeLater(() -> progressed(run, status));
+                    }
+                }
+
+                @Override
+                public void removed(JobStatus last) {
+                    changed(last);
+                }
+            });
+        } catch (RuntimeException e) {
+            jobWatch = Subscription.NONE;
+        }
+        runner.run(() -> current.job(run.jobId()), status -> progressed(run, status), failure -> { });
+    }
+
+    /** Ein neuer Stand des Auftrags; erst sein Ende gibt „Zusammenfassen“ wieder frei. */
+    private void progressed(Run run, JobStatus status) {
+        if (running != run || !status.state().terminal()) {
+            return;
+        }
+        running = null;
+        jobWatch.close();
+        jobWatch = Subscription.NONE;
+        onStatus.accept(switch (status.state()) {
+            case COMPLETED -> "Zusammenfassung erstellt";
+            case CANCELLED -> "Abgebrochen; die bisherige Zusammenfassung bleibt.";
+            case PAUSED -> "Zusammenfassung angehalten; fortsetzen unter Aufträge.";
+            default -> "Zusammenfassung fehlgeschlagen"
+                    + (status.error() == null ? "" : ": " + status.error().message());
+        });
+        offerSummary();
+        if (status.state() == JobState.COMPLETED && Objects.equals(run.sourceId(), sourceId)
+                && Objects.equals(run.updateId(), selected)) {
+            select(selected, true);
         }
     }
 
-    /** Bittet die laufende Zusammenfassung aufzuhören; bis ihr Lauf endet, bleibt „Zusammenfassen“ gesperrt. */
+    /** Bricht den laufenden Auftrag ab; die bisherige Zusammenfassung bleibt. Das Ende meldet der Auftrag selbst. */
     private void cancelSummary() {
-        AtomicBoolean run = running;
-        if (run != null && !run.get()) {
-            run.set(true);
-            busy.setText("Wird abgebrochen …");
+        Actions current = actions.get();
+        Run run = running;
+        if (current == null || run == null || run.jobId() == null) {
+            return;
         }
+        busy.setText("Wird abgebrochen …");
+        runner.run(() -> current.cancelJob(run.jobId()), status -> progressed(run, status), failure -> { });
+    }
+
+    /** Die Ansicht verlässt die Quelle: der Auftrag läuft in der Auftragsliste weiter, sie hört nur nicht mehr zu. */
+    private void forgetRun() {
+        jobWatch.close();
+        jobWatch = Subscription.NONE;
+        running = null;
     }
 
     private java.awt.Point viewPosition() {
@@ -687,8 +754,17 @@ final class SourceUpdatesView extends JPanel {
         /** Die gespeicherte Zusammenfassung des Updates, {@code null} ohne. */
         Summary summary(String sourceId, String updateId);
 
-        /** Fasst das Update zusammen und legt das Ergebnis ab; bricht ab, sobald {@code cancelled} wahr wird. */
-        Summary summarize(String sourceId, String updateId, BooleanSupplier cancelled);
+        /** Ob ein Chat-Modell für Zusammenfassungen eingestellt ist. */
+        boolean summariesAvailable();
+
+        /** Startet den Auftrag „Zusammenfassen“; das Ergebnis legt der Core neben dem Protokoll ab. */
+        JobStatus summarize(String sourceId, String updateId);
+
+        JobStatus job(String jobId);
+
+        JobStatus cancelJob(String jobId);
+
+        Subscription subscribeJobs(JobListener listener);
 
         static Actions of(Workspace workspace) {
             if (workspace == null) {
@@ -716,8 +792,28 @@ final class SourceUpdatesView extends JPanel {
                 }
 
                 @Override
-                public Summary summarize(String sourceId, String updateId, BooleanSupplier cancelled) {
+                public boolean summariesAvailable() {
+                    return false; // TODO CL6: ChangeLog.summariesAvailable() von Strang Q
+                }
+
+                @Override
+                public JobStatus summarize(String sourceId, String updateId) {
                     throw new UnsupportedOperationException("CL6-Core fehlt noch");
+                }
+
+                @Override
+                public JobStatus job(String jobId) {
+                    return workspace.job(jobId);
+                }
+
+                @Override
+                public JobStatus cancelJob(String jobId) {
+                    return workspace.cancelJob(jobId);
+                }
+
+                @Override
+                public Subscription subscribeJobs(JobListener listener) {
+                    return workspace.subscribeJobs(listener);
                 }
             };
         }
@@ -758,6 +854,10 @@ final class SourceUpdatesView extends JPanel {
 
     boolean busy() {
         return busy.isBusy();
+    }
+
+    String summarizeTip() {
+        return summarize.getToolTipText();
     }
 
     void cancelRunningSummary() {
