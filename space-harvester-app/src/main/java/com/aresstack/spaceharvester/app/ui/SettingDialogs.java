@@ -743,6 +743,21 @@ final class SettingDialogs {
     static final String FULL = "Vollständig synchronisieren";
     /** Höchste Zahl je Einheit in den Dauer-Feldern. */
     static final int MAX_AMOUNT = 9_999;
+    static final String CHANGE_LOG_RETENTION = "Änderungsprotokoll aufbewahren";
+    static final String UNLIMITED = "Unbegrenzt";
+
+    /** „1 Jahr“, „90 Tage“ oder „unbegrenzt“ für die Übersicht unter Einstellungen › Cache. */
+    static String changeLogRetention(com.aresstack.spaceharvester.application.configuration.ChangeLogSettings log) {
+        if (log.unlimited()) {
+            return "unbegrenzt";
+        }
+        java.time.Duration kept = log.retention();
+        long days = kept.toDays();
+        if (!kept.equals(java.time.Duration.ofDays(days))) {
+            return ConfigFileEditor.duration(kept);
+        }
+        return days % 365 == 0 ? Texts.count(days / 365, "Jahr", "Jahre") : Texts.count(days, "Tag", "Tage");
+    }
 
     /** Beschriftung der Betriebsart. */
     static String modeLabel(SyncMode mode) {
@@ -802,6 +817,9 @@ final class SettingDialogs {
                 : current.maxAge());
         DurationField retention = new DurationField(global ? null : AS_GLOBAL, MAX_AMOUNT);
         retention.value(global ? cache.withheldRetention() : current.withheldRetention());
+        // Aufbewahrung des Änderungsprotokolls (ADR 0030): Zahl plus Einheit, Standard ein Jahr, auch unbegrenzt.
+        DurationField changeLog = DurationField.withYears(UNLIMITED, MAX_AMOUNT);
+        changeLog.value(cache.changeLog().retention());
 
         String globally = global ? "" : "; wie global: ";
         Rows rows = new Rows();
@@ -835,6 +853,11 @@ final class SettingDialogs {
         rows.add(WITHHELD_RETENTION, retention, "Seiten ohne Leserecht verschwinden sofort aus der Suche; so lange "
                 + "bleiben die Rohdaten, 0 entfernt sie sofort" + (global ? "" : globally
                 + ConfigFileEditor.duration(cache.withheldRetention())));
+        if (global) {
+            rows.add(CHANGE_LOG_RETENTION, changeLog, "So lange bleiben die Zeilen des Änderungsprotokolls (Einsicht "
+                    + "unter Einstellungen › Cache); „" + UNLIMITED + "“ behält alles. Die gespeicherten Seiten "
+                    + "betrifft das nicht");
+        }
         rows.visible(parallel, global);
         if (global) {
             Runnable toggle = () -> maxAge.setEnabled(!ALWAYS_CHECK.equals(refresh.getSelectedItem()));
@@ -862,7 +885,7 @@ final class SettingDialogs {
             boolean always = chosenStrategy.get() == RefreshStrategy.ALWAYS_CHECK_VERSION;
             return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
                     always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value(),
-                    cache.changeLog());
+                    new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(changeLog.value()));
         };
         Supplier<SyncSettings> syncDraft = () -> new SyncSettings(ON.equals(events.getSelectedItem()),
                 changeSearch.value(), sync.spaces(), ON.equals(beforeSearch.getSelectedItem()), retention.value(),
@@ -893,6 +916,10 @@ final class SettingDialogs {
                 if (chosenStrategy.get() != RefreshStrategy.ALWAYS_CHECK_VERSION
                         && (age.isZero() || age.compareTo(java.time.Duration.ofDays(365)) > 0)) {
                     problems.add("Die Frist ist mehr als 0 und höchstens 365 Tage.");
+                }
+                if (changeLog.value() != null && changeLog.value().isZero()) {
+                    problems.add("Die Aufbewahrung des Änderungsprotokolls ist mehr als 0; „" + UNLIMITED
+                            + "“ behält alles.");
                 }
             } else {
                 RefreshStrategy strategy = chosenStrategy.get();

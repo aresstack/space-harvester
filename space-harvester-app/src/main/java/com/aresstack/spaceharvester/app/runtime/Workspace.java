@@ -1461,6 +1461,24 @@ public final class Workspace {
     }
 
     /**
+     * Rohe Zeilen des Änderungsprotokolls (ADR 0030) für den Dialog unter Einstellungen › Cache, neueste zuerst; nur
+     * Zeilen, die diese App sehen darf. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.changelog.ChangeEntries changeEntries(
+            com.aresstack.spaceharvester.application.changelog.ChangeFilter filter) {
+        return harvester.changeLog().entries(caller, filter);
+    }
+
+    /**
+     * Meldet einen Empfänger für neue Zeilen und Marken im Änderungsprotokoll aller Quellen an (ADR 0027); Meldungen
+     * kommen gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT.
+     */
+    public Subscription subscribeChangeLog(
+            com.aresstack.spaceharvester.application.changelog.ChangeLogListener listener) {
+        return harvester.changeLog().subscribe(caller, null, listener);
+    }
+
+    /**
      * Meldet einen Empfänger für den Bestand eines Space an, mit leerem {@code spaceKey} für alle Spaces der Quelle
      * (ADR 0027). Meldungen kommen gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann
      * {@link #holdings} lesen.
