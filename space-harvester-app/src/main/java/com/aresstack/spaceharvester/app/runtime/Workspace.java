@@ -972,6 +972,41 @@ public final class Workspace {
         return started;
     }
 
+    /**
+     * „Confluence-Metadaten exportieren“ (Angelo 16.11.2026): je gewähltem Space bzw. Teilbaum ein Auftrag, der für
+     * jede im Bestand bekannte Seite Historie, Versionen, Kommentare, Properties und Restriktionen über die
+     * dokumentierten REST-Schnittstellen der Quelle holt und als eigene JSON-Datei in {@code directory} ablegt;
+     * der Seitenexport und seine Hashes bleiben unverändert. Nur für Quellen mit REST-Abfragen
+     * ({@link #sourceQueryExportsSupported}).
+     *
+     * @return die eingeplanten Aufträge; der Dateiname je Auftrag steht in
+     *         {@code SourceQueryExports.fileName}
+     */
+    public List<JobStatus> startMetadataExport(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                               Path directory) {
+        List<JobStatus> started = harvester.sourceQueryExports().startMetadata(caller, selection, directory);
+        started.forEach(status -> activities.remember(status.id()));
+        return started;
+    }
+
+    /**
+     * „Analytics exportieren“ (Angelo 16.11.2026): wie {@link #startMetadataExport}, aber Seitenaufrufe über die
+     * Endpunkte des Confluence-Analytics-Plugins ({@code AnalyticsQueries.DEFAULT}); antwortet die Quelle nicht,
+     * scheitert nur dieser Auftrag.
+     */
+    public List<JobStatus> startAnalyticsExport(
+            com.aresstack.spaceharvester.application.holdings.Selection selection, Path directory) {
+        List<JobStatus> started = harvester.sourceQueryExports().startAnalytics(caller, selection, directory,
+                com.aresstack.spaceharvester.application.metadata.AnalyticsQueries.DEFAULT);
+        started.forEach(status -> activities.remember(status.id()));
+        return started;
+    }
+
+    /** Ob die Quelle REST-Abfragen beantwortet, also Metadaten- und Analytics-Export anbietet (nur Confluence). */
+    public boolean sourceQueryExportsSupported(String sourceId) {
+        return harvester.sourceQueryExports().supports(sourceId);
+    }
+
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
         ownExport(exportId);

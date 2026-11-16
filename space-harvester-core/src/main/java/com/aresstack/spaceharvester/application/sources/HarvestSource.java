@@ -108,6 +108,28 @@ public interface HarvestSource {
     }
 
     /**
+     * {@code true}, wenn die Quelle beliebige GET-Abfragen unter ihrer REST-Wurzel beantwortet
+     * ({@link #restGet}): Confluence für Versionshistorie, Kommentare, Properties, Restriktionen und Analytics.
+     */
+    default boolean restQueries() {
+        return false;
+    }
+
+    /**
+     * Eine GET-Abfrage unter {@code /rest/} der Quelle mit ihrer Anmeldung, Route und TLS-Einstellung; die Antwort
+     * kommt Byte für Byte. Nur Pfade unter der REST-Wurzel; die Quelle lehnt alles andere als {@code UNSUPPORTED} ab.
+     *
+     * @param pathAndQuery Pfad samt Query relativ zur Basis-URL, etwa {@code /rest/api/content/1/history}
+     * @throws SourceAccessException {@code NOT_FOUND}, {@code ACCESS_DENIED}, {@code UNAVAILABLE},
+     *                               {@code RATE_LIMITED}, {@code INVALID_RESPONSE} wie die Quelle antwortet,
+     *                               {@code UNSUPPORTED} ohne diese Fähigkeit oder für einen Pfad außerhalb
+     */
+    default SourceRestResponse restGet(String pathAndQuery) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle beantwortet keine REST-Abfragen", null);
+    }
+
+    /**
      * {@code true}, wenn {@link #storedPageAsync} nicht blockierend arbeitet, also die Quelle einen asynchronen
      * HTTP-Client hat ({@code space-harvester.network.async-transport}, #47).
      */
