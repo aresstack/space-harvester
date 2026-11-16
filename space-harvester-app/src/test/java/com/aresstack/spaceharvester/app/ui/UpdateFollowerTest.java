@@ -132,10 +132,12 @@ class UpdateFollowerTest {
             return () -> closed = true;
         }
 
+        /** Wie der Core: die jüngste Marke, ohne Zeilen zu lesen. */
         @Override
-        public List<ChangeUpdate> updates(String sourceId) {
+        public java.util.Optional<UpdateMark> latestMark(String sourceId) {
             reads++;
-            return updates;
+            return updates.stream().map(ChangeUpdate::mark).filter(java.util.Objects::nonNull)
+                    .max(java.util.Comparator.comparing(UpdateMark::at));
         }
 
         @Override
