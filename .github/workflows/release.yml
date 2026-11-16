@@ -10,7 +10,8 @@ name: Release
 #   diesen Stand, als „Latest“ markiert, ohne Versionsnummer im Titel und in den Dateinamen. So liefert
 #   https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar immer den neuesten
 #   Stand (Lesezeichen, Vorbild aresstack/audio). Intern trägt das JAR <Basis>-beta.<N> für --version.
-# - Push auf einen anderen Branch: nur bauen und testen, kein Release (Ergebnis als Actions-Artefakt).
+# - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ bekommt diesen Stand, ebenfalls ohne
+#   Versionsnummer in Titel und Dateinamen, nie „Latest“. Das ist das einzige Pre-Release.
 # - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
 #   „tag“: Release genau mit dieser Version und Versionsnummern in den Dateinamen. Immer das NEUESTE Release ist
 #   „Latest“ (Angelo 16.11.): das getaggte, bis der nächste main-Lauf „latest“ wieder dazu macht. Ohne Vorabkennung
@@ -37,12 +38,12 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
 
 env:
-  # Das eine rollierende Release: main aktualisiert „latest“. Branches außer main veröffentlichen nichts.
+  # Rollierend ohne Versionsnummer: main aktualisiert das Release „latest“, andere Branches das Pre-Release „snapshot“.
   BETA_TAG: latest
   SNAPSHOT_TAG: snapshot
   # Frühere Releases, die der main-Lauf entfernt (nur die Releases; Git-Tags bleiben, außer beim alten „beta“).
   # Der ZIP-Build (chatgpt-compatible-release.yml) hängt sein ZIP jetzt an „latest“.
-  OBSOLETE_RELEASES: beta snapshot chatgpt-compatible v0.1.0-alpha.1
+  OBSOLETE_RELEASES: beta chatgpt-compatible v0.1.0-alpha.1
   # Dateien an „latest“, die nicht aus diesem Workflow stammen und beim Aufräumen bleiben
   FOREIGN_ASSETS: space-harvester-chatgpt-compatible.zip
 
@@ -209,6 +210,7 @@ jobs:
           sum=$(grep " $app\$" SHA256SUMS | cut -d' ' -f1)
           if [ "$MODE" = "snapshot" ] || [ "$MODE" = "beta" ]; then
             intro="Rollierender Build vom main-Commit \`${GITHUB_SHA:0:12}\`, wird bei jedem Push auf main ersetzt. Feste Adresse für ein Lesezeichen: https://github.com/$GITHUB_REPOSITORY/releases/download/latest/$app"
+            [ "$MODE" = "snapshot" ] && intro="Rollierender Entwicklungsstand vom Branch \`$BRANCH\` (\`${GITHUB_SHA:0:12}\`), wird bei jedem Push auf einen Branch außer main ersetzt. Feste Adresse: https://github.com/$GITHUB_REPOSITORY/releases/download/snapshot/$app"
             ref="$GITHUB_SHA"
           else
             kind="Release"
@@ -243,8 +245,8 @@ jobs:
             { cat "$notes"; echo; echo '## Dateien'; echo; cat "$RUNNER_TEMP/RELEASE_NOTES.md"; } > "$RUNNER_TEMP/notes.tmp"
             mv "$RUNNER_TEMP/notes.tmp" "$RUNNER_TEMP/RELEASE_NOTES.md"
           fi
-      - name: Rollierendes Release latest aktualisieren
-        if: steps.version.outputs.mode == 'beta'
+      - name: Rollierendes Release latest bzw. snapshot aktualisieren
+        if: steps.version.outputs.mode == 'beta' || steps.version.outputs.mode == 'snapshot'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
           BRANCH: ${{ github.ref_name }}
@@ -254,12 +256,20 @@ jobs:
         run: |
           set -euo pipefail
           title="Space Harvester – current build"
+          flags=(--prerelease=false --latest)
+          if [ "$MODE" = "snapshot" ]; then
+            # Andere Branches: ein rollierendes Pre-Release ohne Versionsnummer, nie Latest (Angelo 16.11.)
+            title="Space Harvester – Snapshot ($BRANCH)"
+            flags=(--prerelease --latest=false)
+          fi
           # Aufräumen (Angelo 16.11.): nur „latest“ und explizit getaggte Releases bleiben (dazu das NLP-Modell
           # maltparser-*, das die App von dort lädt). Alte v<x.y.z>-beta.<N> und die abgelösten rollierenden Releases
           # werden gelöscht; nach dem ersten Lauf ist nichts mehr zu tun.
           old=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | .tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' || true)
-          for t in $OBSOLETE_RELEASES $old; do
+          [ "$MODE" = "beta" ] || old=""
+          [ "$MODE" = "beta" ] && obsolete="$OBSOLETE_RELEASES" || obsolete=""
+          for t in $obsolete $old; do
             if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               echo "Lösche Release $t"
               if [ "$t" = beta ]; then
@@ -272,12 +282,12 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
-              --latest *.jar SHA256SUMS
+              "${flags[@]}" *.jar SHA256SUMS
           else
             # Release bleibt bestehen (feste Adresse), nur Tag, Text und Dateien wandern auf diesen Stand
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$title" \
-              --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease=false --latest
+              --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" "${flags[@]}"
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber *.jar SHA256SUMS
             # Dateien früherer Läufe, die dieser Stand nicht mehr enthält (z. B. alte Namen mit Versionsnummer)
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r asset; do

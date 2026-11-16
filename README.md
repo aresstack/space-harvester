@@ -286,7 +286,7 @@ und Core-Bibliothek (`space-harvester-core-<v>.jar` mit `-sources` und `-javadoc
 | Auslöser | Ergebnis |
 |---|---|
 | Push auf `main` | das eine rollierende Release `latest` („Space Harvester – current build“, als *Latest* markiert, Dateien ohne Versionsnummer) bekommt diesen Stand |
-| Push auf einen anderen Branch | nur Bauen und Testen, kein Release |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` (ohne Versionsnummer, nie *Latest*) bekommt diesen Stand |
 | **Actions › Release › Run workflow** auf `main` mit Feld `tag` (z. B. `v0.1.0`) | Release genau dieser Version mit Versionsnummer, als *Latest* markiert, bis der nächste main-Push `latest` wieder dazu macht |
 
 - Ein reguläres Release braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`

@@ -447,7 +447,7 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
 | Auslöser | Ergebnis |
 |---|---|
 | Push auf `main` | das eine rollierende Release `latest` bekommt diesen Stand (als *Latest* markiert, Dateien ohne Versionsnummer, z. B. `space-harvester-app.jar`) |
-| Push auf einen anderen Branch | nur Bauen und Testen (Actions-Artefakt), kein Release |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` bekommt diesen Stand (ohne Versionsnummer, nie *Latest*) |
 | Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version; *Latest*, bis der nächste main-Push `latest` wieder dazu macht |
 | *Run workflow* auf `main` mit Feld `tag` | wie ein Tag; der Lauf legt den Tag selbst an |
 
@@ -468,6 +468,6 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
   lassen, ins Feld `tag` z. B. `v0.1.0` eintragen und **Run workflow** klicken. Der Lauf baut, testet, legt Tag und
   Release an. Nicht über **Releases** › **Draft a new release** gehen: das legt das Release selbst an, und der
   Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
-- Versionierte Releases werden nie überschrieben. Frühere rollierende Releases (`beta`, `snapshot`,
+- Versionierte Releases werden nie überschrieben. Frühere rollierende Releases (`beta`,
   `chatgpt-compatible`), die Einzel-Betas `v<x.y.z>-beta.<N>` und `v0.1.0-alpha.1` löscht der main-Lauf (Git-Tags
   bleiben).
