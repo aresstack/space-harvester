@@ -32,6 +32,11 @@ public record ChangeUpdate(String id, String sourceId, Instant from, Instant to,
         spaces = Map.copyOf(spaces);
     }
 
+    /** Dasselbe Update mit vorliegender Zusammenfassung. */
+    ChangeUpdate withSummarized() {
+        return new ChangeUpdate(id, sourceId, from, to, mark, initial, kinds, spaces, pages, loaded, reloaded, true);
+    }
+
     /** Ob das Update noch offen ist (nach der letzten Marke). */
     public boolean open() {
         return mark == null;

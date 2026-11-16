@@ -128,7 +128,8 @@ class ConfigurationManagerConfiguration {
         for (String key : List.of(ExportSettings.ATTACHMENTS_ENABLED, ExportSettings.ATTACHMENTS_MAX_SIZE,
                 TermSettings.SYNONYMS_MAX_TERMS, TermSettings.SYNONYMS_MAX_EMBEDDED_TERMS,
                 TermSettings.SYNONYMS_MAX_JUDGED_PAIRS, EnrichmentSettings.DOCUMENTS_ENABLED,
-                EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION)) {
+                EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
+                ChangeLogSettings.SHOW_AFTER_UPDATE)) {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }

@@ -76,6 +76,24 @@ final class ChangeRows {
         before.put(key, page == null ? null : State.of(page));
     }
 
+    /**
+     * Ob {@code state} einen Inhalt bringt, der eine schon vor dem Lauf gespeicherte andere Fassung im Sinn des
+     * Protokolls ersetzt (ADR 0030, Abschnitt 4): eine andere Version des Inhalts, bei Inhalten ohne Version ein anderer
+     * Inhalts-Hash wie bei {@link ChangeKind#CONTENT_CHANGED}. Dazu zählt das Nachladen einer erst im Katalog gesehenen
+     * Version. Andere Rohbytes derselben Version (dynamische Makros) sind keine neue Fassung.
+     */
+    boolean replacesContent(PageKey key, State state) {
+        State was = before.get(key);
+        if (was == null || !was.content() || !state.content()) {
+            return false;
+        }
+        if (was.contentVersion() == null || state.contentVersion() == null) {
+            return !Objects.equals(was.rawSha256(), state.rawSha256());
+        }
+        // Neue Version mit gleichen Bytes: ein leerer Unterschied, kein fehlender.
+        return !was.contentVersion().equals(state.contentVersion());
+    }
+
     void present(PageKey key, State state) {
         after.put(key, new After(Outcome.PRESENT, state));
     }

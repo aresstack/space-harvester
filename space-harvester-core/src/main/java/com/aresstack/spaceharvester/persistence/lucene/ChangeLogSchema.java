@@ -4,9 +4,14 @@ import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.ContentChange;
+import com.aresstack.spaceharvester.application.changelog.ParagraphChange;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.changelog.StoredSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -25,6 +30,10 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortedNumericSortField;
 import org.apache.lucene.search.TermQuery;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Zeilen des Änderungsprotokolls (ADR 0030) im Index des Seiten-Cache: eine eigene Dokumentart mit eigenen Feldnamen,
@@ -70,6 +79,28 @@ final class ChangeLogSchema {
     private static final String MARK_SPACE = M + "space";
     private static final String MARK_FAILED = M + "failedSyncs";
     private static final String MARK_INITIAL = M + "initial";
+
+    /** Wert von {@link PageCacheSchema#TYPE} für Zusammenfassungen und Präfix ihrer IDs (ADR 0030, Abschnitt 5). */
+    static final String SUMMARY = "summary";
+    private static final String S = SUMMARY + ".";
+    static final String SUMMARY_SOURCE_ID = S + "sourceId";
+    private static final String SUMMARY_UPDATE = S + "update";
+    private static final String SUMMARY_AT = S + "at";
+    private static final String SUMMARY_JSON = S + "json";
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /** Wert von {@link PageCacheSchema#TYPE} für Unterschiede beim Ersetzen eines Inhalts und Präfix ihrer IDs. */
+    static final String DIFF = "diff";
+    private static final String X = DIFF + ".";
+    static final String DIFF_SOURCE_ID = X + "sourceId";
+    static final String DIFF_PAGE_ID = X + "pageId";
+    static final String DIFF_AT = X + "at";
+    private static final String DIFF_AT_TEXT = X + "atText";
+    private static final String DIFF_FROM = X + "fromVersion";
+    private static final String DIFF_TO = X + "toVersion";
+    private static final String DIFF_PART = X + "part";
+    private static final String DIFF_TRUNCATED = X + "truncated";
+    private static final char SEPARATOR = '\u001f';
 
     private ChangeLogSchema() {
     }
@@ -149,6 +180,78 @@ final class ChangeLogSchema {
             any.add(new TermQuery(new Term(field, value)), BooleanClause.Occur.SHOULD);
         }
         return any.build();
+    }
+
+    /** Alle Unterschiede. */
+    static Query allDiffs() {
+        return new TermQuery(new Term(PageCacheSchema.TYPE, DIFF));
+    }
+
+    /** Die Unterschiede einer Seite nach {@code after} (ausschließlich, {@code null} ohne Grenze). */
+    static Query diffsOf(PageKey key, Instant after) {
+        BooleanQuery.Builder builder = new BooleanQuery.Builder().add(allDiffs(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(DIFF_SOURCE_ID, key.sourceId())), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(DIFF_PAGE_ID, key.pageId())), BooleanClause.Occur.FILTER);
+        if (after != null) {
+            builder.add(LongField.newRangeQuery(DIFF_AT, PageCacheSchema.nanos(after) + 1, Long.MAX_VALUE),
+                    BooleanClause.Occur.FILTER);
+        }
+        return builder.build();
+    }
+
+    /** Nach Zeitpunkt aufsteigend. */
+    static Sort diffOrder() {
+        return new Sort(new SortedNumericSortField(DIFF_AT, SortField.Type.LONG), SortField.FIELD_DOC);
+    }
+
+    /** Die Unterschiede einer Quelle über die ID, für das Entfernen der Quelle. */
+    static Query diffsOfSource(String sourceId) {
+        return new PrefixQuery(new Term(PageCacheSchema.ID, PageCacheSchema.id(DIFF, sourceId) + '\u001f'));
+    }
+
+    /** Unterschiede vor {@code cutoff}: Sie werden so lange aufbewahrt wie die Zeilen. */
+    static Query diffsBefore(Instant cutoff) {
+        return new BooleanQuery.Builder().add(allDiffs(), BooleanClause.Occur.FILTER)
+                .add(LongField.newRangeQuery(DIFF_AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
+                        BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    static Document diff(ContentChange change) {
+        Document doc = new Document();
+        doc.add(new StringField(PageCacheSchema.TYPE, DIFF, Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID, PageCacheSchema.id(DIFF, change.sourceId(), change.pageId(),
+                Long.toString(PageCacheSchema.nanos(change.at()))), Field.Store.NO));
+        doc.add(new StringField(DIFF_SOURCE_ID, change.sourceId(), Field.Store.YES));
+        doc.add(new StringField(DIFF_PAGE_ID, change.pageId(), Field.Store.YES));
+        doc.add(new LongField(DIFF_AT, PageCacheSchema.nanos(change.at()), Field.Store.NO));
+        doc.add(new StoredField(DIFF_AT_TEXT, change.at().toString()));
+        stored(doc, DIFF_FROM, change.fromVersion());
+        stored(doc, DIFF_TO, change.toVersion());
+        for (ParagraphChange paragraph : change.paragraphs()) {
+            doc.add(new StoredField(DIFF_PART, paragraph.kind().name() + SEPARATOR
+                    + (paragraph.before() == null ? "" : paragraph.before()) + SEPARATOR
+                    + (paragraph.after() == null ? "" : paragraph.after())));
+        }
+        if (change.truncated()) {
+            doc.add(new StoredField(DIFF_TRUNCATED, "true"));
+        }
+        return doc;
+    }
+
+    static ContentChange diff(Document doc) {
+        List<ParagraphChange> paragraphs = new java.util.ArrayList<>();
+        for (String part : doc.getValues(DIFF_PART)) {
+            int first = part.indexOf(SEPARATOR);
+            int second = part.indexOf(SEPARATOR, first + 1);
+            ParagraphChange.Kind kind = ParagraphChange.Kind.valueOf(part.substring(0, first));
+            String before = part.substring(first + 1, second);
+            String after = part.substring(second + 1);
+            paragraphs.add(new ParagraphChange(kind, kind == ParagraphChange.Kind.ADDED ? null : before,
+                    kind == ParagraphChange.Kind.REMOVED ? null : after));
+        }
+        return new ContentChange(doc.get(DIFF_SOURCE_ID), doc.get(DIFF_PAGE_ID), doc.get(DIFF_FROM), doc.get(DIFF_TO),
+                Instant.parse(doc.get(DIFF_AT_TEXT)), paragraphs, doc.get(DIFF_TRUNCATED) != null);
     }
 
     /** Alle Update-Marken. */
@@ -256,6 +359,88 @@ final class ChangeLogSchema {
                 doc.get(NEW_VERSION), doc.get(OLD_TITLE), doc.get(NEW_TITLE), doc.get(OLD_PARENT),
                 doc.get(NEW_PARENT), doc.get(OLD_SPACE), doc.get(NEW_SPACE),
                 generation == null ? null : generation.longValue(), doc.get(PENDING) != null);
+    }
+
+    /** Alle Zusammenfassungen. */
+    static Query allSummaries() {
+        return new TermQuery(new Term(PageCacheSchema.TYPE, SUMMARY));
+    }
+
+    /** Die Zusammenfassungen einer Quelle. */
+    static Query summariesOf(String sourceId) {
+        return new BooleanQuery.Builder().add(allSummaries(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SUMMARY_SOURCE_ID, sourceId)), BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Die Zusammenfassungen einer Quelle über die ID, für das Entfernen der Quelle. */
+    static Query summariesOfSource(String sourceId) {
+        return new PrefixQuery(new Term(PageCacheSchema.ID, PageCacheSchema.id(SUMMARY, sourceId) + '\u001f'));
+    }
+
+    /** Zusammenfassungen, die vor {@code cutoff} aufzubewahren endeten. */
+    static Query summariesBefore(Instant cutoff) {
+        return new BooleanQuery.Builder().add(allSummaries(), BooleanClause.Occur.FILTER)
+                .add(LongField.newRangeQuery(SUMMARY_AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
+                        BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Eindeutige ID einer Zusammenfassung: Quelle und Update. */
+    static Term summaryTerm(String sourceId, String updateId) {
+        return new Term(PageCacheSchema.ID, PageCacheSchema.id(SUMMARY, sourceId, updateId));
+    }
+
+    static String summaryUpdate(Document doc) {
+        return doc.get(SUMMARY_UPDATE);
+    }
+
+    static Document summary(StoredSummary summary) {
+        ObjectNode json = JSON.createObjectNode();
+        json.put("text", summary.text());
+        ArrayNode statements = json.putArray("statements");
+        for (StoredSummary.Statement statement : summary.statements()) {
+            ObjectNode row = statements.addObject();
+            row.put("text", statement.text());
+            ArrayNode pages = row.putArray("pageIds");
+            statement.pageIds().forEach(pages::add);
+        }
+        json.put("model", summary.model());
+        json.put("createdAt", summary.createdAt().toString());
+        json.put("at", summary.at().toString());
+        json.put("unreadableChanges", summary.unreadableChanges());
+        json.put("reportSha256", summary.reportSha256());
+        ArrayNode inputs = json.putArray("inputPages");
+        for (StoredSummary.InputPage page : summary.inputPages()) {
+            inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId());
+        }
+        Document doc = new Document();
+        doc.add(new StringField(PageCacheSchema.TYPE, SUMMARY, Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID, summaryTerm(summary.sourceId(), summary.updateId()).text(),
+                Field.Store.NO));
+        doc.add(new StringField(SUMMARY_SOURCE_ID, summary.sourceId(), Field.Store.YES));
+        doc.add(new StoredField(SUMMARY_UPDATE, summary.updateId()));
+        doc.add(new LongField(SUMMARY_AT, PageCacheSchema.nanos(summary.at()), Field.Store.NO));
+        doc.add(new StoredField(SUMMARY_JSON, JSON.writeValueAsString(json)));
+        return doc;
+    }
+
+    static StoredSummary summary(Document doc) {
+        JsonNode json = JSON.readTree(doc.get(SUMMARY_JSON));
+        List<StoredSummary.Statement> statements = new ArrayList<>();
+        for (JsonNode row : json.path("statements")) {
+            List<String> pages = new ArrayList<>();
+            row.path("pageIds").forEach(page -> pages.add(page.asString()));
+            statements.add(new StoredSummary.Statement(row.path("text").asString(), pages));
+        }
+        List<StoredSummary.InputPage> inputs = new ArrayList<>();
+        for (JsonNode page : json.path("inputPages")) {
+            inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString()));
+        }
+        return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), json.path("text").asString(),
+                statements, json.path("model").asString(), Instant.parse(json.path("createdAt").asString()),
+                Instant.parse(json.path("at").asString()), json.path("unreadableChanges").asInt(),
+                json.path("reportSha256").asString(), inputs);
     }
 
     private static void stored(Document doc, String field, String value) {

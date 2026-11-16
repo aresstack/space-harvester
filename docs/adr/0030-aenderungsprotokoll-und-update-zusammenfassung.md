@@ -95,6 +95,25 @@ Baum zeigen jeden Seitenabruf mit Inhalt, gleich welcher Weg ihn auslöst.
 - **Unterschied je Seite.** Für `CONTENT_CHANGED` bildet der Core lokal und ohne KI den Unterschied zwischen dem
   Lesetext der alten und der neuen Revision: hinzugekommene, entfallene und geänderte Absätze, in der Länge begrenzt.
   Fehlt die alte Revision im Cache, steht das als Daten im Bericht; es wird nichts geschätzt.
+  - *Umgesetzt (CL5):* Der Verlauf im Cache hält keine alten Inhalte, nur Version und Hashes. Der Unterschied entsteht
+    deshalb in dem Moment, in dem ein gespeicherter Inhalt durch eine andere Fassung ersetzt wird: im Commit des
+    Schreiblaufs, in dem der bisherige Inhalt noch lesbar ist. Andere Fassung heißt andere Version, bei Inhalten ohne
+    Version anderer Inhalts-Hash; dazu zählt das Nachladen einer erst im Katalog gesehenen Version. Andere Rohbytes
+    derselben Version (dynamische Makros) ergeben keinen Unterschied. Abgelegt wird nur der Unterschied (Dokumentart
+    `diff`, höchstens 50 Absätze, 500 Zeichen je Absatz, 8000 Zeichen gesamt, sonst `truncated`), nie eine alte
+    Payload. Unterschiede gibt es erst für Ersetzungen ab Einführung von CL5.
+  - Ein Schreiblauf hält für Unterschiede höchstens 500 Seiten und 64 MiB neuer Payload bis zum Commit vor; weitere
+    Seiten des Laufs bekommen keinen Unterschied (`PREVIOUS_MISSING`), der Lauf selbst geht weiter.
+  - Nur auf Wunsch (`report(…, withDiffs)`, REST `?diff=true`) trägt der Bericht je Seite mit `CONTENT_CHANGED` einen
+    `diff` mit Zustand `AVAILABLE` (Schritte von der alten bis
+    zur neuen Version), `CONTENT_PENDING`, `PREVIOUS_MISSING` oder `NOT_PERMITTED`. Ein Schritt ohne Absätze heißt:
+    Der Lesetext ist gleich, geändert haben sich nur Unsichtbares oder Anhänge; Anhänge sind eigene Dokumente
+    (ADR 0026) und nicht Teil des Unterschieds. Rechte: `METADATA` wie der Bericht und `CONTENT` an der Seite; die
+    KI-Freigabe prüft erst die Zusammenfassung (Stufe 6).
+  - Haltedauer = Aufbewahrung des Protokolls (Abschnitt 2), keine eigene Einstellung. Unterschiede verschwinden mit
+    dem Seiteninhalt: Seite entfernt, gesperrt oder aus dem Umfang gefallen, Quelle entfernt, Cache geleert. Sie
+    erscheinen in keiner Seitenabfrage, Suche, keinem Zähler, Export oder Embedding-Index; Inhalte und Titel stehen nie
+    in Logs.
 - Neue Einträge und neue Marken meldet ein Beobachter (ADR 0027). Niemand fragt in Abständen nach.
 
 ### 5. Zusammenfassung je Quelle und Update
@@ -153,8 +172,8 @@ Die Stufen 1 bis 4 brauchen keine KI und sind für sich nützlich.
 
 ## Vor dem Bau zu klären
 
-- Wie lange der Cache alte Revisionen samt Inhalt hält; davon hängt ab, für welche Seiten Stufe 5 einen Unterschied
-  bilden kann.
+- ~~Wie lange der Cache alte Revisionen samt Inhalt hält~~ – geklärt mit CL5: gar nicht; der Unterschied entsteht
+  beim Ersetzen und wird so lange aufbewahrt wie das Protokoll (Abschnitt 4).
 - Ob es eine gemeinsame Schreibstelle für alle Wege schon gibt oder ADR 0027 sie erst schafft; wenn nicht, hängt
   Stufe 1 an der Umsetzung von ADR 0027, Punkt 4.
 - Woran der Core eine manuelle Synchronisierung erkennt (Auslöser am Auftrag) und wie er mehrere gleichzeitig

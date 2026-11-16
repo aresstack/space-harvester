@@ -61,6 +61,7 @@ class ConfigurationParityTest {
               cache:
                 change-log:
                   retention: P2Y
+                  show-after-update: true
               sync:
                 interval: 30m
                 spaces:
@@ -172,7 +173,7 @@ class ConfigurationParityTest {
         // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
         assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(
-                        java.time.Duration.ofDays(730)));
+                        java.time.Duration.ofDays(730), true));
 
         // ADR 0026, AP9a: Analysen je Anhang, beim Dienst ebenfalls über withSyncRules.
         assertThat(app.enrichment()).isEqualTo(service2.enrichment())

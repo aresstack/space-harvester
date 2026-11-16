@@ -418,7 +418,7 @@ class SourceUpdatesViewTest {
                                          boolean pending) {
             return new ReportedPage("wiki", "CLUK", id, kind, Set.of(kind), title, path,
                     URI.create("https://wiki.example/" + id), oldVersion, newVersion, oldTitle, title, null, null,
-                    null, null, pending, SECOND);
+                    null, null, pending, SECOND, null);
         }
     }
 }
