@@ -368,6 +368,10 @@ public final class AppRuntime implements AutoCloseable {
             // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
             service = service.withRerankModel(ai.rerankModel());
         }
+        if (ai.chatMaxTokens() != null) {
+            // Ausgabelimit des Text-Modells (max_tokens); ohne Eintrag gilt der Standard des Core.
+            service = service.withChatMaxTokens(ai.chatMaxTokens());
+        }
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());

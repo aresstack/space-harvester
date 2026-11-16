@@ -38,6 +38,30 @@ class AiServiceSettingsTest {
     }
 
     @Test
+    void chatMaxTokensDefaultTo8192AndAreConfigurable() {
+        assertThat(AiServiceSettings.NONE.chatMaxTokens()).isEqualTo(8192);
+        Properties properties = new Properties();
+        properties.setProperty("space-harvester.ai.base-url", "https://ki.example.org/v1");
+        assertThat(AiServiceSettings.fromProperties(properties).chatMaxTokens()).isEqualTo(8192);
+        properties.setProperty("space-harvester.ai.chat-max-tokens", "16384");
+
+        AiServiceSettings settings = AiServiceSettings.fromProperties(properties);
+
+        assertThat(settings.chatMaxTokens()).isEqualTo(16384);
+        assertThat(settings.withApiKey("k").withRerankModel("r").withVisionModel("v").withEmbedding("e", 3)
+                .chatMaxTokens()).isEqualTo(16384);
+        assertThat(settings.withChatMaxTokens(null).chatMaxTokens()).isEqualTo(8192);
+        assertThat(settings.toString()).contains("chatMaxTokens=16384");
+        properties.setProperty("space-harvester.ai.chat-max-tokens", "0");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("chat-max-tokens");
+        properties.setProperty("space-harvester.ai.chat-max-tokens", "viel");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("chat-max-tokens")
+                .hasMessageNotContaining("viel");
+    }
+
+    @Test
     void withoutValuesThereIsNoServiceAndNoSourceIsApproved() {
         AiServiceSettings settings = AiServiceSettings.fromProperties(new Properties());
 

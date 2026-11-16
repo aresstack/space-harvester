@@ -109,6 +109,8 @@ final class AiSettingsPanel {
     final JTextField rerankModel = Comic.field(24);
     final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
+    /** Ausgabelimit einer Antwort des Text-Modells in Tokens ({@code chat-max-tokens}); leer: Standard des Core. */
+    final JTextField chatMaxTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -210,6 +212,7 @@ final class AiSettingsPanel {
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
         modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
                 "Für die Synonymprüfung und spätere Suchbegriffe aus einer Frage; optional");
+        modelRows.add(CHAT_MAX_TOKENS_LABEL, chatMaxTokens, CHAT_MAX_TOKENS_HELP);
         judgedPairs.setToolTipText("Höchstens so viele Kandidatenpaare je Synonymlauf prüft das Text-Modell; 0 "
                 + "lässt die Prüfung aus");
         modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
@@ -307,6 +310,7 @@ final class AiSettingsPanel {
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
         rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
+        chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
@@ -540,7 +544,7 @@ final class AiSettingsPanel {
     AiDraft draft() {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
-                visionModel.getText());
+                visionModel.getText(), chatMaxTokens.getText());
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -950,6 +954,10 @@ final class AiSettingsPanel {
                 : new String(key), blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()),
                 draft.dimensions(), draft.timeout(), null, Set.of());
     }
+
+    static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";
+    static final String CHAT_MAX_TOKENS_HELP = "So viele Tokens darf eine Antwort des Text-Modells höchstens lang "
+            + "werden (max_tokens); leer: 8192. Endet eine Antwort am Limit, gilt sie als unvollständig";
 
     static final String UNAUTHENTICATED = "Nicht authentifiziert (401/403): API-Key prüfen";
     static final String NOT_SIGNED_IN = "Nicht angemeldet – API-Key fehlt";
