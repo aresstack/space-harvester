@@ -20,7 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      RELEASE_TAG: chatgpt-compatible
+      # Das ZIP hängt am einen rollierenden Release „latest“ (release.yml legt es an und pflegt Titel, Text, Tag)
+      RELEASE_TAG: latest
       RELEASE_TITLE: ChatGPT-compatible offline build
       ASSET_NAME: space-harvester-chatgpt-compatible.zip
       PACKAGE_DIR: space-harvester
@@ -93,13 +94,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          notes="Offline-tested against commit $GITHUB_SHA. Contains the repository, Gradle 8.14.3 distribution and resolved dependency cache. Use: bash chatgpt-build.sh (Java 21 required)."
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes "$notes"
-          else
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
-              --title "$RELEASE_TITLE" --notes "$notes" --prerelease --latest=false
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG fehlt; es entsteht beim Release-Workflow auf main."
+            exit 1
           fi
 
           # Erst das neue ZIP unter vorläufigem Namen hochladen, dann das alte entfernen und umbenennen: Scheitert
@@ -119,10 +117,3 @@ jobs:
             gh api -X DELETE "$release_api/assets/$old_id"
           fi
           gh api -X PATCH "$release_api/assets/$new_id" -f name="$ASSET_NAME" >/dev/null
-
-          # Der Tag zeigt auf den Commit, aus dem das ZIP stammt. Das ZIP ist da schon veröffentlicht; lässt sich
-          # der Tag nicht verschieben, meldet der Lauf das, ohne das ZIP zurückzuhalten.
-          if ! gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
-              -f sha="$GITHUB_SHA" -F force=true >/dev/null; then
-            echo "::warning::Tag $RELEASE_TAG ließ sich nicht auf $GITHUB_SHA verschieben."
-          fi
