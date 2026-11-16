@@ -1,10 +1,7 @@
 package com.aresstack.spaceharvester.app.chat;
 
-import com.aresstack.enterpriseai.astu.chat.ChatMessage;
-import com.aresstack.enterpriseai.astu.chat.ChatRequest;
-import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
-import com.aresstack.enterpriseai.chat.api.ChatErrorKind;
-import com.aresstack.enterpriseai.chat.api.fake.FakeChatCompletionPort;
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
@@ -73,7 +70,7 @@ class ChatTurnTest {
             return resolved.counts().stored() > 0 ? resolved : null;
         });
 
-        FakeChatCompletionPort port = new FakeChatCompletionPort().enqueueAnswer("Ein ", "Berechtigungs", "management.");
+        FakeAiChat port = new FakeAiChat(List.of("Ein ", "Berechtigungs", "management."), null);
         Events events = new Events();
         List<ChatRecord.Message> history = List.of(ChatRecord.Message.user("Hallo", 1),
                 ChatRecord.Message.assistant("abgebrochen", true, 2), ChatRecord.Message.assistant("Hi", false, 3));
@@ -86,13 +83,13 @@ class ChatTurnTest {
         assertThat(events.context.accepted().get(0).text()).contains("Berechtigungsmanagement");
         assertThat(events.deltas).containsExactly("Ein ", "Berechtigungs", "management.");
         assertThat(events.completed).isEqualTo("Ein Berechtigungsmanagement.");
-        ChatRequest request = port.lastRequest();
-        assertThat(request.options().model()).isEqualTo("modell");
-        assertThat(request.options().reasoningEffort()).isEqualTo("low");
-        List<ChatMessage> messages = request.messages();
-        assertThat(messages.get(0).content()).startsWith(ChatKnowledge.SYSTEM_PROMPT)
+        AiChat.Request request = port.lastRequest;
+        assertThat(request.model()).isEqualTo("modell");
+        assertThat(request.reasoningEffort()).isEqualTo("low");
+        List<AiChat.Message> messages = request.messages();
+        assertThat(messages.get(0).text()).startsWith(ChatKnowledge.SYSTEM_PROMPT)
                 .contains("[1] ").contains("Berechtigungsmanagement");
-        assertThat(messages).extracting(ChatMessage::content)
+        assertThat(messages).extracting(AiChat.Message::text)
                 .containsSubsequence("Hallo", "Hi", "Was hat jedes Datenprodukt?").doesNotContain("abgebrochen");
     }
 
@@ -106,16 +103,41 @@ class ChatTurnTest {
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
         Workspace workspace = context.runtime().workspace();
 
-        FakeChatCompletionPort port = new FakeChatCompletionPort()
-                .enqueueError(new ChatCompletionException(ChatErrorKind.TRANSPORT, 503, "HTTP 503", null));
+        FakeAiChat port = new FakeAiChat(List.of(),
+                new AiChatException(AiChatException.Kind.TRANSPORT, 503, "HTTP 503", null));
         Events events = new Events();
         new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", null, events, Runnable::run).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(events.context.isEmpty()).isTrue();
-        assertThat(port.lastRequest().messages().get(0).content()).isEqualTo(ChatKnowledge.SYSTEM_PROMPT);
-        assertThat(port.lastRequest().options().reasoningEffort()).isNull();
+        assertThat(port.lastRequest.messages().get(0).text()).isEqualTo(ChatKnowledge.SYSTEM_PROMPT);
+        assertThat(port.lastRequest.reasoningEffort()).isNull();
         assertThat(events.failed).startsWith("Der KI-Dienst ist nicht erreichbar. (Status 503)")
                 .contains("Technische Ursache: HTTP 503");
+    }
+
+    /** Chat-Modell für Tests (wie {@code FakeChatCompletionPort} im Client): Deltas oder ein Fehler, Anfrage gemerkt. */
+    private static final class FakeAiChat implements AiChat {
+
+        private final List<String> deltas;
+        private final AiChatException error;
+        volatile Request lastRequest;
+
+        FakeAiChat(List<String> deltas, AiChatException error) {
+            this.deltas = deltas;
+            this.error = error;
+        }
+
+        @Override
+        public Task stream(Request request, Listener listener) {
+            lastRequest = request;
+            if (error != null) {
+                listener.failed(error);
+            } else {
+                deltas.forEach(listener::delta);
+                listener.completed(String.join("", deltas));
+            }
+            return () -> { };
+        }
     }
 
     private static final class Events implements ChatTurn.Listener {

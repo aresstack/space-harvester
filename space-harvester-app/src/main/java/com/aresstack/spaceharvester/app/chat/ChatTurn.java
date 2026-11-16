@@ -1,13 +1,7 @@
 package com.aresstack.spaceharvester.app.chat;
 
-import com.aresstack.enterpriseai.astu.chat.ChatMessage;
-import com.aresstack.enterpriseai.astu.chat.ChatOptions;
-import com.aresstack.enterpriseai.astu.chat.ChatRequest;
-import com.aresstack.enterpriseai.astu.chat.ChatResponse;
-import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
-import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
-import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
-import com.aresstack.enterpriseai.chat.api.ChatTask;
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
@@ -70,8 +64,9 @@ public final class ChatTurn {
     }
 
     private final Workspace workspace;
-    private final ChatCompletionPort port;
-    private final ChatOptions options;
+    private final AiChat port;
+    private final String model;
+    private final String effort;
     private final List<ChatRecord.Message> history;
     private final String question;
     private final PageSelection scope;
@@ -80,19 +75,16 @@ public final class ChatTurn {
     private final StringBuilder received = new StringBuilder();
     private volatile boolean cancelRequested;
     private volatile boolean closed;
-    private volatile ChatTask task;
+    private volatile AiChat.Task task;
     private volatile ProgressiveSearch search;
 
-    public ChatTurn(Workspace workspace, ChatCompletionPort port, String model, String effort,
+    public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
                     List<ChatRecord.Message> history, String question, PageSelection scope, Listener listener,
                     Executor ui) {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.port = Objects.requireNonNull(port, "port");
-        ChatOptions.Builder builder = ChatOptions.builder().model(model);
-        if (effort != null) {
-            builder.reasoningEffort(effort);
-        }
-        this.options = builder.build();
+        this.model = Objects.requireNonNull(model, "model");
+        this.effort = effort;
         this.history = List.copyOf(history);
         this.question = Objects.requireNonNull(question, "question");
         this.scope = scope;
@@ -114,7 +106,7 @@ public final class ChatTurn {
         if (running != null) {
             running.cancel();
         }
-        ChatTask streaming = task;
+        AiChat.Task streaming = task;
         if (streaming != null) {
             streaming.cancel();
         }
@@ -134,28 +126,24 @@ public final class ChatTurn {
         }
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
-        List<ChatMessage> messages = new ArrayList<>();
-        messages.add(ChatMessage.system(context.isEmpty() ? ChatKnowledge.SYSTEM_PROMPT
+        List<AiChat.Message> messages = new ArrayList<>();
+        messages.add(AiChat.Message.system(context.isEmpty() ? ChatKnowledge.SYSTEM_PROMPT
                 : ChatKnowledge.SYSTEM_PROMPT + "\n\n" + context.text()));
         for (ChatRecord.Message message : history) {
             if (message.text().isBlank()) {
                 continue;
             }
             if (message.user()) {
-                messages.add(ChatMessage.user(message.text()));
+                messages.add(AiChat.Message.user(message.text()));
             } else if (message.assistant() && !message.cancelled()) {
                 // Abgebrochene Teilantworten bleiben, wie im EAC, aus dem Modellverlauf.
-                messages.add(ChatMessage.assistant(message.text()));
+                messages.add(AiChat.Message.assistant(message.text()));
             }
         }
-        messages.add(ChatMessage.user(question));
-        task = port.stream(new ChatRequest(messages, options), new ChatStreamListener() {
+        messages.add(AiChat.Message.user(question));
+        task = port.stream(new AiChat.Request(messages, model, effort), new AiChat.Listener() {
             @Override
-            public void onStart() {
-            }
-
-            @Override
-            public void onDelta(String text) {
+            public void delta(String text) {
                 synchronized (received) {
                     received.append(text);
                 }
@@ -163,23 +151,18 @@ public final class ChatTurn {
             }
 
             @Override
-            public void onComplete(ChatResponse response) {
-                String full;
-                synchronized (received) {
-                    full = received.length() > 0 || response == null || response.content() == null
-                            ? received.toString() : response.content();
-                }
-                finish(() -> listener.completed(full));
+            public void completed(String text) {
+                finish(() -> listener.completed(text));
             }
 
             @Override
-            public void onError(ChatCompletionException error) {
+            public void failed(AiChatException error) {
                 String message = describe(error);
                 finish(() -> listener.failed(message));
             }
 
             @Override
-            public void onCancelled() {
+            public void cancelled() {
                 String partial;
                 synchronized (received) {
                     partial = received.toString();
@@ -333,7 +316,7 @@ public final class ChatTurn {
      * Für Menschen lesbare Fehlermeldung wie {@code ChatServiceBinding.headline} des Enterprise AI Client: erste Zeile
      * die Fehlerart, dann die technische Ursache des Adapters (laut Port-Vertrag ohne Zugangsdaten).
      */
-    public static String describe(ChatCompletionException error) {
+    public static String describe(AiChatException error) {
         String reason = switch (error.kind()) {
             case AUTHENTICATION -> "Anmeldung am KI-Dienst fehlgeschlagen.";
             case CREDENTIALS_UNAVAILABLE -> "Der API-Key des KI-Dienstes ist nicht verfügbar.";

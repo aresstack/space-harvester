@@ -1,6 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
-import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -843,7 +843,7 @@ public final class Workspace {
      * Der Chat-Port des KI-Dienstes für den Reiter „Chat“ (streamend, {@code POST /chat/completions}) mit den
      * wirksamen Einstellungen; {@code null} ohne Dienst oder Chat-Modell. Der Chat selbst lebt in der App (ADR 0012).
      */
-    public ChatCompletionPort aiChat() {
+    public AiChat aiChat() {
         return harvester.aiChat();
     }
 

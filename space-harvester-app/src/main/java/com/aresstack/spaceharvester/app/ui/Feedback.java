@@ -2,8 +2,8 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComicSectionPanel;
-import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 
 import javax.swing.BorderFactory;
@@ -61,9 +61,8 @@ public final class Feedback extends JPanel {
     };
     private final ComposerButton details = Comic.button("Technische Details", "Klasse und Meldung der Ausnahme");
     /** ✕ rechts oben: schließt die Meldung (Angelo, 16.11.2026); eine neue Meldung öffnet die Platte wieder. */
-    private final ComicWindowCloseButton close = new ComicWindowCloseButton(Comic.PALETTE, this::clear,
-            "Meldung schließen", CLOSE_SIZE);
-    static final int CLOSE_SIZE = 18;
+    private final ComposerButton close = closeButton();
+    static final int CLOSE_SIZE = 22;
     /** Zeigt die Meldungen an dieser Stelle statt hier (ein Statusbereich für mehrere Ansichten, Assistent). */
     private Feedback target;
     /** Nimmt Lauf-, Erfolgs- und Infomeldungen entgegen (Statuszeile); die Platte zeigt dann nur noch Probleme. */
@@ -432,5 +431,17 @@ public final class Feedback extends JPanel {
             getParent().revalidate();
             getParent().repaint();
         }
+    }
+
+    /** Das ✕ als durchsichtiger Icon-Knopf (kein Fenster-Ring: der Ring bleibt dem Hauptfenster vorbehalten). */
+    private ComposerButton closeButton() {
+        ComposerButton button = ComposerButton.iconButton(ComposerIcons.close(), "Meldung schließen");
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setOpaque(false);
+        button.setPreferredSize(new Dimension(CLOSE_SIZE, CLOSE_SIZE));
+        button.addActionListener(e -> clear());
+        return button;
     }
 }

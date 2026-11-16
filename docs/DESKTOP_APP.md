@@ -309,7 +309,7 @@ Core selbst.
   (Payload, Storage-Format) sowie „Aktualität prüfen“ und „Original speichern …“.
 - **Chat** (Angelo, 13. und 16.11.2026, `ChatPanel`, Paket `app.chat`) nach `ChatShellPanel`, `ChatComposerPanel`,
   `ChatServiceBinding` und `ChatHistoryBinding` des Enterprise AI Client im Design von Space Harvester; der Chat lebt
-  nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, streamend über den
+  nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, eigene SPI `AiChat`, streamend über den
   unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Kopfzeile links
   **Chat: ‹Name›** mit dem durchsichtigen Pfeil, der die Chats dieses Bereichs anbietet (zuletzt geänderte zuerst, der
   aktuelle mit Haken), rechts **Neuer Chat**; Rechtsklick auf den Namen: **Umbenennen** an Ort und Stelle (Enter

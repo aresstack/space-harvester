@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -195,7 +196,6 @@ import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
-import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
@@ -1583,7 +1583,7 @@ public final class Harvester implements AutoCloseable {
      * bleibt außerhalb des Core): Route, TLS, Token und Frist wie {@link #aiModels}; {@code null} ohne Dienst oder
      * Chat-Modell. Je Aufruf frisch gebaut, damit geänderte Einstellungen ohne Neustart gelten (ADR 0015).
      */
-    public ChatCompletionPort aiChat() {
+    public AiChat aiChat() {
         AiServiceSettings current = currentAi.get();
         if (current == null || !current.chat()) {
             return null;
