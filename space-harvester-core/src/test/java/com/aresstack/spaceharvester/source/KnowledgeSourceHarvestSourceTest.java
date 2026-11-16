@@ -1277,6 +1277,52 @@ class KnowledgeSourceHarvestSourceTest {
     private static final PageAttachment PDF = new PageAttachment("att7", "confluence:wiki.example.org/attachment/att7",
             "gross.pdf", "application/pdf", null, "1", null, null);
 
+    /**
+     * Angelo 16.11.2026, Quelle mit Benutzer und Passwort, Auftrag „Anhänge beschaffen“: Confluence nahm den Code an und
+     * leitete auf den großen Anhang weiter, das Absenden meldete „zu groß“. Wie bei einer Quelle mit Token lädt der
+     * Abruf einmal neu (die Probe, über denselben Port, keine neue Web-Sitzung), und die Anmeldung gilt, statt dass der
+     * Auftrag mit „Verbindungsfehler (ConfluenceResponseTooLargeException)“ bei „Wartet auf Anmeldung“ stehen bleibt.
+     */
+    @Test
+    void withUserAndPasswordATooLargeAnswerToTheCodeReloadsTheProbeInTheSameSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", "anna", "pw-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles port = new WebFiles(secrets, seen, "port", 1, null);
+        port.tooLargeNext = true;
+        port.probeTooLarge = true;
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.streamAttachment(PDF, new MemorySink()), SignInRequiredException.class);
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        MemorySink sink = new MemorySink();
+        source.streamAttachment(PDF, sink);
+        assertThat(sink.bytes.toString(StandardCharsets.UTF_8)).isEqualTo("PDF-Inhalt");
+        assertThat(seen).containsExactly("port stream anna:pw-value", "port code anna:pw-value",
+                "port probe anna:pw-value", "port stream anna:pw-value");
+        assertThat(source.opensWebSessions()).isFalse();
+    }
+
+    /** Ebenso nach HTTP 500 auf den Code: einmal neu laden, über denselben Port; kommt die Datei, gilt die Anmeldung. */
+    @Test
+    void withUserAndPasswordAServerErrorOnSubmitReloadsOnceInTheSameSession() {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("wiki", "anna", "pw-value");
+        List<String> seen = new java.util.ArrayList<>();
+        WebFiles port = new WebFiles(secrets, seen, "port", 1, null);
+        port.serverErrorNext = true;
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+        SignInRequiredException required = org.assertj.core.api.Assertions.catchThrowableOfType(
+                () -> source.viewImage(IMAGE, 1000), SignInRequiredException.class);
+
+        assertThat(required.challenge().submit("000000".toCharArray())).isNull();
+
+        assertThat(seen).containsExactly("port image anna:pw-value", "port code anna:pw-value",
+                "port image anna:pw-value");
+    }
+
     /** Ein gestreamter Anhang landet im Ziel; jeder Versuch beginnt es von vorn (Angelo 11.11.2026). */
     @Test
     void aStreamedAttachmentArrivesInTheSinkWithoutTheMemoryPath() {
