@@ -295,4 +295,110 @@ class ExplorerTest {
             assertThat(label.getFontMetrics(label.getFont()).stringWidth(label.getText())).isGreaterThan(available);
         });
     }
+
+    /**
+     * Die Überschrift „Wissensquellen“ (oder der Knopf daneben) wählt alle Quellen (Angelo, 16.11.2026): der Kopf ist
+     * gelb hinterlegt, die Auswahl im Baum verschwindet, Umfang = alles, Chat und Export erhalten die globale Auswahl.
+     * Ein Knoten im Baum löst sie wieder ab.
+     */
+    @Test
+    void theHeadingSelectsAllSourcesAndClearsTheTree() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("kurz.md"), "# Kurz\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        Explorer[] explorer = new Explorer[1];
+        List<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> selections =
+                new java.util.ArrayList<>();
+        List<List<Explorer.Scope>> scopes = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            explorer[0].onSelection(selections::add);
+            explorer[0].onScope(scopes::add);
+        });
+        for (int i = 0; i < 200; i++) {
+            int[] rows = new int[1];
+            SwingUtilities.invokeAndWait(() -> rows[0] = explorer[0].tree().getRowCount());
+            if (rows[0] > 0) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTree tree = explorer[0].tree();
+            tree.setSelectionRow(0);
+            assertThat(explorer[0].allSelected()).isFalse();
+            assertThat(selections.get(selections.size() - 1).sourceId()).isEqualTo("handbuch");
+            assertThat(explorer[0].head().isOpaque()).isFalse();
+
+            // Klick auf die Überschrift: alles gewählt, Baum leer, Kopf gelb.
+            javax.swing.JLabel heading = explorer[0].heading();
+            heading.setSize(120, 20);
+            heading.dispatchEvent(new java.awt.event.MouseEvent(heading, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, 5, 5, 1, false, java.awt.event.MouseEvent.BUTTON1));
+            assertThat(explorer[0].allSelected()).isTrue();
+            assertThat(tree.getSelectionCount()).isZero();
+            assertThat(selections.get(selections.size() - 1))
+                    .isSameAs(com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL);
+            assertThat(selections.get(selections.size() - 1).global()).isTrue();
+            assertThat(scopes.get(scopes.size() - 1)).isEmpty();
+            assertThat(explorer[0].head().isOpaque()).isTrue();
+            assertThat(explorer[0].head().getBackground()).isEqualTo(Comic.YELLOW);
+            assertThat(explorer[0].selectAllButton().getToolTipText()).isEqualTo(Explorer.ALL_TIP);
+
+            // Ein Knoten im Baum löst die globale Auswahl ab.
+            tree.setSelectionRow(0);
+            assertThat(explorer[0].allSelected()).isFalse();
+            assertThat(selections.get(selections.size() - 1).sourceId()).isEqualTo("handbuch");
+            assertThat(explorer[0].head().isOpaque()).isFalse();
+
+            // Der Knopf tut dasselbe wie die Überschrift; ohne Baumauswahl meldet er die Auswahl selbst.
+            tree.clearSelection();
+            int before = selections.size();
+            explorer[0].selectAllButton().doClick();
+            assertThat(explorer[0].allSelected()).isTrue();
+            assertThat(selections).hasSize(before + 1);
+            assertThat(selections.get(before).global()).isTrue();
+            explorer[0].clearSelection();
+            assertThat(explorer[0].allSelected()).isFalse();
+            assertThat(selections.get(selections.size() - 1)).isNull();
+        });
+
+        // Der Download-Knopf daneben lädt jede Quelle mit allen Spaces (je Space ein Auftrag, wie einzeln).
+        List<String> downloaded = new java.util.ArrayList<>();
+        context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("download") && args[1] instanceof List<?> keys) {
+                        downloaded.add(args[0] + ":" + keys);
+                    }
+                    return null;
+                }));
+        List<Boolean> answers = new java.util.ArrayList<>(List.of(false, true));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(explorer[0].downloadAllButton().getToolTipText()).isEqualTo(Explorer.DOWNLOAD_ALL_TIP);
+            // Erst die Rückfrage (Ja/Nein, „wirklich“): bei Nein passiert nichts, bei Ja lädt jede Quelle.
+            explorer[0].confirmDownloadAll(parent -> answers.remove(0));
+            explorer[0].downloadAllButton().doClick();
+            assertThat(downloaded).isEmpty();
+            explorer[0].downloadAllButton().doClick();
+        });
+        assertThat(answers).isEmpty();
+        assertThat(Explorer.DOWNLOAD_ALL_QUESTION).containsIgnoringCase("wirklich");
+        assertThat(downloaded).containsExactly("handbuch:[]");
+    }
 }

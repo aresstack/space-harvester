@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 
 import javax.swing.BorderFactory;
@@ -60,8 +61,20 @@ import java.util.function.Consumer;
  */
 public final class ExportPanel extends JPanel {
 
-    /** Die Auswahl links im Explorer: Quelle, Space oder Seite (samt Unterseiten); {@code title} für die Überschrift. */
+    /**
+     * Die Auswahl links im Explorer: Quelle, Space oder Seite (samt Unterseiten); {@code title} für die Überschrift.
+     * Ohne Quelle ({@link #ALL}) ist es die globale Auswahl über alle Wissensquellen (Angelo, 16.11.2026): die
+     * Überschrift „Wissensquellen“ im Explorer ist gewählt.
+     */
     public record Selection(String sourceId, String spaceKey, String pageId, String title) {
+
+        /** Alle Wissensquellen: die Überschrift des Explorers ist gewählt, kein Knoten im Baum. */
+        public static final Selection ALL = new Selection(null, null, null, "Alle Wissensquellen");
+
+        /** Ob dies die globale Auswahl über alle Wissensquellen ist. */
+        public boolean global() {
+            return sourceId == null;
+        }
 
         boolean page() {
             return pageId != null;
@@ -71,8 +84,17 @@ public final class ExportPanel extends JPanel {
             return spaceKey != null && pageId == null;
         }
 
-        /** Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten. */
-        com.aresstack.spaceharvester.application.holdings.Selection toCore() {
+        /**
+         * Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten; die globale
+         * Auswahl als eine Wurzel je Wissensquelle der Laufzeit.
+         */
+        com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
+            if (global()) {
+                return new com.aresstack.spaceharvester.application.holdings.Selection(
+                        runtime.workspace().sources().stream().map(source ->
+                                com.aresstack.spaceharvester.application.holdings.Selection.Root.source(source.id()))
+                                .toList());
+            }
             com.aresstack.spaceharvester.application.holdings.Selection.Root root = pageId != null
                     ? com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree(sourceId, spaceKey, pageId)
                     : spaceKey != null
@@ -399,9 +421,16 @@ public final class ExportPanel extends JPanel {
                 .toList();
         if (selection.spaceKey() == null) {
             List<SpaceRow> rows = new ArrayList<>();
-            for (Partition space : runtime.workspace().spaces(selection.sourceId())) {
-                Selection whole = new Selection(selection.sourceId(), space.key(), null, space.name());
-                rows.add(new SpaceRow(space, newest(jobs, whole), running(jobs, whole)));
+            // Eine Quelle: ihre Spaces; die globale Auswahl: die Spaces aller Quellen, je mit Quellentitel davor.
+            List<HarvestSource> sources = selection.global() ? runtime.workspace().sources()
+                    : runtime.workspace().sources().stream().filter(s -> s.id().equals(selection.sourceId())).toList();
+            for (HarvestSource source : sources) {
+                String prefix = selection.global()
+                        ? (source.title() == null || source.title().isBlank() ? source.id() : source.title()) : null;
+                for (Partition space : runtime.workspace().spaces(source.id())) {
+                    Selection whole = new Selection(source.id(), space.key(), null, space.name());
+                    rows.add(new SpaceRow(prefix, space, newest(jobs, whole), running(jobs, whole)));
+                }
             }
             return new Data(selection, null, null, null, List.of(), rows, null, finished);
         }
@@ -413,7 +442,7 @@ public final class ExportPanel extends JPanel {
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, nicht nur die Startseite.
-        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore());
+        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore(runtime));
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings, finished);
     }
 
@@ -446,7 +475,8 @@ public final class ExportPanel extends JPanel {
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
-    record SpaceRow(Partition space, JobStatus newest, JobStatus running) {
+    /** Ein Space in der Liste einer Quelle; {@code source} nur in der globalen Auswahl (Quellentitel davor). */
+    record SpaceRow(String source, Partition space, JobStatus newest, JobStatus running) {
     }
 
     private void render(Data data) {
@@ -470,7 +500,10 @@ public final class ExportPanel extends JPanel {
         title.setText(current.page() ? "Export · " + current.title() + " samt Unterseiten"
                 : "Export · " + current.title());
         if (source) {
-            hint.setText("Die Spaces dieser Wissensquelle mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
+            hint.setText(current.global()
+                    ? "Die Spaces aller Wissensquellen mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
+                    + "Seite links zeigt Stand und Ausgabe."
+                    : "Die Spaces dieser Wissensquelle mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
                     + "Seite links zeigt Stand und Ausgabe.");
             renderSpaces(data.spaces());
         } else {
@@ -493,6 +526,9 @@ public final class ExportPanel extends JPanel {
         for (SpaceRow row : rows) {
             String label = row.space().name() == null || row.space().name().isBlank() ? row.space().key()
                     : row.space().name();
+            if (row.source() != null) {
+                label = row.source() + " › " + label;
+            }
             spaces.add(label, standText(row.newest(), row.running()),
                     row.newest() == null && row.running() == null ? Comic.MUTED : Comic.INK);
         }
@@ -659,7 +695,7 @@ public final class ExportPanel extends JPanel {
         }
         collect.setEnabled(false);
         feedback.working("Bilder und Anhänge werden eingeplant …");
-        Background.run(() -> runtime.workspace().collectAssets(current.toCore()), jobs -> {
+        Background.run(() -> runtime.workspace().collectAssets(current.toCore(runtime)), jobs -> {
             collect.setEnabled(true);
             if (!Objects.equals(current, selection)) {
                 return;
@@ -732,7 +768,7 @@ public final class ExportPanel extends JPanel {
         feedback.working(Format.title(format) + " wird aus dem Bestand erzeugt …");
         renderButtons();
         Background.run(() -> {
-            List<JobStatus> jobs = runtime.workspace().startExportFromHoldings(current.toCore(),
+            List<JobStatus> jobs = runtime.workspace().startExportFromHoldings(current.toCore(runtime),
                     List.of(Downloads.FORMAT));
             if (jobs.isEmpty()) {
                 throw new IllegalStateException("Kein Space in der Auswahl");
