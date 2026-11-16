@@ -20,10 +20,10 @@ in dieser Reihenfolge: das beim letzten Mal gefundene (gemerkt in `%USERPROFILE%
 Dialog „Space Harvester braucht Java 21 …“ samt dieser Hinweise. Der Start mit dem vollen Pfad
 `"C:\Program Files\<JDK-21-Ordner>\bin\java.exe" -jar space-harvester-app-<version>.jar` geht weiterhin.
 
-1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) die gewünschte Version öffnen
-   (reguläre Releases wie `v0.1.0` sind als *Latest* markiert, die Testversion `beta` als *Pre-release*, `snapshot` ist der letzte Stand eines
-   Entwicklungs-Branches) und `space-harvester-app-<version>.jar`
-   sowie `SHA256SUMS` herunterladen.
+1. Den neuesten Stand immer unter
+   <https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar> herunterladen
+   (Release „Space Harvester – current build“, als *Latest* markiert), dazu bei Bedarf `SHA256SUMS`. Getaggte
+   Releases wie `v0.1.0` heißen `space-harvester-app-<version>.jar`.
 2. Optional die Prüfsumme vergleichen: `certutil -hashfile space-harvester-app-<version>.jar SHA256` muss den Wert aus
    `SHA256SUMS` ergeben.
 3. Starten: Doppelklick auf das JAR oder
@@ -446,33 +446,28 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | das rollierende Pre-Release `latest` bekommt diesen Stand (Version `<Basis>-beta.<N>`, Dateien ohne Versionsnummer, z. B. `space-harvester-app.jar`) |
-| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` bekommt diesen Stand (Version `<Basis>-SNAPSHOT`, Dateien ohne Versionsnummer) |
-| Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version |
+| Push auf `main` | das eine rollierende Release `latest` bekommt diesen Stand (als *Latest* markiert, Dateien ohne Versionsnummer, z. B. `space-harvester-app.jar`) |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` bekommt diesen Stand (ohne Versionsnummer, nie *Latest*) |
+| Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version; *Latest*, bis der nächste main-Push `latest` wieder dazu macht |
 | *Run workflow* auf `main` mit Feld `tag` | wie ein Tag; der Lauf legt den Tag selbst an |
 
 - Die Version steuert zentral `build.gradle` für alle Module: ohne Angabe `0.1.0-SNAPSHOT`, im Release
   `-PreleaseVersion=<v>`. Lokal: `./gradlew build -PreleaseVersion=0.1.0-beta.3`.
-- **Feste Beta-Adresse:** <https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar>
+- **Feste Adresse:** <https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar>
   liefert immer die Desktop-App des neuesten main-Stands (ebenso `space-harvester.jar`, `space-harvester-core.jar`,
-  `SHA256SUMS`). Das Release `latest` bleibt bestehen; jeder main-Lauf verschiebt den Tag und ersetzt die Dateien.
-  Die Version steht im Titel des Releases und in `java -jar space-harvester-app.jar --version`.
-- **Betas:** Jeder Push auf `main` aktualisiert das eine Pre-Release `latest` (Version `<Basis>-beta.<N>`, z. B.
-  `0.1.2-beta.812`). **Basis** ist die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`:
-  `0.1.2`), mindestens die Version aus `build.gradle`; `N` ist die Zahl der Commits auf `main`. Snapshots anderer
-  Branches heißen `<Basis>-SNAPSHOT`. `build.gradle` muss nach einem Release nicht angepasst werden.
-- GitHub sortiert die Releases-Seite nach Datum, nicht nach Version. Ein neuer Eintrag steht deshalb immer oben;
-  rollierend steht über dem regulären Release höchstens je ein Eintrag `latest` und `snapshot`. Die Markierung
-  „Latest“ und der Link `…/releases/latest` (ohne `download`) zeigen weiterhin auf das reguläre Release; nur
-  `…/releases/download/latest/<Datei>` meint das Pre-Release mit dem Tag `latest`.
-- Ein reguläres Release (ohne Vorabkennung, als „Latest“ markiert) entsteht nur über einen Tag wie `v0.1.0` oder
-  *Run workflow* mit `tag`. Es braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`; der Workflow
-  stellt sie vor die Dateiübersicht und bricht ohne sie ab.
+  `SHA256SUMS` und das Offline-ZIP `space-harvester-chatgpt-compatible.zip`). Das Release `latest` („Space Harvester –
+  current build“) bleibt bestehen und wird bei jedem main-Lauf als *Latest* markiert; jeder main-Lauf verschiebt den Tag und ersetzt die
+  Dateien. Titel und Dateinamen tragen keine Versionsnummer; intern zeigt `java -jar space-harvester-app.jar
+  --version` `<Basis>-beta.<N>` (Basis = nächste Patch-Version nach dem neuesten getaggten Release, N = Commits auf
+  main).
+- Versionsnummern gibt es nur bei einem ausdrücklich getaggten Release (Tag wie `v0.1.0` oder *Run workflow* mit
+  `tag`). *Latest* ist immer das neueste Release: das getaggte, bis der nächste main-Push das rollierende
+  `latest` wieder dazu macht. Ohne Vorabkennung braucht es auf `main` die Release-Notizen
+  `docs/release-notes/<tag>.md`; der Workflow stellt sie vor die Dateiübersicht und bricht ohne sie ab.
 - **Nur im Browser** (ohne IDE): auf GitHub unter **Actions** › **Release** › **Run workflow** den Branch `main`
   lassen, ins Feld `tag` z. B. `v0.1.0` eintragen und **Run workflow** klicken. Der Lauf baut, testet, legt Tag und
   Release an. Nicht über **Releases** › **Draft a new release** gehen: das legt das Release selbst an, und der
   Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
-- Versionierte Releases werden nie überschrieben. Nur `latest` und `snapshot` werden ersetzt. Bis zum
-  Wechsel auf `latest` hieß das rollierende Beta-Release `beta` (Dateien mit Versionsnummer); der erste main-Lauf
-  danach entfernt es. Früher bekam jeder main-Push ein eigenes Pre-Release `v<x.y.z>-beta.<N>`; jeder main-Lauf
-  löscht solche Releases (die Git-Tags bleiben stehen).
+- Versionierte Releases werden nie überschrieben. Frühere rollierende Releases (`beta`,
+  `chatgpt-compatible`), die Einzel-Betas `v<x.y.z>-beta.<N>` und `v0.1.0-alpha.1` löscht der main-Lauf (Git-Tags
+  bleiben).

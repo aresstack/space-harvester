@@ -1,6 +1,6 @@
 # Offline builds in ChatGPT
 
-The rolling `chatgpt-compatible` GitHub release contains a ZIP named
+The rolling `latest` GitHub release ("Space Harvester – current build") contains a ZIP named
 `space-harvester-chatgpt-compatible.zip`. It includes the complete Gradle
 multi-module repository, the Gradle 8.14.3 distribution and a dependency cache
 populated by a Java 21 Linux GitHub Actions build.
