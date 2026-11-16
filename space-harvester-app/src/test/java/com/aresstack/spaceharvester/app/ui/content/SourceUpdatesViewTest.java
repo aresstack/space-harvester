@@ -265,9 +265,11 @@ class SourceUpdatesViewTest {
             view.source("wiki", "Confluence HaVdB");
             view.clickUpdate("16.11.2026, 18:30 · angelo");
             view.clickSummarize();
+            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-zusammenfassen.png"));
             actions.finishNow(JobState.COMPLETED);
-            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-updates.png"));
         });
+        javax.swing.SwingUtilities.invokeAndWait(() -> AnalysisTabsScreenshotTest.write(view,
+                out.resolve("quellenseite-updates.png")));
     }
 
     private static ChangeUpdate summarized(ChangeUpdate u) {
