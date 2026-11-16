@@ -474,6 +474,5 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
   Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
 - Versionierte Releases werden nie überschrieben. Nur `latest` und `snapshot` werden ersetzt. Bis zum
   Wechsel auf `latest` hieß das rollierende Beta-Release `beta` (Dateien mit Versionsnummer); der erste main-Lauf
-  danach entfernt es. Bis `v0.1.0-beta.332`
-  bzw. `v0.2.0-beta.2` bekam jeder main-Push ein eigenes Pre-Release; Releases bis `v0.1.0-beta.2` enthalten nur die
-  Desktop-App.
+  danach entfernt es. Früher bekam jeder main-Push ein eigenes Pre-Release `v<x.y.z>-beta.<N>`; jeder main-Lauf
+  löscht solche Releases (die Git-Tags bleiben stehen).

@@ -257,9 +257,19 @@ jobs:
           set -euo pipefail
           title="Space Harvester Snapshot ($BRANCH, $VERSION)"
           [ "$MODE" = "beta" ] && title="Space Harvester – aktueller Stand ($VERSION)"
-          if [ "$MODE" = "beta" ] && gh release view "$LEGACY_BETA_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Früheres rollierendes Pre-Release „beta“ ist durch „latest“ abgelöst
-            gh release delete "$LEGACY_BETA_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          if [ "$MODE" = "beta" ]; then
+            # Alte Beta-Pre-Releases aufräumen (Angelo 16.11.): das frühere rollierende „beta“ samt Tag und alle
+            # einzelnen v<x.y.z>-beta.<N>. Bei denen bleiben die Git-Tags stehen, nur die Releases verschwinden.
+            # Reguläre Releases, „snapshot“ und andere Vorabversionen bleiben unberührt. Nach dem ersten Lauf leer.
+            if gh release view "$LEGACY_BETA_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release delete "$LEGACY_BETA_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            fi
+            old=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.prerelease) | .tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' || true)
+            echo "Alte Beta-Releases zu löschen: $(wc -w <<< "$old")"
+            for t in $old; do
+              gh release delete "$t" --repo "$GITHUB_REPOSITORY" --yes
+            done
           fi
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
