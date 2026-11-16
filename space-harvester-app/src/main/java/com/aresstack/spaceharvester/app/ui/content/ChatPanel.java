@@ -28,6 +28,7 @@ import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -176,7 +177,8 @@ public final class ChatPanel extends JPanel {
 
     private Selection selection;
     /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl. */
-    private Subscription subscription;
+    /** Anmeldungen bei den Bestandsmeldungen: eine je Quelle und Space der Auswahl, global eine je Quelle. */
+    private final List<Subscription> subscriptions = new ArrayList<>();
     private String subscribedKey;
     private AppRuntime subscribed;
     private boolean refreshPending;
@@ -396,6 +398,7 @@ public final class ChatPanel extends JPanel {
         }
         this.selection = selection;
         ChatNode next = selection == null ? null
+                : selection.global() ? ChatNode.ALL
                 : new ChatNode(selection.sourceId(), selection.spaceKey(), selection.pageId());
         if (!Objects.equals(node, next)) {
             switchNode(next);
@@ -426,18 +429,27 @@ public final class ChatPanel extends JPanel {
         if (runtime == subscribed && Objects.equals(key, subscribedKey)) {
             return;
         }
-        if (subscription != null) {
+        for (Subscription subscription : subscriptions) {
             subscription.close();
-            subscription = null;
         }
+        subscriptions.clear();
         subscribed = runtime;
         subscribedKey = key;
         if (key == null) {
             return;
         }
+        // Die globale Auswahl hört auf jede Wissensquelle der Laufzeit.
+        List<String> sourceIds = current.global()
+                ? runtime.workspace().sources().stream().map(HarvestSource::id).toList()
+                : List.of(current.sourceId());
+        for (String sourceId : sourceIds) {
+            subscribe(runtime, sourceId, current.spaceKey() == null ? "" : current.spaceKey());
+        }
+    }
+
+    private void subscribe(AppRuntime runtime, String sourceId, String spaceKey) {
         try {
-            subscription = runtime.workspace().subscribeHoldings(current.sourceId(),
-                    current.spaceKey() == null ? "" : current.spaceKey(), new HoldingsListener() {
+            subscriptions.add(runtime.workspace().subscribeHoldings(sourceId, spaceKey, new HoldingsListener() {
                     @Override
                     public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
                         scheduleRefresh();
@@ -452,11 +464,10 @@ public final class ChatPanel extends JPanel {
                     public void loading(String sourceId, String spaceKey, Set<String> pageIds) {
                         scheduleRefresh();
                     }
-                });
+                }));
         } catch (RuntimeException gone) {
             // Die gewählte Quelle gibt es in dieser Laufzeit nicht mehr (etwa entfernt): der Baum räumt die Auswahl
             // gleich weg; bis dahin ohne Meldungen, das Lesen meldet den Fehler selbst.
-            subscription = null;
         }
     }
 
@@ -488,7 +499,7 @@ public final class ChatPanel extends JPanel {
         }
         // Bis die neue Auswahl aufgelöst ist, gilt die alte nicht mehr: Senden wartet, sonst gingen fremde Seiten mit.
         renderKnowledge(current, null, false);
-        Background.run(() -> runtime.workspace().resolveSelection(current.toCore()), resolved -> {
+        Background.run(() -> runtime.workspace().resolveSelection(current.toCore(runtime)), resolved -> {
             if (ticket == request) {
                 renderKnowledge(current, resolved, true);
             }
@@ -516,15 +527,23 @@ public final class ChatPanel extends JPanel {
     private void renderKnowledge(Selection current, PageSelection resolved, boolean settled) {
         this.resolved = resolved;
         this.settled = settled;
-        boolean allowed = current == null || allowed(context.settings(), current.sourceId());
+        boolean allowed = current == null || (current.global() ? allowedAll(context.settings(), context.runtime())
+                : allowed(context.settings(), current.sourceId()));
         HoldingCounts counts = resolved == null ? null : resolved.counts();
         knowledge.setText(knowledgeText(current, counts, resolved == null || resolved.complete(), allowed));
-        load.setVisible(current != null && (counts == null || counts.stored() < counts.pages()
+        // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
+        load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         send.setEnabled(current != null && settled);
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
+    }
+
+    /** Für die globale Auswahl: ob jede Wissensquelle der Laufzeit Inhalte an den KI-Dienst geben darf. */
+    static boolean allowedAll(AppSettings settings, AppRuntime runtime) {
+        return runtime == null || runtime.workspace().sources().stream()
+                .allMatch(source -> allowed(settings, source.id()));
     }
 
     /** Ob die Quelle Inhalte an den KI-Dienst geben darf ({@code ai.external-processing-sources}). */
@@ -542,7 +561,9 @@ public final class ChatPanel extends JPanel {
             return NO_SELECTION;
         }
         StringBuilder text = new StringBuilder("Wissen: ");
-        if (selection.pageId() != null) {
+        if (selection.global()) {
+            text.append("alle Wissensquellen");
+        } else if (selection.pageId() != null) {
             text.append(selection.title()).append(" samt Unterseiten");
         } else if (selection.spaceKey() != null) {
             text.append("Space ").append(selection.title());
@@ -952,7 +973,7 @@ public final class ChatPanel extends JPanel {
         if (runtime == null || current == null) {
             return;
         }
-        Background.run(() -> runtime.workspace().releasePagesForChat(current.toCore()), released -> {
+        Background.run(() -> runtime.workspace().releasePagesForChat(current.toCore(runtime)), released -> {
             if (!released.isEmpty() && Objects.equals(current, selection)) {
                 status.setText(status.getText().strip() + " · " + Texts.count(released.size(), "Seite", "Seiten")
                         + " für KI freigegeben");

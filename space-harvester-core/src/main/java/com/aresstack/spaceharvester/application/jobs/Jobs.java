@@ -296,6 +296,47 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Wie {@link #submitAwaiting}, aber freigegeben, sobald der Vorgänger erfolgreich endet ({@link JobState#COMPLETED}),
+     * ohne dass jemand {@link #releaseAwaiting} ruft; etwa die Datei eines Exports, die entsteht, sobald sein
+     * Datenbestand fertig ist (Angelo 16.11.2026). Ist der Vorgänger schon erfolgreich beendet, reiht sich der Auftrag
+     * gleich ein. Hält der Vorgänger an, scheitert er oder wird abgebrochen, wartet der Auftrag weiter, bis derselbe
+     * Eintrag später erfolgreich endet; wird der Vorgänger gelöscht, verschwindet er mit.
+     *
+     * @param awaited der Auftrag, dem er folgt
+     * @throws UnknownJobException wenn es den Vorgänger nicht gibt
+     */
+    public JobStatus submitAfter(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                 String owner, Map<String, String> parameters, JobTask task, String awaited) {
+        Objects.requireNonNull(awaited, "awaited");
+        JobStatus status;
+        synchronized (lock) {
+            boolean done = !open.containsKey(awaited) && store.find(awaited)
+                    .orElseThrow(() -> new UnknownJobException(awaited)).state() == JobState.COMPLETED;
+            status = submitAwaiting(type, sourceId, partitionKey, rootPageId, owner, parameters, task, awaited);
+            Job job = open.get(status.id());
+            job.releaseWhenDone = true;
+            if (done) {
+                job.awaiting = null;
+                status = job.snapshot();
+                store.save(status);
+            }
+        }
+        dispatch();
+        return status;
+    }
+
+    /** Unter dem Sperrobjekt: gibt die Aufträge frei, die auf das erfolgreiche Ende dieses Auftrags warten. */
+    private void releaseFollowers(Job ended) {
+        for (Job follower : open.values()) {
+            if (follower.releaseWhenDone && ended.id.equals(follower.awaiting)
+                    && follower.state == JobState.QUEUED) {
+                follower.awaiting = null;
+                store.save(follower.snapshot());
+            }
+        }
+    }
+
+    /**
      * Gibt einen wartenden Auftrag aus {@link #submitAwaiting} frei; er reiht sich dann wie jeder andere ein.
      *
      * @return ob es den Auftrag noch wartend gab; {@code false}, wenn er gelöscht, abgebrochen oder schon frei ist
@@ -1373,6 +1414,9 @@ public class Jobs implements AutoCloseable {
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);
             store.save(finished);
+            if (finished.state() == JobState.COMPLETED) {
+                releaseFollowers(job);
+            }
             reconnectAttempt = followUp(job, finished);
             // Für ↻ angehalten: gleich weiter im selben Eintrag, auch ohne neue Fehler; sonst nur mit Fehlern.
             boolean pressed = job.restartForRetry;
@@ -1753,6 +1797,8 @@ public class Jobs implements AutoCloseable {
         volatile JobStage stage;
         /** Der Auftrag, auf den dieser wartet ({@link Jobs#submitAwaiting}), bis {@link Jobs#releaseAwaiting}. */
         volatile String awaiting;
+        /** Wird frei, sobald {@link #awaiting} erfolgreich endet ({@link Jobs#submitAfter}). */
+        volatile boolean releaseWhenDone;
         /** Noch nicht startbereit: die Vorbereitung beim Annehmen läuft noch. */
         volatile boolean starting;
         /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */

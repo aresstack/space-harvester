@@ -287,4 +287,102 @@ class ExportConversionsTest {
         assertThatThrownBy(() -> conversions.convert(exportId, "client-a", "markdown", downloads))
                 .isInstanceOf(ExportNotConvertibleException.class);
     }
+    @Test
+    void aFileIsItsOwnJobThatStartsOnceItsExportHasEndedAndIsNotStartedTwice() throws IOException {
+        java.util.Queue<Runnable> queued = new java.util.ArrayDeque<>();
+        Jobs later = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 5, Duration.ofHours(1)), clock);
+        FileSystemExportArtifactWriter writer = writer();
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null)));
+        String exportId = new Exports(later, cache, writer, converters, clock).start("confluence", "DEV", "client-a",
+                List.of("json")).id();
+        ExportConversions conversions = new ExportConversions(later, writer, converters);
+
+        JobStatus file = conversions.startConversion(exportId, "client-a", "markdown", downloads);
+        JobStatus again = conversions.startConversion(exportId, "client-a", "markdown", downloads);
+
+        assertThat(file.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.CONVERSION);
+        assertThat(file.stage()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobStage.AWAITING);
+        assertThat(again.id()).as("ein offener Auftrag kommt zurück").isEqualTo(file.id());
+        assertThat(conversions.produced(file.id(), "client-a")).isEmpty();
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+
+        JobStatus done = later.status(file.id(), "client-a");
+        assertThat(done.state()).as(String.valueOf(done))
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(done.parameter(ExportConversions.FORMAT)).isEqualTo("markdown");
+        ExportConversions.ConvertedFile produced = conversions.produced(file.id(), "client-a").orElseThrow();
+        assertThat(produced.path().getParent()).isEqualTo(downloads);
+        assertThat(Files.readString(produced.path())).contains("100");
+        later.close();
+    }
+
+    @Test
+    void aFileOfAnExportThatHasAlreadyEndedIsWrittenAtOnce() {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters);
+
+        JobStatus file = conversions.startConversion(exportId, "client-a", "markdown", downloads);
+
+        assertThat(jobs.status(file.id(), "client-a").state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(conversions.produced(file.id(), "client-a")).isPresent();
+        assertThatThrownBy(() -> conversions.startConversion(exportId, "client-a", "unbekannt", downloads))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> conversions.startConversion(exportId, "client-b", "markdown", downloads))
+                .isInstanceOf(UnknownJobException.class);
+    }
+    @Test
+    void aCancelledFileJobLeavesNoFileBehind() throws IOException {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        ExportConverter cancelling = new ExportConverter() {
+            @Override
+            public String format() {
+                return "abbruch";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public String mediaType() {
+                return "text/plain";
+            }
+
+            @Override
+            public String fileName() {
+                return "abbruch.txt";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) throws IOException {
+                // Der Benutzer bricht ab, während die Datei entsteht.
+                jobs.cancel(jobs.list("client-a", com.aresstack.spaceharvester.application.jobs.JobType.CONVERSION)
+                        .get(0).id());
+                input.forEachPage(page -> {
+                    try {
+                        out.write('x');
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                });
+            }
+        };
+        ExportConversions conversions = new ExportConversions(jobs, writer, new ExportConverters(List.of(
+                new JsonArrayConverter(), cancelling), ExportConverters.DEFAULT_MAX_BYTES));
+
+        JobStatus file = conversions.startConversion(exportId, "client-a", "abbruch", downloads);
+
+        assertThat(jobs.status(file.id(), "client-a").state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+        assertThat(conversions.produced(file.id(), "client-a")).isEmpty();
+        try (Stream<Path> files = Files.list(downloads)) {
+            assertThat(files).as("weder Datei noch Rest").isEmpty();
+        }
+    }
 }

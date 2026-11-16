@@ -5,20 +5,25 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.Objects;
 
 /**
  * Der Bereich, zu dem Chats gehören (Angelo, 16.11.2026): was links im Baum gewählt ist, eine Quelle, ein Space oder
- * eine Seite samt Unterseiten. Chats sind keine globale Liste, sondern liegen je Bereich in einem eigenen Ordner.
+ * eine Seite samt Unterseiten, oder alle Wissensquellen (die Überschrift des Explorers, {@link #ALL}). Chats sind
+ * keine globale Liste, sondern liegen je Bereich in einem eigenen Ordner.
  *
- * @param sourceId die Quelle
+ * @param sourceId die Quelle oder {@code null} für alle Wissensquellen
  * @param spaceKey der Space oder {@code null} für die ganze Quelle
  * @param pageId   die Seite (samt Unterseiten) oder {@code null} für den ganzen Space
  */
 public record ChatNode(String sourceId, String spaceKey, String pageId) {
 
+    /** Alle Wissensquellen: die Chats zur globalen Auswahl liegen unter {@code _alle}. */
+    public static final ChatNode ALL = new ChatNode(null, null, null);
+
     public ChatNode {
-        Objects.requireNonNull(sourceId, "sourceId");
+        if (sourceId == null && (spaceKey != null || pageId != null)) {
+            throw new IllegalArgumentException("Ein Space braucht seine Quelle");
+        }
         if (pageId != null && spaceKey == null) {
             throw new IllegalArgumentException("Eine Seite braucht ihren Space");
         }
@@ -30,6 +35,9 @@ public record ChatNode(String sourceId, String spaceKey, String pageId) {
      * Kennungen nie denselben Ordner teilen.
      */
     public Path directory(Path root) {
+        if (sourceId == null) {
+            return root.resolve("_alle");
+        }
         return root.resolve(segment(sourceId)).resolve(spaceKey == null ? "_quelle" : segment(spaceKey))
                 .resolve(pageId == null ? "_space" : segment(pageId));
     }

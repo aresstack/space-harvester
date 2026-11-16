@@ -209,6 +209,7 @@ import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalyzer;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
@@ -334,6 +335,7 @@ public final class Harvester implements AutoCloseable {
     private final KnowledgeGraph knowledgeGraph;
     private final StatementAnalysisJobs statementAnalysisJobs;
     private final KnowledgeGraphExportUseCase knowledgeGraphExport;
+    private final SourceQueryExports sourceQueryExports;
     private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
@@ -865,6 +867,22 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
+            // Angelo 16.11.2026: Confluence-Metadaten und Analytics als eigene Exporte aus der Quelle, je Wurzel
+            // der Auswahl ein Auftrag; die Seiten kommen aus dem Bestand, die Daten per REST-Abfrage.
+            Holdings selectedPages = this.holdings;
+            this.sourceQueryExports = new SourceQueryExports(jobs, catalog, new SourceQueryExports.Scopes() {
+                @Override
+                public List<Selection.Root> outputs(AccessContext who, Selection selection) {
+                    return selectedPages.outputs(who, selection);
+                }
+
+                @Override
+                public List<String> pages(AccessContext who, Selection.Root root) {
+                    return selectedPages.resolve(who, Selection.of(root)).pages().pagesOf(root.sourceId()).stream()
+                            .sorted(java.util.Comparator.comparingInt(String::length).thenComparing(
+                                    java.util.Comparator.naturalOrder())).toList();
+                }
+            }, access, clock, OWNER);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -1546,6 +1564,11 @@ public final class Harvester implements AutoCloseable {
      * JSON-LD-Export des Knowledge Graph als Auftrag (#499 Abschnitt G, ADR 0024); liest nur vorhandene Analysen und
      * stößt nie eine an.
      */
+    /** Confluence-Metadaten und Analytics als eigene Exporte aus der Quelle (Angelo 16.11.2026). */
+    public SourceQueryExports sourceQueryExports() {
+        return sourceQueryExports;
+    }
+
     public KnowledgeGraphExportUseCase knowledgeGraphExport() {
         return knowledgeGraphExport;
     }

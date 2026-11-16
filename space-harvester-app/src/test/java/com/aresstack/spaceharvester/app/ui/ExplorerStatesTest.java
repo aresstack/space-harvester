@@ -90,6 +90,10 @@ class ExplorerStatesTest {
         assertThat(onEdt(() -> explorer[0].badge(page)).tooltip()).isEqualTo(TreeStates.TIP_LOCAL);
         await(() -> onEdtQuietly(() -> explorer[0].badge(space)).kind() == TreeStates.Kind.FULL);
         assertThat(onEdt(() -> explorer[0].badge(space)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
+        // Das Zeichen der Kopfzeile fasst alle Quellen zusammen (Angelo, 16.11.2026), ebenfalls ohne Abfrage.
+        await(() -> onEdtQuietly(() -> explorer[0].states().all(List.of("handbuch"))).kind() == TreeStates.Kind.FULL);
+        assertThat(onEdt(() -> explorer[0].allBadge().getIcon())).isEqualTo(Glyph.CIRCLE_FULL);
+        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo("2 von 2 Seiten lokal");
     }
 
     private static void await(BooleanSupplier condition) throws Exception {

@@ -203,7 +203,8 @@ public final class ContentView implements View {
         // Graph grenzt sich auf dieselben Seiten ein, ohne ein zweites Mal aufzulösen.
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
-        if (selection != null) {
+        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
+        if (selection != null && !selection.global()) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
             if (!Objects.equals(selection.sourceId(), sourceId)) {
