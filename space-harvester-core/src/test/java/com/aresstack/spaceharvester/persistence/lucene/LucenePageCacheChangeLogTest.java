@@ -130,6 +130,22 @@ class LucenePageCacheChangeLogTest {
     }
 
     @Test
+    void anUnversionedPageWhoseCatalogEntryChangedIsAPendingContentChange() {
+        LucenePageCache cache = open();
+        PageSnapshot page = page("wiki", "101", "DEV", "100", null, json("{}"));
+        cache.save(page);
+        PageMetadata old = page.metadata();
+
+        cache.saveHeader(PageHeader.of("wiki", new PageMetadata(old.pageId(), old.resourceId(), old.title(),
+                old.partitionKey(), old.parentPageId(), null, old.modifiedAt().plusSeconds(60), old.url(),
+                old.attributes()), LATER));
+
+        assertThat(cache.changeEntries("wiki")).extracting(ChangeEntry::kind, ChangeEntry::contentPending)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(ChangeKind.NEW, false),
+                        org.assertj.core.groups.Tuple.tuple(ChangeKind.CONTENT_CHANGED, true));
+    }
+
+    @Test
     void renamedMovedMovedOutAndLabelsAreTheirOwnRows() {
         LucenePageCache cache = open();
         PageSnapshot page = page("wiki", "101", "DEV", "100", "1", json("{}"));

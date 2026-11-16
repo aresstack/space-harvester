@@ -26,26 +26,31 @@ final class ChangeRows {
 
     /** Gespeicherte Felder des Seitendokuments, die der Vergleich braucht. */
     static final Set<String> FIELDS = Set.of(PageCacheSchema.SPACE_KEY, PageCacheSchema.PARENT_ID,
-            PageCacheSchema.TITLE, PageCacheSchema.VERSION_FIELD, PageCacheSchema.ATTRIBUTES_HASH,
-            PageCacheSchema.RAW_SHA256, PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD);
+            PageCacheSchema.TITLE, PageCacheSchema.VERSION_FIELD, PageCacheSchema.METADATA_HASH,
+            PageCacheSchema.ATTRIBUTES_HASH,
+            PageCacheSchema.RAW_SHA256, PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD,
+            PageCacheSchema.SNAPSHOT + PageCacheSchema.METADATA_HASH);
 
     /** Der für das Protokoll wichtige Stand einer Seite. */
-    record State(String spaceKey, String parentId, String title, String version, String attributesHash,
-                 boolean content, String contentVersion, String rawSha256) {
+    record State(String spaceKey, String parentId, String title, String version, String metadataHash,
+                 String attributesHash,
+                 boolean content, String contentVersion, String contentMetadataHash, String rawSha256) {
 
         static State of(Document page) {
             String raw = page.get(PageCacheSchema.RAW_SHA256);
             return new State(page.get(PageCacheSchema.SPACE_KEY), page.get(PageCacheSchema.PARENT_ID),
                     page.get(PageCacheSchema.TITLE), page.get(PageCacheSchema.VERSION_FIELD),
-                    page.get(PageCacheSchema.ATTRIBUTES_HASH), raw != null,
-                    page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD), raw);
+                    page.get(PageCacheSchema.METADATA_HASH), page.get(PageCacheSchema.ATTRIBUTES_HASH), raw != null,
+                    page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD),
+                    page.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.METADATA_HASH), raw);
         }
 
         /** Aktuelle Kopfdaten mit dem gespeicherten Snapshot, {@code snapshot} {@code null} ohne Inhalt. */
         static State of(PageHeader header, PageSnapshot snapshot) {
             return new State(header.metadata().partitionKey(), header.metadata().parentPageId(),
-                    header.metadata().title(), header.metadata().version(), header.attributesHash(), snapshot != null,
+                    header.metadata().title(), header.metadata().version(), header.metadataHash(), header.attributesHash(), snapshot != null,
                     snapshot == null ? null : snapshot.metadata().version(),
+                    snapshot == null ? null : snapshot.metadataHash(),
                     snapshot == null ? null : snapshot.payload().rawSha256());
         }
     }
@@ -127,10 +132,13 @@ final class ChangeRows {
             entries.add(entry(key, space, at, ChangeKind.NEW, trigger, null, is, !is.content()));
             return;
         }
+        // Ohne Versionskennung zählt wie in SyncPlanner.classify der metadataHash (z. B. geändertes modifiedAt).
         boolean newVersion = !Objects.equals(was.version(), is.version()) || was.version() == null
-                && was.content() && is.content() && !Objects.equals(was.rawSha256(), is.rawSha256());
+                && (!Objects.equals(was.metadataHash(), is.metadataHash())
+                || was.content() && is.content() && !Objects.equals(was.rawSha256(), is.rawSha256()));
         if (newVersion) {
-            boolean pending = !is.content() || is.version() != null && !is.version().equals(is.contentVersion());
+            boolean pending = !is.content() || is.version() != null && !is.version().equals(is.contentVersion())
+                    || is.version() == null && !Objects.equals(is.metadataHash(), is.contentMetadataHash());
             entries.add(entry(key, space, at, ChangeKind.CONTENT_CHANGED, trigger, was, is, pending));
         } else if (is.content() && !was.content()) {
             entries.add(entry(key, space, at, ChangeKind.LOADED, trigger, was, is, false));
