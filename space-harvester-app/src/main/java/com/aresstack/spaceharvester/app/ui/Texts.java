@@ -128,6 +128,7 @@ public final class Texts {
             case GLOSSARY -> "Fachbegriffe ermitteln";
             case IMPORT -> "Import";
             case REREAD -> "Neu lesen";
+            case CONVERSION -> "Datei erzeugen";
         };
     }
 

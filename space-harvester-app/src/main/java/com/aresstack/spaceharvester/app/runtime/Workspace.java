@@ -1002,6 +1002,56 @@ public final class Workspace {
         return harvester.conversions().convert(exportId, Harvester.OWNER, format, directory);
     }
 
+    /**
+     * „Datei erzeugen“ als eigener Auftrag (Angelo 16.11.2026): die Datei im Format aus dem Datenbestand des eigenen
+     * Exports im Ordner, sobald der Export erfolgreich endet; ein offener Auftrag mit gleichem Export, Format und Ordner
+     * kommt zurück. Die erzeugte Datei liest {@link #producedFile}.
+     */
+    public JobStatus startConversion(String exportId, String format, Path directory) {
+        ownExport(exportId);
+        JobStatus status = harvester.conversions().startConversion(exportId, Harvester.OWNER, format, directory);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /** Die Datei eines beendeten eigenen Auftrags „Datei erzeugen“ aus diesem Lauf; leer solange er läuft. */
+    public Optional<ExportConversions.ConvertedFile> producedFile(String jobId) {
+        return harvester.conversions().produced(jobId, Harvester.OWNER);
+    }
+
+    /**
+     * Ein Format-Knopf (Angelo 16.11.2026): je gewähltem Space bzw. Teilbaum ({@code Holdings.outputs}) zwei Aufträge,
+     * erst die Daten, dann die Datei. Liegen für die Wurzel Seiten im Bestand, ist der erste die Ausgabe aus dem Bestand
+     * ({@link #startExportFromHoldings}, wiederverwendet, wenn sich nichts geändert hat); sonst lädt er die Seiten
+     * erst von der Quelle ({@link #startExport(String, String, String, Integer, List)}). Der zweite erzeugt die Datei,
+     * sobald der erste erfolgreich endet ({@link #startConversion}).
+     *
+     * @param datasetFormats Formate des Datenbestands, wie bei einem Download
+     * @return je Wurzel der Daten-Auftrag und danach der Auftrag „Datei erzeugen“
+     */
+    public List<JobStatus> exportFiles(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                       List<String> datasetFormats, String format, Path directory) {
+        Objects.requireNonNull(directory, "directory");
+        harvester.conversions().converter(format);
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
+        List<JobStatus> started = new ArrayList<>(2 * outputs.size());
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            boolean stored = harvester.holdings().resolve(caller,
+                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0;
+            JobStatus data = stored
+                    ? harvester.exports().startFromHoldings(ExportRequest.fromHoldings(root.sourceId(),
+                    root.spaceKey(), Harvester.OWNER, datasetFormats).withRoot(root.pageId()))
+                    : harvester.exports().start(root.sourceId(), root.spaceKey(), root.pageId(), null,
+                    Harvester.OWNER, datasetFormats);
+            activities.remember(data.id());
+            started.add(data);
+            started.add(startConversion(data.id(), format, directory));
+        }
+        return started;
+    }
+
     /** Export abbrechen ({@code POST /exports/{id}/cancel}). */
     public JobStatus cancelExport(String exportId) {
         ownExport(exportId);
