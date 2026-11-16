@@ -385,8 +385,34 @@ public final class Harvester implements AutoCloseable {
     private final Map<String, ConfiguredSchedule> configuredSchedules = new LinkedHashMap<>();
     private final List<ConfiguredSchedule> configuredInventories = new ArrayList<>();
 
+    /**
+     * Misst den Start des Core für das Protokoll: jeder Schritt über einer Sekunde mit Namen und Dauer, am Ende die
+     * Gesamtdauer. Keine Inhalte, nur Schrittnamen.
+     */
+    private static final class StartTimer {
+
+        private static final long SLOW_NANOS = TimeUnit.SECONDS.toNanos(1);
+        private final long started = System.nanoTime();
+        private long last = started;
+
+        void step(String name) {
+            long now = System.nanoTime();
+            if (now - last >= SLOW_NANOS) {
+                LOG.log(System.Logger.Level.INFO, "Start: {0} dauerte {1} ms", name,
+                        TimeUnit.NANOSECONDS.toMillis(now - last));
+            }
+            last = now;
+        }
+
+        void done() {
+            LOG.log(System.Logger.Level.INFO, "Core gestartet in {0} ms",
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        }
+    }
+
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
+        StartTimer start = new StartTimer();
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
             // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
@@ -398,6 +424,7 @@ public final class Harvester implements AutoCloseable {
                     builder.secretProvider);
             opened.add(catalog);
             this.catalog = catalog;
+            start.step("Quellen");
             this.trustBundles = trustBundles;
             this.userAgent = builder.userAgent;
             ConfigurationManager manager = builder.configuration;
@@ -443,6 +470,7 @@ public final class Harvester implements AutoCloseable {
                 runLog = lucene;
             }
             this.searchRuns = new SearchRuns(runLog, builder.searchRunAdministrators);
+            start.step("Ablagen öffnen und Aufträge übernehmen");
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
             Swappable<EmbeddingGeneration> model = null;
@@ -573,6 +601,7 @@ public final class Harvester implements AutoCloseable {
             // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
             VersionRecomputation versions = new VersionRecomputation(enrichments, cache::snapshots);
             opened.add(versions);
+            start.step("Anreicherung");
             versions.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
@@ -763,6 +792,7 @@ public final class Harvester implements AutoCloseable {
                     HitScorer.of(excerpts), runLog);
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
+            start.step("Suche");
             this.liveReranker = swappable;
             LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
             // ADR 0030: Aufbewahrung des Änderungsprotokolls beim Start und nach jedem Abgleich, nie nach Zeitgeber.
@@ -779,7 +809,8 @@ public final class Harvester implements AutoCloseable {
                             }
                         });
             };
-            pruneChangeLog.run();
+            // Beim Start im Hintergrund: Das Aufräumen wartet auf den Schreiblauf des Cache und hielte sonst den Start auf.
+            Thread.ofVirtual().name("change-log-prune").start(pruneChangeLog);
             // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten;
             // der Lauf nach dem Abgleich holt den Bestand nach.
             EnrichmentSettings startEnrichment = builder.enrichment;
@@ -804,6 +835,7 @@ public final class Harvester implements AutoCloseable {
                             () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
                             summaryRelease::mayProcess, clock));
             opened.add(changeLog);
+            start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
@@ -984,6 +1016,7 @@ public final class Harvester implements AutoCloseable {
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
+            start.step("Exporte, Bilder und Aussagen");
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
             this.inventories = Reconciliation.inventories(syncs, OWNER, clock, inventoryLog);
@@ -1019,7 +1052,9 @@ public final class Harvester implements AutoCloseable {
             // ADR 0026, Punkt 11 (AP5c): nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein
             // eigener Auftrag die abgelegten Dokumente neu, ohne den Start aufzuhalten.
             rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
+            start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
+            start.done();
         } catch (RuntimeException e) {
             closeAll(opened, e);
             throw e;

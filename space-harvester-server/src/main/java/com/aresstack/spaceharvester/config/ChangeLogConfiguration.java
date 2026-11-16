@@ -63,7 +63,10 @@ class ChangeLogConfiguration {
         return ManualSyncRounds.start(jobs, available == null ? ChangeLogStore.NONE : available, Clock.systemUTC());
     }
 
-    /** Räumt beim Start und nach jedem bestätigten Abgleich auf, nie nach Zeitgeber (ADR 0030, Abschnitt 2). */
+    /**
+     * Räumt beim Start (im Hintergrund) und nach jedem bestätigten Abgleich auf, nie nach Zeitgeber (ADR 0030,
+     * Abschnitt 2).
+     */
     @Bean
     SyncCommitted pruneChangeLog(ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
         Runnable prune = () -> {
@@ -79,7 +82,8 @@ class ChangeLogConfiguration {
                 LOG.warn("Änderungsprotokoll nicht aufgeräumt ({})", e.getClass().getName());
             }
         };
-        prune.run();
+        // Beim Start im Hintergrund: Das Aufräumen wartet auf den Schreiblauf des Cache und hielte sonst den Start auf.
+        Thread.ofVirtual().name("change-log-prune").start(prune);
         return run -> prune.run();
     }
 }

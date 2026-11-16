@@ -2,13 +2,17 @@ package com.aresstack.spaceharvester.application.changelog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -159,6 +163,36 @@ class ManualSyncRoundsTest {
             assertThat(mark.at()).isEqualTo(T0.plusSeconds(90));
             assertThat(mark.spaces()).containsExactly("DEV", "OPS");
         });
+    }
+
+    @Test
+    void theRecoveryAfterARestartRunsInTheBackgroundAndDoesNotHoldUpTheStart() throws Exception {
+        InMemoryJobStore store = new InMemoryJobStore();
+        store.save(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        List<Runnable> background = new ArrayList<>();
+        try (Jobs jobs = new Jobs(store, Runnable::run, new JobLimits(1, 5, Duration.ofDays(1)), CLOCK);
+             ManualSyncRounds started = ManualSyncRounds.start(jobs, marks, CLOCK, background::add)) {
+            assertThat(written).as("der Start liest und schreibt nichts").isEmpty();
+            assertThat(background).hasSize(1);
+
+            background.getFirst().run();
+            assertThat(written).singleElement().satisfies(mark -> {
+                assertThat(mark.at()).isEqualTo(T0.plusSeconds(60));
+                assertThat(mark.spaces()).containsExactly("DEV");
+            });
+        }
+    }
+
+    @Test
+    void aRecoveryThatOnlyRunsAfterClosingWritesNothing() throws Exception {
+        InMemoryJobStore store = new InMemoryJobStore();
+        store.save(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        List<Runnable> background = new ArrayList<>();
+        try (Jobs jobs = new Jobs(store, Runnable::run, new JobLimits(1, 5, Duration.ofDays(1)), CLOCK)) {
+            ManualSyncRounds.start(jobs, marks, CLOCK, background::add).close();
+            background.getFirst().run();
+        }
+        assertThat(written).isEmpty();
     }
 
     @Test
