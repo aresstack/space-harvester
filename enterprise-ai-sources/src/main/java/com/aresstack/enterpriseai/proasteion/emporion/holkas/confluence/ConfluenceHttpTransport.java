@@ -35,7 +35,9 @@ public interface ConfluenceHttpTransport {
      * Sendet ein Formular ({@code application/x-www-form-urlencoded}) wie ein Browser: Weiterleitungen auf demselben
      * Host werden verfolgt (301/302/303 als GET, 307/308 erneut als POST), Cookies, die unterwegs gesetzt werden,
      * gehen bei den folgenden Schritten mit. Der Körper enthält Formularwerte (etwa einen Einmalcode) und wird nie
-     * geloggt. Standard: nicht unterstützt (Test-Transporte ohne Formulare).
+     * geloggt. Eine Antwort, die {@link ConfluenceHttpResponse#streamable} ist (Erfolg, kein HTML, etwa die Datei, auf
+     * die Confluence nach einem angenommenen Einmalcode weiterleitet), kommt mit Status, Typ und Cookies, aber ohne
+     * Körper; {@code maxBytes} gilt für Seiten. Standard: nicht unterstützt (Test-Transporte ohne Formulare).
      */
     default ConfluenceHttpResponse postForm(URI uri, Map<String, String> headers, byte[] form, int maxBytes)
             throws IOException {

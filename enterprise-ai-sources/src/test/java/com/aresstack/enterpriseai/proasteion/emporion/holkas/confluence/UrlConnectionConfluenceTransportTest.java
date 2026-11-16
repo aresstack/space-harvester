@@ -242,6 +242,49 @@ public class UrlConnectionConfluenceTransportTest {
         assertEquals(base.resolve("/after"), response.uri());
     }
 
+    /**
+     * Space Harvester, 16.11.2026: Nach dem angenommenen Einmalcode leitet Confluence auf die Datei weiter, die die
+     * Code-Seite ausgelöst hat. Das Formular liest sie nicht: Status, Typ und die unterwegs gesetzten Cookies kommen
+     * zurück, auch wenn die Datei größer ist als die Grenze für Antworten.
+     */
+    @Test
+    public void aFormWhoseRedirectEndsInAFileReturnsStatusAndCookiesWithoutReadingTheFile() throws IOException {
+        server.createContext("/code", exchange -> {
+            readAll(exchange.getRequestBody());
+            exchange.getResponseHeaders().add("Set-Cookie", "JSESSIONID=bestaetigt; Path=/; HttpOnly");
+            exchange.getResponseHeaders().add("Location", "/file");
+            respond(exchange, 302, "text/html", "");
+        });
+
+        ConfluenceHttpResponse response = transport.postForm(base.resolve("/code"), headers(),
+                "otpCode=1".getBytes(StandardCharsets.UTF_8), 1000);
+
+        assertEquals(200, response.status());
+        assertEquals("application/pdf", response.contentType());
+        assertEquals(0, response.length());
+        assertEquals(Collections.singletonList("JSESSIONID=bestaetigt"), response.cookies());
+        assertEquals(base.resolve("/file"), response.uri());
+    }
+
+    /** Eine Seite als Antwort auf ein Formular (etwa die Code-Seite nach einem falschen Code) liest es unter der Grenze. */
+    @Test
+    public void aFormReadsAPageAnswerUnderTheLimit() throws IOException {
+        server.createContext("/wrong", exchange -> {
+            readAll(exchange.getRequestBody());
+            exchange.getResponseHeaders().add("Location", "/page");
+            respond(exchange, 302, "text/html", "");
+        });
+        byte[] form = "otpCode=0".getBytes(StandardCharsets.UTF_8);
+
+        assertEquals(20000, transport.postForm(base.resolve("/wrong"), headers(), form, 30000).length());
+        try {
+            transport.postForm(base.resolve("/wrong"), headers(), form, 1000);
+            fail();
+        } catch (ConfluenceResponseTooLargeException expected) {
+            assertEquals(1000, expected.maxBytes());
+        }
+    }
+
     private static byte[] readAll(java.io.InputStream in) throws IOException {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         byte[] buffer = new byte[1024];

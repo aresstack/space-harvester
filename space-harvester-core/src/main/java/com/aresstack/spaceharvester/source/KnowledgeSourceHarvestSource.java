@@ -1582,7 +1582,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /**
      * Ein Dateiabruf: über die eigene Web-Sitzung mit Benutzer und Passwort, sobald angegeben (wie bei einer Quelle mit
      * Benutzer und Passwort), sonst über den Port der Quelle. Verlangt er eine Code-Seite, wird er an ihr gemerkt, damit
-     * er sich nach der Angabe von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt.
+     * er sich nach der Angabe von Benutzer und Passwort einmal in der neuen Web-Sitzung wiederholen lässt und nach einer
+     * Antwort auf den Code, die nicht die Code-Seite ist, einmal neu lädt.
      */
     private <T> T fetch(FileFetch<T> fetch) throws KnowledgeSourceException {
         return fetch(fetch, fetch);
@@ -1594,9 +1595,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             return login == null ? fetch.from(port) : withWebLogin(login, () -> fetch.from(login.port()));
         } catch (OneTimeCodeRequiredException required) {
+            // Bei jeder Quelle gemerkt, auch mit Benutzer und Passwort (Angelo 16.11.2026): Antwortet Confluence auf
+            // den Code nicht mit der Code-Seite (zu groß, weil es auf die Datei weiterleitet, oder HTTP 500), lädt genau
+            // dieser Abruf einmal neu ({@link Challenge#reloadAfterServerError}), in derselben Web-Sitzung.
+            retries.put(required.challenge(), retry);
+            lastRetry = retry;
             if (webPorts != null) {
-                retries.put(required.challenge(), retry);
-                lastRetry = retry;
                 // Die Zwei-Faktor-Anmeldung fordert gerade den Code an: jetzt die zweite Web-Sitzung bereitstellen,
                 // damit das Absenden nichts mehr öffnen muss. Scheitert das, versucht es das Absenden noch einmal.
                 try {
