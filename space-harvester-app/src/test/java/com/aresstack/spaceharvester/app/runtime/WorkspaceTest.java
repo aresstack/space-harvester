@@ -233,6 +233,42 @@ class WorkspaceTest {
     }
 
     @Test
+    void aFormatButtonFirstLoadsWithoutHoldingsAndThenWritesTheFileAsItsOwnJob() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        Path out = home.resolve("ausgabe");
+        com.aresstack.spaceharvester.application.holdings.Selection space =
+                com.aresstack.spaceharvester.application.holdings.Selection.of(
+                        com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "DEV"));
+
+        List<JobStatus> first = workspace.exportFiles(space, List.of("json"), "markdown", out);
+
+        assertThat(first).extracting(JobStatus::type).containsExactly(JobType.EXPORT, JobType.CONVERSION);
+        assertThat(first.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .as("ohne Bestand lädt der erste Auftrag von der Quelle").isNull();
+        JobStatus file = await(workspace, first.get(1));
+        assertThat(file.state()).as(String.valueOf(file)).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.producedFile(file.id())).hasValueSatisfying(produced ->
+                assertThat(produced.path().getParent()).isEqualTo(out));
+
+        // Jetzt liegt der Space im Bestand: die Daten kommen aus ihm.
+        List<JobStatus> second = workspace.exportFiles(space, List.of("json"), "markdown", out);
+        assertThat(second.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .isEqualTo("true");
+        assertThat(await(workspace, second.get(1)).state()).isEqualTo(JobState.COMPLETED);
+
+        // Wer exportieren, aber nicht abgleichen darf, sieht und löscht seine Datei-Aufträge.
+        Workspace exportOnly = new Workspace(started.harvester(),
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.SYNC
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("nur-export.txt")));
+        assertThat(exportOnly.job(file.id()).type()).isEqualTo(JobType.CONVERSION);
+        assertThat(exportOnly.jobs()).extracting(JobStatus::id).contains(file.id());
+    }
+
+    @Test
     void theDeletionOfAJobOfAnInvisibleSourceIsNotAnnounced() throws Exception {
         AppRuntime started = start();
         Workspace full = started.workspace();

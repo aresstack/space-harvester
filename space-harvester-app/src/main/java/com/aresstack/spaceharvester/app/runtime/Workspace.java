@@ -1069,7 +1069,8 @@ public final class Workspace {
 
     /** Welches Recht ein Auftrag zum Anzeigen braucht: Exporte die Export-Freigabe, alle anderen die zum Abgleichen. */
     private static AccessKind visibility(JobStatus status) {
-        return status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC;
+        return status.type() == JobType.EXPORT || status.type() == JobType.CONVERSION ? AccessKind.EXPORT
+                : AccessKind.SYNC;
     }
 
     /**
@@ -1250,6 +1251,8 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
+        // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
         for (JobStatus followUp : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(followUp.id()))) {
                 try {
