@@ -65,6 +65,21 @@ final class JobStatusLine extends JPanel {
         center.revalidate();
     }
 
+    /**
+     * Die Mitte (Zurück, Vor, Endzustand) behält ihren Platz; wird es eng, kürzt sich der Auftragstext mit „…“
+     * (der volle Text steht im Tooltip), statt die Knöpfe aus der Zeile zu drängen.
+     */
+    @Override
+    public void doLayout() {
+        super.doLayout();
+        int width = getWidth();
+        int textWidth = Math.max(0, width - center.getPreferredSize().width);
+        if (text.getWidth() > textWidth) {
+            text.setBounds(text.getX(), text.getY(), textWidth, text.getHeight());
+            center.setBounds(text.getX() + textWidth, center.getY(), width - textWidth, center.getHeight());
+        }
+    }
+
     /** Zeigt Zurück und Vor nur, solange die Mitte des Fensters die Seitenansicht zeigt. */
     void navigationVisible(boolean visible) {
         if (navigation != null) {

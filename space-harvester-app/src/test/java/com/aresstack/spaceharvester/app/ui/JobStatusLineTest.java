@@ -100,4 +100,24 @@ class JobStatusLineTest {
             assertThat(line.doneTimer().isRunning()).as("Fehlgeschlagen bleibt stehen").isFalse();
         });
     }
+
+    @Test
+    void aLongJobTextShortensInsteadOfPushingTheNavigationOut() throws Exception {
+        ApplicationEventBus bus = new ApplicationEventBus();
+        SwingUtilities.invokeAndWait(() -> {
+            JobStatusLine line = new JobStatusLine(bus);
+            javax.swing.JPanel navigation = new javax.swing.JPanel();
+            navigation.add(new javax.swing.JButton("<"));
+            navigation.add(new javax.swing.JButton(">"));
+            line.navigation(navigation);
+            bus.publish(new JobProgressEvent("Aufträge: 3 laufen, 2 warten · 41 % · noch ≈ 12 min, sehr langer Text",
+                    41, 100, false, Outcome.RUNNING));
+            line.setSize(200, 24);
+            line.doLayout();
+            navigation.getParent().doLayout();
+            assertThat(navigation.getWidth()).isEqualTo(navigation.getPreferredSize().width);
+            assertThat(line.text.getWidth()).isLessThan(line.text.getPreferredSize().width);
+            assertThat(line.text.getWidth() + navigation.getParent().getWidth()).isEqualTo(200);
+        });
+    }
 }
