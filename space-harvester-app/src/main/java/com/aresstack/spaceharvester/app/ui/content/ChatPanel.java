@@ -7,17 +7,25 @@ import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.PlaceholderTextArea;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
+import com.aresstack.spaceharvester.app.chat.ChatKnowledge;
+import com.aresstack.spaceharvester.app.chat.ChatNode;
+import com.aresstack.spaceharvester.app.chat.ChatRecord;
+import com.aresstack.spaceharvester.app.chat.ChatStore;
+import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -25,7 +33,7 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.JComboBox;
+import javax.swing.JTextField;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
@@ -46,33 +54,60 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.KeyEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.io.File;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Reiter „Chat“ (Angelo, 13.11.2026), vorerst als Click-Dummy nach {@code ChatShellPanel} und
- * {@code ChatComposerPanel} des Enterprise AI Client, im Design von Space Harvester: oben die Chats und „Neuer Chat“,
- * der Verlauf als Sprechblasen, darüber dem Composer die stille Statuszeile des Wissens (sie folgt der Auswahl links
- * und ist nicht abwählbar), unten die eine abgerundete Composer-Fläche. Senden zeigt nur „Chat folgt“.
+ * Reiter „Chat“ (Angelo, 13. und 16.11.2026) nach {@code ChatShellPanel}, {@code ChatComposerPanel},
+ * {@code ChatServiceBinding} und {@code ChatHistoryBinding} des Enterprise AI Client, im Design von Space Harvester:
+ * oben links „Chat: ‹Name›“ mit dem Pfeil, der die Chats dieses Bereichs anbietet (Rechtsklick auf den Namen:
+ * Umbenennen an Ort und Stelle, Chat löschen mit Rückfrage), rechts „Neuer Chat“; der Verlauf als Sprechblasen,
+ * über dem Composer die stille Statuszeile des Wissens (sie folgt der Auswahl links und ist nicht abwählbar), unten
+ * die eine abgerundete Composer-Fläche. Senden holt das Wissen aus dem Bestand und streamt die Antwort des
+ * Chat-Modells ({@link ChatTurn}); währenddessen heißt der Knopf „Stopp“.
+ *
+ * <p>Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
+ * Unterseiten, {@link ChatNode}), und liegen je Bereich im Datenordner der App ({@link ChatStore}). Der Name eines
+ * Chats ist seine UUID, bis der Benutzer ihn umbenennt; die Kennung bleibt.
  *
  * <p>Das Wissen ist, was links gewählt ist: Quelle, Space oder Seite samt Unterseiten. Die Seitenzahl kommt aus der
  * Bestandsübersicht des Core ({@code Workspace.holdings}, ADR 0027) und frischt sich über deren Meldungen auf, ohne
- * Zeitgeber. Ist der Umfang nicht (ganz) geladen, steht „Laden“ daneben. Der Chat ist die einzige Ausnahme der KI-Freigabe
- * (Angelo, 13.11.2026): eine nicht freigegebene Quelle wird genannt, nicht gesperrt.
+ * Zeitgeber. Ist der Umfang nicht (ganz) geladen, steht „Laden“ daneben; der gestartete Auftrag wird über die
+ * Auftragsmeldungen des Core verfolgt (ADR 0027): „gestartet“ weicht von selbst „abgeschlossen“ oder
+ * „fehlgeschlagen“, und die bleibt, bis sie der Benutzer mit ✕ wegklickt (Angelo, 16.11.2026). Der Chat ist die
+ * einzige Ausnahme der KI-Freigabe (ADR 0028): eine nicht freigegebene Quelle wird genannt, nicht gesperrt; Senden
+ * trägt die Seiten in die Liste freigegebener Seiten ein.
  */
 public final class ChatPanel extends JPanel {
 
     static final String NEW_CHAT = "Neuer Chat";
     static final String PLACEHOLDER = "Nachricht…";
     static final String SEND = "Senden";
-    static final String FOLLOWS = "Chat folgt";
+    static final String STOP = "Stopp";
+    static final String NO_RUNTIME = "Keine Laufzeit: Der Chat braucht eine gestartete Wissensquelle";
+    static final String NO_CHAT_MODEL = "Kein Chat-Modell: unter Einstellungen › KI ein Text-Modell wählen";
+    static final String RENAME = "Umbenennen";
+    static final String DELETE = "Chat löschen";
+    static final String DELETE_TITLE = "Chat löschen";
+    static final String DELETE_QUESTION = "Diesen Chat wirklich löschen?";
+    static final String ASSISTANT = "Assistent";
+    static final String ANSWERING = "Antwort wird geschrieben …";
+    static final String SEARCHING = "Wissen wird gesucht …";
+    static final String CANCELLED = "Abgebrochen";
+    static final String DOWNLOAD_DONE = "abgeschlossen";
+    static final String DOWNLOAD_FAILED = "fehlgeschlagen";
     static final String ATTACH = "Dateien anhängen";
     static final String DICTATE = "Spracheingabe folgt";
     static final String WEB = "Websuche folgt";
@@ -88,8 +123,33 @@ public final class ChatPanel extends JPanel {
     private static final int ARC = 18;
 
     private final AppContext context;
-    private final JComboBox<String> chats = Comic.combo();
+    /** „Chat:“ und der Name des aktuellen Chats; Rechtsklick bietet Umbenennen und Löschen. */
+    private final JLabel chatName = new JLabel();
+    /** Der Name beim Umbenennen an Ort und Stelle. */
+    private final JTextField chatNameEditor = new JTextField();
+    private final JPanel nameHolder = new JPanel(new BorderLayout());
+    /** Nur der Pfeil, durchsichtig: öffnet die Chats dieses Bereichs. */
+    private final ComposerButton chats = ComposerButton.iconButton(ComposerIcons.chevronDown(),
+            "Chats dieses Bereichs");
     private final ComposerButton newChat = Comic.button(NEW_CHAT, "Einen neuen Chat beginnen");
+    private final ChatStore store;
+    /** Der Bereich der Chats: die Auswahl links als Knoten; {@code null} ohne Auswahl. */
+    private ChatNode node;
+    /** Der aktuelle Chat; immer gesetzt, anfangs leer und ungespeichert. */
+    private ChatRecord chat = ChatRecord.fresh(System.currentTimeMillis());
+    /** Der laufende Turn oder {@code null}. */
+    private ChatTurn turn;
+    /** Der Empfänger des laufenden Turns; beim Loslassen wird er abgemeldet, damit er nur noch speichert. */
+    private TurnListener listening;
+    /** Ob die Auswahl links im Core aufgelöst ist; bis dahin sendet der Chat nicht (sonst gälten alte Seiten). */
+    private boolean settled;
+    /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
+    private final List<JobStatus> jobOutcomes = new ArrayList<>();
+    private SpeechBubblePanel answering;
+    /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
+    private final Set<String> watchedJobs = new HashSet<>();
+    private Subscription jobSubscription;
+    private AppRuntime jobsSubscribed;
     private final JPanel transcript = new JPanel();
     private final JLabel emptyNote = Comic.muted(EMPTY_TRANSCRIPT);
     private final JScrollPane transcriptScroll;
@@ -132,17 +192,66 @@ public final class ChatPanel extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
 
-        JLabel heading = new JLabel("Chat");
+        store = new ChatStore(() -> context.settings() == null ? null
+                : context.settings().storage().dataDirectory().resolve(ChatStore.FOLDER));
+        JLabel heading = new JLabel("Chat:");
         heading.setFont(Comic.semiBold(16f));
         heading.setForeground(Comic.INK);
-        chats.addItem(NEW_CHAT);
-        chats.setToolTipText("Chats");
+        chatName.setFont(Comic.regular(15f));
+        chatName.setForeground(Comic.INK);
+        chatName.setToolTipText("Rechtsklick: Umbenennen, Chat löschen");
+        chatName.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    showNameMenu(e);
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    showNameMenu(e);
+                }
+            }
+        });
+        chatNameEditor.setFont(Comic.regular(15f));
+        chatNameEditor.setBorder(Comic.fieldBorder());
+        chatNameEditor.setColumns(28);
+        chatNameEditor.addActionListener(e -> finishRename(true));
+        chatNameEditor.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancel-rename");
+        chatNameEditor.getActionMap().put("cancel-rename", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                finishRename(false);
+            }
+        });
+        chatNameEditor.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                if (chatNameEditor.isShowing()) {
+                    finishRename(true);
+                }
+            }
+        });
+        nameHolder.setOpaque(false);
+        nameHolder.add(chatName, BorderLayout.CENTER);
+        chats.setContentAreaFilled(false);
+        chats.setBorderPainted(false);
+        chats.setOpaque(false);
+        chats.addActionListener(e -> showChatsMenu());
         newChat.addActionListener(e -> newChat());
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        left.setOpaque(false);
+        left.add(heading);
+        left.add(nameHolder);
+        left.add(chats);
         JPanel top = new JPanel(new BorderLayout(8, 0));
         top.setOpaque(false);
-        top.add(heading, BorderLayout.CENTER);
-        top.add(Comic.row(chats, newChat), BorderLayout.EAST);
+        top.add(left, BorderLayout.CENTER);
+        top.add(newChat, BorderLayout.EAST);
         add(top, BorderLayout.NORTH);
+        showChatName();
 
         transcript.setLayout(new BoxLayout(transcript, BoxLayout.Y_AXIS));
         transcript.setOpaque(false);
@@ -175,7 +284,7 @@ public final class ChatPanel extends JPanel {
             refresh();
         });
         showModel();
-        renderKnowledge(null, null);
+        renderKnowledge(null, null, true);
     }
 
     /** Die eine abgerundete Composer-Fläche: Chips, Editor, Fußzeile mit Modell und Denkaufwand links, Werkzeugen rechts. */
@@ -288,7 +397,27 @@ public final class ChatPanel extends JPanel {
             return;
         }
         this.selection = selection;
+        ChatNode next = selection == null ? null
+                : selection.global() ? ChatNode.ALL
+                : new ChatNode(selection.sourceId(), selection.spaceKey(), selection.pageId());
+        if (!Objects.equals(node, next)) {
+            switchNode(next);
+        }
         refresh();
+    }
+
+    /**
+     * Ein anderer Bereich: Ein laufender Turn schreibt seinen Chat noch zu Ende (er hängt am Chat, nicht am Reiter),
+     * die Ansicht zeigt den zuletzt geänderten Chat des neuen Bereichs oder einen leeren.
+     */
+    private void switchNode(ChatNode next) {
+        if (turn != null) {
+            // Die Antwort läuft weiter und wird gespeichert, sobald sie fertig ist; die Ansicht lässt sie los.
+            detachTurn();
+        }
+        node = next;
+        List<ChatRecord> saved = store.list(node);
+        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
     }
 
     /** Meldet sich für Quelle und Space der Auswahl an; eine andere Auswahl oder Laufzeit meldet neu an. */
@@ -365,16 +494,18 @@ public final class ChatPanel extends JPanel {
         Selection current = selection;
         int ticket = ++request;
         if (runtime == null || current == null) {
-            renderKnowledge(current, null);
+            renderKnowledge(current, null, true);
             return;
         }
+        // Bis die neue Auswahl aufgelöst ist, gilt die alte nicht mehr: Senden wartet, sonst gingen fremde Seiten mit.
+        renderKnowledge(current, null, false);
         Background.run(() -> runtime.workspace().resolveSelection(current.toCore(runtime)), resolved -> {
             if (ticket == request) {
-                renderKnowledge(current, resolved);
+                renderKnowledge(current, resolved, true);
             }
         }, error -> {
             if (ticket == request) {
-                renderKnowledge(current, null);
+                renderKnowledge(current, null, true);
             }
         });
     }
@@ -392,8 +523,10 @@ public final class ChatPanel extends JPanel {
         return resolved;
     }
 
-    private void renderKnowledge(Selection current, PageSelection resolved) {
+    /** @param settled ob der Core die Auswahl aufgelöst hat (auch ergebnislos); vorher ist Senden gesperrt */
+    private void renderKnowledge(Selection current, PageSelection resolved, boolean settled) {
         this.resolved = resolved;
+        this.settled = settled;
         boolean allowed = current == null || (current.global() ? allowedAll(context.settings(), context.runtime())
                 : allowed(context.settings(), current.sourceId()));
         HoldingCounts counts = resolved == null ? null : resolved.counts();
@@ -401,7 +534,7 @@ public final class ChatPanel extends JPanel {
         // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
-        send.setEnabled(current != null);
+        send.setEnabled(current != null && settled);
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
@@ -472,9 +605,8 @@ public final class ChatPanel extends JPanel {
             } else if (result.jobs().isEmpty()) {
                 feedback.info("Kein Space zum Herunterladen", null);
             } else {
-                feedback.working(current.page() ? "Download der Seite samt Unterseiten gestartet"
-                        : current.spaceKey() == null ? "Download aller Spaces gestartet"
-                        : "Download des Space gestartet");
+                feedback.working(downloadName(current) + " gestartet");
+                watch(result.jobs());
             }
             load.setEnabled(true);
         };
@@ -488,6 +620,104 @@ public final class ChatPanel extends JPanel {
         } else {
             Downloads.start(context, current.sourceId(), current.spaceKey() == null ? List.of()
                     : List.of(current.spaceKey()), started, failed);
+        }
+    }
+
+    static String downloadName(Selection current) {
+        return current.page() ? "Download der Seite samt Unterseiten"
+                : current.spaceKey() == null ? "Download aller Spaces" : "Download des Space";
+    }
+
+    /**
+     * Verfolgt die gestarteten Aufträge über die Auftragsmeldungen des Core (ADR 0027, nie per Abfrage): endet der
+     * letzte, ersetzt „abgeschlossen“ (mit Seitenzahl und Ablageort) oder „fehlgeschlagen“ die Laufmeldung; die
+     * bleibt stehen, bis ✕ sie schließt.
+     */
+    private void watch(List<JobStatus> jobs) {
+        watchedJobs.clear();
+        jobOutcomes.clear();
+        for (JobStatus job : jobs) {
+            watchedJobs.add(job.id());
+        }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        if (runtime != jobsSubscribed) {
+            if (jobSubscription != null) {
+                jobSubscription.close();
+            }
+            jobsSubscribed = runtime;
+            jobSubscription = runtime.workspace().subscribeJobs(new JobListener() {
+                @Override
+                public void changed(JobStatus status) {
+                    SwingUtilities.invokeLater(() -> jobChanged(status));
+                }
+
+                @Override
+                public void removed(JobStatus last) {
+                    SwingUtilities.invokeLater(() -> watchedJobs.remove(last.id()));
+                }
+            });
+        }
+        // Erst anmelden, dann lesen: ein Auftrag, der schon fertig war, meldet sich sonst nie.
+        for (JobStatus job : runtime.workspace().jobs()) {
+            if (watchedJobs.contains(job.id())) {
+                jobChanged(job);
+            }
+        }
+    }
+
+    private void jobChanged(JobStatus status) {
+        if (!watchedJobs.contains(status.id()) || !status.state().terminal()) {
+            return;
+        }
+        watchedJobs.remove(status.id());
+        jobOutcomes.add(status);
+        if (!watchedJobs.isEmpty()) {
+            // Eine Quelle mit mehreren Spaces hat je Space einen Auftrag: erst das Ende des letzten zählt.
+            return;
+        }
+        Selection current = selection;
+        String name = current == null ? "Download" : downloadName(current);
+        String where = context.settings() == null ? null : context.settings().storage().dataDirectory().toString();
+        List<JobStatus> outcomes = List.copyOf(jobOutcomes);
+        jobOutcomes.clear();
+        showOutcome(name, outcomes, where);
+    }
+
+    /**
+     * Die eine Meldung für alle verfolgten Aufträge: ein Fehler überwiegt jeden Erfolg, Seiten werden über alle
+     * Aufträge gezählt; sie bleibt stehen, bis ✕ sie schließt.
+     */
+    private void showOutcome(String name, List<JobStatus> outcomes, String where) {
+        long written = 0;
+        boolean incomplete = false;
+        List<String> failures = new ArrayList<>();
+        int cancelled = 0;
+        int paused = 0;
+        for (JobStatus job : outcomes) {
+            written += job.progress().written();
+            incomplete |= job.incomplete();
+            switch (job.state()) {
+                case FAILED -> failures.add(job.error() == null ? Texts.state(job) : job.error().message());
+                case CANCELLED -> cancelled++;
+                case PAUSED -> paused++;
+                default -> {
+                }
+            }
+        }
+        String pages = Texts.count(written, "Seite", "Seiten") + " im Bestand" + (where == null ? "" : " unter " + where);
+        if (!failures.isEmpty()) {
+            feedback.warning(name + " " + DOWNLOAD_FAILED + (outcomes.size() > 1
+                    ? " (" + failures.size() + " von " + outcomes.size() + " Aufträgen)" : ""),
+                    String.join("; ", failures) + " · " + pages);
+        } else if (cancelled > 0) {
+            feedback.info(name + " abgebrochen", pages);
+        } else if (paused > 0) {
+            feedback.info(name + " angehalten", pages);
+        } else {
+            feedback.success(name + " " + DOWNLOAD_DONE + " · " + pages + (incomplete ? " · unvollständig" : ""));
         }
     }
 
@@ -565,22 +795,171 @@ public final class ChatPanel extends JPanel {
         attach.setToolTipText(ATTACH + " (" + attachments.size() + " vorgemerkt)");
     }
 
-    /** Senden im Click-Dummy: die Nachricht erscheint als Sprechblase, die Statuszeile sagt „Chat folgt“. */
+    /**
+     * Senden (Enter): die Nachricht erscheint als Sprechblase, der Turn holt das Wissen aus dem Bestand und streamt die
+     * Antwort in eine zweite Blase; der Knopf heißt solange „Stopp“. Dateien aus den Chips gehen als Text mit, wenn
+     * sie lesbarer Text sind. Läuft schon ein Turn, bricht Senden ihn ab.
+     */
     void send() {
+        if (turn != null) {
+            turn.cancel();
+            return;
+        }
         String text = editor.getText().strip();
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            status.setText(NO_RUNTIME);
+            return;
+        }
+        var port = runtime.workspace().aiChat();
+        String modelName = context.settings() == null || context.settings().ai() == null ? null
+                : context.settings().ai().chatModel();
+        if (port == null || modelName == null || modelName.isBlank()) {
+            status.setText(NO_CHAT_MODEL);
+            return;
+        }
+        String question = withAttachments(text);
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", text);
+        long now = System.currentTimeMillis();
+        chat = chat.plus(ChatRecord.Message.user(question, now), now);
+        List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
+        store.save(node, chat);
+        showChatName();
         editor.setText("");
         attachments.clear();
         chips.removeAll();
         chips.setVisible(false);
         attach.setToolTipText(ATTACH);
-        status.setText(FOLLOWS);
+        status.setText(SEARCHING);
         composer.revalidate();
         composer.repaint();
         release();
+        answering = addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
+                ASSISTANT, "…");
+        ChatRecord target = chat;
+        ChatNode targetNode = node;
+        TurnListener listener = new TurnListener(target, targetNode, answering);
+        listening = listener;
+        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, resolved,
+                listener, SwingUtilities::invokeLater);
+        listener.turn = turn;
+        send.setText(STOP);
+        send.setIcon(ComposerIcons.stop());
+        send.setToolTipText("Antwort abbrechen");
+        turn.start();
+    }
+
+    /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */
+    private String effortValue() {
+        return switch (EFFORTS.indexOf(effort.getText())) {
+            case 0 -> "low";
+            case 2 -> "high";
+            default -> "medium";
+        };
+    }
+
+    /** Hängt lesbare Textdateien aus den Chips an die Nachricht; Binäres wird nur genannt. */
+    private String withAttachments(String text) {
+        if (attachments.isEmpty()) {
+            return text;
+        }
+        StringBuilder b = new StringBuilder(text);
+        for (Path file : attachments) {
+            b.append("\n\n--- Anhang: ").append(file.getFileName()).append(" ---\n");
+            try {
+                String content = Files.readString(file, StandardCharsets.UTF_8);
+                b.append(ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS));
+            } catch (java.io.IOException | RuntimeException unreadable) {
+                b.append("(nicht als Text lesbar)");
+            }
+        }
+        return b.toString();
+    }
+
+    /** Nimmt die Ereignisse eines Turns entgegen; nach dem Ende speichert er den Chat, zu dem der Turn gehört. */
+    private final class TurnListener implements ChatTurn.Listener {
+
+        private final ChatRecord started;
+        private final ChatNode startedNode;
+        private final SpeechBubblePanel bubble;
+        private final StringBuilder text = new StringBuilder();
+        ChatTurn turn;
+        boolean detached;
+
+        TurnListener(ChatRecord started, ChatNode startedNode, SpeechBubblePanel bubble) {
+            this.started = started;
+            this.startedNode = startedNode;
+            this.bubble = bubble;
+        }
+
+        @Override
+        public void context(ChatKnowledge.Context context) {
+            if (!detached) {
+                status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
+                        : ANSWERING + " · " + Texts.count(context.accepted().size(), "Auszug", "Auszüge")
+                        + " aus dem Bestand");
+            }
+        }
+
+        @Override
+        public void delta(String delta) {
+            if (text.isEmpty()) {
+                bubble.setText(delta);
+            } else {
+                bubble.appendText(delta);
+            }
+            text.append(delta);
+            if (!detached) {
+                scrollDown();
+            }
+        }
+
+        @Override
+        public void completed(String full) {
+            if (text.isEmpty()) {
+                bubble.setText(full);
+            }
+            finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis()), " ");
+        }
+
+        @Override
+        public void failed(String message) {
+            bubble.setText(message);
+            bubble.setHeaderColor(Comic.RED);
+            // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
+            finish(null, message.lines().findFirst().orElse(" "));
+        }
+
+        @Override
+        public void cancelled(String partial) {
+            bubble.setText(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
+            finish(partial.isEmpty() ? null
+                    : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis()), CANCELLED);
+        }
+
+        private void finish(ChatRecord.Message answer, String note) {
+            ChatRecord next = started;
+            if (answer != null) {
+                next = store.load(startedNode, started.id());
+                next = (next == null ? started : next).plus(answer, answer.at());
+                store.save(startedNode, next);
+            }
+            if (detached) {
+                return;
+            }
+            chat = next;
+            ChatPanel.this.turn = null;
+            listening = null;
+            answering = null;
+            status.setText(note);
+            send.setText(SEND);
+            send.setIcon(ComposerIcons.send());
+            send.setToolTipText("Senden (Enter)");
+            showChatName();
+        }
     }
 
     /**
@@ -596,7 +975,7 @@ public final class ChatPanel extends JPanel {
         }
         Background.run(() -> runtime.workspace().releasePagesForChat(current.toCore(runtime)), released -> {
             if (!released.isEmpty() && Objects.equals(current, selection)) {
-                status.setText(FOLLOWS + " · " + Texts.count(released.size(), "Seite", "Seiten")
+                status.setText(status.getText().strip() + " · " + Texts.count(released.size(), "Seite", "Seiten")
                         + " für KI freigegeben");
             }
         }, error -> {
@@ -606,7 +985,22 @@ public final class ChatPanel extends JPanel {
         });
     }
 
-    private void addBubble(BubbleSide side, Color background, Color foreground, String header, String text) {
+    /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
+    private void detachTurn() {
+        if (listening != null) {
+            listening.detached = true;
+            listening = null;
+        }
+        send.setText(SEND);
+        send.setIcon(ComposerIcons.send());
+        send.setToolTipText("Senden (Enter)");
+        status.setText(" ");
+        answering = null;
+        turn = null;
+    }
+
+    private SpeechBubblePanel addBubble(BubbleSide side, Color background, Color foreground, String header,
+                                        String text) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
@@ -615,21 +1009,135 @@ public final class ChatPanel extends JPanel {
         transcript.add(row);
         transcript.revalidate();
         transcript.repaint();
+        scrollDown();
+        return bubble;
+    }
+
+    private void scrollDown() {
         SwingUtilities.invokeLater(() -> {
             javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
             bar.setValue(bar.getMaximum());
         });
     }
 
+    // ------------------------------------------------------------------ Chats des Bereichs
+
+    /** Ein neuer, leerer Chat in diesem Bereich; ein laufender Turn schreibt seinen alten Chat zu Ende. */
     private void newChat() {
+        if (turn != null) {
+            detachTurn();
+        }
+        open(ChatRecord.fresh(System.currentTimeMillis()));
+        editor.requestFocusInWindow();
+    }
+
+    /** Zeigt einen Chat: Verlauf als Blasen, Name in der Kopfzeile. */
+    private void open(ChatRecord record) {
+        if (turn != null) {
+            detachTurn();
+        }
+        chat = record;
         transcript.removeAll();
         transcript.add(emptyNote);
         emptyNote.setVisible(true);
+        for (ChatRecord.Message message : record.messages()) {
+            if (message.user()) {
+                addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
+                        message.text());
+            } else {
+                addBubble(BubbleSide.LEFT, bubbles.getAssistantBackground(), bubbles.getAssistantForeground(),
+                        ASSISTANT, message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
+            }
+        }
         transcript.revalidate();
         transcript.repaint();
         status.setText(" ");
         editor.setText("");
-        editor.requestFocusInWindow();
+        showChatName();
+    }
+
+    private void showChatName() {
+        chatName.setText(chat.title());
+        chats.setEnabled(node != null);
+    }
+
+    /** Der Pfeil: die Chats dieses Bereichs, zuletzt geänderte zuerst, der aktuelle mit Haken. */
+    private void showChatsMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        List<ChatRecord> saved = store.list(node);
+        if (saved.isEmpty()) {
+            JMenuItem none = new JMenuItem("Noch keine Chats in diesem Bereich");
+            none.setEnabled(false);
+            menu.add(none);
+        }
+        for (ChatRecord record : saved) {
+            boolean current = record.id().equals(chat.id());
+            JMenuItem item = new JMenuItem((current ? "✓ " : "    ") + record.title());
+            item.setToolTipText(Texts.count(record.messages().size(), "Nachricht", "Nachrichten"));
+            item.addActionListener(e -> {
+                if (!current) {
+                    open(record);
+                }
+            });
+            menu.add(item);
+        }
+        menu.show(chats, 0, chats.getHeight());
+    }
+
+    /** Rechtsklick auf den Namen: Umbenennen an Ort und Stelle, Chat löschen mit Rückfrage. */
+    private void showNameMenu(MouseEvent e) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem rename = new JMenuItem(RENAME);
+        rename.addActionListener(ignored -> startRename());
+        menu.add(rename);
+        JMenuItem delete = new JMenuItem(DELETE);
+        delete.setEnabled(!chat.isEmpty() && turn == null);
+        delete.addActionListener(ignored -> deleteChat());
+        menu.add(delete);
+        menu.show(chatName, e.getX(), e.getY());
+    }
+
+    void startRename() {
+        chatNameEditor.setText(chat.title());
+        nameHolder.remove(chatName);
+        nameHolder.add(chatNameEditor, BorderLayout.CENTER);
+        nameHolder.revalidate();
+        nameHolder.repaint();
+        chatNameEditor.requestFocusInWindow();
+        chatNameEditor.selectAll();
+    }
+
+    /** Übernimmt den eingegebenen Namen (leer: zurück zur Kennung) und speichert, wenn der Chat Nachrichten hat. */
+    void finishRename(boolean accept) {
+        if (!renaming()) {
+            return;
+        }
+        if (accept) {
+            String title = chatNameEditor.getText().strip();
+            if (!title.equals(chat.title())) {
+                chat = chat.withTitle(title.isEmpty() ? chat.id() : title, System.currentTimeMillis());
+                store.save(node, chat);
+            }
+        }
+        nameHolder.remove(chatNameEditor);
+        nameHolder.add(chatName, BorderLayout.CENTER);
+        nameHolder.revalidate();
+        nameHolder.repaint();
+        showChatName();
+    }
+
+    private boolean renaming() {
+        return chatNameEditor.getParent() == nameHolder;
+    }
+
+    /** Löscht den aktuellen Chat nach „wirklich“-Rückfrage (Ja/Nein) und zeigt den nächsten des Bereichs. */
+    private void deleteChat() {
+        if (!Dialogs.confirm(this, DELETE_TITLE, DELETE_QUESTION)) {
+            return;
+        }
+        store.delete(node, chat.id());
+        List<ChatRecord> saved = store.list(node);
+        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
     }
 
     // ------------------------------------------------------------------ für Tests
@@ -660,5 +1168,21 @@ public final class ChatPanel extends JPanel {
 
     ComposerButton sendButton() {
         return send;
+    }
+
+    String chatName() {
+        return chatName.getText();
+    }
+
+    ChatRecord chat() {
+        return chat;
+    }
+
+    JTextField chatNameEditor() {
+        return chatNameEditor;
+    }
+
+    boolean renamingShown() {
+        return renaming();
     }
 }

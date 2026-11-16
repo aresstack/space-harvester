@@ -307,20 +307,44 @@ Core selbst.
   Wissensquelle direkt.
 - **Erweitert** enthält technische Angaben (Herkunft, Hashes, Revision, Cache-Stand), Analyse, Originaldaten
   (Payload, Storage-Format) sowie „Aktualität prüfen“ und „Original speichern …“.
-- **Chat** (Angelo, 13.11.2026, `ChatPanel`), vorerst ein Click-Dummy nach `ChatShellPanel`/`ChatComposerPanel` des
-  Enterprise AI Client im Design von Space Harvester: oben rechts die Auswahlliste **Chats** und **Neuer Chat**, der
-  Verlauf als Sprechblasen, über dem Composer die stille Statuszeile des Wissens, die der Auswahl links folgt und nicht
-  abwählbar ist („Wissen: ‹Seite› samt Unterseiten · n Seiten“, „Space ‹Name›“, „‹Quelle› · alle Spaces“; dazu „m davon
-  nicht geladen“ oder „Seiten noch nicht erfasst“ mit dem Knopf **Laden**, der den Download über `Downloads` startet;
-  die Seitenzahl kommt aus der Bestandsübersicht des Core, `Workspace.holdings`, und frischt sich über
-  `subscribeHoldings` auf, ohne Zeitgeber). Der Chat ist die einzige Ausnahme der KI-Freigabe: eine nicht freigegebene
-  Quelle steht in der Zeile als „Quelle nicht für KI freigegeben, wird auf deine Anfrage trotzdem gesendet“, gesperrt
-  wird nichts. Der Composer ist eine abgerundete Fläche: **Nachricht…** (Enter sendet, Umschalt+Enter neue Zeile),
-  darüber Chips der angehängten Dateien mit ✕, unten links das Chat-Modell aus Einstellungen › KI („Kein Chat-Modell“,
-  Klick zeigt es und führt zu den Einstellungen) und der Denkaufwand (Niedrig, Mittel, Hoch), rechts Websuche
-  (ausgegraut, „Websuche folgt“), **Dateien anhängen** (aktiv), Mikrofon (deaktiviert, „Spracheingabe folgt“) und
-  **Senden**. Senden zeigt die eigene Nachricht als Sprechblase und in der Statuszeile des Composers nur „Chat folgt“.
-  Nicht übernommen: Modus, Agentenphase, Browser-Budget, Wissens-Umschalter (Wissen ist immer an).
+- **Chat** (Angelo, 13. und 16.11.2026, `ChatPanel`, Paket `app.chat`) nach `ChatShellPanel`, `ChatComposerPanel`,
+  `ChatServiceBinding` und `ChatHistoryBinding` des Enterprise AI Client im Design von Space Harvester; der Chat lebt
+  nur in der App (ADR 0012), der Core gibt nur den Chat-Port des KI-Dienstes (`Workspace.aiChat`, eigene SPI `AiChat`, streamend über den
+  unveränderten `OpenAiCompatibleChatAdapter`, Route, TLS und Frist wie alle anderen Aufrufe). Kopfzeile links
+  **Chat: ‹Name›** mit dem durchsichtigen Pfeil, der die Chats dieses Bereichs anbietet (zuletzt geänderte zuerst, der
+  aktuelle mit Haken), rechts **Neuer Chat**; Rechtsklick auf den Namen: **Umbenennen** an Ort und Stelle (Enter
+  übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen** („Diesen Chat wirklich löschen?“, Ja/Nein).
+  Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
+  Unterseiten, `ChatNode`), und liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
+  (`ChatStore`, atomar geschrieben, leere Chats ohne Datei; Kennungen mit Sonderzeichen bekommen einen kurzen Hash).
+  Der Name eines Chats ist seine UUID, bis der Benutzer ihn umbenennt; die Kennung bleibt. Ein Wechsel der Auswahl
+  zeigt den zuletzt geänderten Chat des neuen Bereichs oder einen leeren; der Verlauf als Sprechblasen. Über dem
+  Composer die stille Statuszeile des Wissens, die der Auswahl links folgt und nicht abwählbar ist („Wissen: ‹Seite›
+  samt Unterseiten · n Seiten“, „Space ‹Name›“, „‹Quelle› · alle Spaces“; dazu „m davon nicht geladen“ oder „Seiten
+  noch nicht erfasst“ mit dem Knopf **Laden**, der den Download über `Downloads` startet; die Seitenzahl kommt aus der
+  Bestandsübersicht des Core, `Workspace.holdings`, und frischt sich über `subscribeHoldings` auf, ohne Zeitgeber).
+  Die Meldung „Download des Space gestartet“ verfolgt den Auftrag über `subscribeJobs` (ADR 0027, nie per Abfrage):
+  endet er, weicht sie von selbst „… abgeschlossen · n Seiten im Bestand unter ‹Datenordner›“ oder „… fehlgeschlagen“
+  mit dem Grund, und die bleibt, bis ✕ rechts in der Platte sie schließt (das ✕ hat seit 16.11.2026 jede
+  `Feedback`-Platte). Der Chat ist die einzige Ausnahme der KI-Freigabe (ADR 0028): eine nicht freigegebene Quelle
+  steht in der Zeile als „Quelle nicht für KI freigegeben; Senden gibt die gewählten Seiten dauerhaft frei“, gesperrt
+  wird nichts; Senden trägt die lokal gespeicherten Seiten der Auswahl ein (`releasePagesForChat`) und nennt die neuen
+  in der Statuszeile. Der Composer ist eine abgerundete Fläche: **Nachricht…** (Enter sendet, Umschalt+Enter neue
+  Zeile), darüber Chips der angehängten Dateien mit ✕ (lesbare Textdateien gehen als Text mit, anderes wird nur
+  genannt), unten links das Chat-Modell aus Einstellungen › KI („Kein Chat-Modell“, Klick zeigt es und führt zu den
+  Einstellungen) und der Denkaufwand (Niedrig, Mittel, Hoch → `reasoning_effort` low/medium/high), rechts Websuche
+  (ausgegraut, „Websuche folgt“), **Dateien anhängen**, Mikrofon (deaktiviert, „Spracheingabe folgt“) und **Senden**.
+  Senden (`ChatTurn`): die eigene Nachricht als Sprechblase, dann das Wissen aus dem Bestand (ADR 0029: bis drei
+  gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
+  und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
+  `PromptContextAssembler` des EAC mit nummerierten Auszügen, Quelle, Ort und dem Hinweis, dass Auszüge Daten sind;
+  24 000 Zeichen), dann der Stream des Chat-Modells in die Antwortblase, der Verlauf ohne abgebrochene Antworten;
+  der Knopf heißt solange **Stopp**, die Statuszeile „Wissen wird gesucht …“ und „Antwort wird geschrieben · n
+  Auszüge aus dem Bestand“. Fehler stehen lesbar in der Blase (Art, Status, technische Ursache) und werden nicht
+  gespeichert; ein Abbruch behält den Teiltext mit „Abgebrochen“. Ohne Laufzeit oder Chat-Modell sagt die Statuszeile
+  das, die Frage bleibt stehen. Wechselt die Auswahl während einer Antwort, schreibt der Turn seinen Chat zu Ende und
+  die Ansicht zeigt den neuen Bereich. Nicht übernommen: Modus, Agentenphase, Browser-Budget, Werkzeuge des Modells,
+  Wissens-Umschalter (Wissen ist immer an), Export und Zitate.
 - **Export** (Angelo, 13.11.2026, `ExportPanel`) hängt nicht an der gezeigten Seite, sondern an der Auswahl links im
   Explorer: Quelle, Space oder Seite samt Unterseiten („Links gewählt bestimmt rechts“). Für einen Space oder eine
   Seite die Karte **Stand** (jüngster fertiger Download genau dieser Auswahl: Stand vom, Seiten, Bilder, Medien,

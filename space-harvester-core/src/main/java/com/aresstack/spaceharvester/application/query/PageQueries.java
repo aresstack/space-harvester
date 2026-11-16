@@ -238,6 +238,26 @@ public class PageQueries {
      * @throws CacheMissException          wenn die Quelle die Seite nicht (mehr) kennt, sie für den Aufrufer nicht
      *                                     lesbar ist oder sie ohne angebundenen Inhaltsabruf nicht im Cache liegt
      */
+    /**
+     * Nur aus dem Cache, ohne Abruf oder Prüfung bei der Quelle: die lokal gespeicherte Seite, wenn es sie gibt und
+     * der Aufrufer sie lesen darf; sonst leer. Für Abnehmer, die nur Lokales sehen dürfen, etwa das Wissen des Chats
+     * (ADR 0028: an den KI-Dienst geht nur, was lokal liegt und damit freigegeben ist).
+     */
+    public Optional<DeliveredPage> cached(AccessContext caller, String sourceId, String pageId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        requireSource(sourceId);
+        Optional<CachedPage> cached;
+        try {
+            cached = cache.page(new PageKey(sourceId, pageId));
+        } catch (CacheUnavailableException e) {
+            return Optional.empty();
+        }
+        if (cached.isEmpty() || !readable(caller, cached.get().header())) {
+            return Optional.empty();
+        }
+        return Optional.of(DeliveredPage.cached(cached.get()));
+    }
+
     public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
         return page(caller, sourceId, pageId, refresh, false);
     }

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -357,6 +358,18 @@ public final class Workspace {
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
+    }
+
+    /**
+     * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
+     * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
+     */
+    public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
+        try {
+            return harvester.pages().cached(caller, sourceId, pageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            return Optional.empty();
+        }
     }
 
     /**
@@ -824,6 +837,14 @@ public final class Workspace {
     /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */
     public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
         return harvester.aiEmbeddingDimension(settings, embeddingModel);
+    }
+
+    /**
+     * Der Chat-Port des KI-Dienstes für den Reiter „Chat“ (streamend, {@code POST /chat/completions}) mit den
+     * wirksamen Einstellungen; {@code null} ohne Dienst oder Chat-Modell. Der Chat selbst lebt in der App (ADR 0012).
+     */
+    public AiChat aiChat() {
+        return harvester.aiChat();
     }
 
     // ------------------------------------------------------------------ Abgleich

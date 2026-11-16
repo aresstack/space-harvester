@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -343,6 +344,8 @@ public final class Harvester implements AutoCloseable {
     private final ExportPackageImport packageImport;
     private final TrustBundles trustBundles;
     private final String userAgent;
+    /** Die KI-Einstellungen der wirksamen Konfiguration, oder die festen des Builders. */
+    private final Supplier<AiServiceSettings> currentAi;
     /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
     private final boolean networkFollows;
     /**
@@ -388,6 +391,7 @@ public final class Harvester implements AutoCloseable {
             this.settings = manager == null ? null : manager.current().configuration();
             // Was der Builder nach configuration() selbst festlegt, bleibt fest; alles andere folgt der Konfiguration.
             boolean liveAi = manager != null && !builder.aiFixed;
+            this.currentAi = () -> liveAi ? this.settings.ai() : builder.ai;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
             opened.add(cache);
@@ -1595,6 +1599,24 @@ public final class Harvester implements AutoCloseable {
      */
     public List<AiModel> aiModels(AiServiceSettings settings) {
         return RemoteAi.of(settings, catalog, trustBundles, userAgent).models();
+    }
+
+    /**
+     * Der Chat-Port des KI-Dienstes der wirksamen Konfiguration für den Chat der App (ADR 0012: der Chat selbst
+     * bleibt außerhalb des Core): Route, TLS, Token und Frist wie {@link #aiModels}; {@code null} ohne Dienst oder
+     * Chat-Modell. Je Aufruf frisch gebaut, damit geänderte Einstellungen ohne Neustart gelten (ADR 0015).
+     */
+    public AiChat aiChat() {
+        AiServiceSettings current = currentAi.get();
+        if (current == null || !current.chat()) {
+            return null;
+        }
+        try {
+            return RemoteAi.of(current, catalog, trustBundles, userAgent).chat();
+        } catch (IllegalArgumentException notConfigured) {
+            // Etwa ein nicht eingerichtetes trust-bundle: dann kein Chat, wie ohne Modell.
+            return null;
+        }
     }
 
     /**
