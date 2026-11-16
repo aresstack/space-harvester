@@ -10,8 +10,10 @@ import com.aresstack.spaceharvester.application.export.ExportScope;
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
 import com.aresstack.spaceharvester.application.export.PageFailure;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.output.convert.ExportFileJson;
@@ -407,6 +409,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
     }
 
+    private record WrittenPage(PageKey key, PageMetadata metadata, String metadataHash, String attributesHash,
+                               String rawName, String mediaType, String nativeFormat, Instant retrievedAt) {
+    }
+
     private final class FileSession implements Session {
 
         private final String exportId;
@@ -426,6 +432,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final boolean replacing;
         /** Die geschriebenen Seiten; beim Austausch wandern nur ihre Bilder und Lese-Ansichten mit. */
         private final java.util.Set<String> pageIds = new java.util.HashSet<>();
+        /** Snapshot ohne Bytes je geschriebener Seite; die Bytes liegen schon unter {@code raw/}. */
+        private final Map<String, WrittenPage> writtenPages = new HashMap<>();
 
         FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin,
                     boolean replacing) throws IOException {
@@ -470,6 +478,9 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 reserve(bytes.length);
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
                 Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
+                writtenPages.put(pageId, new WrittenPage(snapshot.key(), snapshot.metadata(), snapshot.metadataHash(),
+                        snapshot.attributesHash(), rawName, payload.mediaType(), payload.nativeFormat(),
+                        snapshot.retrievedAt()));
                 boolean parseable = PageJson.isJson(payload.mediaType(), bytes);
                 if (!parseable) {
                     warnings.add("Payload von Seite " + pageId + " ist kein lesbares JSON; nur unter " + rawName
@@ -495,6 +506,24 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 pages.write('\n');
             } catch (IOException e) {
                 throw new UncheckedIOException("Seite " + pageId + " nicht schreibbar", e);
+            }
+        }
+
+        @Override
+        public Optional<PageSnapshot> written(PageKey key) {
+            WrittenPage page = writtenPages.get(key.pageId());
+            if (page == null || !page.key().equals(key)) {
+                return Optional.empty();
+            }
+            try {
+                byte[] bytes = Files.readAllBytes(work.resolve(page.rawName()));
+                return Optional.of(new PageSnapshot(page.key(), page.metadata(), page.metadataHash(),
+                        page.attributesHash(), new NativePayload(bytes, page.mediaType(), page.nativeFormat()),
+                        page.retrievedAt()));
+            } catch (NoSuchFileException e) {
+                return Optional.empty();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Seite " + key.pageId() + " nicht wieder lesbar", e);
             }
         }
 

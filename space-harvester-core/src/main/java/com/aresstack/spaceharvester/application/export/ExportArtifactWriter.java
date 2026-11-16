@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.IOException;
@@ -133,6 +134,16 @@ public interface ExportArtifactWriter {
          * @param snapshot nativer Snapshot mit der Payload; seine Kopfdaten gehören zur Payload
          */
         void page(PageHeader header, PageSnapshot snapshot);
+
+        /**
+         * Die Seite genau so, wie sie in dieses Artefakt geschrieben wurde. Formate lesen eine Seite von hier, wenn der
+         * Cache sie seit dem Schreiben geändert hat, damit Datenbestand und Formate dieselbe Fassung zeigen.
+         *
+         * @return leer, wenn die Seite nicht geschrieben wurde oder der Writer sie nicht zurückgeben kann
+         */
+        default Optional<PageSnapshot> written(PageKey key) {
+            return Optional.empty();
+        }
 
         /**
          * Legt eine aus den Seiten abgeleitete Datei ab (#30) und nimmt ihre Herkunft ins Manifest auf.
