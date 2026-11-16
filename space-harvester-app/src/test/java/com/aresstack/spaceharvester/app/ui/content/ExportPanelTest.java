@@ -11,6 +11,9 @@ import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
+import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
+import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
@@ -201,9 +204,22 @@ class ExportPanelTest {
         assertThat(ExportPanel.newest(jobs, subtree)).isSameAs(page);
         assertThat(ExportPanel.running(jobs, subtree)).isNull();
         assertThat(ExportPanel.newest(jobs, none)).isNull();
+        // Der Stand je Space kommt aus dem Bestand, nicht aus der Auftragsablage (Angelo 17.11.2026: dort stand
+        // „Noch nicht geladen“ für längst geladene Spaces, weil alte Downloads aus der Ablage verschwinden).
+        SpaceSummary inventoried = new SpaceSummary("wiki", "OPS", new CacheGeneration("g1", CacheState.CONFIRMED,
+                Instant.parse("2026-11-13T18:05:00Z"), null), new HoldingCounts(127, 120, 0, 0));
+        SpaceSummary complete = new SpaceSummary("wiki", "OPS", new CacheGeneration("g1", CacheState.CONFIRMED,
+                Instant.parse("2026-11-13T18:05:00Z"), null), new HoldingCounts(127, 127, 0, 0));
+        SpaceSummary single = new SpaceSummary("wiki", "OPS", null, new HoldingCounts(3, 3, 0, 0));
+        SpaceSummary empty = new SpaceSummary("wiki", "OPS", null, HoldingCounts.ZERO);
         assertThat(ExportPanel.standText(null, null)).isEqualTo(ExportPanel.NOT_LOADED);
-        assertThat(ExportPanel.standText(newer, null)).startsWith("Geladen ").contains("· 90 Seiten");
-        assertThat(ExportPanel.standText(newer, running)).startsWith("Download ").contains("von 100 Seiten");
+        assertThat(ExportPanel.standText(empty, null)).isEqualTo(ExportPanel.NOT_LOADED);
+        assertThat(ExportPanel.standText(inventoried, null)).startsWith("120 von 127 Seiten lokal · Stand vom ");
+        assertThat(ExportPanel.standText(single, null)).isEqualTo("3 von 3 Seiten lokal · " + ExportPanel.INCOMPLETE);
+        assertThat(ExportPanel.standText(inventoried, running)).startsWith("Download ").contains("von 100 Seiten");
+        assertThat(ExportPanel.standTone(complete, null)).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.GREEN);
+        assertThat(ExportPanel.standTone(inventoried, null)).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.ORANGE);
+        assertThat(ExportPanel.standTone(null, null)).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.MUTED);
     }
 
     private static JobStatus job(String id, String space, String rootPageId, JobState state, Instant finished) {
