@@ -24,6 +24,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
@@ -96,6 +97,10 @@ public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
     private final ThreadPoolExecutor pool;
     /** Frühester Zeitpunkt, zu dem eine gescheiterte Proxy-Verbindung das PAC-Skript erneut neu laden lässt. */
     private long nextPacReloadAt;
+    /** Wer über Änderungen des PAC-Zustands ({@link #pacState()}) Bescheid bekommt; kein Abfragen nötig (ADR 0027). */
+    private final List<Runnable> pacListeners = new CopyOnWriteArrayList<>();
+    /** Zuletzt gemeldeter PAC-Zustand; nur unter {@code pacListeners} als Sperre. */
+    private PacState lastPac = PacState.NONE;
     private final Map<String, Entry> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
@@ -152,6 +157,7 @@ public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
             cache.clear();
         }
         LOG.info("Proxy-Route umgestellt, Modus {}", modeName(settings.mode()));
+        pacChanged();
     }
 
     /** Prüft die Einstellungen und baut den Resolver der Bibliothek. */
@@ -304,6 +310,8 @@ public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
             }
         }
         HttpRoute route = resolve(current, url);
+        // Nur eine Auflösung lädt das PAC-Skript nach; danach kann sich sein Zustand geändert haben.
+        pacChanged();
         String shown = displayUrl(url);
         long ttl = (route.isUnavailable() ? settings.failureTtl() : settings.cacheTtl()).toMillis();
         HttpRoute kept = null;
@@ -393,6 +401,60 @@ public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
     /** {@code true}, solange das Erneuern des PAC-Skripts scheitert und das zuletzt gültige weiter gilt. */
     public boolean pacStale() {
         return state.resolver().pacStatus().map(PacCacheStatus::isStale).orElse(false);
+    }
+
+    /**
+     * Zustand des PAC-Skripts für Anzeigen (Angelo, 16.11.2026: „Wie erkenne ich, dass ich Probleme habe?“).
+     *
+     * @param stale        ob das Erneuern scheitert und das zuletzt gültige Skript weiter gilt
+     * @param failingSince seit wann das Erneuern scheitert, {@code null} sonst
+     * @param description  die Zeile aus {@link #pacStatus()} mit Grund, {@code null} ohne PAC
+     */
+    public record PacState(boolean stale, java.time.Instant failingSince, String description) {
+
+        /** Ohne PAC oder solange keines geladen wurde. */
+        public static final PacState NONE = new PacState(false, null, null);
+    }
+
+    /** Der aktuelle PAC-Zustand; {@link PacState#NONE} ohne PAC. */
+    public PacState pacState() {
+        return state.resolver().pacStatus()
+                .filter(status -> status.getPacUrl() != null || status.getRefreshFailingSince() > 0)
+                .map(status -> new PacState(status.isStale(), status.getRefreshFailingSince() > 0
+                        ? java.time.Instant.ofEpochMilli(status.getRefreshFailingSince()) : null,
+                        describePac(status)))
+                .orElse(PacState.NONE);
+    }
+
+    /**
+     * Meldet jede Änderung von {@link #pacState()}, etwa wenn das Erneuern des Skripts zu scheitern beginnt oder
+     * wieder gelingt; gemeldet wird auf dem Thread, der die Route auflöst. Das Schließen beendet die Meldungen.
+     */
+    public AutoCloseable onPacChange(Runnable listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        pacListeners.add(listener);
+        return () -> pacListeners.remove(listener);
+    }
+
+    /** Vergleicht den PAC-Zustand mit dem zuletzt gemeldeten und benachrichtigt bei Änderung. */
+    private void pacChanged() {
+        PacState now = pacState();
+        boolean changed;
+        synchronized (pacListeners) {
+            changed = !now.equals(lastPac);
+            lastPac = now;
+        }
+        if (changed) {
+            for (Runnable listener : pacListeners) {
+                try {
+                    listener.run();
+                } catch (RuntimeException e) {
+                    LOG.warn("PAC-Beobachter scheiterte: {}", e.toString());
+                }
+            }
+        }
     }
 
     static String describePac(PacCacheStatus status) {

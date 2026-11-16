@@ -185,6 +185,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.GitSourceAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -1587,6 +1588,14 @@ public final class Harvester implements AutoCloseable {
      */
     public SignInRequests signIns() {
         return signIns;
+    }
+
+    /**
+     * Die Proxy-Route je Ziel aller Quellen; die Oberfläche zeigt {@link ProxyRoutes#pacState()} („Proxy-Skript seit …
+     * nicht erneuert“) und hört mit {@link ProxyRoutes#onPacChange} darauf.
+     */
+    public ProxyRoutes proxyRoutes() {
+        return catalog.routes();
     }
 
     /**

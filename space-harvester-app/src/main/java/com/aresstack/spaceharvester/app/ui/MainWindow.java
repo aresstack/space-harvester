@@ -99,6 +99,8 @@ public final class MainWindow implements AppContext.Navigator {
     private StatusLine statusLine;
     /** „Confluence verlangt einen Einmalcode“ ganz links in der Statuszeile, solange eine Anforderung offen ist. */
     private SignInNotice signInNotice;
+    /** „Proxy-Skript seit … nicht erneuert“ daneben, solange das Erneuern des PAC-Skripts scheitert. */
+    private ProxyNotice proxyNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     private AppContext.Section current = AppContext.Section.SEARCH;
@@ -317,7 +319,13 @@ public final class MainWindow implements AppContext.Navigator {
             show(AppContext.Section.ACTIVITIES);
             activities.showSignIn(request);
         });
-        statusLine = new StatusLine(jobStatus.model(), signInNotice, viewStatus, status, jobStatus,
+        // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
+        proxyNotice = new ProxyNotice(context);
+        JPanel alerts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 12, 0));
+        alerts.setOpaque(false);
+        alerts.add(signInNotice);
+        alerts.add(proxyNotice);
+        statusLine = new StatusLine(jobStatus.model(), alerts, viewStatus, status, jobStatus,
                 new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());

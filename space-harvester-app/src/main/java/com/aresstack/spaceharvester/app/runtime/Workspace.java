@@ -816,6 +816,11 @@ public final class Workspace {
         return harvester.signIns();
     }
 
+    /** Die Proxy-Route aller Quellen, für den Hinweis „Proxy-Skript seit … nicht erneuert“ in der Statuszeile. */
+    public com.aresstack.spaceharvester.source.network.ProxyRoutes proxyRoutes() {
+        return harvester.proxyRoutes();
+    }
+
     /** Ob {@code sort=relevance} semantisch sucht (Embedding-Modell eingerichtet). */
     public boolean semanticSearch() {
         return harvester.relevance().semantic();
