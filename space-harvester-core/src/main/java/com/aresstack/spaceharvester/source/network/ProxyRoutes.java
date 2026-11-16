@@ -440,9 +440,9 @@ public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
             if (diagnostics.getFailureDetail() != null && !diagnostics.getFailureDetail().isEmpty()) {
                 lines.add("Failure: " + scrub(settings, diagnostics.getFailureDetail(), url));
             }
+            pacStatus().ifPresent(lines::add);
             route = scrub(settings, toRoute(diagnostics.getResult()), url);
             lines.add("Result: " + route.describe() + " [" + diagnostics.getDurationMillis() + " ms]");
-            pacStatus().ifPresent(lines::add);
             return lines;
         } catch (TimeoutException e) {
             route = HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail(settings));
