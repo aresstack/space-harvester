@@ -291,7 +291,20 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).as("keine Seite mehr in den Reitern").isNull();
-        assertThat(onEdt(() -> view.detail().titleLabel().getText().isBlank())).isTrue();
+        // Stattdessen die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der Quelle, sonst leer.
+        assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).isEqualTo("handbuch");
+        assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
+                .isTrue();
+        onEdt(() -> {
+            view.detail().tabs().select("Erweitert");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
+        onEdt(() -> {
+            view.detail().tabs().select("Leseansicht");
+            return null;
+        });
         assertThat(onEdt(() -> view.detail().export().selection().sourceId())).isEqualTo("handbuch");
 
         // Ebenso ein Space derselben Quelle.
@@ -305,6 +318,8 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
+        assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
+        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
     }
 
     @Test

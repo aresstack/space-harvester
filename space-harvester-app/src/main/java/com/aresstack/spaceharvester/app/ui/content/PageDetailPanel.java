@@ -110,6 +110,11 @@ public final class PageDetailPanel extends JPanel {
     private static final String PAGE = "page";
     private static final String EXPORT_CARD = "export";
     private static final String CHAT_CARD = "chat";
+    /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
+    private static final String SOURCE_CARD = "source";
+    static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
+    static final String EMPTY_SOURCE = "Für eine Wissensquelle gibt es hier nichts. Ihre Updates stehen unter "
+            + "„Leseansicht“.";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
@@ -120,7 +125,7 @@ public final class PageDetailPanel extends JPanel {
     private String pageCard = EMPTY;
     private final ExportPanel export;
     private final ChatPanel chat;
-    private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
+    private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
@@ -131,6 +136,7 @@ public final class PageDetailPanel extends JPanel {
     private final StatementsTab statementsView;
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
     private final KnowledgeGraphTab graphView;
+    private final SourceUpdatesView sourceView;
     private final JLabel state = Comic.muted(" ");
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
@@ -260,6 +266,15 @@ public final class PageDetailPanel extends JPanel {
         this.context = context;
         this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context.parserModel());
+        this.sourceView = new SourceUpdatesView(() -> context.runtime() == null ? null
+                : context.runtime().workspace());
+        sourceView.onOpen(changed -> {
+            if (context.navigator() != null) {
+                context.navigator().openPage(changed.sourceId(), changed.pageId());
+            } else {
+                load(changed.sourceId(), changed.pageId(), false);
+            }
+        });
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
@@ -453,6 +468,7 @@ public final class PageDetailPanel extends JPanel {
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
         deck.add(chat, CHAT_CARD);
+        deck.add(sourceView, SOURCE_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -555,13 +571,41 @@ public final class PageDetailPanel extends JPanel {
 
     /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
     private void showCard(String card) {
+        if (!SOURCE_CARD.equals(card)) {
+            // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
+            sourceView.source(null, null);
+            empty.setText(EMPTY_PAGE);
+        }
         pageCard = card;
         showDeck();
     }
 
     private void showDeck() {
         String selected = tabs.selected();
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : pageCard);
+        String page = pageCard;
+        if (SOURCE_CARD.equals(page)) {
+            // Auf der Quellenseite zeigt nur „Leseansicht“ etwas (die Updates); die übrigen Seitenreiter bleiben leer.
+            page = READING.equals(selected) ? SOURCE_CARD : EMPTY;
+        }
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : page);
+    }
+
+    /**
+     * Die Quellenseite einer gewählten Wissensquelle (ADR 0030): leert die Seitenreiter und zeigt unter „Leseansicht“
+     * die Updates der Quelle; Export und Chat folgen ohnehin der Auswahl.
+     */
+    public void showSource(String sourceId, String sourceTitle) {
+        clear();
+        title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        empty.setText(EMPTY_SOURCE);
+        sourceView.source(sourceId, sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        pageCard = SOURCE_CARD;
+        showDeck();
+    }
+
+    /** Zeigt die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle). */
+    public void showReading() {
+        tabs.select(READING);
     }
 
     /** Der Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links. */
@@ -575,6 +619,15 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
+    SourceUpdatesView sourceView() {
+        return sourceView;
+    }
+
+    /** Ob gerade die Quellenseite (ADR 0030) gezeigt wird. */
+    boolean showsSource() {
+        return SOURCE_CARD.equals(pageCard);
+    }
+
     public KnowledgeGraphTab graph() {
         return graphView;
     }
