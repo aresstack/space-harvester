@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -12,7 +14,11 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.SyncCommitted;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -34,6 +40,12 @@ class ChangeLogConfiguration {
     @Bean(destroyMethod = "close")
     ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog) {
         LucenePageCache available = cache.getIfAvailable();
+        if (available != null) {
+            // CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
+            available.contentDiffer(new TextContentDiffer(PageTextProjector.firstOf(List.of(
+                    new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
+                    new KnowledgeDocumentTextProjector()))));
+        }
         ChangeLogStore store = available == null ? ChangeLogStore.NONE : available;
         Function<PageKey, Optional<PageHeader>> headers = available == null ? key -> Optional.empty()
                 : available::findHeader;
