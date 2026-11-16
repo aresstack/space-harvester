@@ -99,8 +99,8 @@ final class UpdateFollower {
     }
 
     private static boolean showAfterUpdate(AppContext context) {
-        // TODO CL6: Einstellung aus dem Core von Strang Q (space-harvester.cache.change-log), Standard aus.
-        return false;
+        return context.settings() != null && context.settings().cache() != null
+                && context.settings().cache().changeLog().showAfterUpdate();
     }
 
     /** Meldet sich am Protokoll {@code next} an, {@code null} für keines; eine vorige Anmeldung endet. */

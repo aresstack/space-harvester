@@ -13,6 +13,9 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
 import com.aresstack.spaceharvester.application.changelog.ReportedPage;
+import com.aresstack.spaceharvester.application.changelog.SummaryPage;
+import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
+import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -90,7 +93,7 @@ final class SourceUpdatesView extends JPanel {
     private String selected;
     private ChangeReport shown;
     /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
-    private Summary summary;
+    private UpdateSummary summary;
     /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
     private Run running;
     private Subscription jobWatch = Subscription.NONE;
@@ -273,7 +276,7 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private record Loaded(ChangeReport report, Summary summary, boolean available) {
+    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available) {
     }
 
     /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
@@ -498,46 +501,49 @@ final class SourceUpdatesView extends JPanel {
             add(reportBody, Comic.wrapped("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht "
                     + "alles.", Comic.ORANGE, 12.5f));
         }
-        for (Statement statement : summary.statements()) {
+        List<SummaryStatement> statements = summary.statements().isEmpty() && summary.text() != null
+                ? List.of(new SummaryStatement(summary.text(), List.of())) : summary.statements();
+        for (SummaryStatement statement : statements) {
             reportBody.add(Box.createVerticalStrut(6));
             add(reportBody, Comic.wrapped(statement.text(), Comic.TEXT, 13.5f));
-            List<ReportedPage> pages = statement.pageIds().stream()
-                    .map(pageId -> found.pages().stream().filter(p -> p.pageId().equals(pageId)).findFirst())
-                    .flatMap(java.util.Optional::stream).toList();
-            if (!pages.isEmpty()) {
+            if (!statement.pages().isEmpty()) {
                 JPanel links = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(
                         java.awt.FlowLayout.LEFT, 10, 0));
                 links.setOpaque(false);
-                for (ReportedPage page : pages) {
-                    links.add(pageLink(page));
+                for (SummaryPage page : statement.pages()) {
+                    links.add(pageLink(page, found));
                 }
                 add(reportBody, links);
             }
         }
-        if (summary.unreadable() > 0) {
+        if (summary.unreadableChanges() > 0) {
             reportBody.add(Box.createVerticalStrut(6));
-            add(reportBody, Comic.wrapped(summary.unreadable() == 1
+            add(reportBody, Comic.wrapped(summary.unreadableChanges() == 1
                     ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
-                    : summary.unreadable() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
+                    : summary.unreadableChanges() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
                     + "Zusammenfassung.", Comic.MUTED, 12.5f));
         }
         reportBody.add(Box.createVerticalStrut(12));
     }
 
-    String summaryMeta(Summary shownSummary) {
+    String summaryMeta(UpdateSummary shownSummary) {
         String model = shownSummary.model() == null || shownSummary.model().isBlank() ? ""
                 : " mit " + shownSummary.model();
         return "Erstellt am " + when(shownSummary.createdAt()) + model;
     }
 
-    private JLabel pageLink(ReportedPage page) {
-        JLabel link = new JLabel("→ " + (page.title() == null || page.title().isBlank() ? page.pageId()
-                : page.title()));
+    /** Verweis einer Aussage auf eine Seite; anklickbar, wenn die Seite im Bericht steht und sich öffnen lässt. */
+    private JLabel pageLink(SummaryPage page, ChangeReport found) {
+        ReportedPage reported = found.pages().stream().filter(p -> p.pageId().equals(page.pageId())).findFirst()
+                .orElse(null);
+        String title = page.title() != null && !page.title().isBlank() ? page.title()
+                : reported != null && reported.title() != null ? reported.title() : page.pageId();
+        JLabel link = new JLabel("→ " + title);
         link.setFont(Comic.semiBold(12.5f));
         link.setForeground(Comic.BLUE);
         link.setName("summary-link");
-        if (openable(page)) {
-            clickable(() -> onOpen.accept(page), "Seite öffnen", link);
+        if (reported != null && openable(reported)) {
+            clickable(() -> onOpen.accept(reported), "Seite öffnen", link);
         } else {
             link.setForeground(Comic.MUTED);
         }
@@ -717,9 +723,7 @@ final class SourceUpdatesView extends JPanel {
         StringBuilder text = new StringBuilder(heading(shown.update())).append('\n').append(period(shown.update()));
         if (summary != null) {
             text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
-            for (Statement statement : summary.statements()) {
-                text.append("\n").append(statement.text());
-            }
+            text.append("\n").append(summary.text());
         }
         if (shown.update().initial()) {
             text.append('\n').append("Erstbefüllung: ").append(pages(shown.update().pages()));
@@ -752,7 +756,7 @@ final class SourceUpdatesView extends JPanel {
         Subscription subscribe(String sourceId, ChangeLogListener listener);
 
         /** Die gespeicherte Zusammenfassung des Updates, {@code null} ohne. */
-        Summary summary(String sourceId, String updateId);
+        UpdateSummary summary(String sourceId, String updateId);
 
         /** Ob ein Chat-Modell für Zusammenfassungen eingestellt ist. */
         boolean summariesAvailable();
@@ -787,18 +791,18 @@ final class SourceUpdatesView extends JPanel {
                 }
 
                 @Override
-                public Summary summary(String sourceId, String updateId) {
-                    return null; // TODO CL6: Core-Schnittstelle von Strang Q
+                public UpdateSummary summary(String sourceId, String updateId) {
+                    return workspace.changeSummary(sourceId, updateId).orElse(null);
                 }
 
                 @Override
                 public boolean summariesAvailable() {
-                    return false; // TODO CL6: ChangeLog.summariesAvailable() von Strang Q
+                    return workspace.changeSummariesAvailable();
                 }
 
                 @Override
                 public JobStatus summarize(String sourceId, String updateId) {
-                    throw new UnsupportedOperationException("CL6-Core fehlt noch");
+                    return workspace.summarizeUpdate(sourceId, updateId);
                 }
 
                 @Override
@@ -816,25 +820,6 @@ final class SourceUpdatesView extends JPanel {
                     return workspace.subscribeJobs(listener);
                 }
             };
-        }
-    }
-
-    /**
-     * Die KI-Zusammenfassung eines Updates (ADR 0030, Abschnitt 5), wie die Ansicht sie zeigt.
-     *
-     * @param unreadable wie viele Änderungen die KI mangels Freigabe nicht lesen durfte
-     * @param stale      der Bericht hat sich nach dem Erstellen geändert (nur beim offenen Update möglich)
-     */
-    record Summary(List<Statement> statements, String model, Instant createdAt, int unreadable, boolean stale) {
-        Summary {
-            statements = List.copyOf(statements);
-        }
-    }
-
-    /** Eine Aussage der Zusammenfassung mit den Seiten, auf die sie sich stützt. */
-    record Statement(String text, List<String> pageIds) {
-        Statement {
-            pageIds = List.copyOf(pageIds);
         }
     }
 

@@ -5,6 +5,9 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
 import com.aresstack.spaceharvester.application.changelog.ReportedPage;
+import com.aresstack.spaceharvester.application.changelog.SummaryPage;
+import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
+import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
@@ -197,12 +200,14 @@ class SourceUpdatesViewTest {
         assertThat(view.clickSummaryLink("Betriebshandbuch")).isTrue();
         assertThat(opened).singleElement().satisfies(page -> assertThat(page.pageId()).isEqualTo("11"));
         assertThat(view.clickSummaryLink("Alte Seite")).as("entfernte Seiten öffnen nichts").isFalse();
+        assertThat(view.clickSummaryLink("Kurzbeschreibung DATENH")).as("ohne Titel: Titel aus dem Bericht").isTrue();
     }
 
     @Test
     void aStoredSummaryIsReadBackWithStaleAndUnreadableNotes() {
-        actions.stored = new SourceUpdatesView.Summary(List.of(new SourceUpdatesView.Statement("Eine neue Seite.",
-                List.of("20"))), "gpt-test", SECOND, 2, true);
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
+                new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))), "gpt-test",
+                SECOND, 2, true);
         view.source("wiki", "Confluence HaVdB");
 
         assertThat(view.reportTexts()).contains("Eine neue Seite.", "→ Neue Seite",
@@ -292,7 +297,7 @@ class SourceUpdatesViewTest {
         boolean available = true;
         String cancelled;
         JobListener jobs;
-        SourceUpdatesView.Summary stored;
+        UpdateSummary stored;
 
         static JobStatus job(JobState state) {
             return new JobStatus("job-1", JobType.EXPORT, "wiki", null, "local", state, new JobProgress(1, 0, 0, 0),
@@ -313,11 +318,13 @@ class SourceUpdatesViewTest {
             jobs.changed(job(state));
         }
 
-        private static SourceUpdatesView.Summary summaryOf() {
-            return new SourceUpdatesView.Summary(List.of(
-                    new SourceUpdatesView.Statement("Das Betriebshandbuch wurde überarbeitet.", List.of("11")),
-                    new SourceUpdatesView.Statement("Eine alte Seite ist weggefallen, eine andere heißt jetzt "
-                            + "„Kurzbeschreibung DATENH“.", List.of("13", "12"))),
+        private UpdateSummary summaryOf() {
+            String first = "Das Betriebshandbuch wurde überarbeitet.";
+            String second = "Eine alte Seite ist weggefallen, eine andere heißt jetzt „Kurzbeschreibung DATENH“.";
+            return new UpdateSummary("wiki", second().id(), first + " " + second, List.of(
+                    new SummaryStatement(first, List.of(new SummaryPage("11", "Betriebshandbuch"))),
+                    new SummaryStatement(second, List.of(new SummaryPage("13", "Alte Seite"),
+                            new SummaryPage("12", null)))),
                     "gpt-test", SECOND.plusSeconds(1800), 0, false);
         }
         ChangeLogListener listener;
@@ -375,7 +382,7 @@ class SourceUpdatesViewTest {
         }
 
         @Override
-        public SourceUpdatesView.Summary summary(String sourceId, String updateId) {
+        public UpdateSummary summary(String sourceId, String updateId) {
             return stored;
         }
 

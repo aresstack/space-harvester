@@ -323,10 +323,16 @@ class SettingDialogsTest {
             combo(shell[0].body(), SettingDialogs.CATALOG_ONLY).setSelectedItem(SettingDialogs.FULL);
             durations.get(4).spinner().setValue(90);
             durations.get(4).units().setSelectedItem("Tage");
+            List<JComboBox> combos = find(shell[0].body(), JComboBox.class);
+            JComboBox<?> showAfter = combos.getLast();
+            assertThat(showAfter.getSelectedItem()).as("„Nach dem Update Änderungen anzeigen“, Standard aus")
+                    .isEqualTo(SettingDialogs.OFF);
+            showAfter.setSelectedItem(SettingDialogs.ON);
             shell[0].save();
         });
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(context.settings().cache().changeLog().retention()).isEqualTo(java.time.Duration.ofDays(90));
+        assertThat(context.settings().cache().changeLog().showAfterUpdate()).isTrue();
         assertThat(Files.readString(config)).contains("    interval: 30m", "    mode: full", "    max-age: 6h",
                 "    change-log:\n      retention: 90d",
                 "    version-check: true", "    withheld-retention: 30d", "# Kommentar bleibt stehen")

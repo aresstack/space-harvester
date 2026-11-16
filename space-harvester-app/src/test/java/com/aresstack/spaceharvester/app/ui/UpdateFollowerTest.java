@@ -36,7 +36,7 @@ class UpdateFollowerTest {
             }, () -> ATTACHED);
 
     @Test
-    void aNewMarkOpensTheUpdatesOfItsSourceOnce() {
+    void aNewMarkOpensTheUpdatesOfItsSourceOnce() throws Exception {
         follower.attach(feed);
         assertThat(follower.attached()).isTrue();
 
@@ -44,11 +44,12 @@ class UpdateFollowerTest {
         feed.listener.changed("wiki");
         feed.listener.changed("wiki");
 
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(opened).containsExactly("wiki|Confluence HaVdB");
     }
 
     @Test
-    void backgroundRowsMarksFromBeforeAndTheInitialFillOpenNothing() {
+    void backgroundRowsMarksFromBeforeAndTheInitialFillOpenNothing() throws Exception {
         follower.attach(feed);
 
         feed.updates = List.of(open());
@@ -58,17 +59,19 @@ class UpdateFollowerTest {
         feed.updates = List.of(mark(ATTACHED.plusSeconds(60), true));
         feed.listener.changed("wiki");
 
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(opened).isEmpty();
     }
 
     @Test
-    void withTheSettingOffNothingOpens() {
+    void withTheSettingOffNothingOpens() throws Exception {
         enabled = false;
         follower.attach(feed);
 
         feed.updates = List.of(mark(ATTACHED.plusSeconds(60), false));
         feed.listener.changed("wiki");
 
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(opened).isEmpty();
         assertThat(feed.reads).as("ausgeschaltet liest nichts").isZero();
     }
