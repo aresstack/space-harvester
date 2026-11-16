@@ -176,6 +176,29 @@ public final class PageDetailPanel extends JPanel {
                     "Als Favorit markieren");
     /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat; für den Favoriten. */
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
+    /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
+    private final JPanel heading = new JPanel(null) {
+        @Override
+        public void doLayout() {
+            java.awt.Dimension t = title.getPreferredSize();
+            int width = Math.min(t.width, getWidth());
+            title.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            return title.getPreferredSize();
+        }
+
+        @Override
+        public java.awt.Dimension getMinimumSize() {
+            return new java.awt.Dimension(0, title.getPreferredSize().height);
+        }
+    };
+    /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
+    private final com.aresstack.spaceharvester.app.ui.IconButton more =
+            new com.aresstack.spaceharvester.app.ui.IconButton(new DownTriangle(), MORE_ACTIONS);
+    static final String MORE_ACTIONS = "Weitere Aktionen zur Seite";
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
@@ -243,7 +266,7 @@ public final class PageDetailPanel extends JPanel {
         this.chat = new ChatPanel(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
-        title.setFont(Comic.semiBold(17f));
+        title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
 
         reader.setEditable(false);
@@ -413,33 +436,11 @@ public final class PageDetailPanel extends JPanel {
                 showDetails();
             }
         });
-        // Die Überschrift ist nur so breit wie ihr Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
-        JPanel heading = new JPanel(null) {
-            @Override
-            public void doLayout() {
-                java.awt.Dimension t = title.getPreferredSize();
-                title.setBounds(0, (getHeight() - t.height) / 2, Math.min(t.width, getWidth()), t.height);
-            }
-
-            @Override
-            public java.awt.Dimension getPreferredSize() {
-                return title.getPreferredSize();
-            }
-
-            @Override
-            public java.awt.Dimension getMinimumSize() {
-                return new java.awt.Dimension(0, title.getPreferredSize().height);
-            }
-        };
+        // Die Überschrift steht mittig in der Zeile der Bereichsanzeige (Angelo, 16.11.2026) und ist nur so breit wie ihr
+        // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
-        titleRow.setOpaque(false);
-        // Zurück und Vor wie im Browser vor dem Titel.
-        titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
-        titleRow.add(heading, BorderLayout.CENTER);
-        titleRow.add(Comic.row(star, bookmark, browse), BorderLayout.EAST);
-        header.add(titleRow, BorderLayout.NORTH);
+        more.addActionListener(e -> moreMenu().show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
@@ -1923,11 +1924,71 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
+        more.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+    }
+
+    /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
+    JComponent headerTitle() {
+        return heading;
+    }
+
+    /** Stern und das Dreieck mit den weiteren Aktionen, rechts in der Zeile der Bereichsanzeige. */
+    JComponent headerActions() {
+        return Comic.row(star, more);
+    }
+
+    /** Zurück und Vor für die Statuszeile des Hauptfensters. */
+    JComponent navigation() {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
+        row.setOpaque(false);
+        row.add(backButton.compact());
+        row.add(forwardButton.compact());
+        return row;
+    }
+
+    javax.swing.AbstractButton moreButton() {
+        return more;
+    }
+
+    /** „Lesezeichen kopieren“ und „Im Browser öffnen“; je Eintrag so wählbar wie die Aktion gerade gilt. */
+    javax.swing.JPopupMenu moreMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        for (ComposerButton action : List.of(bookmark, browse)) {
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(action.getText());
+            item.setFont(Comic.regular(13f));
+            item.setToolTipText(action.getToolTipText());
+            item.setEnabled(action.isEnabled());
+            item.addActionListener(e -> action.doClick());
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** Gefülltes Dreieck nach unten, in der Vordergrundfarbe des Knopfs. */
+    private static final class DownTriangle implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.isEnabled() ? c.getForeground() : Comic.MUTED);
+            g2.fillPolygon(new int[] {x + 3, x + 13, x + 8}, new int[] {y + 5, y + 5, y + 11}, 3);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
     }
 
     Breadcrumbs breadcrumbs() {
