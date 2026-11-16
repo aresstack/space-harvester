@@ -174,9 +174,13 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      Dienst `GET /api/v1/sources/{sourceId}/updates`, `…/updates/{updateId}` und `GET /api/v1/change-log`.
      Zusammenfassung eines Updates (ADR 0030, Abschnitt 5): `summarize` startet auf Wunsch den Auftrag
      `UPDATE_SUMMARY` (anhaltbar, nie für die Erstbefüllung); an das Chat-Modell gehen nur Seiten mit KI-Freigabe
-     (`AiRelease::mayProcess`, ADR 0028) samt freigegebenen Vorfahren im Pfad, alle übrigen nur als Zahl je Space.
+     (`AiRelease::mayProcess`, ADR 0028) samt freigegebenen Vorfahren im Pfad und, wenn der Auftraggeber den Inhalt
+     lesen darf, den geänderten Absätzen (CL5); alle übrigen nur als Zahl je Space, Seiten ohne bekannten Inhalt
+     (bisheriger fehlte, neuer steht aus, kein Inhaltsrecht, gekürzt) nur als geändert. Große Updates in Teilen nach
+     Zeichenbudget, stufenweise zusammengeführt.
      `summary` liefert Text und Aussagen mit Seitenverweisen, leer, wenn eine eingegangene Seite die Freigabe verlor oder
-     der Leser sie nicht sehen darf; `stale`, wenn sich der Bericht seitdem geändert hat. Abgelegt im Cache neben dem
+     der Leser sie (bei eingegangenen Absätzen: ihren Inhalt) nicht lesen darf; `stale`, wenn sich der Bericht oder
+     der Inhalt seitdem geändert hat. Abgelegt im Cache neben dem
      Protokoll, gelöscht mit der Quelle, beim Aufräumen und beim Entzug der Freigabe (`withdrawn`). Einstellung
      `space-harvester.cache.change-log.show-after-update` (Standard aus). Im Dienst
      `GET`/`POST /api/v1/sources/{sourceId}/updates/{updateId}/summary`.
