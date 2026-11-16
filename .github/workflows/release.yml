@@ -281,9 +281,12 @@ jobs:
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber *.jar SHA256SUMS
             # Dateien früherer Läufe, die dieser Stand nicht mehr enthält (z. B. alte Namen mit Versionsnummer)
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r asset; do
-              if [ ! -e "$asset" ] && ! grep -qxF -- "$asset" <<< "${FOREIGN_ASSETS// /$'\n'}"; then
-                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
-              fi
+              [ -e "$asset" ] && continue
+              # Fremde Dateien (auch deren vorläufiger Name „….new“ während des Hochladens) bleiben
+              foreign=false
+              for f in $FOREIGN_ASSETS; do [[ "$asset" == "$f" || "$asset" == "$f".* ]] && foreign=true; done
+              [ "$foreign" = true ] && continue
+              gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
             done
           fi
       - name: Release anlegen
