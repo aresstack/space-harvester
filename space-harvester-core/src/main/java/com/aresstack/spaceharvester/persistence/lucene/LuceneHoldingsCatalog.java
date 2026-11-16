@@ -76,6 +76,16 @@ public final class LuceneHoldingsCatalog implements HoldingsCatalog {
                 locked.add(new LockedPage(pageId, parent));
             }
             Set<String> stale = new HashSet<>(Arrays.asList(space.getValues(PageCacheSchema.STALE_PAGE_ID)));
+            // Gelistete Seiten ohne jeden Stand im Cache (Abruf beim Einlesen gescheitert) gehören zum Space und
+            // zählen als nicht geladen; sonst stünde der Space auf „vollständig“, obwohl der Export „unvollständig“
+            // meldet (Angelo, 16.11.2026). Ohne Kopfdaten kennt der Katalog ihre Elternseite nicht.
+            Set<String> known = new HashSet<>();
+            catalog.forEach(page -> known.add(page.pageId()));
+            for (String pageId : space.getValues(PageCacheSchema.MISSING_PAGE_ID)) {
+                if (known.add(pageId)) {
+                    catalog.add(new CatalogPage(pageId, null, false, null, null));
+                }
+            }
             return Optional.of(new Stock(LucenePageCacheReader.of(PageCacheSchema.confirmedGeneration(space)),
                     catalog, stale, locked));
         });
