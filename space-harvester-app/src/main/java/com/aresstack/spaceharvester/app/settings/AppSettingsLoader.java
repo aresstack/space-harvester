@@ -222,7 +222,39 @@ public final class AppSettingsLoader {
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
                 inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
                 consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
-                enrichment(map(get(root, "enrichment")), problems));
+                enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems));
+    }
+
+    /**
+     * {@code space-harvester-app.analytics}: Zeitraum ({@code period}, Dauer wie 365d) und die Pfade des
+     * Analytics-Plugins ({@code details}, {@code activity-by-date}, {@code content-views}); fehlt ein Wert, gilt die
+     * Vorgabe des Core. Ein Pfad muss unter {@code /rest/} liegen, sonst wird er gemeldet und die Vorgabe gilt.
+     */
+    private AnalyticsSettings analytics(Map<?, ?> raw, List<String> problems) {
+        if (raw.isEmpty()) {
+            return AnalyticsSettings.DEFAULT;
+        }
+        Duration period = duration(get(raw, "period"), null, AnalyticsSettings.KEY + ".period", problems);
+        if (period != null && (period.isZero() || period.isNegative())) {
+            problems.add(AnalyticsSettings.KEY + ".period muss mindestens 1d sein");
+            period = null;
+        }
+        return new AnalyticsSettings(period, analyticsPath(get(raw, "details"), "details", problems),
+                analyticsPath(get(raw, "activity-by-date"), "activity-by-date", problems),
+                analyticsPath(get(raw, "content-views"), "content-views", problems));
+    }
+
+    private String analyticsPath(Object raw, String key, List<String> problems) {
+        String path = text(raw, problems);
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        if (!com.aresstack.spaceharvester.application.metadata.AnalyticsQueries.validPath(path.strip())) {
+            problems.add(AnalyticsSettings.KEY + "." + key + " muss ein Pfad unter /rest/ ohne Leerzeichen sein; es "
+                    + "gilt die Vorgabe");
+            return null;
+        }
+        return path.strip();
     }
 
     /**

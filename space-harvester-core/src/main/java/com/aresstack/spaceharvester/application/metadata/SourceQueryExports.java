@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Objects;
 import tools.jackson.core.JsonEncoding;
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
@@ -40,10 +41,10 @@ import tools.jackson.databind.node.ObjectNode;
  *     <li>{@link JobType#METADATA_EXPORT} „Confluence-Metadaten“: je Seite der Auswahl die dokumentierten Abfragen
  *     aus {@link ConfluenceMetadataQueries}, jede Antwort unverändert, Datei
  *     {@code confluence-metadaten-<Space>[-<Seite>]-<Auftrag>.json}.</li>
- *     <li>{@link JobType#ANALYTICS_EXPORT} „Analytics“: Seitenaufrufe über die Abfragen aus
- *     {@link AnalyticsQueries}, Datei {@code confluence-analytics-…json}. Antwortet die Quelle schon bei der ersten
- *     Seite auf keine der Abfragen, scheitert der Auftrag mit {@code ANALYTICS_UNAVAILABLE}; der Rest der App ist
- *     nicht betroffen.</li>
+ *     <li>{@link JobType#ANALYTICS_EXPORT} „Analytics“: Aktivität des Space und Aufrufe je Seite über die Abfragen
+ *     aus {@link AnalyticsQueries} (Seitenliste des Space, nicht eine Abfrage je Seite), Datei
+ *     {@code confluence-analytics-…json}. Antwortet die Quelle auf keine der Abfragen, scheitert der Auftrag mit
+ *     {@code ANALYTICS_UNAVAILABLE}; der Rest der App ist nicht betroffen.</li>
  * </ul>
  * Je gewähltem Space bzw. Teilbaum ein Auftrag ({@link Scopes#outputs}); die Seiten kommen aus dem Bestand
  * ({@link Scopes#pages}: alle dort bekannten Seiten, auch nicht lokal gespeicherte), die Daten aus der Quelle mit
@@ -57,7 +58,7 @@ public class SourceQueryExports {
 
     public static final String COMPONENT = "Quellen-Export";
     public static final String METADATA_SCHEMA = "space-harvester/confluence-metadata-export/v1";
-    public static final String ANALYTICS_SCHEMA = "space-harvester/confluence-analytics-export/v1";
+    public static final String ANALYTICS_SCHEMA = "space-harvester/confluence-analytics-export/v2";
     static final String METADATA_PREFIX = "confluence-metadaten";
     static final String ANALYTICS_PREFIX = "confluence-analytics";
 
@@ -179,9 +180,18 @@ public class SourceQueryExports {
                 if (root.pageId() != null) {
                     json.writeStringProperty("rootPageId", root.pageId());
                 }
+                ContentViews views = null;
                 if (type == JobType.ANALYTICS_EXPORT) {
                     writeAnalyticsHead(json, queries, now);
-                    RestJson.JSON.writeTree(json, spaceAnalytics(source, root.spaceKey(), queries, now));
+                    ObjectNode space = spaceAnalytics(source, root.spaceKey(), queries, now);
+                    views = contentViews(source, root.spaceKey(), queries, now);
+                    if (!views.result().ok() && !space.has("ok")) {
+                        throw unavailable(views.result());
+                    }
+                    space.remove("ok");
+                    RestJson.JSON.writeTree(json, space);
+                    json.writeName(AnalyticsQueries.CONTENT_VIEWS);
+                    RestJson.JSON.writeTree(json, views.section());
                 } else {
                     json.writeName("endpoints");
                     json.writeStartObject();
@@ -192,26 +202,21 @@ public class SourceQueryExports {
                 }
                 json.writeName("pages");
                 json.writeStartArray();
-                boolean first = true;
                 for (String pageId : pages) {
                     context.checkpoint();
                     ObjectNode entry;
                     boolean any;
                     if (type == JobType.ANALYTICS_EXPORT) {
-                        Map<String, RestJson.Result> results = pageAnalytics(source, root.spaceKey(), pageId,
-                                queries, now);
-                        any = results.values().stream().anyMatch(RestJson.Result::ok);
-                        if (first && !any && !results.isEmpty()) {
-                            throw unavailable(results);
-                        }
-                        entry = analyticsEntry(pageId, results);
+                        // Aus der Seitenliste des Space; eine Seite ohne Eintrag hatte im Zeitraum keine Aufrufe oder
+                        // ist der Liste unbekannt, was nicht zu unterscheiden ist: views bleibt null.
+                        any = views.result().ok();
+                        entry = analyticsEntry(pageId, views.byId().get(pageId));
                     } else {
                         Map<String, RestJson.Result> sections = ConfluenceMetadataQueries.fetch(source, pageId);
                         failIfSourceGone(sections);
                         any = sections.values().stream().anyMatch(RestJson.Result::ok);
                         entry = ConfluenceMetadataQueries.entry(pageId, sections);
                     }
-                    first = false;
                     RestJson.JSON.writeTree(json, entry);
                     context.processed(1);
                     if (any) {
@@ -265,11 +270,11 @@ public class SourceQueryExports {
         }
     }
 
-    private static JobFailedException unavailable(Map<String, RestJson.Result> results) {
-        RestJson.Result sample = results.values().iterator().next();
+    private static JobFailedException unavailable(RestJson.Result sample) {
         return new JobFailedException("ANALYTICS_UNAVAILABLE", "Analytics antwortet nicht (" + sample.reason()
                 + "): " + sample.message() + " – Analytics-Plugin fehlt, ist für dieses Konto gesperrt oder die "
-                + "Pfade unter " + AnalyticsQueries.ROOT + " sind an dieser Instanz andere");
+                + "Pfade unter " + AnalyticsQueries.ROOT + " sind an dieser Instanz andere (Einstellungen › "
+                + "Analytics-Export)");
     }
 
     private static void writeAnalyticsHead(JsonGenerator json, AnalyticsQueries queries, Instant now) {
@@ -287,63 +292,132 @@ public class SourceQueryExports {
             json.writeStringProperty(query.name(), query.pathTemplate());
         }
         json.writeEndObject();
-        json.writeName("page");
-        json.writeStartObject();
-        for (AnalyticsQueries.Query query : queries.page()) {
-            json.writeStringProperty(query.name(), query.pathTemplate());
-        }
-        json.writeEndObject();
+        json.writeStringProperty(AnalyticsQueries.CONTENT_VIEWS, queries.contentViews().pathTemplate());
         json.writeEndObject();
         json.writeName("space");
     }
 
+    /** Die Abfragen je Space; {@code ok} merkt sich, ob eine antwortete, und wird vor dem Schreiben entfernt. */
     private static ObjectNode spaceAnalytics(HarvestSource source, String spaceKey, AnalyticsQueries queries,
                                              Instant now) {
         ObjectNode space = RestJson.JSON.createObjectNode();
         for (AnalyticsQueries.Query query : queries.space()) {
-            RestJson.Result result = RestJson.get(source, query.path(spaceKey, null, queries.from(now), now));
+            RestJson.Result result = RestJson.get(source, query.path(spaceKey, queries.from(now), now));
             failIfSourceGone(Map.of(query.name(), result));
             space.set(query.name(), RestJson.section(result));
+            if (result.ok()) {
+                space.put("ok", true);
+            }
         }
         return space;
     }
 
-    private static Map<String, RestJson.Result> pageAnalytics(HarvestSource source, String spaceKey, String pageId,
-                                                              AnalyticsQueries queries, Instant now) {
-        Map<String, RestJson.Result> results = new java.util.LinkedHashMap<>();
-        for (AnalyticsQueries.Query query : queries.page()) {
-            RestJson.Result result = RestJson.get(source, query.path(spaceKey, pageId, queries.from(now), now));
-            failIfSourceGone(Map.of(query.name(), result));
-            results.put(query.name(), result);
+    /** Die Seitenliste des Space mit ihren Einträgen je Seiten-ID. */
+    record ContentViews(RestJson.Result result, Map<String, JsonNode> byId, boolean truncated, int requests) {
+
+        /** Der Abschnitt in der Datei: Status, Anfragen, Einträge gesamt, ob die Liste zu Ende geblättert wurde. */
+        ObjectNode section() {
+            ObjectNode section = RestJson.section(result);
+            section.put("requests", requests);
+            if (result.ok()) {
+                section.remove("data");
+                section.put("entries", byId.size());
+                section.put("complete", !truncated);
+            }
+            return section;
         }
-        return results;
     }
 
     /**
-     * Der Eintrag einer Seite: je Abfrage die Antwort unverändert, dazu {@code summary.views} als Summe aller Felder
-     * {@code views} der Antworten, oder {@code null}, wenn keine Antwort ein solches Feld hat (nicht erhoben ist
-     * nie 0).
+     * Blättert die Seitenliste des Space: {@code contentViews[]} je Antwort, weiter mit {@code nextPageToken} als
+     * Parameter {@link AnalyticsQueries#PAGE_TOKEN}, bis kein Token mehr kommt. Wiederholt die Quelle ein Token oder
+     * dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig statt endlos.
      */
-    static ObjectNode analyticsEntry(String pageId, Map<String, RestJson.Result> results) {
-        ObjectNode entry = RestJson.JSON.createObjectNode();
-        entry.put("pageId", pageId);
-        ObjectNode queries = entry.putObject("queries");
-        long views = 0;
-        boolean counted = false;
-        for (Map.Entry<String, RestJson.Result> result : results.entrySet()) {
-            queries.set(result.getKey(), RestJson.section(result.getValue()));
-            if (result.getValue().ok()) {
-                for (Long value : RestJson.numbers(result.getValue().data(), "views")) {
-                    views += value;
-                    counted = true;
+    static ContentViews contentViews(HarvestSource source, String spaceKey, AnalyticsQueries queries, Instant now) {
+        Map<String, JsonNode> byId = new java.util.LinkedHashMap<>();
+        AnalyticsQueries.Query query = queries.contentViews();
+        Instant from = queries.from(now);
+        String token = null;
+        String previousFirst = null;
+        int requests = 0;
+        boolean truncated = false;
+        RestJson.Result last = null;
+        for (int page = 0; page < RestJson.MAX_LIST_PAGES; page++) {
+            String path = token == null ? query.path(spaceKey, from, now) : query.path(spaceKey, from, now, token);
+            RestJson.Result result = RestJson.get(source, path);
+            requests++;
+            failIfSourceGone(Map.of(query.name(), result));
+            if (!result.ok()) {
+                // Die erste Antwort entscheidet; ein Fehler mitten in der Liste macht sie unvollständig.
+                if (last == null) {
+                    return new ContentViews(result, Map.of(), false, requests);
+                }
+                truncated = true;
+                break;
+            }
+            last = result;
+            JsonNode entries = result.data().get(AnalyticsQueries.CONTENT_VIEWS);
+            if (entries == null || !entries.isArray()) {
+                return new ContentViews(new RestJson.Result(null, requests,
+                        SourceAccessException.Reason.INVALID_RESPONSE, "Antwort ohne " + AnalyticsQueries.CONTENT_VIEWS
+                        + "[]; die Pfade unter " + AnalyticsQueries.ROOT + " sind an dieser Instanz andere"),
+                        Map.of(), false, requests);
+            }
+            String first = entries.isEmpty() ? null : id(entries.get(0));
+            if (token != null && first != null && first.equals(previousFirst)) {
+                truncated = true;
+                break;
+            }
+            previousFirst = first;
+            for (JsonNode entry : entries) {
+                String id = id(entry);
+                if (id != null) {
+                    byId.putIfAbsent(id, entry);
                 }
             }
+            JsonNode next = result.data().get("nextPageToken");
+            String nextToken = next == null || next.isNull() ? null : next.asString();
+            if (nextToken == null || nextToken.isBlank() || nextToken.equals(token) || entries.isEmpty()) {
+                return new ContentViews(last, byId, false, requests);
+            }
+            token = nextToken;
+            if (page == RestJson.MAX_LIST_PAGES - 1) {
+                truncated = true;
+            }
+        }
+        return new ContentViews(last, byId, truncated, requests);
+    }
+
+    private static String id(JsonNode entry) {
+        JsonNode id = entry == null ? null : entry.get("id");
+        return id == null || id.isNull() ? null : id.asString();
+    }
+
+    /**
+     * Der Eintrag einer Seite aus der Seitenliste: {@code content} ist der Listeneintrag unverändert (Titel, Anlage,
+     * letzte Änderung, letzter Aufruf, Leser, Aufrufe, Kommentare) oder {@code null}, dazu {@code summary.views} und
+     * {@code summary.lastViewedAt}; ohne Eintrag ist beides {@code null}, denn nicht erhoben ist nie 0.
+     */
+    static ObjectNode analyticsEntry(String pageId, JsonNode content) {
+        ObjectNode entry = RestJson.JSON.createObjectNode();
+        entry.put("pageId", pageId);
+        if (content == null) {
+            entry.putNull("content");
+        } else {
+            entry.set("content", content);
         }
         ObjectNode summary = entry.putObject("summary");
-        if (counted) {
-            summary.put("views", views);
+        JsonNode views = content == null ? null : content.get("views");
+        if (views != null && views.isNumber()) {
+            summary.put("views", views.asLong());
         } else {
             summary.putNull("views");
+        }
+        JsonNode lastViewed = content == null ? null : content.get("lastViewedAt");
+        if (lastViewed != null && lastViewed.isString()) {
+            summary.put("lastViewedAt", lastViewed.asString());
+        } else {
+            summary.putNull("lastViewedAt");
         }
         return entry;
     }

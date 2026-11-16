@@ -3,10 +3,13 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.settings.AnalyticsSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.ui.controls.DurationField;
+import com.aresstack.spaceharvester.application.metadata.AnalyticsQueries;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 
 import javax.swing.JComboBox;
@@ -19,7 +22,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Einstellungen und Diagnose in Bereichen wie im AskAI-Client: Die Bereiche stehen untereinander im linken Drawer
@@ -118,6 +123,22 @@ public final class SettingsView implements View {
     private ConsoleOutput shownConsole;
     /** Während {@link #renderConsole} die Auswahl setzt, ist das keine Wahl des Benutzers. */
     private boolean showingConsole;
+    /** Platte „Analytics-Export“ unter Allgemein und Zeile auf der Abschlussseite des Assistenten. */
+    static final String ANALYTICS_TITLE = "Analytics-Export";
+    static final String ANALYTICS_HINT = "Leer heißt Vorgabe: der Pfad, den die Analytics-Oberfläche von Confluence "
+            + "10.2 selbst aufruft. Platzhalter {spaceKey}, {from}, {to}. Gilt für den nächsten Export, ohne Neustart.";
+    /**
+     * Platte „Analytics-Export“ (Angelo 16.11.2026): Zeitraum und die Pfade des Analytics-Plugins,
+     * {@code space-harvester-app.analytics}; der Platzhalter jedes Feldes ist die Vorgabe, eine Eingabe ersetzt sie.
+     */
+    final DurationField analyticsPeriod = new DurationField(3650);
+    final PlaceholderField analyticsDetails = new PlaceholderField(40, AnalyticsQueries.DEFAULT_DETAILS);
+    final PlaceholderField analyticsActivity = new PlaceholderField(40, AnalyticsQueries.DEFAULT_ACTIVITY_BY_DATE);
+    final PlaceholderField analyticsContentViews = new PlaceholderField(40, AnalyticsQueries.DEFAULT_CONTENT_VIEWS);
+    /** Was die Felder zeigen; eine Eingabe desselben Werts schreibt nichts. */
+    private AnalyticsSettings shownAnalytics;
+    /** Während {@link #renderAnalytics} die Felder setzt, ist das keine Eingabe des Benutzers. */
+    private boolean showingAnalytics;
     final ComposerButton setup = Comic.button(SetupWizard.TITLE + " …",
             "Netzwerk, KI-Dienst, Modelle und erste Wissensquelle Schritt für Schritt einrichten");
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
@@ -160,6 +181,17 @@ public final class SettingsView implements View {
         }
         console.setToolTipText("Welche Meldungen im Terminal erscheinen, aus dem die App gestartet wurde");
         console.addActionListener(e -> chooseConsole());
+        analyticsPeriod.onChange(this::saveAnalytics);
+        for (PlaceholderField field : List.of(analyticsDetails, analyticsActivity, analyticsContentViews)) {
+            field.setToolTipText("Pfad relativ zur Confluence der Quelle, unter /rest/");
+            field.addActionListener(e -> saveAnalytics());
+            field.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override
+                public void focusLost(java.awt.event.FocusEvent e) {
+                    saveAnalytics();
+                }
+            });
+        }
         about.addActionListener(e -> AboutDialog.open(root, context));
         setup.addActionListener(e -> {
             SetupWizard.open(root, context);
@@ -197,9 +229,18 @@ public final class SettingsView implements View {
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
         SettingDialogs.Rows consoleRows = new SettingDialogs.Rows();
         consoleRows.add("Anzeigen", console, CONSOLE_HINT);
+        SettingDialogs.Rows analyticsRows = new SettingDialogs.Rows();
+        analyticsRows.add("Zeitraum", analyticsPeriod, "Bis heute zurück; Analytics bewahrt standardmäßig 12 Monate "
+                + "auf.");
+        analyticsRows.add("Space-Details", analyticsDetails, ANALYTICS_HINT);
+        analyticsRows.add("Aktivität je Datum", analyticsActivity, "Anlagen, Änderungen und Aufrufe des Space im "
+                + "Zeitraum. " + ANALYTICS_HINT);
+        analyticsRows.add("Seitenliste", analyticsContentViews, "Aufrufe, Leser und letzter Aufruf je Seite; wird "
+                + "über nextPageToken zu Ende geblättert. " + ANALYTICS_HINT);
         page(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
+                Comic.plate(ANALYTICS_TITLE, Comic.PETROL, analyticsRows),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
@@ -549,6 +590,7 @@ public final class SettingsView implements View {
         }
         renderSecurity(settings);
         renderConsole(settings);
+        renderAnalytics(settings);
         retry.reset();
         if (settings != null) {
             var r = settings.jobLimits().retry();
@@ -684,6 +726,64 @@ public final class SettingsView implements View {
             showingConsole = false;
         }
         shownConsole = current;
+    }
+
+    /** Zeigt den Export „Analytics“ aus der Datei; ein Feld, in dem gerade getippt wird, bleibt unberührt. */
+    private void renderAnalytics(AppSettings settings) {
+        AnalyticsSettings current = settings == null ? AnalyticsSettings.DEFAULT : settings.analytics();
+        if (current.equals(shownAnalytics)) {
+            return;
+        }
+        showingAnalytics = true;
+        try {
+            if (!analyticsPeriod.spinner().isFocusOwner()) {
+                analyticsPeriod.value(current.effectivePeriod());
+            }
+            show(analyticsDetails, current.details());
+            show(analyticsActivity, current.activityByDate());
+            show(analyticsContentViews, current.contentViews());
+        } finally {
+            showingAnalytics = false;
+        }
+        shownAnalytics = current;
+    }
+
+    private static void show(PlaceholderField field, String value) {
+        if (!field.isFocusOwner() && !Objects.equals(field.getText(), value == null ? "" : value)) {
+            field.setText(value == null ? "" : value);
+        }
+    }
+
+    /**
+     * Übernimmt die Felder des Exports „Analytics“, sobald sich etwas ändert (Eingabe, Enter oder Verlassen des
+     * Feldes), und speichert sie in der Datei; ein Pfad außerhalb von /rest/ wird gemeldet und nicht gespeichert.
+     */
+    private void saveAnalytics() {
+        if (showingAnalytics || context.settings() == null) {
+            return;
+        }
+        java.time.Duration period = analyticsPeriod.value();
+        AnalyticsSettings chosen = new AnalyticsSettings(
+                period == null || period.equals(AnalyticsSettings.DEFAULT_PERIOD) ? null : period,
+                analyticsDetails.getText(), analyticsActivity.getText(), analyticsContentViews.getText());
+        if (chosen.equals(shownAnalytics)) {
+            return;
+        }
+        for (String path : java.util.Arrays.asList(chosen.details(), chosen.activityByDate(), chosen.contentViews())) {
+            if (path != null && !AnalyticsQueries.validPath(path)) {
+                feedback.problem(new IllegalArgumentException(ANALYTICS_TITLE + ": „" + path + "“ ist kein Pfad "
+                        + "unter /rest/ (ohne Leerzeichen); nicht gespeichert"));
+                return;
+            }
+        }
+        if (chosen.days() < 1) {
+            feedback.problem(new IllegalArgumentException(ANALYTICS_TITLE + ": der Zeitraum muss mindestens einen "
+                    + "Tag umfassen"));
+            return;
+        }
+        shownAnalytics = chosen;
+        context.analytics(chosen, () -> feedback.success(ANALYTICS_TITLE + (chosen.isDefault() ? ": Vorgaben"
+                : " gespeichert")), feedback::problem);
     }
 
     /** Übernimmt die gewählte Terminal-Ausgabe sofort und speichert sie in der Datei, ohne Neustart der Laufzeit. */

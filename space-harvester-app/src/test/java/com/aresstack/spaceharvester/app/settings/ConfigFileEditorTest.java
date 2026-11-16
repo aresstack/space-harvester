@@ -682,6 +682,46 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theAnalyticsExportIsWrittenAsABlockUnderTheAppRootAndRemovedWhenAllIsDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        AnalyticsSettings custom = new AnalyticsSettings(Duration.ofDays(90),
+                "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}", null,
+                "/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}&from={from}");
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), custom));
+        String text = Files.readString(file);
+        assertThat(text).contains("  output-directory: D:\\out   # bleibt\n", "  analytics:\n    period: 90d\n"
+                + "    details: \"/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}\"\n"
+                + "    content-views: \"/rest/confanalytics/2.0/space/paginated/contentViews?spaceKey={spaceKey}"
+                + "&from={from}\"\n").doesNotContain("activity-by-date");
+        assertThat(loader.load(file).analytics()).isEqualTo(custom);
+
+        // Erneut setzen ersetzt den Block; nur noch der Zeitraum weicht ab.
+        AnalyticsSettings period = new AnalyticsSettings(Duration.ofDays(30), null, null, null);
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), period));
+        text = Files.readString(file);
+        assertThat(text).contains("  analytics:\n    period: 30d\n").doesNotContain("details", "content-views");
+        assertThat(text.split("analytics:", -1)).hasSize(2);
+        assertThat(loader.load(file).analytics()).isEqualTo(period);
+
+        // Alles Vorgabe: der Block verschwindet, der Rest bleibt.
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AnalyticsSettings.DEFAULT));
+        text = Files.readString(file);
+        assertThat(text).doesNotContain("analytics").contains("  output-directory: D:\\out   # bleibt\n",
+                "space-harvester:\n  sources: []\n");
+        assertThat(loader.load(file).analytics()).isEqualTo(AnalyticsSettings.DEFAULT);
+
+        // Ohne App-Wurzel entsteht sie oben in der Datei.
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        editor.save(file, editor.withAnalytics(file, new ConfigFileEditor.Draft(Files.readString(file), null), period));
+        assertThat(Files.readString(file)).startsWith("space-harvester-app:\n  analytics:\n    period: 30d\n\n"
+                + "space-harvester:\n");
+        assertThat(loader.load(file).analytics()).isEqualTo(period);
+    }
+
+    @Test
     void aCommentedRetryHeaderIsReplacedAsAWholeBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  jobs:\n    retry: # eigene Werte\n      max-attempts: 5\n"

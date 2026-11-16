@@ -132,49 +132,98 @@ class SourceQueryExportsTest {
         assertThat(wiki.requests).noneMatch(path -> path.contains("body.storage"));
     }
 
+    /** Die Zeitangaben so, wie die Analytics-Oberfläche sie sendet: Millisekunden, UTC, URL-kodiert. */
+    private static String period(Instant to, int days) {
+        java.time.format.DateTimeFormatter stamp = java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+        return "fromDate=" + enc(stamp.format(to.minus(Duration.ofDays(days)))) + "&toDate=" + enc(stamp.format(to))
+                + "&type=total&period=week&timezone=UTC&content=page%2Cblog";
+    }
+
+    private static String contentViews(String period, String token) {
+        return AnalyticsQueries.ROOT + "space/paginated/contentViews?spaceKey=DEV&" + period
+                + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100" + (token == null ? "" : "&nextPageToken=" + token);
+    }
+
     @Test
-    void analyticsSumsViewsPerPageAndNullMeansNotCounted() throws Exception {
-        pagesOfSpace.put("DEV", List.of("1", "2"));
+    void analyticsComesFromThePagedSpaceListAndNullMeansNotCounted() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1", "2", "3"));
         Instant to = CLOCK.instant();
-        String from = to.minus(Duration.ofDays(AnalyticsQueries.DEFAULT_DAYS)).toString();
-        String period = "fromDate=" + enc(from) + "&toDate=" + enc(to.toString()) + "&period=day&type=total&timezone=UTC";
+        String period = period(to, AnalyticsQueries.DEFAULT_DAYS);
+        wiki.stub(AnalyticsQueries.ROOT + "space/details?spaceKey=DEV", "{\"space\":{\"key\":\"DEV\"}}");
         wiki.stub(AnalyticsQueries.ROOT + "space/activityByDate?spaceKey=DEV&" + period,
-                "{\"activityByDate\":[{\"date\":\"2026-11-15\",\"views\":5}]}");
-        wiki.stub(AnalyticsQueries.ROOT + "content/viewsByDate?contentId=1&contentType=page&" + period,
-                "{\"viewsByDate\":[{\"date\":\"2026-11-14\",\"views\":3},{\"date\":\"2026-11-15\",\"views\":4}]}");
-        wiki.stub(AnalyticsQueries.ROOT + "content/viewsByDate?contentId=2&contentType=page&" + period,
-                "{\"message\":\"no data\"}");
+                "{\"activityByDate\":{\"views\":[{\"date\":\"2026-11-15\",\"total\":5}]}}");
+        wiki.stub(contentViews(period, null), "{\"contentViews\":[{\"id\":1,\"type\":\"page\",\"title\":\"Eins\","
+                + "\"lastViewedAt\":\"2026-11-16T16:11:09.090Z\",\"usersViewed\":67,\"views\":1325}],"
+                + "\"nextPageToken\":\"1\"}");
+        wiki.stub(contentViews(period, "1"), "{\"contentViews\":[{\"id\":3,\"type\":\"page\",\"title\":\"Drei\","
+                + "\"usersViewed\":2,\"views\":7}]}");
 
         JobStatus done = run(exports.startAnalytics(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "1")),
                 out, AnalyticsQueries.DEFAULT));
 
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.incomplete()).isFalse();
         assertThat(done.rootPageId()).isEqualTo("1");
         Path file = out.resolve(SourceQueryExports.fileName(JobType.ANALYTICS_EXPORT, "DEV", "1", done.id()));
         assertThat(file.getFileName().toString()).startsWith("confluence-analytics-dev-1-");
         JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(file));
         assertThat(doc.get("schema").asString()).isEqualTo(SourceQueryExports.ANALYTICS_SCHEMA);
         assertThat(doc.get("period").get("days").asInt()).isEqualTo(AnalyticsQueries.DEFAULT_DAYS);
-        assertThat(doc.get("queries").get("page").get("viewsByDate").asString()).contains("{pageId}");
-        assertThat(doc.get("space").get("spaceViewsByDate").get("status").asString()).isEqualTo("ok");
+        assertThat(doc.get("queries").get("contentViews").asString()).contains("{spaceKey}");
+        assertThat(doc.get("space").get("details").get("status").asString()).isEqualTo("ok");
+        assertThat(doc.get("space").get("activityByDate").get("data").get("activityByDate").get("views")).hasSize(1);
+        assertThat(doc.get("space").has("ok")).isFalse();
+        JsonNode list = doc.get("contentViews");
+        assertThat(list.get("status").asString()).isEqualTo("ok");
+        assertThat(list.get("requests").asInt()).isEqualTo(2);
+        assertThat(list.get("entries").asInt()).isEqualTo(2);
+        assertThat(list.get("complete").asBoolean()).isTrue();
         JsonNode first = doc.get("pages").get(0);
-        assertThat(first.get("queries").get("viewsByDate").get("data").get("viewsByDate")).hasSize(2);
-        assertThat(first.get("summary").get("views").asLong()).isEqualTo(7);
-        assertThat(doc.get("pages").get(1).get("summary").get("views").isNull()).isTrue();
+        assertThat(first.get("content").get("title").asString()).isEqualTo("Eins");
+        assertThat(first.get("summary").get("views").asLong()).isEqualTo(1325);
+        assertThat(first.get("summary").get("lastViewedAt").asString()).isEqualTo("2026-11-16T16:11:09.090Z");
+        JsonNode second = doc.get("pages").get(1);
+        assertThat(second.get("content").isNull()).isTrue();
+        assertThat(second.get("summary").get("views").isNull()).isTrue();
+        assertThat(doc.get("pages").get(2).get("summary").get("views").asLong()).isEqualTo(7);
+        assertThat(doc.get("summary").get("failed").asInt()).isZero();
+        // Je Space wenige Anfragen, keine je Seite.
+        assertThat(wiki.requests).hasSize(4);
     }
 
     @Test
-    void analyticsFailsOnlyItselfWhenThePluginAnswersNotFoundOnTheFirstPage() {
-        pagesOfSpace.put("DEV", List.of("1", "2", "3"));
+    void aListWhoseTokenIsIgnoredEndsIncompleteInsteadOfEndless() throws Exception {
+        pagesOfSpace.put("DEV", List.of("1"));
+        String period = period(CLOCK.instant(), AnalyticsQueries.DEFAULT_DAYS);
+        String page = "{\"contentViews\":[{\"id\":1,\"views\":3}],\"nextPageToken\":\"x\"}";
+        wiki.stub(contentViews(period, null), page);
+        wiki.stub(contentViews(period, "x"), page);
 
         JobStatus done = run(exports.startAnalytics(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out,
                 AnalyticsQueries.DEFAULT));
 
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        JsonNode doc = JsonMapper.builder().build().readTree(Files.readString(list(out).get(0)));
+        assertThat(doc.get("contentViews").get("complete").asBoolean()).isFalse();
+        assertThat(doc.get("contentViews").get("requests").asInt()).isEqualTo(2);
+        assertThat(doc.get("pages").get(0).get("summary").get("views").asLong()).isEqualTo(3);
+        // Die Space-Abfragen fehlten (404), nur die Liste antwortete: der Auftrag läuft trotzdem.
+        assertThat(doc.get("space").get("details").get("status").asString()).isEqualTo("error");
+    }
+
+    @Test
+    void analyticsFailsOnlyItselfWhenThePluginAnswersNothing() {
+        pagesOfSpace.put("DEV", List.of("1", "2", "3"));
+
+        JobStatus done = run(exports.startAnalytics(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")), out,
+                AnalyticsQueries.of(null, null, null, 90)));
+
         assertThat(done.state()).isEqualTo(JobState.FAILED);
         assertThat(done.error().code()).isEqualTo("ANALYTICS_UNAVAILABLE");
         assertThat(done.error().message()).contains("NOT_FOUND").contains(AnalyticsQueries.ROOT);
-        // Nach der ersten Seite ist Schluss: keine Abfrage für die Seiten 2 und 3.
-        assertThat(wiki.requests).noneMatch(path -> path.contains("contentId=2"));
+        assertThat(wiki.requests).hasSize(3).allMatch(path -> path.startsWith(AnalyticsQueries.ROOT));
+        assertThat(wiki.requests.get(2)).contains(period(CLOCK.instant(), 90));
         assertThat(list(out)).isEmpty();
     }
 

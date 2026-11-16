@@ -8,6 +8,14 @@
 space-harvester-app:
   # Lokaler Bestand (Lucene), Aufträge und Analysen; Standard: <Benutzerordner>/.space-harvester/data
   data-directory: ${SPACE_HARVESTER_DATA:}
+  # Export „Analytics“ (Export-Reiter): Zeitraum und die Pfade des Confluence-Analytics-Plugins. Ohne Angabe gelten die
+  # Pfade der Analytics-Oberfläche von Confluence 10.2; einstellbar unter Einstellungen › Allgemein › Analytics-Export.
+  # Platzhalter {spaceKey}, {from}, {to}; die Seitenliste blättert über nextPageToken.
+  # analytics:
+  #   period: 365d
+  #   details: "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}"
+  #   activity-by-date: "/rest/confanalytics/1.0/space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog"
+  #   content-views: "/rest/confanalytics/1.0/space/paginated/contentViews?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100"
 
 space-harvester:
   sources:
