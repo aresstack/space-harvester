@@ -83,6 +83,8 @@ public final class Explorer {
     private static final int ACTION_WIDTH = 30;
     /** Spalte des Bestandszeichens links vom Stern. */
     private static final int BADGE_WIDTH = 22;
+    /** Mindestbreite für den Titel vor den Spalten, damit auch bei sehr schmalem Baum wenigstens „…“ bleibt. */
+    private static final int MIN_TITLE_WIDTH = 40;
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
     static final String PAGE_ONLY = "Nur diese Seite herunterladen";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
@@ -434,12 +436,13 @@ public final class Explorer {
 
         JScrollPane treeScroll = Comic.scroll(tree);
         treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-        // Zeilen gehen mindestens über die volle Breite (Download-Symbol rechtsbündig); breitere Zeilen scrollen
-        // waagerecht. Bei neuer Breite neu vermessen.
+        // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen, Stern und Download-Symbol stehen
+        // in festen Spalten ganz rechts, ein zu langer Titel wird davor mit „…“ gekürzt. Bei neuer Breite neu
+        // vermessen (auch beim Verschieben des Teilers).
         treeScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
-                tree.setCellRenderer(new Renderer());
+                remeasure();
             }
         });
         JScrollPane matchScroll = Comic.scroll(matches);
@@ -1090,16 +1093,19 @@ public final class Explorer {
             badge = badge(item);
             this.row = row;
             int depth = value instanceof Node node ? node.getLevel() : 1;
-            int text = super.getPreferredSize().width;
-            width = Math.max(text + (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH + BADGE_WIDTH : 0),
-                    tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
+            // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
+            // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
+            int columns = (action ? ACTION_WIDTH : 0) + (starred ? ACTION_WIDTH + BADGE_WIDTH : 0);
+            setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, columns));
+            int visible = tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4;
+            width = Math.max(visible, columns + MIN_TITLE_WIDTH);
             return this;
         }
 
         @Override
         public java.awt.Dimension getPreferredSize() {
             java.awt.Dimension size = super.getPreferredSize();
-            return new java.awt.Dimension(Math.max(size.width, width), Math.max(size.height, RoundHover.SIZE));
+            return new java.awt.Dimension(width, Math.max(size.height, RoundHover.SIZE));
         }
 
         @Override
@@ -1135,6 +1141,11 @@ public final class Explorer {
                 g.dispose();
             }
         }
+    }
+
+    /** Vermisst alle Zeilen neu, etwa nach einer neuen Breite des sichtbaren Bereichs. */
+    void remeasure() {
+        tree.setCellRenderer(new Renderer());
     }
 
     /** Linker Rand einer Zeile dieser Tiefe, wie {@code BasicTreeUI} ihn ohne sichtbare Wurzel legt. */
