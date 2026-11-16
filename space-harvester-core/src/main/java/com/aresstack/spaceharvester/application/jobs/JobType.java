@@ -58,6 +58,12 @@ public enum JobType {
      */
     REREAD,
     /**
+     * Datei in einem Zielformat (PDF, Word, Markdown, JSON …) aus dem Datenbestand eines Exports im Ausgabeordner
+     * erzeugen, als eigener Auftrag mit Status statt still im Hintergrund (Angelo 16.11.2026); wartet, bis sein Export
+     * erfolgreich endet ({@link Jobs#submitAfter}). Liest weder Cache noch Quelle.
+     */
+    CONVERSION,
+    /**
      * „Confluence-Metadaten exportieren“ (Angelo 16.11.2026): je Seite der Auswahl Versionshistorie, Bearbeiter,
      * Kommentare, Content Properties und Restriktionen über die dokumentierten REST-Schnittstellen der Quelle, als
      * eigene JSON-Datei im Ausgabeordner; eigene Abrufe neben dem Snapshot, der Seitenexport bleibt unverändert.
