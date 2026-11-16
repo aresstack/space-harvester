@@ -4,6 +4,9 @@ import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.ContentChange;
+import com.aresstack.spaceharvester.application.changelog.ParagraphChange;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.changelog.StoredSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -86,6 +89,19 @@ final class ChangeLogSchema {
     private static final String SUMMARY_JSON = S + "json";
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
+    /** Wert von {@link PageCacheSchema#TYPE} für Unterschiede beim Ersetzen eines Inhalts und Präfix ihrer IDs. */
+    static final String DIFF = "diff";
+    private static final String X = DIFF + ".";
+    static final String DIFF_SOURCE_ID = X + "sourceId";
+    static final String DIFF_PAGE_ID = X + "pageId";
+    static final String DIFF_AT = X + "at";
+    private static final String DIFF_AT_TEXT = X + "atText";
+    private static final String DIFF_FROM = X + "fromVersion";
+    private static final String DIFF_TO = X + "toVersion";
+    private static final String DIFF_PART = X + "part";
+    private static final String DIFF_TRUNCATED = X + "truncated";
+    private static final char SEPARATOR = '\u001f';
+
     private ChangeLogSchema() {
     }
 
@@ -164,6 +180,78 @@ final class ChangeLogSchema {
             any.add(new TermQuery(new Term(field, value)), BooleanClause.Occur.SHOULD);
         }
         return any.build();
+    }
+
+    /** Alle Unterschiede. */
+    static Query allDiffs() {
+        return new TermQuery(new Term(PageCacheSchema.TYPE, DIFF));
+    }
+
+    /** Die Unterschiede einer Seite nach {@code after} (ausschließlich, {@code null} ohne Grenze). */
+    static Query diffsOf(PageKey key, Instant after) {
+        BooleanQuery.Builder builder = new BooleanQuery.Builder().add(allDiffs(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(DIFF_SOURCE_ID, key.sourceId())), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(DIFF_PAGE_ID, key.pageId())), BooleanClause.Occur.FILTER);
+        if (after != null) {
+            builder.add(LongField.newRangeQuery(DIFF_AT, PageCacheSchema.nanos(after) + 1, Long.MAX_VALUE),
+                    BooleanClause.Occur.FILTER);
+        }
+        return builder.build();
+    }
+
+    /** Nach Zeitpunkt aufsteigend. */
+    static Sort diffOrder() {
+        return new Sort(new SortedNumericSortField(DIFF_AT, SortField.Type.LONG), SortField.FIELD_DOC);
+    }
+
+    /** Die Unterschiede einer Quelle über die ID, für das Entfernen der Quelle. */
+    static Query diffsOfSource(String sourceId) {
+        return new PrefixQuery(new Term(PageCacheSchema.ID, PageCacheSchema.id(DIFF, sourceId) + '\u001f'));
+    }
+
+    /** Unterschiede vor {@code cutoff}: Sie werden so lange aufbewahrt wie die Zeilen. */
+    static Query diffsBefore(Instant cutoff) {
+        return new BooleanQuery.Builder().add(allDiffs(), BooleanClause.Occur.FILTER)
+                .add(LongField.newRangeQuery(DIFF_AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
+                        BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    static Document diff(ContentChange change) {
+        Document doc = new Document();
+        doc.add(new StringField(PageCacheSchema.TYPE, DIFF, Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID, PageCacheSchema.id(DIFF, change.sourceId(), change.pageId(),
+                Long.toString(PageCacheSchema.nanos(change.at()))), Field.Store.NO));
+        doc.add(new StringField(DIFF_SOURCE_ID, change.sourceId(), Field.Store.YES));
+        doc.add(new StringField(DIFF_PAGE_ID, change.pageId(), Field.Store.YES));
+        doc.add(new LongField(DIFF_AT, PageCacheSchema.nanos(change.at()), Field.Store.NO));
+        doc.add(new StoredField(DIFF_AT_TEXT, change.at().toString()));
+        stored(doc, DIFF_FROM, change.fromVersion());
+        stored(doc, DIFF_TO, change.toVersion());
+        for (ParagraphChange paragraph : change.paragraphs()) {
+            doc.add(new StoredField(DIFF_PART, paragraph.kind().name() + SEPARATOR
+                    + (paragraph.before() == null ? "" : paragraph.before()) + SEPARATOR
+                    + (paragraph.after() == null ? "" : paragraph.after())));
+        }
+        if (change.truncated()) {
+            doc.add(new StoredField(DIFF_TRUNCATED, "true"));
+        }
+        return doc;
+    }
+
+    static ContentChange diff(Document doc) {
+        List<ParagraphChange> paragraphs = new java.util.ArrayList<>();
+        for (String part : doc.getValues(DIFF_PART)) {
+            int first = part.indexOf(SEPARATOR);
+            int second = part.indexOf(SEPARATOR, first + 1);
+            ParagraphChange.Kind kind = ParagraphChange.Kind.valueOf(part.substring(0, first));
+            String before = part.substring(first + 1, second);
+            String after = part.substring(second + 1);
+            paragraphs.add(new ParagraphChange(kind, kind == ParagraphChange.Kind.ADDED ? null : before,
+                    kind == ParagraphChange.Kind.REMOVED ? null : after));
+        }
+        return new ContentChange(doc.get(DIFF_SOURCE_ID), doc.get(DIFF_PAGE_ID), doc.get(DIFF_FROM), doc.get(DIFF_TO),
+                Instant.parse(doc.get(DIFF_AT_TEXT)), paragraphs, doc.get(DIFF_TRUNCATED) != null);
     }
 
     /** Alle Update-Marken. */

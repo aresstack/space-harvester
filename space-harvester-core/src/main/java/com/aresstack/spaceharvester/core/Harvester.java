@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
@@ -792,6 +793,8 @@ public final class Harvester implements AutoCloseable {
                     List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
+            // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
+            cache.contentDiffer(new TextContentDiffer(pageTexts));
             opened.add(ManualSyncRounds.start(jobs, cache, clock));
             // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
             AiRelease summaryRelease = this.aiRelease;

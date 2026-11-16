@@ -51,6 +51,15 @@ public interface ChangeLogStore extends UpdateMarks {
     }
 
     /**
+     * Die Unterschiede beim Ersetzen des Inhalts einer Seite nach {@code after} (ausschließlich, {@code null} ohne
+     * Grenze), älteste zuerst, höchstens {@code limit}.
+     */
+    default List<ContentChange> contentChanges(com.aresstack.spaceharvester.application.snapshot.PageKey key,
+                                               java.time.Instant after, int limit) {
+        return List.of();
+    }
+
+    /**
      * Meldet nach jedem Commit mit neuen Zeilen und nach jeder neuen Marke die Quelle (ADR 0027); die Meldung darf nur
      * vormerken und kehrt sofort zurück.
      */

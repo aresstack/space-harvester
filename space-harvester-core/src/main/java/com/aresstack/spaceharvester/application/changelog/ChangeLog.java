@@ -46,6 +46,8 @@ public final class ChangeLog implements AutoCloseable {
     private static final List<ChangeKind> PRIORITY = List.of(ChangeKind.CONTENT_CHANGED, ChangeKind.MOVED_OUT,
             ChangeKind.RENAMED, ChangeKind.MOVED, ChangeKind.LABELS_CHANGED);
     private static final int MAX_PATH_DEPTH = 50;
+    /** Höchstens so viele Schritte im Unterschied einer Seite. */
+    static final int MAX_DIFF_STEPS = 20;
 
     private final ChangeLogStore store;
     private final AccessGuard access;
@@ -158,6 +160,15 @@ public final class ChangeLog implements AutoCloseable {
      * @throws UnknownUpdateException wenn die Quelle kein solches Update hat
      */
     public ChangeReport report(AccessContext caller, String sourceId, String update) {
+        return report(caller, sourceId, update, false);
+    }
+
+    /**
+     * Wie {@link #report(AccessContext, String, String)}; mit {@code withDiffs} trägt jede geänderte Seite ihren
+     * Unterschied ({@link ReportedPage#diff()}, ADR 0030, CL5). Nur auf Wunsch: je Seite eine Abfrage und bis zu
+     * {@value #MAX_DIFF_STEPS} Schritte, ohne bleibt {@code diff} {@code null}.
+     */
+    public ChangeReport report(AccessContext caller, String sourceId, String update, boolean withDiffs) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         requireReadable(caller, sourceId);
@@ -171,7 +182,8 @@ public final class ChangeLog implements AutoCloseable {
         }
         List<ReportedPage> pages = new ArrayList<>();
         for (ReportedPage page : consolidated.pages()) {
-            pages.add(withDirectory(page, visible));
+            ReportedPage located = withDirectory(page, visible);
+            pages.add(withDiffs ? withDiff(caller, located, span.from(), span.to()) : located);
         }
         pages.sort(Comparator.comparing(ReportedPage::kind)
                 .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)
@@ -437,7 +449,7 @@ public final class ChangeLog implements AutoCloseable {
         return new ReportedPage(last.sourceId(), space, last.pageId(), kind, kinds, title, List.of(), null,
                 first.oldVersion(), gone ? null : last.newVersion(), first.oldTitle(), gone ? null : last.newTitle(),
                 first.oldParentId(), gone ? null : last.newParentId(), first.oldSpaceKey(),
-                gone ? null : last.newSpaceKey(), pending && !gone, last.at());
+                gone ? null : last.newSpaceKey(), pending && !gone, last.at(), null);
     }
 
     /** Pfad und Verweis aus dem Cache; Vorfahren, die der Aufrufer nicht sehen darf, fehlen im Pfad. */
@@ -446,10 +458,7 @@ public final class ChangeLog implements AutoCloseable {
         URI url = header.map(found -> found.metadata().url()).orElse(null);
         List<String> path = path(page, header, (found, key) -> visible.page(key.sourceId(),
                 found.metadata().partitionKey(), key.pageId()));
-        return new ReportedPage(page.sourceId(), page.spaceKey(), page.pageId(), page.kind(), page.kinds(),
-                page.title(), path, url, page.oldVersion(), page.newVersion(), page.oldTitle(), page.newTitle(),
-                page.oldParentId(), page.newParentId(), page.oldSpaceKey(), page.newSpaceKey(),
-                page.contentPending(), page.at());
+        return page.withDirectory(path, url);
     }
 
     /** Der Pfad für das Modell: nur Vorfahren, die der Auftraggeber sehen darf und die die KI-Freigabe haben. */
@@ -478,6 +487,44 @@ public final class ChangeLog implements AutoCloseable {
             parent = found.metadata().parentPageId();
         }
         return path;
+    }
+
+    /**
+     * Die Schritte vom alten bis zum neuen Stand einer geänderten Seite (ADR 0030, Abschnitt 4): die Schritte im Update,
+     * und kam der Inhalt der neuen Version erst später, auch der Schritt, der ihn brachte. Fehlt der Schritt zur neuen
+     * Version, steht das als Zustand im Bericht.
+     */
+    private ReportedPage withDiff(AccessContext caller, ReportedPage page, Instant from, Instant to) {
+        if (!page.kinds().contains(ChangeKind.CONTENT_CHANGED) || page.kind() == ChangeKind.REMOVED
+                || page.kind() == ChangeKind.WITHHELD) {
+            return page;
+        }
+        if (!access.permits(caller, ResourceScope.page(page.sourceId(), page.spaceKey(), page.pageId()),
+                AccessKind.CONTENT)) {
+            return page.withDiff(new ContentDiff(ContentDiff.Status.NOT_PERMITTED, List.of()));
+        }
+        List<ContentChange> steps = new ArrayList<>();
+        boolean reached = false;
+        for (ContentChange step : store.contentChanges(new PageKey(page.sourceId(), page.pageId()), from,
+                MAX_DIFF_STEPS)) {
+            boolean inUpdate = to == null || !step.at().isAfter(to);
+            if (page.newVersion() != null && page.newVersion().equals(step.toVersion())) {
+                steps.add(step);
+                reached = true;
+                break;
+            }
+            if (inUpdate) {
+                steps.add(step);
+            }
+        }
+        if (page.newVersion() == null) {
+            reached = !steps.isEmpty() && !page.contentPending();
+        }
+        if (reached) {
+            return page.withDiff(new ContentDiff(ContentDiff.Status.AVAILABLE, steps));
+        }
+        return page.withDiff(page.contentPending() ? new ContentDiff(ContentDiff.Status.CONTENT_PENDING, steps)
+                : new ContentDiff(ContentDiff.Status.PREVIOUS_MISSING, List.of()));
     }
 
     // --- Rechte --------------------------------------------------------------------------------------------------

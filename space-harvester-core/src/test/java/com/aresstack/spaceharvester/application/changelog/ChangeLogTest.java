@@ -36,6 +36,9 @@ class ChangeLogTest {
     private final Map<PageKey, PageHeader> headers = new HashMap<>();
     private final Set<String> denied = new HashSet<>();
     private final Set<String> deniedSpaces = new HashSet<>();
+    /** Seiten, deren Inhalt der Aufrufer nicht lesen darf (Kopfdaten schon). */
+    private final Set<String> deniedContent = new HashSet<>();
+    private final List<ContentChange> diffs = new ArrayList<>();
     private Consumer<String> recorded = ignored -> {
     };
     private final ChangeLogStore store = new ChangeLogStore() {
@@ -58,10 +61,19 @@ class ChangeLogTest {
         public void mark(UpdateMark mark) {
             marks.add(mark);
         }
+
+        @Override
+        public List<ContentChange> contentChanges(PageKey key, Instant after, int limit) {
+            return diffs.stream().filter(diff -> diff.sourceId().equals(key.sourceId())
+                            && diff.pageId().equals(key.pageId()) && (after == null || diff.at().isAfter(after)))
+                    .sorted(java.util.Comparator.comparing(ContentChange::at)).limit(limit).toList();
+        }
     };
     /** Die Richtlinie hält einzelne Seiten zurück; alles andere ist frei. */
     private final AccessGuard access = new AccessGuard((context, scope, kind) ->
-            scope.pageId() != null && (denied.contains(scope.pageId()) || deniedSpaces.contains(scope.spaceKey()))
+            scope.pageId() != null && (denied.contains(scope.pageId()) || deniedSpaces.contains(scope.spaceKey())
+                    || kind == com.aresstack.spaceharvester.application.access.AccessKind.CONTENT
+                    && deniedContent.contains(scope.pageId()))
                     ? AccessDecision.DENY : AccessDecision.ALLOW);
     private final ChangeLog log = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
             () -> List.of("wiki", "other"));
@@ -310,5 +322,106 @@ class ChangeLogTest {
         assertThat(log.entries(CALLER, new ChangeFilter("wiki", null, Set.of(), Set.of(), "OPS", null, null, 0, 10))
                 .entries()).isEmpty();
         assertThat(log.updates(CALLER, "wiki").getFirst().spaces()).containsExactly(Map.entry("DEV", 2));
+    }
+
+    // --- Unterschied je Seite (CL5) --------------------------------------------------------------------------------
+
+    private void diff(long minutes, String pageId, String from, String to, ParagraphChange... paragraphs) {
+        diffs.add(new ContentChange("wiki", pageId, from, to, at(minutes), List.of(paragraphs), false));
+    }
+
+    private ReportedPage reported(String update, String pageId) {
+        return log.report(CALLER, "wiki", update, true).pages().stream().filter(page -> page.pageId().equals(pageId))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
+    void aChangedPageCarriesEveryStepFromItsOldToItsNewVersion() {
+        twoUpdatesAndAnOpenOne();
+        diff(5, "100", "0", "1", new ParagraphChange(ParagraphChange.Kind.ADDED, null, "vorher"));
+        diff(14, "100", "1", "2", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alt", "Mittel"));
+        diff(20, "100", "2", "3", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Mittel", "Neu"));
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        ContentDiff diff = reported(id, "100").diff();
+
+        assertThat(diff.status()).isEqualTo(ContentDiff.Status.AVAILABLE);
+        assertThat(diff.steps()).extracting(ContentChange::fromVersion, ContentChange::toVersion)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("1", "2"),
+                        org.assertj.core.groups.Tuple.tuple("2", "3"));
+        assertThat(diff.steps().getLast().paragraphs())
+                .containsExactly(new ParagraphChange(ParagraphChange.Kind.CHANGED, "Mittel", "Neu"));
+    }
+
+    @Test
+    void theReportCarriesDiffsOnlyOnRequest() {
+        twoUpdatesAndAnOpenOne();
+        diff(20, "100", "1", "3", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alt", "Neu"));
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        assertThat(log.report(CALLER, "wiki", id).pages()).extracting(ReportedPage::diff).containsOnlyNulls();
+        assertThat(reported(id, "100").diff().status()).isEqualTo(ContentDiff.Status.AVAILABLE);
+    }
+
+    @Test
+    void pagesWithoutAContentChangeHaveNoDiff() {
+        twoUpdatesAndAnOpenOne();
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        assertThat(reported(id, "102").diff()).isNull();
+        assertThat(reported(id, "101").diff()).isNull();
+    }
+
+    @Test
+    void withoutTheStepToTheNewVersionTheOldContentIsMissingAndNothingIsGuessed() {
+        twoUpdatesAndAnOpenOne();
+        diff(14, "100", "1", "2", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alt", "Mittel"));
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        ContentDiff diff = reported(id, "100").diff();
+
+        assertThat(diff.status()).isEqualTo(ContentDiff.Status.PREVIOUS_MISSING);
+        assertThat(diff.steps()).isEmpty();
+    }
+
+    @Test
+    void aNewVersionNotYetLoadedIsPendingWithTheStepsSoFar() {
+        twoUpdatesAndAnOpenOne();
+        row(35, "100", ChangeKind.CONTENT_CHANGED, ChangeTrigger.SCHEDULE, "Startseite", "Startseite", "3", "4",
+                true);
+
+        ContentDiff diff = reported(ChangeUpdate.OPEN, "100").diff();
+
+        assertThat(diff.status()).isEqualTo(ContentDiff.Status.CONTENT_PENDING);
+        assertThat(diff.steps()).isEmpty();
+    }
+
+    @Test
+    void aStepLoadedAfterTheUpdateEndedStillCompletesIt() {
+        twoUpdatesAndAnOpenOne();
+        diff(14, "100", "1", "2");
+        diff(20, "100", "2", "3");
+        String id = log.updates(CALLER, "wiki").get(1).id();
+        diffs.removeLast();
+        diff(32, "100", "2", "3", new ParagraphChange(ParagraphChange.Kind.REMOVED, "Weg", null));
+
+        ContentDiff diff = reported(id, "100").diff();
+
+        assertThat(diff.status()).isEqualTo(ContentDiff.Status.AVAILABLE);
+        assertThat(diff.steps()).extracting(ContentChange::toVersion).containsExactly("2", "3");
+    }
+
+    @Test
+    void withoutContentRightsTheDiffIsNotPermittedButThePageStays() {
+        twoUpdatesAndAnOpenOne();
+        diff(20, "100", "1", "3", new ParagraphChange(ParagraphChange.Kind.CHANGED, "geheim", "geheimer"));
+        deniedContent.add("100");
+        String id = log.updates(CALLER, "wiki").get(1).id();
+
+        ReportedPage page = reported(id, "100");
+
+        assertThat(page.kind()).isEqualTo(ChangeKind.CONTENT_CHANGED);
+        assertThat(page.diff().status()).isEqualTo(ContentDiff.Status.NOT_PERMITTED);
+        assertThat(page.diff().steps()).isEmpty();
     }
 }
