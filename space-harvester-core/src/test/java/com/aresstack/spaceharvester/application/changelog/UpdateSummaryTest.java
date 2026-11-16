@@ -412,7 +412,7 @@ class UpdateSummaryTest {
     }
 
     @Test
-    void missingPendingOrTruncatedContentIsSentAsChangedWithoutContent() {
+    void missingContentIsSentAsChangedWithoutContentAndATruncatedDifferenceWithItsParagraphs() {
         row(1, "100", "DEV", ChangeKind.NEW, "Start");
         row(1, "101", "DEV", ChangeKind.NEW, "Zweite");
         mark(10, true);
@@ -425,10 +425,12 @@ class UpdateSummaryTest {
 
         run(log.summarize(CALLER, "wiki", id));
 
-        assertThat(inputs.getFirst()).doesNotContain("Anfang der Riesenänderung").doesNotContain("absaetze");
-        assertThat(inputs.getFirst().split("\"inhaltUnbekannt\":true", -1)).hasSize(3);
-        assertThat(summaries.get("wiki/" + id).inputPages()).noneMatch(StoredSummary.InputPage::content);
-        assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(2);
+        assertThat(inputs.getFirst()).contains("Anfang der Riesenänderung", "\"gekuerzt\":true");
+        assertThat(inputs.getFirst().split("\"inhaltUnbekannt\":true", -1)).as("nur Seite 100").hasSize(2);
+        assertThat(summaries.get("wiki/" + id).inputPages())
+                .containsExactly(new StoredSummary.InputPage("DEV", "100", false),
+                        new StoredSummary.InputPage("DEV", "101", true));
+        assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(1);
     }
 
     @Test

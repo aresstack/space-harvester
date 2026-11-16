@@ -176,8 +176,8 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      `UPDATE_SUMMARY` (anhaltbar, nie für die Erstbefüllung); an das Chat-Modell gehen nur Seiten mit KI-Freigabe
      (`AiRelease::mayProcess`, ADR 0028) samt freigegebenen Vorfahren im Pfad und, wenn der Auftraggeber den Inhalt
      lesen darf, den geänderten Absätzen (CL5); alle übrigen nur als Zahl je Space, Seiten ohne bekannten Inhalt
-     (bisheriger fehlte, neuer steht aus, kein Inhaltsrecht, gekürzt) nur als geändert. Große Updates in Teilen nach
-     Zeichenbudget, stufenweise zusammengeführt.
+     (bisheriger fehlte, neuer steht aus, kein Inhaltsrecht) nur als geändert, gekürzte Unterschiede mit dem
+     Gezeigten. Große Updates in Teilen nach Zeichenbudget, stufenweise zusammengeführt.
      `summary` liefert Text und Aussagen mit Seitenverweisen, leer, wenn eine eingegangene Seite die Freigabe verlor oder
      der Leser sie (bei eingegangenen Absätzen: ihren Inhalt) nicht lesen darf; `stale`, wenn sich der Bericht oder
      der Inhalt seitdem geändert hat. Abgelegt im Cache neben dem

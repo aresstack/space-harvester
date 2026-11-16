@@ -219,8 +219,8 @@ final class UpdateSummarizer {
 
     /**
      * Die Seite für das Modell: Art, Titel, Pfad, Space und der Unterschied. Unbekannt ist der Inhalt, wenn der Bericht
-     * keinen vollständigen Unterschied hat (bisheriger Inhalt fehlte, neuer steht aus, kein Leserecht am Inhalt oder
-     * beim Bilden gekürzt); dann gehen keine Absätze mit.
+     * keinen Unterschied hat (bisheriger Inhalt fehlte, neuer steht aus, kein Leserecht am Inhalt); dann gehen keine
+     * Absätze mit. Gekürzte Unterschiede gehen mit dem Gezeigten und {@code gekuerzt} ein.
      */
     private static Material material(ReportedPage page, Function<ReportedPage, List<String>> path) {
         ObjectNode node = JSON.createObjectNode();
@@ -238,12 +238,15 @@ final class UpdateSummarizer {
         ContentDiff diff = page.diff();
         boolean unknown = false;
         if (diff != null) {
-            unknown = diff.status() != ContentDiff.Status.AVAILABLE
-                    || diff.steps().stream().anyMatch(ContentChange::truncated);
+            unknown = diff.status() != ContentDiff.Status.AVAILABLE;
             if (unknown) {
                 node.put("inhaltUnbekannt", true);
             } else {
                 ArrayNode paragraphs = node.putArray("absaetze");
+                // Große Überarbeitungen kürzt schon der Unterschied (CL5); das Gezeigte geht mit, gekennzeichnet.
+                if (diff.steps().stream().anyMatch(ContentChange::truncated)) {
+                    node.put("gekuerzt", true);
+                }
                 int chars = 0;
                 outer:
                 for (ContentChange step : diff.steps()) {
