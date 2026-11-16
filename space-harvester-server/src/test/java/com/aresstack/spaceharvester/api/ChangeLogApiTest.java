@@ -104,6 +104,45 @@ class ChangeLogApiTest {
         assertThat(json.readTree(initial.body()).get("pages")).isEmpty();
     }
 
+    /** Seite 100 als Confluence-Inhalt mit Storage-Text. */
+    private static PageSnapshot storage(String version, String html, Instant retrievedAt) {
+        PageMetadata metadata = new PageMetadata("100", "confluence:wiki/page/100", "Start", "DEV", null, version,
+                Instant.parse("2026-11-01T08:00:00Z"), URI.create("https://wiki.example.org/100"),
+                PageMetadata.sorted(Map.of()));
+        String body = "{\"body\":{\"storage\":{\"value\":\"" + html + "\"}}}";
+        return PageSnapshot.of("wiki", metadata, new NativePayload(body.getBytes(StandardCharsets.UTF_8),
+                "application/json", "confluence-rest-content+json"), retrievedAt);
+    }
+
+    @Test
+    void theTextDiffOfAChangedPageComesOnlyOnRequest() throws Exception {
+        ChangeTrigger.MANUAL.run(() -> cache.save(storage("1", "<p>Alt</p>", Instant.parse("2026-11-02T08:00:00Z"))));
+        ChangeTrigger.MANUAL.run(() -> cache.save(storage("2", "<p>Neu</p>", Instant.parse("2026-11-03T08:00:00Z"))));
+
+        JsonNode plain = json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open").body());
+        JsonNode changed = page(plain, "100");
+        assertThat(changed.get("kind").asString()).isEqualTo("CONTENT_CHANGED");
+        assertThat(changed.path("diff").isNull() || changed.path("diff").isMissingNode()).isTrue();
+
+        HttpResponse<String> withDiff = get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open?diff=true");
+        assertThat(withDiff.statusCode()).as(withDiff.body()).isEqualTo(200);
+        JsonNode diff = page(json.readTree(withDiff.body()), "100").get("diff");
+        assertThat(diff.get("status").asString()).as(withDiff.body()).isEqualTo("AVAILABLE");
+        JsonNode paragraph = diff.get("steps").get(0).get("paragraphs").get(0);
+        assertThat(paragraph.get("kind").asString()).isEqualTo("CHANGED");
+        assertThat(paragraph.get("before").asString()).isEqualTo("Alt");
+        assertThat(paragraph.get("after").asString()).isEqualTo("Neu");
+    }
+
+    private static JsonNode page(JsonNode report, String pageId) {
+        for (JsonNode page : report.get("pages")) {
+            if (page.get("pageId").asString().equals(pageId)) {
+                return page;
+            }
+        }
+        throw new AssertionError("Seite " + pageId + " fehlt im Bericht");
+    }
+
     @Test
     void rawRowsAreSearchedAndAPageOutsideTheGrantIsWithheld() throws Exception {
         JsonNode all = json.readTree(get(TestClient.TOKEN, "/api/v1/change-log?sourceId=wiki").body());
