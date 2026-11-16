@@ -39,29 +39,8 @@ public record ChangeFilter(String sourceId, String text, Set<ChangeKind> kinds, 
         return new ChangeFilter(sourceId, null, Set.of(), Set.of(), null, null, null, 0, limit);
     }
 
-    boolean matches(ChangeEntry entry) {
-        return (sourceId == null || sourceId.equals(entry.sourceId()))
-                && (kinds.isEmpty() || kinds.contains(entry.kind()))
-                && (triggers.isEmpty() || triggers.contains(entry.trigger()))
-                && (spaceKey == null || spaceKey.equals(entry.spaceKey()) || spaceKey.equals(entry.oldSpaceKey()))
-                && (from == null || !entry.at().isBefore(from))
-                && (to == null || entry.at().isBefore(to))
-                && (text == null || text.equals(entry.pageId()) || titleMatches(entry));
-    }
-
-    private boolean titleMatches(ChangeEntry entry) {
-        java.util.List<String> words = new java.util.ArrayList<>();
-        if (entry.oldTitle() != null) {
-            words.addAll(com.aresstack.spaceharvester.application.query.PageSearchQuery.words(entry.oldTitle()));
-        }
-        if (entry.newTitle() != null) {
-            words.addAll(com.aresstack.spaceharvester.application.query.PageSearchQuery.words(entry.newTitle()));
-        }
-        for (String wanted : com.aresstack.spaceharvester.application.query.PageSearchQuery.words(text)) {
-            if (words.stream().noneMatch(word -> word.startsWith(wanted))) {
-                return false;
-            }
-        }
-        return true;
+    /** Die Abfrage an die Ablage für die Quellen, die der Aufrufer sehen darf; neueste zuerst. */
+    ChangeQuery query(java.util.Collection<String> sourceIds) {
+        return new ChangeQuery(Set.copyOf(sourceIds), kinds, triggers, spaceKey, text, from, true, to, false, true);
     }
 }

@@ -35,6 +35,7 @@ class ChangeLogTest {
     private final List<UpdateMark> marks = new ArrayList<>();
     private final Map<PageKey, PageHeader> headers = new HashMap<>();
     private final Set<String> denied = new HashSet<>();
+    private final Set<String> deniedSpaces = new HashSet<>();
     private Consumer<String> recorded = ignored -> {
     };
     private final ChangeLogStore store = new ChangeLogStore() {
@@ -60,7 +61,8 @@ class ChangeLogTest {
     };
     /** Die Richtlinie hält einzelne Seiten zurück; alles andere ist frei. */
     private final AccessGuard access = new AccessGuard((context, scope, kind) ->
-            scope.pageId() != null && denied.contains(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW);
+            scope.pageId() != null && (denied.contains(scope.pageId()) || deniedSpaces.contains(scope.spaceKey()))
+                    ? AccessDecision.DENY : AccessDecision.ALLOW);
     private final ChangeLog log = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
             () -> List.of("wiki", "other"));
 
@@ -240,5 +242,73 @@ class ChangeLogTest {
         }
         assertThat(seen).containsExactly("wiki");
         assertThat(all).containsExactlyInAnyOrder("wiki", "other");
+    }
+
+    /** Seite 300 wandert aus DEV nach OPS, Seite 301 aus OPS nach DEV; der Aufrufer darf OPS nicht sehen. */
+    private void movesBetweenSpaces() {
+        mark(10, true);
+        for (ChangeKind kind : List.of(ChangeKind.RENAMED, ChangeKind.MOVED_OUT)) {
+            entries.add(new ChangeEntry("wiki", "OPS", "300", at(50), kind, ChangeTrigger.MANUAL, "4", "4", "Alt",
+                    "Geheim neu", "100", "900", "DEV", "OPS", null, false));
+            entries.add(new ChangeEntry("wiki", "DEV", "301", at(51), kind, ChangeTrigger.MANUAL, "7", "7",
+                    "Geheim alt", "Offen", "901", "100", "OPS", "DEV", null, false));
+        }
+        deniedSpaces.add("OPS");
+    }
+
+    @Test
+    void aPageMovedIntoAHiddenSpaceShowsOnlyThatItLeftWithoutNewTitleOrSpace() {
+        movesBetweenSpaces();
+
+        ChangeEntries rows = log.entries(CALLER, new ChangeFilter("wiki", "300", Set.of(), Set.of(), null, null,
+                null, 0, 10));
+        ReportedPage page = log.report(CALLER, "wiki", ChangeUpdate.OPEN).pages().stream()
+                .filter(candidate -> candidate.pageId().equals("300")).findFirst().orElseThrow();
+
+        assertThat(rows.entries()).singleElement().satisfies(row -> {
+            assertThat(row.kind()).isEqualTo(ChangeKind.MOVED_OUT);
+            assertThat(row.spaceKey()).isEqualTo("DEV");
+            assertThat(row.oldTitle()).isEqualTo("Alt");
+            assertThat(row.newTitle()).isNull();
+            assertThat(row.newSpaceKey()).isNull();
+            assertThat(row.newParentId()).isNull();
+        });
+        assertThat(page.kind()).isEqualTo(ChangeKind.MOVED_OUT);
+        assertThat(page.kinds()).containsExactly(ChangeKind.MOVED_OUT);
+        assertThat(page.title()).isEqualTo("Alt");
+        assertThat(page.spaceKey()).isEqualTo("DEV");
+        assertThat(page.newTitle()).isNull();
+        assertThat(page.newSpaceKey()).isNull();
+        assertThat(log.entries(CALLER, new ChangeFilter("wiki", "neu", Set.of(), Set.of(), null, null, null, 0, 10))
+                .entries()).isEmpty();
+        assertThat(log.entries(CALLER, new ChangeFilter("wiki", null, Set.of(), Set.of(), "OPS", null, null, 0, 10))
+                .entries()).isEmpty();
+    }
+
+    @Test
+    void aPageMovedOutOfAHiddenSpaceHidesItsOldTitleAndSpace() {
+        movesBetweenSpaces();
+
+        ChangeEntries rows = log.entries(CALLER, new ChangeFilter("wiki", "301", Set.of(), Set.of(), null, null,
+                null, 0, 10));
+        ReportedPage page = log.report(CALLER, "wiki", ChangeUpdate.OPEN).pages().stream()
+                .filter(candidate -> candidate.pageId().equals("301")).findFirst().orElseThrow();
+
+        assertThat(rows.entries()).hasSize(2).allSatisfy(row -> {
+            assertThat(row.newTitle()).isEqualTo("Offen");
+            assertThat(row.oldTitle()).isNull();
+            assertThat(row.oldSpaceKey()).isNull();
+            assertThat(row.oldParentId()).isNull();
+        });
+        assertThat(page.title()).isEqualTo("Offen");
+        assertThat(page.oldTitle()).isNull();
+        assertThat(page.oldSpaceKey()).isNull();
+        assertThat(page.oldParentId()).isNull();
+        // Weder der alte Titel noch der alte Space führen zur Zeile.
+        assertThat(log.entries(CALLER, new ChangeFilter("wiki", "geheim", Set.of(), Set.of(), null, null, null, 0,
+                10)).entries()).isEmpty();
+        assertThat(log.entries(CALLER, new ChangeFilter("wiki", null, Set.of(), Set.of(), "OPS", null, null, 0, 10))
+                .entries()).isEmpty();
+        assertThat(log.updates(CALLER, "wiki").getFirst().spaces()).containsExactly(Map.entry("DEV", 2));
     }
 }

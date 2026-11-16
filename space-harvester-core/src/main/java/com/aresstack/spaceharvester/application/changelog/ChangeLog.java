@@ -90,10 +90,17 @@ public final class ChangeLog implements AutoCloseable {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
         Visibility visible = new Visibility(caller);
-        List<ChangeEntry> entries = store.changeEntries(sourceId).stream().filter(visible::row).toList();
+        List<ChangeEntry> entries = store.changeEntries(ChangeQuery.source(sourceId), visible::view, 0,
+                Integer.MAX_VALUE).entries();
         List<ChangeUpdate> updates = new ArrayList<>();
+        int next = 0;
         for (Span span : spans(sourceId)) {
-            List<ChangeEntry> rows = span.rows(entries);
+            // Zeilen und Marken sind beide nach Zeit geordnet: jede Zeile gehört zum ersten Update, das nach ihr endet.
+            int first = next;
+            while (next < entries.size() && (span.to() == null || !entries.get(next).at().isAfter(span.to()))) {
+                next++;
+            }
+            List<ChangeEntry> rows = entries.subList(first, next);
             if (span.mark() == null && rows.isEmpty()) {
                 continue;
             }
@@ -117,7 +124,8 @@ public final class ChangeLog implements AutoCloseable {
         Span span = spans(sourceId).stream().filter(candidate -> candidate.id().equals(update)).findFirst()
                 .orElseThrow(() -> new UnknownUpdateException(sourceId));
         Visibility visible = new Visibility(caller);
-        List<ChangeEntry> rows = span.rows(store.changeEntries(sourceId).stream().filter(visible::row).toList());
+        List<ChangeEntry> rows = store.changeEntries(ChangeQuery.span(sourceId, span.from(), span.to()),
+                visible::view, 0, Integer.MAX_VALUE).entries();
         Consolidated consolidated = consolidate(span, rows);
         if (consolidated.update().initial()) {
             return new ChangeReport(consolidated.update(), List.of());
@@ -145,19 +153,16 @@ public final class ChangeLog implements AutoCloseable {
                     .filter(sourceId -> access.permits(caller, ResourceScope.source(sourceId), AccessKind.METADATA))
                     .toList();
         }
-        Visibility visible = new Visibility(caller);
-        List<ChangeEntry> found = new ArrayList<>();
-        for (String sourceId : wanted) {
-            for (ChangeEntry entry : store.changeEntries(sourceId)) {
-                if (filter.matches(entry) && visible.row(entry)) {
-                    found.add(entry);
-                }
-            }
+        if (wanted.isEmpty()) {
+            return new ChangeEntries(List.of(), 0, filter.offset(), filter.limit());
         }
-        found.sort(Comparator.comparing(ChangeEntry::at).reversed());
-        int from = Math.min(filter.offset(), found.size());
-        int to = Math.min(found.size(), from + filter.limit());
-        return new ChangeEntries(found.subList(from, to), found.size(), filter.offset(), filter.limit());
+        Visibility visible = new Visibility(caller);
+        ChangeQuery query = filter.query(wanted);
+        // Eine gekürzte Zeile muss auch ohne die verborgene Seite passen (Space und Titel nur der sichtbaren Seite).
+        return store.changeEntries(query, entry -> {
+            ChangeEntry seen = visible.view(entry);
+            return seen == null || seen == entry || query.matches(seen) ? seen : null;
+        }, filter.offset(), filter.limit());
     }
 
     @Override
@@ -169,13 +174,6 @@ public final class ChangeLog implements AutoCloseable {
 
     /** Zeitraum eines Updates zwischen zwei Marken. */
     private record Span(String id, String sourceId, Instant from, Instant to, UpdateMark mark, boolean initial) {
-
-        List<ChangeEntry> rows(List<ChangeEntry> entries) {
-            return entries.stream()
-                    .filter(entry -> (from == null || entry.at().isAfter(from))
-                            && (to == null || !entry.at().isAfter(to)))
-                    .toList();
-        }
     }
 
     private List<Span> spans(String sourceId) {
@@ -304,8 +302,29 @@ public final class ChangeLog implements AutoCloseable {
             this.caller = caller;
         }
 
-        boolean row(ChangeEntry entry) {
-            return page(entry.sourceId(), entry.spaceKey(), entry.pageId());
+        /**
+         * Die Zeile, wie der Aufrufer sie sehen darf, oder {@code null}. Wandert eine Seite zwischen Spaces, zählen
+         * beide Seiten der Zeile: Ohne Recht am neuen Space bleibt nur {@link ChangeKind#MOVED_OUT} im alten Space,
+         * ohne neuen Titel, neue Elternseite und neuen Space; ohne Recht am alten Space fehlen alter Titel, alte
+         * Elternseite und alter Space.
+         */
+        ChangeEntry view(ChangeEntry entry) {
+            String old = entry.oldSpaceKey();
+            boolean moved = old != null && !old.equals(entry.spaceKey());
+            if (!page(entry.sourceId(), entry.spaceKey(), entry.pageId())) {
+                if (!moved || entry.kind() != ChangeKind.MOVED_OUT || !page(entry.sourceId(), old, entry.pageId())) {
+                    return null;
+                }
+                return new ChangeEntry(entry.sourceId(), old, entry.pageId(), entry.at(), entry.kind(),
+                        entry.trigger(), entry.oldVersion(), null, entry.oldTitle(), null, entry.oldParentId(), null,
+                        old, null, entry.generation(), false);
+            }
+            if (moved && !page(entry.sourceId(), old, entry.pageId())) {
+                return new ChangeEntry(entry.sourceId(), entry.spaceKey(), entry.pageId(), entry.at(), entry.kind(),
+                        entry.trigger(), entry.oldVersion(), entry.newVersion(), null, entry.newTitle(), null,
+                        entry.newParentId(), null, entry.newSpaceKey(), entry.generation(), entry.contentPending());
+            }
+            return entry;
         }
 
         boolean page(String sourceId, String spaceKey, String pageId) {
