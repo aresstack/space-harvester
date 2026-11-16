@@ -260,6 +260,42 @@ class ExportAssetsFromHoldingsTest {
     }
 
     @Test
+    void theHoldingsCountAsCompleteOnlyOnceImagesAndAttachmentsOfTheStoredVersionLieThere() {
+        setUp(true);
+        Selection.Root space = Selection.Root.space("confluence", "DEV");
+        assertThat(images.inHoldings("client-a", space)).as("nur Seiten, keine Bilder").isFalse();
+
+        images.collect("client-a", space).forEach(this::run);
+
+        assertThat(images.inHoldings("client-a", space)).isTrue();
+    }
+
+    @Test
+    void aFileOfAnExportIsWrittenOnlyAfterItsImagesAndAttachmentsHaveBeenCollected() throws Exception {
+        setUp(true);
+        com.aresstack.spaceharvester.application.export.ExportConversions conversions =
+                new com.aresstack.spaceharvester.application.export.ExportConversions(jobs, writer, converters, images);
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        JobStatus file = conversions.startConversion(export.id(), "client-a", "json", data.resolve("ausgabe"));
+
+        // Zuletzt Eingereihtes zuerst, wie bei freien Plätzen nebeneinander: die Datei darf nicht vorher starten.
+        ArrayDeque<Runnable> order = (ArrayDeque<Runnable>) queued;
+        while (!order.isEmpty()) {
+            order.pollLast().run();
+            if (jobs.status(file.id(), "client-a").startedAt() != null) {
+                // Startet die Datei, sind Bilder und Anhänge des Exports schon fertig.
+                assertThat(jobs.list("client-a", JobType.ASSETS)).isNotEmpty()
+                        .allSatisfy(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+                assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).isNotEmpty()
+                        .allSatisfy(job -> assertThat(job.state()).isEqualTo(JobState.COMPLETED));
+            }
+        }
+
+        assertThat(jobs.status(file.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(conversions.produced(file.id(), "client-a")).isPresent();
+    }
+
+    @Test
     void aCollectionWithoutAccessToTheWholeSourceLeavesNothingInTheHoldings() {
         setUp(false);
         run(exports.start("confluence", "DEV", "client-a", List.of("json")));

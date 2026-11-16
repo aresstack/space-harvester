@@ -64,6 +64,25 @@ class JobsSubmitAfterTest {
     }
 
     @Test
+    void aFollowerOfSeveralJobsStartsOnlyWhenAllHaveCompleted() {
+        String first = submit(JobTask.blocking(context -> { }));
+        String second = submit(JobTask.blocking(context -> { }));
+        JobStatus follower = jobs.submitAfter(JobType.CONVERSION, "wiki", "DEV", null, "client-a", Map.of(),
+                JobTask.blocking(context -> { }), java.util.List.of(first, second));
+
+        executor.runNext();
+        assertThat(jobs.status(first, "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(follower.id(), "client-a").stage()).as("wartet auf den zweiten")
+                .isEqualTo(JobStage.AWAITING);
+        executor.runNext();
+        assertThat(jobs.status(second, "client-a").state()).isEqualTo(JobState.COMPLETED);
+        assertThat(executor.pending()).isEqualTo(1);
+        executor.runNext();
+
+        assertThat(jobs.status(follower.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void anUnknownPredecessorIsRejected() {
         assertThatThrownBy(() -> after("gibt-es-nicht")).isInstanceOf(UnknownJobException.class);
     }

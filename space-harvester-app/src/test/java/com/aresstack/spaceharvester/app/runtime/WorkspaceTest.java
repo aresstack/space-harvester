@@ -269,6 +269,28 @@ class WorkspaceTest {
     }
 
     @Test
+    void pagesStoredWithoutTheirImagesAreExportedWithTheImagesFromTheSource() throws Exception {
+        Workspace workspace = start().workspace();
+        // Ein Abgleich speichert die Seiten, beschafft aber keine Bilder und Anhänge.
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+
+        List<JobStatus> started = workspace.exportFiles(com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "DEV")),
+                List.of("json"), "markdown", home.resolve("ausgabe"));
+
+        assertThat(started.get(0).parameter(com.aresstack.spaceharvester.application.export.Exports.HOLDINGS))
+                .as("nicht aus dem Bestand: dort fehlen die Bilder").isNull();
+        JobStatus file = await(workspace, started.get(1));
+        assertThat(file.state()).as(String.valueOf(file)).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.jobs()).filteredOn(job -> started.get(0).id().equals(
+                        job.parameter(com.aresstack.spaceharvester.application.export.ExportAssetCollection.EXPORT_ID))
+                        && job.type() == JobType.ASSETS)
+                .as("die Bilder des Exports sind vor der Datei fertig").isNotEmpty()
+                .allSatisfy(job -> assertThat(job.finishedAt()).isBeforeOrEqualTo(file.startedAt()));
+    }
+
+    @Test
     void theDeletionOfAJobOfAnInvisibleSourceIsNotAnnounced() throws Exception {
         AppRuntime started = start();
         Workspace full = started.workspace();

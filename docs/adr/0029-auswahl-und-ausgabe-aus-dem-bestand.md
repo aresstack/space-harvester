@@ -126,13 +126,18 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
 
 - Die Datei in einem Zielformat (PDF, Word, Markdown, JSON …) entsteht als eigener Auftrag „Datei erzeugen“
   (`JobType.CONVERSION`, Angelo 16.11.2026) statt still im Hintergrund der Oberfläche. Er trägt `exportId`, `format`
-  und `directory`, liest nur den Datenbestand seines Exports und startet von selbst, sobald dieser erfolgreich endet
-  (`Jobs.submitAfter`, `ExportConversions.startConversion`); ist der Export schon fertig, reiht er sich gleich ein.
+  und `directory`, liest nur den Datenbestand seines Exports und startet von selbst, sobald dieser und seine Aufträge
+  „Bilder beschaffen“ und „Anhänge beschaffen“ erfolgreich enden (`Jobs.submitAfter` mit mehreren Vorgängern,
+  `ExportConversions.startConversion`); sonst fehlten Bilder in der Datei. Ist alles schon fertig, reiht er sich gleich
+  ein.
   Hält der Export an oder scheitert er, wartet die Datei, bis derselbe Eintrag erfolgreich endet; wird er gelöscht,
   verschwindet sie mit. Ein offener Auftrag mit gleichem Export, Format und Ordner kommt beim zweiten Klick zurück.
 - Ein Format-Knopf startet je Wurzel der Auswahl zwei Aufträge (`Workspace.exportFiles`): erst die Daten, dann die
-  Datei. Liegen Seiten der Wurzel im Bestand, sind die Daten die Ausgabe aus dem Bestand (Abschnitt 3, samt
-  Wiederverwendung); sonst lädt der erste Auftrag die Seiten von der Quelle wie „Laden“. Die erzeugte Datei samt
+  Datei. Liegen die Seiten der Wurzel samt Bildern und Anhängen zu ihrer gespeicherten Version im Bestand
+  (`ExportAssetCollection.inHoldings`), sind die Daten die Ausgabe aus dem Bestand (Abschnitt 3, samt
+  Wiederverwendung); sonst ist der erste Auftrag ein Export wie „Laden“: Gespeicherte, aktuelle Seiten liest er aus dem
+  Cache, Bilder und Anhänge holen seine Folgeaufträge von der Quelle und legen sie im Bestand ab, sodass der nächste
+  Klick ohne Quelle auskommt. Die erzeugte Datei samt
   Hinweisen liest die Oberfläche nach dem Ende des Auftrags (`Workspace.producedFile`).
 
 ### 6. Nicht Teil dieser Entscheidung

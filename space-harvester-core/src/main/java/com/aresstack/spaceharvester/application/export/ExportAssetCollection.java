@@ -412,6 +412,44 @@ public class ExportAssetCollection {
         return List.copyOf(started);
     }
 
+    /**
+     * Ob für jede lokal gespeicherte Seite der Wurzel Bilder und, bei eingeschalteten Anhängen, Anhänge zu ihrer
+     * gespeicherten Version vollständig im Bestand liegen ({@link #imported}), nach den heutigen Einstellungen: Nur dann
+     * findet eine Ausgabe aus dem Bestand alles, ohne die Quelle zu fragen. Liest nur Cache und Bestand.
+     *
+     * @return {@code false} ohne lokal gespeicherte Seiten oder ohne Ablage
+     */
+    public boolean inHoldings(String owner, Selection.Root root) {
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(root, "root");
+        ImportedAssets directory = imported;
+        if (directory == null || root.spaceKey() == null) {
+            return false;
+        }
+        Optional<ConversionInput> dataset = dataset(key(root), owner);
+        if (dataset.isEmpty() || dataset.get().headers().isEmpty()) {
+            return false;
+        }
+        ExportSettings current = Objects.requireNonNullElse(settings.get(), ExportSettings.DEFAULT);
+        boolean documents = current.attachments();
+        boolean[] complete = {true};
+        dataset.get().forEachPage(page -> {
+            if (!complete[0]) {
+                return;
+            }
+            PageSnapshot snapshot = page.snapshot();
+            String version = snapshot.metadata().version();
+            Optional<ExportAssetManifest> stored = version == null ? Optional.empty()
+                    : directory.find(snapshot.key(), version);
+            complete[0] = stored.isPresent() && stored.get().imagesComplete()
+                    && (!documents || stored.get().documentsComplete())
+                    && stored.get().assets().stream().filter(entry -> documents || !entry.document())
+                    .map(entry -> entry.document() ? filtered(current, entry) : entry)
+                    .allMatch(ExportAssetManifest.Entry::present);
+        });
+        return complete[0];
+    }
+
     private Optional<JobStatus> submit(Scope scope, Selection.Root root, String key, String owner) {
         Map<String, String> parameters = root.pageId() == null ? Map.of(SELECTION, "true")
                 : Map.of(SELECTION, "true", SELECTION_ROOT, root.pageId());
