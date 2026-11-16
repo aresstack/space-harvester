@@ -1013,6 +1013,7 @@ public final class Explorer {
         }
         switch (node.item()) {
             case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
+            case SourceItem source -> context.navigator().openSource(source.sourceId(), source.title());
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }

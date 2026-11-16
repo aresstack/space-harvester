@@ -102,6 +102,10 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
+        default void openSource(String sourceId, String title) {
+        }
+
         /**
          * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
          * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.

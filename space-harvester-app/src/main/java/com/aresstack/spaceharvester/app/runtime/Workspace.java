@@ -1460,6 +1460,28 @@ public final class Workspace {
         return harvester.pageReleaseService().subscribe(caller, listener);
     }
 
+    /** Die Updates einer Quelle aus dem Änderungsprotokoll (ADR 0030), neuestes zuerst, das offene vorn. */
+    public java.util.List<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> changeUpdates(
+            String sourceId) {
+        return harvester.changeLog().updates(caller, sourceId);
+    }
+
+    /** Der Änderungsbericht eines Updates (ADR 0030): die geänderten Seiten nach Art; bei der Erstbefüllung nur Zähler. */
+    public com.aresstack.spaceharvester.application.changelog.ChangeReport changeReport(String sourceId,
+                                                                                       String updateId) {
+        return harvester.changeLog().report(caller, sourceId, updateId);
+    }
+
+    /**
+     * Meldet einen Empfänger für neue Zeilen und Marken im Änderungsprotokoll einer Quelle an (ADR 0027/0030),
+     * gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann lesen.
+     */
+    public Subscription subscribeChangeLog(String sourceId,
+                                           com.aresstack.spaceharvester.application.changelog.ChangeLogListener
+                                                   listener) {
+        return harvester.changeLog().subscribe(caller, sourceId, listener);
+    }
+
     /**
      * Rohe Zeilen des Änderungsprotokolls (ADR 0030) für den Dialog unter Einstellungen › Cache, neueste zuerst; nur
      * Zeilen, die diese App sehen darf. Nie auf dem EDT.

@@ -96,6 +96,17 @@ public final class ContentView implements View {
         renderCrumbs();
     }
 
+    /** Die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle im Explorer, ADR 0030). */
+    public void openSource(String sourceId, String title) {
+        if (!Objects.equals(sourceId, this.sourceId) || !detail.showsSource()) {
+            detail.showSource(sourceId, title);
+        }
+        this.sourceId = sourceId;
+        this.spaceKey = null;
+        renderCrumbs();
+        detail.showReading();
+    }
+
     /** Öffnet eine Seite (aus dem Explorer, der Suche, einem Auftrag). */
     public void openPage(String sourceId, String pageId) {
         if (!Objects.equals(sourceId, this.sourceId)) {
@@ -261,7 +272,12 @@ public final class ContentView implements View {
             // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
             // Erweitert) haben dafür keinen Inhalt und zeigen leer statt der vorher geöffneten Seite; Export und Chat
             // folgen der Auswahl (Angelo, 16.11.2026).
-            if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
+            if (selection.spaceKey() == null && !selection.page()) {
+                // Die Wurzel einer Quelle: die Quellenseite mit ihren Updates (ADR 0030); schon gezeigt, bleibt sie.
+                if (!Objects.equals(selection.sourceId(), sourceId) || !detail.showsSource()) {
+                    detail.showSource(selection.sourceId(), selection.title());
+                }
+            } else if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
                 detail.clear();
             }
             sourceId = selection.sourceId();
