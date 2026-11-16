@@ -321,12 +321,8 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
         proxyNotice = new ProxyNotice(context);
-        JPanel alerts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 12, 0));
-        alerts.setOpaque(false);
-        alerts.add(signInNotice);
-        alerts.add(proxyNotice);
-        statusLine = new StatusLine(jobStatus.model(), alerts, viewStatus, status, jobStatus,
-                new CopyrightLink());
+        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
+                status, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
