@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -106,7 +107,8 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     public record Counts(long catalogued, long outdated, long unchanged, long excluded, long failed, long dropped) {
     }
 
-    private record Task(AccessContext finder, PageKey key, String version) {
+    /** {@code trigger}: Auslöser des Anbietenden (ADR 0030), der Arbeiter-Thread kennt ihn sonst nicht. */
+    private record Task(AccessContext finder, PageKey key, String version, ChangeTrigger trigger) {
     }
 
     private record Checked(String version, Instant at) {
@@ -154,6 +156,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             return;
         }
         Instant now = clock.instant();
+        ChangeTrigger trigger = ChangeTrigger.currentOr(ChangeTrigger.SEARCH);
         synchronized (monitor) {
             if (closed) {
                 return;
@@ -176,7 +179,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
                     continue;
                 }
                 queued.add(key);
-                waiting.add(new Task(finder, key, finding.version()));
+                waiting.add(new Task(finder, key, finding.version(), trigger));
             }
             workers.removeIf(worker -> !worker.isAlive());
             while (workers.size() < PARALLELISM && workers.size() < waiting.size()) {
@@ -218,7 +221,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             }
             String version = task.version();
             try {
-                version = catalog(task);
+                version = task.trigger().call(() -> catalog(task));
             } catch (RuntimeException e) {
                 count(() -> failed++);
                 LOG.log(System.Logger.Level.DEBUG, "Fund in {0} nicht katalogisiert ({1})", task.key().sourceId(),

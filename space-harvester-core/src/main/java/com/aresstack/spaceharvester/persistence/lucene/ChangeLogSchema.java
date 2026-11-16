@@ -3,8 +3,10 @@ package com.aresstack.spaceharvester.persistence.lucene;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.TreeSet;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -47,6 +49,17 @@ final class ChangeLogSchema {
     private static final String GENERATION = P + "generation";
     private static final String PENDING = P + "contentPending";
 
+    /** Wert von {@link PageCacheSchema#TYPE} für Update-Marken und Präfix ihrer IDs. */
+    static final String MARK = "mark";
+    private static final String M = MARK + ".";
+    static final String MARK_SOURCE_ID = M + "sourceId";
+    static final String MARK_AT = M + "at";
+    private static final String MARK_AT_TEXT = M + "atText";
+    private static final String MARK_USER = M + "user";
+    private static final String MARK_SPACE = M + "space";
+    private static final String MARK_FAILED = M + "failedSyncs";
+    private static final String MARK_INITIAL = M + "initial";
+
     private ChangeLogSchema() {
     }
 
@@ -66,6 +79,62 @@ final class ChangeLogSchema {
                 .add(LongField.newRangeQuery(AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
                         BooleanClause.Occur.FILTER)
                 .build();
+    }
+
+    /** Alle Update-Marken. */
+    static Query allMarks() {
+        return new TermQuery(new Term(PageCacheSchema.TYPE, MARK));
+    }
+
+    /** Die Update-Marken einer Quelle. */
+    static Query marksOf(String sourceId) {
+        return new BooleanQuery.Builder().add(allMarks(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(MARK_SOURCE_ID, sourceId)), BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Die Update-Marken einer Quelle über die ID, für das Entfernen der Quelle. */
+    static Query marksOfSource(String sourceId) {
+        return new PrefixQuery(new Term(PageCacheSchema.ID, PageCacheSchema.id(MARK, sourceId) + '\u001f'));
+    }
+
+    /** Update-Marken vor {@code cutoff}. */
+    static Query marksBefore(Instant cutoff) {
+        return new BooleanQuery.Builder().add(allMarks(), BooleanClause.Occur.FILTER)
+                .add(LongField.newRangeQuery(MARK_AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
+                        BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Eindeutige ID einer Marke: Quelle und Zeitpunkt. */
+    static Term markTerm(UpdateMark mark) {
+        return new Term(PageCacheSchema.ID, PageCacheSchema.id(MARK, mark.sourceId(),
+                Long.toString(PageCacheSchema.nanos(mark.at()))));
+    }
+
+    static Document mark(UpdateMark mark) {
+        Document doc = new Document();
+        doc.add(new StringField(PageCacheSchema.TYPE, MARK, Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID, markTerm(mark).text(), Field.Store.NO));
+        doc.add(new StringField(MARK_SOURCE_ID, mark.sourceId(), Field.Store.YES));
+        doc.add(new LongField(MARK_AT, PageCacheSchema.nanos(mark.at()), Field.Store.NO));
+        doc.add(new StoredField(MARK_AT_TEXT, mark.at().toString()));
+        stored(doc, MARK_USER, mark.user());
+        for (String space : mark.spaces()) {
+            doc.add(new StoredField(MARK_SPACE, space));
+        }
+        doc.add(new StoredField(MARK_FAILED, mark.failedSyncs()));
+        if (mark.initial()) {
+            doc.add(new StoredField(MARK_INITIAL, "true"));
+        }
+        return doc;
+    }
+
+    static UpdateMark mark(Document doc) {
+        Number failed = doc.getField(MARK_FAILED) == null ? null : doc.getField(MARK_FAILED).numericValue();
+        return new UpdateMark(doc.get(MARK_SOURCE_ID), Instant.parse(doc.get(MARK_AT_TEXT)), doc.get(MARK_USER),
+                Arrays.asList(doc.getValues(MARK_SPACE)), failed == null ? 0 : failed.intValue(),
+                doc.get(MARK_INITIAL) != null);
     }
 
     static Document change(ChangeEntry entry) {

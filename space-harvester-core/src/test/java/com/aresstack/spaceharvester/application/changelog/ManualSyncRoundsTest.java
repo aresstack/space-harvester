@@ -1,0 +1,145 @@
+package com.aresstack.spaceharvester.application.changelog;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.PauseReason;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+/**
+ * ADR 0030, Bedingung 3 des Architekten: Angehaltene manuelle Synchronisierungen (auch automatisch angehaltene) halten
+ * die Runde offen; die Update-Marke kommt erst, wenn keine mehr läuft oder wartet. Abgebrochen und gescheitert zählen als
+ * Ende; die erste Marke einer Quelle trägt die Erstbefüllung.
+ */
+class ManualSyncRoundsTest {
+
+    private static final Instant T0 = Instant.parse("2026-11-16T10:00:00Z");
+    private static final Clock CLOCK = Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC);
+
+    private final List<UpdateMark> written = new ArrayList<>();
+    private final UpdateMarks marks = new UpdateMarks() {
+        @Override
+        public List<UpdateMark> marks(String sourceId) {
+            return written.stream().filter(mark -> mark.sourceId().equals(sourceId)).toList();
+        }
+
+        @Override
+        public void mark(UpdateMark mark) {
+            written.add(mark);
+        }
+    };
+    private final ManualSyncRounds rounds = new ManualSyncRounds(marks, CLOCK);
+
+    private static JobStatus sync(String id, String space, JobState state, Instant finishedAt, ChangeTrigger trigger) {
+        return sync(id, space, state, finishedAt, trigger, null);
+    }
+
+    private static JobStatus sync(String id, String space, JobState state, Instant finishedAt, ChangeTrigger trigger,
+                                  PauseReason reason) {
+        return new JobStatus(id, JobType.SYNC, "wiki", space, "client:a", state, JobProgress.NONE,
+                state == JobState.FAILED ? new JobError("SYNC_FAILED", "gescheitert") : null, false, T0, T0,
+                finishedAt, null, null, Map.of(ChangeTrigger.PARAMETER, trigger.name()), false, false, reason);
+    }
+
+    @Test
+    void theMarkComesWhenTheLastManualSyncOfTheSourceEnds() {
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "OPS", JobState.QUEUED, null, ChangeTrigger.MANUAL));
+
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        assertThat(written).isEmpty();
+
+        rounds.changed(sync("b", "OPS", JobState.COMPLETED, T0.plusSeconds(120), ChangeTrigger.MANUAL));
+        assertThat(written).singleElement().satisfies(mark -> {
+            assertThat(mark.sourceId()).isEqualTo("wiki");
+            assertThat(mark.at()).isEqualTo(T0.plusSeconds(120));
+            assertThat(mark.user()).isEqualTo("client:a");
+            assertThat(mark.spaces()).containsExactly("DEV", "OPS");
+            assertThat(mark.failedSyncs()).isZero();
+            assertThat(mark.initial()).isTrue();
+        });
+    }
+
+    @Test
+    void aPausedSyncAlsoAutoPausedKeepsTheRoundOpen() {
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "OPS", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.PAUSED, null, ChangeTrigger.MANUAL, PauseReason.USER));
+        rounds.changed(sync("b", "OPS", JobState.PAUSED, null, ChangeTrigger.MANUAL, PauseReason.CONNECTION_LOST));
+        assertThat(written).isEmpty();
+
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        assertThat(written).isEmpty();
+
+        rounds.changed(sync("b", "OPS", JobState.COMPLETED, T0.plusSeconds(90), ChangeTrigger.MANUAL));
+        assertThat(written).hasSize(1);
+    }
+
+    @Test
+    void cancelledFailedAndDeletedSyncsEndTheRoundAndAreCounted() {
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "OPS", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("c", "QA", JobState.PAUSED, null, ChangeTrigger.MANUAL));
+
+        rounds.changed(sync("a", "DEV", JobState.CANCELLED, T0.plusSeconds(10), ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "OPS", JobState.FAILED, T0.plusSeconds(20), ChangeTrigger.MANUAL));
+        assertThat(written).isEmpty();
+        rounds.removed(sync("c", "QA", JobState.PAUSED, null, ChangeTrigger.MANUAL));
+
+        assertThat(written).singleElement().satisfies(mark -> {
+            assertThat(mark.failedSyncs()).isEqualTo(3);
+            assertThat(mark.at()).isEqualTo(CLOCK.instant());
+        });
+    }
+
+    @Test
+    void onlyTheFirstMarkOfASourceIsTheInitialLoad() {
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("b", "DEV", JobState.COMPLETED, T0.plusSeconds(120), ChangeTrigger.MANUAL));
+
+        assertThat(written).extracting(UpdateMark::initial).containsExactly(true, false);
+    }
+
+    @Test
+    void syncsOfOtherTriggersNeverMark() {
+        for (ChangeTrigger trigger : List.of(ChangeTrigger.STARTUP, ChangeTrigger.SCHEDULE, ChangeTrigger.SEARCH,
+                ChangeTrigger.UNKNOWN)) {
+            rounds.changed(sync(trigger.name(), "DEV", JobState.RUNNING, null, trigger));
+            rounds.changed(sync(trigger.name(), "DEV", JobState.COMPLETED, T0.plusSeconds(5), trigger));
+        }
+        assertThat(written).isEmpty();
+    }
+
+    @Test
+    void aFastSyncThatOnlyReportsItsEndStillMarksOnceEvenIfReportedTwice() {
+        JobStatus done = sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(30), ChangeTrigger.MANUAL);
+
+        rounds.changed(done);
+        rounds.changed(done);
+
+        assertThat(written).singleElement().satisfies(mark -> assertThat(mark.at()).isEqualTo(T0.plusSeconds(30)));
+    }
+
+    @Test
+    void retryingAFinishedSyncInTheSameEntryIsANewRound() {
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(30), ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(90), ChangeTrigger.MANUAL));
+
+        assertThat(written).extracting(UpdateMark::at).containsExactly(T0.plusSeconds(30), T0.plusSeconds(90));
+    }
+}

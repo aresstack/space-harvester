@@ -5,6 +5,7 @@ import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HE
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -607,11 +608,15 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         });
     }
 
-    /** Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces) ohne das Änderungsprotokoll, für Betrieb und Tests. */
+    /**
+     * Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces) ohne Änderungsprotokoll und Update-Marken, für
+     * Betrieb und Tests.
+     */
     int documentCount() {
         return read(searcher -> searcher.count(new BooleanQuery.Builder()
                 .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
-                .add(ChangeLogSchema.all(), BooleanClause.Occur.MUST_NOT).build()));
+                .add(ChangeLogSchema.all(), BooleanClause.Occur.MUST_NOT)
+                .add(ChangeLogSchema.allMarks(), BooleanClause.Occur.MUST_NOT).build()));
     }
 
     // --- Änderungsprotokoll (ADR 0030) ----------------------------------------------------------------------------
@@ -638,21 +643,70 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         return entries;
     }
 
+    /** Die Update-Marken einer Quelle, älteste zuerst (ADR 0030, Abschnitt 3). */
+    public List<UpdateMark> marks(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        List<UpdateMark> marks = read(searcher -> {
+            TopDocs top = searcher.search(ChangeLogSchema.marksOf(sourceId), Integer.MAX_VALUE);
+            StoredFields stored = searcher.storedFields();
+            List<UpdateMark> found = new ArrayList<>(top.scoreDocs.length);
+            for (ScoreDoc hit : top.scoreDocs) {
+                found.add(ChangeLogSchema.mark(stored.document(hit.doc)));
+            }
+            return found;
+        });
+        marks.sort(Comparator.comparing(UpdateMark::at));
+        return marks;
+    }
+
+    /** Legt eine Update-Marke in einem eigenen Commit ab; dieselbe Quelle zum selben Zeitpunkt ersetzt die vorige. */
+    public void mark(UpdateMark mark) {
+        Objects.requireNonNull(mark, "mark");
+        try (Batch batch = begin()) {
+            batch.dirty = true;
+            write(() -> writer.updateDocument(ChangeLogSchema.markTerm(mark), ChangeLogSchema.mark(mark)));
+            batch.commit();
+        }
+    }
+
     /**
-     * Entfernt Protokollzeilen vor {@code cutoff} in einem eigenen Commit (Aufbewahrung, ADR 0030 Abschnitt 2); nur
-     * beim Start und nach einem Abgleich aufgerufen, nie nach Zeitgeber. Seiten und Revisionen bleiben unberührt.
+     * Entfernt Protokollzeilen und Update-Marken vor {@code cutoff} in einem eigenen Commit (Aufbewahrung, ADR 0030
+     * Abschnitt 2); die jüngste Marke jeder Quelle bleibt, damit das nächste Update eine Grenze hat. Nur beim Start und
+     * nach einem Abgleich aufgerufen, nie nach Zeitgeber. Seiten und Revisionen bleiben unberührt.
      *
      * @return ob etwas entfernt wurde
      */
     public boolean pruneChangeLog(Instant cutoff) {
         Objects.requireNonNull(cutoff, "cutoff");
         Query expired = ChangeLogSchema.before(cutoff);
-        if (read(searcher -> searcher.count(expired)) == 0) {
+        List<UpdateMark> expiredMarks = read(searcher -> {
+            TopDocs top = searcher.search(ChangeLogSchema.marksBefore(cutoff), Integer.MAX_VALUE);
+            StoredFields stored = searcher.storedFields();
+            List<UpdateMark> found = new ArrayList<>(top.scoreDocs.length);
+            for (ScoreDoc hit : top.scoreDocs) {
+                found.add(ChangeLogSchema.mark(stored.document(hit.doc)));
+            }
+            return found;
+        });
+        List<Term> deletedMarks = new ArrayList<>();
+        java.util.Map<String, UpdateMark> newest = new java.util.HashMap<>();
+        for (UpdateMark mark : expiredMarks) {
+            UpdateMark last = newest.computeIfAbsent(mark.sourceId(), id -> marks(id).getLast());
+            if (!last.at().equals(mark.at())) {
+                deletedMarks.add(ChangeLogSchema.markTerm(mark));
+            }
+        }
+        if (deletedMarks.isEmpty() && read(searcher -> searcher.count(expired)) == 0) {
             return false;
         }
         try (Batch batch = begin()) {
             batch.dirty = true;
-            write(() -> writer.deleteDocuments(expired));
+            write(() -> {
+                writer.deleteDocuments(expired);
+                if (!deletedMarks.isEmpty()) {
+                    writer.deleteDocuments(deletedMarks.toArray(Term[]::new));
+                }
+            });
             batch.commit();
         }
         return true;
@@ -822,6 +876,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             write(() -> {
                 writer.deleteDocuments(PageCacheSchema.ofSource(sourceId));
                 writer.deleteDocuments(ChangeLogSchema.ofSource(sourceId));
+                writer.deleteDocuments(ChangeLogSchema.marksOfSource(sourceId));
             });
         }
 

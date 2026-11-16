@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import java.time.Clock;
 import java.time.Duration;
@@ -76,7 +77,8 @@ public final class SyncBeforeSearch {
 
     private void catchUp(HarvesterConfiguration current, Set<String> due) {
         try {
-            syncs.catchUpAll(owner, sourceId -> due.contains(sourceId) ? current.syncFor(sourceId).mode() : null);
+            syncs.catchUpAll(owner, ChangeTrigger.SEARCH,
+                    sourceId -> due.contains(sourceId) ? current.syncFor(sourceId).mode() : null);
         } catch (RuntimeException e) {
             failed(e);
         }

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.jobs;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -428,6 +429,32 @@ public class Jobs implements AutoCloseable {
     public Subscription subscribe(String owner, JobListener listener) {
         Objects.requireNonNull(listener, "listener");
         return listeners.add(listener, subject -> Objects.equals(subject, owner));
+    }
+
+    /**
+     * Meldet einen Empfänger für die Aufträge aller Auftraggeber an, wie {@link #subscribe}; für Dienste des Core, die
+     * jeden Auftrag einer Art verfolgen (ADR 0030: Update-Marke nach manueller Synchronisierung).
+     */
+    public Subscription subscribeAll(JobListener listener) {
+        Objects.requireNonNull(listener, "listener");
+        return listeners.add(listener);
+    }
+
+    /** Die Aufträge einer Art aller Auftraggeber mit laufenden Zählern, älteste zuerst. */
+    public List<JobStatus> listAll(JobType type) {
+        Objects.requireNonNull(type, "type");
+        List<JobStatus> result = new ArrayList<>();
+        for (JobStatus stored : store.all()) {
+            if (stored.type() == type) {
+                try {
+                    result.add(status(stored.id()));
+                } catch (UnknownJobException e) {
+                    // inzwischen gelöscht
+                }
+            }
+        }
+        result.sort(Comparator.comparing(JobStatus::createdAt));
+        return result;
     }
 
     /**
@@ -1474,10 +1501,28 @@ public class Jobs implements AutoCloseable {
         dispatch();
     }
 
+    /**
+     * Der Auslöser, unter dem ein Auftrag in den Cache schreibt (ADR 0030): die Angabe {@link ChangeTrigger#PARAMETER}
+     * am Auftrag, sonst nach seiner Art; {@link ChangeTrigger#UNKNOWN}, wenn beides nichts sagt.
+     */
+    static ChangeTrigger trigger(JobType type, Map<String, String> parameters) {
+        String given = parameters == null ? null : parameters.get(ChangeTrigger.PARAMETER);
+        if (given != null) {
+            return ChangeTrigger.parse(given);
+        }
+        return switch (type) {
+            case EXPORT, ASSETS, ATTACHMENTS, CONVERSION, METADATA_EXPORT, ANALYTICS_EXPORT, KNOWLEDGE_GRAPH_EXPORT ->
+                    ChangeTrigger.EXPORT;
+            case HARVEST, IMPORT -> ChangeTrigger.MANUAL;
+            default -> ChangeTrigger.UNKNOWN;
+        };
+    }
+
     private void run(Job job) {
         CompletionStage<Void> stage;
         try {
-            stage = job.task.start(job);
+            // ADR 0030: Was der Auftrag in den Cache schreibt, trägt seinen Auslöser; blockierende Arbeit läuft hier.
+            stage = trigger(job.type, job.parameters).call(() -> job.task.start(job));
             if (stage == null) {
                 stage = CompletableFuture.failedFuture(new IllegalStateException("JobTask lieferte null"));
             }
