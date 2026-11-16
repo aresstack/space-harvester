@@ -83,6 +83,43 @@ class JobsSubmitAfterTest {
     }
 
     @Test
+    void deletingTheFirstPredecessorRemovesAFollowerStillWaitingForALaterOne() {
+        String export = submit(JobTask.blocking(context -> { }));
+        String images = submit(JobTask.blocking(context -> {
+            throw new IllegalStateException("kaputt");
+        }));
+        JobStatus file = jobs.submitAfter(JobType.CONVERSION, "wiki", "DEV", null, "client-a", Map.of(),
+                JobTask.blocking(context -> { }), java.util.List.of(export, images));
+        executor.runNext();
+        executor.runNext();
+        assertThat(jobs.status(images, "client-a").state()).isEqualTo(JobState.FAILED);
+        assertThat(jobs.status(file.id(), "client-a").stage()).as("wartet auf die Bilder")
+                .isEqualTo(JobStage.AWAITING);
+
+        jobs.delete(export, "client-a");
+
+        assertThatThrownBy(() -> jobs.status(file.id(), "client-a")).isInstanceOf(UnknownJobException.class);
+    }
+
+    @Test
+    void deletingALaterPredecessorNoLongerHoldsTheFollower() {
+        String export = submit(JobTask.blocking(context -> { }));
+        String images = submit(JobTask.blocking(context -> {
+            throw new IllegalStateException("kaputt");
+        }));
+        JobStatus file = jobs.submitAfter(JobType.CONVERSION, "wiki", "DEV", null, "client-a", Map.of(),
+                JobTask.blocking(context -> { }), java.util.List.of(export, images));
+        executor.runNext();
+        executor.runNext();
+
+        jobs.delete(images, "client-a");
+
+        assertThat(executor.pending()).as("die Datei ist frei").isEqualTo(1);
+        executor.runNext();
+        assertThat(jobs.status(file.id(), "client-a").state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void anUnknownPredecessorIsRejected() {
         assertThatThrownBy(() -> after("gibt-es-nicht")).isInstanceOf(UnknownJobException.class);
     }

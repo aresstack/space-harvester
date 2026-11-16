@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.holdings.Selection;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -64,7 +65,9 @@ class ChatTurnTest {
         Workspace workspace = context.runtime().workspace();
         assertThat(workspace.aiChat()).as("ohne Chat-Modell kein Port").isNull();
         String space = workspace.spaces("handbuch").get(0).key();
-        workspace.startSync("handbuch", space);
+        // Vollständiger Abgleich lädt die Inhalte sofort; SYNC_CACHE katalogisiert nur, der Inhalt käme erst über die
+        // Hintergrundfüllung nach ihrer Anlaufzeit (30 s) – ein Wettlauf mit dem Warten unten.
+        workspace.startSync("handbuch", space, SyncMode.FULL);
         PageSelection scope = await(() -> {
             PageSelection resolved = workspace.resolveSelection(Selection.of(Selection.Root.space("handbuch", space)));
             return resolved.counts().stored() > 0 ? resolved : null;
