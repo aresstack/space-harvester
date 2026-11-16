@@ -287,10 +287,16 @@ public final class ChatTurn {
         }
     }
 
-    /** Der Lesetext der Seite aus dem Cache, gekürzt; {@code null}, wenn sie nicht lokal liegt. */
+    /**
+     * Der Lesetext der Seite nur aus dem Cache, gekürzt; {@code null}, wenn sie nicht lokal liegt. Nie ein Abruf bei
+     * der Quelle: An den KI-Dienst geht nur, was lokal gespeichert und damit beim Senden freigegeben ist (ADR 0028).
+     */
     private ChatKnowledge.Excerpt page(String sourceId, String pageId, String fallback, int maxChars) {
         try {
-            DeliveredPage page = workspace.page(sourceId, pageId, false);
+            DeliveredPage page = workspace.cachedPage(sourceId, pageId).orElse(null);
+            if (page == null) {
+                return null;
+            }
             PageText text = workspace.pageText(page.snapshot());
             PageMetadata metadata = page.header().metadata();
             String body = text == null || text.text().isBlank() ? fallback : text.text();

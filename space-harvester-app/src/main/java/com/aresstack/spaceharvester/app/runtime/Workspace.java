@@ -361,6 +361,18 @@ public final class Workspace {
     }
 
     /**
+     * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
+     * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
+     */
+    public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
+        try {
+            return harvester.pages().cached(caller, sourceId, pageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Lese-Ansicht einer Seite ({@code …/pages/{pageId}/reading-view}, #176): gerendertes HTML der Quelle mit den
      * Bildern, die sie zeigt; Rechte und Version prüft der Core.
      */

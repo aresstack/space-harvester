@@ -138,6 +138,12 @@ public final class ChatPanel extends JPanel {
     private ChatRecord chat = ChatRecord.fresh(System.currentTimeMillis());
     /** Der laufende Turn oder {@code null}. */
     private ChatTurn turn;
+    /** Der Empfänger des laufenden Turns; beim Loslassen wird er abgemeldet, damit er nur noch speichert. */
+    private TurnListener listening;
+    /** Ob die Auswahl links im Core aufgelöst ist; bis dahin sendet der Chat nicht (sonst gälten alte Seiten). */
+    private boolean settled;
+    /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
+    private final List<JobStatus> jobOutcomes = new ArrayList<>();
     private SpeechBubblePanel answering;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
     private final Set<String> watchedJobs = new HashSet<>();
@@ -276,7 +282,7 @@ public final class ChatPanel extends JPanel {
             refresh();
         });
         showModel();
-        renderKnowledge(null, null);
+        renderKnowledge(null, null, true);
     }
 
     /** Die eine abgerundete Composer-Fläche: Chips, Editor, Fußzeile mit Modell und Denkaufwand links, Werkzeugen rechts. */
@@ -477,16 +483,18 @@ public final class ChatPanel extends JPanel {
         Selection current = selection;
         int ticket = ++request;
         if (runtime == null || current == null) {
-            renderKnowledge(current, null);
+            renderKnowledge(current, null, true);
             return;
         }
+        // Bis die neue Auswahl aufgelöst ist, gilt die alte nicht mehr: Senden wartet, sonst gingen fremde Seiten mit.
+        renderKnowledge(current, null, false);
         Background.run(() -> runtime.workspace().resolveSelection(current.toCore()), resolved -> {
             if (ticket == request) {
-                renderKnowledge(current, resolved);
+                renderKnowledge(current, resolved, true);
             }
         }, error -> {
             if (ticket == request) {
-                renderKnowledge(current, null);
+                renderKnowledge(current, null, true);
             }
         });
     }
@@ -504,14 +512,16 @@ public final class ChatPanel extends JPanel {
         return resolved;
     }
 
-    private void renderKnowledge(Selection current, PageSelection resolved) {
+    /** @param settled ob der Core die Auswahl aufgelöst hat (auch ergebnislos); vorher ist Senden gesperrt */
+    private void renderKnowledge(Selection current, PageSelection resolved, boolean settled) {
         this.resolved = resolved;
+        this.settled = settled;
         boolean allowed = current == null || allowed(context.settings(), current.sourceId());
         HoldingCounts counts = resolved == null ? null : resolved.counts();
         knowledge.setText(knowledgeText(current, counts, resolved == null || resolved.complete(), allowed));
         load.setVisible(current != null && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
-        send.setEnabled(current != null);
+        send.setEnabled(current != null && settled);
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
@@ -604,6 +614,7 @@ public final class ChatPanel extends JPanel {
      */
     private void watch(List<JobStatus> jobs) {
         watchedJobs.clear();
+        jobOutcomes.clear();
         for (JobStatus job : jobs) {
             watchedJobs.add(job.id());
         }
@@ -640,24 +651,52 @@ public final class ChatPanel extends JPanel {
         if (!watchedJobs.contains(status.id()) || !status.state().terminal()) {
             return;
         }
-        Selection current = selection;
         watchedJobs.remove(status.id());
+        jobOutcomes.add(status);
+        if (!watchedJobs.isEmpty()) {
+            // Eine Quelle mit mehreren Spaces hat je Space einen Auftrag: erst das Ende des letzten zählt.
+            return;
+        }
+        Selection current = selection;
         String name = current == null ? "Download" : downloadName(current);
-        switch (status.state()) {
-            case COMPLETED -> {
-                String where = context.settings() == null ? null
-                        : context.settings().storage().dataDirectory().toString();
-                feedback.success(name + " " + DOWNLOAD_DONE + " · "
-                        + Texts.count(status.progress().written(), "Seite", "Seiten") + " im Bestand"
-                        + (where == null ? "" : " unter " + where)
-                        + (status.incomplete() ? " · unvollständig" : ""));
+        String where = context.settings() == null ? null : context.settings().storage().dataDirectory().toString();
+        List<JobStatus> outcomes = List.copyOf(jobOutcomes);
+        jobOutcomes.clear();
+        showOutcome(name, outcomes, where);
+    }
+
+    /**
+     * Die eine Meldung für alle verfolgten Aufträge: ein Fehler überwiegt jeden Erfolg, Seiten werden über alle
+     * Aufträge gezählt; sie bleibt stehen, bis ✕ sie schließt.
+     */
+    private void showOutcome(String name, List<JobStatus> outcomes, String where) {
+        long written = 0;
+        boolean incomplete = false;
+        List<String> failures = new ArrayList<>();
+        int cancelled = 0;
+        int paused = 0;
+        for (JobStatus job : outcomes) {
+            written += job.progress().written();
+            incomplete |= job.incomplete();
+            switch (job.state()) {
+                case FAILED -> failures.add(job.error() == null ? Texts.state(job) : job.error().message());
+                case CANCELLED -> cancelled++;
+                case PAUSED -> paused++;
+                default -> {
+                }
             }
-            case FAILED -> feedback.warning(name + " " + DOWNLOAD_FAILED,
-                    status.error() == null ? null : status.error().message());
-            case CANCELLED -> feedback.info(name + " abgebrochen", null);
-            case PAUSED -> feedback.info(name + " angehalten", Texts.state(status));
-            default -> {
-            }
+        }
+        String pages = Texts.count(written, "Seite", "Seiten") + " im Bestand" + (where == null ? "" : " unter " + where);
+        if (!failures.isEmpty()) {
+            feedback.warning(name + " " + DOWNLOAD_FAILED + (outcomes.size() > 1
+                    ? " (" + failures.size() + " von " + outcomes.size() + " Aufträgen)" : ""),
+                    String.join("; ", failures) + " · " + pages);
+        } else if (cancelled > 0) {
+            feedback.info(name + " abgebrochen", pages);
+        } else if (paused > 0) {
+            feedback.info(name + " angehalten", pages);
+        } else {
+            feedback.success(name + " " + DOWNLOAD_DONE + " · " + pages + (incomplete ? " · unvollständig" : ""));
         }
     }
 
@@ -782,6 +821,7 @@ public final class ChatPanel extends JPanel {
         ChatRecord target = chat;
         ChatNode targetNode = node;
         TurnListener listener = new TurnListener(target, targetNode, answering);
+        listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, resolved,
                 listener, SwingUtilities::invokeLater);
         listener.turn = turn;
@@ -891,6 +931,7 @@ public final class ChatPanel extends JPanel {
             }
             chat = next;
             ChatPanel.this.turn = null;
+            listening = null;
             answering = null;
             status.setText(note);
             send.setText(SEND);
@@ -925,6 +966,10 @@ public final class ChatPanel extends JPanel {
 
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
     private void detachTurn() {
+        if (listening != null) {
+            listening.detached = true;
+            listening = null;
+        }
         send.setText(SEND);
         send.setIcon(ComposerIcons.send());
         send.setToolTipText("Senden (Enter)");
