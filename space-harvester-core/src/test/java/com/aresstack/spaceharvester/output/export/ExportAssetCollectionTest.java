@@ -220,6 +220,35 @@ class ExportAssetCollectionTest {
     }
 
     @Test
+    void retryingTheExportWhileItsImagesAreCollectedPausesThemAndRunsThemAgainAfterwards() {
+        ExportAssetCollection images = collection();
+        Exports exports = new Exports(jobs, cache, writer(), converters, clock);
+        exports.onSubmitted(images::announce);
+        exports.onPublished(images::start);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(
+                page("confluence", "DEV", "100", null, STORAGE.getBytes(StandardCharsets.UTF_8)),
+                page("confluence", "DEV", "101", "100")));
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        queued.poll().run();
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        JobStatus collecting = jobs.list("client-a", JobType.ASSETS).get(0);
+        assertThat(collecting.state()).as("Bilder laufen noch").isEqualTo(JobState.RUNNING);
+
+        // ↻ geht immer (ADR 0025): kein Fehler, die Bilder und Anhänge halten an, der Export läuft neu.
+        JobStatus retried = exports.retryFailed(export.id(), "client-a", java.util.function.UnaryOperator.identity());
+        assertThat(retried.id()).isEqualTo(export.id());
+        drain();
+
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.list("client-a", JobType.ASSETS)).singleElement().satisfies(collection -> {
+            assertThat(collection.id()).as("derselbe Eintrag").isEqualTo(collecting.id());
+            assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
+        });
+        assertThat(jobs.list("client-a", JobType.ATTACHMENTS)).singleElement()
+                .satisfies(documents -> assertThat(documents.state()).isEqualTo(JobState.COMPLETED));
+    }
+
+    @Test
     void aPageMovedToAnotherSpaceGetsNoAttachmentsFromTheCatalog() {
         source.searchable = true;
         source.moved = Set.of("100");

@@ -479,21 +479,28 @@ public class Exports {
         private final Set<String> retry;
         /** Nur „Neu erzwingen“: auch unveränderte Seiten neu laden. */
         private final boolean reloadAll;
+        /** Bilder- und Anhängeaufträge, die gerade anhalten; der Lauf ersetzt das Artefakt erst, wenn sie stehen. */
+        private final List<String> stopping;
 
         ExportTask(ExportRequest request, List<ExportConverter> selected) {
-            this(request, selected, null, false);
+            this(request, selected, null, false, List.of());
         }
 
-        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll) {
+        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll,
+                   List<String> stopping) {
             this.request = request;
             this.selected = selected;
             this.retry = retry == null ? null : Set.copyOf(retry);
             this.reloadAll = reloadAll;
+            this.stopping = List.copyOf(stopping);
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
-            return JobTask.blocking(running -> export(running, request, selected, retry, reloadAll)).start(context);
+            return JobTask.blocking(running -> {
+                awaitStopped(running, request.owner(), stopping);
+                export(running, request, selected, retry, reloadAll);
+            }).start(context);
         }
     }
 
@@ -506,8 +513,8 @@ public class Exports {
      * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
      *                                                                               dieser ID gibt
-     * @throws JobNotResumableException wenn der Export noch wartet oder läuft oder seine Bilder oder Anhänge noch
-     *                                  beschafft werden
+     * @throws JobNotResumableException wenn der Export noch wartet oder läuft; laufende Bilder- und Anhängeaufträge
+     *                                  hält der Aufruf an und setzt sie danach fort
      * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
      */
     public JobStatus forceRefresh(String exportId, String owner,
@@ -523,21 +530,65 @@ public class Exports {
         if (!status.state().terminal()) {
             throw new JobNotResumableException(exportId, "der Export wartet oder läuft noch");
         }
-        requireNoFollowUp(exportId, owner);
         purgeQuietly();
         writer.requireCapacity();
         ExportRequest request = access.apply(request(status)).withRefresh(true);
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), null,
-                true));
+                true, pauseFollowUps(exportId, owner)));
     }
 
-    private void requireNoFollowUp(String exportId, String owner) {
-        if (followUpRunning(exportId, owner)) {
-            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
-            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
-                    + "erst anhalten oder abwarten");
+    /**
+     * Hält die laufenden Bilder- und Anhängeaufträge dieses Exports an, damit ↻ und ⟲ immer gehen (ADR 0025): Das
+     * Artefakt wird ersetzt, und ein laufender Auftrag liest es gerade. Nach dem Lauf laufen sie im selben Eintrag neu
+     * ({@link #onPublished}); was sie schon abgelegt haben, kommt dann aus dem Speicher. Wartende bleiben, wie sie
+     * sind, und starten beim Veröffentlichen.
+     *
+     * @return die angehaltenen Aufträge; der Lauf wartet, bis sie stehen
+     */
+    private List<String> pauseFollowUps(String exportId, String owner) {
+        List<String> stopping = new ArrayList<>();
+        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
+            for (JobStatus job : jobs.list(owner, type)) {
+                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()
+                        && job.stage() != com.aresstack.spaceharvester.application.jobs.JobStage.AWAITING) {
+                    try {
+                        jobs.pause(job.id(), owner);
+                        stopping.add(job.id());
+                    } catch (UnknownJobException e) {
+                        // gerade gelöscht: hält nichts auf
+                    }
+                }
+            }
+        }
+        return stopping;
+    }
+
+    /** Wartet, bis die angehaltenen Folgeaufträge stehen; ein Abbruch des Exports greift dabei jederzeit. */
+    private void awaitStopped(JobContext context, String owner, List<String> stopping) {
+        if (stopping.isEmpty()) {
+            return;
+        }
+        context.phase(COMPONENT, "Bilder und Anhänge anhalten");
+        for (String jobId : stopping) {
+            while (true) {
+                context.checkpoint();
+                try {
+                    jobs.await(jobId, owner, STOP_CHECK);
+                    break;
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // weiter warten und auf Abbruch prüfen
+                } catch (UnknownJobException e) {
+                    break;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(context.jobId());
+                }
+            }
         }
     }
+
+    /** Wie lange {@link #awaitStopped} am Stück wartet, bevor es wieder auf einen Abbruch prüft. */
+    private static final java.time.Duration STOP_CHECK = java.time.Duration.ofMillis(500);
 
     /**
      * „Nur Fehler neu versuchen“ für den eigenen Export im selben Eintrag (ADR 0025): lädt nur die Seiten nach, die
@@ -548,8 +599,8 @@ public class Exports {
      * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
      *                                                                               dieser ID gibt
-     * @throws JobNotResumableException wenn der Export noch läuft, nicht fertig ist oder seine Bilder oder Anhänge noch
-     *                                  beschafft werden
+     * @throws JobNotResumableException wenn der Export noch läuft oder nicht fertig ist; laufende Bilder- und
+     *                                  Anhängeaufträge hält der Aufruf an und setzt sie danach fort
      * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
      */
     public JobStatus retryFailed(String exportId, String owner,
@@ -564,25 +615,12 @@ public class Exports {
                     ? "der Export ist nicht fertig geworden; Fortsetzen holt den Rest"
                     : "der Export wartet oder läuft noch");
         }
-        requireNoFollowUp(exportId, owner);
         purgeQuietly();
         writer.requireCapacity();
         Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
         ExportRequest request = access.apply(request(status));
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds,
-                false));
-    }
-
-    /** Ob für diesen Export ein Bilder- oder Anhängeauftrag wartet oder läuft. */
-    private boolean followUpRunning(String exportId, String owner) {
-        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
-            for (JobStatus job : jobs.list(owner, type)) {
-                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()) {
-                    return true;
-                }
-            }
-        }
-        return false;
+                false, pauseFollowUps(exportId, owner)));
     }
 
     /**
@@ -623,7 +661,8 @@ public class Exports {
         }
         // Ein angehaltenes Nachladen oder Neu-Erzwingen setzt als solches fort, nicht als gewöhnlicher Lauf.
         return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
-                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll)
+                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll,
+                        List.of())
                 : task);
     }
 
