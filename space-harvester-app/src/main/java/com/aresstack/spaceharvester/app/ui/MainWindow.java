@@ -139,7 +139,7 @@ public final class MainWindow implements AppContext.Navigator {
                 explorer.revealPage(position);
             }
         });
-        // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum markieren, die Seite bleibt offen.
+        // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
         content.onLocate(explorer::reveal);
         // Die Diagnose ist kein eigener Bereich mehr, sondern die Seite „Diagnose“ der Einstellungen.
         settings.diagnosis(statusView);

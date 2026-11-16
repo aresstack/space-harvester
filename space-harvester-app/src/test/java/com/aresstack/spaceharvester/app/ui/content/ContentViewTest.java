@@ -269,6 +269,45 @@ class ContentViewTest {
     }
 
     @Test
+    void choosingTheSourceOrASpaceOfTheOpenPageEmptiesThePageTabs() throws Exception {
+        String space = space("handbuch");
+        String pageId = firstPage("handbuch", space);
+        onEdt(() -> {
+            view.openPage("handbuch", pageId);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+
+        // Die Seite selbst gewählt (etwa beim Aufdecken im Baum): sie bleibt stehen.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space, pageId, "handbuch 0"));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).isNotNull();
+
+        // Die Wurzel derselben Quelle gewählt: Die Seitenreiter zeigen nicht mehr die vorige Seite, Export folgt.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).as("keine Seite mehr in den Reitern").isNull();
+        assertThat(onEdt(() -> view.detail().titleLabel().getText().isBlank())).isTrue();
+        assertThat(onEdt(() -> view.detail().export().selection().sourceId())).isEqualTo("handbuch");
+
+        // Ebenso ein Space derselben Quelle.
+        onEdt(() -> {
+            view.openPage("handbuch", pageId);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space, null, space));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).isNull();
+    }
+
+    @Test
     void theChatFollowsTheSelectionAndSendingWithoutAChatModelSaysSo() throws Exception {
         PageDetailPanel detail = view.detail();
         ChatPanel chat = detail.chat();

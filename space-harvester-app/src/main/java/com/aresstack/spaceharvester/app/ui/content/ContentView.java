@@ -31,7 +31,7 @@ public final class ContentView implements View {
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position;
     private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position>
             positionListener = shown -> { };
-    /** Markiert Quelle ({@code spaceKey} {@code null}) oder Space im Baum, ohne die Seite zu wechseln. */
+    /** Markiert Quelle ({@code spaceKey} {@code null}) oder Space im Baum; die Auswahl dort bestimmt die Mitte. */
     private java.util.function.BiConsumer<String, String> locate = (source, space) -> { };
     private final PageDetailPanel detail;
     /** Stand des gezeigten Reiters (etwa „50 Knoten, 51 Kanten“) links in der Statuszeile des Hauptfensters. */
@@ -258,7 +258,10 @@ public final class ContentView implements View {
         if (selection != null && !selection.global()) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
-            if (!Objects.equals(selection.sourceId(), sourceId)) {
+            // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
+            // Erweitert) haben dafür keinen Inhalt und zeigen leer statt der vorher geöffneten Seite; Export und Chat
+            // folgen der Auswahl (Angelo, 16.11.2026).
+            if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
                 detail.clear();
             }
             sourceId = selection.sourceId();
