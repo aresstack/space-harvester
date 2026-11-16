@@ -187,6 +187,13 @@ final class ChangeLogDialog {
             }
             return current[0];
         });
+        // Startet der Core, während der Dialog offen ist (Programmstart, neu geladene Konfiguration), liest er neu
+        // und meldet sich an der neuen Laufzeit an.
+        context.onChange(ignored -> {
+            if (dialog.component().isShowing()) {
+                dialog.refresh();
+            }
+        });
         Dialogs.viewSized(parent, TITLE, dialog.component(), "change-log", 0.7);
     }
 
@@ -387,6 +394,7 @@ final class ChangeLogDialog {
         count.setText(!any ? " " : shown.size() >= total ? Texts.count(shown.size(), "Zeile", "Zeilen")
                 : shown.size() + " von " + Texts.count(total, "Zeile", "Zeilen"));
         more.setVisible(shown.size() < total);
+        more.setEnabled(true);
     }
 
     /** Liest die erste Seite neu, etwa nach einer Änderung von Suche oder Filter. Erst anmelden, dann lesen. */
@@ -413,6 +421,9 @@ final class ChangeLogDialog {
             sources(current.sources());
         }
         ChangeFilter filter = filter(offset, limit);
+        // Solange eine neue erste Seite unterwegs ist, gehört „Weitere laden“ noch zu den alten Zeilen: gesperrt,
+        // sonst mischte ein Klick alte und neue Treffer.
+        more.setEnabled(false);
         Background.run(() -> current.entries(filter), entries -> {
             if (ticket == request) {
                 feedback.clear();
@@ -420,6 +431,7 @@ final class ChangeLogDialog {
             }
         }, error -> {
             if (ticket == request) {
+                more.setEnabled(offset > 0);
                 feedback.problem(error);
             }
         });

@@ -143,6 +143,16 @@ class ChangeLogDialogTest {
         SwingUtilities.invokeAndWait(() -> {
             assertThat(dialog[0].count.getText()).isEqualTo("500 von 520 Zeilen");
             assertThat(dialog[0].more.isVisible()).isTrue();
+            assertThat(dialog[0].more.isEnabled()).isTrue();
+            dialog[0].refresh();
+            assertThat(dialog[0].more.isEnabled()).as("gesperrt, solange die neue erste Seite lädt").isFalse();
+        });
+        await(() -> dialog[0].more.isEnabled());
+        SwingUtilities.invokeAndWait(() -> {
+            java.awt.Component cell = dialog[0].table.prepareRenderer(dialog[0].table.getCellRenderer(0,
+                    ChangeLogDialog.PAGE_TITLE), 0, ChangeLogDialog.PAGE_TITLE);
+            assertThat(((javax.swing.JComponent) cell).getClientProperty("html.disable"))
+                    .as("Seitentitel nie als HTML").isEqualTo(Boolean.TRUE);
             dialog[0].more.doClick();
         });
         await(() -> dialog[0].rowCount() == ChangeLogDialog.PAGE + 20);
