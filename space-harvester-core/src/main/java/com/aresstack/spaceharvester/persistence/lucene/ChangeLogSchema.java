@@ -4,9 +4,11 @@ import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.StoredSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -25,6 +27,10 @@ import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.SortedNumericSortField;
 import org.apache.lucene.search.TermQuery;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Zeilen des Änderungsprotokolls (ADR 0030) im Index des Seiten-Cache: eine eigene Dokumentart mit eigenen Feldnamen,
@@ -70,6 +76,15 @@ final class ChangeLogSchema {
     private static final String MARK_SPACE = M + "space";
     private static final String MARK_FAILED = M + "failedSyncs";
     private static final String MARK_INITIAL = M + "initial";
+
+    /** Wert von {@link PageCacheSchema#TYPE} für Zusammenfassungen und Präfix ihrer IDs (ADR 0030, Abschnitt 5). */
+    static final String SUMMARY = "summary";
+    private static final String S = SUMMARY + ".";
+    static final String SUMMARY_SOURCE_ID = S + "sourceId";
+    private static final String SUMMARY_UPDATE = S + "update";
+    private static final String SUMMARY_AT = S + "at";
+    private static final String SUMMARY_JSON = S + "json";
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private ChangeLogSchema() {
     }
@@ -256,6 +271,88 @@ final class ChangeLogSchema {
                 doc.get(NEW_VERSION), doc.get(OLD_TITLE), doc.get(NEW_TITLE), doc.get(OLD_PARENT),
                 doc.get(NEW_PARENT), doc.get(OLD_SPACE), doc.get(NEW_SPACE),
                 generation == null ? null : generation.longValue(), doc.get(PENDING) != null);
+    }
+
+    /** Alle Zusammenfassungen. */
+    static Query allSummaries() {
+        return new TermQuery(new Term(PageCacheSchema.TYPE, SUMMARY));
+    }
+
+    /** Die Zusammenfassungen einer Quelle. */
+    static Query summariesOf(String sourceId) {
+        return new BooleanQuery.Builder().add(allSummaries(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SUMMARY_SOURCE_ID, sourceId)), BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Die Zusammenfassungen einer Quelle über die ID, für das Entfernen der Quelle. */
+    static Query summariesOfSource(String sourceId) {
+        return new PrefixQuery(new Term(PageCacheSchema.ID, PageCacheSchema.id(SUMMARY, sourceId) + '\u001f'));
+    }
+
+    /** Zusammenfassungen, die vor {@code cutoff} aufzubewahren endeten. */
+    static Query summariesBefore(Instant cutoff) {
+        return new BooleanQuery.Builder().add(allSummaries(), BooleanClause.Occur.FILTER)
+                .add(LongField.newRangeQuery(SUMMARY_AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
+                        BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Eindeutige ID einer Zusammenfassung: Quelle und Update. */
+    static Term summaryTerm(String sourceId, String updateId) {
+        return new Term(PageCacheSchema.ID, PageCacheSchema.id(SUMMARY, sourceId, updateId));
+    }
+
+    static String summaryUpdate(Document doc) {
+        return doc.get(SUMMARY_UPDATE);
+    }
+
+    static Document summary(StoredSummary summary) {
+        ObjectNode json = JSON.createObjectNode();
+        json.put("text", summary.text());
+        ArrayNode statements = json.putArray("statements");
+        for (StoredSummary.Statement statement : summary.statements()) {
+            ObjectNode row = statements.addObject();
+            row.put("text", statement.text());
+            ArrayNode pages = row.putArray("pageIds");
+            statement.pageIds().forEach(pages::add);
+        }
+        json.put("model", summary.model());
+        json.put("createdAt", summary.createdAt().toString());
+        json.put("at", summary.at().toString());
+        json.put("unreadableChanges", summary.unreadableChanges());
+        json.put("reportSha256", summary.reportSha256());
+        ArrayNode inputs = json.putArray("inputPages");
+        for (StoredSummary.InputPage page : summary.inputPages()) {
+            inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId());
+        }
+        Document doc = new Document();
+        doc.add(new StringField(PageCacheSchema.TYPE, SUMMARY, Field.Store.NO));
+        doc.add(new StringField(PageCacheSchema.ID, summaryTerm(summary.sourceId(), summary.updateId()).text(),
+                Field.Store.NO));
+        doc.add(new StringField(SUMMARY_SOURCE_ID, summary.sourceId(), Field.Store.YES));
+        doc.add(new StoredField(SUMMARY_UPDATE, summary.updateId()));
+        doc.add(new LongField(SUMMARY_AT, PageCacheSchema.nanos(summary.at()), Field.Store.NO));
+        doc.add(new StoredField(SUMMARY_JSON, JSON.writeValueAsString(json)));
+        return doc;
+    }
+
+    static StoredSummary summary(Document doc) {
+        JsonNode json = JSON.readTree(doc.get(SUMMARY_JSON));
+        List<StoredSummary.Statement> statements = new ArrayList<>();
+        for (JsonNode row : json.path("statements")) {
+            List<String> pages = new ArrayList<>();
+            row.path("pageIds").forEach(page -> pages.add(page.asString()));
+            statements.add(new StoredSummary.Statement(row.path("text").asString(), pages));
+        }
+        List<StoredSummary.InputPage> inputs = new ArrayList<>();
+        for (JsonNode page : json.path("inputPages")) {
+            inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString()));
+        }
+        return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), json.path("text").asString(),
+                statements, json.path("model").asString(), Instant.parse(json.path("createdAt").asString()),
+                Instant.parse(json.path("at").asString()), json.path("unreadableChanges").asInt(),
+                json.path("reportSha256").asString(), inputs);
     }
 
     private static void stored(Document doc, String field, String value) {

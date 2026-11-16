@@ -31,6 +31,25 @@ public interface ChangeLogStore extends UpdateMarks {
         return window.result();
     }
 
+    /** Die abgelegte Zusammenfassung eines Updates. */
+    default java.util.Optional<StoredSummary> summary(String sourceId, String updateId) {
+        return java.util.Optional.empty();
+    }
+
+    /** Die Updates einer Quelle mit abgelegter Zusammenfassung. */
+    default java.util.Set<String> summarizedUpdates(String sourceId) {
+        return java.util.Set.of();
+    }
+
+    /** Legt die Zusammenfassung ab und ersetzt eine frühere desselben Updates; meldet danach die Quelle. */
+    default void saveSummary(StoredSummary summary) {
+        throw new IllegalStateException("Ohne Cache gibt es keine Ablage für Zusammenfassungen");
+    }
+
+    /** Entfernt die Zusammenfassung eines Updates, ohne Meldung. */
+    default void deleteSummary(String sourceId, String updateId) {
+    }
+
     /**
      * Meldet nach jedem Commit mit neuen Zeilen und nach jeder neuen Marke die Quelle (ADR 0027); die Meldung darf nur
      * vormerken und kehrt sofort zurück.

@@ -485,6 +485,12 @@ class ConfigFileEditorTest {
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
         assertThat(settings.cache().changeLog().unlimited()).isTrue();
+
+        var shown = days.withShowAfterUpdate(true);
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                new AppSettings.Cache(Duration.ZERO, true, Duration.ofDays(30), shown)));
+        assertThat(Files.readString(file)).contains("      retention: 90d\n      show-after-update: true");
+        assertThat(loader.load(file).cache().changeLog()).isEqualTo(shown);
     }
 
     @Test

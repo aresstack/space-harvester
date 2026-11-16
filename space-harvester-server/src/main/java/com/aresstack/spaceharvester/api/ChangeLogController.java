@@ -8,6 +8,8 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeReport;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
+import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,15 +25,17 @@ import java.util.Locale;
 import java.util.Set;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Änderungsprotokoll und Updates je Quelle (ADR 0030): Updates zwischen zwei manuellen Synchronisierungen, der
- * Änderungsbericht eines Updates und die rohen Zeilen mit Suche. Jede Zeile hat die Leserechte ihrer Seite; was der
- * Client an der Seite nicht sehen darf, fehlt auch in den Zählern.
+ * Änderungsbericht und die Zusammenfassung eines Updates und die rohen Zeilen mit Suche. Jede Zeile hat die
+ * Leserechte ihrer Seite; was der Client an der Seite nicht sehen darf, fehlt auch in den Zählern.
  */
 @RestController
 @Tag(name = "Änderungsprotokoll", description = "Was sich in den Quellen geändert hat, je Update und als Protokoll")
@@ -70,6 +74,40 @@ public class ChangeLogController {
     public ChangeReport report(@Parameter(hidden = true) AccessContext caller, @PathVariable String sourceId,
                                @PathVariable String updateId) {
         return changeLog.report(caller, sourceId, updateId);
+    }
+
+    @GetMapping(path = UPDATES + "/{updateId}/summary", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Zusammenfassung eines Updates",
+            description = "Die abgelegte KI-Zusammenfassung mit Aussagen und den Seiten, auf die sie sich beziehen. 204, "
+                    + "wenn keine erstellt ist, wenn sie verfallen ist (eine eingegangene Seite hat die KI-Freigabe "
+                    + "verloren) oder wenn der Client nicht alle eingegangenen Seiten sehen darf. stale beim offenen "
+                    + "Update, wenn sich seitdem etwas geändert hat.")
+    @ApiResponse(responseCode = "200", description = "Zusammenfassung")
+    @ApiResponse(responseCode = "204", description = "Keine Zusammenfassung")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder kein solches Update "
+            + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<UpdateSummary> summary(@Parameter(hidden = true) AccessContext caller,
+                                                 @PathVariable String sourceId, @PathVariable String updateId) {
+        return changeLog.summary(caller, sourceId, updateId).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @PostMapping(path = UPDATES + "/{updateId}/summary", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Update zusammenfassen",
+            description = "Startet den Auftrag „Zusammenfassen“ (UPDATE_SUMMARY); eine frühere Zusammenfassung "
+                    + "desselben Updates wird ersetzt. An das Modell gehen Titel nur von Seiten mit KI-Freigabe, alle "
+                    + "übrigen nur als Anzahl je Space. Recht wie beim Start der Aussagenanalyse: Lesen der Quelle.")
+    @ApiResponse(responseCode = "202", description = "Auftrag angenommen")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder kein solches Update "
+            + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Kein Chat-Modell eingestellt oder Erstbefüllung "
+            + "(summary-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<JobStatus> summarize(@Parameter(hidden = true) AccessContext caller,
+                                               @PathVariable String sourceId, @PathVariable String updateId) {
+        return ResponseEntity.accepted().body(changeLog.summarize(caller, sourceId, updateId));
     }
 
     @GetMapping(path = ENTRIES, produces = MediaType.APPLICATION_JSON_VALUE)

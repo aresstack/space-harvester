@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
 import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeWindow;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.StoredSummary;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -617,14 +618,16 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     }
 
     /**
-     * Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces) ohne Änderungsprotokoll und Update-Marken, für
+     * Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces) ohne Änderungsprotokoll, Update-Marken und
+     * Zusammenfassungen, für
      * Betrieb und Tests.
      */
     int documentCount() {
         return read(searcher -> searcher.count(new BooleanQuery.Builder()
                 .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
                 .add(ChangeLogSchema.all(), BooleanClause.Occur.MUST_NOT)
-                .add(ChangeLogSchema.allMarks(), BooleanClause.Occur.MUST_NOT).build()));
+                .add(ChangeLogSchema.allMarks(), BooleanClause.Occur.MUST_NOT)
+                .add(ChangeLogSchema.allSummaries(), BooleanClause.Occur.MUST_NOT).build()));
     }
 
     // --- Änderungsprotokoll (ADR 0030) ----------------------------------------------------------------------------
@@ -730,8 +733,59 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         recorded(List.of(mark.sourceId()));
     }
 
+    // --- Zusammenfassungen (ADR 0030, Abschnitt 5) ---------------------------------------------------------------
+
+    @Override
+    public Optional<StoredSummary> summary(String sourceId, String updateId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(updateId, "updateId");
+        return read(searcher -> {
+            TopDocs top = searcher.search(new TermQuery(ChangeLogSchema.summaryTerm(sourceId, updateId)), 1);
+            return top.scoreDocs.length == 0 ? Optional.<StoredSummary>empty()
+                    : Optional.of(ChangeLogSchema.summary(searcher.storedFields().document(top.scoreDocs[0].doc)));
+        });
+    }
+
+    @Override
+    public Set<String> summarizedUpdates(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return read(searcher -> {
+            TopDocs top = searcher.search(ChangeLogSchema.summariesOf(sourceId), Integer.MAX_VALUE);
+            StoredFields stored = searcher.storedFields();
+            Set<String> found = new HashSet<>();
+            for (ScoreDoc hit : top.scoreDocs) {
+                found.add(ChangeLogSchema.summaryUpdate(stored.document(hit.doc)));
+            }
+            return found;
+        });
+    }
+
+    /** Legt die Zusammenfassung in einem eigenen Commit ab, ersetzt die vorige desselben Updates und meldet die Quelle. */
+    @Override
+    public void saveSummary(StoredSummary summary) {
+        Objects.requireNonNull(summary, "summary");
+        try (Batch batch = begin()) {
+            batch.dirty = true;
+            write(() -> writer.updateDocument(ChangeLogSchema.summaryTerm(summary.sourceId(), summary.updateId()),
+                    ChangeLogSchema.summary(summary)));
+            batch.commit();
+        }
+        recorded(List.of(summary.sourceId()));
+    }
+
+    @Override
+    public void deleteSummary(String sourceId, String updateId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(updateId, "updateId");
+        try (Batch batch = begin()) {
+            batch.dirty = true;
+            write(() -> writer.deleteDocuments(ChangeLogSchema.summaryTerm(sourceId, updateId)));
+            batch.commit();
+        }
+    }
+
     /**
-     * Entfernt Protokollzeilen und Update-Marken vor {@code cutoff} in einem eigenen Commit (Aufbewahrung, ADR 0030
+     * Entfernt Protokollzeilen, Update-Marken und Zusammenfassungen vor {@code cutoff} in einem eigenen Commit (ADR 0030,
      * Abschnitt 2); die jüngste Marke jeder Quelle bleibt, damit das nächste Update eine Grenze hat. Nur beim Start und
      * nach einem Abgleich aufgerufen, nie nach Zeitgeber. Seiten und Revisionen bleiben unberührt.
      *
@@ -739,7 +793,9 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
      */
     public boolean pruneChangeLog(Instant cutoff) {
         Objects.requireNonNull(cutoff, "cutoff");
-        Query expired = ChangeLogSchema.before(cutoff);
+        Query expired = new BooleanQuery.Builder()
+                .add(ChangeLogSchema.before(cutoff), BooleanClause.Occur.SHOULD)
+                .add(ChangeLogSchema.summariesBefore(cutoff), BooleanClause.Occur.SHOULD).build();
         List<UpdateMark> expiredMarks = read(searcher -> {
             TopDocs top = searcher.search(ChangeLogSchema.marksBefore(cutoff), Integer.MAX_VALUE);
             StoredFields stored = searcher.storedFields();
@@ -939,6 +995,7 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
                 writer.deleteDocuments(PageCacheSchema.ofSource(sourceId));
                 writer.deleteDocuments(ChangeLogSchema.ofSource(sourceId));
                 writer.deleteDocuments(ChangeLogSchema.marksOfSource(sourceId));
+                writer.deleteDocuments(ChangeLogSchema.summariesOfSource(sourceId));
             });
         }
 

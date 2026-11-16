@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments;
@@ -110,14 +112,15 @@ class EnrichmentConfiguration {
 
     /**
      * Bildanalyse auf Abruf (ADR 0021, #362). Verliert eine Seite die Freigabe für den KI-Dienst (Liste oder Quelle,
-     * ADR 0028), entfallen auch ihre Bildbeschreibungen, und die Analysen ihrer Anhänge, die mit Modell entstanden,
-     * rechnen ohne neu.
+     * ADR 0028), entfallen auch ihre Bildbeschreibungen und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge,
+     * die mit Modell entstanden, rechnen ohne neu.
      */
     @Bean
     PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments,
                                         ObjectProvider<ReleaseRecomputation> recomputation,
                                         ObjectProvider<AiRelease> release,
-                                        ObjectProvider<DocumentEnrichments> documents) {
+                                        ObjectProvider<DocumentEnrichments> documents,
+                                        ObjectProvider<ChangeLog> changeLog) {
         PageImageAnalysis analysis = new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
         ReleaseRecomputation withdrawals = recomputation.getIfAvailable();
         AiRelease pages = release.getIfAvailable();
@@ -127,6 +130,11 @@ class EnrichmentConfiguration {
                 DocumentEnrichments found = documents.getIfAvailable();
                 if (found != null) {
                     found.withdrawn(snapshots, pages::mayProcess);
+                }
+                // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
+                ChangeLog log = changeLog.getIfAvailable();
+                if (log != null) {
+                    log.withdrawn(snapshots.stream().map(PageSnapshot::key).toList());
                 }
             });
         }
