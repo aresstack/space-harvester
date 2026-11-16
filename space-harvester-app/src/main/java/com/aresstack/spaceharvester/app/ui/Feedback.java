@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComicSectionPanel;
+import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 
@@ -59,6 +60,10 @@ public final class Feedback extends JPanel {
         }
     };
     private final ComposerButton details = Comic.button("Technische Details", "Klasse und Meldung der Ausnahme");
+    /** ✕ rechts oben: schließt die Meldung (Angelo, 16.11.2026); eine neue Meldung öffnet die Platte wieder. */
+    private final ComicWindowCloseButton close = new ComicWindowCloseButton(Comic.PALETTE, this::clear,
+            "Meldung schließen", CLOSE_SIZE);
+    static final int CLOSE_SIZE = 18;
     /** Zeigt die Meldungen an dieser Stelle statt hier (ein Statusbereich für mehrere Ansichten, Assistent). */
     private Feedback target;
     /** Nimmt Lauf-, Erfolgs- und Infomeldungen entgegen (Statuszeile); die Platte zeigt dann nur noch Probleme. */
@@ -88,6 +93,7 @@ public final class Feedback extends JPanel {
             relayout();
         });
         plate.add(title);
+        plate.add(close);
         plate.add(scroll);
         plate.add(details);
         add(plate);
@@ -172,8 +178,9 @@ public final class Feedback extends JPanel {
                 return;
             }
             int y = insets.top;
-            int heading = title.getPreferredSize().height;
-            title.setBounds(insets.left, y, inner, heading);
+            int heading = Math.max(title.getPreferredSize().height, CLOSE_SIZE);
+            close.setBounds(insets.left + inner - CLOSE_SIZE, y, CLOSE_SIZE, CLOSE_SIZE);
+            title.setBounds(insets.left, y, Math.max(0, inner - CLOSE_SIZE - GAP), heading);
             y += heading;
             if (scroll.isVisible()) {
                 int needed = textHeight(inner);
@@ -199,7 +206,7 @@ public final class Feedback extends JPanel {
     private int plateHeight(int width) {
         Insets insets = plate.getInsets();
         int inner = Math.max(1, width - insets.left - insets.right);
-        int height = insets.top + title.getPreferredSize().height + insets.bottom;
+        int height = insets.top + Math.max(title.getPreferredSize().height, CLOSE_SIZE) + insets.bottom;
         if (scroll.isVisible()) {
             height += GAP + Math.min(textHeight(inner), maximumTextHeight());
         }
@@ -228,7 +235,7 @@ public final class Feedback extends JPanel {
 
     private int preferredWidth() {
         Insets insets = plate.getInsets();
-        int content = Math.max(NARROW, title.getPreferredSize().width);
+        int content = Math.max(NARROW, title.getPreferredSize().width + GAP + CLOSE_SIZE);
         if (details.isVisible()) {
             content = Math.max(content, details.getPreferredSize().width);
         }
@@ -308,7 +315,8 @@ public final class Feedback extends JPanel {
     int maximumHeight() {
         Insets own = getInsets();
         Insets insets = plate.getInsets();
-        return own.top + own.bottom + insets.top + insets.bottom + title.getPreferredSize().height
+        return own.top + own.bottom + insets.top + insets.bottom
+                + Math.max(title.getPreferredSize().height, CLOSE_SIZE)
                 + GAP + MAX_LINES_OPEN * lineHeight() + GAP + details.getPreferredSize().height;
     }
 

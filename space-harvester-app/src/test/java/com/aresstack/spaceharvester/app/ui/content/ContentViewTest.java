@@ -230,7 +230,7 @@ class ContentViewTest {
     }
 
     @Test
-    void theChatFollowsTheSelectionAndSendingOnlySaysThatTheChatIsStillToCome() throws Exception {
+    void theChatFollowsTheSelectionAndSendingWithoutAChatModelSaysSo() throws Exception {
         PageDetailPanel detail = view.detail();
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
@@ -243,23 +243,25 @@ class ContentViewTest {
         assertThat(onEdt(chat::isVisible)).isTrue();
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces"));
         assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
-        // Senden im Click-Dummy: die eigene Nachricht als Sprechblase, der Composer leer, Status „Chat folgt“.
+        // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
         onEdt(() -> {
             chat.attach(home.resolve("notiz.txt"));
             ((javax.swing.text.JTextComponent) chat.editor()).setText("Was steht im Handbuch?");
             chat.send();
             return null;
         });
-        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
-        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.FOLLOWS);
-        assertThat(onEdt(chat::attachments)).isEmpty();
-        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText())).isEmpty();
+        assertThat(onEdt(chat::bubbles)).isZero();
+        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.NO_CHAT_MODEL);
+        assertThat(onEdt(chat::attachments)).hasSize(1);
+        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText()))
+                .isEqualTo("Was steht im Handbuch?");
         // Leer sendet nichts.
         onEdt(() -> {
+            ((javax.swing.text.JTextComponent) chat.editor()).setText("");
             chat.send();
             return null;
         });
-        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        assertThat(onEdt(chat::bubbles)).isZero();
         onEdt(() -> {
             view.selection(null);
             return null;

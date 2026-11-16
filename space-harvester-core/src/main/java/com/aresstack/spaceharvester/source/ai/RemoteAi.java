@@ -151,6 +151,21 @@ public final class RemoteAi {
         };
     }
 
+    /**
+     * Das Chat-Modell als Gesprächspartner der App ({@code POST /chat/completions}, streamend) über den unveränderten
+     * {@code OpenAiCompatibleChatAdapter}: derselbe Port, den der Enterprise AI Client für seinen Chat nutzt. Der
+     * Chat selbst gehört nicht in den Core (ADR 0012); hier gibt es nur die Verbindung mit Route, TLS, Token und
+     * Fristen wie bei allen anderen Aufrufen. Was an den Dienst geht, entscheidet der Aufrufer (ADR 0028).
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public ChatCompletionPort chat() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        return new OpenAiCompatibleChatAdapter(chatConfig());
+    }
+
     /** Obergrenze der Antwort des Chat-Modells für Suchvarianten in Tokens. */
     static final int MAX_VARIANT_TOKENS = 1024;
 
