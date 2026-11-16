@@ -168,6 +168,10 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      `<dataDirectory>/facts`.
    - `terms()`, `termRelations()`: Begriffsindex und Begriffsbeziehungen (#119, #120).
    - `assets()`, `imageAnalysis()`: Anhänge mit Text, Vorschau und Bildbeschreibung (#183, #184, ADR 0021).
+   - `changeLog()`: Änderungsprotokoll und Updates je Quelle (`ChangeLog`, ADR 0030): `updates` von Update-Marke zu
+     Update-Marke, `report` eines Updates mit je Seite zusammengefassten Änderungen (Erstbefüllung nur mit Zählern),
+     `entries` mit Suche, `subscribe` für neue Zeilen und Marken; jede Zeile mit den Leserechten ihrer Seite. Im
+     Dienst `GET /api/v1/sources/{sourceId}/updates`, `…/updates/{updateId}` und `GET /api/v1/change-log`.
 
    Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
    `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,

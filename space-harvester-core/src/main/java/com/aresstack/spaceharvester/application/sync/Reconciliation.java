@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import java.time.Clock;
@@ -212,11 +213,12 @@ public final class Reconciliation implements AutoCloseable {
             JobStatus started;
             if (inventory != null) {
                 started = syncs.start(entry.sourceId, entry.spaceKey, owner,
-                        entry.mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : entry.mode);
+                        entry.mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : entry.mode, ChangeTrigger.SCHEDULE);
             } else {
                 started = entry.mode == SyncMode.FULL
-                        ? syncs.start(entry.sourceId, entry.spaceKey, owner, SyncMode.FULL)
-                        : syncs.catchUp(entry.sourceId, entry.spaceKey, owner, null, entry.mode);
+                        ? syncs.start(entry.sourceId, entry.spaceKey, owner, SyncMode.FULL, ChangeTrigger.SCHEDULE)
+                        : syncs.catchUp(entry.sourceId, entry.spaceKey, owner, null, entry.mode,
+                        ChangeTrigger.SCHEDULE);
             }
             outcome = Outcome.STARTED;
             jobId = started.id();

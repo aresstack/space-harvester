@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -300,6 +301,44 @@ class LucenePageCacheChangeLogTest {
         assertThat(cache.rootPages("wiki", "DEV", 100)).isEqualTo(roots);
         assertThat(cache.children(root.key(), 100)).isEqualTo(children);
         assertThat(cache.knownPages("wiki", "DEV")).isEqualTo(known);
+    }
+
+    @Test
+    void updateMarksSurviveARestartAndStayOutOfCounters() {
+        LucenePageCache cache = open();
+        cache.save(page("wiki", "101", "DEV", null, "1", json("{}")));
+        int documents = cache.documentCount();
+        UpdateMark first = new UpdateMark("wiki", LATER, "client:a", List.of("DEV", "OPS"), 1, true);
+
+        cache.mark(first);
+        cache.mark(new UpdateMark("other", LATER, null, List.of(), 0, true));
+        cache.close();
+        LucenePageCache reopened = open();
+
+        assertThat(reopened.marks("wiki")).containsExactly(first);
+        assertThat(reopened.documentCount()).isEqualTo(documents);
+        assertThat(reopened.countSpacePages("wiki", "DEV")).isEqualTo(1);
+    }
+
+    @Test
+    void pruningKeepsTheNewestMarkOfEachSourceAndRemovingTheSourceRemovesItsMarks() {
+        LucenePageCache cache = open();
+        UpdateMark old = new UpdateMark("wiki", LATER, null, List.of("DEV"), 0, true);
+        UpdateMark newer = new UpdateMark("wiki", LATER.plusSeconds(60), null, List.of("DEV"), 0, false);
+        UpdateMark other = new UpdateMark("other", LATER, null, List.of("OPS"), 0, true);
+        cache.mark(old);
+        cache.mark(newer);
+        cache.mark(other);
+
+        assertThat(cache.pruneChangeLog(LATER.plusSeconds(3600))).isTrue();
+
+        assertThat(cache.marks("wiki")).containsExactly(newer);
+        assertThat(cache.marks("other")).containsExactly(other);
+        assertThat(cache.pruneChangeLog(LATER.plusSeconds(3600))).isFalse();
+
+        cache.removeSource("wiki");
+        assertThat(cache.marks("wiki")).isEmpty();
+        assertThat(cache.marks("other")).containsExactly(other);
     }
 
     private static PageHeader header(PageSnapshot page, String title, String spaceKey, String parentId,

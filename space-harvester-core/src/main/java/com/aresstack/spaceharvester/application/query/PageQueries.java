@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -319,7 +320,9 @@ public class PageQueries {
      * @throws IllegalStateException wenn im Hintergrund nichts Aktuelles abgelegt ist
      */
     public void acquire(AccessContext caller, PageKey key, boolean background) {
-        DeliveredPage delivered = page(caller, key.sourceId(), key.pageId(), background, true);
+        // ADR 0030: Hintergrundfüllung schreibt als BACKGROUND, sonst holt eine Suche die Seite.
+        DeliveredPage delivered = (background ? ChangeTrigger.BACKGROUND : ChangeTrigger.SEARCH)
+                .call(() -> page(caller, key.sourceId(), key.pageId(), background, true));
         if (background && (delivered.refresh() == null || delivered.live())) {
             throw new IllegalStateException("Seite nicht aktuell abgelegt");
         }
@@ -402,7 +405,9 @@ public class PageQueries {
      */
     private boolean stored(PageSnapshot snapshot, String seenState, boolean acquiring) {
         try {
-            return acquiring ? fill.storeWaiting(snapshot, seenState) : fill.store(snapshot, seenState);
+            // ADR 0030: ohne Auslöser eines Weges darüber legt das Lesen der Seite sie ab.
+            return ChangeTrigger.currentOr(ChangeTrigger.READ)
+                    .call(() -> acquiring ? fill.storeWaiting(snapshot, seenState) : fill.store(snapshot, seenState));
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Nachgeladene Seite nicht abgelegt ({0})",
                     e.getClass().getName());

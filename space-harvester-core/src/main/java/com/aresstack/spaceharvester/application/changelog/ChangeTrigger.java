@@ -43,6 +43,13 @@ public enum ChangeTrigger {
         return trigger == null ? UNKNOWN : trigger;
     }
 
+    /** Der Auslöser des aufrufenden Threads, {@code fallback} ohne Angabe oder bei {@link #UNKNOWN}. */
+    public static ChangeTrigger currentOr(ChangeTrigger fallback) {
+        Objects.requireNonNull(fallback, "fallback");
+        ChangeTrigger trigger = CURRENT.get();
+        return trigger == null || trigger == UNKNOWN ? fallback : trigger;
+    }
+
     /** Führt {@code work} mit diesem Auslöser aus und stellt danach den vorigen wieder her. */
     public void run(Runnable work) {
         Objects.requireNonNull(work, "work");

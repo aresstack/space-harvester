@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.export.SpaceProvisioning;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException;
@@ -283,8 +284,19 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      * {@link SyncMode#CATALOG_ONLY} zum Initialisieren des Katalogs ohne Inhalte (ADR 0014).
      */
     public synchronized JobStatus start(String sourceId, String spaceKey, String owner, SyncMode mode) {
+        return start(sourceId, spaceKey, owner, mode, ChangeTrigger.MANUAL);
+    }
+
+    /**
+     * Wie {@link #start(String, String, String, SyncMode)}, mit dem Auslöser {@code trigger} am Auftrag (ADR 0030); er
+     * übersteht Anhalten, Fortsetzen und Neustart.
+     */
+    public synchronized JobStatus start(String sourceId, String spaceKey, String owner, SyncMode mode,
+                                        ChangeTrigger trigger) {
         Objects.requireNonNull(mode, "mode");
-        return submit(sourceId, spaceKey, owner, Map.of(MODE, mode.name()), inventory(sourceId, spaceKey, mode));
+        Objects.requireNonNull(trigger, "trigger");
+        return submit(sourceId, spaceKey, owner, Map.of(MODE, mode.name(), ChangeTrigger.PARAMETER, trigger.name()),
+                inventory(sourceId, spaceKey, mode));
     }
 
     /** Wiederanlauf-Angabe: Betriebsart ({@link SyncMode}). */
@@ -376,8 +388,16 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
                                           SyncMode mode) {
+        return catchUp(sourceId, spaceKey, owner, since, mode, ChangeTrigger.MANUAL);
+    }
+
+    /** Wie {@link #catchUp(String, String, String, Instant, SyncMode)}, mit dem Auslöser {@code trigger} (ADR 0030). */
+    public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
+                                          SyncMode mode, ChangeTrigger trigger) {
         Objects.requireNonNull(mode, "mode");
-        Map<String, String> parameters = new java.util.TreeMap<>(Map.of(MODE, mode.name(), LISTING, "changes"));
+        Objects.requireNonNull(trigger, "trigger");
+        Map<String, String> parameters = new java.util.TreeMap<>(Map.of(MODE, mode.name(), LISTING, "changes",
+                ChangeTrigger.PARAMETER, trigger.name()));
         if (since != null) {
             parameters.put(SINCE, since.toString());
         }
@@ -416,7 +436,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     continue;
                 }
                 try {
-                    run = eventSync.commit(plan, applier);
+                    run = ChangeTrigger.EVENT.call(() -> eventSync.commit(plan, applier));
                 } catch (SyncConflictException e) {
                     deferred.addAll(plan.events());
                     continue;
@@ -485,6 +505,12 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      * @param modeBySource Betriebsart je Quellen-ID oder {@code null}, wenn die Quelle nicht nachholen soll
      */
     public List<JobStatus> catchUpAll(String owner, Function<String, SyncMode> modeBySource) {
+        return catchUpAll(owner, ChangeTrigger.STARTUP, modeBySource);
+    }
+
+    /** Wie {@link #catchUpAll(String, Function)}, mit dem Auslöser {@code trigger} an jedem Auftrag (ADR 0030). */
+    public List<JobStatus> catchUpAll(String owner, ChangeTrigger trigger, Function<String, SyncMode> modeBySource) {
+        Objects.requireNonNull(trigger, "trigger");
         Objects.requireNonNull(modeBySource, "modeBySource");
         if (!available()) {
             return List.of();
@@ -498,7 +524,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                 continue;
             }
             try {
-                started.add(catchUp(space.sourceId(), space.spaceKey(), owner, null, mode));
+                started.add(catchUp(space.sourceId(), space.spaceKey(), owner, null, mode, trigger));
             } catch (SyncAlreadyRunningException e) {
                 // läuft schon
             } catch (com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException e) {
@@ -609,7 +635,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private Work retryWork(JobStatus status, Set<String> pageIds) {
         String sourceId = status.sourceId();
         String spaceKey = status.partitionKey();
-        return context -> retry(context, sourceId, spaceKey, pageIds);
+        return context -> ChangeTrigger.RETRY.run(() -> retry(context, sourceId, spaceKey, pageIds));
     }
 
     private Work forceWork(JobStatus status) {

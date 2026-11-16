@@ -19,6 +19,11 @@ import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
+import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -130,6 +135,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -321,6 +327,9 @@ public final class Harvester implements AutoCloseable {
     private final SynonymDiscovery synonymDiscovery;
     private final FactEdits factEdits;
     private final Jobs jobs;
+    /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
+    private final LucenePageCache pageCache;
+    private final ChangeLog changeLog;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
@@ -397,6 +406,7 @@ public final class Harvester implements AutoCloseable {
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
             opened.add(cache);
+            this.pageCache = cache;
             LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
             opened.add(jobStore);
             LuceneJobEventStore eventStore = LuceneJobEventStore.open(cacheDirectory.resolve("job-events"));
@@ -780,6 +790,11 @@ public final class Harvester implements AutoCloseable {
             this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
                     List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
+            // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
+            opened.add(ManualSyncRounds.start(jobs, cache, clock));
+            this.changeLog = new ChangeLog(cache, access, cache::findHeader,
+                    () -> catalog.all().stream().map(HarvestSource::id).toList());
+            opened.add(changeLog);
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
@@ -1237,7 +1252,7 @@ public final class Harvester implements AutoCloseable {
     private void catchUpOnStart() {
         HarvesterConfiguration configuration = settings;
         try {
-            List<JobStatus> started = syncs.catchUpAll(OWNER, sourceId -> {
+            List<JobStatus> started = syncs.catchUpAll(OWNER, ChangeTrigger.STARTUP, sourceId -> {
                 SyncSettings rules = configuration.syncFor(sourceId);
                 return rules.catchUpOnStart() ? rules.mode() : null;
             });
@@ -1843,6 +1858,21 @@ public final class Harvester implements AutoCloseable {
         return syncs.catchUp(sourceId, spaceKey, OWNER, since, mode);
     }
 
+    /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
+    public ChangeLog changeLog() {
+        return changeLog;
+    }
+
+    /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */
+    List<ChangeEntry> changeEntries(String sourceId) {
+        return pageCache.changeEntries(sourceId);
+    }
+
+    /** Die Update-Marken einer Quelle (ADR 0030), für Tests. */
+    List<UpdateMark> updateMarks(String sourceId) {
+        return pageCache.marks(sourceId);
+    }
+
     /**
      * Holt für alle Spaces mit bestätigter Generation die verpassten Änderungen nach, etwa beim Start (ADR 0014); nur
      * Spaces, für die die Richtlinie {@code SYNC} freigibt. Wartet nicht.
@@ -1855,7 +1885,8 @@ public final class Harvester implements AutoCloseable {
             if (access.permits(caller, ResourceScope.space(space.sourceId(), space.spaceKey()), AccessKind.SYNC)
                     && catalog.find(space.sourceId()).isPresent()) {
                 try {
-                    started.add(syncs.catchUp(space.sourceId(), space.spaceKey(), OWNER, null));
+                    started.add(syncs.catchUp(space.sourceId(), space.spaceKey(), OWNER, null, SyncMode.SYNC_CACHE,
+                            ChangeTrigger.STARTUP));
                 } catch (com.aresstack.spaceharvester.application.sync.SyncAlreadyRunningException e) {
                     // läuft schon
                 } catch (com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException e) {
