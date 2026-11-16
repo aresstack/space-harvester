@@ -1472,6 +1472,15 @@ public final class Workspace {
         return harvester.changeLog().report(caller, sourceId, updateId);
     }
 
+    /**
+     * Die jüngste Update-Marke einer Quelle (ADR 0030); liest nur die Marken, keine Protokollzeilen, für
+     * „Nach dem Update Änderungen anzeigen“. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateMark> latestChangeMark(
+            String sourceId) {
+        return harvester.changeLog().latestMark(caller, sourceId);
+    }
+
     /** Ob ein Chat-Modell für Update-Zusammenfassungen eingestellt ist (ADR 0030, Abschnitt 5). */
     public boolean changeSummariesAvailable() {
         return harvester.changeLog().summariesAvailable();

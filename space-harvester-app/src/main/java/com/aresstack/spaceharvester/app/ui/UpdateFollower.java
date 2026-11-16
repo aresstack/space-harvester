@@ -3,13 +3,13 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
-import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
+import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
 import javax.swing.SwingUtilities;
 import java.time.Instant;
-import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -31,7 +31,8 @@ final class UpdateFollower {
 
         Subscription subscribe(ChangeLogListener listener);
 
-        List<ChangeUpdate> updates(String sourceId);
+        /** Die jüngste Marke der Quelle; liest nur die Marken, keine Zeilen. */
+        Optional<UpdateMark> latestMark(String sourceId);
 
         String title(String sourceId);
 
@@ -43,8 +44,8 @@ final class UpdateFollower {
                 }
 
                 @Override
-                public List<ChangeUpdate> updates(String sourceId) {
-                    return workspace.changeUpdates(sourceId);
+                public Optional<UpdateMark> latestMark(String sourceId) {
+                    return workspace.latestChangeMark(sourceId);
                 }
 
                 @Override
@@ -132,9 +133,12 @@ final class UpdateFollower {
         if (current == null || sourceId == null || !enabled.getAsBoolean()) {
             return;
         }
+        // Während eines Abgleichs kommen laufend Meldungen: gelesen wird nur die jüngste Marke, nie die Zeilen.
         runner.run(() -> {
-            Instant newest = newest(current.updates(sourceId));
-            return newest == null ? null : new Found(newest, current.title(sourceId));
+            Instant newest = current.latestMark(sourceId).filter(mark -> !mark.initial()).map(UpdateMark::at)
+                    .orElse(null);
+            return newest == null || !newest.isAfter(seen.getOrDefault(sourceId, since)) ? null
+                    : new Found(newest, current.title(sourceId));
         }, found -> {
             if (found == null || current != feed) {
                 return;
@@ -166,12 +170,6 @@ final class UpdateFollower {
     }
 
     private record Found(Instant mark, String title) {
-    }
-
-    /** Zeitpunkt der jüngsten abgeschlossenen Marke, die keine Erstbefüllung ist; {@code null} ohne. */
-    private static Instant newest(List<ChangeUpdate> updates) {
-        return updates.stream().filter(update -> !update.open() && !update.initial() && update.mark() != null)
-                .map(update -> update.mark().at()).max(Instant::compareTo).orElse(null);
     }
 
     // ---- für Tests
