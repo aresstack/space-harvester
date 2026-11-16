@@ -533,6 +533,8 @@ public class Exports {
         purgeQuietly();
         writer.requireCapacity();
         ExportRequest request = access.apply(request(status)).withRefresh(true);
+        // Erst prüfen, ob der Lauf angenommen wird: sonst hielten Bilder und Anhänge umsonst an.
+        jobs.requireRerunnable(exportId, owner);
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), null,
                 true, pauseFollowUps(exportId, owner)));
     }
@@ -573,7 +575,8 @@ public class Exports {
             while (true) {
                 context.checkpoint();
                 try {
-                    jobs.await(jobId, owner, STOP_CHECK);
+                    // Auch eine nach der Anhaltefrist abgekoppelte Arbeit muss geendet haben, sonst liest sie noch.
+                    jobs.awaitSettled(jobId, owner, STOP_CHECK);
                     break;
                 } catch (java.util.concurrent.TimeoutException e) {
                     // weiter warten und auf Abbruch prüfen
@@ -619,6 +622,7 @@ public class Exports {
         writer.requireCapacity();
         Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
         ExportRequest request = access.apply(request(status));
+        jobs.requireRerunnable(exportId, owner);
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds,
                 false, pauseFollowUps(exportId, owner)));
     }
@@ -662,7 +666,7 @@ public class Exports {
         // Ein angehaltenes Nachladen oder Neu-Erzwingen setzt als solches fort, nicht als gewöhnlicher Lauf.
         return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
                 ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll,
-                        List.of())
+                        export.stopping)
                 : task);
     }
 

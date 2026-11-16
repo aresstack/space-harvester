@@ -178,6 +178,39 @@ class JobsDeletionTest {
     }
 
     @Test
+    void awaitSettledWaitsUntilTheDetachedStepHasReallyEnded() throws Exception {
+        CompletableFuture<Void> hanging = new CompletableFuture<>();
+        JobStatus stuck = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> hanging);
+        executor.runNext();
+        jobs.pause(stuck.id(), "client-a");
+        clock.advance(Jobs.STOP_GRACE.plusSeconds(1));
+        assertThat(jobs.status(stuck.id()).state()).isEqualTo(JobState.PAUSED);
+
+        // Der Eintrag gilt als angehalten, seine Arbeit läuft aber noch: await kehrt zurück, awaitSettled nicht.
+        assertThat(jobs.await(stuck.id(), "client-a", Duration.ZERO).state()).isEqualTo(JobState.PAUSED);
+        assertThatThrownBy(() -> jobs.awaitSettled(stuck.id(), "client-a", Duration.ofMillis(50)))
+                .isInstanceOf(java.util.concurrent.TimeoutException.class);
+        assertThatThrownBy(() -> jobs.requireRerunnable(stuck.id(), "client-a"))
+                .isInstanceOf(JobNotResumableException.class);
+
+        hanging.complete(null);
+        assertThat(jobs.awaitSettled(stuck.id(), "client-a", Duration.ZERO).state()).isEqualTo(JobState.PAUSED);
+        jobs.requireRerunnable(stuck.id(), "client-a");
+    }
+
+    @Test
+    void requireRerunnableRejectsWithoutChangingAnythingWhenNoSlotIsFree() {
+        JobStatus done = finished("client-a", JobType.EXPORT);
+        for (int i = 0; i < 7; i++) {
+            jobs.submit(JobType.EXPORT, "wiki", "S" + i, "client-b", JobTask.blocking(context -> { }));
+        }
+
+        assertThatThrownBy(() -> jobs.requireRerunnable(done.id(), "client-a"))
+                .isInstanceOf(JobCapacityExceededException.class);
+        assertThat(jobs.status(done.id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void aStepThatReachesItsCheckpointInTimeEndsNormally() {
         CompletableFuture<Void> slow = new CompletableFuture<>();
         JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> slow);
