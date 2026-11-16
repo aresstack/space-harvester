@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source.confluence;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.source.network.RouteFailureListener;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * <p>Nur Schema, Host, Port, Pfad und die Namen der Query-Parameter, nie deren Werte (Tokens, Sitzungen, Codes), nie
  * Kopfzeilen oder Cookies. REST-Aufrufe bleiben draußen, sie wären zu viele und laufen nicht über die Anmeldeseite.
  */
-final class WebCallLog implements HttpRoutePort {
+final class WebCallLog implements HttpRoutePort, RouteFailureListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(WebCallLog.class);
 
@@ -40,6 +41,11 @@ final class WebCallLog implements HttpRoutePort {
             LOG.info("[Confluence {}] Webaufruf {}", label, describe(target));
         }
         return routes.routeFor(target);
+    }
+
+    @Override
+    public void routeFailed(URI target, HttpRoute route) {
+        RouteFailureListener.notify(routes, target, route);
     }
 
     private static boolean web(URI target) {
