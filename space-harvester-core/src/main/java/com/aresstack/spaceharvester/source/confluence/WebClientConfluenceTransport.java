@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.application.jobs.RequestRoute;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
+import com.aresstack.spaceharvester.source.network.RouteFailureListener;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.ClientAuth;
@@ -220,7 +221,25 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                     headers.forEach(sent::set);
                 })
                 .exchangeToMono(response -> read(response, maxBytes))
+                .doOnError(error -> {
+                    if (connectFailure(error)) {
+                        RouteFailureListener.notify(routes, uri, route);
+                    }
+                })
                 .onErrorMap(error -> routed(error, route));
+    }
+
+    /** Verbindungsaufbau gescheitert (Proxy oder Ziel nicht erreichbar), nicht etwa eine Antwort mit Fehlerstatus. */
+    static boolean connectFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof java.net.ConnectException || cause instanceof java.net.NoRouteToHostException
+                    || cause instanceof java.net.UnknownHostException
+                    || cause instanceof io.netty.channel.ConnectTimeoutException
+                    || cause.getClass().getSimpleName().equals("ProxyConnectException")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
