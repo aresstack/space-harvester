@@ -314,6 +314,7 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
+        jobStatus.navigation(content.navigation());
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -447,6 +448,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
         content.tabsActive(section == AppContext.Section.CONTENT);
+        jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {

@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.event.ApplicationEventBus;
 import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 
 import javax.swing.BorderFactory;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -23,15 +24,21 @@ final class JobStatusLine extends JPanel {
     final JLabel text = Comic.muted(" ");
     final JLabel endState = new JLabel(" ");
     private JobProgressEvent last = JobProgressEvent.none();
+    private final JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
+    private final javax.swing.Timer done = new javax.swing.Timer(StatusLine.FADE_DELAY_MS,
+            e -> endState.setVisible(false));
+    private JComponent navigation;
 
     JobStatusLine(ApplicationEventBus events) {
         super(new BorderLayout());
         setOpaque(false);
         endState.setFont(Comic.semiBold(13f));
         endState.setForeground(Comic.INK);
-        JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
         center.setOpaque(false);
         center.add(endState);
+        // „Fertig“ ist nach kurzer Zeit keine Nachricht mehr und verschwindet mit dem vollen Balken (Angelo,
+        // 16.11.2026); Angehalten, Abgebrochen und Fehlgeschlagen bleiben stehen, bis sich etwas ändert.
+        done.setRepeats(false);
         setBorder(BorderFactory.createEmptyBorder());
         add(text, BorderLayout.WEST);
         add(center, BorderLayout.CENTER);
@@ -45,6 +52,31 @@ final class JobStatusLine extends JPanel {
         });
     }
 
+    /**
+     * Setzt Zurück und Vor der Seitenansicht in die Mitte der Statuszeile, vor den Endzustand; neben der Suchleiste
+     * ist bei schmalem Fenster kein Platz (Angelo, 16.11.2026).
+     */
+    void navigation(JComponent buttons) {
+        if (navigation != null) {
+            center.remove(navigation);
+        }
+        navigation = buttons;
+        center.add(buttons, 0);
+        center.revalidate();
+    }
+
+    /** Zeigt Zurück und Vor nur, solange die Mitte des Fensters die Seitenansicht zeigt. */
+    void navigationVisible(boolean visible) {
+        if (navigation != null) {
+            navigation.setVisible(visible);
+        }
+    }
+
+    /** Für Tests: blendet „Fertig“ nach {@link StatusLine#FADE_DELAY_MS} aus. */
+    javax.swing.Timer doneTimer() {
+        return done;
+    }
+
     JProgressBar model() {
         return model;
     }
@@ -55,6 +87,7 @@ final class JobStatusLine extends JPanel {
     }
 
     private void render(JobProgressEvent event) {
+        boolean wasCompleted = last.outcome() == JobProgressEvent.Outcome.COMPLETED;
         last = event;
         JobProgressEvent.Outcome outcome = event.outcome();
         boolean running = outcome == JobProgressEvent.Outcome.RUNNING;
@@ -71,7 +104,16 @@ final class JobStatusLine extends JPanel {
             // Fertig heißt 100 %: die Statuszeile zeigt den vollen Balken kurz und blendet ihn dann aus.
             model.setValue(outcome == JobProgressEvent.Outcome.COMPLETED ? 1 : 0);
         }
-        endState.setVisible(outcome.terminal());
+        if (outcome == JobProgressEvent.Outcome.COMPLETED) {
+            // Nur der Wechsel auf „Fertig“ zeigt es; eine Wiederholung desselben Stands holt es nicht zurück.
+            if (!wasCompleted) {
+                endState.setVisible(true);
+                done.restart();
+            }
+        } else {
+            done.stop();
+            endState.setVisible(outcome.terminal());
+        }
         endState.setText(switch (outcome) {
             case COMPLETED -> "Fertig";
             case CANCELLED -> "Abgebrochen";

@@ -116,6 +116,45 @@ class ContentViewTest {
             heading.doLayout();
             return heading.getComponentCount() == 1 && titleLabel.getWidth() == 300;
         })).isTrue();
+        // Eine Kopfzeile (Angelo, 16.11.2026): Überschrift, Stern und das Dreieck stehen in der Zeile der
+        // Bereichsanzeige; „Lesezeichen kopieren“ und „Im Browser öffnen“ liegen im Menü am Dreieck.
+        assertThat(onEdt(() -> {
+            java.awt.Container row = view.detail().titleLabel().getParent().getParent();
+            return javax.swing.SwingUtilities.isDescendingFrom(view.detail().starButton(), row)
+                    && javax.swing.SwingUtilities.isDescendingFrom(view.detail().moreButton(), row)
+                    && !javax.swing.SwingUtilities.isDescendingFrom(row, view.detail());
+        })).isTrue();
+        assertThat(onEdt(() -> {
+            List<String> entries = new java.util.ArrayList<>();
+            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
+                entries.add(((javax.swing.JMenuItem) item).getText());
+            }
+            return entries;
+        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen");
+        // Sichtprüfung der Kopfzeile, nur mit der Umgebungsvariable HEADER_SCREENSHOT (Pfad der PNG-Datei).
+        String screenshot = System.getenv("HEADER_SCREENSHOT");
+        if (screenshot != null && !screenshot.isBlank()) {
+            onEdt(() -> {
+                javax.swing.JComponent root = view.component();
+                root.setSize(1300, 420);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(root);
+                }
+                java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(1300, 420,
+                        java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g = image.createGraphics();
+                root.paint(g);
+                g.dispose();
+                try {
+                    javax.imageio.ImageIO.write(image, "png", new java.io.File(screenshot));
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                return null;
+            });
+        }
+        // Jeder Eintrag ist so wählbar wie seine Aktion (die Testseite hat keine Adresse in der Quelle).
+        assertThat(onEdt(() -> view.detail().moreMenu().getComponent(0).isEnabled())).isTrue();
         assertThat(onEdt(() -> {
             java.awt.event.MouseListener[] listeners = view.detail().titleLabel().getMouseListeners();
             listeners[listeners.length - 1].mouseEntered(null);
@@ -494,5 +533,14 @@ class ContentViewTest {
             throw failure.get();
         }
         return result.get();
+    }
+
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
     }
 }

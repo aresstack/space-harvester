@@ -54,8 +54,12 @@ public final class ContentView implements View {
         JPanel top = new JPanel(new BorderLayout(12, 0));
         top.setBackground(Comic.SURFACE);
         top.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        top.add(crumbs, BorderLayout.CENTER);
+                BorderFactory.createEmptyBorder(4, 12, 4, 12)));
+        // Eine Zeile statt zwei (Angelo, 16.11.2026): links, wo die Seite liegt, mittig ihre Überschrift, rechts Stern
+        // und das Dreieck mit den weiteren Aktionen. Die Überschrift kürzt sich mit „…“, wenn der Platz nicht reicht.
+        top.add(crumbs, BorderLayout.WEST);
+        top.add(detail.headerTitle(), BorderLayout.CENTER);
+        top.add(detail.headerActions(), BorderLayout.EAST);
 
         JPanel north = new JPanel(new BorderLayout());
         north.setOpaque(false);
@@ -222,6 +226,11 @@ public final class ContentView implements View {
     /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
     public void showExport() {
         detail.showExport();
+    }
+
+    /** Zurück und Vor der Seitenansicht für die Statuszeile des Hauptfensters (Angelo, 16.11.2026). */
+    public JComponent navigation() {
+        return detail.navigation();
     }
 
     PageDetailPanel detail() {
