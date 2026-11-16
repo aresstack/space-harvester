@@ -37,7 +37,7 @@ class LucenePageCacheSummaryTest {
                 List.of(new StoredSummary.Statement("Startseite neu", List.of("101", "102")),
                         new StoredSummary.Statement("Ohne Seiten", List.of())),
                 "test-summary:1", Instant.parse("2026-11-16T20:00:00Z"), at, 2, "sha256:ab",
-                List.of(new StoredSummary.InputPage("DEV", "101"), new StoredSummary.InputPage("OPS", "102")));
+                List.of(new StoredSummary.InputPage("DEV", "101", true), new StoredSummary.InputPage("OPS", "102")));
     }
 
     @Test

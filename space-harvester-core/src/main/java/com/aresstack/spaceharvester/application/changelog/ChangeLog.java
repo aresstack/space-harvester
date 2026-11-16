@@ -116,6 +116,20 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /**
+     * Die jüngste Update-Marke der Quelle, ohne Zeilen zu lesen; für Beobachter, die nach jeder Meldung nur wissen
+     * wollen, ob ein neues Update abgeschlossen ist (etwa „Nach dem Update Änderungen anzeigen“). Rechte wie
+     * {@link #updates}.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public Optional<UpdateMark> latestMark(AccessContext caller, String sourceId) {
+        Objects.requireNonNull(caller, "caller");
+        requireReadable(caller, sourceId);
+        List<UpdateMark> marks = store.marks(sourceId);
+        return marks.isEmpty() ? Optional.empty() : Optional.of(marks.getLast());
+    }
+
+    /**
      * Die Updates einer Quelle, neuestes zuerst; das offene nach der letzten Marke vorn, wenn es Änderungen hat, die
      * der Aufrufer sehen darf.
      *
@@ -256,7 +270,8 @@ public final class ChangeLog implements AutoCloseable {
             statements.add(new SummaryStatement(statement.text(), pages));
         }
         // Offenes Update mit neuen Änderungen oder abgeschlossenes, in das ein Schritt später nachkam.
-        boolean stale = !UpdateSummarizer.reportSha256(report).equals(stored.get().reportSha256());
+        boolean stale = !UpdateSummarizer.reportSha256(report, page -> contentState(page, span))
+                .equals(stored.get().reportSha256());
         return Optional.of(new UpdateSummary(sourceId, update, stored.get().text(), statements, stored.get().model(),
                 stored.get().createdAt(), stored.get().unreadableChanges(), stale));
     }
@@ -287,14 +302,16 @@ public final class ChangeLog implements AutoCloseable {
         Summaries runtime = summaries;
         return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, null, null, caller.jobOwner(),
                 Map.of(UPDATE_PARAMETER, update), JobTask.blocking(context -> {
-                    ChangeReport report = report(caller, sourceId, update);
+                    // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.
+                    ChangeReport report = report(caller, sourceId, update, true);
                     Visibility visible = new Visibility(caller);
                     UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), context);
                     Instant now = runtime.clock().instant();
                     store.saveSummary(new StoredSummary(sourceId, update, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,
-                            result.unreadable(), UpdateSummarizer.reportSha256(report), result.inputPages()));
+                            result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span)),
+                            result.inputPages()));
                     context.written(1);
                 }));
     }
@@ -312,8 +329,30 @@ public final class ChangeLog implements AutoCloseable {
                     || !visible.page(stored.sourceId(), page.spaceKey(), page.pageId())) {
                 return false;
             }
+            // Gingen Absätze der Seite ein, muss der Leser ihren Inhalt lesen dürfen.
+            if (page.content() && !access.permits(visible.caller,
+                    ResourceScope.page(stored.sourceId(), page.spaceKey(), page.pageId()), AccessKind.CONTENT)) {
+                return false;
+            }
         }
         return true;
+    }
+
+    /**
+     * Stand des Inhalts einer Seite für {@code stale}: die abgelegten Schritte ab Beginn des Updates und ob der Inhalt
+     * aussteht, unabhängig von den Rechten des Lesers. Geht nie nach außen.
+     */
+    private String contentState(ReportedPage page, Span span) {
+        if (!page.kinds().contains(ChangeKind.CONTENT_CHANGED)) {
+            return "";
+        }
+        StringBuilder state = new StringBuilder(page.contentPending() ? "pending" : "local");
+        for (ContentChange step : store.contentChanges(new PageKey(page.sourceId(), page.pageId()), span.from(),
+                MAX_DIFF_STEPS)) {
+            state.append('|').append(step.toVersion()).append('@').append(step.at())
+                    .append(step.truncated() ? "!" : "");
+        }
+        return state.toString();
     }
 
     /**

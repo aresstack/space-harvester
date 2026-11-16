@@ -412,7 +412,8 @@ final class ChangeLogSchema {
         json.put("reportSha256", summary.reportSha256());
         ArrayNode inputs = json.putArray("inputPages");
         for (StoredSummary.InputPage page : summary.inputPages()) {
-            inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId());
+            inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId())
+                    .put("content", page.content());
         }
         Document doc = new Document();
         doc.add(new StringField(PageCacheSchema.TYPE, SUMMARY, Field.Store.NO));
@@ -435,7 +436,8 @@ final class ChangeLogSchema {
         }
         List<StoredSummary.InputPage> inputs = new ArrayList<>();
         for (JsonNode page : json.path("inputPages")) {
-            inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString()));
+            inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString(),
+                    page.path("content").asBoolean(false)));
         }
         return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), json.path("text").asString(),
                 statements, json.path("model").asString(), Instant.parse(json.path("createdAt").asString()),

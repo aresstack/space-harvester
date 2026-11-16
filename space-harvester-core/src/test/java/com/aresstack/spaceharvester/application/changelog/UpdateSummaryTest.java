@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -46,6 +47,9 @@ class UpdateSummaryTest {
     private final Map<PageKey, PageHeader> headers = new HashMap<>();
     private final Set<String> released = new HashSet<>();
     private final Set<String> hiddenFromReader = new HashSet<>();
+    private final Set<String> contentHiddenFromReader = new HashSet<>();
+    private final Set<String> contentHiddenFromCaller = new HashSet<>();
+    private final List<ContentChange> diffs = new ArrayList<>();
     private boolean modelAvailable = true;
     private Consumer<String> recorded = ignored -> {
     };
@@ -84,6 +88,13 @@ class UpdateSummaryTest {
         }
 
         @Override
+        public List<ContentChange> contentChanges(PageKey key, Instant after, int limit) {
+            return diffs.stream().filter(diff -> diff.sourceId().equals(key.sourceId())
+                            && diff.pageId().equals(key.pageId()) && (after == null || diff.at().isAfter(after)))
+                    .sorted(java.util.Comparator.comparing(ContentChange::at)).limit(limit).toList();
+        }
+
+        @Override
         public void deleteSummary(String sourceId, String updateId) {
             summaries.remove(sourceId + "/" + updateId);
         }
@@ -95,7 +106,14 @@ class UpdateSummaryTest {
         }
     };
     private final AccessGuard access = new AccessGuard((context, scope, kind) -> {
-        return context == READER && scope.pageId() != null && hiddenFromReader.contains(scope.pageId())
+        if (scope.pageId() == null) {
+            return AccessDecision.ALLOW;
+        }
+        if (kind == AccessKind.CONTENT && (context == READER ? contentHiddenFromReader : contentHiddenFromCaller)
+                .contains(scope.pageId())) {
+            return AccessDecision.DENY;
+        }
+        return context == READER && hiddenFromReader.contains(scope.pageId())
                 ? AccessDecision.DENY : AccessDecision.ALLOW;
     });
     private final List<String> inputs = new CopyOnWriteArrayList<>();
@@ -158,11 +176,18 @@ class UpdateSummaryTest {
                 PageMetadata.sorted(Map.of())), T0));
     }
 
+    private void diff(long minutes, String pageId, String from, String to, boolean truncated,
+                      ParagraphChange... paragraphs) {
+        diffs.add(new ContentChange("wiki", pageId, from, to, at(minutes), List.of(paragraphs), truncated));
+    }
+
     /** Erstbefüllung bis Minute 10, ein Update bis Minute 30: Seite 100 freigegeben, Seite 102 nicht. */
     private String oneUpdate() {
         row(1, "100", "DEV", ChangeKind.NEW, "Start");
         mark(10, true);
         row(12, "100", "DEV", ChangeKind.CONTENT_CHANGED, "Startseite");
+        diff(12, "100", "1", "2", false, new ParagraphChange(ParagraphChange.Kind.CHANGED, "Altes Vorwort",
+                "Neues Vorwort"));
         row(14, "102", "OPS", ChangeKind.NEW, "Geheimplan");
         mark(30, false);
         header("100", "DEV", "Startseite");
@@ -190,7 +215,9 @@ class UpdateSummaryTest {
 
         assertThat(inputs).hasSize(1);
         assertThat(inputs.getFirst()).contains("Startseite").doesNotContain("Geheimplan").doesNotContain("\"102\"")
-                .contains("\"nichtLesbar\":1");
+                .contains("\"nichtLesbar\":1").contains("Altes Vorwort", "Neues Vorwort");
+        assertThat(summaries.get("wiki/" + id).inputPages())
+                .containsExactly(new StoredSummary.InputPage("DEV", "100", true));
         UpdateSummary summary = log.summary(CALLER, "wiki", id).orElseThrow();
         assertThat(summary.text()).isEqualTo("Die Startseite wurde überarbeitet.");
         assertThat(summary.statements()).singleElement().satisfies(statement -> {
@@ -361,27 +388,114 @@ class UpdateSummaryTest {
     }
 
     @Test
-    void manyPagesAreSummarizedPerSpaceAndThenCombined() {
+    void differencesOfPagesWithoutReleaseOrContentRightNeverReachTheModelAndCountAsUnreadable() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "100", "DEV", ChangeKind.CONTENT_CHANGED, "Freigegeben");
+        diff(12, "100", "1", "2", false, new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Sichtbarer Absatz"));
+        row(13, "102", "DEV", ChangeKind.CONTENT_CHANGED, "Nicht freigegeben");
+        diff(13, "102", "1", "2", false, new ParagraphChange(ParagraphChange.Kind.REMOVED, "Geheimer Absatz", null));
+        row(14, "103", "DEV", ChangeKind.CONTENT_CHANGED, "Ohne Inhaltsrecht");
+        diff(14, "103", "1", "2", false, new ParagraphChange(ParagraphChange.Kind.REMOVED, "Vertraulich", null));
+        mark(30, false);
+        released.addAll(List.of("100", "103"));
+        contentHiddenFromCaller.add("103");
+        String id = log.updates(CALLER, "wiki").getFirst().id();
+
+        run(log.summarize(CALLER, "wiki", id));
+
+        assertThat(inputs.getFirst()).contains("Sichtbarer Absatz").doesNotContain("Geheimer Absatz")
+                .doesNotContain("Nicht freigegeben").doesNotContain("Vertraulich").contains("Ohne Inhaltsrecht")
+                .contains("\"inhaltUnbekannt\":true");
+        assertThat(instructions.getFirst()).contains("nennst du nur die Tatsache");
+        assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(2);
+    }
+
+    @Test
+    void missingContentIsSentAsChangedWithoutContentAndATruncatedDifferenceWithItsParagraphs() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        row(1, "101", "DEV", ChangeKind.NEW, "Zweite");
+        mark(10, true);
+        row(12, "100", "DEV", ChangeKind.CONTENT_CHANGED, "Ohne Vorgänger");
+        row(13, "101", "DEV", ChangeKind.CONTENT_CHANGED, "Zu groß");
+        diff(13, "101", "1", "2", true, new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Anfang der Riesenänderung"));
+        mark(30, false);
+        released.addAll(List.of("100", "101"));
+        String id = log.updates(CALLER, "wiki").getFirst().id();
+
+        run(log.summarize(CALLER, "wiki", id));
+
+        assertThat(inputs.getFirst()).contains("Anfang der Riesenänderung", "\"gekuerzt\":true");
+        assertThat(inputs.getFirst().split("\"inhaltUnbekannt\":true", -1)).as("nur Seite 100").hasSize(2);
+        assertThat(summaries.get("wiki/" + id).inputPages())
+                .containsExactly(new StoredSummary.InputPage("DEV", "100", false),
+                        new StoredSummary.InputPage("DEV", "101", true));
+        assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(1);
+    }
+
+    @Test
+    void aReaderWithoutTheContentRightOfAPageWhoseParagraphsWentInSeesNothing() {
+        String id = oneUpdate();
+        run(log.summarize(CALLER, "wiki", id));
+        assertThat(log.summary(READER, "wiki", id)).isPresent();
+
+        contentHiddenFromReader.add("100");
+
+        assertThat(log.summary(READER, "wiki", id)).isEmpty();
+        assertThat(log.summary(CALLER, "wiki", id)).isPresent();
+    }
+
+    @Test
+    void contentThatArrivesLaterMakesTheSummaryStaleWhateverTheReaderMayRead() {
+        String id = oneUpdate();
+        run(log.summarize(CALLER, "wiki", id));
+        contentHiddenFromReader.add("102");
+        assertThat(log.summary(READER, "wiki", id).orElseThrow().stale()).isFalse();
+
+        diff(40, "100", "2", "3", false, new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Nachtrag"));
+
+        assertThat(log.summary(CALLER, "wiki", id).orElseThrow().stale()).isTrue();
+    }
+
+    @Test
+    void largeUpdatesAreSplitByTextAndCombinedInStagesWithinTheBudget() {
         row(1, "1", "DEV", ChangeKind.NEW, "Start");
         mark(10, true);
-        for (int i = 0; i < 130; i++) {
-            String pageId = "d" + i;
-            row(12, pageId, "DEV", ChangeKind.NEW, "Seite " + i);
+        String paragraph = "Absatz mit Inhalt. ".repeat(25);
+        for (int i = 0; i < 60; i++) {
+            String pageId = "p" + i;
+            row(1, pageId, i % 2 == 0 ? "DEV" : "OPS", ChangeKind.NEW, "Seite " + i);
+            row(12, pageId, i % 2 == 0 ? "DEV" : "OPS", ChangeKind.CONTENT_CHANGED, "Seite " + i);
+            ParagraphChange[] changes = new ParagraphChange[12];
+            for (int j = 0; j < changes.length; j++) {
+                changes[j] = new ParagraphChange(ParagraphChange.Kind.CHANGED, paragraph + j, paragraph + "neu " + j);
+            }
+            diff(12, pageId, "1", "2", false, changes);
             released.add(pageId);
         }
-        for (int i = 0; i < 5; i++) {
-            String pageId = "o" + i;
-            row(13, pageId, "OPS", ChangeKind.NEW, "Betrieb " + i);
-            released.add(pageId);
+        StringBuilder big = new StringBuilder("{\"zusammenfassung\": \"").append("Viel. ".repeat(600))
+                .append("\", \"aussagen\": [");
+        for (int i = 0; i < UpdateSummarizer.MAX_STATEMENTS; i++) {
+            big.append(i == 0 ? "" : ",").append("{\"text\": \"").append("Aussage ".repeat(80))
+                    .append("\", \"seiten\": [");
+            for (int j = 0; j < 30; j++) {
+                big.append(j == 0 ? "" : ",").append("\"p").append(j).append('"');
+            }
+            big.append("]}");
         }
-        answer = "{\"zusammenfassung\": \"Viel Neues.\", \"aussagen\": [{\"text\": \"Neu\", \"seiten\": [\"d0\", \"o1\"]}]}";
+        answer = big.append("]}").toString();
 
         assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
 
-        // DEV in zwei Teilen (120 + 10), OPS in einem, dann die Fassung der Quelle.
-        assertThat(inputs).hasSize(4);
-        assertThat(inputs.getLast()).contains("\"teile\"");
+        long parts = instructions.stream().filter(UpdateSummarizer.INSTRUCTIONS::equals).count();
+        long combines = instructions.stream().filter(UpdateSummarizer.COMBINE::equals).count();
+        assertThat(parts).isGreaterThan(4);
+        assertThat(combines).as("stufenweise").isGreaterThan(1);
+        assertThat(inputs).allSatisfy(input -> assertThat(input.length())
+                .isLessThanOrEqualTo(UpdateSummarizer.MAX_REQUEST_CHARS));
+        assertThat(inputs).filteredOn(input -> input.contains("\"aenderungen\"")).allSatisfy(input ->
+                assertThat(input).contains("\"gekuerzt\":true"));
         assertThat(summaries.get("wiki/" + ChangeUpdate.OPEN).statements().getFirst().pageIds())
-                .containsExactly("d0", "o1");
+                .hasSize(UpdateSummarizer.MAX_STATEMENT_PAGES);
     }
 }

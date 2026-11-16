@@ -26,12 +26,20 @@ public record StoredSummary(String sourceId, String updateId, String text, List<
         }
     }
 
-    /** Eine Seite, die mit Titel an das Modell ging, samt Space für die Rechteprüfung. */
-    public record InputPage(String spaceKey, String pageId) {
+    /**
+     * Eine Seite, die mit Titel an das Modell ging, samt Space für die Rechteprüfung.
+     *
+     * @param content ob auch Absätze ihres Inhalts eingingen; dann muss der Leser den Inhalt lesen dürfen
+     */
+    public record InputPage(String spaceKey, String pageId, boolean content) {
 
         public InputPage {
             Objects.requireNonNull(spaceKey, "spaceKey");
             Objects.requireNonNull(pageId, "pageId");
+        }
+
+        public InputPage(String spaceKey, String pageId) {
+            this(spaceKey, pageId, false);
         }
     }
 
