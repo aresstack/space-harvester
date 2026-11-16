@@ -1152,6 +1152,7 @@ public final class ActivitiesView implements View {
                         "Fehlgeschlagen");
                 case IMPORT -> new Counters("Seiten im Paket", "Bearbeitet", "Übernommen", "Fehlgeschlagen");
                 case REREAD -> new Counters("Dokumente", "Geprüft", "Neu gelesen", "Fehlgeschlagen");
+                case METADATA_EXPORT, ANALYTICS_EXPORT -> new Counters("Seiten", "Abgefragt", "Mit Daten", "Ohne Antwort");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }

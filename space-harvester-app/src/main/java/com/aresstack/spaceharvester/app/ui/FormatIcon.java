@@ -36,6 +36,9 @@ public final class FormatIcon implements Icon {
             case "markdown" -> new FormatIcon("MD", Comic.INK);
             case "json" -> new FormatIcon("{}", Comic.PETROL);
             case "analysis" -> new FormatIcon("AN", Comic.ORANGE);
+            // Exporte aus der Quelle (Angelo 16.11.2026): Confluence-Metadaten und Analytics (Aufrufe).
+            case "metadata" -> new FormatIcon("ME", Comic.PETROL);
+            case "analytics" -> new FormatIcon("ST", Comic.PETROL);
             default -> new FormatIcon(format.substring(0, Math.min(3, format.length())).toUpperCase(
                     java.util.Locale.ROOT), Comic.INK);
         };
