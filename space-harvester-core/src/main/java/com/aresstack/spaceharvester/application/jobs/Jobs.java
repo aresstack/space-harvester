@@ -307,32 +307,75 @@ public class Jobs implements AutoCloseable {
      */
     public JobStatus submitAfter(JobType type, String sourceId, String partitionKey, String rootPageId,
                                  String owner, Map<String, String> parameters, JobTask task, String awaited) {
-        Objects.requireNonNull(awaited, "awaited");
+        return submitAfter(type, sourceId, partitionKey, rootPageId, owner, parameters, task, List.of(awaited));
+    }
+
+    /**
+     * Wie {@link #submitAfter(JobType, String, String, String, String, Map, JobTask, String)}, aber nach mehreren
+     * Vorgängern: frei, sobald jeder erfolgreich beendet ist, etwa die Datei eines Exports nach dem Export und seinen
+     * Bildern und Anhängen. Gewartet wird der Reihe nach; {@link JobStatus#parameter} {@link #AWAITS} nennt den ersten.
+     *
+     * @param awaited die Vorgänger, mindestens einer
+     * @throws UnknownJobException wenn es einen Vorgänger nicht gibt
+     */
+    public JobStatus submitAfter(JobType type, String sourceId, String partitionKey, String rootPageId,
+                                 String owner, Map<String, String> parameters, JobTask task,
+                                 java.util.Collection<String> awaited) {
+        if (awaited.isEmpty()) {
+            throw new IllegalArgumentException("Mindestens ein Vorgänger");
+        }
         JobStatus status;
         synchronized (lock) {
-            boolean done = !open.containsKey(awaited) && store.find(awaited)
-                    .orElseThrow(() -> new UnknownJobException(awaited)).state() == JobState.COMPLETED;
-            status = submitAwaiting(type, sourceId, partitionKey, rootPageId, owner, parameters, task, awaited);
+            java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
+            for (String id : awaited) {
+                Objects.requireNonNull(id, "awaited");
+                boolean done = !open.containsKey(id) && store.find(id)
+                        .orElseThrow(() -> new UnknownJobException(id)).state() == JobState.COMPLETED;
+                if (!done && !pending.contains(id)) {
+                    pending.add(id);
+                }
+            }
+            String first = awaited.iterator().next();
+            status = submitAwaiting(type, sourceId, partitionKey, rootPageId, owner, parameters, task,
+                    pending.isEmpty() ? first : pending.peekFirst());
             Job job = open.get(status.id());
             job.releaseWhenDone = true;
-            if (done) {
+            if (pending.isEmpty()) {
                 job.awaiting = null;
-                status = job.snapshot();
-                store.save(status);
+            } else {
+                pending.pollFirst();
+                job.laterAwaited.addAll(pending);
             }
+            status = job.snapshot();
+            store.save(status);
         }
         dispatch();
         return status;
     }
 
-    /** Unter dem Sperrobjekt: gibt die Aufträge frei, die auf das erfolgreiche Ende dieses Auftrags warten. */
+    /**
+     * Unter dem Sperrobjekt: Die Aufträge, die auf das erfolgreiche Ende dieses Auftrags warten, warten auf ihren
+     * nächsten noch nicht erfolgreich beendeten Vorgänger oder sind frei.
+     */
     private void releaseFollowers(Job ended) {
         for (Job follower : open.values()) {
-            if (follower.releaseWhenDone && ended.id.equals(follower.awaiting)
-                    && follower.state == JobState.QUEUED) {
-                follower.awaiting = null;
-                store.save(follower.snapshot());
+            releaseFollowerFrom(follower, ended.id);
+        }
+    }
+
+    /** Unter dem Sperrobjekt: Wartet der Nachfolger auf {@code predecessor}, wartet er auf den nächsten oder ist frei. */
+    private void releaseFollowerFrom(Job follower, String predecessor) {
+        if (follower.releaseWhenDone && predecessor.equals(follower.awaiting) && follower.state == JobState.QUEUED) {
+            String next = null;
+            while (next == null && !follower.laterAwaited.isEmpty()) {
+                String candidate = follower.laterAwaited.pollFirst();
+                // Ein gelöschter späterer Vorgänger hält nichts mehr auf.
+                boolean done = !open.containsKey(candidate) && store.find(candidate)
+                        .map(other -> other.state() == JobState.COMPLETED).orElse(true);
+                next = done ? null : candidate;
             }
+            follower.awaiting = next;
+            store.save(follower.snapshot());
         }
     }
 
@@ -855,10 +898,22 @@ public class Jobs implements AutoCloseable {
                 // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit; auch, was nach
                 // einem Neustart als unterbrochen gilt, ohne je gestartet zu sein.
                 for (Job follower : List.copyOf(this.open.values())) {
-                    if (jobId.equals(follower.awaiting)) {
+                    // Ein Nachfolger mehrerer Vorgänger (submitAfter) hängt am ersten, etwa die Datei an ihrem Export,
+                    // auch wenn er gerade auf dessen Bilder wartet; ein späterer Vorgänger hält ihn nur nicht mehr auf.
+                    boolean anchored = follower.releaseWhenDone
+                            ? jobId.equals(follower.parameters.get(AWAITS)) && follower.state == JobState.QUEUED
+                            : jobId.equals(follower.awaiting);
+                    if (anchored) {
                         stop(follower.id);
                         events.delete(follower.id);
                         store.delete(follower.id);
+                    } else if (follower.releaseWhenDone && follower.state == JobState.QUEUED
+                            && (jobId.equals(follower.awaiting) || follower.laterAwaited.contains(jobId))) {
+                        follower.laterAwaited.remove(jobId);
+                        if (jobId.equals(follower.awaiting)) {
+                            releaseFollowerFrom(follower, jobId);
+                            freed |= follower.awaiting == null;
+                        }
                     }
                 }
                 for (JobStatus follower : store.all()) {
@@ -1799,6 +1854,8 @@ public class Jobs implements AutoCloseable {
         volatile String awaiting;
         /** Wird frei, sobald {@link #awaiting} erfolgreich endet ({@link Jobs#submitAfter}). */
         volatile boolean releaseWhenDone;
+        /** Weitere Vorgänger nach {@link #awaiting}, der Reihe nach ({@link Jobs#submitAfter}); nur unter der Sperre. */
+        final java.util.ArrayDeque<String> laterAwaited = new java.util.ArrayDeque<>();
         /** Noch nicht startbereit: die Vorbereitung beim Annehmen läuft noch. */
         volatile boolean starting;
         /** Erfüllt, sobald ein vorbereiteter Download seinen Platz hat ({@link #grantDownloads()}). */

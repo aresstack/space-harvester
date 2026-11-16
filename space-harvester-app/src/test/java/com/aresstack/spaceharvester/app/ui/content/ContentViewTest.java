@@ -241,8 +241,8 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(chat::isVisible)).isTrue();
-        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces"));
-        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
+        // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
         onEdt(() -> {
             chat.attach(home.resolve("notiz.txt"));

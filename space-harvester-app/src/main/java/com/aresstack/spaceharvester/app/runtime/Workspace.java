@@ -1077,10 +1077,11 @@ public final class Workspace {
 
     /**
      * Ein Format-Knopf (Angelo 16.11.2026): je gewähltem Space bzw. Teilbaum ({@code Holdings.outputs}) zwei Aufträge,
-     * erst die Daten, dann die Datei. Liegen für die Wurzel Seiten im Bestand, ist der erste die Ausgabe aus dem Bestand
-     * ({@link #startExportFromHoldings}, wiederverwendet, wenn sich nichts geändert hat); sonst lädt er die Seiten
-     * erst von der Quelle ({@link #startExport(String, String, String, Integer, List)}). Der zweite erzeugt die Datei,
-     * sobald der erste erfolgreich endet ({@link #startConversion}).
+     * erst die Daten, dann die Datei. Liegen für die Wurzel Seiten samt ihren Bildern und Anhängen im Bestand
+     * ({@code ExportAssetCollection.inHoldings}), ist der erste die Ausgabe aus dem Bestand
+     * ({@link #startExportFromHoldings}, wiederverwendet, wenn sich nichts geändert hat); sonst lädt er von der Quelle,
+     * was fehlt ({@link #startExport(String, String, String, Integer, List)}). Der zweite erzeugt die Datei, sobald der
+     * erste und seine Bilder und Anhänge erfolgreich enden ({@link #startConversion}).
      *
      * @param datasetFormats Formate des Datenbestands, wie bei einem Download
      * @return je Wurzel der Daten-Auftrag und danach der Auftrag „Datei erzeugen“
@@ -1094,8 +1095,12 @@ public final class Workspace {
         outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
         List<JobStatus> started = new ArrayList<>(2 * outputs.size());
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            // Aus dem Bestand nur, wenn dort auch Bilder und Anhänge der Seiten liegen; sonst holt der Export sie von der
+            // Quelle (gespeicherte, aktuelle Seiten liest auch er nur aus dem Cache) und legt sie im Bestand ab.
             boolean stored = harvester.holdings().resolve(caller,
-                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0;
+                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0
+                    && harvester.assetCollection() != null
+                    && harvester.assetCollection().inHoldings(Harvester.OWNER, root);
             JobStatus data = stored
                     ? harvester.exports().startFromHoldings(ExportRequest.fromHoldings(root.sourceId(),
                     root.spaceKey(), Harvester.OWNER, datasetFormats).withRoot(root.pageId()))

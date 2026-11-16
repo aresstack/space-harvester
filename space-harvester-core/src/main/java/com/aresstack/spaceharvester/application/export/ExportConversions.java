@@ -146,7 +146,8 @@ public class ExportConversions {
 
     /**
      * „Datei erzeugen“ als eigener Auftrag ({@link JobType#CONVERSION}, Angelo 16.11.2026): die Datei im Format aus dem
-     * Datenbestand des eigenen Exports, sobald dieser erfolgreich endet ({@link Jobs#submitAfter}); ist er schon fertig,
+     * Datenbestand des eigenen Exports, sobald dieser und seine Aufträge „Bilder beschaffen“ und „Anhänge beschaffen“
+     * erfolgreich enden ({@link Jobs#submitAfter}); ist er schon fertig,
      * reiht sich der Auftrag gleich ein. Läuft für denselben Export, dasselbe Format und denselben Ordner schon ein
      * offener Auftrag, kommt er zurück. Die Datei liest {@link #produced}.
      *
@@ -172,6 +173,16 @@ public class ExportConversions {
 
     private JobStatus submitConversion(JobStatus export, String owner, String exportId, String target,
                                        String folder) {
+        // Erst wenn auch Bilder und Anhänge des Exports beschafft sind: sonst fehlten sie in der Datei.
+        List<String> awaited = new java.util.ArrayList<>();
+        awaited.add(exportId);
+        for (JobType followUp : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
+            for (JobStatus job : jobs.list(owner, followUp)) {
+                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID))) {
+                    awaited.add(job.id());
+                }
+            }
+        }
         return jobs.submitAfter(JobType.CONVERSION, export.sourceId(), export.partitionKey(), export.rootPageId(),
                 owner, java.util.Map.of(ExportAssetCollection.EXPORT_ID, exportId, FORMAT, target, DIRECTORY, folder),
                 com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
@@ -181,7 +192,7 @@ public class ExportConversions {
                     produced.put(context.jobId(), file);
                     context.processed(1);
                     context.written(1);
-                }), exportId);
+                }), awaited);
     }
 
     /**
