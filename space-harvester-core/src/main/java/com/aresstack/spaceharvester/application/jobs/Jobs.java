@@ -359,19 +359,23 @@ public class Jobs implements AutoCloseable {
      */
     private void releaseFollowers(Job ended) {
         for (Job follower : open.values()) {
-            if (follower.releaseWhenDone && ended.id.equals(follower.awaiting)
-                    && follower.state == JobState.QUEUED) {
-                String next = null;
-                while (next == null && !follower.laterAwaited.isEmpty()) {
-                    String candidate = follower.laterAwaited.pollFirst();
-                    // Ein gelöschter späterer Vorgänger hält nichts mehr auf.
-                    boolean done = !open.containsKey(candidate) && store.find(candidate)
-                            .map(other -> other.state() == JobState.COMPLETED).orElse(true);
-                    next = done ? null : candidate;
-                }
-                follower.awaiting = next;
-                store.save(follower.snapshot());
+            releaseFollowerFrom(follower, ended.id);
+        }
+    }
+
+    /** Unter dem Sperrobjekt: Wartet der Nachfolger auf {@code predecessor}, wartet er auf den nächsten oder ist frei. */
+    private void releaseFollowerFrom(Job follower, String predecessor) {
+        if (follower.releaseWhenDone && predecessor.equals(follower.awaiting) && follower.state == JobState.QUEUED) {
+            String next = null;
+            while (next == null && !follower.laterAwaited.isEmpty()) {
+                String candidate = follower.laterAwaited.pollFirst();
+                // Ein gelöschter späterer Vorgänger hält nichts mehr auf.
+                boolean done = !open.containsKey(candidate) && store.find(candidate)
+                        .map(other -> other.state() == JobState.COMPLETED).orElse(true);
+                next = done ? null : candidate;
             }
+            follower.awaiting = next;
+            store.save(follower.snapshot());
         }
     }
 
@@ -894,10 +898,22 @@ public class Jobs implements AutoCloseable {
                 // Was auf diesen Auftrag wartet (Bilder und Anhänge eines Exports), verschwindet mit; auch, was nach
                 // einem Neustart als unterbrochen gilt, ohne je gestartet zu sein.
                 for (Job follower : List.copyOf(this.open.values())) {
-                    if (jobId.equals(follower.awaiting)) {
+                    // Ein Nachfolger mehrerer Vorgänger (submitAfter) hängt am ersten, etwa die Datei an ihrem Export,
+                    // auch wenn er gerade auf dessen Bilder wartet; ein späterer Vorgänger hält ihn nur nicht mehr auf.
+                    boolean anchored = follower.releaseWhenDone
+                            ? jobId.equals(follower.parameters.get(AWAITS)) && follower.state == JobState.QUEUED
+                            : jobId.equals(follower.awaiting);
+                    if (anchored) {
                         stop(follower.id);
                         events.delete(follower.id);
                         store.delete(follower.id);
+                    } else if (follower.releaseWhenDone && follower.state == JobState.QUEUED
+                            && (jobId.equals(follower.awaiting) || follower.laterAwaited.contains(jobId))) {
+                        follower.laterAwaited.remove(jobId);
+                        if (jobId.equals(follower.awaiting)) {
+                            releaseFollowerFrom(follower, jobId);
+                            freed |= follower.awaiting == null;
+                        }
                     }
                 }
                 for (JobStatus follower : store.all()) {
