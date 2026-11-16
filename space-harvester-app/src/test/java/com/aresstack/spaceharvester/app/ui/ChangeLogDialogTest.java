@@ -122,7 +122,8 @@ class ChangeLogDialogTest {
             dialog[0].search.setText("Hand");
         });
         await(() -> dialog[0].rowCount() == 1 && "Handbuch".equals(dialog[0].cell(0, ChangeLogDialog.PAGE_TITLE)));
-        assertThat(log.asked.get(log.asked.size() - 1).text()).isEqualTo("Hand");
+        // Hintergrundabrufe laufen parallel: der Abruf der Artauswahl kann den Core nach dem Suchabruf erreichen.
+        assertThat(log.asked).extracting(ChangeFilter::text).contains("Hand");
         SwingUtilities.invokeAndWait(() -> dialog[0].search.setText("nichts"));
         await(() -> dialog[0].emptyShown());
         assertThat(dialog[0].emptyText()).isEqualTo(ChangeLogDialog.NO_MATCH);
