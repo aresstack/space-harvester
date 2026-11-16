@@ -401,4 +401,77 @@ class ExplorerTest {
         assertThat(Explorer.DOWNLOAD_ALL_QUESTION).containsIgnoringCase("wirklich");
         assertThat(downloaded).containsExactly("handbuch:[]");
     }
+
+    /** Die Hervorhebung des Sterns folgt der Maus über dem Stern, nicht über dem Download-Symbol (Angelo, 16.11.2026). */
+    @Test
+    void theStarHighlightsOnlyUnderTheMouse() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("kurz.md"), "# Kurz\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
+                null);
+        Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
+        Explorer.PageItem page = Explorer.children(context.runtime(), space, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .findFirst().orElseThrow();
+        PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
+                List.of(), new HarvestSource.PageNode(page.pageId(), page.title(), space.spaceKey(), false));
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            explorer[0].tree().getParent().setSize(320, 400);
+            explorer[0].remeasure();
+            explorer[0].revealPage(position);
+        });
+        for (int i = 0; i < 200; i++) {
+            boolean[] done = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> done[0] = explorer[0].tree().getSelectionPath() != null
+                    && ((Explorer.Node) explorer[0].tree().getSelectionPath().getLastPathComponent()).item()
+                    instanceof Explorer.PageItem);
+            if (done[0]) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTree tree = explorer[0].tree();
+            tree.setSize(320, 400);
+            javax.swing.tree.TreePath path = tree.getSelectionPath();
+            int row = tree.getRowForPath(path);
+            java.awt.Rectangle bounds = tree.getPathBounds(path);
+            // Spalten von rechts: Download (30), Stern (30), Bestandszeichen (22).
+            int y = bounds.y + bounds.height / 2;
+            move(tree, bounds.x + bounds.width - 15, y);
+            assertThat(explorer[0].hoverRow()).isEqualTo(row);
+            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
+            assertThat(tree.getToolTipText()).isEqualTo(Explorer.DOWNLOAD_TIP);
+            move(tree, bounds.x + bounds.width - 45, y);
+            assertThat(explorer[0].hoverStarRow()).isEqualTo(row);
+            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
+            assertThat(tree.getToolTipText()).isEqualTo(Explorer.STAR_TIP);
+            move(tree, bounds.x + 5, y);
+            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
+            assertThat(explorer[0].hoverRow()).isEqualTo(-1);
+        });
+    }
+
+    private static void move(javax.swing.JTree tree, int x, int y) {
+        tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_MOVED,
+                System.currentTimeMillis(), 0, x, y, 0, false));
+    }
 }
