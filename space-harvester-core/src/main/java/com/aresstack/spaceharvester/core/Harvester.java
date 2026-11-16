@@ -29,6 +29,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.ExportSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
@@ -752,6 +753,21 @@ public final class Harvester implements AutoCloseable {
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             LuceneSyncBaselineStore baselineStore = new LuceneSyncBaselineStore(cache);
+            // ADR 0030: Aufbewahrung des Änderungsprotokolls beim Start und nach jedem Abgleich, nie nach Zeitgeber.
+            Clock pruneClock = clock;
+            Runnable pruneChangeLog = () -> {
+                HarvesterConfiguration current = this.settings;
+                (current != null ? current.changeLog() : ChangeLogSettings.DEFAULT).cutoff(pruneClock.instant())
+                        .ifPresent(cutoff -> {
+                            try {
+                                cache.pruneChangeLog(cutoff);
+                            } catch (RuntimeException e) {
+                                LOG.log(System.Logger.Level.WARNING, "Änderungsprotokoll nicht aufgeräumt ({0})",
+                                        e.getClass().getName());
+                            }
+                        });
+            };
+            pruneChangeLog.run();
             // ADR 0026, AP9a: Analysen je Anhang und enthaltener Datei als Auftrag der Anreicherung wie bei Seiten;
             // der Lauf nach dem Abgleich holt den Bestand nach.
             EnrichmentSettings startEnrichment = builder.enrichment;
@@ -761,8 +777,8 @@ public final class Harvester implements AutoCloseable {
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     List.of(acronymRelationRule::refresh), documentEnrichments);
-            this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock, List.of(afterSync),
-                    retentionRule(builder));
+            this.syncs = new SpaceSyncJobs(jobs, sources, baselineStore, snapshots, clock,
+                    List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.

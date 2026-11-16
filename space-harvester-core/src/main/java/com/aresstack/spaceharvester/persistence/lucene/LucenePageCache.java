@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.persistence.lucene;
 import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HEADER_FIELDS;
 
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
+import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -18,6 +20,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -604,9 +607,55 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         });
     }
 
-    /** Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces), für Betrieb und Tests. */
+    /** Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces) ohne das Änderungsprotokoll, für Betrieb und Tests. */
     int documentCount() {
-        return read(searcher -> searcher.count(new MatchAllDocsQuery()));
+        return read(searcher -> searcher.count(new BooleanQuery.Builder()
+                .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+                .add(ChangeLogSchema.all(), BooleanClause.Occur.MUST_NOT).build()));
+    }
+
+    // --- Änderungsprotokoll (ADR 0030) ----------------------------------------------------------------------------
+
+    /**
+     * Die Protokollzeilen einer Quelle in der Reihenfolge ihres Entstehens; Grundlage der Abfragen in
+     * {@code ChangeLog} (CL2).
+     */
+    public List<ChangeEntry> changeEntries(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        List<ChangeEntry> entries = read(searcher -> {
+            Query query = new BooleanQuery.Builder().add(ChangeLogSchema.all(), BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(ChangeLogSchema.SOURCE_ID, sourceId)), BooleanClause.Occur.FILTER)
+                    .build();
+            TopDocs top = searcher.search(query, Integer.MAX_VALUE);
+            StoredFields stored = searcher.storedFields();
+            List<ChangeEntry> found = new ArrayList<>(top.scoreDocs.length);
+            for (ScoreDoc hit : top.scoreDocs) {
+                found.add(ChangeLogSchema.entry(stored.document(hit.doc)));
+            }
+            return found;
+        });
+        entries.sort(Comparator.comparing(ChangeEntry::at));
+        return entries;
+    }
+
+    /**
+     * Entfernt Protokollzeilen vor {@code cutoff} in einem eigenen Commit (Aufbewahrung, ADR 0030 Abschnitt 2); nur
+     * beim Start und nach einem Abgleich aufgerufen, nie nach Zeitgeber. Seiten und Revisionen bleiben unberührt.
+     *
+     * @return ob etwas entfernt wurde
+     */
+    public boolean pruneChangeLog(Instant cutoff) {
+        Objects.requireNonNull(cutoff, "cutoff");
+        Query expired = ChangeLogSchema.before(cutoff);
+        if (read(searcher -> searcher.count(expired)) == 0) {
+            return false;
+        }
+        try (Batch batch = begin()) {
+            batch.dirty = true;
+            write(() -> writer.deleteDocuments(expired));
+            batch.commit();
+        }
+        return true;
     }
 
     // --- Schreibläufe ---------------------------------------------------------------------------------------------
@@ -637,6 +686,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         private final Map<SyncBaselineStore.SpaceRef, Set<String>> changedPages = new HashMap<>();
         private final Set<SyncBaselineStore.SpaceRef> changedSpaces = new HashSet<>();
         private final Set<String> changedSources = new HashSet<>();
+        /** Für das Änderungsprotokoll (ADR 0030): bisheriger und neuer Stand je Seite, Auslöser ab Beginn. */
+        private final ChangeRows changeRows = new ChangeRows();
+        private final ChangeTrigger trigger = ChangeTrigger.current();
         private DirectoryReader uncommitted;
         private boolean done;
         private boolean dirty;
@@ -655,14 +707,17 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 throw new IllegalArgumentException("Payload von " + snapshot.key() + " ist " + snapshot.payload()
                         .length() + " Bytes groß, zulässig sind " + maxPayloadBytes + "; sie wird nicht gekürzt");
             }
+            Document committed = rememberBefore(snapshot.key());
             if (observed()) {
                 // Aus dem bestätigten Stand: eine verschobene Seite fehlt danach in ihrem bisherigen Space und unter
                 // ihrer bisherigen Elternseite.
-                first(new TermQuery(PageCacheSchema.pageTerm(snapshot.key())), SPACE_AND_PARENT, doc -> doc)
-                        .ifPresent(previous -> changedFrom(snapshot.key(), previous.get(PageCacheSchema.SPACE_KEY),
-                                previous.get(PageCacheSchema.PARENT_ID)));
+                Optional<Document> previous = committed != null ? Optional.of(committed)
+                        : first(new TermQuery(PageCacheSchema.pageTerm(snapshot.key())), SPACE_AND_PARENT, doc -> doc);
+                previous.ifPresent(doc -> changedFrom(snapshot.key(), doc.get(PageCacheSchema.SPACE_KEY),
+                        doc.get(PageCacheSchema.PARENT_ID)));
                 changed(snapshot.key(), snapshot.header().metadata().partitionKey());
             }
+            changeRows.present(snapshot.key(), ChangeRows.State.of(snapshot.header(), snapshot));
             dirty = true;
             touchedSources.add(snapshot.key().sourceId());
             write(() -> {
@@ -679,9 +734,11 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public void saveHeader(PageHeader header) {
             Objects.requireNonNull(header, "header");
             requireActive();
+            rememberBefore(header.key());
             Document existing = lookup(header.key());
             PageSnapshot snapshot = existing != null && PageCacheSchema.hasSnapshot(existing)
                     ? PageCacheSchema.snapshot(existing) : null;
+            changeRows.present(header.key(), ChangeRows.State.of(header, snapshot));
             if (existing != null) {
                 changedFrom(header.key(), existing.get(PageCacheSchema.SPACE_KEY),
                         existing.get(PageCacheSchema.PARENT_ID));
@@ -702,8 +759,10 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public boolean remove(PageKey key) {
             Objects.requireNonNull(key, "key");
             requireActive();
+            rememberBefore(key);
             Document existing = lookup(key);
             boolean existed = existing != null;
+            changeRows.removed(key);
             if (existing != null) {
                 changedFrom(key, existing.get(PageCacheSchema.SPACE_KEY), existing.get(PageCacheSchema.PARENT_ID));
             } else if (observed()) {
@@ -730,7 +789,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public void withhold(PageKey key) {
             Objects.requireNonNull(key, "key");
             requireActive();
+            rememberBefore(key);
             Document existing = lookup(key);
+            changeRows.withheld(key);
             if (existing != null) {
                 changed(key, existing.get(PageCacheSchema.SPACE_KEY));
             }
@@ -754,9 +815,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             if (observed()) {
                 changedSources.add(sourceId);
             }
+            // Das Protokoll der Quelle verschwindet mit ihr (ADR 0030), auch Zeilen dieses Laufs von vorher.
+            changeRows.sourceRemoved(sourceId);
             dirty = true;
             touchedSources.add(sourceId);
-            write(() -> writer.deleteDocuments(PageCacheSchema.ofSource(sourceId)));
+            write(() -> {
+                writer.deleteDocuments(PageCacheSchema.ofSource(sourceId));
+                writer.deleteDocuments(ChangeLogSchema.ofSource(sourceId));
+            });
         }
 
         /**
@@ -785,6 +851,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             if (observed()) {
                 changedSpaces.add(new SyncBaselineStore.SpaceRef(next.sourceId(), next.spaceKey()));
             }
+            changeRows.generation(next.sourceId(), next.spaceKey(), next.generation());
             dirty = true;
             touchedSources.add(next.sourceId());
             write(() -> {
@@ -803,6 +870,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             requireActive();
             try {
                 Instant committedAt = Instant.now();
+                if (!changeRows.isEmpty()) {
+                    // Im selben Commit wie die Änderungen: ein verworfener Lauf schreibt keine Zeile (ADR 0030).
+                    List<Document> rows = new ArrayList<>();
+                    for (ChangeEntry entry : changeRows.entries(committedAt, trigger)) {
+                        rows.add(ChangeLogSchema.change(entry));
+                    }
+                    writer.addDocuments(rows);
+                }
                 for (String sourceId : touchedSources) {
                     // Unter der Schreibsperre ist der gelesene Stand der zuletzt bestätigte.
                     long current = first(new TermQuery(PageCacheSchema.sourceTerm(sourceId)), null,
@@ -907,6 +982,22 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 throw new IllegalStateException("Schreiblauf ist bereits beendet");
             }
             requireOpen();
+        }
+
+        /**
+         * Merkt beim ersten Anfassen einer Seite in diesem Lauf ihren bestätigten Stand für das Änderungsprotokoll.
+         *
+         * @return das dafür gelesene Seitendokument (nur {@link ChangeRows#FIELDS} samt Space und Elternseite), oder
+         *         {@code null}, wenn nichts gelesen wurde oder die Seite unbekannt ist
+         */
+        private Document rememberBefore(PageKey key) {
+            if (changeRows.known(key)) {
+                return null;
+            }
+            Document committed = first(new TermQuery(PageCacheSchema.pageTerm(key)), ChangeRows.FIELDS, doc -> doc)
+                    .orElse(null);
+            changeRows.before(key, committed);
+            return committed;
         }
 
         /** Das Seitendokument einschließlich der unbestätigten Änderungen dieses Laufs. */
