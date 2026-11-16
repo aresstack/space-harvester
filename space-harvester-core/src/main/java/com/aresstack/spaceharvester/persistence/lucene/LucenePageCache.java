@@ -4,7 +4,10 @@ import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HE
 
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeEntries;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
+import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
+import com.aresstack.spaceharvester.application.changelog.ChangeWindow;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
@@ -647,6 +650,39 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         });
         entries.sort(Comparator.comparing(ChangeEntry::at));
         return entries;
+    }
+
+    /** Treffer je Lesegang beim seitenweisen Lesen des Protokolls; Tests setzen weniger. */
+    int changeBatch = 500;
+
+    /**
+     * Die Zeilen zu {@code query}, gefiltert und nach Zeit geordnet im Index; nur {@code view} (die Rechte je Zeile)
+     * prüft im Speicher. Gelesen wird in Gängen zu {@link #changeBatch} Treffern.
+     */
+    @Override
+    public ChangeEntries changeEntries(ChangeQuery query, java.util.function.UnaryOperator<ChangeEntry> view,
+                                       int offset, int limit) {
+        Objects.requireNonNull(query, "query");
+        ChangeWindow window = new ChangeWindow(view, offset, limit);
+        Query lucene = ChangeLogSchema.query(query);
+        Sort order = ChangeLogSchema.order(query);
+        int batch = changeBatch;
+        read(searcher -> {
+            StoredFields stored = searcher.storedFields();
+            ScoreDoc after = null;
+            while (true) {
+                TopDocs top = after == null ? searcher.search(lucene, batch, order)
+                        : searcher.searchAfter(after, lucene, batch, order);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    window.offer(ChangeLogSchema.entry(stored.document(hit.doc)));
+                }
+                if (top.scoreDocs.length < batch) {
+                    return null;
+                }
+                after = top.scoreDocs[top.scoreDocs.length - 1];
+            }
+        });
+        return window.result();
     }
 
     @Override

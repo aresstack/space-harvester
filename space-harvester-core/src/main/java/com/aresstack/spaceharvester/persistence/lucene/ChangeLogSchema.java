@@ -2,11 +2,14 @@ package com.aresstack.spaceharvester.persistence.lucene;
 
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
+import com.aresstack.spaceharvester.application.changelog.ChangeQuery;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
 import java.util.TreeSet;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -18,6 +21,9 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.SortedNumericSortField;
 import org.apache.lucene.search.TermQuery;
 
 /**
@@ -45,6 +51,11 @@ final class ChangeLogSchema {
     private static final String OLD_PARENT = P + "oldParentId";
     private static final String NEW_PARENT = P + "newParentId";
     private static final String OLD_SPACE = P + "oldSpaceKey";
+    /**
+     * Der alte Space im Index, für den Space-Filter. Eigener Name, weil Lucene die Art eines Feldes im ganzen Index
+     * festhält: {@link #OLD_SPACE} ist in bestehenden Caches nur abgelegt.
+     */
+    static final String OLD_SPACE_TERM = P + "oldSpaceKeyTerm";
     private static final String NEW_SPACE = P + "newSpaceKey";
     private static final String GENERATION = P + "generation";
     private static final String PENDING = P + "contentPending";
@@ -79,6 +90,65 @@ final class ChangeLogSchema {
                 .add(LongField.newRangeQuery(AT, Long.MIN_VALUE, PageCacheSchema.nanos(cutoff) - 1),
                         BooleanClause.Occur.FILTER)
                 .build();
+    }
+
+    /**
+     * Die Abfrage zu {@code query}: Quellen, Arten, Auslöser, Space (neu oder alt), Suchtext und Zeitraum liegen im
+     * Index, nicht im Speicher. Zeilen vor dieser Fassung haben den alten Space nicht im Index; der Space-Filter trifft
+     * sie nur über den neuen.
+     */
+    static Query query(ChangeQuery query) {
+        BooleanQuery.Builder builder = new BooleanQuery.Builder().add(all(), BooleanClause.Occur.FILTER)
+                .add(anyOf(SOURCE_ID, query.sourceIds()), BooleanClause.Occur.FILTER);
+        if (!query.kinds().isEmpty()) {
+            builder.add(anyOf(KIND, query.kinds().stream().map(Enum::name).toList()), BooleanClause.Occur.FILTER);
+        }
+        if (!query.triggers().isEmpty()) {
+            builder.add(anyOf(TRIGGER, query.triggers().stream().map(Enum::name).toList()),
+                    BooleanClause.Occur.FILTER);
+        }
+        if (query.spaceKey() != null) {
+            builder.add(new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(SPACE_KEY, query.spaceKey())), BooleanClause.Occur.SHOULD)
+                    .add(new TermQuery(new Term(OLD_SPACE_TERM, query.spaceKey())), BooleanClause.Occur.SHOULD)
+                    .build(), BooleanClause.Occur.FILTER);
+        }
+        List<String> words = query.words();
+        if (query.text() != null && !words.isEmpty()) {
+            BooleanQuery.Builder title = new BooleanQuery.Builder();
+            for (String word : words) {
+                title.add(new PrefixQuery(new Term(TITLE_WORD, word)), BooleanClause.Occur.FILTER);
+            }
+            builder.add(new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(PAGE_ID, query.text())), BooleanClause.Occur.SHOULD)
+                    .add(title.build(), BooleanClause.Occur.SHOULD)
+                    .build(), BooleanClause.Occur.FILTER);
+        }
+        if (query.lower() != null || query.upper() != null) {
+            long lower = query.lower() == null ? Long.MIN_VALUE
+                    : PageCacheSchema.nanos(query.lower()) + (query.lowerInclusive() ? 0 : 1);
+            long upper = query.upper() == null ? Long.MAX_VALUE
+                    : PageCacheSchema.nanos(query.upper()) - (query.upperInclusive() ? 0 : 1);
+            builder.add(LongField.newRangeQuery(AT, lower, upper), BooleanClause.Occur.FILTER);
+        }
+        return builder.build();
+    }
+
+    /** Nach Zeitpunkt, gleiche Zeitpunkte in der Reihenfolge des Schreibens. */
+    static Sort order(ChangeQuery query) {
+        return new Sort(new SortedNumericSortField(AT, SortField.Type.LONG, query.newestFirst()),
+                SortField.FIELD_DOC);
+    }
+
+    private static Query anyOf(String field, Collection<String> values) {
+        if (values.size() == 1) {
+            return new TermQuery(new Term(field, values.iterator().next()));
+        }
+        BooleanQuery.Builder any = new BooleanQuery.Builder();
+        for (String value : values) {
+            any.add(new TermQuery(new Term(field, value)), BooleanClause.Occur.SHOULD);
+        }
+        return any.build();
     }
 
     /** Alle Update-Marken. */
@@ -166,6 +236,9 @@ final class ChangeLogSchema {
         stored(doc, OLD_PARENT, entry.oldParentId());
         stored(doc, NEW_PARENT, entry.newParentId());
         stored(doc, OLD_SPACE, entry.oldSpaceKey());
+        if (entry.oldSpaceKey() != null) {
+            doc.add(new StringField(OLD_SPACE_TERM, entry.oldSpaceKey(), Field.Store.NO));
+        }
         stored(doc, NEW_SPACE, entry.newSpaceKey());
         if (entry.generation() != null) {
             doc.add(new StoredField(GENERATION, entry.generation()));
