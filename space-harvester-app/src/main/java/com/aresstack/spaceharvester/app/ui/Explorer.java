@@ -649,10 +649,26 @@ public final class Explorer {
         this.confirmDownloadAll = Objects.requireNonNull(confirmer, "confirmer");
     }
 
+    /** Je Quelle die Spaces, die der Baum schon kennt (aufgeklappte Quellen), für den Gesamtstand der Kopfzeile. */
+    private java.util.Map<String, java.util.Set<String>> treeSpaces() {
+        java.util.Map<String, java.util.Set<String>> spaces = new java.util.HashMap<>();
+        for (int i = 0; i < top.getChildCount(); i++) {
+            if (!(top.getChildAt(i) instanceof Node source)) {
+                continue;
+            }
+            for (int j = 0; j < source.getChildCount(); j++) {
+                if (source.getChildAt(j) instanceof Node child && child.item() instanceof SpaceItem space) {
+                    spaces.computeIfAbsent(space.sourceId(), ignored -> new java.util.HashSet<>()).add(space.spaceKey());
+                }
+            }
+        }
+        return spaces;
+    }
+
     /** Der Bestand hat sich geändert: Baum und das Zeichen der Kopfzeile neu. */
     private void statesChanged() {
         tree.repaint();
-        TreeStates.Badge badge = states.all(shownSources);
+        TreeStates.Badge badge = states.all(shownSources, treeSpaces());
         allBadge.setIcon(badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph());
         allBadge.setForeground(badge.color());
         allBadge.setToolTipText(badge.tooltip());
@@ -890,6 +906,10 @@ public final class Explorer {
             node.removeAllChildren();
             append(node, batch);
             model.nodeStructureChanged(node);
+            // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
+            if (item instanceof SourceItem) {
+                statesChanged();
+            }
             Runnable then = node.then;
             node.then = null;
             if (then != null) {
@@ -1253,11 +1273,13 @@ public final class Explorer {
                 g.setColor(Comic.INK);
                 download.paintIcon(this, g, x + (ACTION_WIDTH - download.getIconWidth()) / 2,
                         (getHeight() - download.getIconHeight()) / 2);
-                // Der Stern links daneben: als Favorit immer gefüllt, sonst nur als Umriss beim Darüberfahren.
-                if (starred && (favorite || row == hoverRow)) {
+                // Der Stern links daneben (Angelo, 16.11.2026): immer sichtbar, damit man weiß, wo man klickt –
+                // als Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
+                if (starred) {
                     Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                    badgeHost.setForeground(favorite || row == hoverRow ? Comic.INK : Comic.MUTED);
                     int sx = x - ACTION_WIDTH;
-                    star.paintIcon(this, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
+                    star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
                             (getHeight() - star.getIconHeight()) / 2);
                 }
                 // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …).
