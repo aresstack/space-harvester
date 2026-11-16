@@ -208,6 +208,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
@@ -795,8 +796,13 @@ public final class Harvester implements AutoCloseable {
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
             opened.add(ManualSyncRounds.start(jobs, cache, clock));
+            // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
+            AiRelease summaryRelease = this.aiRelease;
             this.changeLog = new ChangeLog(cache, access, cache::findHeader,
-                    () -> catalog.all().stream().map(HarvestSource::id).toList());
+                    () -> catalog.all().stream().map(HarvestSource::id).toList(),
+                    new ChangeLog.Summaries(jobs, new ChatUpdateSummaryModel(
+                            () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent),
+                            summaryRelease::mayProcess, clock));
             opened.add(changeLog);
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -855,13 +861,16 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
-            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen,
-            // und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
+            // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
+            // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
             PageImageAnalysis pageImages = this.imageAnalysis;
             AiRelease withdrawn = this.aiRelease;
+            ChangeLog summaries = this.changeLog;
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
+                // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
+                summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
             });
             // #499, ADR 0024: Aussagenanalyse nur auf Knopfdruck; der Analysator kommt vom Einbettenden (Desktop-App).
             // Der Graph liegt außerhalb des Caches und wird erst beim ersten Zugriff gelesen.

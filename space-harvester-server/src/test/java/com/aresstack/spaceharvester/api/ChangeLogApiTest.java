@@ -173,6 +173,26 @@ class ChangeLogApiTest {
         assertThat(get(TestClient.TOKEN, "/api/v1/change-log?limit=0").statusCode()).isEqualTo(400);
     }
 
+    @Test
+    void withoutAChatModelThereIsNoSummaryAndStartingOneIsAProblem() throws Exception {
+        HttpResponse<String> none = get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary");
+        assertThat(none.statusCode()).as(none.body()).isEqualTo(204);
+
+        HttpResponse<String> start = post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary");
+        assertThat(start.statusCode()).as(start.body()).isEqualTo(409);
+        assertThat(start.body()).contains("summary-unavailable", "NO_MODEL");
+        assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345/summary").statusCode()).isEqualTo(404);
+        assertThat(post(TestClient.TOKEN, "/api/v1/sources/nirgends/updates/open/summary").statusCode())
+                .isEqualTo(404);
+    }
+
+    private HttpResponse<String> post(String token, String path) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:"
+                        + environment.getProperty("local.server.port") + path))
+                .header("Authorization", "Bearer " + token).POST(HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     private HttpResponse<String> get(String token, String path) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create("http://localhost:"
                         + environment.getProperty("local.server.port") + path))

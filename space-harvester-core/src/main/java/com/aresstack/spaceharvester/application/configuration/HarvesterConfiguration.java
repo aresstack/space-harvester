@@ -364,6 +364,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(ChangeLogSettings.RETENTION, e.getMessage()));
         }
+        try {
+            changeLog = changeLog.withShowAfterUpdate(read.bool(ChangeLogSettings.SHOW_AFTER_UPDATE, false));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(ChangeLogSettings.SHOW_AFTER_UPDATE, e.getMessage()));
+        }
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
                 storage, localFiles, export, terms, enrichment, changeLog);
         problems.addAll(configuration.validate());

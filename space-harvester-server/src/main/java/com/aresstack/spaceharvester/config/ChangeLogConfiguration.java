@@ -4,10 +4,12 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.changelog.SummaryModel;
 import com.aresstack.spaceharvester.application.changelog.TextContentDiffer;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -30,7 +32,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Änderungsprotokoll (ADR 0030) im Dienst wie in der Bibliothek: Update-Marke je Quelle nach manueller
  * Synchronisierung, Aufräumen nach {@code space-harvester.cache.change-log.retention} beim Start und nach jedem
- * Abgleich, Abfragen für die REST-API. Ohne Cache gibt es kein Protokoll.
+ * Abgleich, Abfragen und Zusammenfassungen für die REST-API. Ohne Cache gibt es kein Protokoll.
  */
 @Configuration(proxyBeanMethods = false)
 class ChangeLogConfiguration {
@@ -38,7 +40,8 @@ class ChangeLogConfiguration {
     private static final Logger LOG = LoggerFactory.getLogger(ChangeLogConfiguration.class);
 
     @Bean(destroyMethod = "close")
-    ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog) {
+    ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog, Jobs jobs,
+                        SummaryModel summaries, AiRelease release) {
         LucenePageCache available = cache.getIfAvailable();
         if (available != null) {
             // CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
@@ -49,7 +52,9 @@ class ChangeLogConfiguration {
         ChangeLogStore store = available == null ? ChangeLogStore.NONE : available;
         Function<PageKey, Optional<PageHeader>> headers = available == null ? key -> Optional.empty()
                 : available::findHeader;
-        return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList());
+        // ADR 0030, Abschnitt 5: Zusammenfassen nur auf Wunsch, an das Modell nur Seiten mit KI-Freigabe.
+        return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList(),
+                new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC()));
     }
 
     @Bean(destroyMethod = "close")

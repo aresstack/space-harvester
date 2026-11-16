@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.changelog.SummaryModel;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -33,6 +34,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
 import com.aresstack.spaceharvester.application.terms.SynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
@@ -223,6 +225,16 @@ class AiConfiguration {
     AcronymExpansionModel acronymExpansions(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                             ObjectProvider<BuildProperties> build, LiveConfiguration live) {
         return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /**
+     * Zusammenfassung eines Updates (ADR 0030, Abschnitt 5) über dasselbe Chat-Modell; ohne Modell antwortet
+     * {@code POST /api/v1/sources/{sourceId}/updates/{updateId}/summary} mit {@code summary-unavailable}.
+     */
+    @Bean
+    SummaryModel updateSummaries(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                 ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatUpdateSummaryModel(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
     /** Bedeutungsprüfung der Synonymerkennung (#336) über dasselbe Chat-Modell wie die Akronymauflösung. */

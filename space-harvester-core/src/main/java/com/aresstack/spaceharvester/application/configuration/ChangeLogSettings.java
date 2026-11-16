@@ -14,11 +14,17 @@ import java.util.regex.Pattern;
  * Server und App lesen denselben Schlüssel über {@link #parse}. Aufgeräumt wird beim Start und nach einem Abgleich,
  * nie nach Zeitgeber. Betrifft nur Protokollzeilen und Marken, nicht die Revisionen im Cache.
  *
- * @param retention wie lange Zeilen bleiben; {@code null} heißt unbegrenzt
+ * <p>Dazu unter {@code space-harvester.cache.change-log.show-after-update} die Einstellung „Nach dem Update Änderungen
+ * anzeigen“ (Abschnitt 6, Standard aus): Sie öffnet nach einem Update die Updates der Quelle und erstellt nie von selbst
+ * eine Zusammenfassung.
+ *
+ * @param retention       wie lange Zeilen bleiben; {@code null} heißt unbegrenzt
+ * @param showAfterUpdate ob die App nach einem Update die Updates der Quelle öffnet
  */
-public record ChangeLogSettings(Duration retention) {
+public record ChangeLogSettings(Duration retention, boolean showAfterUpdate) {
 
     public static final String RETENTION = "cache.change-log.retention";
+    public static final String SHOW_AFTER_UPDATE = "cache.change-log.show-after-update";
     /** Ein Jahr (Angelo 16.11.2026), als 365 Tage. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(365);
     public static final ChangeLogSettings DEFAULT = new ChangeLogSettings(DEFAULT_RETENTION);
@@ -26,11 +32,21 @@ public record ChangeLogSettings(Duration retention) {
 
     private static final Pattern SIMPLE = Pattern.compile("(\\d+)\\s*(ms|s|m|h|d|w|y)?");
 
+    /** Nur die Aufbewahrung; nach dem Update wird nichts angezeigt. */
+    public ChangeLogSettings(Duration retention) {
+        this(retention, false);
+    }
+
     public ChangeLogSettings {
         if (retention != null && retention.isNegative()) {
             throw new IllegalArgumentException("Die Aufbewahrung darf nicht negativ sein (0 = unbegrenzt)");
         }
         retention = retention == null || retention.isZero() ? null : retention;
+    }
+
+    /** Dieselbe Aufbewahrung mit {@code value} für „Nach dem Update Änderungen anzeigen“. */
+    public ChangeLogSettings withShowAfterUpdate(boolean value) {
+        return new ChangeLogSettings(retention, value);
     }
 
     /** Ob nichts aufgeräumt wird. */

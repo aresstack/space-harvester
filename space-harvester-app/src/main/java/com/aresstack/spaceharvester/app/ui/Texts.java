@@ -131,6 +131,7 @@ public final class Texts {
             case CONVERSION -> "Datei erzeugen";
             case METADATA_EXPORT -> "Confluence-Metadaten";
             case ANALYTICS_EXPORT -> "Analytics";
+            case UPDATE_SUMMARY -> "Zusammenfassen";
         };
     }
 

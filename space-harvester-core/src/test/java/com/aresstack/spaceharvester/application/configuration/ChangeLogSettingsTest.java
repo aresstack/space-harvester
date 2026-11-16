@@ -55,6 +55,12 @@ class ChangeLogSettingsTest {
         assertThat(HarvesterConfiguration.fromProperties(properties).configuration().changeLog().retention())
                 .isEqualTo(Duration.ofDays(730));
 
+        assertThat(HarvesterConfiguration.fromProperties(properties).configuration().changeLog().showAfterUpdate())
+                .as("Vorgabe: Änderungen nach dem Update nicht von selbst zeigen").isFalse();
+        properties.setProperty("space-harvester." + ChangeLogSettings.SHOW_AFTER_UPDATE, "true");
+        assertThat(HarvesterConfiguration.fromProperties(properties).configuration().changeLog())
+                .isEqualTo(new ChangeLogSettings(Duration.ofDays(730), true));
+
         properties.setProperty("space-harvester.cache.change-log.retention", "irgendwann");
         assertThat(HarvesterConfiguration.fromProperties(properties).problems())
                 .anySatisfy(problem -> assertThat(problem.key()).isEqualTo(ChangeLogSettings.RETENTION));

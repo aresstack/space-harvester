@@ -73,7 +73,12 @@ public enum JobType {
      * „Analytics exportieren“ (Angelo 16.11.2026): Seitenaufrufe über die internen Endpunkte des
      * Confluence-Analytics-Plugins, als eigene JSON-Datei; Fehler betreffen nur diesen Auftrag.
      */
-    ANALYTICS_EXPORT;
+    ANALYTICS_EXPORT,
+    /**
+     * „Zusammenfassen“ (ADR 0030, Abschnitt 5): die KI-Zusammenfassung eines Updates einer Quelle, nur auf Wunsch; Titel
+     * und Unterschiede nur freigegebener Seiten (ADR 0028). Eingeplant wie ein Folgeauftrag ({@link #followUp()}).
+     */
+    UPDATE_SUMMARY;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie
@@ -88,7 +93,8 @@ public enum JobType {
     }
 
     public boolean followUp() {
-        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD;
+        return this == ENRICHMENT || this == ASSETS || this == ATTACHMENTS || this == GLOSSARY || this == REREAD
+                || this == UPDATE_SUMMARY;
     }
 
     /**
@@ -96,9 +102,10 @@ public enum JobType {
      * Seite sofort ab, ein neuer Lauf holt nur, was fehlt. Bilder ({@link #ASSETS}) legen jede Datei sofort im
      * Asset-Speicher ab und schreiben beim Anhalten das bisherige Manifest; ein neuer Lauf übernimmt geprüfte Seiten.
      * Anhänge ({@link #ATTACHMENTS}) ebenso. „Neu lesen“ ({@link #REREAD}) überspringt beim neuen Lauf, was schon neu
-     * gelesen ist.
+     * gelesen ist. „Zusammenfassen“ ({@link #UPDATE_SUMMARY}) legt erst am Ende ab und fragt beim neuen Lauf von vorn.
      */
     public boolean resumable() {
-        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD;
+        return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
+                || this == UPDATE_SUMMARY;
     }
 }
