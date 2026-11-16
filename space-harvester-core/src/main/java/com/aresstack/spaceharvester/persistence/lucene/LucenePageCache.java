@@ -4,6 +4,7 @@ import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HE
 
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
@@ -21,6 +22,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -90,7 +92,7 @@ import org.apache.lucene.store.LockObtainFailedException;
  * <p>Keine relationalen Transaktionen: ein Batch ist atomar gegenüber Lesern und Abstürzen, aber es gibt nur einen
  * Schreiber zur Zeit und keine Isolation zwischen mehreren gleichzeitigen Läufen.
  */
-public final class LucenePageCache implements SnapshotRepository, AutoCloseable {
+public final class LucenePageCache implements SnapshotRepository, ChangeLogStore, AutoCloseable {
 
     /** Standardobergrenze einer Payload, wie {@code maxResponseBytes} des Upstream-Transports (ADR 0002). */
     public static final int DEFAULT_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
@@ -111,6 +113,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     private IndexWriter writer;
     private volatile boolean closed;
     private volatile HoldingsChanges changes = HoldingsChanges.NONE;
+    /** Wem neue Zeilen und Marken gemeldet werden (ADR 0030), je Quelle nach dem Commit. */
+    private volatile java.util.function.Consumer<String> changeLogRecorded = sourceId -> {
+    };
     /** Writer und Verzeichnis sind freigegeben; nur unter {@link #writeLock}. */
     private boolean released;
 
@@ -625,6 +630,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
      * Die Protokollzeilen einer Quelle in der Reihenfolge ihres Entstehens; Grundlage der Abfragen in
      * {@code ChangeLog} (CL2).
      */
+    @Override
     public List<ChangeEntry> changeEntries(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
         List<ChangeEntry> entries = read(searcher -> {
@@ -643,7 +649,24 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         return entries;
     }
 
+    @Override
+    public void changeLogRecorded(java.util.function.Consumer<String> recorded) {
+        this.changeLogRecorded = Objects.requireNonNull(recorded, "recorded");
+    }
+
+    private void recorded(Collection<String> sourceIds) {
+        for (String sourceId : sourceIds) {
+            try {
+                changeLogRecorded.accept(sourceId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Meldung des Änderungsprotokolls gescheitert ({0})",
+                        e.getClass().getName());
+            }
+        }
+    }
+
     /** Die Update-Marken einer Quelle, älteste zuerst (ADR 0030, Abschnitt 3). */
+    @Override
     public List<UpdateMark> marks(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
         List<UpdateMark> marks = read(searcher -> {
@@ -660,6 +683,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     }
 
     /** Legt eine Update-Marke in einem eigenen Commit ab; dieselbe Quelle zum selben Zeitpunkt ersetzt die vorige. */
+    @Override
     public void mark(UpdateMark mark) {
         Objects.requireNonNull(mark, "mark");
         try (Batch batch = begin()) {
@@ -667,6 +691,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             write(() -> writer.updateDocument(ChangeLogSchema.markTerm(mark), ChangeLogSchema.mark(mark)));
             batch.commit();
         }
+        recorded(List.of(mark.sourceId()));
     }
 
     /**
@@ -742,6 +767,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         private final Set<String> changedSources = new HashSet<>();
         /** Für das Änderungsprotokoll (ADR 0030): bisheriger und neuer Stand je Seite, Auslöser ab Beginn. */
         private final ChangeRows changeRows = new ChangeRows();
+        private final java.util.Set<String> recordedSources = new java.util.LinkedHashSet<>();
         private final ChangeTrigger trigger = ChangeTrigger.current();
         private DirectoryReader uncommitted;
         private boolean done;
@@ -930,6 +956,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                     List<Document> rows = new ArrayList<>();
                     for (ChangeEntry entry : changeRows.entries(committedAt, trigger)) {
                         rows.add(ChangeLogSchema.change(entry));
+                        recordedSources.add(entry.sourceId());
                     }
                     writer.addDocuments(rows);
                 }
@@ -958,6 +985,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             } finally {
                 finish();
                 publish();
+                recorded(recordedSources);
             }
         }
 

@@ -20,10 +20,10 @@ import com.aresstack.spaceharvester.application.assets.ExtractionStore;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
 import com.aresstack.spaceharvester.application.changelog.UpdateMark;
-import com.aresstack.spaceharvester.application.changelog.UpdateMarks;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -135,6 +135,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -328,6 +329,7 @@ public final class Harvester implements AutoCloseable {
     private final Jobs jobs;
     /** Seiten-Cache samt Änderungsprotokoll und Update-Marken (ADR 0030). */
     private final LucenePageCache pageCache;
+    private final ChangeLog changeLog;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
@@ -789,17 +791,10 @@ public final class Harvester implements AutoCloseable {
                     List.of(afterSync, run -> pruneChangeLog.run()), retentionRule(builder));
             syncs.connectionLostAfter(builder.jobLimits.retry().pauseAfterFailures());
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
-            opened.add(ManualSyncRounds.start(jobs, new UpdateMarks() {
-                @Override
-                public List<UpdateMark> marks(String sourceId) {
-                    return cache.marks(sourceId);
-                }
-
-                @Override
-                public void mark(UpdateMark mark) {
-                    cache.mark(mark);
-                }
-            }, clock));
+            opened.add(ManualSyncRounds.start(jobs, cache, clock));
+            this.changeLog = new ChangeLog(cache, access, cache::findHeader,
+                    () -> catalog.all().stream().map(HarvestSource::id).toList());
+            opened.add(changeLog);
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
                 this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
@@ -1863,12 +1858,17 @@ public final class Harvester implements AutoCloseable {
         return syncs.catchUp(sourceId, spaceKey, OWNER, since, mode);
     }
 
-    /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030); bis zur Abfrage-API (CL2) nur für Tests. */
+    /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
+    public ChangeLog changeLog() {
+        return changeLog;
+    }
+
+    /** Die Zeilen des Änderungsprotokolls einer Quelle (ADR 0030) ohne Rechteprüfung, für Tests. */
     List<ChangeEntry> changeEntries(String sourceId) {
         return pageCache.changeEntries(sourceId);
     }
 
-    /** Die Update-Marken einer Quelle (ADR 0030); bis zur Abfrage-API (CL2) nur für Tests. */
+    /** Die Update-Marken einer Quelle (ADR 0030), für Tests. */
     List<UpdateMark> updateMarks(String sourceId) {
         return pageCache.marks(sourceId);
     }
