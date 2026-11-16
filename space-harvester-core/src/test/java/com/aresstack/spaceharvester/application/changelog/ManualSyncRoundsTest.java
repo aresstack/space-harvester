@@ -38,7 +38,9 @@ class ManualSyncRoundsTest {
             written.add(mark);
         }
     };
-    private final ManualSyncRounds rounds = new ManualSyncRounds(marks, CLOCK);
+    /** Der Stand in den Aufträgen, unabhängig davon, welche Meldungen schon zugestellt sind. */
+    private final List<JobStatus> current = new ArrayList<>();
+    private final ManualSyncRounds rounds = new ManualSyncRounds(marks, CLOCK, () -> List.copyOf(current));
 
     private static JobStatus sync(String id, String space, JobState state, Instant finishedAt, ChangeTrigger trigger) {
         return sync(id, space, state, finishedAt, trigger, null);
@@ -141,5 +143,21 @@ class ManualSyncRoundsTest {
         rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(90), ChangeTrigger.MANUAL));
 
         assertThat(written).extracting(UpdateMark::at).containsExactly(T0.plusSeconds(30), T0.plusSeconds(90));
+    }
+
+    @Test
+    void aSecondSyncWhoseFirstReportIsStillPendingKeepsTheRoundOpen() {
+        // b läuft schon, seine erste Meldung ist aber noch gebündelt; a meldet nur sein Ende.
+        current.add(sync("b", "OPS", JobState.RUNNING, null, ChangeTrigger.MANUAL));
+        current.add(sync("x", "OPS", JobState.RUNNING, null, ChangeTrigger.SCHEDULE));
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(30), ChangeTrigger.MANUAL));
+        assertThat(written).isEmpty();
+
+        current.clear();
+        rounds.changed(sync("b", "OPS", JobState.COMPLETED, T0.plusSeconds(90), ChangeTrigger.MANUAL));
+        assertThat(written).singleElement().satisfies(mark -> {
+            assertThat(mark.at()).isEqualTo(T0.plusSeconds(90));
+            assertThat(mark.spaces()).containsExactly("DEV", "OPS");
+        });
     }
 }

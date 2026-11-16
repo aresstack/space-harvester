@@ -11,10 +11,12 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.Supplier;
 
 /**
  * Setzt die Update-Marke einer Quelle (ADR 0030, Abschnitt 3): Eine Runde beginnt mit der ersten manuellen
@@ -29,6 +31,11 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
 
     private final UpdateMarks marks;
     private final Clock clock;
+    /**
+     * Der aktuelle Stand aller Synchronisierungen. Meldungen kommen gebündelt; ein zweiter Auftrag derselben Quelle kann
+     * schon laufen, bevor seine erste Meldung da ist. Vor dem Setzen der Marke wird deshalb hier nachgesehen.
+     */
+    private final Supplier<List<JobStatus>> syncs;
     private final Map<String, Round> open = new HashMap<>();
     /** Schon verbuchte Enden je Auftrag (Ende-Zeitpunkt), damit eine wiederholte Meldung nicht zweimal zählt. */
     private final Map<String, Instant> ends = new LinkedHashMap<>(16, 0.75f, false) {
@@ -48,15 +55,16 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         Instant end;
     }
 
-    ManualSyncRounds(UpdateMarks marks, Clock clock) {
+    ManualSyncRounds(UpdateMarks marks, Clock clock, Supplier<List<JobStatus>> syncs) {
         this.marks = Objects.requireNonNull(marks, "marks");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.syncs = Objects.requireNonNull(syncs, "syncs");
     }
 
     /** Meldet sich bei {@code jobs} an und übernimmt die schon offenen manuellen Synchronisierungen (nach Neustart). */
     public static ManualSyncRounds start(Jobs jobs, UpdateMarks marks, Clock clock) {
         Objects.requireNonNull(jobs, "jobs");
-        ManualSyncRounds rounds = new ManualSyncRounds(marks, clock);
+        ManualSyncRounds rounds = new ManualSyncRounds(marks, clock, () -> jobs.listAll(JobType.SYNC));
         rounds.subscription = jobs.subscribeAll(rounds);
         for (JobStatus status : jobs.listAll(JobType.SYNC)) {
             if (manual(status) && open(status.state())) {
@@ -136,6 +144,9 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         if (round.end == null || end.isAfter(round.end)) {
             round.end = end;
         }
+        if (round.jobs.isEmpty()) {
+            joinUnreported(status, round);
+        }
         if (!round.jobs.isEmpty()) {
             return;
         }
@@ -146,6 +157,26 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
                     round.failed, initial));
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Update-Marke nicht gesetzt ({0})", e.getClass().getName());
+        }
+    }
+
+    /** Nimmt offene manuelle Synchronisierungen derselben Quelle auf, deren Meldung noch aussteht. */
+    private void joinUnreported(JobStatus ending, Round round) {
+        List<JobStatus> current;
+        try {
+            current = syncs.get();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Offene Synchronisierungen nicht lesbar ({0})", e.getClass().getName());
+            return;
+        }
+        for (JobStatus other : current) {
+            if (!other.id().equals(ending.id()) && ending.sourceId().equals(other.sourceId()) && manual(other)
+                    && open(other.state())) {
+                round.jobs.add(other.id());
+                if (other.partitionKey() != null) {
+                    round.spaces.add(other.partitionKey());
+                }
+            }
         }
     }
 
