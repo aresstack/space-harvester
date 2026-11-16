@@ -85,6 +85,12 @@ public final class Explorer {
     private static final int BADGE_WIDTH = 22;
     /** Mindestbreite für den Titel vor den Spalten, damit auch bei sehr schmalem Baum wenigstens „…“ bleibt. */
     private static final int MIN_TITLE_WIDTH = 40;
+    static final String ALL_TIP = "Alle Wissensquellen wählen: Chat, Export und Analysen beziehen sich dann auf alles";
+    static final String DOWNLOAD_ALL_TITLE = "Alles herunterladen?";
+    static final String DOWNLOAD_ALL_QUESTION = "Wirklich alle Wissensquellen herunterladen? Für jeden Space jeder "
+            + "Wissensquelle startet sofort ein eigener Auftrag.";
+    static final String DOWNLOAD_ALL_TIP = "Alles herunterladen: für jeden Space jeder Wissensquelle startet sofort ein "
+            + "eigener Auftrag, exportiert wird unter Aufträge";
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
     static final String PAGE_ONLY = "Nur diese Seite herunterladen";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
@@ -111,8 +117,14 @@ public final class Explorer {
         this.selectionListener = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Die erste gewählte Zeile als Quelle, Space oder Seite; {@code null} ohne Auswahl oder auf einem Hinweis. */
+    /**
+     * Die erste gewählte Zeile als Quelle, Space oder Seite; {@link com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection#ALL} bei gewählter
+     * Überschrift; {@code null} ohne Auswahl oder auf einem Hinweis.
+     */
     public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection selection() {
+        if (global) {
+            return com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL;
+        }
         TreePath[] paths = tree.getSelectionPaths();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
@@ -202,6 +214,23 @@ public final class Explorer {
     private final JPanel root = new JPanel(new BorderLayout(0, 6));
     private final PlaceholderField filter = new PlaceholderField(14, "Titel filtern …");
     private final Node top = new Node(new Note("Wissensquellen"));
+    /** Kopf: Überschrift und Filterfeld; als globale Auswahl gelb hinterlegt wie ein gewählter Knoten im Baum. */
+    private final JPanel head = new JPanel(new BorderLayout(0, 6));
+    private final JLabel heading = Comic.caption("Wissensquellen");
+    /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
+    private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
+    /** Ganz rechts in der Kopfzeile, in der Spalte der Download-Symbole: lädt alle Quellen, je Space ein Auftrag. */
+    private final IconButton downloadAll = new IconButton(ComposerIcons.download(), DOWNLOAD_ALL_TIP);
+    /** Zwischen „Alles auswählen“ und Download: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
+    private final JLabel allBadge = new JLabel();
+    /** Rückfrage vor dem Alles-Download (Ja/Nein); Tests setzen eine eigene Antwort. */
+    private java.util.function.Predicate<java.awt.Component> confirmDownloadAll =
+            parent -> Dialogs.confirm(parent, DOWNLOAD_ALL_TITLE, DOWNLOAD_ALL_QUESTION);
+    /**
+     * Die Überschrift „Wissensquellen“ ist gewählt (Angelo, 16.11.2026): die globale Auswahl über alle Quellen; Chat,
+     * Export und Analysen beziehen sich dann auf alles, im Baum ist nichts gewählt.
+     */
+    private boolean global;
     private final DefaultTreeModel model = new DefaultTreeModel(top);
     private final JTree tree = new JTree(model);
     /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
@@ -288,7 +317,7 @@ public final class Explorer {
 
     public Explorer(AppContext context) {
         this.context = context;
-        this.states = new TreeStates(context, tree::repaint);
+        this.states = new TreeStates(context, this::statesChanged);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setToggleClickCount(0);
@@ -312,6 +341,11 @@ public final class Explorer {
         tree.getSelectionModel().setSelectionMode(
                 javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
         tree.addTreeSelectionListener(e -> {
+            // Ein gewählter Knoten löst die globale Auswahl ab.
+            if (global && tree.getSelectionCount() > 0) {
+                global = false;
+                paintHead();
+            }
             if (!revealing) {
                 scopeListener.accept(scopes());
             }
@@ -485,10 +519,40 @@ public final class Explorer {
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
-        JPanel head = new JPanel(new BorderLayout(0, 6));
+        // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
+        // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
         head.setOpaque(false);
-        head.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
+        // Rechts 2 px, damit der Download-Knopf in der Spalte der Download-Symbole des Baums steht.
+        head.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 2));
+        JPanel title = new JPanel(new BorderLayout(4, 0));
+        title.setOpaque(false);
+        title.add(heading, BorderLayout.CENTER);
+        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): links „Alles auswählen“, rechts Download.
+        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+        actions.setOpaque(false);
+        actions.add(selectAll);
+        allBadge.setHorizontalAlignment(JLabel.CENTER);
+        allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
+        actions.add(allBadge);
+        actions.add(downloadAll);
+        title.add(actions, BorderLayout.EAST);
+        selectAll.addActionListener(e -> selectAll());
+        downloadAll.addActionListener(e -> downloadAll());
+        head.add(title, BorderLayout.NORTH);
         head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
+        heading.setToolTipText(ALL_TIP);
+        heading.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        MouseAdapter chooseAll = new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    selectAll();
+                }
+            }
+        };
+        heading.addMouseListener(chooseAll);
+        title.addMouseListener(chooseAll);
+        head.addMouseListener(chooseAll);
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());
@@ -549,9 +613,74 @@ public final class Explorer {
         revealPage(current);
     }
 
-    /** Hebt die Auswahl auf; der Umfang ist dann wieder alles. */
+    /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
-        tree.clearSelection();
+        boolean was = global;
+        global = false;
+        if (tree.getSelectionCount() > 0) {
+            tree.clearSelection();
+        } else if (was) {
+            selectionListener.accept(null);
+        }
+        paintHead();
+    }
+
+    /**
+     * Wählt die Überschrift „Wissensquellen“: die globale Auswahl über alle Quellen. Die Auswahl im Baum verschwindet,
+     * der Umfang der Suche ist alles, Chat und Export erhalten {@link com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection#ALL}.
+     */
+    public void selectAll() {
+        if (global) {
+            return;
+        }
+        global = true;
+        paintHead();
+        if (tree.getSelectionCount() > 0) {
+            // Der Auswahl-Listener des Baums meldet Umfang und Auswahl.
+            tree.clearSelection();
+        } else {
+            scopeListener.accept(List.of());
+            selectionListener.accept(selection());
+        }
+    }
+
+    /** Für Tests: ersetzt die Rückfrage vor dem Alles-Download. */
+    void confirmDownloadAll(java.util.function.Predicate<java.awt.Component> confirmer) {
+        this.confirmDownloadAll = Objects.requireNonNull(confirmer, "confirmer");
+    }
+
+    /** Der Bestand hat sich geändert: Baum und das Zeichen der Kopfzeile neu. */
+    private void statesChanged() {
+        tree.repaint();
+        TreeStates.Badge badge = states.all(shownSources);
+        allBadge.setIcon(badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph());
+        allBadge.setForeground(badge.color());
+        allBadge.setToolTipText(badge.tooltip());
+    }
+
+    /**
+     * Lädt alle Wissensquellen des Baums nach Rückfrage (Angelo, 16.11.2026): je Space ein eigener Auftrag, wie
+     * einzeln angestoßen.
+     */
+    void downloadAll() {
+        if (shownSources.isEmpty() || !confirmDownloadAll.test(root)) {
+            return;
+        }
+        for (String sourceId : List.copyOf(shownSources)) {
+            context.navigator().download(sourceId, List.of());
+        }
+    }
+
+    /** Ob die Überschrift „Wissensquellen“ gewählt ist (alle Quellen). */
+    public boolean allSelected() {
+        return global;
+    }
+
+    private void paintHead() {
+        head.setOpaque(global);
+        head.setBackground(Comic.YELLOW);
+        heading.setForeground(global ? Comic.INK : Comic.MUTED);
+        head.repaint();
     }
 
     /** Zeigt einen Space im Baum: Quelle aufklappen, Space wählen und aufklappen; unbekannte bleiben ohne Wirkung. */
@@ -721,6 +850,7 @@ public final class Explorer {
             return;
         }
         shownSources = ids;
+        statesChanged();
         top.removeAllChildren();
         for (HarvestSource source : sources) {
             top.add(expandable(new SourceItem(source.id(), source.title())));
@@ -1523,6 +1653,31 @@ public final class Explorer {
     /** Für Tests. */
     JTree tree() {
         return tree;
+    }
+
+    /** Für Tests: das Bestandszeichen der Kopfzeile. */
+    JLabel allBadge() {
+        return allBadge;
+    }
+
+    /** Für Tests: der Download-Knopf ganz rechts in der Kopfzeile. */
+    IconButton downloadAllButton() {
+        return downloadAll;
+    }
+
+    /** Für Tests: der Knopf neben der Überschrift. */
+    IconButton selectAllButton() {
+        return selectAll;
+    }
+
+    /** Für Tests: die anklickbare Überschrift. */
+    JLabel heading() {
+        return heading;
+    }
+
+    /** Für Tests: der Kopf (Überschrift und Filterfeld), gelb bei globaler Auswahl. */
+    JPanel head() {
+        return head;
     }
 
     /** Für Tests. */

@@ -301,6 +301,29 @@ final class TreeStates {
         return node(summary.inventoried() ? summary.counts() : null, running != null && !running.isEmpty());
     }
 
+    /**
+     * Das Zeichen über alle Wissensquellen (Kopfzeile des Explorers, Angelo 16.11.2026): die Summe der Stände aller
+     * bekannten Spaces dieser Quellen; Kreispfeile, solange irgendwo geladen wird; ohne jede Inventur leer.
+     */
+    Badge all(List<String> sourceIds) {
+        HoldingCounts counts = null;
+        boolean running = false;
+        for (String sourceId : sourceIds) {
+            String prefix = sourceId + "\u0000";
+            for (Map.Entry<String, SpaceSummary> entry : summaries.entrySet()) {
+                if (entry.getKey().startsWith(prefix) && entry.getValue().inventoried()) {
+                    counts = counts == null ? entry.getValue().counts() : counts.plus(entry.getValue().counts());
+                }
+            }
+            for (Map.Entry<String, Set<String>> entry : loading.entrySet()) {
+                if (entry.getKey().startsWith(prefix) && !entry.getValue().isEmpty()) {
+                    running = true;
+                }
+            }
+        }
+        return node(counts, running);
+    }
+
     /** Das Zeichen einer Seite; mit Kindern nach ihrem Teilbaum, sonst nach ihrem eigenen Zustand. */
     Badge page(String sourceId, String spaceKey, String pageId, boolean hasChildren) {
         String key = key(sourceId, spaceKey);
