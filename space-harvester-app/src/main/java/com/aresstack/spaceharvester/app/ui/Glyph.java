@@ -27,6 +27,8 @@ public enum Glyph implements Icon {
 
     REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT, COLLAPSE_ALL, CROSSHAIR, FIT, TABLE,
     GRAPH, FILTER, BACK, NEIGHBOURS, BROOM, BOUNCE, EXPAND_ALL, PULSE,
+    /** „Alles auswählen“ (Kasten mit Haken, dahinter ein zweiter Kasten): neben der Überschrift des Explorers. */
+    SELECT_ALL,
     /** Stern-Umriss: kein Favorit bzw. „alle Knoten“; nachgezeichnet nach {@code SidebarIcons.star} des EAC. */
     STAR,
     /** Gelb gefüllter Stern: Favorit bzw. „nur Favoriten“. */
@@ -308,6 +310,17 @@ public enum Glyph implements Icon {
                     g.fill(new Arc2D.Double(4.3, 4.3, 7.4, 7.4, 90, 180, Arc2D.PIE));
                 }
                 case CIRCLE_EMPTY -> g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
+                case SELECT_ALL -> {
+                    // Zweiter Kasten hinten rechts oben, vorne der Kasten mit Haken.
+                    g.draw(new Line2D.Double(6, 1.5, 12.5, 1.5));
+                    g.draw(new Line2D.Double(14.5, 3.5, 14.5, 10));
+                    g.draw(new RoundRectangle2D.Double(1.5, 4.5, 10, 10, 2.5, 2.5));
+                    Path2D check = new Path2D.Double();
+                    check.moveTo(4, 9.6);
+                    check.lineTo(6.2, 11.8);
+                    check.lineTo(9.4, 7.2);
+                    g.draw(check);
+                }
             }
         } finally {
             g.dispose();

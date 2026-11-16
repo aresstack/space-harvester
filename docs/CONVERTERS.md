@@ -181,6 +181,77 @@ gelesen oder umgewandelt wird dabei nichts Neues.
 - Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher
   Input-Hash ergibt dieselben Seiten, aber nicht unbedingt dieselben Abschnitte.
 
+## Confluence-Metadaten und Analytics aus der Quelle (Angelo 16.11.2026)
+
+Zwei Exporte, die anders als alle Formate oben nicht aus dem Datenbestand kommen, sondern die Quelle lesen: der
+Analyse-Export enthält die selbst erzeugten Analysedaten, diese beiden die Daten, die Confluence über eine Seite
+führt. Beide sind eigene Aufträge (`SourceQueryExports`, `JobType.METADATA_EXPORT` und `ANALYTICS_EXPORT`, App:
+Export-Reiter, Knöpfe rechts neben den Formaten; je gewähltem Space bzw. Teilbaum ein Auftrag) und schreiben je
+eine JSON-Datei in den Ausgabeordner, unsichtbar erzeugt, fertig umbenannt, nie überschrieben. Die Seiten kommen
+aus dem Bestand (alle dort bekannten Seiten der Auswahl), die Daten über `HarvestSource.restGet` mit der Anmeldung,
+Route und TLS-Einstellung der Quelle (`RestQuerySource` im Confluence-Adapter, nur Pfade unter `/rest/`). Nichts
+davon landet im Snapshot, in `header`, `attributes` oder im Cache: `metadataHash`, `attributesHash`, `rawSha256`
+und alle übrigen Exporte bleiben unverändert, der Seitenabruf wird nicht langsamer. Nur Confluence-Quellen bieten
+die Exporte an (`HarvestSource.restQueries()`); eine unerreichbare oder drosselnde Quelle beendet den Auftrag,
+ein Fehler je Seite oder Abschnitt steht in der Datei (`status` `error`, `kind`, `message`), die Seite zählt als
+„ohne Antwort“ und der Auftrag endet als unvollständig.
+
+### Confluence-Metadaten
+
+`confluence-metadaten-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-metadata-export/v1`.
+Je Seite fünf Abschnitte über die dokumentierten REST-Schnittstellen von Confluence Data Center
+(`ConfluenceMetadataQueries`), jede Antwort unverändert unter `data`, Listen über alle Seiten geblättert
+(`requests` zählt die Anfragen):
+
+| Abschnitt | Abfrage | Inhalt |
+|---|---|---|
+| `history` | `GET /rest/api/content/{id}/history?expand=lastUpdated,previousVersion,contributors.publishers.users` | Erstellung, letzte Änderung, Vorgängerversion, alle Bearbeiter |
+| `versions` | `GET /rest/experimental/content/{id}/version` | alle Versionen mit Nummer, Zeit, Autor, Änderungskommentar; experimentell, fehlt je Instanz (`NOT_FOUND`) |
+| `comments` | `GET /rest/api/content/{id}/child/comment?depth=all&expand=version,history.lastUpdated,extensions.resolution,extensions.inlineProperties` | Seiten- und Inline-Kommentare mit Erledigt-Status |
+| `properties` | `GET /rest/api/content/{id}/property` | Content Properties |
+| `restrictions` | `GET /rest/api/content/{id}/restriction/byOperation?expand=read.restrictions.user,…` | Lese- und Schreibrestriktionen mit Benutzern und Gruppen |
+
+```json
+{ "schema": "space-harvester/confluence-metadata-export/v1", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
+  "spaceKey": "DEV", "rootPageId": "100", "endpoints": { "history": "/rest/api/content/{id}/history?…", … },
+  "pages": [{ "pageId": "100",
+              "history": { "status": "ok", "requests": 1, "data": { … } },
+              "versions": { "status": "ok", "requests": 2, "data": [ … ] },
+              "comments": { "status": "error", "requests": 1, "kind": "ACCESS_DENIED", "message": "…" }, … }],
+  "summary": { "pages": 120, "withData": 119, "failed": 1 } }
+```
+
+Labels, Erstellung, letzte Änderung, letzter Bearbeiter und Änderungskommentar stehen schon im Snapshot
+(`raw/<id>.json`, `pages.ndjson`) und werden nicht erneut geholt.
+
+### Analytics
+
+`confluence-analytics-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-analytics-export/v1`.
+Seitenaufrufe über die Endpunkte des Confluence-Analytics-Plugins (Data Center ab 7.11). Dafür gibt es keine
+dokumentierte Schnittstelle; die Pfade unter `/rest/confanalytics/1.0/` sind die der Analytics-Oberfläche und können
+je Confluence-Version abweichen. Deshalb nennt `AnalyticsQueries` sie als austauschbare Vorlagen mit den
+Platzhaltern `{spaceKey}`, `{pageId}`, `{from}`, `{to}` (ISO-8601, UTC; Zeitraum `days`, Standard 365 wie die
+Standard-Aufbewahrung von Analytics), und die Datei schreibt die verwendeten Vorlagen unter `queries`. Vorgabe:
+`space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&period=day&type=total&timezone=UTC` einmal
+je Space und `content/viewsByDate?contentId={pageId}&contentType=page&…` je Seite. Gefragt wird nur nach Summen,
+nie nach den Namen der Leser.
+
+Antwortet das Plugin schon bei der ersten Seite auf keine Abfrage (404: Plugin fehlt oder andere Pfade; 403: für
+dieses Konto gesperrt), scheitert der Auftrag mit `ANALYTICS_UNAVAILABLE`, statt jede Seite zu versuchen; alles
+andere in der App ist davon nicht betroffen. `summary.views` je Seite ist die Summe aller Felder `views` der
+Antworten, `null` wenn keine Antwort ein solches Feld hat (nicht erhoben ist nie 0).
+
+```json
+{ "schema": "space-harvester/confluence-analytics-export/v1", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
+  "spaceKey": "DEV", "period": { "from": "…", "to": "…", "days": 365 },
+  "queries": { "space": { "spaceViewsByDate": "/rest/confanalytics/1.0/space/activityByDate?…" },
+               "page": { "viewsByDate": "/rest/confanalytics/1.0/content/viewsByDate?…" } },
+  "space": { "spaceViewsByDate": { "status": "ok", "requests": 1, "data": { … } } },
+  "pages": [{ "pageId": "100", "queries": { "viewsByDate": { "status": "ok", "requests": 1, "data": { … } } },
+              "summary": { "views": 42 } }],
+  "summary": { "pages": 120, "withData": 120, "failed": 0 } }
+```
+
 ## Gemeinsamer Dokumentbaum
 
 Markdown, Word und PDF sind drei Ausgaben desselben Dokumentbaums: `ExportChapters` im Core baut ihn aus Seiten,

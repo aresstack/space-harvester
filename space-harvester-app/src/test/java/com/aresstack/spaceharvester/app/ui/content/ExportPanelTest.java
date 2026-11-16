@@ -234,6 +234,22 @@ class ExportPanelTest {
     }
 
     @Test
+    void theSourceExportsAreTwoMoreButtonsThatReadTheSourceInsteadOfTheHoldings() {
+        // Angelo 16.11.2026: offizielle Confluence-Metadaten und Analytics als eigene Unterpunkte, getrennt vom
+        // Analyse-Export (eigene Analysedaten) und von den Format-Knöpfen (Ausgabe aus dem Bestand).
+        assertThat(ExportPanel.SOURCE_EXPORTS).containsExactly("metadata", "analytics");
+        assertThat(ExportPanel.FORMATS).doesNotContainAnyElementsOf(ExportPanel.SOURCE_EXPORTS);
+        assertThat(ExportPanel.sourceTitle("metadata")).isEqualTo("Confluence-Metadaten");
+        assertThat(ExportPanel.sourceTitle("analytics")).isEqualTo("Analytics");
+        assertThat(ExportPanel.sourceExport(JobType.METADATA_EXPORT)).isTrue();
+        assertThat(ExportPanel.sourceExport(JobType.ANALYTICS_EXPORT)).isTrue();
+        assertThat(ExportPanel.sourceExport(JobType.EXPORT)).isFalse();
+        assertThat(ExportPanel.affects(new JobStatus("m", JobType.ANALYTICS_EXPORT, "wiki", "OPS", "local",
+                JobState.RUNNING, new JobProgress(3, 1, 1, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null,
+                null, Map.of(), false, false, null))).isTrue();
+    }
+
+    @Test
     void analysisIsExactlyOneMoreButtonAfterTheFormats() {
         assertThat(ExportPanel.FORMATS).containsExactly("pdf", "docx", "markdown-package", "json-package", "analysis");
         assertThat(ExportPanel.Format.title("analysis")).isEqualTo("Analyse");

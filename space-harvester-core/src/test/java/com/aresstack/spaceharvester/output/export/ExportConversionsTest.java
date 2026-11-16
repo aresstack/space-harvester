@@ -334,4 +334,55 @@ class ExportConversionsTest {
         assertThatThrownBy(() -> conversions.startConversion(exportId, "client-b", "markdown", downloads))
                 .isInstanceOf(UnknownJobException.class);
     }
+    @Test
+    void aCancelledFileJobLeavesNoFileBehind() throws IOException {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        ExportConverter cancelling = new ExportConverter() {
+            @Override
+            public String format() {
+                return "abbruch";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public String mediaType() {
+                return "text/plain";
+            }
+
+            @Override
+            public String fileName() {
+                return "abbruch.txt";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) throws IOException {
+                // Der Benutzer bricht ab, während die Datei entsteht.
+                jobs.cancel(jobs.list("client-a", com.aresstack.spaceharvester.application.jobs.JobType.CONVERSION)
+                        .get(0).id());
+                input.forEachPage(page -> {
+                    try {
+                        out.write('x');
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                });
+            }
+        };
+        ExportConversions conversions = new ExportConversions(jobs, writer, new ExportConverters(List.of(
+                new JsonArrayConverter(), cancelling), ExportConverters.DEFAULT_MAX_BYTES));
+
+        JobStatus file = conversions.startConversion(exportId, "client-a", "abbruch", downloads);
+
+        assertThat(jobs.status(file.id(), "client-a").state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+        assertThat(conversions.produced(file.id(), "client-a")).isEmpty();
+        try (Stream<Path> files = Files.list(downloads)) {
+            assertThat(files).as("weder Datei noch Rest").isEmpty();
+        }
+    }
 }

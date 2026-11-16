@@ -23,7 +23,9 @@ import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 
 import javax.swing.BorderFactory;
@@ -60,8 +62,20 @@ import java.util.function.Consumer;
  */
 public final class ExportPanel extends JPanel {
 
-    /** Die Auswahl links im Explorer: Quelle, Space oder Seite (samt Unterseiten); {@code title} für die Überschrift. */
+    /**
+     * Die Auswahl links im Explorer: Quelle, Space oder Seite (samt Unterseiten); {@code title} für die Überschrift.
+     * Ohne Quelle ({@link #ALL}) ist es die globale Auswahl über alle Wissensquellen (Angelo, 16.11.2026): die
+     * Überschrift „Wissensquellen“ im Explorer ist gewählt.
+     */
     public record Selection(String sourceId, String spaceKey, String pageId, String title) {
+
+        /** Alle Wissensquellen: die Überschrift des Explorers ist gewählt, kein Knoten im Baum. */
+        public static final Selection ALL = new Selection(null, null, null, "Alle Wissensquellen");
+
+        /** Ob dies die globale Auswahl über alle Wissensquellen ist. */
+        public boolean global() {
+            return sourceId == null;
+        }
 
         boolean page() {
             return pageId != null;
@@ -71,8 +85,17 @@ public final class ExportPanel extends JPanel {
             return spaceKey != null && pageId == null;
         }
 
-        /** Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten. */
-        com.aresstack.spaceharvester.application.holdings.Selection toCore() {
+        /**
+         * Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten; die globale
+         * Auswahl als eine Wurzel je Wissensquelle der Laufzeit.
+         */
+        com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
+            if (global()) {
+                return new com.aresstack.spaceharvester.application.holdings.Selection(
+                        runtime.workspace().sources().stream().map(source ->
+                                com.aresstack.spaceharvester.application.holdings.Selection.Root.source(source.id()))
+                                .toList());
+            }
             com.aresstack.spaceharvester.application.holdings.Selection.Root root = pageId != null
                     ? com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree(sourceId, spaceKey, pageId)
                     : spaceKey != null
@@ -119,9 +142,24 @@ public final class ExportPanel extends JPanel {
             + "aus, ohne die Quelle zu lesen.";
     static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: ein Format-Knopf lädt erst die Seiten von der "
             + "Quelle und erzeugt dann die Datei.";
+    static final String NOT_AVAILABLE = "kein Datenbestand vorhanden";
     static final String NO_SELECTION = "keine Auswahl";
     /** Zusatz im Tooltip eines Format-Knopfs ohne Bestand (Angelo 16.11.2026). */
     static final String LOADS_FIRST = "lädt erst die Seiten von der Quelle";
+    /**
+     * Die beiden Exporte aus der Quelle (Angelo 16.11.2026) rechts neben den Format-Knöpfen: „Confluence-Metadaten“
+     * (dokumentierte REST-Schnittstellen) und „Analytics“ (Seitenaufrufe über das Analytics-Plugin), je als eigener
+     * Auftrag unter Aufträge und eigene JSON-Datei im Ausgabeordner; anders als die Formate lesen sie die Quelle.
+     */
+    public static final List<String> SOURCE_EXPORTS = List.of("metadata", "analytics");
+    private static final Map<String, String> SOURCE_TIPS = Map.of("metadata",
+            "Confluence-Metadaten exportieren (eigene JSON-Datei: Historie und alle Bearbeiter, Versionen, "
+                    + "Kommentare, Properties und Restriktionen je Seite über die dokumentierten REST-Schnittstellen; "
+                    + "liest die Quelle, Auftrag unter Aufträge)", "analytics",
+            "Analytics exportieren (eigene JSON-Datei: Seitenaufrufe je Seite über das Confluence-Analytics-Plugin; "
+                    + "liest die Quelle, Auftrag unter Aufträge)");
+    static final String ONLY_CONFLUENCE = "nur für Confluence-Quellen";
+    static final String NO_PAGES = "keine Seite bekannt, erst laden";
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
@@ -136,6 +174,8 @@ public final class ExportPanel extends JPanel {
     private final ComposerButton collect = Comic.button(COLLECT, COLLECT_TIP);
     private final JComponent standPlate;
     private final Map<String, IconButton> formatButtons = new LinkedHashMap<>();
+    /** Die Knöpfe der Exporte aus der Quelle ({@link #SOURCE_EXPORTS}). */
+    private final Map<String, IconButton> sourceButtons = new LinkedHashMap<>();
     /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
     final JTextArea cardImages = Comic.note("");
     /** Die Dateien dieses Downloads im Ausgabeordner und laufende Exporte, eine Zeile je Datei. */
@@ -171,6 +211,8 @@ public final class ExportPanel extends JPanel {
     private boolean refreshPending;
     /** Der Bestand der gezeigten Auswahl; {@code null} ohne Auswahl oder für eine Quelle. */
     private PageSelection shownHoldings;
+    /** Ob die Quelle der gezeigten Auswahl REST-Abfragen beantwortet (Confluence): Exporte aus der Quelle. */
+    private boolean shownRestQueries;
     /**
      * Aufträge „Datei erzeugen“, die diese Ansicht gestartet hat und deren Ende sie meldet, je Auftrag die Auswahl; sie
      * gehören zum Auftrag, nicht zur gezeigten Auswahl: ein Auswahlwechsel verbirgt nur die Rückmeldung, die Datei
@@ -182,6 +224,17 @@ public final class ExportPanel extends JPanel {
     private String startingFormat;
     /** Je Auswahl der jüngste Daten-Auftrag eines Format-Knopfs: die Karte zeigt seinen Datenbestand. */
     private final Map<Selection, String> lastOutput = new HashMap<>();
+
+    /** Ein laufender Export aus der Quelle, mit seiner Art. */
+    record Pending(Selection selection, String format) {
+    }
+    /**
+     * Laufende Exporte aus der Quelle je Auftrag, mit Auswahl und Art; sie laufen unter Aufträge weiter, auch wenn
+     * die Auswahl wechselt. Nach dem Ende nennt die Rückmeldung die Datei, sofern die Karte noch diese Auswahl zeigt.
+     */
+    private final Map<String, Pending> sourceJobs = new LinkedHashMap<>();
+    /** Ein Export aus der Quelle, dessen Auftrag gerade erst angefordert wird. */
+    private Pending sourceStarting;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
     private int request;
 
@@ -225,6 +278,13 @@ public final class ExportPanel extends JPanel {
                     : format.equals("json-package") ? "json" : format), EXPORT_TIPS.get(format));
             button.addActionListener(e -> output(format));
             formatButtons.put(format, button);
+            formats.add(button);
+        }
+        formats.add(javax.swing.Box.createHorizontalStrut(10));
+        for (String kind : SOURCE_EXPORTS) {
+            IconButton button = new IconButton(FormatIcon.of(kind), SOURCE_TIPS.get(kind));
+            button.addActionListener(e -> startSource(kind));
+            sourceButtons.put(kind, button);
             formats.add(button);
         }
         JPanel outputHead = new JPanel(new BorderLayout(0, 4));
@@ -302,6 +362,12 @@ public final class ExportPanel extends JPanel {
             @Override
             public void removed(JobStatus last) {
                 if (affects(last)) {
+                    // Ein in den Aufträgen gelöschter Auftrag endet nie mehr: nicht weiter als laufend führen, sonst
+                    // bliebe der Knopf dieser Auswahl gesperrt.
+                    SwingUtilities.invokeLater(() -> {
+                        watched.remove(last.id());
+                        sourceJobs.remove(last.id());
+                    });
                     scheduleRefresh();
                 }
             }
@@ -351,7 +417,17 @@ public final class ExportPanel extends JPanel {
      * der Datensatz aus den Aufträgen ableitet.
      */
     static boolean affects(JobStatus status) {
-        return status.type() == JobType.EXPORT || status.type() == JobType.CONVERSION || status.type().download();
+        return status.type() == JobType.EXPORT || status.type() == JobType.CONVERSION || status.type().download()
+                || sourceExport(status.type());
+    }
+
+    /** Die Aufträge der Exporte aus der Quelle. */
+    static boolean sourceExport(JobType type) {
+        return type == JobType.METADATA_EXPORT || type == JobType.ANALYTICS_EXPORT;
+    }
+
+    static String sourceKind(JobType type) {
+        return type == JobType.ANALYTICS_EXPORT ? "analytics" : "metadata";
     }
 
     /** Vom Zustell-Thread des Core: einmal auf dem EDT auffrischen, auch bei mehreren Meldungen hintereinander. */
@@ -384,8 +460,9 @@ public final class ExportPanel extends JPanel {
         }
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Set<String> watchedJobs = Set.copyOf(watched.keySet());
+        Set<String> watchedSource = Set.copyOf(sourceJobs.keySet());
         String preferred = lastOutput.get(current);
-        Background.run(() -> gather(runtime, current, directory, watchedJobs, preferred), data -> {
+        Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred), data -> {
             if (ticket == request) {
                 render(data);
             }
@@ -397,29 +474,38 @@ public final class ExportPanel extends JPanel {
         });
     }
 
-    /**
-     * Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien, offener Auftrag
-     * „Datei erzeugen“; je Space einer Quelle. Beendete Aufträge „Datei erzeugen“, auf die diese Ansicht wartet, kommen
-     * samt ihrer Datei mit ({@code Workspace.producedFile}).
-     */
+    /** Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien; je Space einer Quelle. */
     private static Data gather(AppRuntime runtime, Selection selection, Path directory, Set<String> watched,
-                               String preferred) {
+                               Set<String> watchedSource, String preferred) {
         List<JobStatus> jobs = runtime.workspace().jobs();
         List<JobStatus> finished = jobs.stream().filter(job -> watched.contains(job.id()) && job.state().terminal())
                 .toList();
+        List<JobStatus> finishedSource = jobs.stream().filter(job -> watchedSource.contains(job.id())
+                && job.state().terminal()).toList();
+        // Beendete Aufträge „Datei erzeugen“, auf die diese Ansicht wartet, samt ihrer Datei (Workspace.producedFile).
         Map<String, ExportConversions.ConvertedFile> produced = new HashMap<>();
         for (JobStatus job : finished) {
             if (job.state() == JobState.COMPLETED) {
                 runtime.workspace().producedFile(job.id()).ifPresent(file -> produced.put(job.id(), file));
             }
         }
+        boolean restQueries = !selection.global()
+                && runtime.workspace().sourceQueryExportsSupported(selection.sourceId());
         if (selection.spaceKey() == null) {
             List<SpaceRow> rows = new ArrayList<>();
-            for (Partition space : runtime.workspace().spaces(selection.sourceId())) {
-                Selection whole = new Selection(selection.sourceId(), space.key(), null, space.name());
-                rows.add(new SpaceRow(space, newest(jobs, whole), running(jobs, whole)));
+            // Eine Quelle: ihre Spaces; die globale Auswahl: die Spaces aller Quellen, je mit Quellentitel davor.
+            List<HarvestSource> sources = selection.global() ? runtime.workspace().sources()
+                    : runtime.workspace().sources().stream().filter(s -> s.id().equals(selection.sourceId())).toList();
+            for (HarvestSource source : sources) {
+                String prefix = selection.global()
+                        ? (source.title() == null || source.title().isBlank() ? source.id() : source.title()) : null;
+                for (Partition space : runtime.workspace().spaces(source.id())) {
+                    Selection whole = new Selection(source.id(), space.key(), null, space.name());
+                    rows.add(new SpaceRow(prefix, space, newest(jobs, whole), running(jobs, whole)));
+                }
             }
-            return new Data(selection, null, null, null, List.of(), rows, null, null, finished, produced);
+            return new Data(selection, null, null, null, List.of(), rows, null, null, finished, finishedSource,
+                    produced, restQueries);
         }
         // Die jüngste Ausgabe aus dem Bestand dieser Auswahl hat Vorrang: der Core kann einen älteren, unveränderten
         // Auftrag wiederverwenden, dessen Datenbestand dann die Datei liefert, nicht der jüngste Download.
@@ -429,9 +515,9 @@ public final class ExportPanel extends JPanel {
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, nicht nur die Startseite.
-        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore());
+        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore(runtime));
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings,
-                conversion(jobs, selection), finished, produced);
+                conversion(jobs, selection), finished, finishedSource, produced, restQueries);
     }
 
     /** Ein noch nicht beendeter Auftrag „Datei erzeugen“ dieser Auswahl (wartend, laufend, angehalten). */
@@ -465,18 +551,21 @@ public final class ExportPanel extends JPanel {
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
                 List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus conversion,
-                List<JobStatus> finished, Map<String, ExportConversions.ConvertedFile> produced) {
+                List<JobStatus> finished, List<JobStatus> finishedSource,
+                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries) {
         static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, null, List.of(),
-                Map.of());
+                List.of(), Map.of(), false);
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
-    record SpaceRow(Partition space, JobStatus newest, JobStatus running) {
+    /** Ein Space in der Liste einer Quelle; {@code source} nur in der globalen Auswahl (Quellentitel davor). */
+    record SpaceRow(String source, Partition space, JobStatus newest, JobStatus running) {
     }
 
     private void render(Data data) {
         shown = data;
         shownHoldings = data.holdings();
+        shownRestQueries = data.restQueries();
         Selection current = data.selection();
         boolean none = current == null;
         boolean source = !none && current.spaceKey() == null;
@@ -495,7 +584,10 @@ public final class ExportPanel extends JPanel {
         title.setText(current.page() ? "Export · " + current.title() + " samt Unterseiten"
                 : "Export · " + current.title());
         if (source) {
-            hint.setText("Die Spaces dieser Wissensquelle mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
+            hint.setText(current.global()
+                    ? "Die Spaces aller Wissensquellen mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
+                    + "Seite links zeigt Stand und Ausgabe."
+                    : "Die Spaces dieser Wissensquelle mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
                     + "Seite links zeigt Stand und Ausgabe.");
             renderSpaces(data.spaces());
         } else {
@@ -507,6 +599,7 @@ public final class ExportPanel extends JPanel {
         revalidate();
         repaint();
         data.finished().forEach(job -> finishOutput(job, data.produced().get(job.id())));
+        data.finishedSource().forEach(this::finishSource);
     }
 
     private void renderSpaces(List<SpaceRow> rows) {
@@ -518,6 +611,9 @@ public final class ExportPanel extends JPanel {
         for (SpaceRow row : rows) {
             String label = row.space().name() == null || row.space().name().isBlank() ? row.space().key()
                     : row.space().name();
+            if (row.source() != null) {
+                label = row.source() + " › " + label;
+            }
             spaces.add(label, standText(row.newest(), row.running()),
                     row.newest() == null && row.running() == null ? Comic.MUTED : Comic.INK);
         }
@@ -699,7 +795,7 @@ public final class ExportPanel extends JPanel {
         }
         collect.setEnabled(false);
         feedback.working("Bilder und Anhänge werden eingeplant …");
-        Background.run(() -> runtime.workspace().collectAssets(current.toCore()), jobs -> {
+        Background.run(() -> runtime.workspace().collectAssets(current.toCore(runtime)), jobs -> {
             collect.setEnabled(true);
             if (!Objects.equals(current, selection)) {
                 return;
@@ -785,8 +881,8 @@ public final class ExportPanel extends JPanel {
         feedback.working(Format.title(format) + " wird eingeplant …");
         renderButtons();
         Background.run(() -> {
-            List<JobStatus> jobs = runtime.workspace().exportFiles(current.toCore(), List.of(Downloads.FORMAT), format,
-                    directory);
+            List<JobStatus> jobs = runtime.workspace().exportFiles(current.toCore(runtime), List.of(Downloads.FORMAT),
+                    format, directory);
             if (jobs.size() < 2) {
                 throw new IllegalStateException("Kein Space in der Auswahl");
             }
@@ -846,6 +942,99 @@ public final class ExportPanel extends JPanel {
             entry.getValue().setToolTipText(EXPORT_TIPS.get(entry.getKey())
                     + (blocked != null ? " · " + blocked : loadsFirst() ? " · " + LOADS_FIRST : ""));
         }
+        for (Map.Entry<String, IconButton> entry : sourceButtons.entrySet()) {
+            String blocked = sourceBlocked(entry.getKey());
+            entry.getValue().setEnabled(blocked == null);
+            entry.getValue().setToolTipText(blocked == null ? SOURCE_TIPS.get(entry.getKey())
+                    : SOURCE_TIPS.get(entry.getKey()) + " · " + blocked);
+        }
+    }
+
+    /** Warum dieser Export aus der Quelle für die gezeigte Auswahl gerade nicht geht, oder {@code null}. */
+    String sourceBlocked(String kind) {
+        if (selection == null || selection.spaceKey() == null || context.runtime() == null) {
+            return NOT_AVAILABLE;
+        }
+        if (!shownRestQueries) {
+            return ONLY_CONFLUENCE;
+        }
+        if (shownHoldings == null || shownHoldings.size() == 0) {
+            return NO_PAGES;
+        }
+        Pending running = sourcePendingFor(selection, kind);
+        return running == null ? null : sourceTitle(kind) + " läuft schon";
+    }
+
+    static String sourceTitle(String kind) {
+        return kind.equals("analytics") ? "Analytics" : "Confluence-Metadaten";
+    }
+
+    private Pending sourcePendingFor(Selection selection, String kind) {
+        if (sourceStarting != null && sourceStarting.selection().equals(selection)
+                && sourceStarting.format().equals(kind)) {
+            return sourceStarting;
+        }
+        return sourceJobs.values().stream().filter(p -> p.selection().equals(selection) && p.format().equals(kind))
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * Export aus der Quelle (Angelo 16.11.2026): startet je Space bzw. Teilbaum der Auswahl einen Auftrag
+     * „Confluence-Metadaten“ bzw. „Analytics“ ({@code Workspace.startMetadataExport}, {@code startAnalyticsExport});
+     * er läuft unter Aufträge, die Datei entsteht im Ausgabeordner, die Rückmeldung hier nennt sie nach dem Ende.
+     */
+    void startSource(String kind) {
+        AppRuntime runtime = context.runtime();
+        Selection current = selection;
+        if (runtime == null || context.settings() == null || current == null || sourceBlocked(kind) != null) {
+            return;
+        }
+        Path directory = context.settings().outputDirectory();
+        sourceStarting = new Pending(current, kind);
+        feedback.working(sourceTitle(kind) + " werden aus der Quelle geholt …");
+        renderButtons();
+        Background.run(() -> kind.equals("analytics")
+                        ? runtime.workspace().startAnalyticsExport(current.toCore(runtime), directory)
+                        : runtime.workspace().startMetadataExport(current.toCore(runtime), directory), jobs -> {
+            sourceStarting = null;
+            for (JobStatus job : jobs) {
+                sourceJobs.put(job.id(), new Pending(current, kind));
+            }
+            if (Objects.equals(current, selection)) {
+                feedback.working(sourceTitle(kind) + ": " + Texts.count(jobs.size(), "Auftrag", "Aufträge")
+                        + " eingeplant; die Datei entsteht in " + name(directory));
+            }
+            context.navigator().followJobs();
+            renderButtons();
+            refresh();
+        }, error -> {
+            sourceStarting = null;
+            if (Objects.equals(current, selection)) {
+                feedback.problem(error);
+            }
+            renderButtons();
+        });
+    }
+
+    /** Ein Export aus der Quelle ist beendet: die Rückmeldung nennt Datei oder Grund, wenn die Auswahl noch passt. */
+    private void finishSource(JobStatus job) {
+        Pending export = job == null || !job.state().terminal() ? null : sourceJobs.remove(job.id());
+        if (export == null) {
+            return;
+        }
+        if (Objects.equals(export.selection(), selection)) {
+            Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+            String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
+            if (job.state() == JobState.COMPLETED) {
+                feedback.success(file + " gespeichert in " + (directory == null ? "Ausgabeordner" : name(directory))
+                        + (job.incomplete() ? " · " + Texts.count(job.progress().failed(), "Seite", "Seiten")
+                        + " ohne Antwort, Gründe in der Datei" : ""));
+            } else {
+                feedback.warning(sourceTitle(export.format()) + " " + Texts.state(job).toLowerCase(Locale.GERMAN),
+                        job.error() == null ? null : job.error().message());
+            }
+        }
+        renderButtons();
     }
 
     /** Der gezeigte Datenbestand, für Tests. */

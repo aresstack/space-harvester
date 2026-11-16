@@ -31,5 +31,9 @@ class ChatPanelTest {
         assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), true, false))
                 .isEqualTo("Wissen: Beta · alle Spaces · 2010 Seiten · 1826 davon nicht geladen · "
                         + ChatPanel.NOT_ALLOWED);
+        // Die globale Auswahl (Überschrift „Wissensquellen“, Angelo 16.11.2026).
+        assertThat(Selection.ALL.global()).isTrue();
+        assertThat(ChatPanel.knowledgeText(Selection.ALL, new HoldingCounts(10, 10, 0, 0), true, true))
+                .isEqualTo("Wissen: alle Wissensquellen · 10 Seiten");
     }
 }

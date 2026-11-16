@@ -35,6 +35,9 @@ import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.enterpriseai.source.api.RestQuerySource;
+import com.aresstack.enterpriseai.source.api.RestResponse;
+import com.aresstack.spaceharvester.application.sources.SourceRestResponse;
 import com.aresstack.spaceharvester.application.signin.SignInFailures;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
@@ -851,6 +854,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return storedPage(content);
+    }
+
+    @Override
+    public boolean restQueries() {
+        return port instanceof RestQuerySource;
+    }
+
+    @Override
+    public SourceRestResponse restGet(String pathAndQuery) {
+        if (!(port instanceof RestQuerySource queries)) {
+            return HarvestSource.super.restGet(pathAndQuery);
+        }
+        try {
+            RestResponse response = queries.restGet(pathAndQuery);
+            return new SourceRestResponse(response.contentType(), response.body());
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
     }
 
     @Override

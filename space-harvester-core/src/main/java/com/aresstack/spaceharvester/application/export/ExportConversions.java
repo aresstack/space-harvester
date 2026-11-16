@@ -158,18 +158,26 @@ public class ExportConversions {
         JobStatus export = ownExport(exportId, owner);
         String target = converter(format).format();
         String folder = directory.toAbsolutePath().normalize().toString();
-        for (JobStatus job : jobs.list(owner, JobType.CONVERSION)) {
-            if (!job.state().terminal() && exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID))
-                    && target.equals(job.parameter(FORMAT)) && folder.equals(job.parameter(DIRECTORY))) {
-                return job;
+        // Nachsehen und Einplanen gemeinsam, damit zwei gleichzeitige Klicks nicht zwei Dateien erzeugen.
+        synchronized (produced) {
+            for (JobStatus job : jobs.list(owner, JobType.CONVERSION)) {
+                if (!job.state().terminal() && exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID))
+                        && target.equals(job.parameter(FORMAT)) && folder.equals(job.parameter(DIRECTORY))) {
+                    return job;
+                }
             }
+            return submitConversion(export, owner, exportId, target, folder);
         }
+    }
+
+    private JobStatus submitConversion(JobStatus export, String owner, String exportId, String target,
+                                       String folder) {
         return jobs.submitAfter(JobType.CONVERSION, export.sourceId(), export.partitionKey(), export.rootPageId(),
                 owner, java.util.Map.of(ExportAssetCollection.EXPORT_ID, exportId, FORMAT, target, DIRECTORY, folder),
                 com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
                     context.phase("Export", "Datei erzeugen");
                     context.discovered(1);
-                    ConvertedFile file = convert(exportId, owner, target, Path.of(folder));
+                    ConvertedFile file = convert(exportId, owner, target, Path.of(folder), context::checkpoint);
                     produced.put(context.jobId(), file);
                     context.processed(1);
                     context.written(1);
@@ -200,9 +208,17 @@ public class ExportConversions {
      * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format
      */
     public ConvertedFile convert(String exportId, String owner, String format, Path directory) {
+        return convert(exportId, owner, format, directory, () -> { });
+    }
+
+    /**
+     * Wie {@link #convert(String, String, String, Path)}, mit einem Prüfpunkt je Seite und vor dem Ablegen: Wirft er,
+     * etwa weil der Auftrag abgebrochen wurde, entsteht keine Datei und die halbfertige verschwindet.
+     */
+    private ConvertedFile convert(String exportId, String owner, String format, Path directory, Runnable checkpoint) {
         Objects.requireNonNull(directory, "directory");
         Notices notices = new Notices();
-        ConversionInput input = input(exportId, owner, notices);
+        ConversionInput input = input(exportId, owner, notices, checkpoint);
         ExportConverter converter = converter(format);
         try {
             Files.createDirectories(directory);
@@ -216,6 +232,7 @@ public class ExportConversions {
                     hashing = new Hashing(file);
                     write(converter, input, hashing);
                 }
+                checkpoint.run();
                 for (int attempt = 1; ; attempt++) {
                     Path target = directory.resolve(base + (attempt == 1 ? "" : "-" + attempt) + extension);
                     if (Files.exists(target)) {
@@ -261,6 +278,10 @@ public class ExportConversions {
     }
 
     private ConversionInput input(String exportId, String owner, Notices notices) {
+        return input(exportId, owner, notices, () -> { });
+    }
+
+    private ConversionInput input(String exportId, String owner, Notices notices, Runnable checkpoint) {
         JobStatus status = ownExport(exportId, owner);
         if (status.state() != JobState.COMPLETED) {
             throw new ExportNotConvertibleException(exportId, "Export ist nicht abgeschlossen");
@@ -302,7 +323,10 @@ public class ExportConversions {
             @Override
             public void forEachPage(java.util.function.Consumer<
                     com.aresstack.spaceharvester.application.convert.ConvertiblePage> action) {
-                dataset.forEachPage(action);
+                dataset.forEachPage(page -> {
+                    checkpoint.run();
+                    action.accept(page);
+                });
             }
 
             @Override
