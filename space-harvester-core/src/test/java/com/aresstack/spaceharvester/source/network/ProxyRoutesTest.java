@@ -196,6 +196,54 @@ class ProxyRoutesTest {
     }
 
     @Test
+    void pacChangesAreReportedOnceAndStopAfterClosing() throws Exception {
+        java.lang.reflect.Constructor<PacCacheStatus> constructor = PacCacheStatus.class.getDeclaredConstructor(
+                String.class, long.class, long.class, long.class, int.class, String.class);
+        constructor.setAccessible(true);
+        PacCacheStatus fresh = constructor.newInstance("http://wpad.example/wpad.dat", 1_000L, 2_000L, 0L, 0, null);
+        PacCacheStatus stale = constructor.newInstance("http://wpad.example/wpad.dat", 1_000L, 2_000L, 1_500L, 2,
+                "Connect timed out");
+        java.util.concurrent.atomic.AtomicReference<PacCacheStatus> status = new java.util.concurrent.atomic.AtomicReference<>(fresh);
+        ProxyRoutes routes = ProxyRoutes.create(pac(null, null), new ProxyRoutes.Resolver() {
+            @Override
+            public ProxyResult resolve(String url) {
+                return ProxyResult.direct("pac-direct");
+            }
+
+            @Override
+            public ProxyDiagnostics diagnose(String url) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public java.util.Optional<PacCacheStatus> pacStatus() {
+                return java.util.Optional.ofNullable(status.get());
+            }
+        }, now::get);
+        java.util.concurrent.atomic.AtomicInteger reported = new java.util.concurrent.atomic.AtomicInteger();
+        AutoCloseable subscription = routes.onPacChange(reported::incrementAndGet);
+
+        routes.routeFor(URI.create("https://a.example.org/"));
+        assertThat(reported).as("geladen, aber nicht veraltet: erste Meldung").hasValue(1);
+        assertThat(routes.pacState().stale()).isFalse();
+        routes.routeFor(URI.create("https://b.example.org/"));
+        assertThat(reported).as("unverändert: keine Meldung").hasValue(1);
+
+        status.set(stale);
+        routes.routeFor(URI.create("https://c.example.org/"));
+        assertThat(reported).hasValue(2);
+        assertThat(routes.pacState().stale()).isTrue();
+        assertThat(routes.pacState().failingSince()).isEqualTo(java.time.Instant.ofEpochMilli(1_500L));
+        assertThat(routes.pacState().description()).contains("nicht erneuert seit ").endsWith("Connect timed out");
+
+        subscription.close();
+        status.set(fresh);
+        routes.routeFor(URI.create("https://d.example.org/"));
+        assertThat(reported).as("nach dem Schließen keine Meldung").hasValue(2);
+        assertThat(routes.pacState().stale()).isFalse();
+    }
+
+    @Test
     void pacStatusShowsSinceWhenRefreshingFails() throws Exception {
         java.lang.reflect.Constructor<PacCacheStatus> constructor = PacCacheStatus.class.getDeclaredConstructor(
                 String.class, long.class, long.class, long.class, int.class, String.class);

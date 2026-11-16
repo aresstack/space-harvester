@@ -171,6 +171,56 @@ final class StatusLine extends JPanel {
         super.removeNotify();
     }
 
+    /**
+     * Mehrere Hinweise nebeneinander (Einmalcode, Proxy-Skript): reicht der Platz nicht, teilen sie ihn und kürzen
+     * ihren Text mit „…“, statt in eine zweite, abgeschnittene Zeile umzubrechen; ein unsichtbarer Hinweis nimmt
+     * keinen Platz ein, auch nicht seinen Abstand.
+     */
+    static JPanel alerts(JComponent... notices) {
+        JPanel row = new JPanel();
+        row.setLayout(new javax.swing.BoxLayout(row, javax.swing.BoxLayout.X_AXIS));
+        row.setOpaque(false);
+        for (int i = 0; i < notices.length; i++) {
+            row.add(new Shrinkable(notices[i], i == 0 ? 0 : 12));
+        }
+        return row;
+    }
+
+    /** Ein Hinweis, der bei Platznot schmaler als gewünscht werden darf (sein Text kürzt sich dann mit „…“). */
+    private static final class Shrinkable extends JPanel {
+        private final JComponent child;
+        private final int gap;
+
+        Shrinkable(JComponent child, int gap) {
+            super(new BorderLayout());
+            this.child = child;
+            this.gap = gap;
+            setOpaque(false);
+            add(child, BorderLayout.CENTER);
+        }
+
+        @Override
+        public java.awt.Insets getInsets() {
+            return new java.awt.Insets(0, child.isVisible() ? gap : 0, 0, 0);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            java.awt.Dimension size = super.getPreferredSize();
+            return child.isVisible() ? size : new java.awt.Dimension(0, size.height);
+        }
+
+        @Override
+        public java.awt.Dimension getMinimumSize() {
+            return new java.awt.Dimension(0, super.getMinimumSize().height);
+        }
+
+        @Override
+        public java.awt.Dimension getMaximumSize() {
+            return getPreferredSize();
+        }
+    }
+
     /** Hält ein Kind auf höchstens einen Anteil der Breite der Statuszeile. */
     private final class Capped extends JPanel {
         private final double share;

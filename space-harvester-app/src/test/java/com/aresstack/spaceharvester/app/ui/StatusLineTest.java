@@ -48,4 +48,39 @@ class StatusLineTest {
             assertThat(line.fillVisible()).isFalse();
         });
     }
+
+    /** Zwei Hinweise zugleich (Einmalcode und Proxy-Skript) teilen sich die Breite, statt umzubrechen (Codex zu #801). */
+    @Test
+    void twoAlertsShareTheWidthInsteadOfWrapping() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JLabel signIn = new JLabel("Confluence HaVdB, confluence.swlm.zd.in.bund.de verlangen einen Einmalcode");
+            JLabel proxy = new JLabel("Proxy-Skript seit 16.11.2026 17:03:12 nicht erneuert");
+            JLabel hidden = new JLabel("unsichtbar");
+            hidden.setVisible(false);
+            javax.swing.JPanel alerts = StatusLine.alerts(signIn, proxy, hidden);
+            StatusLine line = new StatusLine(new JProgressBar(), alerts, new JLabel("Seite 3"), new JLabel(" "),
+                    new JLabel(" "), new JLabel("© 2026 AresStack"));
+            // Ohne Fenster (headless): Größe setzen und von oben nach unten auslegen.
+            line.setSize(960, 32);
+            layOut(line);
+            int rowHeight = alerts.getHeight();
+            assertThat(signIn.getWidth()).isGreaterThan(0);
+            assertThat(proxy.getWidth()).isGreaterThan(0);
+            assertThat(proxy.getParent().getY()).as("in derselben Zeile").isLessThan(rowHeight);
+            assertThat(proxy.getParent().getY() + proxy.getParent().getHeight()).isLessThanOrEqualTo(rowHeight);
+            // Der Abstand (12) liegt im Rahmen des zweiten Hinweises, der Text beginnt dahinter.
+            assertThat(proxy.getParent().getX() + proxy.getX()).isGreaterThan(signIn.getParent().getX()
+                    + signIn.getWidth());
+            assertThat(hidden.getParent().getWidth()).as("unsichtbar ohne Platz").isZero();
+        });
+    }
+
+    private static void layOut(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layOut(inner);
+            }
+        }
+    }
 }
