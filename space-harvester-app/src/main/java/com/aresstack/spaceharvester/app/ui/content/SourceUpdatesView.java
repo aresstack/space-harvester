@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
@@ -37,6 +38,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -54,7 +58,13 @@ final class SourceUpdatesView extends JPanel {
     static final String NOT_RUNNING = "Die Updates erscheinen, sobald der Dienst läuft.";
     static final String HELP = "Ein Update ist alles, was sich in der Quelle seit der vorigen manuellen "
             + "Synchronisierung geändert hat, auch was im Hintergrund geholt wurde. Oben steht, was seit dem letzten "
-            + "Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet sie.";
+            + "Update dazugekommen ist; es zählt zum nächsten. Ein Klick auf eine Seite öffnet sie.\n\n"
+            + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
+            + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
+            + "gespeichert und lässt sich später nachlesen oder neu erstellen. Von selbst wird nie zusammengefasst.";
+    static final String SUMMARIZE = "Zusammenfassen";
+    static final String RESUMMARIZE = "Neu zusammenfassen";
+    static final String SUMMARIZING = "Wird zusammengefasst …";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
     private final Supplier<Actions> actions;
@@ -64,6 +74,10 @@ final class SourceUpdatesView extends JPanel {
     private final ScrollColumn report = new ScrollColumn(new BorderLayout());
     private final JPanel reportBody = new JPanel();
     private final JComponent reportScroll;
+    private final BusyOverlay busy;
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton summarize = Comic.button(SUMMARIZE,
+            "Lässt das Chat-Modell das gewählte Update zusammenfassen; nur Seiten mit KI-Freigabe");
+    private Consumer<String> onStatus = text -> { };
     private Consumer<ReportedPage> onOpen = page -> { };
     private ZoneId zone = ZoneId.systemDefault();
 
@@ -72,6 +86,10 @@ final class SourceUpdatesView extends JPanel {
     private List<ChangeUpdate> updates = List.of();
     private String selected;
     private ChangeReport shown;
+    /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
+    private Summary summary;
+    /** Laufende Zusammenfassung; bleibt nach „Abbrechen“ gesetzt, bis ihr Lauf wirklich endet. */
+    private AtomicBoolean running;
     private int generation;
 
     SourceUpdatesView(Supplier<Workspace> workspace) {
@@ -90,7 +108,8 @@ final class SourceUpdatesView extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
-        head.copy(this::copyText);
+        head.action(summarize).copy(this::copyText);
+        summarize.addActionListener(e -> summarize());
         head.tool(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
@@ -109,8 +128,15 @@ final class SourceUpdatesView extends JPanel {
         add(head, BorderLayout.NORTH);
         add(listScroll, BorderLayout.WEST);
         reportScroll = Comic.scroll(report);
-        add(reportScroll, BorderLayout.CENTER);
+        busy = new BusyOverlay(reportScroll);
+        busy.onCancel(this::cancelSummary);
+        add(busy, BorderLayout.CENTER);
         source(null, null);
+    }
+
+    /** {@code listener} bekommt Meldungen für die Statuszeile des Hauptfensters. */
+    void onStatus(Consumer<String> listener) {
+        onStatus = Objects.requireNonNull(listener, "listener");
     }
 
     /** {@code listener} öffnet eine Seite aus dem Bericht. */
@@ -130,6 +156,9 @@ final class SourceUpdatesView extends JPanel {
         updates = List.of();
         selected = null;
         shown = null;
+        summary = null;
+        cancelSummary();
+        offerSummary();
         head.title(title == null || title.isBlank() ? "Updates" : "Updates · " + title);
         list.removeAll();
         if (id == null) {
@@ -167,19 +196,24 @@ final class SourceUpdatesView extends JPanel {
             }
             List<ChangeUpdate> fresh = List.copyOf(found);
             boolean changed = !fresh.equals(updates);
+            ChangeUpdate before = entry(updates, selected);
             updates = fresh;
             String keep = updates.stream().map(ChangeUpdate::id).filter(u -> u.equals(selected)).findFirst()
                     .orElse(updates.isEmpty() ? null : updates.getFirst().id());
             if (keep == null) {
                 selected = null;
                 shown = null;
+                summary = null;
+                offerSummary();
                 renderList();
                 message(NO_UPDATES);
                 return;
             }
             // Während eines Abgleichs kommen laufend Meldungen: Ein abgeschlossenes Update ändert sich nie mehr, sein
             // Bericht bleibt samt Rollposition stehen; neu gelesen wird nur das offene oder eine neue Auswahl.
-            boolean reread = !keep.equals(selected) || shown == null || ChangeUpdate.OPEN.equals(keep);
+            // Ändert sich der Eintrag selbst (etwa „zusammengefasst“ aus einem anderen Fenster), wird er neu gelesen.
+            boolean reread = !keep.equals(selected) || shown == null || ChangeUpdate.OPEN.equals(keep)
+                    || !Objects.equals(before, entry(fresh, keep));
             if (reread) {
                 select(keep, keep.equals(selected));
             } else if (changed) {
@@ -204,25 +238,98 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || id == null || updateId == null) {
             return;
         }
+        if (!updateId.equals(selected)) {
+            summary = null;
+        }
         selected = updateId;
         renderList();
+        offerSummary();
         int mine = ++generation;
-        runner.run(() -> current.report(id, updateId), found -> {
+        runner.run(() -> new Loaded(current.report(id, updateId), current.summary(id, updateId)), found -> {
             if (mine != generation) {
                 return;
             }
-            if (keepPosition && found.equals(shown)) {
+            if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)) {
                 return;
             }
             java.awt.Point position = keepPosition ? viewPosition() : new java.awt.Point();
-            shown = found;
-            renderReport(found);
+            shown = found.report();
+            summary = found.summary();
+            renderReport(shown);
+            offerSummary();
             restore(position);
         }, failure -> {
             if (mine == generation) {
                 message("Änderungen nicht geladen: " + Problems.describe(failure).title());
             }
         });
+    }
+
+    private record Loaded(ChangeReport report, Summary summary) {
+    }
+
+    private static ChangeUpdate entry(List<ChangeUpdate> in, String id) {
+        return id == null ? null : in.stream().filter(u -> u.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /** „Zusammenfassen“ gibt es für ein gewähltes Update mit Änderungen, nicht für die Erstbefüllung. */
+    private void offerSummary() {
+        ChangeUpdate update = shown != null && shown.update().id().equals(selected) ? shown.update()
+                : entry(updates, selected);
+        boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
+        summarize.setText(summary == null ? SUMMARIZE : RESUMMARIZE);
+        summarize.setVisible(sourceId != null);
+        summarize.setEnabled(possible && running == null);
+    }
+
+    /** Startet die Zusammenfassung des gewählten Updates im Hintergrund; nie zwei zugleich. */
+    private void summarize() {
+        Actions current = actions.get();
+        String id = sourceId;
+        String updateId = selected;
+        if (current == null || id == null || updateId == null || running != null) {
+            return;
+        }
+        AtomicBoolean cancelled = new AtomicBoolean();
+        running = cancelled;
+        offerSummary();
+        busy.setText(SUMMARIZING);
+        busy.setBusy(true);
+        onStatus.accept(SUMMARIZING);
+        runner.run(() -> current.summarize(id, updateId, cancelled::get), result -> {
+            finished(cancelled);
+            onStatus.accept("Zusammenfassung erstellt");
+            if (Objects.equals(id, sourceId) && updateId.equals(selected) && shown != null) {
+                java.awt.Point position = viewPosition();
+                summary = result;
+                renderReport(shown);
+                offerSummary();
+                restore(position);
+            }
+        }, failure -> {
+            finished(cancelled);
+            onStatus.accept(failure instanceof CancellationException || cancelled.get()
+                    ? "Abgebrochen; die bisherige Zusammenfassung bleibt."
+                    : "Zusammenfassung fehlgeschlagen: " + Problems.describe(failure).title());
+        });
+    }
+
+    /** Der Lauf ist wirklich zu Ende: erst jetzt ist „Zusammenfassen“ wieder möglich. */
+    private void finished(AtomicBoolean run) {
+        if (running == run) {
+            running = null;
+            busy.setBusy(false);
+            offerSummary();
+        }
+    }
+
+    /** Bittet die laufende Zusammenfassung aufzuhören; bis ihr Lauf endet, bleibt „Zusammenfassen“ gesperrt. */
+    private void cancelSummary() {
+        AtomicBoolean run = running;
+        if (run != null && !run.get()) {
+            run.set(true);
+            busy.setText("Wird abgebrochen …");
+        }
     }
 
     private java.awt.Point viewPosition() {
@@ -279,6 +386,9 @@ final class SourceUpdatesView extends JPanel {
                     : update.mark().failedSyncs() + " Abgleiche sind dabei gescheitert.", Comic.RED, 12.5f));
         }
         reportBody.add(Box.createVerticalStrut(10));
+        if (summary != null) {
+            renderSummary(found);
+        }
         if (update.initial()) {
             add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
                     + "Seitenliste gibt es dafür nicht.", Comic.TEXT, 13.5f));
@@ -308,6 +418,63 @@ final class SourceUpdatesView extends JPanel {
         }
         reportBody.revalidate();
         reportBody.repaint();
+    }
+
+    /** Die Zusammenfassung über den Arten; jede Aussage verweist auf ihre Seiten. */
+    private void renderSummary(ChangeReport found) {
+        JLabel title = new JLabel("Zusammenfassung");
+        title.setFont(Comic.semiBold(14f));
+        title.setForeground(Comic.INK);
+        add(reportBody, title);
+        add(reportBody, Comic.wrapped(summaryMeta(summary), Comic.MUTED, 12f));
+        if (summary.stale()) {
+            add(reportBody, Comic.wrapped("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht "
+                    + "alles.", Comic.ORANGE, 12.5f));
+        }
+        for (Statement statement : summary.statements()) {
+            reportBody.add(Box.createVerticalStrut(6));
+            add(reportBody, Comic.wrapped(statement.text(), Comic.TEXT, 13.5f));
+            List<ReportedPage> pages = statement.pageIds().stream()
+                    .map(pageId -> found.pages().stream().filter(p -> p.pageId().equals(pageId)).findFirst())
+                    .flatMap(java.util.Optional::stream).toList();
+            if (!pages.isEmpty()) {
+                JPanel links = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(
+                        java.awt.FlowLayout.LEFT, 10, 0));
+                links.setOpaque(false);
+                for (ReportedPage page : pages) {
+                    links.add(pageLink(page));
+                }
+                add(reportBody, links);
+            }
+        }
+        if (summary.unreadable() > 0) {
+            reportBody.add(Box.createVerticalStrut(6));
+            add(reportBody, Comic.wrapped(summary.unreadable() == 1
+                    ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
+                    : summary.unreadable() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
+                    + "Zusammenfassung.", Comic.MUTED, 12.5f));
+        }
+        reportBody.add(Box.createVerticalStrut(12));
+    }
+
+    String summaryMeta(Summary shownSummary) {
+        String model = shownSummary.model() == null || shownSummary.model().isBlank() ? ""
+                : " mit " + shownSummary.model();
+        return "Erstellt am " + when(shownSummary.createdAt()) + model;
+    }
+
+    private JLabel pageLink(ReportedPage page) {
+        JLabel link = new JLabel("→ " + (page.title() == null || page.title().isBlank() ? page.pageId()
+                : page.title()));
+        link.setFont(Comic.semiBold(12.5f));
+        link.setForeground(Comic.BLUE);
+        link.setName("summary-link");
+        if (openable(page)) {
+            clickable(() -> onOpen.accept(page), "Seite öffnen", link);
+        } else {
+            link.setForeground(Comic.MUTED);
+        }
+        return link;
     }
 
     private JPanel pageRow(ReportedPage page) {
@@ -384,6 +551,9 @@ final class SourceUpdatesView extends JPanel {
                 }
             }
             text = String.join(" · ", parts);
+        }
+        if (update.summarized()) {
+            text += " · zusammengefasst";
         }
         return update.open() ? "noch nicht abgeschlossen · " + text : text;
     }
@@ -478,6 +648,12 @@ final class SourceUpdatesView extends JPanel {
             return "";
         }
         StringBuilder text = new StringBuilder(heading(shown.update())).append('\n').append(period(shown.update()));
+        if (summary != null) {
+            text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
+            for (Statement statement : summary.statements()) {
+                text.append("\n").append(statement.text());
+            }
+        }
         if (shown.update().initial()) {
             text.append('\n').append("Erstbefüllung: ").append(pages(shown.update().pages()));
         }
@@ -508,6 +684,12 @@ final class SourceUpdatesView extends JPanel {
 
         Subscription subscribe(String sourceId, ChangeLogListener listener);
 
+        /** Die gespeicherte Zusammenfassung des Updates, {@code null} ohne. */
+        Summary summary(String sourceId, String updateId);
+
+        /** Fasst das Update zusammen und legt das Ergebnis ab; bricht ab, sobald {@code cancelled} wahr wird. */
+        Summary summarize(String sourceId, String updateId, BooleanSupplier cancelled);
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -527,11 +709,86 @@ final class SourceUpdatesView extends JPanel {
                 public Subscription subscribe(String sourceId, ChangeLogListener listener) {
                     return workspace.subscribeChangeLog(sourceId, listener);
                 }
+
+                @Override
+                public Summary summary(String sourceId, String updateId) {
+                    return null; // TODO CL6: Core-Schnittstelle von Strang Q
+                }
+
+                @Override
+                public Summary summarize(String sourceId, String updateId, BooleanSupplier cancelled) {
+                    throw new UnsupportedOperationException("CL6-Core fehlt noch");
+                }
             };
         }
     }
 
+    /**
+     * Die KI-Zusammenfassung eines Updates (ADR 0030, Abschnitt 5), wie die Ansicht sie zeigt.
+     *
+     * @param unreadable wie viele Änderungen die KI mangels Freigabe nicht lesen durfte
+     * @param stale      der Bericht hat sich nach dem Erstellen geändert (nur beim offenen Update möglich)
+     */
+    record Summary(List<Statement> statements, String model, Instant createdAt, int unreadable, boolean stale) {
+        Summary {
+            statements = List.copyOf(statements);
+        }
+    }
+
+    /** Eine Aussage der Zusammenfassung mit den Seiten, auf die sie sich stützt. */
+    record Statement(String text, List<String> pageIds) {
+        Statement {
+            pageIds = List.copyOf(pageIds);
+        }
+    }
+
     // ---- für Tests
+
+    boolean summarizeOffered() {
+        return summarize.isVisible() && summarize.isEnabled();
+    }
+
+    String summarizeLabel() {
+        return summarize.getText();
+    }
+
+    void clickSummarize() {
+        summarize.doClick();
+    }
+
+    boolean busy() {
+        return busy.isBusy();
+    }
+
+    void cancelRunningSummary() {
+        busy.cancel();
+    }
+
+    /** Klickt den Seitenverweis einer Aussage an; {@code false}, wenn es ihn nicht gibt oder er nicht klickbar ist. */
+    boolean clickSummaryLink(String title) {
+        return clickLink(reportBody, "→ " + title);
+    }
+
+    private static boolean clickLink(java.awt.Container container, String text) {
+        for (Component child : container.getComponents()) {
+            if (child instanceof JLabel label && text.equals(label.getText())) {
+                java.awt.event.MouseListener[] listeners = label.getMouseListeners();
+                if (listeners.length == 0) {
+                    return false;
+                }
+                MouseEvent event = new MouseEvent(label, MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, 1, 1, false,
+                        MouseEvent.BUTTON1);
+                for (java.awt.event.MouseListener listener : listeners) {
+                    listener.mouseClicked(event);
+                }
+                return true;
+            }
+            if (child instanceof java.awt.Container nested && clickLink(nested, text)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     void zone(ZoneId zone) {
         this.zone = Objects.requireNonNull(zone, "zone");

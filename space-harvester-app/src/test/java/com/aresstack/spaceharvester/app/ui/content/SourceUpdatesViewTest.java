@@ -32,11 +32,13 @@ class SourceUpdatesViewTest {
     private final FakeActions actions = new FakeActions();
     private final SourceUpdatesView view = new SourceUpdatesView(() -> actions, new SyncRunner());
     private final List<ReportedPage> opened = new ArrayList<>();
+    private final List<String> status = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         view.zone(ZoneOffset.UTC);
         view.onOpen(opened::add);
+        view.onStatus(status::add);
     }
 
     @Test
@@ -146,6 +148,68 @@ class SourceUpdatesViewTest {
         assertThat(view.sourceId()).isNull();
     }
 
+    @Test
+    void anUpdateWithoutSummaryOffersToSummarizeButNotTheInitialFill() {
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        assertThat(view.summarizeOffered()).isTrue();
+        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
+        assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
+
+        view.clickUpdate("10.11.2026, 08:00 · angelo");
+        assertThat(view.summarizeOffered()).as("Erstbefüllung").isFalse();
+        assertThat(actions.summarizeCalls).as("nie von selbst").isZero();
+    }
+
+    @Test
+    void summarizingShowsTheSummaryAboveTheKindsWithLinksToItsPages() {
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+
+        view.clickSummarize();
+
+        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(view.busy()).isFalse();
+        List<String> texts = view.reportTexts();
+        assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00 mit gpt-test",
+                "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch", "Geändert (1)");
+        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
+        assertThat(status).contains(SourceUpdatesView.SUMMARIZING, "Zusammenfassung erstellt");
+        assertThat(view.copyText()).contains("Zusammenfassung (Erstellt am").contains("überarbeitet");
+
+        assertThat(view.clickSummaryLink("Betriebshandbuch")).isTrue();
+        assertThat(opened).singleElement().satisfies(page -> assertThat(page.pageId()).isEqualTo("11"));
+        assertThat(view.clickSummaryLink("Alte Seite")).as("entfernte Seiten öffnen nichts").isFalse();
+    }
+
+    @Test
+    void aStoredSummaryIsReadBackWithStaleAndUnreadableNotes() {
+        actions.stored = new SourceUpdatesView.Summary(List.of(new SourceUpdatesView.Statement("Eine neue Seite.",
+                List.of("20"))), "gpt-test", SECOND, 2, true);
+        view.source("wiki", "Confluence HaVdB");
+
+        assertThat(view.reportTexts()).contains("Eine neue Seite.", "→ Neue Seite",
+                "Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles.",
+                "2 Änderungen durfte die KI nicht lesen; sie fehlen in der Zusammenfassung.");
+        assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
+        assertThat(view.counts(summarized(actions.second()))).endsWith(" · zusammengefasst");
+    }
+
+    @Test
+    void cancellingKeepsThePreviousSummary() {
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("16.11.2026, 18:30 · angelo");
+        actions.onSummarize = view::cancelRunningSummary;
+
+        view.clickSummarize();
+
+        assertThat(view.busy()).isFalse();
+        assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
+        assertThat(status).last().isEqualTo("Abgebrochen; die bisherige Zusammenfassung bleibt.");
+        assertThat(view.summarizeOffered()).isTrue();
+    }
+
     /** Bildschirmfoto der Quellenseite zur Sichtprüfung; nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}. */
     @Test
     void renderSourcePage() throws Exception {
@@ -155,8 +219,14 @@ class SourceUpdatesViewTest {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             view.source("wiki", "Confluence HaVdB");
             view.clickUpdate("16.11.2026, 18:30 · angelo");
+            view.clickSummarize();
             AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-updates.png"));
         });
+    }
+
+    private static ChangeUpdate summarized(ChangeUpdate u) {
+        return new ChangeUpdate(u.id(), u.sourceId(), u.from(), u.to(), u.mark(), u.initial(), u.kinds(), u.spaces(),
+                u.pages(), u.loaded(), u.reloaded(), true);
     }
 
     static final class SyncRunner implements SourceUpdatesView.Runner {
@@ -177,6 +247,9 @@ class SourceUpdatesViewTest {
         int updateCalls;
         int reportCalls;
         boolean openGrows;
+        int summarizeCalls;
+        Runnable onSummarize = () -> { };
+        SourceUpdatesView.Summary stored;
         ChangeLogListener listener;
 
         ChangeUpdate open() {
@@ -229,6 +302,27 @@ class SourceUpdatesViewTest {
                     page("12", ChangeKind.RENAMED, "Kurzbeschreibung DATENH", List.of("CLUK"), "Kurzbeschreibung",
                             null, null, false),
                     page("13", ChangeKind.REMOVED, "Alte Seite", List.of(), null, null, null, false)));
+        }
+
+        @Override
+        public SourceUpdatesView.Summary summary(String sourceId, String updateId) {
+            return stored;
+        }
+
+        @Override
+        public SourceUpdatesView.Summary summarize(String sourceId, String updateId,
+                                                   java.util.function.BooleanSupplier cancelled) {
+            summarizeCalls++;
+            onSummarize.run();
+            if (cancelled.getAsBoolean()) {
+                throw new java.util.concurrent.CancellationException();
+            }
+            stored = new SourceUpdatesView.Summary(List.of(
+                    new SourceUpdatesView.Statement("Das Betriebshandbuch wurde überarbeitet.", List.of("11")),
+                    new SourceUpdatesView.Statement("Eine alte Seite ist weggefallen, eine andere heißt jetzt "
+                            + "„Kurzbeschreibung DATENH“.", List.of("13", "12"))),
+                    "gpt-test", SECOND.plusSeconds(1800), 0, false);
+            return stored;
         }
 
         @Override
