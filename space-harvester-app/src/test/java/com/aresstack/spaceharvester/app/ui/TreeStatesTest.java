@@ -3,8 +3,13 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
+import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
+import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheState;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -46,6 +51,43 @@ class TreeStatesTest {
         TreeStates.Badge loading = TreeStates.node(new HoldingCounts(12, 3, 0, 0), true);
         assertThat(loading.glyph()).isEqualTo(Glyph.SYNC);
         assertThat(loading.tooltip()).isEqualTo("3 von 12 Seiten lokal · wird geladen");
+    }
+
+    /**
+     * Der Gesamtstand der Kopfzeile (Angelo, 16.11.2026): grün nur, wenn jede Quelle und jeder bekannte Space
+     * inventarisiert und vollständig ist; ein voller Space neben nicht geladenen macht den Stand nicht grün.
+     */
+    @Test
+    void theOverallStateIsFullOnlyWhenEverySpaceOfEverySourceIsComplete() {
+        CacheGeneration synced = new CacheGeneration("g1", CacheState.values()[0], Instant.EPOCH, Instant.EPOCH);
+        SpaceSummary full = new SpaceSummary("a", "ACC", synced, new HoldingCounts(12, 12, 0, 0));
+        SpaceSummary none = new SpaceSummary("a", "ADM", null, HoldingCounts.ZERO);
+        SpaceSummary half = new SpaceSummary("b", "DEV", synced, new HoldingCounts(10, 4, 0, 0));
+        Map<String, Set<String>> noLoading = Map.of();
+        // Ein voller Space, ein Space ohne Inventur: halb, nicht grün.
+        TreeStates.Badge mixed = TreeStates.all(List.of("a"), Map.of(TreeStates.key("a", "ACC"), full,
+                TreeStates.key("a", "ADM"), none), noLoading, Map.of());
+        assertThat(mixed.kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        assertThat(mixed.tooltip()).isEqualTo("12 von 12 Seiten lokal · " + TreeStates.TIP_NOT_ALL);
+        // Ein voller Space, aber der Baum kennt einen weiteren ohne Stand: halb.
+        assertThat(TreeStates.all(List.of("a"), Map.of(TreeStates.key("a", "ACC"), full), noLoading,
+                Map.of("a", Set.of("ACC", "XYZ"))).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        // Eine zweite Quelle ganz ohne Stand: halb.
+        assertThat(TreeStates.all(List.of("a", "b"), Map.of(TreeStates.key("a", "ACC"), full), noLoading,
+                Map.of()).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        // Alles inventarisiert und vollständig: grün.
+        assertThat(TreeStates.all(List.of("a"), Map.of(TreeStates.key("a", "ACC"), full), noLoading,
+                Map.of("a", Set.of("ACC"))).kind()).isEqualTo(TreeStates.Kind.FULL);
+        // Zwei Quellen, eine halb: Summe halb.
+        TreeStates.Badge two = TreeStates.all(List.of("a", "b"), Map.of(TreeStates.key("a", "ACC"), full,
+                TreeStates.key("b", "DEV"), half), noLoading, Map.of());
+        assertThat(two.kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        assertThat(two.tooltip()).isEqualTo("16 von 22 Seiten lokal");
+        // Ohne jeden Stand: leer; mit laufendem Download: Kreispfeile.
+        assertThat(TreeStates.all(List.of("a"), Map.of(), noLoading, Map.of()).kind())
+                .isEqualTo(TreeStates.Kind.EMPTY);
+        assertThat(TreeStates.all(List.of("a"), Map.of(TreeStates.key("a", "ACC"), full),
+                Map.of(TreeStates.key("a", "ADM"), Set.of("p1")), Map.of()).kind()).isEqualTo(TreeStates.Kind.LOADING);
     }
 
     @Test
