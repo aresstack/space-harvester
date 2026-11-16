@@ -446,20 +446,25 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | das rollierende Pre-Release `beta` wird durch diesen Stand ersetzt (`…-beta.<N>.jar`) |
-| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird durch diesen Stand ersetzt (`…-SNAPSHOT.jar`) |
+| Push auf `main` | das rollierende Pre-Release `latest` bekommt diesen Stand (Version `<Basis>-beta.<N>`, Dateien ohne Versionsnummer, z. B. `space-harvester-app.jar`) |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` bekommt diesen Stand (Version `<Basis>-SNAPSHOT`, Dateien ohne Versionsnummer) |
 | Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version |
 | *Run workflow* auf `main` mit Feld `tag` | wie ein Tag; der Lauf legt den Tag selbst an |
 
 - Die Version steuert zentral `build.gradle` für alle Module: ohne Angabe `0.1.0-SNAPSHOT`, im Release
   `-PreleaseVersion=<v>`. Lokal: `./gradlew build -PreleaseVersion=0.1.0-beta.3`.
-- **Betas:** Jeder Push auf `main` ersetzt das eine Pre-Release `beta` (Version `<Basis>-beta.<N>`, z. B.
+- **Feste Beta-Adresse:** <https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar>
+  liefert immer die Desktop-App des neuesten main-Stands (ebenso `space-harvester.jar`, `space-harvester-core.jar`,
+  `SHA256SUMS`). Das Release `latest` bleibt bestehen; jeder main-Lauf verschiebt den Tag und ersetzt die Dateien.
+  Die Version steht im Titel des Releases und in `java -jar space-harvester-app.jar --version`.
+- **Betas:** Jeder Push auf `main` aktualisiert das eine Pre-Release `latest` (Version `<Basis>-beta.<N>`, z. B.
   `0.1.2-beta.812`). **Basis** ist die nächste Patch-Version nach dem neuesten regulären Release (nach `v0.1.1`:
   `0.1.2`), mindestens die Version aus `build.gradle`; `N` ist die Zahl der Commits auf `main`. Snapshots anderer
   Branches heißen `<Basis>-SNAPSHOT`. `build.gradle` muss nach einem Release nicht angepasst werden.
 - GitHub sortiert die Releases-Seite nach Datum, nicht nach Version. Ein neuer Eintrag steht deshalb immer oben;
-  rollierend steht über dem regulären Release höchstens je ein Eintrag `beta` und `snapshot`. „Latest“ und der Link
-  `…/releases/latest` zeigen immer auf das reguläre Release.
+  rollierend steht über dem regulären Release höchstens je ein Eintrag `latest` und `snapshot`. Die Markierung
+  „Latest“ und der Link `…/releases/latest` (ohne `download`) zeigen weiterhin auf das reguläre Release; nur
+  `…/releases/download/latest/<Datei>` meint das Pre-Release mit dem Tag `latest`.
 - Ein reguläres Release (ohne Vorabkennung, als „Latest“ markiert) entsteht nur über einen Tag wie `v0.1.0` oder
   *Run workflow* mit `tag`. Es braucht auf `main` die Release-Notizen `docs/release-notes/<tag>.md`; der Workflow
   stellt sie vor die Dateiübersicht und bricht ohne sie ab.
@@ -467,6 +472,7 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
   lassen, ins Feld `tag` z. B. `v0.1.0` eintragen und **Run workflow** klicken. Der Lauf baut, testet, legt Tag und
   Release an. Nicht über **Releases** › **Draft a new release** gehen: das legt das Release selbst an, und der
   Workflow lehnt das Hochladen der Dateien dann ab, weil versionierte Releases nie überschrieben werden.
-- Versionierte Releases werden nie überschrieben. Nur `beta` und `snapshot` werden ersetzt. Bis `v0.1.0-beta.332`
-  bzw. `v0.2.0-beta.2` bekam jeder main-Push ein eigenes Pre-Release; Releases bis `v0.1.0-beta.2` enthalten nur die
-  Desktop-App.
+- Versionierte Releases werden nie überschrieben. Nur `latest` und `snapshot` werden ersetzt. Bis zum
+  Wechsel auf `latest` hieß das rollierende Beta-Release `beta` (Dateien mit Versionsnummer); der erste main-Lauf
+  danach entfernt es. Früher bekam jeder main-Push ein eigenes Pre-Release `v<x.y.z>-beta.<N>`; jeder main-Lauf
+  löscht solche Releases (die Git-Tags bleiben stehen).
