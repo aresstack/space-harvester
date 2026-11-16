@@ -45,8 +45,9 @@ import org.slf4j.LoggerFactory;
  *       ({@link #displayUrl(String)}); auch Meldungen der Bibliothek werden so bereinigt, weil sie die Ziel-URL
  *       enthalten können. Das PAC-Skript selbst bekommt die URL unverändert.</li>
  *   <li>Routen werden {@link ProxySettings#cacheTtl()} lang gemerkt, Fehler {@link ProxySettings#failureTtl()} lang
- *       (höchstens {@value #MAX_CACHE_ENTRIES} Einträge). Die Bibliothek lädt das PAC-Skript bei jeder Auflösung neu;
- *       eine geänderte PAC-Datei wirkt also spätestens nach Ablauf des Eintrags.</li>
+ *       (höchstens {@value #MAX_CACHE_ENTRIES} Einträge). Scheitert die erneute Auflösung einer Route, die zuvor
+ *       gefunden wurde (z. B. PAC-Download mit Zeitüberschreitung), bleibt die zuletzt gültige Route und wird nach
+ *       {@link ProxySettings#failureTtl()} erneut versucht; UNAVAILABLE gibt es nur ohne gültige Vorgängerin.</li>
  *   <li>Jede Auflösung läuft auf einem eigenen Pool von höchstens {@value #MAX_RESOLVER_THREADS} Threads mit der Frist
  *       {@link ProxySettings#resolveTimeout()}; ist der Pool voll oder die Frist überschritten, ist die Route
  *       UNAVAILABLE. Die erste Auflösung geschieht bei der ersten Anfrage, nie beim Start.</li>
@@ -279,11 +280,23 @@ public final class ProxyRoutes implements HttpRoutePort {
         HttpRoute route = resolve(current, url);
         String shown = displayUrl(url);
         long ttl = (route.isUnavailable() ? settings.failureTtl() : settings.cacheTtl()).toMillis();
+        HttpRoute kept = null;
         synchronized (cache) {
             // Nach einem Wechsel nie die Route der alten Einstellungen merken.
             if (state == current) {
-                cache.put(url, new Entry(route, now + ttl));
+                Entry previous = cache.get(url);
+                if (route.isUnavailable() && previous != null && !previous.route.isUnavailable()) {
+                    // Zuletzt gültige Route behalten: ein kurz nicht erreichbarer WPAD-Server bricht keine
+                    // funktionierende Verbindung ab; nach failure-ttl wird erneut aufgelöst.
+                    kept = previous.route;
+                }
+                cache.put(url, new Entry(kept != null ? kept : route, now + ttl));
             }
+        }
+        if (kept != null) {
+            LOG.warn("Proxy-Route für {} ({}) nicht neu bestimmbar, zuletzt gültige bleibt: {} ({})", shown,
+                    modeName(settings.mode()), kept.describe(), route.describe());
+            return kept;
         }
         if (route.isUnavailable()) {
             LOG.warn("Proxy-Route für {} ({}) nicht bestimmbar: {}", shown, modeName(settings.mode()), route.describe());

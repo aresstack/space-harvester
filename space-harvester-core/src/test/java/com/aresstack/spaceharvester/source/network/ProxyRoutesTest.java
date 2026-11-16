@@ -110,6 +110,36 @@ class ProxyRoutesTest {
     }
 
     @Test
+    void unreachablePacServerKeepsTheLastGoodRouteAndRetriesAfterFailureTtl() {
+        java.util.concurrent.atomic.AtomicBoolean wpadDown = new java.util.concurrent.atomic.AtomicBoolean();
+        ProxyRoutes routes = routes(pac(null, null), url -> wpadDown.get()
+                ? ProxyResult.error("pac-download-failed", "Could not load PAC script <- Connect timed out")
+                : ProxyResult.proxy("proxy.example", 3128, "pac:resolved"));
+        URI confluence = URI.create("https://confluence.example.org/rest/api/space");
+        HttpRoute good = HttpRoute.proxy("proxy.example", 3128, "pac:resolved");
+
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        wpadDown.set(true);
+        now.addAndGet(Duration.ofMinutes(11).toMillis());
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        now.addAndGet(Duration.ofSeconds(61).toMillis());
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+
+        assertThat(resolved).hasSize(3);
+    }
+
+    @Test
+    void withoutAPreviousRouteAPacFailureStaysUnavailable() {
+        ProxyRoutes routes = routes(pac(null, null), url -> ProxyResult.error("pac-download-failed", "timeout"));
+        URI confluence = URI.create("https://confluence.example.org/");
+
+        assertThat(routes.routeFor(confluence).isUnavailable()).isTrue();
+        routes.invalidate();
+        assertThat(routes.routeFor(confluence).isUnavailable()).isTrue();
+    }
+
+    @Test
     void slowResolutionBecomesUnavailableInsteadOfDirect() {
         ProxyRoutes routes = routes(pac(null, Duration.ofMillis(100)), url -> {
             try {
