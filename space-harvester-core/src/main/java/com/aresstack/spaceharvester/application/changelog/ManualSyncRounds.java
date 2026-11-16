@@ -66,12 +66,51 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         Objects.requireNonNull(jobs, "jobs");
         ManualSyncRounds rounds = new ManualSyncRounds(marks, clock, () -> jobs.listAll(JobType.SYNC));
         rounds.subscription = jobs.subscribeAll(rounds);
-        for (JobStatus status : jobs.listAll(JobType.SYNC)) {
-            if (manual(status) && open(status.state())) {
-                rounds.joined(status);
+        rounds.recover(jobs.listAll(JobType.SYNC));
+        return rounds;
+    }
+
+    /**
+     * Übernimmt nach dem Start die offenen manuellen Synchronisierungen und holt Enden nach, deren Meldung vor dem
+     * Beenden nicht mehr zugestellt wurde: Jeder beendete manuelle Auftrag, der nach der letzten Marke seiner Quelle
+     * endete, gehört zu einer Runde ohne Marke.
+     */
+    synchronized void recover(List<JobStatus> syncs) {
+        Map<String, Instant> lastMark = new HashMap<>();
+        Map<String, List<JobStatus>> unmarked = new LinkedHashMap<>();
+        for (JobStatus status : syncs) {
+            if (!manual(status)) {
+                continue;
+            }
+            if (open(status.state())) {
+                joined(status);
+                continue;
+            }
+            if (status.finishedAt() == null || Objects.equals(ends.get(status.id()), status.finishedAt())) {
+                continue;
+            }
+            Instant last = lastMark.computeIfAbsent(status.sourceId(), this::lastMark);
+            if (last == null || status.finishedAt().isAfter(last)) {
+                unmarked.computeIfAbsent(status.sourceId(), ignored -> new java.util.ArrayList<>()).add(status);
             }
         }
-        return rounds;
+        for (List<JobStatus> ended : unmarked.values()) {
+            // Erst alle aufnehmen, dann beenden: sonst schlösse schon das erste Ende die Runde.
+            ended.forEach(this::joined);
+            for (JobStatus status : ended) {
+                ends.put(status.id(), status.finishedAt());
+                ended(status, status.state() != JobState.COMPLETED);
+            }
+        }
+    }
+
+    private Instant lastMark(String sourceId) {
+        try {
+            return marks.marks(sourceId).stream().map(UpdateMark::at).max(Instant::compareTo).orElse(null);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Update-Marken nicht lesbar ({0})", e.getClass().getName());
+            return Instant.MAX;
+        }
     }
 
     /** Ob der Auftrag eine manuelle Synchronisierung ist. */

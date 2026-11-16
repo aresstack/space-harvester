@@ -160,4 +160,40 @@ class ManualSyncRoundsTest {
             assertThat(mark.spaces()).containsExactly("DEV", "OPS");
         });
     }
+
+    @Test
+    void afterARestartAnEndWhoseReportWasLostStillMarks() {
+        written.add(new UpdateMark("wiki", T0.plusSeconds(10), "client:a", List.of("DEV"), 0, true));
+
+        rounds.recover(List.of(
+                sync("old", "DEV", JobState.COMPLETED, T0.plusSeconds(10), ChangeTrigger.MANUAL),
+                sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL),
+                sync("b", "OPS", JobState.FAILED, T0.plusSeconds(50), ChangeTrigger.MANUAL),
+                sync("s", "QA", JobState.COMPLETED, T0.plusSeconds(70), ChangeTrigger.SCHEDULE)));
+
+        assertThat(written).hasSize(2);
+        assertThat(written.get(1)).satisfies(mark -> {
+            assertThat(mark.at()).isEqualTo(T0.plusSeconds(60));
+            assertThat(mark.spaces()).containsExactly("DEV", "OPS");
+            assertThat(mark.failedSyncs()).isEqualTo(1);
+            assertThat(mark.initial()).isFalse();
+        });
+        // Die nachgeholte Meldung zählt nicht noch einmal.
+        rounds.changed(sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL));
+        assertThat(written).hasSize(2);
+    }
+
+    @Test
+    void afterARestartALostEndJoinsTheRoundOfAStillPausedSync() {
+        rounds.recover(List.of(
+                sync("a", "DEV", JobState.COMPLETED, T0.plusSeconds(60), ChangeTrigger.MANUAL),
+                sync("b", "OPS", JobState.PAUSED, null, ChangeTrigger.MANUAL, PauseReason.CONNECTION_LOST)));
+        assertThat(written).isEmpty();
+
+        rounds.changed(sync("b", "OPS", JobState.COMPLETED, T0.plusSeconds(120), ChangeTrigger.MANUAL));
+        assertThat(written).singleElement().satisfies(mark -> {
+            assertThat(mark.initial()).isTrue();
+            assertThat(mark.spaces()).containsExactly("DEV", "OPS");
+        });
+    }
 }
