@@ -110,15 +110,17 @@ class ExplorerAnalyzeTest {
     @Test
     void entriesFollowDownloadInTheRightOrder() throws Exception {
         useFakes();
-        // „Favorit“ steht hinter Herunterladen (Spaces und Seiten); Quellen haben keinen Stern.
-        assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
-                Explorer.PAGE_ONLY);
-        assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
-                Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE,
-                Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
-        assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.ANALYZE);
-        assertThat(labels(SOURCE)).containsExactly("Herunterladen", Explorer.ANALYZE);
+        // „Favorit“ und „Änderungen nachholen“ stehen hinter Herunterladen, auch an der Quelle (Angelo, 16.11.2026).
+        assertThat(labels(LEAF)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE, Explorer.PAGE_ONLY);
+        assertThat(labels(PARENT)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
+        assertThat(labels(UNKNOWN)).containsExactly("Öffnen", "Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE, Explorer.ANALYZE_PAGE, Explorer.PAGE_ONLY);
+        assertThat(labels(SPACE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE);
+        assertThat(labels(SOURCE)).containsExactly("Herunterladen", Explorer.FAVORITE, Explorer.REFRESH,
+                Explorer.ANALYZE);
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();
         assertThat(labels(new Explorer.Note(Explorer.LOADING))).isEmpty();
         assertThat(entry(PARENT, Explorer.ANALYZE).isEnabled()).isTrue();

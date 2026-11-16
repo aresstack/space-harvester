@@ -77,6 +77,12 @@ public final class Explorer {
     static final String UNFAVORITE = "Favorit entfernen";
     static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
     static final String STAR_TIP = "Favorit setzen oder entfernen";
+    /** Am Zustandspunkt (Angelo, 16.11.2026): beim Darüberfahren Kreispfeile, der Klick holt den Knoten samt Teilbaum nach. */
+    static final String REFRESH_TIP = "Klick: Änderungen aus der Quelle nachholen";
+    static final String REFRESH = "Änderungen nachholen";
+    static final String REFRESH_ALL_TITLE = "Alles aktualisieren?";
+    static final String REFRESH_ALL_QUESTION = "Wirklich alle Wissensquellen aktualisieren? Für jeden Space jeder "
+            + "Wissensquelle startet sofort ein eigener Auftrag, der die Änderungen nachholt.";
     static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int TREE_LIMIT = 5_000;
@@ -227,6 +233,11 @@ public final class Explorer {
     /** Rückfrage vor dem Alles-Download (Ja/Nein); Tests setzen eine eigene Antwort. */
     private java.util.function.Predicate<java.awt.Component> confirmDownloadAll =
             parent -> Dialogs.confirm(parent, DOWNLOAD_ALL_TITLE, DOWNLOAD_ALL_QUESTION);
+    /** Rückfrage vor dem Aktualisieren aller Quellen (Ja/Nein); Tests setzen eine eigene Antwort. */
+    private java.util.function.Predicate<java.awt.Component> confirmRefreshAll =
+            parent -> Dialogs.confirm(parent, REFRESH_ALL_TITLE, REFRESH_ALL_QUESTION);
+    /** Ob die Maus über dem Zustandspunkt der Kopfzeile steht: dann zeigt er die Kreispfeile. */
+    private boolean allBadgeHover;
     /**
      * Die Überschrift „Wissensquellen“ ist gewählt (Angelo, 16.11.2026): die globale Auswahl über alle Quellen; Chat,
      * Export und Analysen beziehen sich dann auf alles, im Baum ist nichts gewählt.
@@ -264,6 +275,8 @@ public final class Explorer {
     private int hoverRow = -1;
     /** Zeile, über deren Stern die Maus steht; -1 sonst (Angelo, 16.11.2026: Hervorhebung nur auf dem Stern). */
     private int hoverStarRow = -1;
+    /** Zeile, über deren Zustandspunkt die Maus steht; dort stehen dann die Kreispfeile zum Nachholen. */
+    private int hoverBadgeRow = -1;
     /** „Analysieren“ über den Core ({@code Workspace}); Tests setzen eine eigene Umsetzung. */
     private Analyses analyses = new WorkspaceAnalyses();
     /** Bestätigung großer Analyseumfänge; Tests antworten ohne Dialog. */
@@ -321,6 +334,7 @@ public final class Explorer {
     public Explorer(AppContext context) {
         this.context = context;
         this.states = new TreeStates(context, this::statesChanged);
+        states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setToggleClickCount(0);
@@ -372,6 +386,10 @@ public final class Explorer {
                     if (single) {
                         toggleFavorite(((Node) path.getLastPathComponent()).item());
                     }
+                } else if (onBadge(path, event.getPoint())) {
+                    if (single) {
+                        refresh(((Node) path.getLastPathComponent()).item());
+                    }
                 } else if (path.getLastPathComponent() instanceof Node node && node.item() instanceof MoreItem) {
                     if (single) {
                         activate(path);
@@ -400,20 +418,23 @@ public final class Explorer {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
                 int starRow = onStar(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
+                int badgeRow = onBadge(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
                 tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : starRow >= 0 ? STAR_TIP
-                        : onBadge(path, event.getPoint()) ? badgeTip(path) : null);
-                if (row != hoverRow || starRow != hoverStarRow) {
+                        : badgeRow >= 0 ? refreshTip(badgeTip(path)) : null);
+                if (row != hoverRow || starRow != hoverStarRow || badgeRow != hoverBadgeRow) {
                     hoverRow = row;
                     hoverStarRow = starRow;
+                    hoverBadgeRow = badgeRow;
                     tree.repaint();
                 }
             }
 
             @Override
             public void mouseExited(MouseEvent event) {
-                if (hoverRow >= 0 || hoverStarRow >= 0) {
+                if (hoverRow >= 0 || hoverStarRow >= 0 || hoverBadgeRow >= 0) {
                     hoverRow = -1;
                     hoverStarRow = -1;
+                    hoverBadgeRow = -1;
                     tree.repaint();
                 }
             }
@@ -503,7 +524,8 @@ public final class Explorer {
                     // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
                     setText("<html>" + escape(favorite.title()) + "<br><font color='#7a7a7a'>"
                             + escape(favorite.where()) + "</font></html>");
-                    setIcon(favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
+                    setIcon(favorite.isSource() ? MainWindow.database()
+                            : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
                 }
                 setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
                 setOpaque(selected);
@@ -540,6 +562,28 @@ public final class Explorer {
         actions.add(selectAll);
         allBadge.setHorizontalAlignment(JLabel.CENTER);
         allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
+        // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
+        allBadge.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        allBadge.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent event) {
+                allBadgeHover = true;
+                statesChanged();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent event) {
+                allBadgeHover = false;
+                statesChanged();
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    refreshAll();
+                }
+            }
+        });
         actions.add(allBadge);
         actions.add(downloadAll);
         title.add(actions, BorderLayout.EAST);
@@ -676,9 +720,40 @@ public final class Explorer {
     private void statesChanged() {
         tree.repaint();
         TreeStates.Badge badge = states.all(shownSources, treeSpaces());
-        allBadge.setIcon(badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph());
-        allBadge.setForeground(badge.color());
-        allBadge.setToolTipText(badge.tooltip());
+        allBadge.setIcon(allBadgeHover ? Glyph.SYNC : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph());
+        allBadge.setForeground(allBadgeHover ? Comic.INK : badge.color());
+        allBadge.setToolTipText(refreshTip(badge.tooltip()));
+    }
+
+    /** Der Tooltip am Zustandspunkt: der Stand, dahinter der Hinweis auf das Nachholen. */
+    static String refreshTip(String stateTip) {
+        return stateTip == null || stateTip.isBlank() ? REFRESH_TIP : stateTip + " · " + REFRESH_TIP;
+    }
+
+    /** Für Tests: eigene Antwort auf die Rückfrage vor dem Aktualisieren aller Quellen. */
+    void confirmRefreshAll(java.util.function.Predicate<java.awt.Component> confirmer) {
+        this.confirmRefreshAll = Objects.requireNonNull(confirmer, "confirmer");
+    }
+
+    /** Holt nach Rückfrage die Änderungen aller Wissensquellen des Baums nach (Angelo, 16.11.2026). */
+    void refreshAll() {
+        if (shownSources.isEmpty() || !confirmRefreshAll.test(root)) {
+            return;
+        }
+        for (String sourceId : List.copyOf(shownSources)) {
+            context.navigator().refresh(sourceId, null, null);
+        }
+    }
+
+    /** Holt den Knoten samt Teilbaum aus der Quelle nach ({@link AppContext.Navigator#refresh}). */
+    private void refresh(Item item) {
+        switch (item) {
+            case SourceItem source -> context.navigator().refresh(source.sourceId(), null, null);
+            case SpaceItem space -> context.navigator().refresh(space.sourceId(), space.spaceKey(), null);
+            case PageItem page -> context.navigator().refresh(page.sourceId(), page.spaceKey(), page.pageId());
+            default -> {
+            }
+        }
     }
 
     /**
@@ -994,6 +1069,101 @@ public final class Explorer {
     record Batch(List<Node> nodes, String nextCursor) {
     }
 
+    /**
+     * Ein Space hat laut Core einen neuen Stand (etwa nach dem Nachholen über die Kreispfeile, Codex zu #802): die
+     * geladenen Knoten dieses Space (oder aller Spaces der Quelle, {@code spaceKey} null) lesen ihre Kinder nach.
+     * Vorhandene Knoten bleiben samt Aufklappung und Auswahl, neue kommen hinzu, verschwundene gehen, geänderte Titel
+     * werden übernommen; die Ansicht springt nicht.
+     */
+    private void spaceStructureChanged(String sourceId, String spaceKey) {
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(sourceId));
+        if (source == null) {
+            return;
+        }
+        for (int i = 0; i < source.getChildCount(); i++) {
+            if (source.getChildAt(i) instanceof Node space && space.item() instanceof SpaceItem item
+                    && (spaceKey == null || item.spaceKey().equals(spaceKey))) {
+                reread(space);
+            }
+        }
+    }
+
+    /** Liest die Kinder eines geladenen Knotens nach und gleicht sie ab ({@link #merge}); danach seine geladenen Kinder. */
+    private void reread(Node node) {
+        AppRuntime runtime = context.runtime();
+        Item item = node.item();
+        if (runtime == null || !node.loaded || node.loading || !(item instanceof SpaceItem || item instanceof PageItem)) {
+            return;
+        }
+        node.loading = true;
+        Background.run(() -> children(runtime, item, null), batch -> {
+            node.loading = false;
+            merge(node, batch);
+        }, error -> node.loading = false);
+    }
+
+    /** Schlüssel eines Knotens für den Abgleich; Hinweise und „Weitere laden“ haben keinen. */
+    private static String key(Item item) {
+        return switch (item) {
+            case SpaceItem space -> "s" + space.spaceKey();
+            case PageItem page -> "p" + page.pageId();
+            default -> null;
+        };
+    }
+
+    /** Gleicht die Kinder von {@code parent} mit dem frischen Stapel ab, mit einzelnen Modell-Ereignissen statt Neuaufbau. */
+    private void merge(Node parent, Batch batch) {
+        java.util.Map<String, Node> existing = new java.util.LinkedHashMap<>();
+        for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+            Node child = (Node) parent.getChildAt(i);
+            String key = key(child.item());
+            if (key == null) {
+                model.removeNodeFromParent(child);
+            } else {
+                existing.put(key, child);
+            }
+        }
+        List<Node> kept = new ArrayList<>();
+        int index = 0;
+        for (Node fresh : batch.nodes()) {
+            Node current = existing.remove(key(fresh.item()));
+            if (current == null) {
+                model.insertNodeInto(fresh, parent, index);
+            } else {
+                if (!current.item().equals(fresh.item())) {
+                    current.setUserObject(fresh.item());
+                    model.nodeChanged(current);
+                }
+                if (!current.loaded && current.getChildCount() == 0 && fresh.getChildCount() > 0) {
+                    // Hat jetzt Kinder: den Platzhalter fürs Aufklappen nachtragen.
+                    model.insertNodeInto((Node) fresh.getFirstChild(), current, 0);
+                } else if (!current.loaded && current.getChildCount() > 0 && fresh.getChildCount() == 0) {
+                    model.removeNodeFromParent((Node) current.getFirstChild());
+                }
+                if (parent.getIndex(current) != index) {
+                    model.removeNodeFromParent(current);
+                    model.insertNodeInto(current, parent, index);
+                }
+                kept.add(current);
+            }
+            index++;
+        }
+        for (Node gone : existing.values()) {
+            model.removeNodeFromParent(gone);
+        }
+        if (batch.nextCursor() != null) {
+            model.insertNodeInto(new Node(new MoreItem(batch.nextCursor())), parent, parent.getChildCount());
+        }
+        if (parent.getChildCount() == 0) {
+            Node empty = new Node(new Note(parent.item() instanceof SourceItem ? "Keine Spaces" : "Keine Seiten"));
+            empty.loaded = true;
+            model.insertNodeInto(empty, parent, 0);
+        }
+        for (Node child : kept) {
+            reread(child);
+        }
+    }
+
     static Batch children(AppRuntime runtime, Item item, String cursor) {
         return switch (item) {
             case SourceItem source -> new Batch(runtime.workspace().spaces(source.sourceId()).stream()
@@ -1289,12 +1459,21 @@ public final class Explorer {
                     star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
                             (getHeight() - star.getIconHeight()) / 2);
                 }
-                // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …).
-                if (badge.kind() != TreeStates.Kind.NONE) {
+                // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …);
+                // unter der Maus stattdessen die Kreispfeile zum Nachholen (Angelo, 16.11.2026).
+                if (starred) {
                     int bx = x - ACTION_WIDTH - BADGE_WIDTH;
-                    badgeHost.setForeground(badge.color());
-                    badge.glyph().paintIcon(badgeHost, g, bx + (BADGE_WIDTH - badge.glyph().getIconWidth()) / 2,
-                            (getHeight() - badge.glyph().getIconHeight()) / 2);
+                    javax.swing.Icon glyph = row == hoverBadgeRow ? Glyph.SYNC
+                            : badge.kind() == TreeStates.Kind.NONE ? null : badge.glyph();
+                    if (row == hoverBadgeRow) {
+                        RoundHover.paint(g, bx + (BADGE_WIDTH - RoundHover.SIZE) / 2, 0, RoundHover.SIZE,
+                                getHeight(), false);
+                    }
+                    if (glyph != null) {
+                        badgeHost.setForeground(row == hoverBadgeRow ? Comic.INK : badge.color());
+                        glyph.paintIcon(badgeHost, g, bx + (BADGE_WIDTH - glyph.getIconWidth()) / 2,
+                                (getHeight() - glyph.getIconHeight()) / 2);
+                    }
                 }
             } finally {
                 g.dispose();
@@ -1352,9 +1531,10 @@ public final class Explorer {
         return badge.tooltip();
     }
 
-    /** Das Bestandszeichen einer Zeile: Spaces nach ihrem Stand, Seiten nach Zustand bzw. Teilbaum. */
+    /** Das Bestandszeichen einer Zeile: Quellen über alle ihre Spaces, Spaces nach ihrem Stand, Seiten nach Zustand bzw. Teilbaum. */
     TreeStates.Badge badge(Item item) {
         return switch (item) {
+            case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
             case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
             case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
                     !Boolean.FALSE.equals(page.hasChildren()));
@@ -1377,13 +1557,14 @@ public final class Explorer {
 
     // ------------------------------------------------------------------ Favoriten
 
-    /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026). */
+    /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026) und ganze Quellen (16.11.2026). */
     static boolean starrable(Item item) {
-        return item instanceof SpaceItem || item instanceof PageItem;
+        return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
     }
 
     boolean isFavorite(Item item) {
         return switch (item) {
+            case SourceItem source -> context.favorites().contains(source.sourceId(), null, null);
             case SpaceItem space -> context.favorites().contains(space.sourceId(), space.spaceKey(), null);
             case PageItem page -> context.favorites().contains(page.sourceId(), page.spaceKey(), page.pageId());
             default -> false;
@@ -1397,6 +1578,8 @@ public final class Explorer {
     void toggleFavorite(Item item) {
         Favorites store = context.favorites();
         switch (item) {
+            case SourceItem source -> store.toggle(Favorites.Favorite.source(source.sourceId(),
+                    sourceTitle(source.sourceId())));
             case SpaceItem space -> store.toggle(Favorites.Favorite.space(space.sourceId(), space.spaceKey(),
                     space.name(), sourceTitle(space.sourceId())));
             case PageItem page -> {
@@ -1469,7 +1652,7 @@ public final class Explorer {
         favoriteModel.clear();
         all.forEach(favoriteModel::addElement);
         if (onlyFavorites && filter.getText().trim().isEmpty()) {
-            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
         tree.repaint();
     }
@@ -1480,7 +1663,10 @@ public final class Explorer {
         if (favorite == null) {
             return;
         }
-        if (favorite.pageId() == null) {
+        if (favorite.isSource()) {
+            // Die ganze Quelle: im Baum wählen, Mitte und rechts folgen der Auswahl.
+            reveal(favorite.sourceId(), null);
+        } else if (favorite.pageId() == null) {
             context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
         } else {
             context.navigator().openPage(favorite.sourceId(), favorite.pageId());
@@ -1529,6 +1715,11 @@ public final class Explorer {
             star.setIcon(isFavorite(item) ? Glyph.STAR_FILLED : Glyph.STAR);
             star.addActionListener(e -> toggleFavorite(item));
             menu.add(star);
+            javax.swing.JMenuItem refresh = new javax.swing.JMenuItem(REFRESH);
+            refresh.setIcon(Glyph.SYNC);
+            refresh.setToolTipText(REFRESH_TIP);
+            refresh.addActionListener(e -> refresh(item));
+            menu.add(refresh);
         }
         if (analysisScope(item, false) != null) {
             String unavailable = analyses.unavailable();
@@ -1687,6 +1878,11 @@ public final class Explorer {
     /** Für Tests: Zeile, über deren Stern die Maus steht. */
     int hoverStarRow() {
         return hoverStarRow;
+    }
+
+    /** Für Tests: Zeile, über deren Zustandspunkt die Maus steht. */
+    int hoverBadgeRow() {
+        return hoverBadgeRow;
     }
 
     /** Für Tests: Zeile, über deren Download-Symbol die Maus steht. */

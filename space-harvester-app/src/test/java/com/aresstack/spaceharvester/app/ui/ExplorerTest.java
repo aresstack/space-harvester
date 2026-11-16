@@ -431,6 +431,15 @@ class ExplorerTest {
                 .findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
                 List.of(), new HarvestSource.PageNode(page.pageId(), page.title(), space.spaceKey(), false));
+        // Die Kreispfeile am Zustandspunkt rufen das Nachholen des Knotens auf (Angelo, 16.11.2026).
+        List<String> refreshed = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("refresh")) {
+                        refreshed.add(args[0] + "/" + args[1] + "/" + args[2]);
+                    }
+                    return null;
+                }));
         Explorer[] explorer = new Explorer[1];
         SwingUtilities.invokeAndWait(() -> {
             explorer[0] = new Explorer(context);
@@ -467,7 +476,46 @@ class ExplorerTest {
             move(tree, bounds.x + 5, y);
             assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
             assertThat(explorer[0].hoverRow()).isEqualTo(-1);
+            // Der Zustandspunkt links vom Stern: Kreispfeile unter der Maus, Klick holt die Seite samt Teilbaum nach.
+            move(tree, bounds.x + bounds.width - 60 - 11, y);
+            assertThat(explorer[0].hoverBadgeRow()).isEqualTo(row);
+            assertThat(explorer[0].hoverStarRow()).isEqualTo(-1);
+            assertThat(tree.getToolTipText()).endsWith(Explorer.REFRESH_TIP);
+            click(tree, bounds.x + bounds.width - 60 - 11, y);
+            assertThat(refreshed).containsExactly("handbuch/" + space.spaceKey() + "/" + page.pageId());
+            // Die Wurzel der Quelle (Zeile 0) trägt dieselben Spalten: Zustandspunkt, Stern, Download.
+            java.awt.Rectangle top = tree.getRowBounds(0);
+            assertThat(((Explorer.Node) tree.getPathForRow(0).getLastPathComponent()).item())
+                    .isInstanceOf(Explorer.SourceItem.class);
+            int ty = top.y + top.height / 2;
+            move(tree, top.x + top.width - 60 - 11, ty);
+            assertThat(explorer[0].hoverBadgeRow()).isZero();
+            click(tree, top.x + top.width - 60 - 11, ty);
+            assertThat(refreshed).hasSize(2);
+            assertThat(refreshed.get(1)).isEqualTo("handbuch/null/null");
+            // Der Stern an der Quelle merkt die ganze Quelle als Favorit (Angelo, 16.11.2026).
+            move(tree, top.x + top.width - 45, ty);
+            assertThat(explorer[0].hoverStarRow()).isZero();
+            click(tree, top.x + top.width - 45, ty);
+            assertThat(context.favorites().contains("handbuch", null, null)).isTrue();
+            assertThat(context.favorites().all().get(0).isSource()).isTrue();
+            assertThat(context.favorites().all().get(0).title()).isEqualTo("Handbuch");
+            // Alle Quellen: erst die Rückfrage, „Nein“ startet nichts, „Ja“ je Quelle einmal.
+            explorer[0].confirmRefreshAll(parent -> false);
+            explorer[0].refreshAll();
+            assertThat(refreshed).hasSize(2);
+            explorer[0].confirmRefreshAll(parent -> true);
+            explorer[0].refreshAll();
+            assertThat(refreshed).hasSize(3);
+            assertThat(refreshed.get(2)).isEqualTo("handbuch/null/null");
+            assertThat(Explorer.REFRESH_ALL_QUESTION).containsIgnoringCase("wirklich");
         });
+    }
+
+    /** Nur das Klick-Ereignis (ohne Drücken/Loslassen): die Baum-Auswahl bräuchte headless das Toolkit. */
+    private static void click(javax.swing.JTree tree, int x, int y) {
+        tree.dispatchEvent(new java.awt.event.MouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(), 0, x, y, 1, false, java.awt.event.MouseEvent.BUTTON1));
     }
 
     private static void move(javax.swing.JTree tree, int x, int y) {

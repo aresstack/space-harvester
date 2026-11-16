@@ -538,6 +538,26 @@ public final class MainWindow implements AppContext.Navigator {
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
 
+    /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
+    @Override
+    public void refresh(String sourceId, String spaceKey, String pageId) {
+        if (pageId == null) {
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+                notice("Nachholen wird gestartet …", Comic.MUTED);
+            } else {
+                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
+                        Comic.ORANGE);
+            }
+            return;
+        }
+        notice("Aktualisierung wird gestartet …", Comic.MUTED);
+        Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
+            notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);
+            showJob(started.jobs().get(0).id());
+        }, error -> notice("Aktualisierung ließ sich nicht starten: " + Problems.describe(error).title(),
+                Comic.RED));
+    }
+
     /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */
     private void notice(String text, java.awt.Color color) {
         context.events().publish(new StatusMessageEvent(text, NOTICE_MS,

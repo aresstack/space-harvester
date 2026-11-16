@@ -152,6 +152,14 @@ public final class AppContext {
         default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
         }
 
+        /**
+         * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
+         * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie
+         * auf der Quellenkarte), mit {@code pageId} die Seite samt Unterseiten neu aus der Quelle.
+         */
+        default void refresh(String sourceId, String spaceKey, String pageId) {
+        }
+
         void search(String text);
     }
 
