@@ -93,7 +93,11 @@ class ExplorerStatesTest {
         // Das Zeichen der Kopfzeile fasst alle Quellen zusammen (Angelo, 16.11.2026), ebenfalls ohne Abfrage.
         await(() -> onEdtQuietly(() -> explorer[0].states().all(List.of("handbuch"), java.util.Map.of())).kind() == TreeStates.Kind.FULL);
         assertThat(onEdt(() -> explorer[0].allBadge().getIcon())).isEqualTo(Glyph.CIRCLE_FULL);
-        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo("2 von 2 Seiten lokal");
+        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo(Explorer.refreshTip("2 von 2 Seiten lokal"));
+        // Auch die Wurzel der Quelle trägt den Zustandspunkt (Angelo, 16.11.2026): über alle ihre Spaces.
+        Explorer.SourceItem source = new Explorer.SourceItem("handbuch", "Handbuch");
+        assertThat(onEdt(() -> explorer[0].badge(source)).kind()).isEqualTo(TreeStates.Kind.FULL);
+        assertThat(onEdt(() -> explorer[0].badge(source)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
     }
 
     private static void await(BooleanSupplier condition) throws Exception {

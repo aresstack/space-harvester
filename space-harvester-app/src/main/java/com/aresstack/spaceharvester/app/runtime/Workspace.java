@@ -948,6 +948,19 @@ public final class Workspace {
     }
 
     /**
+     * Eine Seite samt Unterseiten neu aus der Quelle lesen und ausgeben (Kreispfeile im Baum, Angelo 16.11.2026):
+     * wie {@link #startExport(String, String, String, List)}, aber mit verlangter Aktualität
+     * ({@code ExportRequest.refresh}), statt einen vorhandenen Bestand wiederzuverwenden.
+     */
+    public JobStatus refreshSubtree(String sourceId, String spaceKey, String rootPageId, List<String> formats) {
+        requireExport(sourceId, spaceKey);
+        JobStatus status = harvester.exports().start(ExportRequest.of(sourceId, spaceKey, Harvester.OWNER, formats)
+                .withRoot(rootPageId).withRefresh(true));
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
      * Ausgabe der Auswahl aus dem Bestand starten (ADR 0029): je gewähltem Space bzw. Teilbaum ein Export-Auftrag
      * ({@code Holdings.outputs}), der nur den Seiten-Cache liest, nie die Quelle; braucht je Space export und content,
      * geprüft vor dem ersten Auftrag. Gespeicherte Seiten kommen mit, veraltete im gespeicherten Stand; nur aus dem

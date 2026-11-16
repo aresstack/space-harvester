@@ -62,10 +62,10 @@ class ExplorerFavoritesTest {
         SwingUtilities.invokeAndWait(() -> {
             explorer[0] = new Explorer(context);
             Explorer.SpaceItem item = new Explorer.SpaceItem("handbuch", space, space);
-            // Kontextmenü: „Favorit“, danach „Favorit entfernen“; Quellen haben keinen Stern.
+            // Kontextmenü: „Favorit“, danach „Favorit entfernen“; auch ganze Quellen (Angelo, 16.11.2026).
             assertThat(labels(explorer[0].menu(item))).contains(Explorer.FAVORITE).doesNotContain(Explorer.UNFAVORITE);
             assertThat(labels(explorer[0].menu(new Explorer.SourceItem("handbuch", "Handbuch"))))
-                    .doesNotContain(Explorer.FAVORITE);
+                    .contains(Explorer.FAVORITE, Explorer.REFRESH);
             explorer[0].toggleFavorite(item);
             assertThat(explorer[0].isFavorite(item)).isTrue();
             assertThat(labels(explorer[0].menu(item))).contains(Explorer.UNFAVORITE);
