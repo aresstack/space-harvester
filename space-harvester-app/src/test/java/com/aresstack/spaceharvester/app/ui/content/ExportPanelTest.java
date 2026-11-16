@@ -61,8 +61,8 @@ class ExportPanelTest {
         }
     }
 
-    @Test
-    void aFinishedDownloadIsExportedFromItsDatasetIntoTheOutputDirectory() throws Exception {
+    /** Eine Quelle „handbuch“ aus einem Ordner mit einer Seite; die Laufzeit läuft, der Ausgabeordner ist {@code out}. */
+    private Path startHandbuch() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("seite.md"), "# Seite\n\nText.\n");
         Path out = home.resolve("Ausgabe");
@@ -83,8 +83,47 @@ class ExportPanelTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        Workspace workspace = context.runtime().workspace();
         await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
+        return out;
+    }
+
+    /**
+     * Angelo 16.11.2026: Ein Format-Knopf ohne Bestand lädt erst die Seiten, danach entsteht die Datei als eigener
+     * Auftrag „Datei erzeugen“ mit Status unter Aufträge; die Ansicht erfährt das Ende per Auftragsmeldung.
+     */
+    @Test
+    void aFormatButtonWithoutHoldingsLoadsThePagesFirstAndThenProducesTheFileAsAJob() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        ExportPanel[] panel = new ExportPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            assertThat(panel[0].exportBlocked("pdf")).as("ohne Auswahl").isEqualTo(ExportPanel.NO_SELECTION);
+            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+        });
+        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].exportBlocked("pdf")).as("ohne Bestand erlaubt: lädt erst").isNull();
+            assertThat(panel[0].shownDataset()).isNull();
+            panel[0].output("pdf");
+            assertThat(panel[0].exportBlocked("pdf")).contains("wird gerade erzeugt");
+        });
+        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".pdf")));
+        List<JobStatus> jobs = workspace.jobs();
+        assertThat(jobs).as("Daten-Auftrag von der Quelle und Auftrag „Datei erzeugen“")
+                .anyMatch(job -> job.type() == JobType.EXPORT && space.equals(job.partitionKey()))
+                .anyMatch(job -> job.type() == JobType.CONVERSION && space.equals(job.partitionKey())
+                        && "pdf".equals(job.parameter(ExportConversions.FORMAT)));
+        await(() -> panel[0].exportBlocked("pdf") == null);
+        await(() -> panel[0].shownDataset() != null);
+        await(() -> panel[0].files.getText().contains(".pdf"));
+    }
+
+    @Test
+    void aFinishedDownloadIsExportedFromItsDatasetIntoTheOutputDirectory() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
         String space = workspace.spaces("handbuch").get(0).key();
         String job = workspace.startExport("handbuch", space, List.of(Downloads.FORMAT)).id();
 
@@ -92,7 +131,7 @@ class ExportPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new ExportPanel(context);
             // Ohne Auswahl nur der Hinweis; die Quelle zeigt ihre Spaces; erst der Space zeigt Stand und Ausgabe.
-            assertThat(panel[0].exportBlocked("pdf")).isEqualTo("kein Datenbestand vorhanden");
+            assertThat(panel[0].exportBlocked("pdf")).isEqualTo(ExportPanel.NO_SELECTION);
             panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
         });
         // Sobald der Download fertig ist, hängt der Datenbestand an der Auswahl (Auftragsmeldung, kein Zeitgeber).
@@ -102,7 +141,7 @@ class ExportPanelTest {
             assertThat(panel[0].exportBlocked("pdf")).isNull();
             assertThat(panel[0].files.getText()).startsWith("Noch nichts exportiert");
             panel[0].exportAs(job, "markdown-package");
-            assertThat(panel[0].exportBlocked("pdf")).as("ein Export je Download zugleich")
+            assertThat(panel[0].exportBlocked("pdf")).as("eine Datei je Auswahl zugleich")
                     .contains("wird gerade erzeugt");
         });
         await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".zip")));
@@ -121,22 +160,27 @@ class ExportPanelTest {
         SwingUtilities.invokeAndWait(() -> panel[0].exportAs(job, "analysis"));
         await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".json")));
         assertThat(list(out)).hasSize(3);
-        // Die Format-Knöpfe geben aus dem Bestand aus (ADR 0029): der Auftrag liest nur den Cache; da sich nichts
-        // geändert hat, kommt der fertige Download zurück und die Datei entsteht sofort aus seinem Datenbestand.
+        await(() -> panel[0].exportBlocked("pdf") == null);
+        // Die Format-Knöpfe geben aus dem Bestand aus (ADR 0029): der Daten-Auftrag liest nur den Cache; da sich
+        // nichts geändert hat, kommt der fertige Download zurück, und „Datei erzeugen“ läuft als eigener Auftrag.
         SwingUtilities.invokeAndWait(() -> {
             panel[0].output("pdf");
-            assertThat(panel[0].exportBlocked("pdf")).as("eine Ausgabe je Auswahl zugleich").contains("wird gerade erzeugt");
+            assertThat(panel[0].exportBlocked("pdf")).as("eine Datei je Auswahl zugleich").contains("wird gerade erzeugt");
         });
         await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".pdf")));
         await(() -> panel[0].exportBlocked("pdf") == null);
         assertThat(list(out)).hasSize(4);
+        assertThat(workspace.jobs()).filteredOn(j -> j.type() == JobType.CONVERSION).hasSize(4)
+                .allMatch(j -> j.state() == JobState.COMPLETED);
+        // Der Download von der Quelle und die eine Ausgabe aus dem Bestand; keine weitere je Format.
+        assertThat(workspace.jobs()).filteredOn(j -> j.type() == JobType.EXPORT).hasSize(2)
+                .anyMatch(j -> "true".equals(j.parameter("holdings")));
         // Eine Seite derselben Quelle hat keinen eigenen Download: „Noch nicht geladen“, der Datenbestand des Space
-        // gilt nicht für sie.
+        // gilt nicht für sie; der Knopf bleibt frei und lädt erst (Angelo 16.11.2026).
         SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("handbuch", space, "x",
                 "Seite x")));
         await(() -> panel[0].shownDataset() == null);
-        SwingUtilities.invokeAndWait(() ->
-                assertThat(panel[0].exportBlocked("pdf")).isEqualTo("kein Datenbestand vorhanden"));
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].exportBlocked("pdf")).isNull());
     }
 
     /** Stand = jüngster fertiger Download genau dieser Auswahl; ein Seiten-Download zählt nicht für den Space. */
