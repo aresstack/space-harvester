@@ -340,7 +340,13 @@ final class ChangeLogDialog {
                 base.spaceKey(), from, null, 0, ChangeFilter.MAX_LIMIT);
         Background.run(() -> current.entries(filter), entries -> {
             if (ticket == request) {
-                prepend(entries.entries());
+                if (entries.total() > entries.entries().size()) {
+                    // Mehr neue Zeilen als ein Abruf fasst (große Erstbefüllung): Einsetzen ließe darunter eine
+                    // Lücke, deshalb die erste Seite neu lesen.
+                    load(0);
+                } else {
+                    prepend(entries.entries());
+                }
             }
         }, error -> {
             if (ticket == request) {
