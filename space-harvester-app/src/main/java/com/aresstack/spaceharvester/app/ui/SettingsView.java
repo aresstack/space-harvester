@@ -623,6 +623,7 @@ public final class SettingsView implements View {
             cache.add(SettingDialogs.BACKGROUND_TITLE, settings.sync().backgroundFill()
                     ? "an · " + settings.sync().backgroundParallelism() + " gleichzeitig" : "aus");
             cache.add(SettingDialogs.CHANGE_LOG_RETENTION, SettingDialogs.changeLogRetention(c.changeLog()));
+            cache.add(SettingDialogs.SHOW_AFTER_UPDATE, c.changeLog().showAfterUpdate() ? "an" : "aus");
         }
         runtime.reset();
         AppRuntime current = context.runtime();

@@ -745,6 +745,8 @@ final class SettingDialogs {
     static final int MAX_AMOUNT = 9_999;
     static final String CHANGE_LOG_RETENTION = "Änderungsprotokoll aufbewahren";
     static final String UNLIMITED = "Unbegrenzt";
+    /** ADR 0030, Abschnitt 6: öffnet nach einem Update dessen Änderungen, fasst nie von selbst zusammen. */
+    static final String SHOW_AFTER_UPDATE = "Nach dem Update Änderungen anzeigen";
 
     /** „1 Jahr“, „90 Tage“ oder „unbegrenzt“ für die Übersicht unter Einstellungen › Cache. */
     static String changeLogRetention(com.aresstack.spaceharvester.application.configuration.ChangeLogSettings log) {
@@ -820,6 +822,7 @@ final class SettingDialogs {
         // Aufbewahrung des Änderungsprotokolls (ADR 0030): Zahl plus Einheit, Standard ein Jahr, auch unbegrenzt.
         DurationField changeLog = DurationField.withYears(UNLIMITED, MAX_AMOUNT);
         changeLog.value(cache.changeLog().retention());
+        JComboBox<String> showAfterUpdate = onOff(cache.changeLog().showAfterUpdate());
 
         String globally = global ? "" : "; wie global: ";
         Rows rows = new Rows();
@@ -857,6 +860,8 @@ final class SettingDialogs {
             rows.add(CHANGE_LOG_RETENTION, changeLog, "So lange bleiben die Zeilen des Änderungsprotokolls (Einsicht "
                     + "unter Einstellungen › Cache); „" + UNLIMITED + "“ behält alles. Die gespeicherten Seiten "
                     + "betrifft das nicht");
+            rows.add(SHOW_AFTER_UPDATE, showAfterUpdate, "Öffnet nach jeder manuellen Synchronisierung die "
+                    + "Updates der Quelle; zusammengefasst wird nur auf Wunsch");
         }
         rows.visible(parallel, global);
         if (global) {
@@ -885,7 +890,8 @@ final class SettingDialogs {
             boolean always = chosenStrategy.get() == RefreshStrategy.ALWAYS_CHECK_VERSION;
             return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
                     always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value(),
-                    new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(changeLog.value()));
+                    new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(changeLog.value(),
+                            ON.equals(showAfterUpdate.getSelectedItem())));
         };
         Supplier<SyncSettings> syncDraft = () -> new SyncSettings(ON.equals(events.getSelectedItem()),
                 changeSearch.value(), sync.spaces(), ON.equals(beforeSearch.getSelectedItem()), retention.value(),

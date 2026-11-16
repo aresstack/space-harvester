@@ -1472,6 +1472,28 @@ public final class Workspace {
         return harvester.changeLog().report(caller, sourceId, updateId);
     }
 
+    /** Ob ein Chat-Modell für Update-Zusammenfassungen eingestellt ist (ADR 0030, Abschnitt 5). */
+    public boolean changeSummariesAvailable() {
+        return harvester.changeLog().summariesAvailable();
+    }
+
+    /**
+     * Die gespeicherte Zusammenfassung eines Updates, wie diese App sie sehen darf; leer ohne, wenn verfallen oder wenn
+     * eine eingegangene Seite nicht sichtbar ist. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
+            String sourceId, String updateId) {
+        return harvester.changeLog().summary(caller, sourceId, updateId);
+    }
+
+    /**
+     * Startet „Zusammenfassen“ für ein Update als Auftrag (ADR 0030); nur auf Wunsch. Fertig meldet sich das Ergebnis
+     * über {@link #subscribeChangeLog(String, com.aresstack.spaceharvester.application.changelog.ChangeLogListener)}.
+     */
+    public JobStatus summarizeUpdate(String sourceId, String updateId) {
+        return harvester.changeLog().summarize(caller, sourceId, updateId);
+    }
+
     /**
      * Meldet einen Empfänger für neue Zeilen und Marken im Änderungsprotokoll einer Quelle an (ADR 0027/0030),
      * gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann lesen.

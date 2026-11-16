@@ -357,6 +357,9 @@ final class SetupWizard {
         summary.add("Proxy", proxyMode);
         summary.add("Serverzertifikate", settings.tls().describe());
         summary.add(SettingDialogs.RETRY_TITLE, SettingDialogs.retrySummary(settings.jobLimits().retry()));
+        // Einstellbar unter Cache › „Alle Quellen anpassen“ (ADR 0030): öffnet nach einem Update dessen Änderungen.
+        summary.add(SettingDialogs.SHOW_AFTER_UPDATE, settings.cache() != null
+                && settings.cache().changeLog().showAfterUpdate() ? "an" : "aus");
         summary.add("Text-Modell", blank(settings.ai().chatModel()));
         int judged = settings.terms().synonyms().maxJudgedPairs();
         summary.add(AiSettingsPanel.JUDGED_PAIRS_LABEL,

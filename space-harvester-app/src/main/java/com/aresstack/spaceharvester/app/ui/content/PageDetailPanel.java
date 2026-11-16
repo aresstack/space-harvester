@@ -406,6 +406,7 @@ public final class PageDetailPanel extends JPanel {
         images.onStatus(text -> tabStatus(IMAGES, text));
         references.onStatus(text -> tabStatus(REFERENCES, text));
         statementsView.onStatus(text -> tabStatus(STATEMENTS, text));
+        sourceView.onStatus(text -> tabStatus(READING, text));
         graphView.onStatus(text -> tabStatus(GRAPH, text));
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
         feedback.statusLine((text, tone) -> context.events().publish(

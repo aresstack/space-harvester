@@ -172,6 +172,8 @@ public final class MainWindow implements AppContext.Navigator {
         context.events().subscribe(StatusMessageEvent.class, this::showStatus);
         context.onChange(ignored -> updateStatus());
         updateStatus();
+        // „Nach dem Update Änderungen anzeigen“ (ADR 0030): eine neue Marke öffnet die Updates ihrer Quelle.
+        UpdateFollower.install(context, this::openSource, content::shownSource);
     }
 
     /** Öffnet das rahmenlose Fenster; Schließen beendet die Laufzeit (Rückfrage bei laufenden Aufträgen). */

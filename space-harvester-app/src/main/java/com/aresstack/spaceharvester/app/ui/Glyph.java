@@ -33,7 +33,9 @@ public enum Glyph implements Icon {
     STAR,
     /** Gelb gefüllter Stern: Favorit bzw. „nur Favoriten“. */
     STAR_FILLED,
-    CLOUD, CHECK_CIRCLE, SYNC, WARNING, LOCK, CIRCLE_FULL, CIRCLE_HALF, CIRCLE_EMPTY;
+    CLOUD, CHECK_CIRCLE, SYNC, WARNING, LOCK, CIRCLE_FULL, CIRCLE_HALF, CIRCLE_EMPTY,
+    /** „Zusammenfassen“ (ADR 0030): drei Textzeilen, oben rechts ein Funkeln für die KI. */
+    SUMMARIZE;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -98,6 +100,20 @@ public enum Glyph implements Icon {
                     arrow.lineTo(8, 10.5);
                     arrow.lineTo(12, 6);
                     g.draw(arrow);
+                }
+                case SUMMARIZE -> {
+                    g.draw(new Line2D.Double(2, 6, 8.5, 6));
+                    g.draw(new Line2D.Double(2, 9.5, 12, 9.5));
+                    g.draw(new Line2D.Double(2, 13, 9.5, 13));
+                    // Vierzackiges Funkeln, gefüllt.
+                    Path2D spark = new Path2D.Double();
+                    spark.moveTo(12.5, 0.8);
+                    spark.quadTo(12.9, 2.9, 15, 3.3);
+                    spark.quadTo(12.9, 3.7, 12.5, 5.8);
+                    spark.quadTo(12.1, 3.7, 10, 3.3);
+                    spark.quadTo(12.1, 2.9, 12.5, 0.8);
+                    spark.closePath();
+                    g.fill(spark);
                 }
                 case PULSE -> {
                     // Pulslinie für die Diagnose: flach, Ausschlag hoch und tief, flach.

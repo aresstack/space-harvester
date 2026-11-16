@@ -97,6 +97,11 @@ public final class ContentView implements View {
     }
 
     /** Die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle im Explorer, ADR 0030). */
+    /** Die Quelle, deren Updates gerade zu sehen sind, sonst {@code null}. */
+    public String shownSource() {
+        return detail.showsSource() ? detail.sourceView().sourceId() : null;
+    }
+
     public void openSource(String sourceId, String title) {
         if (!Objects.equals(sourceId, this.sourceId) || !detail.showsSource()) {
             detail.showSource(sourceId, title);
