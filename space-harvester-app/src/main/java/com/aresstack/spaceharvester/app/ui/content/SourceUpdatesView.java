@@ -68,8 +68,8 @@ final class SourceUpdatesView extends JPanel {
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
     static final String SUMMARIZING = "Wird zusammengefasst …";
-    static final String SUMMARIZE_TIP = "Lässt das Chat-Modell das gewählte Update als Auftrag zusammenfassen; nur "
-            + "Seiten mit KI-Freigabe";
+    static final String SUMMARIZE_TIP = "Update zusammenfassen";
+    static final String RESUMMARIZE_TIP = "Zusammenfassung neu erstellen";
     static final String NO_MODEL = "Kein Chat-Modell eingestellt; unter Einstellungen › Modelle wählen";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
@@ -81,8 +81,13 @@ final class SourceUpdatesView extends JPanel {
     private final JPanel reportBody = new JPanel();
     private final JComponent reportScroll;
     private final BusyOverlay busy;
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton summarize = Comic.button(SUMMARIZE,
-            SUMMARIZE_TIP);
+    /** Werkzeug oben rechts in der Tab-Zeile; der Tooltip beschreibt nur. */
+    private final com.aresstack.spaceharvester.app.ui.IconButton summarize =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE,
+                    SUMMARIZE_TIP);
+    /** Sichtbarer Einstieg im Bericht, solange das Update noch keine Zusammenfassung hat. */
+    private final JLabel summarizeEntry = new JLabel(SUMMARIZE, com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE,
+            JLabel.LEFT);
     private Consumer<String> onStatus = text -> { };
     private Consumer<ReportedPage> onOpen = page -> { };
     private ZoneId zone = ZoneId.systemDefault();
@@ -117,8 +122,14 @@ final class SourceUpdatesView extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
-        head.action(summarize).copy(this::copyText);
+        head.tool(summarize).copy(this::copyText);
         summarize.addActionListener(e -> summarize());
+        summarizeEntry.setFont(Comic.semiBold(13f));
+        summarizeEntry.setForeground(Comic.BLUE);
+        summarizeEntry.setIconTextGap(6);
+        summarizeEntry.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        clickable(this::summarize, "Das Chat-Modell fasst dieses Update zusammen; nur Seiten mit KI-Freigabe",
+                summarizeEntry);
         head.tool(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
@@ -295,10 +306,12 @@ final class SourceUpdatesView extends JPanel {
         ChangeUpdate update = shown != null && shown.update().id().equals(selected) ? shown.update()
                 : entry(updates, selected);
         boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
-        summarize.setText(summary == null ? SUMMARIZE : RESUMMARIZE);
+        String tip = !available ? NO_MODEL : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
         summarize.setVisible(sourceId != null);
         summarize.setEnabled(possible && available && running == null);
-        summarize.setToolTipText(available ? SUMMARIZE_TIP : NO_MODEL);
+        summarize.setToolTipText(tip);
+        summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
+        summarizeEntry.setVisible(summary == null && summarize.isEnabled());
         boolean mine = running != null && Objects.equals(running.sourceId(), sourceId)
                 && Objects.equals(running.updateId(), selected);
         if (mine != busy.isBusy()) {
@@ -458,6 +471,8 @@ final class SourceUpdatesView extends JPanel {
         reportBody.add(Box.createVerticalStrut(10));
         if (summary != null) {
             renderSummary(found);
+        } else {
+            add(reportBody, summarizeEntry);
         }
         if (update.initial()) {
             add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
@@ -830,7 +845,19 @@ final class SourceUpdatesView extends JPanel {
     }
 
     String summarizeLabel() {
-        return summarize.getText();
+        return summarize.getAccessibleContext().getAccessibleName();
+    }
+
+    /** Ob der Einstieg „Zusammenfassen“ im Bericht zu sehen ist. */
+    boolean summarizeEntryShown() {
+        return summarizeEntry.isVisible() && summarizeEntry.getParent() == reportBody;
+    }
+
+    void clickSummarizeEntry() {
+        for (java.awt.event.MouseListener listener : summarizeEntry.getMouseListeners()) {
+            listener.mouseClicked(new MouseEvent(summarizeEntry, MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, 1, 1, false,
+                    MouseEvent.BUTTON1));
+        }
     }
 
     void clickSummarize() {

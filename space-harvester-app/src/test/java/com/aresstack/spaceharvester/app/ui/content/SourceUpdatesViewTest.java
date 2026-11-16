@@ -164,10 +164,13 @@ class SourceUpdatesViewTest {
 
         assertThat(view.summarizeOffered()).isTrue();
         assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
+        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.SUMMARIZE_TIP);
+        assertThat(view.summarizeEntryShown()).as("sichtbarer Einstieg im Bericht").isTrue();
         assertThat(view.reportTexts()).doesNotContain("Zusammenfassung");
 
         view.clickUpdate("10.11.2026, 08:00 · angelo");
         assertThat(view.summarizeOffered()).as("Erstbefüllung").isFalse();
+        assertThat(view.summarizeEntryShown()).isFalse();
         assertThat(actions.summarizeCalls).as("nie von selbst").isZero();
     }
 
@@ -176,10 +179,11 @@ class SourceUpdatesViewTest {
         view.source("wiki", "Confluence HaVdB");
         view.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        view.clickSummarize();
+        view.clickSummarizeEntry();
 
         assertThat(actions.summarizeCalls).isEqualTo(1);
         assertThat(view.busy()).as("BusyOverlay über dem Bericht").isTrue();
+        assertThat(view.summarizeEntryShown()).isFalse();
         assertThat(view.summarizeOffered()).as("nie zwei zugleich").isFalse();
         assertThat(status).contains(SourceUpdatesView.SUMMARIZING);
         view.clickUpdate("10.11.2026, 08:00 · angelo");
@@ -194,6 +198,8 @@ class SourceUpdatesViewTest {
         assertThat(texts).containsSubsequence("Zusammenfassung", "Erstellt am 16.11.2026, 19:00 mit gpt-test",
                 "Das Betriebshandbuch wurde überarbeitet.", "→ Betriebshandbuch", "Geändert (1)");
         assertThat(view.summarizeLabel()).isEqualTo(SourceUpdatesView.RESUMMARIZE);
+        assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.RESUMMARIZE_TIP);
+        assertThat(view.summarizeEntryShown()).as("mit Zusammenfassung nur noch das Werkzeug oben").isFalse();
         assertThat(status).last().isEqualTo("Zusammenfassung erstellt");
         assertThat(view.copyText()).contains("Zusammenfassung (Erstellt am").contains("überarbeitet");
 
@@ -253,6 +259,7 @@ class SourceUpdatesViewTest {
 
         assertThat(view.summarizeOffered()).isFalse();
         assertThat(view.summarizeTip()).isEqualTo(SourceUpdatesView.NO_MODEL);
+        assertThat(view.summarizeEntryShown()).isFalse();
     }
 
     /** Bildschirmfoto der Quellenseite zur Sichtprüfung; nur mit der Umgebungsvariable {@code SCREENSHOTS_DIR}. */
@@ -264,6 +271,7 @@ class SourceUpdatesViewTest {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             view.source("wiki", "Confluence HaVdB");
             view.clickUpdate("16.11.2026, 18:30 · angelo");
+            AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-einstieg.png"));
             view.clickSummarize();
             AnalysisTabsScreenshotTest.write(view, out.resolve("quellenseite-zusammenfassen.png"));
             actions.finishNow(JobState.COMPLETED);

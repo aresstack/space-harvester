@@ -22,9 +22,14 @@ class UpdateFollowerTest {
 
     private final List<String> opened = new ArrayList<>();
     private boolean enabled = true;
+    /** Was die App gerade zeigt: die Updates dieser Quelle, sonst {@code null}. */
+    private String showing;
     private final FakeFeed feed = new FakeFeed();
     private final UpdateFollower follower = new UpdateFollower(() -> enabled,
-            (sourceId, title) -> opened.add(sourceId + "|" + title), new UpdateFollower.Runner() {
+            (sourceId, title) -> {
+                opened.add(sourceId + "|" + title);
+                showing = sourceId;
+            }, () -> showing, new UpdateFollower.Runner() {
                 @Override
                 public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
                     try {
@@ -74,6 +79,24 @@ class UpdateFollowerTest {
         javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(opened).isEmpty();
         assertThat(feed.reads).as("ausgeschaltet liest nichts").isZero();
+    }
+
+    @Test
+    void severalSourcesAtOnceOpenOnlyTheFirstUntilTheUserChoosesSomethingElse() throws Exception {
+        follower.attach(feed);
+        feed.updates = List.of(mark(ATTACHED.plusSeconds(60), false));
+
+        feed.listener.changed("wiki");
+        feed.listener.changed("dev");
+        feed.listener.changed("ops");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(opened).as("die übrigen drängen sich nicht auf").containsExactly("wiki|Confluence HaVdB");
+
+        showing = null; // der Benutzer wählt etwas anderes
+        feed.updates = List.of(mark(ATTACHED.plusSeconds(120), false));
+        feed.listener.changed("dev");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(opened).containsExactly("wiki|Confluence HaVdB", "dev|Confluence HaVdB");
     }
 
     @Test

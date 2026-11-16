@@ -65,13 +65,19 @@ final class UpdateFollower {
     private final BiConsumer<String, String> open;
     private final Runner runner;
     private final Supplier<Instant> clock;
+    /** Die Quelle, deren Updates gerade zu sehen sind, sonst {@code null}; nur auf dem EDT gelesen. */
+    private final Supplier<String> showing;
+    /** Die zuletzt von selbst geöffnete Quelle; nur auf dem EDT. */
+    private String opened;
     /** Je Quelle die jüngste Marke, die schon berücksichtigt ist. */
     private final Map<String, Instant> seen = new ConcurrentHashMap<>();
     private volatile Feed feed;
     private volatile Instant since = Instant.MIN;
     private Subscription subscription = Subscription.NONE;
 
-    UpdateFollower(BooleanSupplier enabled, BiConsumer<String, String> open, Runner runner, Supplier<Instant> clock) {
+    UpdateFollower(BooleanSupplier enabled, BiConsumer<String, String> open, Supplier<String> showing, Runner runner,
+                   Supplier<Instant> clock) {
+        this.showing = Objects.requireNonNull(showing, "showing");
         this.enabled = Objects.requireNonNull(enabled, "enabled");
         this.open = Objects.requireNonNull(open, "open");
         this.runner = Objects.requireNonNull(runner, "runner");
@@ -82,8 +88,8 @@ final class UpdateFollower {
      * Folgt den Updates der jeweils laufenden App: meldet sich bei jedem Wechsel der Laufzeit (Start, neu geladene
      * Konfiguration) an der neuen an.
      */
-    static UpdateFollower install(AppContext context, BiConsumer<String, String> open) {
-        UpdateFollower follower = new UpdateFollower(() -> showAfterUpdate(context), open, Background::run,
+    static UpdateFollower install(AppContext context, BiConsumer<String, String> open, Supplier<String> showing) {
+        UpdateFollower follower = new UpdateFollower(() -> showAfterUpdate(context), open, showing, Background::run,
                 Instant::now);
         AppRuntime[] known = new AppRuntime[1];
         Consumer<AppContext> attach = ignored -> {
@@ -138,13 +144,25 @@ final class UpdateFollower {
                 return;
             }
             seen.put(sourceId, found.mark());
-            String title = found.title();
             if (SwingUtilities.isEventDispatchThread()) {
-                open.accept(sourceId, title);
+                show(sourceId, found.title());
             } else {
-                SwingUtilities.invokeLater(() -> open.accept(sourceId, title));
+                SwingUtilities.invokeLater(() -> show(sourceId, found.title()));
             }
         }, failure -> { });
+    }
+
+    /**
+     * Werden mehrere Quellen auf einmal aktualisiert, öffnet nur die erste: Solange ihre von selbst geöffneten Updates
+     * noch zu sehen sind, drängt sich keine weitere Quelle auf. Hat der Benutzer seitdem etwas anderes gewählt, öffnet
+     * die nächste Marke wieder.
+     */
+    private void show(String sourceId, String title) {
+        if (opened != null && opened.equals(showing.get())) {
+            return;
+        }
+        opened = sourceId;
+        open.accept(sourceId, title);
     }
 
     private record Found(Instant mark, String title) {
