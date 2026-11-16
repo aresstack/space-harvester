@@ -41,6 +41,8 @@ import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.enterpriseai.source.api.RestQuerySource;
+import com.aresstack.enterpriseai.source.api.RestResponse;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Attachment;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Page;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Session;
@@ -105,7 +107,7 @@ import java.util.regex.Pattern;
 public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
         AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ChangeListingSource,
         ResourceMetadataSource,
-        StoredContentSource, AttachmentListSource, AttachmentSearchSource {
+        StoredContentSource, AttachmentListSource, AttachmentSearchSource, RestQuerySource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -880,6 +882,22 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
         }
         return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
                 mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
+    }
+
+    /**
+     * Eine GET-Abfrage unter {@code /rest/} der Quelle mit ihrer Anmeldung ({@link RestQuerySource}), etwa
+     * Versionsliste, Kommentare, Properties, Restriktionen oder Analytics einer Seite; die Antwort kommt unverändert.
+     * Eine gesperrte Seite ist hier {@code ACCESS_DENIED}, nicht {@code NOT_FOUND}: der Aufrufer sieht so, warum die
+     * Abfrage scheiterte.
+     */
+    @Override
+    public RestResponse restGet(final String pathAndQuery) throws KnowledgeSourceException {
+        return withSession(new Operation<RestResponse>() {
+            @Override
+            public RestResponse run(Session session) throws KnowledgeSourceException {
+                return client.restGet(session, pathAndQuery);
+            }
+        });
     }
 
     /**

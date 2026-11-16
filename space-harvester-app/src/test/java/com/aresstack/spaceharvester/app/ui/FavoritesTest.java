@@ -45,6 +45,17 @@ class FavoritesTest {
                 List.of()))).isFalse();
         assertThat(again.contains("wiki", "OPS", "4711")).isFalse();
         assertThat(new Favorites(() -> file).all()).hasSize(1);
+
+        // Eine ganze Quelle (Angelo, 16.11.2026): ohne Space, überlebt den Neustart, getrennt vom Space-Favoriten.
+        assertThat(again.toggle(Favorites.Favorite.source("wiki", "Confluence"))).isTrue();
+        assertThat(again.contains("wiki", null, null)).isTrue();
+        assertThat(again.contains("wiki", "OPS", null)).isTrue();
+        Favorites third = new Favorites(() -> file);
+        assertThat(third.all()).extracting(Favorites.Favorite::isSource).containsExactly(false, true);
+        assertThat(third.all().get(1).title()).isEqualTo("Confluence");
+        assertThat(third.toggle(Favorites.Favorite.source("wiki", "Anderer Titel"))).isFalse();
+        assertThat(third.contains("wiki", null, null)).isFalse();
+        assertThat(third.contains("wiki", "OPS", null)).isTrue();
     }
 
     @Test

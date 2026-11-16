@@ -10,8 +10,10 @@ import com.aresstack.spaceharvester.application.export.ExportScope;
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
 import com.aresstack.spaceharvester.application.export.PageFailure;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.output.convert.ExportFileJson;
@@ -21,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -407,6 +410,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
     }
 
+    private record WrittenPage(PageKey key, PageMetadata metadata, String metadataHash, String attributesHash,
+                               String rawName, String mediaType, String nativeFormat, Instant retrievedAt) {
+    }
+
     private final class FileSession implements Session {
 
         private final String exportId;
@@ -426,6 +433,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final boolean replacing;
         /** Die geschriebenen Seiten; beim Austausch wandern nur ihre Bilder und Lese-Ansichten mit. */
         private final java.util.Set<String> pageIds = new java.util.HashSet<>();
+        /** Snapshot ohne Bytes je geschriebener Seite; die Bytes liegen schon unter {@code raw/}. */
+        private final Map<String, WrittenPage> writtenPages = new HashMap<>();
 
         FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin,
                     boolean replacing) throws IOException {
@@ -470,6 +479,9 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 reserve(bytes.length);
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
                 Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
+                writtenPages.put(pageId, new WrittenPage(snapshot.key(), snapshot.metadata(), snapshot.metadataHash(),
+                        snapshot.attributesHash(), rawName, payload.mediaType(), payload.nativeFormat(),
+                        snapshot.retrievedAt()));
                 boolean parseable = PageJson.isJson(payload.mediaType(), bytes);
                 if (!parseable) {
                     warnings.add("Payload von Seite " + pageId + " ist kein lesbares JSON; nur unter " + rawName
@@ -495,6 +507,24 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 pages.write('\n');
             } catch (IOException e) {
                 throw new UncheckedIOException("Seite " + pageId + " nicht schreibbar", e);
+            }
+        }
+
+        @Override
+        public Optional<PageSnapshot> written(PageKey key) {
+            WrittenPage page = writtenPages.get(key.pageId());
+            if (page == null || !page.key().equals(key)) {
+                return Optional.empty();
+            }
+            try {
+                byte[] bytes = Files.readAllBytes(work.resolve(page.rawName()));
+                return Optional.of(new PageSnapshot(page.key(), page.metadata(), page.metadataHash(),
+                        page.attributesHash(), new NativePayload(bytes, page.mediaType(), page.nativeFormat()),
+                        page.retrievedAt()));
+            } catch (NoSuchFileException e) {
+                return Optional.empty();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Seite " + key.pageId() + " nicht wieder lesbar", e);
             }
         }
 
@@ -724,11 +754,50 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     }
 
     private static void move(Path from, Path to) throws IOException {
-        try {
-            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(from, to);
+        retryWhileLocked(() -> {
+            try {
+                Files.move(from, to, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(from, to);
+            }
+        }, Thread::sleep);
+    }
+
+    /** Wartezeiten zwischen den Versuchen, einen gesperrten Ordner umzubenennen: zusammen gut zehn Sekunden. */
+    static final long[] LOCK_RETRY_MILLIS = {100, 200, 400, 800, 1500, 2500, 5000};
+
+    /**
+     * Unter Windows sperrt jeder offene Griff in einem Ordner sein Umbenennen ({@link AccessDeniedException}), etwa
+     * Virenscanner, Suchindex oder Explorer, die eine eben geschriebene Datei ansehen. Das gibt sich meist nach
+     * Sekundenbruchteilen; erst wenn es nach allen Versuchen noch gesperrt ist, scheitert das Ablegen.
+     */
+    static void retryWhileLocked(IoAction action, Sleeper sleeper) throws IOException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                action.run();
+                return;
+            } catch (AccessDeniedException e) {
+                if (attempt >= LOCK_RETRY_MILLIS.length) {
+                    throw e;
+                }
+                try {
+                    sleeper.sleep(LOCK_RETRY_MILLIS[attempt]);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
         }
+    }
+
+    @FunctionalInterface
+    interface IoAction {
+        void run() throws IOException;
+    }
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long millis) throws InterruptedException;
     }
 
     @Override

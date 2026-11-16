@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.AnalyticsSettings;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -101,6 +102,10 @@ public final class AppContext {
 
         void openSpace(String sourceId, String spaceKey);
 
+        /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
+        default void openSource(String sourceId, String title) {
+        }
+
         /**
          * Zeigt Inhalte › Export für einen Space bzw. eine Startseite samt Unterseiten (Angelo, 13.11.2026): wählt
          * sie zuerst im Explorer, dann den Reiter; ohne eigene Umsetzung nur den Space.
@@ -150,6 +155,14 @@ public final class AppContext {
 
         /** Wie {@link #downloadPage(String, String, String)}, ohne {@code withChildren} nur die Seite selbst. */
         default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
+        }
+
+        /**
+         * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
+         * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie
+         * auf der Quellenkarte), mit {@code pageId} die Seite samt Unterseiten neu aus der Quelle.
+         */
+        default void refresh(String sourceId, String spaceKey, String pageId) {
         }
 
         void search(String text);
@@ -401,6 +414,37 @@ public final class AppContext {
 
     private final Object consoleLock = new Object();
     private volatile ConsoleOutput consoleWanted;
+
+    /**
+     * Speichert den Export „Analytics“ ({@code space-harvester-app.analytics}) in der Datei, ohne Neustart der
+     * Laufzeit: der nächste Export liest die Werte aus den Einstellungen. Schnell aufeinanderfolgende Änderungen
+     * schreiben immer die jüngste zuletzt.
+     */
+    public void analytics(AnalyticsSettings analytics, Runnable done, Consumer<Throwable> failed) {
+        analyticsWanted = analytics;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                AnalyticsSettings wanted = analyticsWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withAnalytics(configFile, new ConfigFileEditor.Draft(text, null),
+                        wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withAnalytics(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile AnalyticsSettings analyticsWanted;
 
     /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab

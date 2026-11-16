@@ -58,6 +58,9 @@ class ConfigurationParityTest {
                 vision-model: vision-model
                 external-processing-sources:
                   - confluence
+              cache:
+                change-log:
+                  retention: P2Y
               sync:
                 interval: 30m
                 spaces:
@@ -165,6 +168,11 @@ class ConfigurationParityTest {
         SynonymBudget budget = service2.terms().synonyms();
         assertThat(app.terms().synonyms()).isEqualTo(budget);
         assertThat(budget).isEqualTo(new SynonymBudget(300, 100, 50));
+
+        // ADR 0030: Aufbewahrung des Änderungsprotokolls, beim Dienst über withSyncRules.
+        assertThat(app.cache().changeLog()).isEqualTo(service2.changeLog())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(
+                        java.time.Duration.ofDays(730)));
 
         // ADR 0026, AP9a: Analysen je Anhang, beim Dienst ebenfalls über withSyncRules.
         assertThat(app.enrichment()).isEqualTo(service2.enrichment())

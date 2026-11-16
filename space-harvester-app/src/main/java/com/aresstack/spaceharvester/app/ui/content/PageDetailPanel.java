@@ -110,6 +110,13 @@ public final class PageDetailPanel extends JPanel {
     private static final String PAGE = "page";
     private static final String EXPORT_CARD = "export";
     private static final String CHAT_CARD = "chat";
+    /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
+    private static final String SOURCE_CARD = "source";
+    static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
+    static final String EMPTY_SOURCE = "Für eine Wissensquelle gibt es hier nichts. Ihre Änderungen stehen unter "
+            + "„Updates“.";
+    /** Name des ersten Hauptreiters, solange eine Quelle gewählt ist (sonst „Leseansicht“). */
+    static final String UPDATES = "Updates";
     private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
@@ -120,7 +127,7 @@ public final class PageDetailPanel extends JPanel {
     private String pageCard = EMPTY;
     private final ExportPanel export;
     private final ChatPanel chat;
-    private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
+    private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
@@ -131,6 +138,7 @@ public final class PageDetailPanel extends JPanel {
     private final StatementsTab statementsView;
     /** Unterreiter „Analysen → Graph“ (#499 F): fokussierte Teilgraphen, geladen erst beim Anzeigen. */
     private final KnowledgeGraphTab graphView;
+    private final SourceUpdatesView sourceView;
     private final JLabel state = Comic.muted(" ");
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
@@ -176,6 +184,29 @@ public final class PageDetailPanel extends JPanel {
                     "Als Favorit markieren");
     /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat; für den Favoriten. */
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
+    /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
+    private final JPanel heading = new JPanel(null) {
+        @Override
+        public void doLayout() {
+            java.awt.Dimension t = title.getPreferredSize();
+            int width = Math.min(t.width, getWidth());
+            title.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            return title.getPreferredSize();
+        }
+
+        @Override
+        public java.awt.Dimension getMinimumSize() {
+            return new java.awt.Dimension(0, title.getPreferredSize().height);
+        }
+    };
+    /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
+    private final com.aresstack.spaceharvester.app.ui.IconButton more =
+            new com.aresstack.spaceharvester.app.ui.IconButton(new DownTriangle(), MORE_ACTIONS);
+    static final String MORE_ACTIONS = "Weitere Aktionen zur Seite";
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
@@ -237,13 +268,22 @@ public final class PageDetailPanel extends JPanel {
         this.context = context;
         this.statementsView = new StatementsTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context.parserModel());
+        this.sourceView = new SourceUpdatesView(() -> context.runtime() == null ? null
+                : context.runtime().workspace());
+        sourceView.onOpen(changed -> {
+            if (context.navigator() != null) {
+                context.navigator().openPage(changed.sourceId(), changed.pageId());
+            } else {
+                load(changed.sourceId(), changed.pageId(), false);
+            }
+        });
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
         this.chat = new ChatPanel(context);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
-        title.setFont(Comic.semiBold(17f));
+        title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
 
         reader.setEditable(false);
@@ -413,33 +453,11 @@ public final class PageDetailPanel extends JPanel {
                 showDetails();
             }
         });
-        // Die Überschrift ist nur so breit wie ihr Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
-        JPanel heading = new JPanel(null) {
-            @Override
-            public void doLayout() {
-                java.awt.Dimension t = title.getPreferredSize();
-                title.setBounds(0, (getHeight() - t.height) / 2, Math.min(t.width, getWidth()), t.height);
-            }
-
-            @Override
-            public java.awt.Dimension getPreferredSize() {
-                return title.getPreferredSize();
-            }
-
-            @Override
-            public java.awt.Dimension getMinimumSize() {
-                return new java.awt.Dimension(0, title.getPreferredSize().height);
-            }
-        };
+        // Die Überschrift steht mittig in der Zeile der Bereichsanzeige (Angelo, 16.11.2026) und ist nur so breit wie ihr
+        // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
-        titleRow.setOpaque(false);
-        // Zurück und Vor wie im Browser vor dem Titel.
-        titleRow.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
-        titleRow.add(heading, BorderLayout.CENTER);
-        titleRow.add(Comic.row(star, bookmark, browse), BorderLayout.EAST);
-        header.add(titleRow, BorderLayout.NORTH);
+        more.addActionListener(e -> moreMenu().show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
@@ -452,6 +470,7 @@ public final class PageDetailPanel extends JPanel {
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
         deck.add(chat, CHAT_CARD);
+        deck.add(sourceView, SOURCE_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -554,13 +573,58 @@ public final class PageDetailPanel extends JPanel {
 
     /** Seite oder Hinweis merken; sichtbar wird es erst, wenn weder „Export“ noch „Chat“ gewählt ist. */
     private void showCard(String card) {
+        if (!SOURCE_CARD.equals(card)) {
+            // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
+            sourceView.source(null, null);
+            empty.setText(EMPTY_PAGE);
+            nameFirstTab(false);
+        }
         pageCard = card;
         showDeck();
     }
 
     private void showDeck() {
         String selected = tabs.selected();
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : pageCard);
+        String page = pageCard;
+        if (SOURCE_CARD.equals(page)) {
+            // Auf der Quellenseite zeigt nur „Leseansicht“ etwas (die Updates); die übrigen Seitenreiter bleiben leer.
+            page = READING.equals(selected) ? SOURCE_CARD : EMPTY;
+        }
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : page);
+    }
+
+    /**
+     * Die Quellenseite einer gewählten Wissensquelle (ADR 0030): leert die Seitenreiter und zeigt unter „Leseansicht“
+     * die Updates der Quelle; Export und Chat folgen ohnehin der Auswahl.
+     */
+    public void showSource(String sourceId, String sourceTitle) {
+        clear();
+        title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        empty.setText(EMPTY_SOURCE);
+        sourceView.source(sourceId, sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        nameFirstTab(true);
+        pageCard = SOURCE_CARD;
+        showDeck();
+    }
+
+    /**
+     * Der erste Hauptreiter heißt auf der Quellenseite „Updates“ (Symbol: Kreispfeile), sonst „Leseansicht“; Tooltip,
+     * zugänglicher Name und Symbol wechseln, die Umschaltung bleibt dieselbe.
+     */
+    private void nameFirstTab(boolean source) {
+        javax.swing.AbstractButton first = tabs.button(READING);
+        if (first == null) {
+            return;
+        }
+        String name = source ? UPDATES : READING;
+        first.setIcon(source ? PageTabIcons.updates() : PageTabIcons.reading());
+        first.setToolTipText(name);
+        first.getAccessibleContext().setAccessibleName(name);
+    }
+
+    /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */
+    public void showReading() {
+        tabs.select(READING);
     }
 
     /** Der Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links. */
@@ -574,6 +638,15 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
+    SourceUpdatesView sourceView() {
+        return sourceView;
+    }
+
+    /** Ob gerade die Quellenseite (ADR 0030) gezeigt wird. */
+    boolean showsSource() {
+        return SOURCE_CARD.equals(pageCard);
+    }
+
     public KnowledgeGraphTab graph() {
         return graphView;
     }
@@ -1923,11 +1996,71 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
+        more.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+    }
+
+    /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
+    JComponent headerTitle() {
+        return heading;
+    }
+
+    /** Stern und das Dreieck mit den weiteren Aktionen, rechts in der Zeile der Bereichsanzeige. */
+    JComponent headerActions() {
+        return Comic.row(star, more);
+    }
+
+    /** Zurück und Vor für die Statuszeile des Hauptfensters. */
+    JComponent navigation() {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
+        row.setOpaque(false);
+        row.add(backButton.compact());
+        row.add(forwardButton.compact());
+        return row;
+    }
+
+    javax.swing.AbstractButton moreButton() {
+        return more;
+    }
+
+    /** „Lesezeichen kopieren“ und „Im Browser öffnen“; je Eintrag so wählbar wie die Aktion gerade gilt. */
+    javax.swing.JPopupMenu moreMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        for (ComposerButton action : List.of(bookmark, browse)) {
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(action.getText());
+            item.setFont(Comic.regular(13f));
+            item.setToolTipText(action.getToolTipText());
+            item.setEnabled(action.isEnabled());
+            item.addActionListener(e -> action.doClick());
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** Gefülltes Dreieck nach unten, in der Vordergrundfarbe des Knopfs. */
+    private static final class DownTriangle implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.isEnabled() ? c.getForeground() : Comic.MUTED);
+            g2.fillPolygon(new int[] {x + 3, x + 13, x + 8}, new int[] {y + 5, y + 5, y + 11}, 3);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
     }
 
     Breadcrumbs breadcrumbs() {

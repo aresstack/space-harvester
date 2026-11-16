@@ -102,7 +102,7 @@ public final class SourcesView implements View {
     final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen",
             "Je angehaktem Space sofort einen Download starten; exportiert wird unter Aufträge");
     /** Kreispfeil am Space: vollständiger Abgleich des gewählten bzw. der angehakten Spaces, sofort angewendet. */
-    final ComposerButton reconcile = Comic.button(Glyph.REFRESH, "Bestand abgleichen",
+    final ComposerButton reconcile = Comic.button(Glyph.SYNC, "Bestand abgleichen",
             "Gewählten Space (oder alle angehakten) vollständig mit der Quelle abgleichen: neue Seiten aufnehmen, "
                     + "geänderte aktualisieren, verschobene neu zuordnen, gelöschte entfernen; je Space ein Auftrag");
     /** Nur den Seitenkatalog anlegen, ohne Inhalte; für Spaces, die der Cache noch nicht kennt. */
@@ -1139,19 +1139,30 @@ public final class SourcesView implements View {
      * Der Knopf bleibt ausgegraut, bis jeder gestartete Auftrag beendet ist, auch gescheitert; das Ergebnis steht in
      * der Statuszeile und unter Aufträge.
      */
-    private void catchUp(AppSettings.SourceEntry entry) {
-        String id = entry.id();
+    /**
+     * Holt die Änderungen einer Quelle nach, je Space ein Auftrag; {@code spaceKeys} leer heißt alle Spaces, die die
+     * Verbindung kennt. Auch aus dem Baum (Kreispfeile an Quelle oder Space, Angelo 16.11.2026). Die ganze Quelle
+     * läuft nur einmal zugleich (die Karte zeigt es); einzelne Spaces starten unabhängig davon, damit kein Klick
+     * verloren geht (Codex zu #802).
+     *
+     * @return ob gestartet wurde; {@code false} ohne Spaces oder solange die ganze Quelle schon nachholt
+     */
+    boolean catchUp(String id, List<String> spaceKeys) {
         AppRuntime runtime = context.runtime();
-        List<String> keys = context.connection(id).spaces().stream().map(Partition::key).toList();
+        List<String> keys = spaceKeys.isEmpty()
+                ? context.connection(id).spaces().stream().map(Partition::key).toList() : spaceKeys;
         if (runtime == null || keys.isEmpty()) {
             feedback.info("Keine Spaces bekannt", "Zuerst die Verbindung prüfen; danach holen die Kreispfeile je Space "
                     + "die Änderungen nach.");
-            return;
+            return false;
         }
-        if (!catchingUp.add(id)) {
-            return;
+        boolean whole = spaceKeys.isEmpty();
+        if (whole) {
+            if (!catchingUp.add(id)) {
+                return false;
+            }
+            cards.values().forEach(SourceCard::update);
         }
-        cards.values().forEach(SourceCard::update);
         // In der Betriebsart, die unter Synchronisierung für die Quelle gilt (Standard: nur katalogisieren).
         SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
                 : SyncMode.CATALOG_ONLY;
@@ -1168,6 +1179,17 @@ public final class SourcesView implements View {
             }
             return new CatchUpStarted(jobs, failed);
         }, started -> {
+            if (!whole) {
+                // Einzelne Spaces: keine Karten-Sperre, keine Beobachtung; der Auftrag steht unter Aufträge.
+                if (started.failed().isEmpty()) {
+                    feedback.success(Texts.count(started.jobs().size(), "Space wird", "Spaces werden") + " nachgeholt");
+                } else {
+                    feedback.warning(Texts.count(started.failed().size(), "Space", "Spaces") + " nicht gestartet",
+                            started.failed().entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                    .collect(java.util.stream.Collectors.joining("\n")));
+                }
+                return;
+            }
             if (started.jobs().isEmpty()) {
                 finishCatchUp(id, new CatchUpResult(0, 0, started.failed()));
                 return;
@@ -1180,7 +1202,14 @@ public final class SourcesView implements View {
             CatchUpWatch watch = new CatchUpWatch(runtime, id, started);
             watches.put(id, watch);
             watch.begin();
-        }, error -> finishCatchUp(id, error));
+        }, error -> {
+            if (whole) {
+                finishCatchUp(id, error);
+            } else {
+                feedback.problem(error);
+            }
+        });
+        return true;
     }
 
     private void finishCatchUp(String id, CatchUpResult result) {
@@ -1562,7 +1591,8 @@ public final class SourcesView implements View {
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
         /** Kreispfeile vor den drei Punkten: Änderungen seit dem letzten bestätigten Stand je Space nachholen. */
-        final IconButton sync = new IconButton(Glyph.REFRESH, SYNC_CARD_TOOLTIP);
+        // Zwei sich verfolgende Kreispfeile, das übliche Aktualisieren-Symbol (Angelo, 16.11.2026).
+        final IconButton sync = new IconButton(Glyph.SYNC, SYNC_CARD_TOOLTIP);
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
 
         private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
@@ -1601,7 +1631,7 @@ public final class SourcesView implements View {
             });
             sync.addActionListener(e -> {
                 select(entry.id());
-                SourcesView.this.catchUp(entry);
+                SourcesView.this.catchUp(entry.id(), List.of());
             });
             more.addActionListener(e -> {
                 select(entry.id());

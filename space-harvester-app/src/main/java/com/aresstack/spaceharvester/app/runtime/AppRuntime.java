@@ -253,7 +253,7 @@ public final class AppRuntime implements AutoCloseable {
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
                 NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
                 .withLocalFiles(settings.localFiles()).withTerms(settings.terms())
-                .withEnrichment(settings.enrichment());
+                .withEnrichment(settings.enrichment()).withChangeLog(settings.cache().changeLog());
     }
 
     /**

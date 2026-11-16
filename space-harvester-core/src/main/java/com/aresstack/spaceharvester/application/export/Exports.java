@@ -29,6 +29,7 @@ import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.SyncUnavailableException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -478,21 +479,28 @@ public class Exports {
         private final Set<String> retry;
         /** Nur „Neu erzwingen“: auch unveränderte Seiten neu laden. */
         private final boolean reloadAll;
+        /** Bilder- und Anhängeaufträge, die gerade anhalten; der Lauf ersetzt das Artefakt erst, wenn sie stehen. */
+        private final List<String> stopping;
 
         ExportTask(ExportRequest request, List<ExportConverter> selected) {
-            this(request, selected, null, false);
+            this(request, selected, null, false, List.of());
         }
 
-        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll) {
+        ExportTask(ExportRequest request, List<ExportConverter> selected, Set<String> retry, boolean reloadAll,
+                   List<String> stopping) {
             this.request = request;
             this.selected = selected;
             this.retry = retry == null ? null : Set.copyOf(retry);
             this.reloadAll = reloadAll;
+            this.stopping = List.copyOf(stopping);
         }
 
         @Override
         public java.util.concurrent.CompletionStage<Void> start(JobContext context) {
-            return JobTask.blocking(running -> export(running, request, selected, retry, reloadAll)).start(context);
+            return JobTask.blocking(running -> {
+                awaitStopped(running, request.owner(), stopping);
+                export(running, request, selected, retry, reloadAll);
+            }).start(context);
         }
     }
 
@@ -505,8 +513,8 @@ public class Exports {
      * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
      *                                                                               dieser ID gibt
-     * @throws JobNotResumableException wenn der Export noch wartet oder läuft oder seine Bilder oder Anhänge noch
-     *                                  beschafft werden
+     * @throws JobNotResumableException wenn der Export noch wartet oder läuft; laufende Bilder- und Anhängeaufträge
+     *                                  hält der Aufruf an und setzt sie danach fort
      * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
      */
     public JobStatus forceRefresh(String exportId, String owner,
@@ -522,21 +530,68 @@ public class Exports {
         if (!status.state().terminal()) {
             throw new JobNotResumableException(exportId, "der Export wartet oder läuft noch");
         }
-        requireNoFollowUp(exportId, owner);
         purgeQuietly();
         writer.requireCapacity();
         ExportRequest request = access.apply(request(status)).withRefresh(true);
+        // Erst prüfen, ob der Lauf angenommen wird: sonst hielten Bilder und Anhänge umsonst an.
+        jobs.requireRerunnable(exportId, owner);
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), null,
-                true));
+                true, pauseFollowUps(exportId, owner)));
     }
 
-    private void requireNoFollowUp(String exportId, String owner) {
-        if (followUpRunning(exportId, owner)) {
-            // Das Artefakt wird ersetzt; ein laufender Bilder- oder Anhängeauftrag liest es gerade.
-            throw new JobNotResumableException(exportId, "Bilder oder Anhänge dieses Exports werden noch beschafft; "
-                    + "erst anhalten oder abwarten");
+    /**
+     * Hält die laufenden Bilder- und Anhängeaufträge dieses Exports an, damit ↻ und ⟲ immer gehen (ADR 0025): Das
+     * Artefakt wird ersetzt, und ein laufender Auftrag liest es gerade. Nach dem Lauf laufen sie im selben Eintrag neu
+     * ({@link #onPublished}); was sie schon abgelegt haben, kommt dann aus dem Speicher. Wartende bleiben, wie sie
+     * sind, und starten beim Veröffentlichen.
+     *
+     * @return die angehaltenen Aufträge; der Lauf wartet, bis sie stehen
+     */
+    private List<String> pauseFollowUps(String exportId, String owner) {
+        List<String> stopping = new ArrayList<>();
+        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
+            for (JobStatus job : jobs.list(owner, type)) {
+                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()
+                        && job.stage() != com.aresstack.spaceharvester.application.jobs.JobStage.AWAITING) {
+                    try {
+                        jobs.pause(job.id(), owner);
+                        stopping.add(job.id());
+                    } catch (UnknownJobException e) {
+                        // gerade gelöscht: hält nichts auf
+                    }
+                }
+            }
+        }
+        return stopping;
+    }
+
+    /** Wartet, bis die angehaltenen Folgeaufträge stehen; ein Abbruch des Exports greift dabei jederzeit. */
+    private void awaitStopped(JobContext context, String owner, List<String> stopping) {
+        if (stopping.isEmpty()) {
+            return;
+        }
+        context.phase(COMPONENT, "Bilder und Anhänge anhalten");
+        for (String jobId : stopping) {
+            while (true) {
+                context.checkpoint();
+                try {
+                    // Auch eine nach der Anhaltefrist abgekoppelte Arbeit muss geendet haben, sonst liest sie noch.
+                    jobs.awaitSettled(jobId, owner, STOP_CHECK);
+                    break;
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // weiter warten und auf Abbruch prüfen
+                } catch (UnknownJobException e) {
+                    break;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(context.jobId());
+                }
+            }
         }
     }
+
+    /** Wie lange {@link #awaitStopped} am Stück wartet, bevor es wieder auf einen Abbruch prüft. */
+    private static final java.time.Duration STOP_CHECK = java.time.Duration.ofMillis(500);
 
     /**
      * „Nur Fehler neu versuchen“ für den eigenen Export im selben Eintrag (ADR 0025): lädt nur die Seiten nach, die
@@ -547,8 +602,8 @@ public class Exports {
      * @param access erneuert Lese- und Exportprüfung mit dem aktuellen Zugang des Aufrufers
      * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es keinen eigenen Export mit
      *                                                                               dieser ID gibt
-     * @throws JobNotResumableException wenn der Export noch läuft, nicht fertig ist oder seine Bilder oder Anhänge noch
-     *                                  beschafft werden
+     * @throws JobNotResumableException wenn der Export noch läuft oder nicht fertig ist; laufende Bilder- und
+     *                                  Anhängeaufträge hält der Aufruf an und setzt sie danach fort
      * @throws ExportStorageFullException                                             wenn die Exportablage voll ist
      */
     public JobStatus retryFailed(String exportId, String owner,
@@ -563,25 +618,13 @@ public class Exports {
                     ? "der Export ist nicht fertig geworden; Fortsetzen holt den Rest"
                     : "der Export wartet oder läuft noch");
         }
-        requireNoFollowUp(exportId, owner);
         purgeQuietly();
         writer.requireCapacity();
         Set<String> pageIds = writer.retryPages(exportId).orElse(Set.of());
         ExportRequest request = access.apply(request(status));
+        jobs.requireRerunnable(exportId, owner);
         return jobs.rerun(exportId, owner, new ExportTask(request, converters.select(request.formats()), pageIds,
-                false));
-    }
-
-    /** Ob für diesen Export ein Bilder- oder Anhängeauftrag wartet oder läuft. */
-    private boolean followUpRunning(String exportId, String owner) {
-        for (JobType type : List.of(JobType.ASSETS, JobType.ATTACHMENTS)) {
-            for (JobStatus job : jobs.list(owner, type)) {
-                if (exportId.equals(job.parameter(ExportAssetCollection.EXPORT_ID)) && !job.state().terminal()) {
-                    return true;
-                }
-            }
-        }
-        return false;
+                false, pauseFollowUps(exportId, owner)));
     }
 
     /**
@@ -622,7 +665,8 @@ public class Exports {
         }
         // Ein angehaltenes Nachladen oder Neu-Erzwingen setzt als solches fort, nicht als gewöhnlicher Lauf.
         return jobs.resume(exportId, owner, task -> task instanceof ExportTask export
-                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll)
+                ? new ExportTask(access.apply(export.request), export.selected, export.retry, export.reloadAll,
+                        export.stopping)
                 : task);
     }
 
@@ -1244,7 +1288,7 @@ public class Exports {
             return;
         }
         String inputSha256 = inputSha256(tree, exported, scope.rootPageId());
-        ConversionInput input = new CachedConversionInput(context, scope, tree, exported);
+        ConversionInput input = new CachedConversionInput(context, session, scope, tree, exported);
         for (ExportConverter converter : selected) {
             context.checkpoint();
             context.phase(COMPONENT, "Konvertieren (" + converter.format() + ")");
@@ -1347,16 +1391,23 @@ public class Exports {
         void visit(String pageId, int depth);
     }
 
-    /** Liest die exportierten Seiten einzeln aus dem Cache und besteht darauf, dass sie unverändert sind. */
+    /**
+     * Liest die exportierten Seiten einzeln aus dem Cache. Hat der Cache eine Seite seit dem Schreiben geändert, etwa
+     * weil ein Abgleich sie gerade neu geladen hat, kommt sie so aus dem Artefakt, wie sie geschrieben wurde: Formate
+     * und Datenbestand zeigen dieselbe Fassung, und der Export scheitert nicht an einer einzelnen Seite.
+     */
     private final class CachedConversionInput implements ConversionInput {
 
         private final JobContext context;
+        private final ExportArtifactWriter.Session session;
         private final ExportScope scope;
         private final PageTree tree;
         private final Map<String, ListedPage> exported;
 
-        CachedConversionInput(JobContext context, ExportScope scope, PageTree tree, Map<String, ListedPage> exported) {
+        CachedConversionInput(JobContext context, ExportArtifactWriter.Session session, ExportScope scope,
+                              PageTree tree, Map<String, ListedPage> exported) {
             this.context = context;
+            this.session = session;
             this.scope = scope;
             this.tree = tree;
             this.exported = exported;
@@ -1404,13 +1455,19 @@ public class Exports {
             walk(tree, (pageId, depth) -> {
                 context.checkpoint();
                 ListedPage listed = exported.get(pageId);
-                CachedPage page = cache.page(listed.header().key())
+                Optional<CachedPage> unchanged = cache.page(listed.header().key())
                         .filter(cached -> cached.generation().id().equals(scope.generation().id()))
                         .filter(cached -> cached.snapshot().payload().rawSha256().equals(listed.rawSha256()))
-                        .filter(cached -> cached.header().metadataHash().equals(listed.header().metadataHash()))
+                        .filter(cached -> cached.header().metadataHash().equals(listed.header().metadataHash()));
+                if (unchanged.isPresent()) {
+                    action.accept(new ConvertiblePage(unchanged.get().header(), unchanged.get().snapshot(), depth));
+                    return;
+                }
+                PageSnapshot written = session.written(listed.header().key())
+                        .filter(snapshot -> snapshot.payload().rawSha256().equals(listed.rawSha256()))
                         .orElseThrow(() -> new JobFailedException("CHANGED_DURING_EXPORT",
                                 "Seite " + pageId + " wurde während der Konvertierung im Cache geändert"));
-                action.accept(new ConvertiblePage(page.header(), page.snapshot(), depth));
+                action.accept(new ConvertiblePage(listed.header(), written, depth));
             });
         }
     }

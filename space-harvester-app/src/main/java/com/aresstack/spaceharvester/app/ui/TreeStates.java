@@ -66,9 +66,17 @@ final class TreeStates {
     private final Set<String> staleSources = new HashSet<>();
     private AppRuntime subscribed;
 
+    /** Erfährt je Core-Meldung „Space hat neuen Stand“ Quelle und Space ({@code null} = alle Spaces der Quelle). */
+    private java.util.function.BiConsumer<String, String> spaceListener = (source, space) -> { };
+
     TreeStates(AppContext context, Runnable changed) {
         this.context = context;
         this.changed = changed;
+    }
+
+    /** Der Baum liest nach einer solchen Meldung seine geladenen Knoten des Space nach (Codex zu #802). */
+    void onSpaceChanged(java.util.function.BiConsumer<String, String> listener) {
+        this.spaceListener = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     static String key(String sourceId, String spaceKey) {
@@ -253,6 +261,7 @@ final class TreeStates {
         if (runtime == null || runtime != subscribed) {
             return;
         }
+        spaceListener.accept(sourceId, spaceKey == null || spaceKey.isEmpty() ? null : spaceKey);
         if (spaceKey == null || spaceKey.isEmpty()) {
             // Alle Spaces der Quelle: Übersichten vergessen, Stand neu lesen; aufgeklappte lesen beim nächsten Zeichnen.
             List<String> open = new ArrayList<>();
@@ -299,6 +308,56 @@ final class TreeStates {
         }
         Set<String> running = loading.get(key);
         return node(summary.inventoried() ? summary.counts() : null, running != null && !running.isEmpty());
+    }
+
+    static final String TIP_NOT_ALL = "nicht alle Spaces geladen";
+
+    /**
+     * Das Zeichen über alle Wissensquellen (Kopfzeile des Explorers, Angelo 16.11.2026): die Summe der Stände aller
+     * inventarisierten Spaces dieser Quellen; Kreispfeile, solange irgendwo geladen wird; ohne jede Inventur leer.
+     * Voll (grün) nur, wenn jede Quelle und jeder bekannte Space inventarisiert und vollständig ist: ein Space ohne
+     * Inventur, ein Space im Baum ohne Stand oder eine Quelle ganz ohne Stand drücken auf „halb“.
+     *
+     * @param treeSpaces je Quelle die Spaces, die der Baum kennt (aufgeklappte Quellen); sonst leer
+     */
+    Badge all(List<String> sourceIds, Map<String, Set<String>> treeSpaces) {
+        return all(sourceIds, summaries, loading, treeSpaces);
+    }
+
+    /** Wie {@link #all(List, Map)}, auf gegebenen Ständen (Schlüssel {@link #key}); für Tests. */
+    static Badge all(List<String> sourceIds, Map<String, SpaceSummary> summaries, Map<String, Set<String>> loading,
+                     Map<String, Set<String>> treeSpaces) {
+        HoldingCounts counts = null;
+        boolean running = false;
+        boolean complete = !sourceIds.isEmpty();
+        for (String sourceId : sourceIds) {
+            String prefix = sourceId + "\u0000";
+            Set<String> known = new HashSet<>();
+            for (Map.Entry<String, SpaceSummary> entry : summaries.entrySet()) {
+                if (!entry.getKey().startsWith(prefix)) {
+                    continue;
+                }
+                known.add(entry.getValue().spaceKey());
+                if (entry.getValue().inventoried()) {
+                    counts = counts == null ? entry.getValue().counts() : counts.plus(entry.getValue().counts());
+                } else {
+                    complete = false;
+                }
+            }
+            if (known.isEmpty() || !known.containsAll(treeSpaces.getOrDefault(sourceId, Set.of()))) {
+                complete = false;
+            }
+            for (Map.Entry<String, Set<String>> entry : loading.entrySet()) {
+                if (entry.getKey().startsWith(prefix) && !entry.getValue().isEmpty()) {
+                    running = true;
+                }
+            }
+        }
+        Badge badge = node(counts, running);
+        if (!complete && badge.kind() == Kind.FULL) {
+            return new Badge(Kind.PARTIAL, Glyph.CIRCLE_HALF, Comic.INK, badge.tooltip() + " · " + TIP_NOT_ALL);
+        }
+        return badge;
     }
 
     /** Das Zeichen einer Seite; mit Kindern nach ihrem Teilbaum, sonst nach ihrem eigenen Zustand. */

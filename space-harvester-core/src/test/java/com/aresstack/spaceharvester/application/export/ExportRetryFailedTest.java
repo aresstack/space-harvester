@@ -10,9 +10,9 @@ import com.aresstack.spaceharvester.application.jobcontrol.JobActions;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
-import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
@@ -191,15 +192,23 @@ class ExportRetryFailedTest {
     }
 
     @Test
-    void whileImagesOrAttachmentsAreStillCollectedTheArtifactStays() {
+    void whileImagesOrAttachmentsAreStillCollectedARetryPausesThemAndReplacesTheArtifactOnlyAfterwards()
+            throws Exception {
         JobStatus export = exportWithPage3Failing(dev());
-        jobs.submit(JobType.ASSETS, "confluence", "DEV", null, "client-a",
-                Map.of(ExportAssetCollection.EXPORT_ID, export.id()), context -> new CompletableFuture<>());
+        CompletableFuture<Void> collecting = new CompletableFuture<>();
+        JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "DEV", null, "client-a",
+                Map.of(ExportAssetCollection.EXPORT_ID, export.id()), context -> collecting);
 
-        assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.RETRY_FAILED))
-                .isInstanceOf(JobNotResumableException.class)
-                .hasMessageContaining("Bilder oder Anhänge");
-        assertThat(retried).isEmpty();
+        // ↻ geht immer (ADR 0025): die Bilder halten an, der Export wartet darauf, bevor er etwas ersetzt.
+        CompletableFuture<JobStatus> retry = CompletableFuture.supplyAsync(() ->
+                actions.perform(export.id(), "client-a", JobAction.RETRY_FAILED));
+        awaitPauseRequested(images.id());
+        assertThat(retried).as("nichts ersetzt, solange die Bilder noch lesen").isEmpty();
+        collecting.completeExceptionally(new JobCancelledException(images.id()));
+
+        assertThat(retry.get(10, TimeUnit.SECONDS).id()).isEqualTo(export.id());
+        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(retried).hasSize(1);
     }
 
     @Test
@@ -218,14 +227,49 @@ class ExportRetryFailedTest {
     }
 
     @Test
-    void forcingIsRefusedWhileImagesAreCollected() {
+    void forcingWhileAttachmentsAreCollectedPausesThemFirst() throws Exception {
         JobStatus export = exportWithPage3Failing(dev());
-        jobs.submit(JobType.ATTACHMENTS, "confluence", "DEV", null, "client-a",
+        CompletableFuture<Void> collecting = new CompletableFuture<>();
+        JobStatus documents = jobs.submit(JobType.ATTACHMENTS, "confluence", "DEV", null, "client-a",
+                Map.of(ExportAssetCollection.EXPORT_ID, export.id()), context -> collecting);
+
+        CompletableFuture<JobStatus> forced = CompletableFuture.supplyAsync(() ->
+                actions.perform(export.id(), "client-a", JobAction.FORCE_REFRESH));
+        awaitPauseRequested(documents.id());
+        assertThat(reloads).containsExactly(false);
+        collecting.completeExceptionally(new JobCancelledException(documents.id()));
+
+        assertThat(forced.get(10, TimeUnit.SECONDS).id()).isEqualTo(export.id());
+        assertThat(jobs.status(documents.id()).state()).isEqualTo(JobState.PAUSED);
+        assertThat(reloads).containsExactly(false, true);
+    }
+
+    @Test
+    void aRefreshThatCannotStartLeavesTheCollectorsRunning() {
+        JobStatus export = exportWithPage3Failing(dev());
+        JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "DEV", null, "client-a",
                 Map.of(ExportAssetCollection.EXPORT_ID, export.id()), context -> new CompletableFuture<>());
+        // Der eine Platz ist belegt: der Neustart wird nicht angenommen.
+        jobs.submit(JobType.EXPORT, "confluence", "OPS", "client-b", context -> new CompletableFuture<>());
+        for (int i = 0; i < 5; i++) {
+            jobs.submit(JobType.EXPORT, "confluence", "Q" + i, "client-b", context -> new CompletableFuture<>());
+        }
 
         assertThatThrownBy(() -> actions.perform(export.id(), "client-a", JobAction.FORCE_REFRESH))
-                .isInstanceOf(JobNotResumableException.class);
-        assertThat(reloads).containsExactly(false);
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException.class);
+        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(images.id()).lifecycle().key()).isNotEqualTo("PAUSE_REQUESTED");
+    }
+
+    /** Bis der Aufruf im anderen Thread das Anhalten angefordert hat; nur für diesen Test. */
+    private void awaitPauseRequested(String jobId) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!"PAUSE_REQUESTED".equals(jobs.status(jobId).lifecycle().key())) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("Anhalten nicht angefordert");
+            }
+            Thread.sleep(5);
+        }
     }
 
     @Test

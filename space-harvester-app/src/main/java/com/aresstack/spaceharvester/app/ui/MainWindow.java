@@ -99,6 +99,8 @@ public final class MainWindow implements AppContext.Navigator {
     private StatusLine statusLine;
     /** „Confluence verlangt einen Einmalcode“ ganz links in der Statuszeile, solange eine Anforderung offen ist. */
     private SignInNotice signInNotice;
+    /** „Proxy-Skript seit … nicht erneuert“ daneben, solange das Erneuern des PAC-Skripts scheitert. */
+    private ProxyNotice proxyNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     private AppContext.Section current = AppContext.Section.SEARCH;
@@ -137,6 +139,8 @@ public final class MainWindow implements AppContext.Navigator {
                 explorer.revealPage(position);
             }
         });
+        // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
+        content.onLocate(explorer::reveal);
         // Die Diagnose ist kein eigener Bereich mehr, sondern die Seite „Diagnose“ der Einstellungen.
         settings.diagnosis(statusView);
         views.put(AppContext.Section.SOURCES, sources);
@@ -312,13 +316,16 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
+        jobStatus.navigation(content.navigation());
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
             activities.showSignIn(request);
         });
-        statusLine = new StatusLine(jobStatus.model(), signInNotice, viewStatus, status, jobStatus,
-                new CopyrightLink());
+        // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
+        proxyNotice = new ProxyNotice(context);
+        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
+                status, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -443,6 +450,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
         content.tabsActive(section == AppContext.Section.CONTENT);
+        jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {
@@ -474,6 +482,12 @@ public final class MainWindow implements AppContext.Navigator {
         show(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
         explorer.reveal(sourceId, spaceKey);
+    }
+
+    @Override
+    public void openSource(String sourceId, String title) {
+        show(AppContext.Section.CONTENT);
+        content.openSource(sourceId, title);
     }
 
     @Override
@@ -532,6 +546,26 @@ public final class MainWindow implements AppContext.Navigator {
                     Comic.MUTED);
             showJob(started.jobs().get(0).id());
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    /** Kreispfeile im Baum: Quelle oder Space holen nach wie die Quellenkarte, eine Seite liest ihren Teilbaum neu. */
+    @Override
+    public void refresh(String sourceId, String spaceKey, String pageId) {
+        if (pageId == null) {
+            if (sources.catchUp(sourceId, spaceKey == null ? List.of() : List.of(spaceKey))) {
+                notice("Nachholen wird gestartet …", Comic.MUTED);
+            } else {
+                notice("Nachholen nicht gestartet: keine Spaces bekannt, oder die Quelle holt schon nach",
+                        Comic.ORANGE);
+            }
+            return;
+        }
+        notice("Aktualisierung wird gestartet …", Comic.MUTED);
+        Downloads.refreshSubtree(context, sourceId, spaceKey, pageId, started -> {
+            notice("Aktualisierung der Seite samt Unterseiten gestartet", Comic.MUTED);
+            showJob(started.jobs().get(0).id());
+        }, error -> notice("Aktualisierung ließ sich nicht starten: " + Problems.describe(error).title(),
+                Comic.RED));
     }
 
     /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */

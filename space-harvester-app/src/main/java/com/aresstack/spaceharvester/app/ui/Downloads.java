@@ -71,4 +71,16 @@ public final class Downloads {
         Background.run(() -> new Started(List.of(runtime.workspace().startExport(sourceId, spaceKey, pageId,
                 withChildren ? null : 0, List.of(FORMAT))), List.of()), done, failed);
     }
+
+    /** Liest eine Seite samt Unterseiten neu aus der Quelle (ein Auftrag, {@code Workspace.refreshSubtree}). */
+    public static void refreshSubtree(AppContext context, String sourceId, String spaceKey, String pageId,
+                                      Consumer<Started> done, Consumer<Throwable> failed) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            failed.accept(new IllegalStateException("Die Laufzeit ist nicht gestartet"));
+            return;
+        }
+        Background.run(() -> new Started(List.of(runtime.workspace().refreshSubtree(sourceId, spaceKey, pageId,
+                List.of(FORMAT))), List.of()), done, failed);
+    }
 }

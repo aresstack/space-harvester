@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.winproxy.ProxyConfiguration;
 import com.aresstack.winproxy.ProxyDiagnostics;
+import com.aresstack.winproxy.PacCacheStatus;
 import com.aresstack.winproxy.ProxyMode;
 import com.aresstack.winproxy.ProxyResult;
 import com.aresstack.winproxy.WindowsProxyResolver;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -22,6 +24,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
@@ -45,8 +48,12 @@ import org.slf4j.LoggerFactory;
  *       ({@link #displayUrl(String)}); auch Meldungen der Bibliothek werden so bereinigt, weil sie die Ziel-URL
  *       enthalten können. Das PAC-Skript selbst bekommt die URL unverändert.</li>
  *   <li>Routen werden {@link ProxySettings#cacheTtl()} lang gemerkt, Fehler {@link ProxySettings#failureTtl()} lang
- *       (höchstens {@value #MAX_CACHE_ENTRIES} Einträge). Die Bibliothek lädt das PAC-Skript bei jeder Auflösung neu;
- *       eine geänderte PAC-Datei wirkt also spätestens nach Ablauf des Eintrags.</li>
+ *       (höchstens {@value #MAX_CACHE_ENTRIES} Einträge). Scheitert die erneute Auflösung einer Route, die zuvor
+ *       gefunden wurde (z. B. PAC-Download mit Zeitüberschreitung), bleibt die zuletzt gültige Route und wird nach
+ *       {@link ProxySettings#failureTtl()} erneut versucht; UNAVAILABLE gibt es nur ohne gültige Vorgängerin. Das PAC-Skript selbst hält die Bibliothek
+ *       (ab 0.3.0) zwischengespeichert: Lebensdauer laut HTTP-Kopfzeilen des PAC-Servers, sonst 12 h; bei Ladefehler
+ *       bleibt das zuletzt gültige Skript ({@link #pacStatus()}). {@link #invalidate()} und {@link #routeFailed}
+ *       lassen es neu laden.</li>
  *   <li>Jede Auflösung läuft auf einem eigenen Pool von höchstens {@value #MAX_RESOLVER_THREADS} Threads mit der Frist
  *       {@link ProxySettings#resolveTimeout()}; ist der Pool voll oder die Frist überschritten, ist die Route
  *       UNAVAILABLE. Die erste Auflösung geschieht bei der ersten Anfrage, nie beim Start.</li>
@@ -54,13 +61,22 @@ import org.slf4j.LoggerFactory;
  *       Routen; wer diese Instanz hält, bekommt beim nächsten Verbindungsaufbau die neue Route.</li>
  * </ul>
  */
-public final class ProxyRoutes implements HttpRoutePort {
+public final class ProxyRoutes implements HttpRoutePort, RouteFailureListener {
 
     /** Zugriff auf die Bibliothek; Naht für Tests ohne PowerShell. */
     public interface Resolver {
         ProxyResult resolve(String url);
 
         ProxyDiagnostics diagnose(String url);
+
+        /** Lässt PAC-URL und PAC-Skript bei der nächsten Auflösung neu laden; Vorgabe: nichts. */
+        default void invalidatePac() {
+        }
+
+        /** Zustand des zwischengespeicherten PAC-Skripts, leer ohne PAC; Vorgabe: leer. */
+        default java.util.Optional<PacCacheStatus> pacStatus() {
+            return java.util.Optional.empty();
+        }
     }
 
     static final int MAX_CACHE_ENTRIES = 1024;
@@ -79,6 +95,12 @@ public final class ProxyRoutes implements HttpRoutePort {
     private volatile State state;
     private final LongSupplier clock;
     private final ThreadPoolExecutor pool;
+    /** Frühester Zeitpunkt, zu dem eine gescheiterte Proxy-Verbindung das PAC-Skript erneut neu laden lässt. */
+    private long nextPacReloadAt;
+    /** Wer über Änderungen des PAC-Zustands ({@link #pacState()}) Bescheid bekommt; kein Abfragen nötig (ADR 0027). */
+    private final List<Runnable> pacListeners = new CopyOnWriteArrayList<>();
+    /** Zuletzt gemeldeter PAC-Zustand; nur unter {@code pacListeners} als Sperre. */
+    private PacState lastPac = PacState.NONE;
     private final Map<String, Entry> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
@@ -135,6 +157,7 @@ public final class ProxyRoutes implements HttpRoutePort {
             cache.clear();
         }
         LOG.info("Proxy-Route umgestellt, Modus {}", modeName(settings.mode()));
+        pacChanged();
     }
 
     /** Prüft die Einstellungen und baut den Resolver der Bibliothek. */
@@ -153,6 +176,16 @@ public final class ProxyRoutes implements HttpRoutePort {
             @Override
             public ProxyDiagnostics diagnose(String url) {
                 return library.diagnose(url);
+            }
+
+            @Override
+            public void invalidatePac() {
+                library.invalidatePacCache();
+            }
+
+            @Override
+            public java.util.Optional<PacCacheStatus> pacStatus() {
+                return java.util.Optional.of(library.pacCacheStatus());
             }
         };
     }
@@ -277,13 +310,27 @@ public final class ProxyRoutes implements HttpRoutePort {
             }
         }
         HttpRoute route = resolve(current, url);
+        // Nur eine Auflösung lädt das PAC-Skript nach; danach kann sich sein Zustand geändert haben.
+        pacChanged();
         String shown = displayUrl(url);
         long ttl = (route.isUnavailable() ? settings.failureTtl() : settings.cacheTtl()).toMillis();
+        HttpRoute kept = null;
         synchronized (cache) {
             // Nach einem Wechsel nie die Route der alten Einstellungen merken.
             if (state == current) {
-                cache.put(url, new Entry(route, now + ttl));
+                Entry previous = cache.get(url);
+                if (route.isUnavailable() && previous != null && !previous.route.isUnavailable()) {
+                    // Zuletzt gültige Route behalten: ein kurz nicht erreichbarer WPAD-Server bricht keine
+                    // funktionierende Verbindung ab; nach failure-ttl wird erneut aufgelöst.
+                    kept = previous.route;
+                }
+                cache.put(url, new Entry(kept != null ? kept : route, now + ttl));
             }
+        }
+        if (kept != null) {
+            LOG.warn("Proxy-Route für {} ({}) nicht neu bestimmbar, zuletzt gültige bleibt: {} ({})", shown,
+                    modeName(settings.mode()), kept.describe(), route.describe());
+            return kept;
         }
         if (route.isUnavailable()) {
             LOG.warn("Proxy-Route für {} ({}) nicht bestimmbar: {}", shown, modeName(settings.mode()), route.describe());
@@ -293,11 +340,143 @@ public final class ProxyRoutes implements HttpRoutePort {
         return route;
     }
 
-    /** Vergisst alle gemerkten Routen, z. B. nach einem Netzwechsel. */
+    /** Vergisst alle gemerkten Routen und lässt das PAC-Skript neu laden, z. B. nach einem Netzwechsel. */
     public void invalidate() {
+        State current;
         synchronized (cache) {
             cache.clear();
+            current = state;
         }
+        current.resolver().invalidatePac();
+    }
+
+    /**
+     * Eine Verbindung über die gelieferte Proxy-Route ist gescheitert: die gemerkte Route dieses Ziels wird verworfen und
+     * das PAC-Skript beim nächsten Mal neu geladen, höchstens einmal je {@link ProxySettings#failureTtl()}, damit ein
+     * ausgefallener Proxy den PAC-Server nicht mit Abrufen überzieht. Scheitert das Neuladen, bleibt das zuletzt gültige
+     * Skript in Gebrauch.
+     */
+    @Override
+    public void routeFailed(URI target, HttpRoute route) {
+        if (target == null || route == null || !route.isProxy()) {
+            return;
+        }
+        State current = state;
+        if (fixedRoute(current.settings(), target.getHost()) != null) {
+            return;
+        }
+        String url = resolutionUrl(target);
+        long now = clock.getAsLong();
+        boolean reload;
+        synchronized (cache) {
+            if (state != current) {
+                return;
+            }
+            Entry cached = cache.get(url);
+            if (cached != null && cached.route.equals(route)) {
+                cache.remove(url);
+            }
+            reload = now >= nextPacReloadAt;
+            if (reload) {
+                nextPacReloadAt = now + Math.max(1, current.settings().failureTtl().toMillis());
+            }
+        }
+        if (reload) {
+            LOG.info("Verbindung über {} zu {} gescheitert, Proxy-Skript wird neu geladen", route.describe(),
+                    displayUrl(url));
+            current.resolver().invalidatePac();
+        }
+    }
+
+    /**
+     * Zustand des PAC-Skripts in einer Zeile, leer ohne PAC-Modus oder solange keines geladen wurde; mit
+     * {@code nicht erneuert seit …}, wenn das Erneuern scheitert und das zuletzt gültige Skript weiter gilt.
+     */
+    public Optional<String> pacStatus() {
+        return state.resolver().pacStatus()
+                .filter(status -> status.getPacUrl() != null || status.getRefreshFailingSince() > 0)
+                .map(ProxyRoutes::describePac);
+    }
+
+    /** {@code true}, solange das Erneuern des PAC-Skripts scheitert und das zuletzt gültige weiter gilt. */
+    public boolean pacStale() {
+        return state.resolver().pacStatus().map(PacCacheStatus::isStale).orElse(false);
+    }
+
+    /**
+     * Zustand des PAC-Skripts für Anzeigen (Angelo, 16.11.2026: „Wie erkenne ich, dass ich Probleme habe?“).
+     *
+     * @param stale        ob das Erneuern scheitert und das zuletzt gültige Skript weiter gilt
+     * @param failingSince seit wann das Erneuern scheitert, {@code null} sonst
+     * @param description  die Zeile aus {@link #pacStatus()} mit Grund, {@code null} ohne PAC
+     */
+    public record PacState(boolean stale, java.time.Instant failingSince, String description) {
+
+        /** Ohne PAC oder solange keines geladen wurde. */
+        public static final PacState NONE = new PacState(false, null, null);
+    }
+
+    /** Der aktuelle PAC-Zustand; {@link PacState#NONE} ohne PAC. */
+    public PacState pacState() {
+        return state.resolver().pacStatus()
+                .filter(status -> status.getPacUrl() != null || status.getRefreshFailingSince() > 0)
+                .map(status -> new PacState(status.isStale(), status.getRefreshFailingSince() > 0
+                        ? java.time.Instant.ofEpochMilli(status.getRefreshFailingSince()) : null,
+                        describePac(status)))
+                .orElse(PacState.NONE);
+    }
+
+    /**
+     * Meldet jede Änderung von {@link #pacState()}, etwa wenn das Erneuern des Skripts zu scheitern beginnt oder
+     * wieder gelingt; gemeldet wird auf dem Thread, der die Route auflöst. Das Schließen beendet die Meldungen.
+     */
+    public AutoCloseable onPacChange(Runnable listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
+        pacListeners.add(listener);
+        return () -> pacListeners.remove(listener);
+    }
+
+    /** Vergleicht den PAC-Zustand mit dem zuletzt gemeldeten und benachrichtigt bei Änderung. */
+    private void pacChanged() {
+        PacState now = pacState();
+        boolean changed;
+        synchronized (pacListeners) {
+            changed = !now.equals(lastPac);
+            lastPac = now;
+        }
+        if (changed) {
+            for (Runnable listener : pacListeners) {
+                try {
+                    listener.run();
+                } catch (RuntimeException e) {
+                    LOG.warn("PAC-Beobachter scheiterte: {}", e.toString());
+                }
+            }
+        }
+    }
+
+    static String describePac(PacCacheStatus status) {
+        java.time.format.DateTimeFormatter time = java.time.format.DateTimeFormatter.ofPattern("dd.MM. HH:mm")
+                .withZone(java.time.ZoneId.systemDefault());
+        StringBuilder text = new StringBuilder("Proxy-Skript ");
+        if (status.getPacUrl() != null) {
+            text.append(displayUrl(status.getPacUrl())).append(" geladen ")
+                    .append(time.format(java.time.Instant.ofEpochMilli(status.getLoadedAt())))
+                    .append(", gültig bis ").append(time.format(java.time.Instant.ofEpochMilli(status.getValidUntil())));
+        } else {
+            text.append("nicht geladen");
+        }
+        if (status.getRefreshFailingSince() > 0) {
+            text.append("; nicht erneuert seit ")
+                    .append(time.format(java.time.Instant.ofEpochMilli(status.getRefreshFailingSince())))
+                    .append(" (").append(status.getConsecutiveFailures()).append(" Versuche)");
+            if (status.getLastFailure() != null) {
+                text.append(": ").append(displayUrl(status.getLastFailure()));
+            }
+        }
+        return text.toString();
     }
 
     /**
@@ -323,6 +502,7 @@ public final class ProxyRoutes implements HttpRoutePort {
             if (diagnostics.getFailureDetail() != null && !diagnostics.getFailureDetail().isEmpty()) {
                 lines.add("Failure: " + scrub(settings, diagnostics.getFailureDetail(), url));
             }
+            pacStatus().ifPresent(lines::add);
             route = scrub(settings, toRoute(diagnostics.getResult()), url);
             lines.add("Result: " + route.describe() + " [" + diagnostics.getDurationMillis() + " ms]");
             return lines;

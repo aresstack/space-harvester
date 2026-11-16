@@ -56,7 +56,24 @@ public enum JobType {
      * Grenzen. Der bisherige Stand gilt, bis das neue Lesen Text liefert. Anhaltbar; ein neuer Lauf liest nur, was noch
      * fehlt. Eingeplant wie ein Folgeauftrag ({@link #followUp()}), damit er nie einen Abgleich oder Export aufhält.
      */
-    REREAD;
+    REREAD,
+    /**
+     * Datei in einem Zielformat (PDF, Word, Markdown, JSON …) aus dem Datenbestand eines Exports im Ausgabeordner
+     * erzeugen, als eigener Auftrag mit Status statt still im Hintergrund (Angelo 16.11.2026); wartet, bis sein Export
+     * erfolgreich endet ({@link Jobs#submitAfter}). Liest weder Cache noch Quelle.
+     */
+    CONVERSION,
+    /**
+     * „Confluence-Metadaten exportieren“ (Angelo 16.11.2026): je Seite der Auswahl Versionshistorie, Bearbeiter,
+     * Kommentare, Content Properties und Restriktionen über die dokumentierten REST-Schnittstellen der Quelle, als
+     * eigene JSON-Datei im Ausgabeordner; eigene Abrufe neben dem Snapshot, der Seitenexport bleibt unverändert.
+     */
+    METADATA_EXPORT,
+    /**
+     * „Analytics exportieren“ (Angelo 16.11.2026): Seitenaufrufe über die internen Endpunkte des
+     * Confluence-Analytics-Plugins, als eigene JSON-Datei; Fehler betreffen nur diesen Auftrag.
+     */
+    ANALYTICS_EXPORT;
 
     /**
      * Folgeauftrag eines Abgleichs oder Exports: startet erst, wenn kein Abgleich oder Export wartet, und belegt nie

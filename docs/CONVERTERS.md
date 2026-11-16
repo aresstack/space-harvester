@@ -181,6 +181,94 @@ gelesen oder umgewandelt wird dabei nichts Neues.
 - Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher
   Input-Hash ergibt dieselben Seiten, aber nicht unbedingt dieselben Abschnitte.
 
+## Confluence-Metadaten und Analytics aus der Quelle (Angelo 16.11.2026)
+
+Zwei Exporte, die anders als alle Formate oben nicht aus dem Datenbestand kommen, sondern die Quelle lesen: der
+Analyse-Export enthält die selbst erzeugten Analysedaten, diese beiden die Daten, die Confluence über eine Seite
+führt. Beide sind eigene Aufträge (`SourceQueryExports`, `JobType.METADATA_EXPORT` und `ANALYTICS_EXPORT`, App:
+Export-Reiter, Knöpfe rechts neben den Formaten; je gewähltem Space bzw. Teilbaum ein Auftrag) und schreiben je
+eine JSON-Datei in den Ausgabeordner, unsichtbar erzeugt, fertig umbenannt, nie überschrieben. Die Seiten kommen
+aus dem Bestand (alle dort bekannten Seiten der Auswahl), die Daten über `HarvestSource.restGet` mit der Anmeldung,
+Route und TLS-Einstellung der Quelle (`RestQuerySource` im Confluence-Adapter, nur Pfade unter `/rest/`). Nichts
+davon landet im Snapshot, in `header`, `attributes` oder im Cache: `metadataHash`, `attributesHash`, `rawSha256`
+und alle übrigen Exporte bleiben unverändert, der Seitenabruf wird nicht langsamer. Nur Confluence-Quellen bieten
+die Exporte an (`HarvestSource.restQueries()`); eine unerreichbare oder drosselnde Quelle beendet den Auftrag,
+ein Fehler je Seite oder Abschnitt steht in der Datei (`status` `error`, `kind`, `message`), die Seite zählt als
+„ohne Antwort“ und der Auftrag endet als unvollständig.
+
+### Confluence-Metadaten
+
+`confluence-metadaten-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-metadata-export/v1`.
+Je Seite fünf Abschnitte über die dokumentierten REST-Schnittstellen von Confluence Data Center
+(`ConfluenceMetadataQueries`), jede Antwort unverändert unter `data`, Listen über alle Seiten geblättert
+(`requests` zählt die Anfragen):
+
+| Abschnitt | Abfrage | Inhalt |
+|---|---|---|
+| `history` | `GET /rest/api/content/{id}/history?expand=lastUpdated,previousVersion,contributors.publishers.users` | Erstellung, letzte Änderung, Vorgängerversion, alle Bearbeiter |
+| `versions` | `GET /rest/experimental/content/{id}/version` | alle Versionen mit Nummer, Zeit, Autor, Änderungskommentar; experimentell, fehlt je Instanz (`NOT_FOUND`) |
+| `comments` | `GET /rest/api/content/{id}/child/comment?depth=all&expand=version,history.lastUpdated,extensions.resolution,extensions.inlineProperties` | Seiten- und Inline-Kommentare mit Erledigt-Status |
+| `properties` | `GET /rest/api/content/{id}/property` | Content Properties |
+| `restrictions` | `GET /rest/api/content/{id}/restriction/byOperation?expand=read.restrictions.user,…` | Lese- und Schreibrestriktionen mit Benutzern und Gruppen |
+
+```json
+{ "schema": "space-harvester/confluence-metadata-export/v1", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
+  "spaceKey": "DEV", "rootPageId": "100", "endpoints": { "history": "/rest/api/content/{id}/history?…", … },
+  "pages": [{ "pageId": "100",
+              "history": { "status": "ok", "requests": 1, "data": { … } },
+              "versions": { "status": "ok", "requests": 2, "data": [ … ] },
+              "comments": { "status": "error", "requests": 1, "kind": "ACCESS_DENIED", "message": "…" }, … }],
+  "summary": { "pages": 120, "withData": 119, "failed": 1 } }
+```
+
+Labels, Erstellung, letzte Änderung, letzter Bearbeiter und Änderungskommentar stehen schon im Snapshot
+(`raw/<id>.json`, `pages.ndjson`) und werden nicht erneut geholt.
+
+### Analytics
+
+`confluence-analytics-<space>[-<seite>]-<auftrag>.json`, Schema `space-harvester/confluence-analytics-export/v2`.
+Aktivität des Space und Aufrufe je Seite über die Endpunkte des Confluence-Analytics-Plugins (Data Center ab 7.11).
+Dafür gibt es keine dokumentierte Schnittstelle; die Pfade unter `/rest/confanalytics/1.0/` sind die, die die
+Analytics-Oberfläche selbst aufruft (mitgeschnitten an Confluence 10.2.19, Angelo 16.11.2026), und können je
+Confluence-Version abweichen. Deshalb stehen sie nicht fest im Code: `AnalyticsQueries` nennt die Vorgaben, die App
+liest Abweichungen aus `space-harvester-app.analytics` (Einstellungen › Allgemein › Analytics-Export: der Platzhalter
+jedes Feldes ist die Vorgabe, eine Eingabe ersetzt sie, gilt für den nächsten Export). Platzhalter `{spaceKey}`,
+`{from}`, `{to}` (ISO-8601 mit Millisekunden, UTC, wie die Oberfläche; Zeitraum `period`, Standard 365 Tage wie die
+Standard-Aufbewahrung von Analytics). Die Datei schreibt die verwendeten Vorlagen unter `queries`.
+
+| Schlüssel | Vorgabe | Antwort |
+|---|---|---|
+| `details` | `space/details?spaceKey={spaceKey}` | Name, Anlage des Space, Installation des Plugins |
+| `activity-by-date` | `space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog` | `activityByDate.creates/updates/views[]` je Woche |
+| `content-views` | `space/paginated/contentViews?spaceKey={spaceKey}&…&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100` | `contentViews[]` je Seite: `id`, `title`, `createdAt`, `lastModifiedAt`, `lastViewedAt`, `usersViewed`, `views`, `commentActivityCount`; `nextPageToken` |
+
+Die Aufrufe je Seite kommen aus der **Seitenliste des Space**, nicht aus einer Abfrage je Seite: Sie wird über
+`nextPageToken` (als Parameter `nextPageToken`) zu Ende geblättert, so kostet ein Space wenige Anfragen. Wiederholt
+die Quelle ein Token oder dieselbe erste Seite (der Parameter heißt dort anders), endet die Liste als unvollständig
+(`contentViews.complete: false`) statt endlos. Gefragt wird nur nach Summen, nie nach den Namen der Leser.
+
+Antwortet das Plugin auf keine der Abfragen (404: Plugin fehlt oder andere Pfade; 403: für dieses Konto gesperrt),
+scheitert der Auftrag mit `ANALYTICS_UNAVAILABLE`; alles andere in der App ist davon nicht betroffen. Je Seite der
+Auswahl steht `content` (der Listeneintrag unverändert oder `null`) und `summary.views`/`summary.lastViewedAt`;
+ohne Eintrag ist beides `null`, denn eine Seite ohne Aufrufe im Zeitraum fehlt in der Liste, und nicht erhoben ist
+nie 0.
+
+```json
+{ "schema": "space-harvester/confluence-analytics-export/v2", "jobId": "…", "exportedAt": "…", "sourceId": "wiki",
+  "spaceKey": "DEV", "period": { "from": "…", "to": "…", "days": 365 },
+  "queries": { "space": { "details": "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}",
+                          "activityByDate": "/rest/confanalytics/1.0/space/activityByDate?…" },
+               "contentViews": "/rest/confanalytics/1.0/space/paginated/contentViews?…" },
+  "space": { "details": { "status": "ok", "requests": 1, "data": { … } },
+             "activityByDate": { "status": "ok", "requests": 1, "data": { "activityByDate": { … } } } },
+  "contentViews": { "status": "ok", "requests": 3, "entries": 240, "complete": true },
+  "pages": [{ "pageId": "100", "content": { "id": 100, "title": "…", "lastViewedAt": "…", "usersViewed": 67,
+                                             "views": 1325, … },
+              "summary": { "views": 1325, "lastViewedAt": "…" } },
+            { "pageId": "101", "content": null, "summary": { "views": null, "lastViewedAt": null } }],
+  "summary": { "pages": 120, "withData": 120, "failed": 0 } }
+```
+
 ## Gemeinsamer Dokumentbaum
 
 Markdown, Word und PDF sind drei Ausgaben desselben Dokumentbaums: `ExportChapters` im Core baut ihn aus Seiten,
@@ -206,9 +294,10 @@ ihn nur aus. Keiner der drei interpretiert die Seiten selbst.
   Tabellenzellen, nie ein Platzhalter, der wie ein Bild aussieht. SVG rastert Batik.
 - **Diagramme.** Der Diagramm-Dienst des Core (`application.diagrams.Diagrams`, #190) zeichnet offline mit denselben
   Renderern wie der Enterprise AI Client: Mermaid aus dem Diagrammtext der Seite (mermaid-java; Markdown behält
-  zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (JGraphX, auch `inc-drawio` von einer
+  zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (drawio-java, auch `inc-drawio` von einer
   anderen Seite; Markdown schreibt draw.io stattdessen als Codeblock ```` ```drawio ```` mit dem XML, siehe Tabelle).
-  Was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte PNG-Vorschau des Plugins.
+  Was drawio-java nicht vollständig darstellen kann (etwa AWS- oder Azure-Symbole, nicht eingebettete Bilder),
+  ersetzt die abgelegte PNG-Vorschau des Plugins.
   Ist das Diagramm beim Beschaffen gezeichnet, wird die Vorschau gar nicht erst geladen (`REDUNDANT` in
   `assets.json`, [ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)).
   PlantUML bleibt Codeblock, Gliffy ein Hinweis. Die textuelle Quelle bleibt für Suche und KI maßgeblich.
@@ -288,7 +377,7 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: eingebettet, wenn der Datenbestand es abgelegt hat (Markdown als `data:`-URI), sonst „[Abbildung nicht verfügbar: …]“ mit Grund; ein externes Bild (`ri:url`) ohne abgelegte Kopie zusätzlich mit Link „Adresse“ |
 | Mermaid | gezeichnetes Diagramm (Word, PDF, Markdown) und in Markdown zusätzlich der Codeblock mit der Textquelle |
 | PlantUML | Codeblock mit der Textquelle des Diagramms |
-| draw.io (auch `inc-drawio`) | Markdown (seit `markdown/8`, `markdown-package/3`): Codeblock ```` ```drawio ```` mit dem XML der abgelegten Quelldaten statt eines Bildes (Textform vor Bild, ADR 0012; Betrachter mit draw.io-Viewer wie TinyMD zeichnen ihn); nur ohne lesbare Quelldaten oder mitten in einer Tabellen- oder Listenzeile wie Word und PDF. Word und PDF: die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
+| draw.io (auch `inc-drawio`) | Markdown (seit `markdown/8`, `markdown-package/3`): Codeblock ```` ```drawio ```` mit dem XML der abgelegten Quelldaten statt eines Bildes (Textform vor Bild, ADR 0012; Betrachter mit draw.io-Viewer wie TinyMD zeichnen ihn); nur ohne lesbare Quelldaten oder mitten in einer Tabellen- oder Listenzeile wie Word und PDF. Word und PDF: die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (drawio-java, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
 | Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include`, `children` und jedes andere berechnete Makro (z. B. `toc`, `contentbylabel`, Jira-Abfrage) | Inhalt aus der abgelegten Lese-Ansicht: das n-te Makro eines Namens ist das n-te äußerste Element mit diesem `data-macro-name`, nur wenn Speicherformat und Ansicht gleich viele davon haben; eine Jira-Abfrage mit Tabelle wird ein eigener Block. Selbst umgesetzte Makros (Code, Diagramme, Panels, Status, einzelnes Jira-Ticket …) bleiben, wie sie sind; Unsichtbares (`display:none`, Skripte) entfällt, Bilder der Ansicht über ihre Adresse. Ohne verfügbare Ansicht Hinweis auf die eingebundene Seite bzw. die berechnete Liste, gemeldet als `OMITTED_CONTENT` (Verweis: Seitentitel oder `children`; Grund `not-collected`, `foreign-content`, `no-reading-view`, `page-changed`, `source-unavailable`, `not-rendered`, `view-count-mismatch`). Andere berechnete Makros ohne Ansicht behalten ihren Hinweis ohne Meldung |
 | `toc` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |

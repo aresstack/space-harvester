@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
+import com.aresstack.winproxy.PacCacheStatus;
 import com.aresstack.winproxy.ProxyDiagnostics;
 import com.aresstack.winproxy.ProxyResult;
 import java.net.URI;
@@ -107,6 +108,156 @@ class ProxyRoutesTest {
 
         assertThat(resolved).containsExactly("https://ok.example/", "https://broken.example/",
                 "https://broken.example/", "https://ok.example/");
+    }
+
+    @Test
+    void unreachablePacServerKeepsTheLastGoodRouteAndRetriesAfterFailureTtl() {
+        java.util.concurrent.atomic.AtomicBoolean wpadDown = new java.util.concurrent.atomic.AtomicBoolean();
+        ProxyRoutes routes = routes(pac(null, null), url -> wpadDown.get()
+                ? ProxyResult.error("pac-download-failed", "Could not load PAC script <- Connect timed out")
+                : ProxyResult.proxy("proxy.example", 3128, "pac:resolved"));
+        URI confluence = URI.create("https://confluence.example.org/rest/api/space");
+        HttpRoute good = HttpRoute.proxy("proxy.example", 3128, "pac:resolved");
+
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        wpadDown.set(true);
+        now.addAndGet(Duration.ofMinutes(11).toMillis());
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+        now.addAndGet(Duration.ofSeconds(61).toMillis());
+        assertThat(routes.routeFor(confluence)).isEqualTo(good);
+
+        assertThat(resolved).hasSize(3);
+    }
+
+    @Test
+    void withoutAPreviousRouteAPacFailureStaysUnavailable() {
+        ProxyRoutes routes = routes(pac(null, null), url -> ProxyResult.error("pac-download-failed", "timeout"));
+        URI confluence = URI.create("https://confluence.example.org/");
+
+        assertThat(routes.routeFor(confluence).isUnavailable()).isTrue();
+        routes.invalidate();
+        assertThat(routes.routeFor(confluence).isUnavailable()).isTrue();
+    }
+
+    private final java.util.concurrent.atomic.AtomicInteger pacReloads = new java.util.concurrent.atomic.AtomicInteger();
+
+    private ProxyRoutes routesWithPac(Function<String, ProxyResult> answer, PacCacheStatus status) {
+        return ProxyRoutes.create(pac(null, null), new ProxyRoutes.Resolver() {
+            @Override
+            public ProxyResult resolve(String url) {
+                resolved.add(url);
+                return answer.apply(url);
+            }
+
+            @Override
+            public ProxyDiagnostics diagnose(String url) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void invalidatePac() {
+                pacReloads.incrementAndGet();
+            }
+
+            @Override
+            public java.util.Optional<PacCacheStatus> pacStatus() {
+                return java.util.Optional.ofNullable(status);
+            }
+        }, now::get);
+    }
+
+    @Test
+    void failedProxyConnectionDropsTheRouteAndReloadsThePacAtMostOncePerFailureTtl() {
+        ProxyRoutes routes = routesWithPac(url -> ProxyResult.proxy("proxy.example", 3128, "pac:resolved"), null);
+        URI confluence = URI.create("https://confluence.example.org/rest/api/space");
+        HttpRoute route = routes.routeFor(confluence);
+
+        routes.routeFailed(confluence, route);
+        routes.routeFailed(confluence, route);
+        routes.routeFor(confluence);
+        now.addAndGet(Duration.ofSeconds(61).toMillis());
+        routes.routeFailed(confluence, route);
+
+        assertThat(pacReloads).hasValue(2);
+        assertThat(resolved).hasSize(2);
+    }
+
+    @Test
+    void directRoutesAndNetworkInvalidationBehave() {
+        ProxyRoutes routes = routesWithPac(url -> ProxyResult.direct("pac-direct"), null);
+        URI confluence = URI.create("https://confluence.example.org/");
+
+        routes.routeFailed(confluence, routes.routeFor(confluence));
+        assertThat(pacReloads).hasValue(0);
+
+        routes.invalidate();
+        assertThat(pacReloads).hasValue(1);
+    }
+
+    @Test
+    void pacChangesAreReportedOnceAndStopAfterClosing() throws Exception {
+        java.lang.reflect.Constructor<PacCacheStatus> constructor = PacCacheStatus.class.getDeclaredConstructor(
+                String.class, long.class, long.class, long.class, int.class, String.class);
+        constructor.setAccessible(true);
+        PacCacheStatus fresh = constructor.newInstance("http://wpad.example/wpad.dat", 1_000L, 2_000L, 0L, 0, null);
+        PacCacheStatus stale = constructor.newInstance("http://wpad.example/wpad.dat", 1_000L, 2_000L, 1_500L, 2,
+                "Connect timed out");
+        java.util.concurrent.atomic.AtomicReference<PacCacheStatus> status = new java.util.concurrent.atomic.AtomicReference<>(fresh);
+        ProxyRoutes routes = ProxyRoutes.create(pac(null, null), new ProxyRoutes.Resolver() {
+            @Override
+            public ProxyResult resolve(String url) {
+                return ProxyResult.direct("pac-direct");
+            }
+
+            @Override
+            public ProxyDiagnostics diagnose(String url) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public java.util.Optional<PacCacheStatus> pacStatus() {
+                return java.util.Optional.ofNullable(status.get());
+            }
+        }, now::get);
+        java.util.concurrent.atomic.AtomicInteger reported = new java.util.concurrent.atomic.AtomicInteger();
+        AutoCloseable subscription = routes.onPacChange(reported::incrementAndGet);
+
+        routes.routeFor(URI.create("https://a.example.org/"));
+        assertThat(reported).as("geladen, aber nicht veraltet: erste Meldung").hasValue(1);
+        assertThat(routes.pacState().stale()).isFalse();
+        routes.routeFor(URI.create("https://b.example.org/"));
+        assertThat(reported).as("unverändert: keine Meldung").hasValue(1);
+
+        status.set(stale);
+        routes.routeFor(URI.create("https://c.example.org/"));
+        assertThat(reported).hasValue(2);
+        assertThat(routes.pacState().stale()).isTrue();
+        assertThat(routes.pacState().failingSince()).isEqualTo(java.time.Instant.ofEpochMilli(1_500L));
+        assertThat(routes.pacState().description()).contains("nicht erneuert seit ").endsWith("Connect timed out");
+
+        subscription.close();
+        status.set(fresh);
+        routes.routeFor(URI.create("https://d.example.org/"));
+        assertThat(reported).as("nach dem Schließen keine Meldung").hasValue(2);
+        assertThat(routes.pacState().stale()).isFalse();
+    }
+
+    @Test
+    void pacStatusShowsSinceWhenRefreshingFails() throws Exception {
+        java.lang.reflect.Constructor<PacCacheStatus> constructor = PacCacheStatus.class.getDeclaredConstructor(
+                String.class, long.class, long.class, long.class, int.class, String.class);
+        constructor.setAccessible(true);
+        PacCacheStatus stale = constructor.newInstance("http://wpad.example/wpad.dat?x=1", 1_000L, 2_000L, 1_500L, 3,
+                "Connect timed out");
+        ProxyRoutes routes = routesWithPac(url -> ProxyResult.direct("pac-direct"), stale);
+
+        assertThat(routes.pacStale()).isTrue();
+        assertThat(routes.pacStatus()).hasValueSatisfying(text -> assertThat(text)
+                .startsWith("Proxy-Skript http://wpad.example/wpad.dat?… geladen ")
+                .contains("nicht erneuert seit ")
+                .endsWith("(3 Versuche): Connect timed out"));
+        assertThat(routesWithPac(url -> ProxyResult.direct("pac-direct"), null).pacStatus()).isEmpty();
     }
 
     @Test

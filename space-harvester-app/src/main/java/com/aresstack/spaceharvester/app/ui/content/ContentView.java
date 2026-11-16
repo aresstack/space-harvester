@@ -26,7 +26,13 @@ public final class ContentView implements View {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
-    private final JLabel crumbs = new JLabel(" ");
+    private final LocationBar crumbs = new LocationBar();
+    /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat: die Vorfahren in der Bereichsanzeige. */
+    private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position;
+    private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position>
+            positionListener = shown -> { };
+    /** Markiert Quelle ({@code spaceKey} {@code null}) oder Space im Baum; die Auswahl dort bestimmt die Mitte. */
+    private java.util.function.BiConsumer<String, String> locate = (source, space) -> { };
     private final PageDetailPanel detail;
     /** Stand des gezeigten Reiters (etwa „50 Knoten, 51 Kanten“) links in der Statuszeile des Hauptfensters. */
     private final JLabel statusInfo = Comic.muted(" ");
@@ -48,14 +54,21 @@ public final class ContentView implements View {
         signIn.onAccepted(detail::reloadShown);
         root.setBackground(Comic.SURFACE);
 
-        crumbs.setFont(Comic.regular(13f));
-        crumbs.setForeground(Comic.MUTED);
+        detail.onPosition(shown -> {
+            position = shown;
+            renderCrumbs();
+            positionListener.accept(shown);
+        });
 
         JPanel top = new JPanel(new BorderLayout(12, 0));
         top.setBackground(Comic.SURFACE);
         top.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        top.add(crumbs, BorderLayout.CENTER);
+                BorderFactory.createEmptyBorder(4, 12, 4, 12)));
+        // Eine Zeile statt zwei (Angelo, 16.11.2026): links, wo die Seite liegt, mittig ihre Überschrift, rechts Stern
+        // und das Dreieck mit den weiteren Aktionen. Die Überschrift kürzt sich mit „…“, wenn der Platz nicht reicht.
+        top.add(crumbs, BorderLayout.WEST);
+        top.add(detail.headerTitle(), BorderLayout.CENTER);
+        top.add(detail.headerActions(), BorderLayout.EAST);
 
         JPanel north = new JPanel(new BorderLayout());
         north.setOpaque(false);
@@ -81,6 +94,17 @@ public final class ContentView implements View {
         this.sourceId = sourceId;
         this.spaceKey = spaceKey;
         renderCrumbs();
+    }
+
+    /** Die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle im Explorer, ADR 0030). */
+    public void openSource(String sourceId, String title) {
+        if (!Objects.equals(sourceId, this.sourceId) || !detail.showsSource()) {
+            detail.showSource(sourceId, title);
+        }
+        this.sourceId = sourceId;
+        this.spaceKey = null;
+        renderCrumbs();
+        detail.showReading();
     }
 
     /** Öffnet eine Seite (aus dem Explorer, der Suche, einem Auftrag). */
@@ -120,7 +144,15 @@ public final class ContentView implements View {
     /** Meldet den Pfad jeder angezeigten Seite, etwa damit der Explorer sie zeigt. */
     public void onPosition(java.util.function.Consumer<
             com.aresstack.spaceharvester.application.navigation.PageNavigation.Position> listener) {
-        detail.onPosition(listener);
+        positionListener = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Ein Klick auf Quelle oder Space in der Bereichsanzeige: {@code listener} markiert den Knoten im Baum
+     * ({@code spaceKey} {@code null} für die Quelle).
+     */
+    public void onLocate(java.util.function.BiConsumer<String, String> listener) {
+        locate = Objects.requireNonNull(listener, "listener");
     }
 
     /** Nach dem Laden kennt die Seite ihren Space. */
@@ -143,10 +175,36 @@ public final class ContentView implements View {
         signIn.refresh();
         String source = currentSource();
         if (source == null) {
-            crumbs.setText(sources().isEmpty() ? "Keine Wissensquelle" : "Seite im Explorer wählen");
+            crumbs.show(List.of(new LocationBar.Part(sources().isEmpty() ? "Keine Wissensquelle"
+                    : "Seite im Explorer wählen", null, null)));
             return;
         }
-        crumbs.setText(spaceKey == null ? title(source) : title(source) + " › " + spaceKey);
+        List<LocationBar.Part> parts = new java.util.ArrayList<>();
+        parts.add(new LocationBar.Part(title(source), "Wissensquelle im Baum zeigen",
+                () -> locate.accept(source, null)));
+        String space = spaceKey;
+        if (space != null) {
+            parts.add(new LocationBar.Part(space, "Space im Baum zeigen", () -> locate.accept(source, space)));
+        }
+        // Die Vorfahren der gezeigten Seite, sobald ihr Pfad da ist und zur gezeigten Quelle gehört.
+        if (position != null && source.equals(position.sourceId()) && Objects.equals(space, position.spaceKey())) {
+            for (HarvestSource.PageNode ancestor : position.ancestors()) {
+                String pageId = ancestor.pageId();
+                parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Seite öffnen und im Baum zeigen",
+                        () -> open(source, pageId)));
+            }
+        }
+        crumbs.show(parts);
+    }
+
+    /** Öffnet eine Seite aus der Bereichsanzeige; über den Navigator zeigt der Baum sie aufgeklappt und gewählt. */
+    private void open(String source, String pageId) {
+        AppContext.Navigator navigator = context.navigator();
+        if (navigator != null) {
+            navigator.openPage(source, pageId);
+        } else {
+            openPage(source, pageId);
+        }
     }
 
     private String title(String id) {
@@ -172,7 +230,11 @@ public final class ContentView implements View {
     }
 
     String crumbs() {
-        return crumbs.getText();
+        return crumbs.text();
+    }
+
+    LocationBar locationBar() {
+        return crumbs;
     }
 
     @Override
@@ -203,10 +265,19 @@ public final class ContentView implements View {
         // Graph grenzt sich auf dieselben Seiten ein, ohne ein zweites Mal aufzulösen.
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
-        if (selection != null) {
+        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
+        if (selection != null && !selection.global()) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
-            if (!Objects.equals(selection.sourceId(), sourceId)) {
+            // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
+            // Erweitert) haben dafür keinen Inhalt und zeigen leer statt der vorher geöffneten Seite; Export und Chat
+            // folgen der Auswahl (Angelo, 16.11.2026).
+            if (selection.spaceKey() == null && !selection.page()) {
+                // Die Wurzel einer Quelle: die Quellenseite mit ihren Updates (ADR 0030); schon gezeigt, bleibt sie.
+                if (!Objects.equals(selection.sourceId(), sourceId) || !detail.showsSource()) {
+                    detail.showSource(selection.sourceId(), selection.title());
+                }
+            } else if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
                 detail.clear();
             }
             sourceId = selection.sourceId();
@@ -218,6 +289,11 @@ public final class ContentView implements View {
     /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
     public void showExport() {
         detail.showExport();
+    }
+
+    /** Zurück und Vor der Seitenansicht für die Statuszeile des Hauptfensters (Angelo, 16.11.2026). */
+    public JComponent navigation() {
+        return detail.navigation();
     }
 
     PageDetailPanel detail() {

@@ -26,6 +26,12 @@ public class DurationField extends JPanel {
     /** Einheiten in Reihenfolge der Auswahlliste. */
     private static final String[] UNITS = {"Sekunden", "Minuten", "Stunden", "Tage"};
     private static final long[] SECONDS = {1L, 60L, 3_600L, 86_400L};
+    /** Mit „Jahre“ (365 Tage) für lange Fristen wie die Aufbewahrung des Änderungsprotokolls. */
+    private static final String[] UNITS_WITH_YEARS = {"Sekunden", "Minuten", "Stunden", "Tage", "Jahre"};
+    private static final long[] SECONDS_WITH_YEARS = {1L, 60L, 3_600L, 86_400L, 365L * 86_400L};
+
+    private final String[] units;
+    private final long[] seconds;
 
     private final JSpinner amount;
     private final JComboBox<String> unit;
@@ -42,7 +48,18 @@ public class DurationField extends JPanel {
      * @param maximum höchste Zahl des Spinners je Einheit
      */
     public DurationField(String none, int maximum) {
+        this(none, maximum, false);
+    }
+
+    /** Wie {@link #DurationField(String, int)}, zusätzlich mit der Einheit „Jahre“ (ein Jahr zählt 365 Tage). */
+    public static DurationField withYears(String none, int maximum) {
+        return new DurationField(none, maximum, true);
+    }
+
+    private DurationField(String none, int maximum, boolean years) {
         super(new GridBagLayout());
+        this.units = years ? UNITS_WITH_YEARS : UNITS;
+        this.seconds = years ? SECONDS_WITH_YEARS : SECONDS;
         setOpaque(false);
         this.none = none;
         amount = new JSpinner(new SpinnerNumberModel(0, 0, maximum, 1));
@@ -57,7 +74,7 @@ public class DurationField extends JPanel {
         if (none != null) {
             unit.addItem(none);
         }
-        for (String name : UNITS) {
+        for (String name : units) {
             unit.addItem(name);
         }
         unit.setSelectedIndex(none != null ? 0 : 1);
@@ -98,7 +115,7 @@ public class DurationField extends JPanel {
         if (isNone()) {
             return null;
         }
-        return Duration.ofSeconds(((Number) amount.getValue()).longValue() * SECONDS[unitIndex()]);
+        return Duration.ofSeconds(((Number) amount.getValue()).longValue() * this.seconds[unitIndex()]);
     }
 
     /** Zeigt die Dauer in der größten Einheit, die sie ganzzahlig teilt; {@code null} wählt den Sonderwert. */
@@ -111,13 +128,13 @@ public class DurationField extends JPanel {
         }
         long seconds = Math.max(0, (duration.toMillis() + 500L) / 1_000L);
         int index = 0;
-        for (int i = SECONDS.length - 1; i > 0; i--) {
-            if (seconds > 0 && seconds % SECONDS[i] == 0) {
+        for (int i = this.seconds.length - 1; i > 0; i--) {
+            if (seconds > 0 && seconds % this.seconds[i] == 0) {
                 index = i;
                 break;
             }
         }
-        long count = seconds / SECONDS[index];
+        long count = seconds / this.seconds[index];
         // Eine gesetzte Dauer bleibt erhalten: Braucht sie mehr als das Maximum, wächst das Maximum mit, statt dass
         // der Wert still gekappt und beim Speichern verkürzt würde.
         SpinnerNumberModel model = (SpinnerNumberModel) amount.getModel();

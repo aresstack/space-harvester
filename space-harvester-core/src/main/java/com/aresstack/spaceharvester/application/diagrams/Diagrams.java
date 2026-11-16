@@ -12,7 +12,7 @@ import java.util.Objects;
 import javax.imageio.ImageIO;
 
 /**
- * Diagramm-Rendering des Core (#190): draw.io ({@code mxfile}) wird SVG über JGraphX, Mermaid wird PNG über
+ * Diagramm-Rendering des Core (#190): draw.io ({@code mxfile}) wird SVG über drawio-java, Mermaid wird PNG über
  * mermaid-java, beides offline und mit denselben Renderern wie der Enterprise AI Client. Eingabe sind die Quelldaten
  * aus dem Datenbestand, nie eine Adresse; der Dienst ruft nichts ab. Die textuelle Quelle bleibt für Suche und KI
  * maßgeblich, die Grafik ist nur Darstellung. Word, PDF und Markdown nutzen ihn; die Leseansicht kann es ebenso.

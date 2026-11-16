@@ -28,16 +28,21 @@ import java.util.logging.Logger;
 public final class Favorites {
 
     /**
-     * Ein Favorit: eine Seite ({@code pageId}) oder ein ganzer Space ({@code pageId} null). {@code path} ist der
-     * Anzeigepfad (Quelle › Space › Vorfahren), {@code ancestorIds} die IDs der Vorfahren im Seitenbaum.
+     * Ein Favorit: eine Seite ({@code pageId}), ein ganzer Space ({@code pageId} null) oder eine ganze Wissensquelle
+     * ({@code spaceKey} und {@code pageId} null; Angelo, 16.11.2026, etwa um den Chat über die ganze Quelle zu
+     * merken). {@code path} ist der Anzeigepfad (Quelle › Space › Vorfahren), {@code ancestorIds} die IDs der
+     * Vorfahren im Seitenbaum.
      */
     public record Favorite(String sourceId, String spaceKey, String pageId, String title, List<String> path,
                            List<String> ancestorIds) {
 
         public Favorite {
             Objects.requireNonNull(sourceId, "sourceId");
-            Objects.requireNonNull(spaceKey, "spaceKey");
-            title = title == null || title.isBlank() ? (pageId == null ? spaceKey : "Seite " + pageId) : title;
+            if (spaceKey == null && pageId != null) {
+                throw new IllegalArgumentException("Ein Seiten-Favorit braucht seinen Space");
+            }
+            title = title == null || title.isBlank()
+                    ? (spaceKey == null ? sourceId : pageId == null ? spaceKey : "Seite " + pageId) : title;
             path = path == null ? List.of() : List.copyOf(path);
             ancestorIds = ancestorIds == null ? List.of() : List.copyOf(ancestorIds);
         }
@@ -47,9 +52,19 @@ public final class Favorites {
                     List.of());
         }
 
+        /** Eine ganze Wissensquelle. */
+        public static Favorite source(String sourceId, String title) {
+            return new Favorite(sourceId, null, null, title, List.of(), List.of());
+        }
+
+        /** Ob der Favorit eine ganze Wissensquelle ist. */
+        public boolean isSource() {
+            return spaceKey == null;
+        }
+
         /** Derselbe Knoten, unabhängig von Titel und Pfad. */
         boolean same(String sourceId, String spaceKey, String pageId) {
-            return this.sourceId.equals(sourceId) && this.spaceKey.equals(spaceKey)
+            return this.sourceId.equals(sourceId) && Objects.equals(this.spaceKey, spaceKey)
                     && Objects.equals(this.pageId, pageId);
         }
 
@@ -117,7 +132,7 @@ public final class Favorites {
     }
 
     private Favorite find(String sourceId, String spaceKey, String pageId) {
-        if (sourceId == null || spaceKey == null) {
+        if (sourceId == null) {
             return null;
         }
         for (Favorite favorite : load()) {
@@ -144,7 +159,7 @@ public final class Favorites {
             for (JsonNode node : root.path("favorites")) {
                 String sourceId = text(node, "sourceId");
                 String spaceKey = text(node, "spaceKey");
-                if (sourceId == null || spaceKey == null) {
+                if (sourceId == null || spaceKey == null && text(node, "pageId") != null) {
                     continue;
                 }
                 entries.add(new Favorite(sourceId, spaceKey, text(node, "pageId"), text(node, "title"),

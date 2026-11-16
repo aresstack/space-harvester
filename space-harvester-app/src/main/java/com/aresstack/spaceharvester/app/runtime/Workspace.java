@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -357,6 +358,18 @@ public final class Workspace {
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
+    }
+
+    /**
+     * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
+     * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
+     */
+    public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
+        try {
+            return harvester.pages().cached(caller, sourceId, pageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            return Optional.empty();
+        }
     }
 
     /**
@@ -803,6 +816,11 @@ public final class Workspace {
         return harvester.signIns();
     }
 
+    /** Die Proxy-Route aller Quellen, für den Hinweis „Proxy-Skript seit … nicht erneuert“ in der Statuszeile. */
+    public com.aresstack.spaceharvester.source.network.ProxyRoutes proxyRoutes() {
+        return harvester.proxyRoutes();
+    }
+
     /** Ob {@code sort=relevance} semantisch sucht (Embedding-Modell eingerichtet). */
     public boolean semanticSearch() {
         return harvester.relevance().semantic();
@@ -824,6 +842,14 @@ public final class Workspace {
     /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */
     public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
         return harvester.aiEmbeddingDimension(settings, embeddingModel);
+    }
+
+    /**
+     * Der Chat-Port des KI-Dienstes für den Reiter „Chat“ (streamend, {@code POST /chat/completions}) mit den
+     * wirksamen Einstellungen; {@code null} ohne Dienst oder Chat-Modell. Der Chat selbst lebt in der App (ADR 0012).
+     */
+    public AiChat aiChat() {
+        return harvester.aiChat();
     }
 
     // ------------------------------------------------------------------ Abgleich
@@ -922,6 +948,19 @@ public final class Workspace {
     }
 
     /**
+     * Eine Seite samt Unterseiten neu aus der Quelle lesen und ausgeben (Kreispfeile im Baum, Angelo 16.11.2026):
+     * wie {@link #startExport(String, String, String, List)}, aber mit verlangter Aktualität
+     * ({@code ExportRequest.refresh}), statt einen vorhandenen Bestand wiederzuverwenden.
+     */
+    public JobStatus refreshSubtree(String sourceId, String spaceKey, String rootPageId, List<String> formats) {
+        requireExport(sourceId, spaceKey);
+        JobStatus status = harvester.exports().start(ExportRequest.of(sourceId, spaceKey, Harvester.OWNER, formats)
+                .withRoot(rootPageId).withRefresh(true));
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
      * Ausgabe der Auswahl aus dem Bestand starten (ADR 0029): je gewähltem Space bzw. Teilbaum ein Export-Auftrag
      * ({@code Holdings.outputs}), der nur den Seiten-Cache liest, nie die Quelle; braucht je Space export und content,
      * geprüft vor dem ersten Auftrag. Gespeicherte Seiten kommen mit, veraltete im gespeicherten Stand; nur aus dem
@@ -972,6 +1011,42 @@ public final class Workspace {
         return started;
     }
 
+    /**
+     * „Confluence-Metadaten exportieren“ (Angelo 16.11.2026): je gewähltem Space bzw. Teilbaum ein Auftrag, der für
+     * jede im Bestand bekannte Seite Historie, Versionen, Kommentare, Properties und Restriktionen über die
+     * dokumentierten REST-Schnittstellen der Quelle holt und als eigene JSON-Datei in {@code directory} ablegt;
+     * der Seitenexport und seine Hashes bleiben unverändert. Nur für Quellen mit REST-Abfragen
+     * ({@link #sourceQueryExportsSupported}).
+     *
+     * @return die eingeplanten Aufträge; der Dateiname je Auftrag steht in
+     *         {@code SourceQueryExports.fileName}
+     */
+    public List<JobStatus> startMetadataExport(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                               Path directory) {
+        List<JobStatus> started = harvester.sourceQueryExports().startMetadata(caller, selection, directory);
+        started.forEach(status -> activities.remember(status.id()));
+        return started;
+    }
+
+    /**
+     * „Analytics exportieren“ (Angelo 16.11.2026): wie {@link #startMetadataExport}, aber Aktivität und Seitenaufrufe
+     * über die Endpunkte des Confluence-Analytics-Plugins ({@code queries}, aus Einstellungen › Analytics-Export);
+     * antwortet die Quelle nicht, scheitert nur dieser Auftrag.
+     */
+    public List<JobStatus> startAnalyticsExport(
+            com.aresstack.spaceharvester.application.holdings.Selection selection, Path directory,
+            com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries) {
+        List<JobStatus> started = harvester.sourceQueryExports().startAnalytics(caller, selection, directory,
+                queries);
+        started.forEach(status -> activities.remember(status.id()));
+        return started;
+    }
+
+    /** Ob die Quelle REST-Abfragen beantwortet, also Metadaten- und Analytics-Export anbietet (nur Confluence). */
+    public boolean sourceQueryExportsSupported(String sourceId) {
+        return harvester.sourceQueryExports().supports(sourceId);
+    }
+
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
         ownExport(exportId);
@@ -1002,6 +1077,61 @@ public final class Workspace {
         return harvester.conversions().convert(exportId, Harvester.OWNER, format, directory);
     }
 
+    /**
+     * „Datei erzeugen“ als eigener Auftrag (Angelo 16.11.2026): die Datei im Format aus dem Datenbestand des eigenen
+     * Exports im Ordner, sobald der Export erfolgreich endet; ein offener Auftrag mit gleichem Export, Format und Ordner
+     * kommt zurück. Die erzeugte Datei liest {@link #producedFile}.
+     */
+    public JobStatus startConversion(String exportId, String format, Path directory) {
+        ownExport(exportId);
+        JobStatus status = harvester.conversions().startConversion(exportId, Harvester.OWNER, format, directory);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /** Die Datei eines beendeten eigenen Auftrags „Datei erzeugen“ aus diesem Lauf; leer solange er läuft. */
+    public Optional<ExportConversions.ConvertedFile> producedFile(String jobId) {
+        return harvester.conversions().produced(jobId, Harvester.OWNER);
+    }
+
+    /**
+     * Ein Format-Knopf (Angelo 16.11.2026): je gewähltem Space bzw. Teilbaum ({@code Holdings.outputs}) zwei Aufträge,
+     * erst die Daten, dann die Datei. Liegen für die Wurzel Seiten samt ihren Bildern und Anhängen im Bestand
+     * ({@code ExportAssetCollection.inHoldings}), ist der erste die Ausgabe aus dem Bestand
+     * ({@link #startExportFromHoldings}, wiederverwendet, wenn sich nichts geändert hat); sonst lädt er von der Quelle,
+     * was fehlt ({@link #startExport(String, String, String, Integer, List)}). Der zweite erzeugt die Datei, sobald der
+     * erste und seine Bilder und Anhänge erfolgreich enden ({@link #startConversion}).
+     *
+     * @param datasetFormats Formate des Datenbestands, wie bei einem Download
+     * @return je Wurzel der Daten-Auftrag und danach der Auftrag „Datei erzeugen“
+     */
+    public List<JobStatus> exportFiles(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                       List<String> datasetFormats, String format, Path directory) {
+        Objects.requireNonNull(directory, "directory");
+        harvester.conversions().converter(format);
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> outputs =
+                harvester.holdings().outputs(caller, selection);
+        outputs.forEach(root -> requireExport(root.sourceId(), root.spaceKey()));
+        List<JobStatus> started = new ArrayList<>(2 * outputs.size());
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : outputs) {
+            // Aus dem Bestand nur, wenn dort auch Bilder und Anhänge der Seiten liegen; sonst holt der Export sie von der
+            // Quelle (gespeicherte, aktuelle Seiten liest auch er nur aus dem Cache) und legt sie im Bestand ab.
+            boolean stored = harvester.holdings().resolve(caller,
+                    com.aresstack.spaceharvester.application.holdings.Selection.of(root)).counts().stored() > 0
+                    && harvester.assetCollection() != null
+                    && harvester.assetCollection().inHoldings(Harvester.OWNER, root);
+            JobStatus data = stored
+                    ? harvester.exports().startFromHoldings(ExportRequest.fromHoldings(root.sourceId(),
+                    root.spaceKey(), Harvester.OWNER, datasetFormats).withRoot(root.pageId()))
+                    : harvester.exports().start(root.sourceId(), root.spaceKey(), root.pageId(), null,
+                    Harvester.OWNER, datasetFormats);
+            activities.remember(data.id());
+            started.add(data);
+            started.add(startConversion(data.id(), format, directory));
+        }
+        return started;
+    }
+
     /** Export abbrechen ({@code POST /exports/{id}/cancel}). */
     public JobStatus cancelExport(String exportId) {
         ownExport(exportId);
@@ -1019,7 +1149,8 @@ public final class Workspace {
 
     /** Welches Recht ein Auftrag zum Anzeigen braucht: Exporte die Export-Freigabe, alle anderen die zum Abgleichen. */
     private static AccessKind visibility(JobStatus status) {
-        return status.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC;
+        return status.type() == JobType.EXPORT || status.type() == JobType.CONVERSION ? AccessKind.EXPORT
+                : AccessKind.SYNC;
     }
 
     /**
@@ -1200,6 +1331,8 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
+        // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
         for (JobStatus followUp : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(followUp.id()))) {
                 try {
@@ -1325,6 +1458,46 @@ public final class Workspace {
             java.util.function.Consumer<com.aresstack.spaceharvester.application.release.PageReleases.Change>
                     listener) {
         return harvester.pageReleaseService().subscribe(caller, listener);
+    }
+
+    /** Die Updates einer Quelle aus dem Änderungsprotokoll (ADR 0030), neuestes zuerst, das offene vorn. */
+    public java.util.List<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> changeUpdates(
+            String sourceId) {
+        return harvester.changeLog().updates(caller, sourceId);
+    }
+
+    /** Der Änderungsbericht eines Updates (ADR 0030): die geänderten Seiten nach Art; bei der Erstbefüllung nur Zähler. */
+    public com.aresstack.spaceharvester.application.changelog.ChangeReport changeReport(String sourceId,
+                                                                                       String updateId) {
+        return harvester.changeLog().report(caller, sourceId, updateId);
+    }
+
+    /**
+     * Meldet einen Empfänger für neue Zeilen und Marken im Änderungsprotokoll einer Quelle an (ADR 0027/0030),
+     * gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT. Erst anmelden, dann lesen.
+     */
+    public Subscription subscribeChangeLog(String sourceId,
+                                           com.aresstack.spaceharvester.application.changelog.ChangeLogListener
+                                                   listener) {
+        return harvester.changeLog().subscribe(caller, sourceId, listener);
+    }
+
+    /**
+     * Rohe Zeilen des Änderungsprotokolls (ADR 0030) für den Dialog unter Einstellungen › Cache, neueste zuerst; nur
+     * Zeilen, die diese App sehen darf. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.changelog.ChangeEntries changeEntries(
+            com.aresstack.spaceharvester.application.changelog.ChangeFilter filter) {
+        return harvester.changeLog().entries(caller, filter);
+    }
+
+    /**
+     * Meldet einen Empfänger für neue Zeilen und Marken im Änderungsprotokoll aller Quellen an (ADR 0027); Meldungen
+     * kommen gebündelt auf dem Zustell-Thread des Core, nie auf dem EDT.
+     */
+    public Subscription subscribeChangeLog(
+            com.aresstack.spaceharvester.application.changelog.ChangeLogListener listener) {
+        return harvester.changeLog().subscribe(caller, null, listener);
     }
 
     /**

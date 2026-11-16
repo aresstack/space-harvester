@@ -122,7 +122,25 @@ nächste Export liest also wieder aus der Quelle. Bilder und Anhänge hängen an
   bleibt im Speicher, was bleibt, steht im Verzeichnis je Seite. Ein zweiter Klick auf dieselbe Wurzel liefert den
   offenen Auftrag oder lässt den beendeten im selben Eintrag erneut laufen.
 
-### 5. Nicht Teil dieser Entscheidung
+### 5. Datei erzeugen als eigener Auftrag
+
+- Die Datei in einem Zielformat (PDF, Word, Markdown, JSON …) entsteht als eigener Auftrag „Datei erzeugen“
+  (`JobType.CONVERSION`, Angelo 16.11.2026) statt still im Hintergrund der Oberfläche. Er trägt `exportId`, `format`
+  und `directory`, liest nur den Datenbestand seines Exports und startet von selbst, sobald dieser und seine Aufträge
+  „Bilder beschaffen“ und „Anhänge beschaffen“ erfolgreich enden (`Jobs.submitAfter` mit mehreren Vorgängern,
+  `ExportConversions.startConversion`); sonst fehlten Bilder in der Datei. Ist alles schon fertig, reiht er sich gleich
+  ein.
+  Hält der Export an oder scheitert er, wartet die Datei, bis derselbe Eintrag erfolgreich endet; wird er gelöscht,
+  verschwindet sie mit. Ein offener Auftrag mit gleichem Export, Format und Ordner kommt beim zweiten Klick zurück.
+- Ein Format-Knopf startet je Wurzel der Auswahl zwei Aufträge (`Workspace.exportFiles`): erst die Daten, dann die
+  Datei. Liegen die Seiten der Wurzel samt Bildern und Anhängen zu ihrer gespeicherten Version im Bestand
+  (`ExportAssetCollection.inHoldings`), sind die Daten die Ausgabe aus dem Bestand (Abschnitt 3, samt
+  Wiederverwendung); sonst ist der erste Auftrag ein Export wie „Laden“: Gespeicherte, aktuelle Seiten liest er aus dem
+  Cache, Bilder und Anhänge holen seine Folgeaufträge von der Quelle und legen sie im Bestand ab, sodass der nächste
+  Klick ohne Quelle auskommt. Die erzeugte Datei samt
+  Hinweisen liest die Oberfläche nach dem Ende des Auftrags (`Workspace.producedFile`).
+
+### 6. Nicht Teil dieser Entscheidung
 
 - **Umfang** (Schritt B der Architektur: was der Benutzer lokal halten will, als gespeicherter Wert) und das Umstellen
   von „Herunterladen“ vom Export-Auftrag auf den Abgleich. Bis dahin enthält eine Ausgabe, was der Bestand hält.
@@ -140,6 +158,7 @@ Je ein kleiner Pull Request, Core zuerst:
 5. Ausgabe aus dem Bestand samt Wiederverwendung; Export-Auftrag entscheidet nach Abdeckung.
 6. Verzeichnis der Bilder und Anhänge je Seite und Version, Folgeaufträge der Ausgabe aus dem Bestand daraus.
 7. Beschaffen auf einer Auswahl ohne Export-Auftrag.
+8. Datei erzeugen als eigener Auftrag nach seinem Export; Format-Knopf ohne Bestand lädt erst.
 
 ## Folgen
 

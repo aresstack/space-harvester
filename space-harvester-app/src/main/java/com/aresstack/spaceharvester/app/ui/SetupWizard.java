@@ -382,6 +382,9 @@ final class SetupWizard {
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
         // Einstellbar unter Allgemein › Terminal-Ausgabe; die Protokolldatei bekommt immer alles.
         summary.add(SettingsView.CONSOLE_TITLE, settings.consoleOutput().label());
+        // Einstellbar unter Allgemein › Analytics-Export: Zeitraum und Pfade des Confluence-Analytics-Plugins.
+        summary.add(SettingsView.ANALYTICS_TITLE, settings.analytics().isDefault() ? "Vorgaben (Confluence 10.2)"
+                : "angepasst · " + settings.analytics().days() + " Tage");
         summary.add("Konfigurationsdatei", context.configFile().toAbsolutePath().toString());
     }
 

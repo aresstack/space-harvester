@@ -350,7 +350,9 @@ public final class ConfigFileEditor {
     /**
      * Der Entwurf {@code base} mit neuer Cache-Frische ({@code space-harvester.cache.max-age}, {@code version-check})
      * und Sperrfrist ({@code space-harvester.sync.withheld-retention}, ADR 0014); dieselben Schlüssel wie im Server.
-     * Nur diese drei Werte ändern sich.
+     * Nur diese drei Werte ändern sich, dazu die Aufbewahrung des Änderungsprotokolls
+     * ({@code space-harvester.cache.change-log.retention}, ADR 0030; {@code 0} heißt unbegrenzt), wenn sie von dem
+     * abweicht, was die Datei schon liest.
      */
     public Draft withCache(Path file, Draft base, AppSettings.Cache cache) {
         String text = nested(base.text(), "cache", "max-age", indent -> indent + "max-age: " + duration(cache.maxAge())
@@ -360,6 +362,12 @@ public final class ConfigFileEditor {
         text = nested(text, "sync", "withheld-retention", indent -> indent + "withheld-retention: "
                 + duration(cache.withheldRetention()) + "\n");
         AppSettings settings = loader.read(file, text);
+        if (!settings.cache().changeLog().equals(cache.changeLog())) {
+            String retention = cache.changeLog().unlimited() ? "0" : duration(cache.changeLog().retention());
+            text = nested(text, "cache", "change-log", indent -> indent + "change-log:\n" + indent + "  retention: "
+                    + retention + "\n");
+            settings = loader.read(file, text);
+        }
         if (!settings.cache().equals(cache)) {
             throw new IllegalArgumentException("Die Cache-Einstellungen ließen sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.cache und space-harvester.sync von Hand "
@@ -540,6 +548,43 @@ public final class ConfigFileEditor {
         if (newProblem || settings.consoleOutput() != output) {
             throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
                     + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Export „Analytics“ ({@code space-harvester-app.analytics}, nur die App, Angelo
+     * 16.11.2026): Zeitraum und die drei Pfade; nur Angaben, die von der Vorgabe abweichen, stehen in der Datei, alles
+     * Vorgabe entfernt den Block. Pfade stehen in Anführungszeichen, denn sie enthalten {@code {} und {@code :}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAnalytics(Path file, Draft base, AnalyticsSettings analytics) {
+        String value = null;
+        if (!analytics.isDefault()) {
+            StringBuilder block = new StringBuilder("analytics:");
+            if (analytics.period() != null) {
+                block.append("\n  period: ").append(duration(analytics.period()));
+            }
+            if (analytics.details() != null) {
+                block.append("\n  details: ").append(quoted(analytics.details()));
+            }
+            if (analytics.activityByDate() != null) {
+                block.append("\n  activity-by-date: ").append(quoted(analytics.activityByDate()));
+            }
+            if (analytics.contentViews() != null) {
+                block.append("\n  content-views: ").append(quoted(analytics.contentViews()));
+            }
+            value = block.toString();
+        }
+        String text = appValue(base.text(), "analytics", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.analytics().equals(analytics)) {
+            throw new IllegalArgumentException("Der Export „Analytics“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + AnalyticsSettings.KEY + " von Hand bearbeiten."
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
@@ -875,7 +920,10 @@ public final class ConfigFileEditor {
         if (root < 0) {
             if (value != null) {
                 // Oben in der Datei, wie im Beispiel; der Rest bleibt unverändert.
-                lines.addAll(0, List.of("space-harvester-app:", "  " + value, ""));
+                List<String> fresh = new ArrayList<>(List.of("space-harvester-app:"));
+                fresh.addAll(valueLines(value, "  "));
+                fresh.add("");
+                lines.addAll(0, fresh);
             }
             return String.join(newline, lines) + newline;
         }
@@ -893,9 +941,18 @@ public final class ConfigFileEditor {
             lines.subList(line, blockEnd(lines, line, childIndent)).clear();
         }
         if (value != null) {
-            lines.add(line >= 0 ? line : root + 1, " ".repeat(childIndent) + value);
+            lines.addAll(line >= 0 ? line : root + 1, valueLines(value, " ".repeat(childIndent)));
         }
         return String.join(newline, lines) + newline;
+    }
+
+    /** Ein Wert mit Zeilenumbrüchen ist ein Block: jede Zeile bekommt den Einzug des Schlüssels davor. */
+    private static List<String> valueLines(String value, String indent) {
+        List<String> result = new ArrayList<>();
+        for (String line : value.split("\n", -1)) {
+            result.add(indent + line);
+        }
+        return result;
     }
 
     /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */

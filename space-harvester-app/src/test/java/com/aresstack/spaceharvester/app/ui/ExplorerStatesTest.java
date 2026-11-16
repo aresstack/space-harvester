@@ -90,6 +90,52 @@ class ExplorerStatesTest {
         assertThat(onEdt(() -> explorer[0].badge(page)).tooltip()).isEqualTo(TreeStates.TIP_LOCAL);
         await(() -> onEdtQuietly(() -> explorer[0].badge(space)).kind() == TreeStates.Kind.FULL);
         assertThat(onEdt(() -> explorer[0].badge(space)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
+        // Das Zeichen der Kopfzeile fasst alle Quellen zusammen (Angelo, 16.11.2026), ebenfalls ohne Abfrage.
+        await(() -> onEdtQuietly(() -> explorer[0].states().all(List.of("handbuch"), java.util.Map.of())).kind() == TreeStates.Kind.FULL);
+        assertThat(onEdt(() -> explorer[0].allBadge().getIcon())).isEqualTo(Glyph.CIRCLE_FULL);
+        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo(Explorer.refreshTip("2 von 2 Seiten lokal"));
+        // Auch die Wurzel der Quelle trägt den Zustandspunkt (Angelo, 16.11.2026): über alle ihre Spaces.
+        Explorer.SourceItem source = new Explorer.SourceItem("handbuch", "Handbuch");
+        assertThat(onEdt(() -> explorer[0].badge(source)).kind()).isEqualTo(TreeStates.Kind.FULL);
+        assertThat(onEdt(() -> explorer[0].badge(source)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
+
+        // Nach einem neuen Stand des Space (Core-Meldung) liest der aufgeklappte Knoten seine Kinder nach: die neue
+        // Seite erscheint, Aufklappung und Auswahl bleiben (Codex zu #802).
+        javax.swing.tree.TreePath selected = onEdt(() -> explorer[0].tree().getSelectionPath());
+        assertThat(selected).isNotNull();
+        Files.writeString(files.resolve("neu.md"), "# Neu\n\nText.\n");
+        JobStatus sync = context.runtime().workspace().startSync("handbuch", space.spaceKey());
+        await(() -> {
+            JobStatus status = context.runtime().workspace().job(sync.id());
+            return status != null && status.state().terminal();
+        });
+        await(() -> onEdtQuietly(() -> titles(explorer[0], space)).stream()
+                .anyMatch(title -> title.toLowerCase(java.util.Locale.ROOT).contains("neu")));
+        assertThat(onEdt(() -> titles(explorer[0], space))).hasSize(3);
+        assertThat(onEdt(() -> explorer[0].tree().getSelectionPath())).isEqualTo(selected);
+        assertThat(onEdt(() -> explorer[0].tree().isExpanded(selected.getParentPath()))).isTrue();
+    }
+
+    /** Die Titel der Kinder des Space-Knotens im Baum. */
+    private static List<String> titles(Explorer explorer, Explorer.SpaceItem space) {
+        javax.swing.tree.TreeModel model = explorer.tree().getModel();
+        Object root = model.getRoot();
+        for (int i = 0; i < model.getChildCount(root); i++) {
+            Explorer.Node source = (Explorer.Node) model.getChild(root, i);
+            for (int j = 0; j < source.getChildCount(); j++) {
+                Explorer.Node node = (Explorer.Node) source.getChildAt(j);
+                if (node.item() instanceof Explorer.SpaceItem item && item.spaceKey().equals(space.spaceKey())) {
+                    List<String> titles = new java.util.ArrayList<>();
+                    for (int k = 0; k < node.getChildCount(); k++) {
+                        if (((Explorer.Node) node.getChildAt(k)).item() instanceof Explorer.PageItem page) {
+                            titles.add(page.title());
+                        }
+                    }
+                    return titles;
+                }
+            }
+        }
+        return List.of();
     }
 
     private static void await(BooleanSupplier condition) throws Exception {

@@ -116,6 +116,45 @@ class ContentViewTest {
             heading.doLayout();
             return heading.getComponentCount() == 1 && titleLabel.getWidth() == 300;
         })).isTrue();
+        // Eine Kopfzeile (Angelo, 16.11.2026): Überschrift, Stern und das Dreieck stehen in der Zeile der
+        // Bereichsanzeige; „Lesezeichen kopieren“ und „Im Browser öffnen“ liegen im Menü am Dreieck.
+        assertThat(onEdt(() -> {
+            java.awt.Container row = view.detail().titleLabel().getParent().getParent();
+            return javax.swing.SwingUtilities.isDescendingFrom(view.detail().starButton(), row)
+                    && javax.swing.SwingUtilities.isDescendingFrom(view.detail().moreButton(), row)
+                    && !javax.swing.SwingUtilities.isDescendingFrom(row, view.detail());
+        })).isTrue();
+        assertThat(onEdt(() -> {
+            List<String> entries = new java.util.ArrayList<>();
+            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
+                entries.add(((javax.swing.JMenuItem) item).getText());
+            }
+            return entries;
+        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen");
+        // Sichtprüfung der Kopfzeile, nur mit der Umgebungsvariable HEADER_SCREENSHOT (Pfad der PNG-Datei).
+        String screenshot = System.getenv("HEADER_SCREENSHOT");
+        if (screenshot != null && !screenshot.isBlank()) {
+            onEdt(() -> {
+                javax.swing.JComponent root = view.component();
+                root.setSize(1300, 420);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(root);
+                }
+                java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(1300, 420,
+                        java.awt.image.BufferedImage.TYPE_INT_RGB);
+                java.awt.Graphics2D g = image.createGraphics();
+                root.paint(g);
+                g.dispose();
+                try {
+                    javax.imageio.ImageIO.write(image, "png", new java.io.File(screenshot));
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                return null;
+            });
+        }
+        // Jeder Eintrag ist so wählbar wie seine Aktion (die Testseite hat keine Adresse in der Quelle).
+        assertThat(onEdt(() -> view.detail().moreMenu().getComponent(0).isEnabled())).isTrue();
         assertThat(onEdt(() -> {
             java.awt.event.MouseListener[] listeners = view.detail().titleLabel().getMouseListeners();
             listeners[listeners.length - 1].mouseEntered(null);
@@ -230,7 +269,64 @@ class ContentViewTest {
     }
 
     @Test
-    void theChatFollowsTheSelectionAndSendingOnlySaysThatTheChatIsStillToCome() throws Exception {
+    void choosingTheSourceOrASpaceOfTheOpenPageEmptiesThePageTabs() throws Exception {
+        String space = space("handbuch");
+        String pageId = firstPage("handbuch", space);
+        onEdt(() -> {
+            view.openPage("handbuch", pageId);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+
+        // Die Seite selbst gewählt (etwa beim Aufdecken im Baum): sie bleibt stehen.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space, pageId, "handbuch 0"));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).isNotNull();
+
+        // Die Wurzel derselben Quelle gewählt: Die Seitenreiter zeigen nicht mehr die vorige Seite, Export folgt.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).as("keine Seite mehr in den Reitern").isNull();
+        // Stattdessen die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der Quelle, sonst leer.
+        assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).isEqualTo("handbuch");
+        assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText()))
+                .as("der erste Reiter heißt auf der Quellenseite „Updates“").isEqualTo("Updates");
+        assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
+                .isTrue();
+        onEdt(() -> {
+            view.detail().tabs().select("Erweitert");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().sourceView().isVisible())).as("übrige Reiter leer").isFalse();
+        onEdt(() -> {
+            view.detail().tabs().select("Leseansicht");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().export().selection().sourceId())).isEqualTo("handbuch");
+
+        // Ebenso ein Space derselben Quelle.
+        onEdt(() -> {
+            view.openPage("handbuch", pageId);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space, null, space));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().shownPage())).isNull();
+        assertThat(onEdt(() -> view.detail().showsSource())).as("ein Space hat keine Quellenseite").isFalse();
+        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).as("Anmeldung beendet").isNull();
+        assertThat(onEdt(() -> view.detail().tabs().button("Leseansicht").getToolTipText())).isEqualTo("Leseansicht");
+    }
+
+    @Test
+    void theChatFollowsTheSelectionAndSendingWithoutAChatModelSaysSo() throws Exception {
         PageDetailPanel detail = view.detail();
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
@@ -241,25 +337,27 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(chat::isVisible)).isTrue();
-        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces"));
-        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
-        // Senden im Click-Dummy: die eigene Nachricht als Sprechblase, der Composer leer, Status „Chat folgt“.
+        // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
+        // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
         onEdt(() -> {
             chat.attach(home.resolve("notiz.txt"));
             ((javax.swing.text.JTextComponent) chat.editor()).setText("Was steht im Handbuch?");
             chat.send();
             return null;
         });
-        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
-        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.FOLLOWS);
-        assertThat(onEdt(chat::attachments)).isEmpty();
-        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText())).isEmpty();
+        assertThat(onEdt(chat::bubbles)).isZero();
+        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.NO_CHAT_MODEL);
+        assertThat(onEdt(chat::attachments)).hasSize(1);
+        assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText()))
+                .isEqualTo("Was steht im Handbuch?");
         // Leer sendet nichts.
         onEdt(() -> {
+            ((javax.swing.text.JTextComponent) chat.editor()).setText("");
             chat.send();
             return null;
         });
-        assertThat(onEdt(chat::bubbles)).isEqualTo(1);
+        assertThat(onEdt(chat::bubbles)).isZero();
         onEdt(() -> {
             view.selection(null);
             return null;
@@ -453,5 +551,14 @@ class ContentViewTest {
             throw failure.get();
         }
         return result.get();
+    }
+
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
     }
 }

@@ -1,0 +1,68 @@
+package com.aresstack.spaceharvester.config;
+
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.changelog.ChangeLog;
+import com.aresstack.spaceharvester.application.changelog.ChangeLogStore;
+import com.aresstack.spaceharvester.application.changelog.ManualSyncRounds;
+import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sync.SyncCommitted;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import java.time.Clock;
+import java.util.Optional;
+import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * Änderungsprotokoll (ADR 0030) im Dienst wie in der Bibliothek: Update-Marke je Quelle nach manueller
+ * Synchronisierung, Aufräumen nach {@code space-harvester.cache.change-log.retention} beim Start und nach jedem
+ * Abgleich, Abfragen für die REST-API. Ohne Cache gibt es kein Protokoll.
+ */
+@Configuration(proxyBeanMethods = false)
+class ChangeLogConfiguration {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ChangeLogConfiguration.class);
+
+    @Bean(destroyMethod = "close")
+    ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog) {
+        LucenePageCache available = cache.getIfAvailable();
+        ChangeLogStore store = available == null ? ChangeLogStore.NONE : available;
+        Function<PageKey, Optional<PageHeader>> headers = available == null ? key -> Optional.empty()
+                : available::findHeader;
+        return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList());
+    }
+
+    @Bean(destroyMethod = "close")
+    ManualSyncRounds manualSyncRounds(Jobs jobs, ObjectProvider<LucenePageCache> cache) {
+        LucenePageCache available = cache.getIfAvailable();
+        return ManualSyncRounds.start(jobs, available == null ? ChangeLogStore.NONE : available, Clock.systemUTC());
+    }
+
+    /** Räumt beim Start und nach jedem bestätigten Abgleich auf, nie nach Zeitgeber (ADR 0030, Abschnitt 2). */
+    @Bean
+    SyncCommitted pruneChangeLog(ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+        Runnable prune = () -> {
+            LucenePageCache available = cache.getIfAvailable();
+            if (available == null) {
+                return;
+            }
+            try {
+                ChangeLogSettings settings = live.current().changeLog();
+                (settings != null ? settings : ChangeLogSettings.DEFAULT).cutoff(Clock.systemUTC().instant())
+                        .ifPresent(available::pruneChangeLog);
+            } catch (RuntimeException e) {
+                LOG.warn("Änderungsprotokoll nicht aufgeräumt ({})", e.getClass().getName());
+            }
+        };
+        prune.run();
+        return run -> prune.run();
+    }
+}

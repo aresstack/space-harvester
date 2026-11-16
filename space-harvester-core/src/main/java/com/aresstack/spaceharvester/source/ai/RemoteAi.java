@@ -27,6 +27,8 @@ import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogAdapter;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogConfig;
 import com.aresstack.enterpriseai.model.kipitz.KipitzRerankAdapter;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
@@ -149,6 +151,72 @@ public final class RemoteAi {
                 // Die Meldung des Adapters nennt nur Status und Ausnahmeklasse, nie Texte oder den Key.
                 throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, e.getMessage());
             }
+        };
+    }
+
+    /**
+     * Das Chat-Modell als Gesprächspartner der App ({@code POST /chat/completions}, streamend) über den unveränderten
+     * {@code OpenAiCompatibleChatAdapter}: derselbe Port, den der Enterprise AI Client für seinen Chat nutzt, hinter
+     * der eigenen SPI {@link AiChat}, damit die Kopie aus enterprise-ai-sources hier im Quellenadapter bleibt. Der
+     * Chat selbst gehört nicht in den Core (ADR 0012); hier gibt es nur die Verbindung mit Route, TLS, Token und
+     * Fristen wie bei allen anderen Aufrufen. Was an den Dienst geht, entscheidet der Aufrufer (ADR 0028).
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public AiChat chat() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        ChatCompletionPort adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        return (request, listener) -> {
+            List<ChatMessage> messages = new ArrayList<>();
+            for (AiChat.Message message : request.messages()) {
+                messages.add(switch (message.role()) {
+                    case SYSTEM -> ChatMessage.system(message.text());
+                    case USER -> ChatMessage.user(message.text());
+                    case ASSISTANT -> ChatMessage.assistant(message.text());
+                });
+            }
+            ChatOptions.Builder options = ChatOptions.builder().model(request.model());
+            if (request.reasoningEffort() != null) {
+                options.reasoningEffort(request.reasoningEffort());
+            }
+            StringBuilder received = new StringBuilder();
+            ChatTask task = adapter.stream(new ChatRequest(messages, options.build()), new ChatStreamListener() {
+                @Override
+                public void onStart() {
+                }
+
+                @Override
+                public void onDelta(String text) {
+                    synchronized (received) {
+                        received.append(text);
+                    }
+                    listener.delta(text);
+                }
+
+                @Override
+                public void onComplete(ChatResponse response) {
+                    String full;
+                    synchronized (received) {
+                        full = received.length() > 0 || response == null || response.content() == null
+                                ? received.toString() : response.content();
+                    }
+                    listener.completed(full);
+                }
+
+                @Override
+                public void onError(ChatCompletionException error) {
+                    listener.failed(new AiChatException(AiChatException.Kind.valueOf(error.kind().name()),
+                            error.statusCode(), error.getMessage(), error));
+                }
+
+                @Override
+                public void onCancelled() {
+                    listener.cancelled();
+                }
+            });
+            return task::cancel;
         };
     }
 
