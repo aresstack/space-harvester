@@ -481,7 +481,8 @@ public final class PageDetailPanel extends JPanel {
         // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        more.addActionListener(e -> moreMenu().show(more, 0, more.getHeight()));
+        more.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(moreMenu(), more)
+                .show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);

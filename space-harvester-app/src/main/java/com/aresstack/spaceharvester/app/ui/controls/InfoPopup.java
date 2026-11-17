@@ -188,8 +188,11 @@ public final class InfoPopup extends JPopupMenu {
         int barWidth = scrolls ? scroll.getVerticalScrollBar().getPreferredSize().width : 0;
         scroll.setVerticalScrollBarPolicy(scrolls ? JScrollPane.VERTICAL_SCROLLBAR_ALWAYS
                 : JScrollPane.VERTICAL_SCROLLBAR_NEVER);
-        title.setPreferredSize(new Dimension(inner, title.isVisible() ? title.heightFor(inner) : 0));
-        title.setMaximumSize(title.getPreferredSize());
+        // Feste Größe über die ganze Breite: WrappedText meldet von sich aus nur eine schmale Wunschbreite (40 px),
+        // als Höchstgröße übernommen brach „Updates“ als „Updat / es“ um.
+        Dimension titleSize = new Dimension(inner, title.isVisible() ? title.heightFor(inner) : 0);
+        title.setPreferredSize(titleSize);
+        title.setMaximumSize(titleSize);
         links.setMaximumSize(new Dimension(inner, linksHeight));
         body.setPreferredSize(new Dimension(inner - barWidth, scrolls ? body.heightFor(inner - barWidth) : bodyHeight));
         scroll.setPreferredSize(new Dimension(inner, bodyRoom));

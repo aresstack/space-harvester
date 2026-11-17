@@ -1634,7 +1634,8 @@ public final class SourcesView implements View {
             });
             more.addActionListener(e -> {
                 select(entry.id());
-                menu().show(more, 0, more.getHeight());
+                com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(menu(), more)
+                        .show(more, 0, more.getHeight());
             });
             MouseAdapter choose = new MouseAdapter() {
                 @Override
