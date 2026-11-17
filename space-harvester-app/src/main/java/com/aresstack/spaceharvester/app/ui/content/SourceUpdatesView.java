@@ -130,6 +130,8 @@ final class SourceUpdatesView extends JPanel {
     private JobState runState;
     /** Updates, für die die Leseansicht die Zusammenfassung schon von selbst angestoßen hat (je Quelle, Ebene). */
     private final java.util.Set<String> autoStarted = new java.util.HashSet<>();
+    /** Alle Auftragskennungen, die „Zusammenfassen“ dieser Ansicht schon geliefert hat. */
+    private final java.util.Set<String> seenJobs = new java.util.HashSet<>();
     private Subscription jobWatch = Subscription.NONE;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
@@ -613,7 +615,10 @@ final class SourceUpdatesView extends JPanel {
             if (running != starting) {
                 return;
             }
-            Run run = new Run(status.id(), id, space, updateId, auto);
+            // Der Core liefert für dasselbe Update und dieselbe Ebene den schon wartenden oder laufenden Auftrag (#842),
+            // etwa aus einem anderen Fenster. Als eigener Selbst-Auftrag (abbrechbar) gilt nur eine neue Kennung.
+            boolean fresh = seenJobs.add(status.id());
+            Run run = new Run(status.id(), id, space, updateId, auto && fresh);
             running = run;
             runState = status.state();
             watch(current, run);
@@ -1277,17 +1282,18 @@ final class SourceUpdatesView extends JPanel {
 
                 @Override
                 public JobStatus job(String jobId) {
-                    return workspace.job(jobId);
+                    return workspace.summaryJob(jobId);
                 }
 
                 @Override
                 public JobStatus cancelJob(String jobId) {
-                    return workspace.cancelJob(jobId);
+                    return workspace.cancelSummary(jobId);
                 }
 
                 @Override
                 public Subscription subscribeJobs(JobListener listener) {
-                    return workspace.subscribeJobs(listener);
+                    // Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer.
+                    return workspace.subscribeSummaryJobs(listener);
                 }
             };
         }

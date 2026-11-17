@@ -491,6 +491,19 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void aWaitingJobThatAnotherWindowStartedIsNeverCancelledFromHere() {
+        actions.jobNow = JobState.QUEUED;
+        actions.reuseJob = "fremd-1";
+        summary.source("wiki", "Confluence HaVdB");
+        summary.source("wiki", "CLUK", "CLUK");
+        assertThat(actions.cancels).as("eigener, neuer Auftrag: abgebrochen").isEqualTo(1);
+
+        summary.source("wiki", "Confluence HaVdB");
+        summary.source("wiki", "ARCH", "ARCH");
+        assertThat(actions.cancels).as("dieselbe Kennung wie zuvor gilt nicht mehr als eigener").isEqualTo(1);
+    }
+
+    @Test
     void aRunningAutoJobFinishesAndTheNextLevelGetsItsJobAfterwards() throws Exception {
         summary.source("wiki", "Confluence HaVdB");
         summary.source("wiki", "CLUK", "CLUK");
@@ -617,11 +630,17 @@ class SourceUpdatesViewTest {
         int cancels;
         int active;
         int mostActive;
+        /** Wie der Core (#842): liefert den schon wartenden Auftrag eines anderen Fensters. */
+        String reuseJob;
         JobListener jobs;
         UpdateSummary stored;
 
         static JobStatus job(JobState state) {
-            return new JobStatus("job-1", JobType.EXPORT, "wiki", null, "local", state, new JobProgress(1, 0, 0, 0),
+            return job("job-1", state);
+        }
+
+        static JobStatus job(String id, JobState state) {
+            return new JobStatus(id, JobType.EXPORT, "wiki", null, "local", state, new JobProgress(1, 0, 0, 0),
                     state == JobState.FAILED ? new JobError("X", "Modell nicht erreichbar") : null, false, SECOND,
                     null, null, null, null, Map.of(), false, false, null);
         }
@@ -771,14 +790,17 @@ class SourceUpdatesViewTest {
         public JobStatus summarize(String sourceId, String updateId, String spaceKey) {
             summarizeCalls++;
             summarizedLevel = spaceKey;
+            if (reuseJob != null) {
+                return job(reuseJob, JobState.QUEUED);
+            }
             active++;
             mostActive = Math.max(mostActive, active);
-            return job(JobState.QUEUED);
+            return job("job-" + summarizeCalls, JobState.QUEUED);
         }
 
         @Override
         public JobStatus job(String jobId) {
-            return job(jobNow);
+            return job(jobId, jobNow);
         }
 
         @Override
@@ -786,7 +808,7 @@ class SourceUpdatesViewTest {
             cancelled = jobId;
             cancels++;
             active--;
-            return job(JobState.CANCELLED);
+            return job(jobId, JobState.CANCELLED);
         }
 
         @Override
