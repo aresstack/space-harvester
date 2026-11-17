@@ -44,7 +44,9 @@ import java.util.function.Supplier;
  * Reiter „Eigenschaften“ der Quellenseite (Angelo, 17.11.2026): Kennzahlen der Quelle aus dem Bestand (Spaces,
  * Seiten, lokal, veraltet, gesperrt, Stand, Updates), je Space eine Zeile, darunter die Einstellungen der Quelle.
  * Neu gelesen wird nur auf Meldung von Bestand und Änderungsprotokoll (ADR 0027), nie in Abständen. Bearbeitet wird
- * die Quelle unter Quellen; der Stift oben in der Kopfzeile führt dorthin.
+ * die Quelle unter Quellen; der Stift oben in der Kopfzeile führt dorthin. Für „Wissensquellen“ (alle Quellen, Angelo
+ * 17.11.2026) dieselben Kästen als Gesamtsicht: Kennzahlen über alle Quellen, je Space eine Zeile mit Quellentitel
+ * davor und statt der Einstellungen der Kasten „Quellen“ mit einer Zeile je Quelle.
  */
 final class SourcePropertiesView extends JPanel {
 
@@ -135,6 +137,9 @@ final class SourcePropertiesView extends JPanel {
     private final JComponent figuresPlate = plate("Kennzahlen", Comic.PETROL, figures);
     private final JComponent spacesPlate = plate("Spaces", Comic.GREEN, spaces);
     private final JComponent settingsPlate = plate("Einstellungen", Comic.BLUE, settingsFacts);
+    /** Die Überschrift des dritten Kastens: „Einstellungen“ einer Quelle, „Quellen“ in der Gesamtsicht. */
+    private final JLabel settingsTitle = headings.get(headings.size() - 1);
+    static final String ALL_SOURCES = "Quellen";
     private final com.aresstack.spaceharvester.app.ui.controls.WrappedText note =
             Comic.wrapped(" ", Comic.MUTED, 13.5f);
     private static final java.time.format.DateTimeFormatter WHEN =
@@ -142,10 +147,14 @@ final class SourcePropertiesView extends JPanel {
     private java.time.ZoneId zone = java.time.ZoneId.systemDefault();
     private Consumer<String> onEdit = id -> { };
     private String sourceId;
+    /** Die Gesamtsicht über alle Quellen ({@link #all}); leer, wenn eine Quelle oder keine gezeigt wird. */
+    private List<String> allIds = List.of();
+    private final List<Subscription> allSubscriptions = new ArrayList<>();
     private int generation;
     private Subscription holdings = Subscription.NONE;
     private Subscription changes = Subscription.NONE;
     private Loaded shown;
+    private Map<String, Loaded> shownAll;
     /** Höchstens ein Lauf gleichzeitig; Meldungen währenddessen oder bei verdecktem Reiter merken einen Nachlauf vor. */
     private boolean running;
     private boolean pending;
@@ -231,13 +240,12 @@ final class SourcePropertiesView extends JPanel {
 
     /** Die gezeigte Quelle, {@code null} für keine: meldet sich an Bestand und Änderungsprotokoll an und liest. */
     void source(String id) {
-        holdings.close();
-        changes.close();
-        holdings = Subscription.NONE;
-        changes = Subscription.NONE;
+        unsubscribe();
         generation++;
         sourceId = id;
+        allIds = List.of();
         shown = null;
+        shownAll = null;
         edit.setEnabled(id != null);
         if (id == null) {
             show(null, " ");
@@ -249,8 +257,52 @@ final class SourcePropertiesView extends JPanel {
             return;
         }
         // Erst anmelden, dann lesen (ADR 0027); Meldungen kommen auf dem Zustell-Thread des Core.
+        holdings = subscribeHoldings(current, id);
+        changes = subscribeChanges(current, id);
+        reload();
+    }
+
+    /**
+     * Die Gesamtsicht über alle Wissensquellen (Angelo 17.11.2026: die Überschrift „Wissensquellen“ im Explorer):
+     * meldet sich bei jeder Quelle an und liest alle; der Stift gilt hier nicht.
+     */
+    void all(List<String> ids) {
+        unsubscribe();
+        generation++;
+        sourceId = null;
+        allIds = List.copyOf(ids);
+        shown = null;
+        shownAll = null;
+        edit.setEnabled(false);
+        Actions current = actions.get();
+        if (current == null) {
+            show(null, NOT_RUNNING);
+            return;
+        }
+        for (String id : allIds) {
+            allSubscriptions.add(subscribeHoldings(current, id));
+            allSubscriptions.add(subscribeChanges(current, id));
+        }
+        reload();
+    }
+
+    /** Ob die Gesamtsicht über alle Quellen gezeigt wird. */
+    boolean showsAll() {
+        return !allIds.isEmpty();
+    }
+
+    private void unsubscribe() {
+        holdings.close();
+        changes.close();
+        holdings = Subscription.NONE;
+        changes = Subscription.NONE;
+        allSubscriptions.forEach(Subscription::close);
+        allSubscriptions.clear();
+    }
+
+    private Subscription subscribeHoldings(Actions current, String id) {
         try {
-            holdings = current.subscribeHoldings(id, new HoldingsListener() {
+            return current.subscribeHoldings(id, new HoldingsListener() {
                 @Override
                 public void pagesChanged(String source, String spaceKey, Set<String> pageIds) {
                     later(source);
@@ -262,19 +314,21 @@ final class SourcePropertiesView extends JPanel {
                 }
             });
         } catch (RuntimeException e) {
-            holdings = Subscription.NONE;
+            return Subscription.NONE;
         }
+    }
+
+    private Subscription subscribeChanges(Actions current, String id) {
         try {
-            changes = current.subscribeChangeLog(id, this::later);
+            return current.subscribeChangeLog(id, this::later);
         } catch (RuntimeException e) {
-            changes = Subscription.NONE;
+            return Subscription.NONE;
         }
-        reload();
     }
 
     private void later(String changed) {
         SwingUtilities.invokeLater(() -> {
-            if (Objects.equals(changed, sourceId)) {
+            if (Objects.equals(changed, sourceId) || allIds.contains(changed)) {
                 reload();
             }
         });
@@ -287,7 +341,8 @@ final class SourcePropertiesView extends JPanel {
     void reload() {
         Actions current = actions.get();
         String id = sourceId;
-        if (current == null || id == null) {
+        List<String> ids = allIds;
+        if (current == null || id == null && ids.isEmpty()) {
             pending = false;
             return;
         }
@@ -304,15 +359,31 @@ final class SourcePropertiesView extends JPanel {
                 known = List.copyOf(current.types());
                 types = known;
             }
-            return new Loaded(List.copyOf(current.spaces(id)), List.copyOf(current.updates(id)),
-                    current.enabled(id), known);
-        }, found -> {
+            Map<String, Loaded> loaded = new java.util.LinkedHashMap<>();
+            for (String each : id != null ? List.of(id) : ids) {
+                loaded.put(each, new Loaded(List.copyOf(current.spaces(each)), List.copyOf(current.updates(each)),
+                        current.enabled(each), known));
+            }
+            return loaded;
+        }, loaded -> {
             finished();
-            if (mine != generation || found.equals(shown)) {
+            if (mine != generation) {
                 return;
             }
-            shown = found;
-            show(found, null);
+            if (id != null) {
+                Loaded found = loaded.get(id);
+                if (found.equals(shown)) {
+                    return;
+                }
+                shown = found;
+                show(found, null);
+            } else {
+                if (loaded.equals(shownAll)) {
+                    return;
+                }
+                shownAll = loaded;
+                showAll(loaded);
+            }
         }, failure -> {
             finished();
             if (mine == generation) {
@@ -339,14 +410,45 @@ final class SourcePropertiesView extends JPanel {
         figures.reset();
         spaces.reset();
         settingsFacts.reset();
+        settingsTitle.setText("Einstellungen");
         note.setText(message == null ? "" : message);
         note.setVisible(message != null && !message.isBlank());
         if (found != null) {
             fillFigures(found);
-            fillSpaces(found.spaces());
+            fillSpaces(found.spaces(), Map.of());
             fillSettings(found);
         }
-        boolean any = found != null;
+        finishShow(found != null, found != null && !found.spaces().isEmpty());
+    }
+
+    /** Die Gesamtsicht: Kennzahlen über alle Quellen, Spaces mit Quellentitel davor, der Kasten „Quellen“. */
+    private void showAll(Map<String, Loaded> loaded) {
+        figures.reset();
+        spaces.reset();
+        settingsFacts.reset();
+        settingsTitle.setText(ALL_SOURCES);
+        note.setText("");
+        note.setVisible(false);
+        List<SpaceSummary> allSpaces = new ArrayList<>();
+        List<ChangeUpdate> allUpdates = new ArrayList<>();
+        Map<String, String> titles = new java.util.HashMap<>();
+        List<SourceType> types = List.of();
+        for (Map.Entry<String, Loaded> entry : loaded.entrySet()) {
+            allSpaces.addAll(entry.getValue().spaces());
+            allUpdates.addAll(entry.getValue().updates());
+            titles.put(entry.getKey(), sourceTitle(entry.getKey()));
+            types = entry.getValue().types();
+        }
+        fillFigures(new Loaded(allSpaces, allUpdates, true, types));
+        fillSpaces(allSpaces, titles);
+        for (Map.Entry<String, Loaded> entry : loaded.entrySet()) {
+            settingsFacts.add(titles.get(entry.getKey()), sourceLine(entry.getKey(), entry.getValue()),
+                    entry.getValue().enabled() ? Comic.INK : Comic.ORANGE, null, "ID " + entry.getKey());
+        }
+        finishShow(true, !allSpaces.isEmpty());
+    }
+
+    private void finishShow(boolean any, boolean anySpaces) {
         for (Component part : column.getComponents()) {
             if (part != note) {
                 part.setVisible(any);
@@ -358,9 +460,37 @@ final class SourcePropertiesView extends JPanel {
         for (Facts facts : List.of(figures, spaces, settingsFacts)) {
             facts.labelWidth(labels);
         }
-        spacesPlate.setVisible(any && !found.spaces().isEmpty());
+        spacesPlate.setVisible(any && anySpaces);
         column.revalidate();
         column.repaint();
+    }
+
+    /** Der Anzeigename einer Quelle aus den Einstellungen, sonst ihre ID. */
+    private String sourceTitle(String id) {
+        AppSettings.SourceEntry entry = entry(id);
+        return entry == null || entry.config().title() == null || entry.config().title().isBlank() ? id
+                : entry.config().title();
+    }
+
+    /** Eine Zeile je Quelle in der Gesamtsicht: „Confluence · Personal Access Token · aktiv“. */
+    private String sourceLine(String id, Loaded found) {
+        AppSettings.SourceEntry entry = entry(id);
+        List<String> parts = new ArrayList<>();
+        if (entry != null) {
+            SourceSettingsConfig config = entry.config();
+            SourceType type = found.types().stream().filter(candidate -> candidate.id().equals(config.type()))
+                    .findFirst().orElse(null);
+            parts.add(type == null ? Texts.sourceType(config.type()) : type.displayName());
+            parts.add(Texts.auth(config.auth()));
+        }
+        parts.add(found.enabled() ? "aktiv" : "nicht aktiv");
+        return String.join(" · ", parts);
+    }
+
+    private AppSettings.SourceEntry entry(String id) {
+        AppSettings current = settings.get();
+        return current == null ? null : current.sources().stream().filter(source -> source.id().equals(id))
+                .findFirst().orElse(null);
     }
 
     private void fillFigures(Loaded found) {
@@ -385,12 +515,14 @@ final class SourcePropertiesView extends JPanel {
         figures.add("Gesperrt", String.valueOf(total.locked()), total.locked() > 0 ? Comic.RED : Comic.INK);
         figures.add("Stand vom", asOf == null ? "keine Inventur" : when(asOf));
         List<ChangeUpdate> done = found.updates().stream().filter(update -> !update.open()).toList();
-        ChangeUpdate open = found.updates().stream().filter(ChangeUpdate::open).findFirst().orElse(null);
+        // In der Gesamtsicht je Quelle ein offenes Update: die geänderten Seiten zählen zusammen.
+        List<ChangeUpdate> open = found.updates().stream().filter(ChangeUpdate::open).toList();
         figures.add("Updates", done.isEmpty() ? "noch keines" : String.valueOf(done.size()));
         done.stream().map(ChangeUpdate::to).filter(Objects::nonNull).max(Comparator.naturalOrder())
                 .ifPresent(last -> figures.add("Letztes Update", when(last)));
-        if (open != null) {
-            figures.add("Seit dem letzten Update", Texts.count(open.pages(), "geänderte Seite", "geänderte Seiten"));
+        if (!open.isEmpty()) {
+            figures.add("Seit dem letzten Update", Texts.count(open.stream().mapToInt(ChangeUpdate::pages).sum(),
+                    "geänderte Seite", "geänderte Seiten"));
         }
     }
 
@@ -399,11 +531,13 @@ final class SourcePropertiesView extends JPanel {
      * 5 veraltet · 2 gesperrt · Stand vom 16.11.2026, 18:30“, grün wenn alles lokal und inventarisiert, orange
      * sonst, grau „Noch nicht geladen“ ohne Stand ({@link ExportPanel#standTone}).
      */
-    private void fillSpaces(List<SpaceSummary> list) {
-        list.stream().sorted(Comparator.comparing(SpaceSummary::spaceKey)).forEach(space -> {
+    private void fillSpaces(List<SpaceSummary> list, Map<String, String> titles) {
+        list.stream().sorted(Comparator.comparing(SpaceSummary::sourceId).thenComparing(SpaceSummary::spaceKey))
+                .forEach(space -> {
             HoldingCounts counts = space.counts();
-            spaces.add(space.spaceKey(), spaceText(space), ExportPanel.standTone(space, null), null,
-                    counts.outdated() > 0 ? Texts.OUTDATED_WHY : null);
+            String title = titles.get(space.sourceId());
+            spaces.add(title == null ? space.spaceKey() : title + " › " + space.spaceKey(), spaceText(space),
+                    ExportPanel.standTone(space, null), null, counts.outdated() > 0 ? Texts.OUTDATED_WHY : null);
         });
     }
 

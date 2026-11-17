@@ -693,6 +693,26 @@ public final class PageDetailPanel extends JPanel {
         showDeck();
     }
 
+    /**
+     * „Wissensquellen“ im Explorer (Angelo 17.11.2026): die Seitenreiter zeigen leer statt einer vorher gezeigten
+     * Seite oder Quelle, der Reiter Eigenschaften die Gesamtsicht über alle Quellen.
+     */
+    public void showAllSources(List<String> sourceIds, String title) {
+        clear();
+        this.title.setText(title);
+        empty.setText(EMPTY_SOURCE);
+        sourceView.source(null, null, title);
+        sourceChanges.source(null, null, title);
+        sourceProperties.all(sourceIds);
+        pageCard = SOURCE_CARD;
+        showDeck();
+    }
+
+    /** Ob gerade die Gesamtsicht über alle Wissensquellen gezeigt wird. */
+    boolean showsAllSources() {
+        return showsSource() && sourceProperties.showsAll();
+    }
+
     /** Zeigt den Reiter „Updates“ der Quellenseite (Doppelklick auf eine Quelle). */
     public void showReading() {
         tabs.select(READING);

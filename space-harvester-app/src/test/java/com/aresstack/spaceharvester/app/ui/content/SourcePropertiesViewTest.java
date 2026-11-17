@@ -100,6 +100,34 @@ class SourcePropertiesViewTest {
         assertThat(view.subscribed()).isTrue();
     }
 
+    /** Angelo 17.11.2026: „Wissensquellen“ zeigt die Gesamtsicht über alle Quellen statt der zuletzt gewählten. */
+    @Test
+    void allSourcesSumUpEveryQuelleAndListTheSpacesWithTheirSourceTitle() throws Exception {
+        view.all(List.of("wiki", "archiv"));
+
+        assertThat(view.showsAll()).isTrue();
+        assertThat(view.editEnabled()).isFalse();
+        assertThat(actions.subscriptions).as("je Quelle der Bestand").isEqualTo(2);
+        List<String> texts = view.texts();
+        assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", SourcePropertiesView.ALL_SOURCES);
+        assertThat(texts).containsSubsequence("Kennzahlen", "Spaces", "4 Spaces, davon 2 mit Inventur", "Seiten", "720",
+                "Seit dem letzten Update", "4 geänderte Seiten");
+        assertThat(texts).containsSubsequence("Spaces", "archiv › CLUK", "archiv › DEV", "Confluence HaVdB › CLUK",
+                "Confluence HaVdB › DEV");
+        assertThat(texts).containsSubsequence(SourcePropertiesView.ALL_SOURCES, "Confluence HaVdB",
+                "Confluence · Personal Access Token · aktiv", "archiv", "aktiv");
+        assertThat(texts).doesNotContain("Einstellungen", "Token");
+
+        // Eine Meldung einer der Quellen liest neu; eine einzelne Quelle beendet die Gesamtsicht.
+        int reads = actions.reads;
+        actions.changes.changed("archiv");
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.reads).isGreaterThan(reads);
+        view.source("wiki");
+        assertThat(view.showsAll()).isFalse();
+        assertThat(view.texts()).contains("Einstellungen").doesNotContain("archiv › CLUK");
+    }
+
     @Test
     void settingsShowTheSourceWithFieldLabelsAndNoSecrets() {
         view.source("wiki");
@@ -242,14 +270,15 @@ class SourcePropertiesViewTest {
         ChangeLogListener changes;
         int reads;
         int closed;
+        int subscriptions;
 
         @Override
         public List<SpaceSummary> spaces(String sourceId) {
             reads++;
             return List.of(
-                    new SpaceSummary("wiki", "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
+                    new SpaceSummary(sourceId, "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
                             new HoldingCounts(20, 5, 1, 0)),
-                    new SpaceSummary("wiki", "CLUK", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
+                    new SpaceSummary(sourceId, "CLUK", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
                             counts));
         }
 
@@ -280,6 +309,7 @@ class SourcePropertiesViewTest {
         @Override
         public Subscription subscribeHoldings(String sourceId, HoldingsListener listener) {
             holdings = listener;
+            subscriptions++;
             return () -> closed++;
         }
 

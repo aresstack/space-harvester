@@ -275,8 +275,15 @@ public final class ContentView implements View {
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
         detail.standing().selection(selection);
-        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind.
-        if (selection != null && !selection.global()) {
+        // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind; die Mitte
+        // zeigt leer statt einer alten Seite und unter Eigenschaften die Gesamtsicht (Angelo 17.11.2026).
+        if (selection != null && selection.global()) {
+            if (!detail.showsAllSources() && context.runtime() != null) {
+                detail.showAllSources(context.runtime().workspace().sources().stream()
+                        .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList(),
+                        selection.title());
+            }
+        } else if (selection != null) {
             // Quelle und Space der Auswahl: oben die Brotkrumen und die Einmalcode-Abfrage, auch ohne geöffnete Seite
             // (etwa ein Download aus „Export“ eines nur gewählten Spaces fragt den Code hier ab, nicht erst in Aufträge).
             // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
