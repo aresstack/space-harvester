@@ -92,4 +92,14 @@ class JobStepTest {
         assertThat(ActivitiesView.Step.of(JobType.SYNC, null, new JobProgress(10, 3, 3, 0)).text())
                 .isEqualTo("3 von 10 Seiten geladen oder geprüft");
     }
+
+    /** „Aussagen prüfen“ (ADR 0032) zählt Seiten wie die Analyse, mit eigenen Wörtern. */
+    @Test
+    void checkingStatementsCountsPagesCheckedAndSkipped() {
+        assertThat(ActivitiesView.Step.of(JobType.STATEMENT_CHECK, null, new JobProgress(10, 6, 4, 1)))
+                .isEqualTo(new ActivitiesView.Step("Aussagen prüfen · 6 von 10 Seiten, 4 geprüft, 1 übersprungen", 6,
+                        10));
+        assertThat(ActivitiesView.Counters.of(JobType.STATEMENT_CHECK).written()).isEqualTo("Geprüft");
+        assertThat(OverallProgress.priorSeconds(JobType.STATEMENT_CHECK, type -> null)).isEqualTo(2.0);
+    }
 }

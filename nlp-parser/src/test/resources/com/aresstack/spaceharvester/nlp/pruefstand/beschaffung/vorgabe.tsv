@@ -116,3 +116,11 @@ I07	I	7	umfassen	Lieferantennetzwerk	Firmen	-	nein	-	GILT
 I08	I	8	erhalten	Stammkunde	Rabatt	-	nein	-	GILT	
 I09	I	9	brauchen	Export	Genehmigung	-	nein	-	GILT	„der Ware“ ist Genitiv am Export
 I10	I	10	abzeichnen	Sachgebietsleiter	Rechnung	-	nein	-	GILT	abgetrennte Verbpartikel
+J01	J	1	Disponentin	Frau|Sommer	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Ortsangabe „im“ gehört nicht zum Rollennomen
+J02	J	2	Ansprechpartner	Hausmeister	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Ortsangabe „beim“
+J03	J	3	Stabsstelle	Revision	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist eine“, Ortsangabe „beim“
+J04	J	4	Vertreter	Herr|Brandt	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist der“, Genitiv und Angabe „im“ danach
+J05	J	5	Annahmestelle	Poststelle	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist die“, Ortsangabe „im“
+J06	J	6	Ansprechpartner	Pförtner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Zeitangabe „am“ davor, „für“ danach
+J07	J	7	Stellvertreterin	Frau|Lindner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv (weiblich) und Angabe „im“ danach
+J08	J	8	Vorgesetzter	Schichtführer	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv und Angabe „beim“ danach

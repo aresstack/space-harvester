@@ -172,6 +172,30 @@ class GlossaryOverviewViewTest {
     }
 
     @Test
+    void refiningReusesTheHeldDerivationAndReadsTheEntriesAgain() {
+        GlossaryOverview.View full = overview.view(EDITOR, WIKI, key -> true, GlossaryOverview.Query.DEFAULT,
+                () -> false);
+        int before = reads.get();
+        glossary.add(EDITOR, new Glossary.NewEntry("Bewilligung", WIKI, null, List.of()));
+
+        GlossaryOverview.View refined = overview.view(EDITOR, full, new GlossaryOverview.Query("bew", null, null),
+                () -> false);
+
+        assertThat(reads.get()).as("keine neue Ableitung beim Verfeinern").isEqualTo(before);
+        assertThat(refined.derivation()).isSameAs(full.derivation());
+        assertThat(refined.scope()).isEqualTo(full.scope());
+        assertThat(refined.pages()).isEqualTo(full.pages());
+        assertThat(refined.rows()).extracting(row -> row.entry().term())
+                .as("Einträge neu gelesen, Wichtigkeit aus dem gehaltenen Ergebnis")
+                .containsExactly("Bewilligungsstelle", "Bewilligung");
+        assertThat(refined.rows().get(0).importance()).isNotNull();
+        assertThat(refined.countsByStatus()).containsEntry(ReviewStatus.CONFIRMED, 1)
+                .containsEntry(ReviewStatus.PROPOSED, 1);
+        assertThatThrownBy(() -> overview.view(EDITOR, full, GlossaryOverview.Query.DEFAULT, () -> true))
+                .isInstanceOf(CancellationException.class);
+    }
+
+    @Test
     void importanceFollowsTheSelectionAndNothingIsStored() {
         long revisions = store.all().stream().mapToLong(GlossaryEntry::revision).sum();
 

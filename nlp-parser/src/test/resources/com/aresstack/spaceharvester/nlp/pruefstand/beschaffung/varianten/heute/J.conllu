@@ -1,0 +1,110 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/J@heute
+# sent_id = 1
+# text = Frau Sommer ist Disponentin im Außenlager.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Sommer	sommer	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Disponentin	disponentin	NOUN	_	_	0	root	_	_
+5-6	im	_	_	_	_	_	_	_	_
+5	in	in	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Außenlager	außenlager	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 2
+# text = Der Hausmeister ist Ansprechpartner beim Wareneingang.
+1	Der	der	DET	_	_	2	det	_	_
+2	Hausmeister	hausmeister	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Ansprechpartner	ansprechpartner	NOUN	_	_	0	root	_	_
+5-6	beim	_	_	_	_	_	_	_	_
+5	bei	bei	ADP	_	_	7	case	_	_
+6	dem	der	DET	_	_	7	det	_	_
+7	Wareneingang	wareneingang	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 3
+# text = Die Revision ist eine Stabsstelle beim Vorstand.
+1	Die	der	DET	_	_	2	det	_	_
+2	Revision	revision	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	eine	ein	DET	_	_	5	det	_	_
+5	Stabsstelle	stabsstelle	NOUN	_	_	0	root	_	_
+6-7	beim	_	_	_	_	_	_	_	_
+6	bei	bei	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	Vorstand	vorstand	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 4
+# text = Herr Brandt ist der Vertreter des Lagerleiters im Urlaub.
+1	Herr	herr	NOUN	_	_	2	compound	_	_
+2	Brandt	brandt	PROPN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	der	der	DET	_	_	5	det	_	_
+5	Vertreter	vertreter	NOUN	_	_	0	root	_	_
+6	des	der	DET	_	_	7	det	_	_
+7	Lagerleiters	lagerleiters	NOUN	_	_	5	nmod	_	_
+8-9	im	_	_	_	_	_	_	_	_
+8	in	in	ADP	_	_	10	case	_	_
+9	dem	der	DET	_	_	10	det	_	_
+10	Urlaub	urlaub	NOUN	_	_	5	nmod	_	SpaceAfter=No
+11	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Die Poststelle ist die Annahmestelle im Erdgeschoss.
+1	Die	der	DET	_	_	2	det	_	_
+2	Poststelle	poststelle	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Annahmestelle	annahmestelle	NOUN	_	_	0	root	_	_
+6-7	im	_	_	_	_	_	_	_	_
+6	in	in	ADP	_	_	8	case	_	_
+7	dem	der	DET	_	_	8	det	_	_
+8	Erdgeschoss	erdgeschoß	NOUN	_	_	5	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 6
+# text = Der Pförtner ist am Wochenende Ansprechpartner für Lieferanten.
+1	Der	der	DET	_	_	2	det	_	_
+2	Pförtner	pförtner	NOUN	_	_	0	root	_	_
+3	ist	sein	AUX	_	_	0	root	_	_
+4-5	am	_	_	_	_	_	_	_	_
+4	an	an	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Wochenende	wochenende	NOUN	_	_	2	nmod	_	_
+7	Ansprechpartner	ansprechpartner	PROPN	_	_	6	appos	_	_
+8	für	für	ADP	_	_	9	case	_	_
+9	Lieferanten	lieferant	NOUN	_	_	7	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 7
+# text = Frau Lindner ist Stellvertreterin der Einkaufsleitung im Krankheitsfall.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Lindner	lindner	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Stellvertreterin	stellvertreterin	NOUN	_	_	0	root	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Einkaufsleitung	einkaufsleitung	NOUN	_	_	4	nmod	_	_
+7-8	im	_	_	_	_	_	_	_	_
+7	in	in	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Krankheitsfall	krankheitsfall	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 8
+# text = Der Schichtführer ist Vorgesetzter des Lageristen beim Nachtdienst.
+1	Der	der	DET	_	_	2	det	_	_
+2	Schichtführer	schichtführer	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Vorgesetzter	vorgesetzte	NOUN	_	_	0	root	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Lageristen	lageristen	NOUN	_	_	4	nmod	_	_
+7-8	beim	_	_	_	_	_	_	_	_
+7	bei	bei	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Nachtdienst	nachtdienst	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
