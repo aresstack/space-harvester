@@ -73,6 +73,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -107,6 +108,8 @@ final class StandingTab extends JPanel {
     static final String NO_STATEMENTS = "Keine analysierten Aussagen in der Auswahl";
     static final String NO_MATCH = "Keine Treffer";
     static final String STALE_WORD = "veraltet";
+    static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
+    static final String DELETE_ANALYSES_TIP = "Aussagen-Analysen löschen";
     static final String STALE_TIP = "Aussagen aus veralteten Analysen einblenden; sie zählen nirgends mit";
     static final String STALE_HIDE_TIP = "Aussagen aus veralteten Analysen wieder ausblenden";
     static final String NO_CONFLICTS = "Keine möglichen Widersprüche";
@@ -166,6 +169,15 @@ final class StandingTab extends JPanel {
         /** Die Leseempfehlung der Auswahl ({@code ReadingAdvice}), mit Thema oder ({@code null}) ohne; nie auf dem EDT. */
         ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled);
 
+        /**
+         * Löscht die Aussagen-Analysen der Auswahl samt Unterseiten, Anhängen und enthaltenen Dateien; die Seiten
+         * bleiben. Liefert die Zahl der gelöschten Analysen; nie auf dem EDT.
+         */
+        int deleteAnalyses(ExportPanel.Selection selection);
+
+        /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden (Beobachter, kein Zeitgeber). */
+        Subscription subscribeAnalyses(Runnable listener);
+
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
                 return null;
@@ -212,6 +224,16 @@ final class StandingTab extends JPanel {
                 public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
                     return runtime.workspace().readingList(
                             runtime.workspace().resolveSelection(selection.toCore(runtime)), topic, cancelled);
+                }
+
+                @Override
+                public int deleteAnalyses(ExportPanel.Selection selection) {
+                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime));
+                }
+
+                @Override
+                public Subscription subscribeAnalyses(Runnable listener) {
+                    return runtime.workspace().subscribeStatementAnalyses(listener);
                 }
             };
         }
@@ -262,6 +284,14 @@ final class StandingTab extends JPanel {
     private final JCheckBoxMenuItem certainOnly = new JCheckBoxMenuItem("Nur sichere Aussagen", false);
     private final IconButton filter = new IconButton(Glyph.FILTER, FILTER_TIP);
     private final IconButton bearer = new IconButton(Glyph.NEIGHBOURS, BY_BEARER_TIP);
+    /** „Aussagen-Analysen löschen“ absteigend ab dem gewählten Knoten (Angelo 17.11.2026); die Seiten bleiben. */
+    private final IconButton deleteAnalyses = new IconButton(Glyph.TRASH, DELETE_ANALYSES_TIP);
+    private Predicate<String> confirmDelete = question -> Dialogs.confirm(this, DELETE_ANALYSES_TITLE,
+            question);
+    private boolean deleting;
+    /** Ergebnis des letzten Löschens; steht vor der Zählung in der Statuszeile, bis eine andere Auswahl kommt. */
+    private String deletedNotice;
+    private Subscription analysesWatch = Subscription.NONE;
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
     private final PlaceholderList<Row> list = new PlaceholderList<>(model);
@@ -433,7 +463,8 @@ final class StandingTab extends JPanel {
         JScrollPane conflictScroll = Comic.scroll(conflictList);
         conflictScroll.getViewport().addChangeListener(e -> fetchSentences(conflictList, conflictModel));
         tabs.tab(CONFLICTS, conflictScroll);
-        tabs.actions(counts, filter, bearer, field, topic);
+        deleteAnalyses.addActionListener(e -> deleteAnalyses());
+        tabs.actions(counts, filter, bearer, field, topic, deleteAnalyses);
         // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
         // ohne Wirkung da.
         tabs.onSelect(name -> {
@@ -469,6 +500,7 @@ final class StandingTab extends JPanel {
             return;
         }
         this.selection = selection;
+        deletedNotice = null;
         dirty = true;
         reading.source(selection == null ? null : (topic, stop) -> {
             Actions current = actions.get();
@@ -640,8 +672,15 @@ final class StandingTab extends JPanel {
         }
         standingWatch.close();
         jobWatch.close();
+        analysesWatch.close();
         watched = current;
         watchFailed = false;
+        try {
+            analysesWatch = current.subscribeAnalyses(() -> SwingUtilities.invokeLater(this::changed));
+        } catch (RuntimeException e) {
+            analysesWatch = Subscription.NONE;
+            watchFailed = true;
+        }
         try {
             standingWatch = current.subscribeStanding(() -> SwingUtilities.invokeLater(this::changed));
         } catch (RuntimeException e) {
@@ -723,7 +762,7 @@ final class StandingTab extends JPanel {
             String text = (found == 0 ? NO_CONFLICTS
                     : Texts.count(found, "möglicher Widerspruch", "mögliche Widersprüche"))
                     + " · " + Texts.count(replaced, "Ablösung", "Ablösungen");
-            onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+            onStatus.accept(noticed(watchFailed ? text + " · " + NOT_WATCHING : text));
             return;
         }
         int shownLines = 0;
@@ -741,7 +780,68 @@ final class StandingTab extends JPanel {
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
                 + " auf " + Texts.count(pages, "Seite", "Seiten");
-        onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+        onStatus.accept(noticed(watchFailed ? text + " · " + NOT_WATCHING : text));
+    }
+
+    /** Das Ergebnis des letzten Löschens vor der Zählung, solange dieselbe Auswahl gilt. */
+    private String noticed(String text) {
+        return deletedNotice == null ? text : deletedNotice + " · " + text;
+    }
+
+    /** Die Rückfrage vor dem Löschen, mit dem Namen des gewählten Knotens. */
+    static String deleteQuestion(ExportPanel.Selection selection) {
+        if (selection.global()) {
+            return "Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.";
+        }
+        return "Wirklich die Aussagen-Analysen von „" + selection.title() + "“ samt Unterseiten löschen? Die Seiten "
+                + "bleiben.";
+    }
+
+    /**
+     * „Aussagen-Analysen löschen“: nach der Rückfrage im Hintergrund unter dem Ladekreis, absteigend ab dem gewählten
+     * Knoten (Wissensquellen-Kopf, Quelle, Space, Ordner). Danach liest der Reiter über den Beobachter neu.
+     */
+    void deleteAnalyses() {
+        Actions current = actions.get();
+        ExportPanel.Selection chosen = selection;
+        if (current == null || chosen == null || deleting || !confirmDelete.test(deleteQuestion(chosen))) {
+            return;
+        }
+        watch(current);
+        deleting = true;
+        deleteAnalyses.setEnabled(false);
+        busy.setText("Aussagen-Analysen werden gelöscht …");
+        busy.setBusy(true);
+        runner.run(() -> current.deleteAnalyses(chosen), deleted -> {
+            deleting = false;
+            deleteAnalyses.setEnabled(true);
+            busy.setText(BUSY);
+            busy.setBusy(false);
+            if (!chosen.equals(selection)) {
+                return;
+            }
+            deletedNotice = deleted == 0
+                    ? (chosen.global() ? "Keine Aussagen-Analysen vorhanden"
+                    : "Keine Aussagen-Analysen unter „" + chosen.title() + "“")
+                    : Texts.count(deleted, "Aussagen-Analyse", "Aussagen-Analysen") + " gelöscht";
+            // Der Beobachter meldet sich nur, wenn etwas gelöscht wurde; sonst die Statuszeile hier setzen.
+            status();
+        }, failure -> {
+            deleting = false;
+            deleteAnalyses.setEnabled(true);
+            busy.setText(BUSY);
+            busy.setBusy(false);
+            onStatus.accept("Aussagen-Analysen nicht gelöscht: " + failure.getClass().getSimpleName());
+        });
+    }
+
+    /** Für Tests: statt des Dialogs; bekommt die Frage. */
+    void confirmDeleteWith(Predicate<String> confirm) {
+        confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    IconButton deleteAnalysesButton() {
+        return deleteAnalyses;
     }
 
     /**

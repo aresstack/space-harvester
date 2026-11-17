@@ -770,6 +770,42 @@ public final class Workspace {
         return harvester.knowledgeGraph().deleteAll(caller);
     }
 
+    /**
+     * Löscht die Aussagen-Analysen der Auswahl ({@code KnowledgeGraph.delete}, Angelo 17.11.2026): absteigend, also eine
+     * ganze Quelle samt allen Spaces und Unterseiten, ein Space oder eine Seite samt Unterseiten; Analysen von Anhängen
+     * und enthaltenen Dateien gehen mit, die Seiten selbst bleiben. Bei einer ganzen Quelle zählt jede Analyse dieser
+     * Quelle, auch zu Seiten, die der Bestand nicht mehr kennt. Synchron, also außerhalb des EDT aufrufen; danach melden
+     * sich die Beobachter von {@link #subscribeStatementAnalyses}.
+     *
+     * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
+     */
+    public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        java.util.Set<String> wholeSources = new java.util.HashSet<>();
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : selection.roots()) {
+            if (root.spaceKey() == null && root.pageId() == null) {
+                wholeSources.add(root.sourceId());
+            }
+        }
+        com.aresstack.spaceharvester.application.holdings.PageSelection pages = resolveSelection(selection);
+        return harvester.knowledgeGraph().delete(caller,
+                key -> wholeSources.contains(key.sourceId()) || pages.contains(key));
+    }
+
+    /**
+     * Löscht die Aussagen-Analyse einer Seite samt Anhängen und enthaltenen Dateien ({@code KnowledgeGraph.delete});
+     * die Seite bleibt. Synchron, also außerhalb des EDT aufrufen.
+     *
+     * @return Zahl der gelöschten Analysen (Seite und Dokumente)
+     */
+    public int deleteStatementAnalysis(PageKey key) {
+        return harvester.knowledgeGraph().delete(caller, key::equals);
+    }
+
+    /** Meldet sich, nachdem Aussagen-Analysen gelöscht wurden ({@code KnowledgeGraph.subscribe}); kein Polling. */
+    public Subscription subscribeStatementAnalyses(Runnable listener) {
+        return harvester.knowledgeGraph().subscribe(listener);
+    }
+
     /** Erwähnungen eines Begriffs auf allen manuell analysierten, sichtbaren Seiten. */
     public KnowledgeGraph.Search searchKnowledgeGraph(String term, int limit) {
         return harvester.knowledgeGraph().search(caller, term, limit);
