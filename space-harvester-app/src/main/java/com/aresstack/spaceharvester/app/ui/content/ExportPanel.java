@@ -21,6 +21,7 @@ import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.metadata.SourceQueryExports;
@@ -162,8 +163,6 @@ public final class ExportPanel extends JPanel {
     static final String NO_PAGES = "keine Seite bekannt, erst laden";
 
     private final AppContext context;
-    private final JLabel title = new JLabel(" ");
-    private final JLabel hint = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final Facts stand = new Facts();
     private final ComposerButton load = Comic.button(LOAD_SPACE, "Startet den Download sofort; der Auftrag läuft "
@@ -242,8 +241,6 @@ public final class ExportPanel extends JPanel {
         super(new BorderLayout(0, 8));
         this.context = context;
         setOpaque(false);
-        title.setFont(Comic.semiBold(17f));
-        title.setForeground(Comic.INK);
         output.setFont(Comic.regular(13f));
         output.setForeground(Comic.INK);
         load.addActionListener(e -> load(true));
@@ -305,12 +302,8 @@ public final class ExportPanel extends JPanel {
 
         spacesPlate = Comic.plate("Spaces", Comic.PETROL, spaces);
 
-        JPanel head = new JPanel(new BorderLayout(0, 4));
-        head.setOpaque(false);
-        head.add(title, BorderLayout.NORTH);
-        head.add(hint, BorderLayout.CENTER);
-        head.add(feedback, BorderLayout.SOUTH);
-        add(head, BorderLayout.NORTH);
+        // Kein eigener Titel und kein Hinweistext (Angelo): die Kopfzeile nennt die Auswahl, der Reiter heißt Export.
+        add(feedback, BorderLayout.NORTH);
         add(Comic.column(standPlate, outputPlate, spacesPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
         noticeList.setVisible(false);
@@ -499,9 +492,15 @@ public final class ExportPanel extends JPanel {
             for (HarvestSource source : sources) {
                 String prefix = selection.global()
                         ? (source.title() == null || source.title().isBlank() ? source.id() : source.title()) : null;
+                // Der Stand je Space kommt aus dem Bestand (ADR 0029), nicht aus der Auftragsablage: Downloads früherer
+                // Läufe sind dort längst weg, der Bestand bleibt.
+                Map<String, SpaceSummary> summaries = new HashMap<>();
+                for (SpaceSummary summary : runtime.workspace().holdingSpaces(source.id())) {
+                    summaries.put(summary.spaceKey(), summary);
+                }
                 for (Partition space : runtime.workspace().spaces(source.id())) {
                     Selection whole = new Selection(source.id(), space.key(), null, space.name());
-                    rows.add(new SpaceRow(prefix, space, newest(jobs, whole), running(jobs, whole)));
+                    rows.add(new SpaceRow(prefix, space, summaries.get(space.key()), running(jobs, whole)));
                 }
             }
             return new Data(selection, null, null, null, List.of(), rows, null, null, finished, finishedSource,
@@ -558,8 +557,11 @@ public final class ExportPanel extends JPanel {
     }
 
     /** Ein Space einer Wissensquelle mit seinem Stand. */
-    /** Ein Space in der Liste einer Quelle; {@code source} nur in der globalen Auswahl (Quellentitel davor). */
-    record SpaceRow(String source, Partition space, JobStatus newest, JobStatus running) {
+    /**
+     * Ein Space in der Liste einer Quelle mit seinem Bestand ({@code null}, wenn der Cache ihn nicht kennt);
+     * {@code source} nur in der globalen Auswahl (Quellentitel davor).
+     */
+    record SpaceRow(String source, Partition space, SpaceSummary holdings, JobStatus running) {
     }
 
     private void render(Data data) {
@@ -573,26 +575,17 @@ public final class ExportPanel extends JPanel {
         outputPlate.setVisible(!none && !source);
         spacesPlate.setVisible(source);
         if (none) {
-            title.setText(context.runtime() == null ? "Startet …" : "Export");
-            hint.setText("Wähle links im Explorer eine Wissensquelle, einen Space oder eine Seite; der Export bezieht "
-                    + "sich immer auf die Auswahl samt Unterseiten.");
+            if (context.runtime() == null) {
+                feedback.working("Startet …");
+            }
             shownDataset = null;
             revalidate();
             repaint();
             return;
         }
-        title.setText(current.page() ? "Export · " + current.title() + " samt Unterseiten"
-                : "Export · " + current.title());
         if (source) {
-            hint.setText(current.global()
-                    ? "Die Spaces aller Wissensquellen mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
-                    + "Seite links zeigt Stand und Ausgabe."
-                    : "Die Spaces dieser Wissensquelle mit dem Stand ihres jüngsten Downloads; ein Space oder eine "
-                    + "Seite links zeigt Stand und Ausgabe.");
             renderSpaces(data.spaces());
         } else {
-            hint.setText(current.page() ? "Stand und Ausgabe der Seite samt Unterseiten."
-                    : "Stand und Ausgabe des ganzen Space.");
             renderStand(data);
             renderOutput(data);
         }
@@ -614,22 +607,37 @@ public final class ExportPanel extends JPanel {
             if (row.source() != null) {
                 label = row.source() + " › " + label;
             }
-            spaces.add(label, standText(row.newest(), row.running()),
-                    row.newest() == null && row.running() == null ? Comic.MUTED : Comic.INK);
+            spaces.add(label, standText(row.holdings(), row.running()), standTone(row.holdings(), row.running()));
         }
     }
 
-    /** „Geladen 13.11.2026 19:05 · 120 Seiten“, „Download läuft · 90 von 127 Seiten“ oder „Noch nicht geladen“. */
-    static String standText(JobStatus newest, JobStatus running) {
+    /**
+     * Der Stand eines Space aus dem Bestand: „120 von 127 Seiten lokal · Stand vom 13.11.2026 19:05“, ohne Inventur
+     * mit Hinweis, „Download läuft · 90 von 127 Seiten“ oder „Noch nicht geladen“, wenn der Cache nichts hat.
+     */
+    static String standText(SpaceSummary holdings, JobStatus running) {
         if (running != null) {
             return "Download " + Texts.state(running).toLowerCase(Locale.GERMAN) + " · " + progress(running);
         }
-        if (newest == null) {
+        if (holdings == null || holdings.counts().stored() == 0 && !holdings.inventoried()) {
             return NOT_LOADED;
         }
-        return "Geladen " + Texts.time(newest.finishedAt()) + " · "
-                + Texts.count(newest.progress().written(), "Seite", "Seiten")
-                + (newest.incomplete() ? " · unvollständig" : "");
+        String local = holdings.counts().stored() + " von "
+                + Texts.count(holdings.counts().pages(), "Seite", "Seiten") + " lokal";
+        return holdings.inventoried() ? local + " · Stand vom " + Texts.time(holdings.asOf())
+                : local + " · " + INCOMPLETE;
+    }
+
+    /** Grün, wenn alles lokal und inventarisiert; grau ohne Stand; sonst orange wie die Zeile „Bestand“. */
+    static java.awt.Color standTone(SpaceSummary holdings, JobStatus running) {
+        if (running != null) {
+            return Comic.INK;
+        }
+        if (holdings == null || holdings.counts().stored() == 0 && !holdings.inventoried()) {
+            return Comic.MUTED;
+        }
+        return holdings.inventoried() && holdings.counts().stored() >= holdings.counts().pages() ? Comic.GREEN
+                : Comic.ORANGE;
     }
 
     private static String progress(JobStatus job) {
@@ -647,13 +655,17 @@ public final class ExportPanel extends JPanel {
             stand.add("Auftrag", Texts.state(running) + " · " + progress(running), Comic.tone(Texts.tone(running)));
         }
         PageSelection holdings = data.holdings();
+        boolean stored = holdings != null && holdings.counts().stored() > 0;
         if (holdings != null) {
             boolean all = holdings.size() > 0 && holdings.counts().stored() >= holdings.size();
-            stand.add("Bestand", holdingsText(holdings), holdings.size() == 0 ? Comic.MUTED
-                    : all && holdings.complete() ? Comic.GREEN : Comic.ORANGE);
+            stand.add("Bestand", holdingsText(holdings) + (current.page() ? " · samt Unterseiten" : ""),
+                    holdings.size() == 0 ? Comic.MUTED : all && holdings.complete() ? Comic.GREEN : Comic.ORANGE);
         }
         if (newest == null) {
-            stand.add("Stand", NOT_LOADED, Comic.MUTED);
+            // Ohne Download in der Auftragsablage sagt der Bestand den Stand; nur ohne beides „Noch nicht geladen“.
+            if (!stored) {
+                stand.add("Stand", NOT_LOADED, Comic.MUTED);
+            }
         } else {
             stand.add("Stand vom", Texts.time(newest.finishedAt()));
             stand.add("Seiten", dataset == null ? String.valueOf(newest.progress().written())
@@ -671,13 +683,13 @@ public final class ExportPanel extends JPanel {
                 stand.add("Datenbestand", "nicht mehr vorhanden", Comic.ORANGE);
             }
         }
-        load.setText(current.page() ? LOAD_SUBTREE : newest == null ? LOAD_SPACE : REFRESH);
+        boolean loaded = newest != null || stored;
+        load.setText(current.page() ? LOAD_SUBTREE : loaded ? REFRESH : LOAD_SPACE);
         load.setToolTipText(current.page() ? "Lädt die Seite samt Unterseiten erneut; Vorhandenes nur bei Änderung"
-                : newest == null ? "Lädt den ganzen Space" : "Lädt den ganzen Space erneut; Vorhandenes nur bei Änderung");
+                : loaded ? "Lädt den ganzen Space erneut; Vorhandenes nur bei Änderung" : "Lädt den ganzen Space");
         loadPage.setVisible(current.page());
         load.setEnabled(running == null);
         loadPage.setEnabled(running == null);
-        boolean stored = holdings != null && holdings.counts().stored() > 0;
         collect.setEnabled(stored);
         collect.setToolTipText(stored ? COLLECT_TIP : COLLECT_TIP + " · " + NOTHING_LOCAL + ", erst laden");
         showJob.setVisible(running != null || newest != null);

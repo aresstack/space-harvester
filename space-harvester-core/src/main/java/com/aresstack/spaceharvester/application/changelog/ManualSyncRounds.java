@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 
 /**
@@ -46,6 +47,7 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
     };
     private volatile Subscription subscription = () -> {
     };
+    private volatile boolean closed;
 
     private static final class Round {
         final Set<String> jobs = new HashSet<>();
@@ -61,12 +63,34 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
         this.syncs = Objects.requireNonNull(syncs, "syncs");
     }
 
-    /** Meldet sich bei {@code jobs} an und übernimmt die schon offenen manuellen Synchronisierungen (nach Neustart). */
+    /**
+     * Meldet sich bei {@code jobs} an und übernimmt die schon offenen manuellen Synchronisierungen (nach Neustart) im
+     * Hintergrund: Das Lesen aller Aufträge und das Setzen nachgeholter Marken (wartet auf den Schreiblauf des Cache)
+     * hält den Start nicht auf.
+     */
     public static ManualSyncRounds start(Jobs jobs, UpdateMarks marks, Clock clock) {
+        return start(jobs, marks, clock, work -> Thread.ofVirtual().name("change-log-recovery").start(work));
+    }
+
+    /** Wie {@link #start(Jobs, UpdateMarks, Clock)}, die Übernahme läuft auf {@code recovery}. */
+    public static ManualSyncRounds start(Jobs jobs, UpdateMarks marks, Clock clock, Executor recovery) {
         Objects.requireNonNull(jobs, "jobs");
+        Objects.requireNonNull(recovery, "recovery");
         ManualSyncRounds rounds = new ManualSyncRounds(marks, clock, () -> jobs.listAll(JobType.SYNC));
+        // Erst anmelden, dann lesen (ADR 0027): kein Ende geht zwischen beidem verloren.
         rounds.subscription = jobs.subscribeAll(rounds);
-        rounds.recover(jobs.listAll(JobType.SYNC));
+        recovery.execute(() -> {
+            try {
+                if (!rounds.closed) {
+                    rounds.recover(jobs.listAll(JobType.SYNC));
+                }
+            } catch (RuntimeException e) {
+                if (!rounds.closed) {
+                    LOG.log(System.Logger.Level.WARNING, "Offene Synchronisierungen nicht übernommen ({0})",
+                            e.getClass().getName());
+                }
+            }
+        });
         return rounds;
     }
 
@@ -76,6 +100,9 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
      * endete, gehört zu einer Runde ohne Marke.
      */
     synchronized void recover(List<JobStatus> syncs) {
+        if (closed) {
+            return;
+        }
         Map<String, Instant> lastMark = new HashMap<>();
         Map<String, List<JobStatus>> unmarked = new LinkedHashMap<>();
         for (JobStatus status : syncs) {
@@ -221,6 +248,7 @@ public final class ManualSyncRounds implements JobListener, AutoCloseable {
 
     @Override
     public void close() {
+        closed = true;
         subscription.close();
     }
 }
