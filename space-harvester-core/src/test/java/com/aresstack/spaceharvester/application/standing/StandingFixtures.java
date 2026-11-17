@@ -44,6 +44,7 @@ final class StandingFixtures {
         final String input;
         final List<Mention> mentions = new ArrayList<>();
         final List<Statement> statements = new ArrayList<>();
+        final List<ParsedStatements.Sentence> sentences = new ArrayList<>();
         PageStatements.State state = PageStatements.State.CURRENT;
 
         PageBuilder(String pageId, String title, char hash) {
@@ -127,7 +128,7 @@ final class StandingFixtures {
         }
 
         KnowledgeGraph.AnalysedPage build() {
-            ParsedStatements result = new ParsedStatements(List.of(), mentions, statements, List.of(),
+            ParsedStatements result = new ParsedStatements(sentences, mentions, statements, List.of(),
                     List.of("parser=schein"), null);
             PageStatementAnalysis analysis = new PageStatementAnalysis(key, spaceKey, title, "1", input, "schein",
                     "1", AT, result);

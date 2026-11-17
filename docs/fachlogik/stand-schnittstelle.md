@@ -175,3 +175,18 @@ Darum heißt es „möglich“, und die Anzeige zeigt beide Sätze im Wortlaut.
 Vorschlag für die Oberfläche: In der Status-quo-Sicht ein Hinweis-Symbol an betroffenen Zeilen. Ein Overlay am
 Mausklick zeigt die Gegenaussagen mit Seite und springt zur Stelle. Ablösungen erscheinen als Verweis „löst ab“ bzw.
 „abgelöst durch“, nie als Warnung.
+
+## Wortlaut: `StatusQuo#sentences(caller, entries)`
+
+Die Sicht trägt keinen Satztext, damit sie schnell bleibt. Den Wortlaut holt die Anzeige je sichtbarem Ausschnitt einer
+Liste, auch für die Einträge möglicher Widersprüche und Ablösungen (es sind dieselben `StatusQuoEntry`):
+`Map<statementId, SentenceText>`.
+
+- `SentenceText`: `original` ist der Originalsatz aus dem Lesetext, nur wenn dieser genau der analysierte Text ist
+  (Eingabe-Hash), sonst `null` und `stale = true`. `simplified` ist der vereinfachte Satz aus
+  `Derivation#simplifiedSentence` der Aussage. `sentenceStart`/`sentenceEnd` sind die Satzgrenzen im Lesetext (-1 ohne)
+  für „Im Lesetext zeigen“, `predicateStart`/`predicateEnd` die Grenzen des Prädikats.
+- Der Abruf braucht Leserecht `CONTENT` auf die Seite; ohne dieses Recht fehlt der Eintrag in der Map. Es wird nichts
+  gespeichert.
+- Anhänge und enthaltene Dateien liefern noch keinen Originalsatz, bis ihre Lesetexte an die Analyse angebunden sind
+  (ADR 0026). Bis dahin zeigt die Anzeige den vereinfachten Satz oder Handelnden und Prädikat.
