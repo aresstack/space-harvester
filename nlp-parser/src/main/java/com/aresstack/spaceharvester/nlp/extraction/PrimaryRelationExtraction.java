@@ -485,10 +485,14 @@ final class PrimaryRelationExtraction {
         return sentence.dependents(verb.id(), "mark").stream().anyMatch(t -> !"zu".equalsIgnoreCase(t.form()));
     }
 
-    /** Verb in Zweitstellung: ohne Einleitewort und mit einem eigenen Satzglied dahinter. */
+    /**
+     * Verb in Zweitstellung: ohne Einleitewort und mit einem eigenen Satzglied dahinter; nachgestellte Hilfsverben und
+     * Kopula zählen nicht („… vorliegt und geprüft wurde“ ist Verbletzt).
+     */
     private static boolean verbSecond(Sentence sentence, Token verb) {
         return sentence.dependents(verb.id(), "mark").isEmpty() && sentence.dependents(verb.id()).stream()
-                .anyMatch(t -> t.id() > verb.id() && !"punct".equals(t.deprel()));
+                .anyMatch(t -> t.id() > verb.id() && !"punct".equals(t.deprel()) && !"aux".equals(t.baseRelation())
+                        && !"cop".equals(t.baseRelation()));
     }
 
     /** Ob die Übernahme entlang der {@code conj}-Kette an einer Teilsatzgrenze endete. */

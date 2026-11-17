@@ -105,5 +105,8 @@ class Fl1RulesTest {
                 "Zweitstellung: gereiht mit „zahlt“, nicht mit dem sobald-Satz");
         assertEquals(List.of("Mahnung"), heads(statement(15, "vorliegen"), Role.ACTOR),
                 "Gegenprobe: Verbletzt im Nebensatz bleibt beim Subjekt des Nebensatzes");
+        assertEquals(List.of("Mahnung"), heads(statement(16, "prüfen"), Role.AFFECTED_OBJECT),
+                "Gegenprobe: Partizip mit nachgestelltem Hilfsverb ist Verbletzt, gereiht im Nebensatz");
+        assertTrue(heads(statement(16, "prüfen"), Role.ACTOR).isEmpty(), "die Leserin prüft nicht");
     }
 }
