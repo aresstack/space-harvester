@@ -70,6 +70,24 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void thePreselectionIsTheLatestUpdateWithChangesNotAnEmptyOneOrTheInitialFill() {
+        ChangeUpdate open = actions.open();
+        ChangeUpdate changed = actions.second();
+        ChangeUpdate initial = actions.initial();
+        ChangeUpdate empty = new ChangeUpdate("leer", "wiki", changed.to(), changed.to().plusSeconds(3600),
+                new UpdateMark("wiki", changed.to().plusSeconds(3600), "angelo", List.of("CLUK"), 0, false), false,
+                Map.of(), Map.of(), 0, 0, 0, false);
+
+        assertThat(SourceUpdatesView.preselected(List.of(open, empty, changed, initial)))
+                .as("jüngstes leer, das davor nicht").isEqualTo(changed.id());
+        assertThat(SourceUpdatesView.preselected(List.of(open, empty, initial))).as("sonst das jüngste abgeschlossene")
+                .isEqualTo("leer");
+        assertThat(SourceUpdatesView.preselected(List.of(open, initial))).isEqualTo(initial.id());
+        assertThat(SourceUpdatesView.preselected(List.of(open))).isEqualTo(ChangeUpdate.OPEN);
+        assertThat(SourceUpdatesView.preselected(List.of())).isNull();
+    }
+
+    @Test
     void theUpdatesAreCloudsOnTopWithTheNewestMarkedAndAClickMovesTheMark() {
         view.source("wiki", "Confluence HaVdB");
 
@@ -79,8 +97,8 @@ class SourceUpdatesViewTest {
                 .containsExactly("10.11.2026, 08:00 · angelo", "16.11.2026, 18:30 · angelo", "Seit dem letzten Update");
         assertThat(view.markedUpdate()).as("standardmäßig das jüngste abgeschlossene Update")
                 .isEqualTo(actions.second().id());
-        assertThat(view.sky().navigation().chapters().get(2).isGenerated()).as("„Seit dem letzten Update“ gestrichelt")
-                .isTrue();
+        assertThat(view.sky().dashedForTest(2)).as("„Seit dem letzten Update“ gestrichelt").isTrue();
+        assertThat(view.sky().dashedForTest(1)).isFalse();
         assertThat(view.paleClouds()).as("Erstbefüllung blass").containsExactly("10.11.2026, 08:00 · angelo");
         assertThat(view.cloudTooltip("16.11.2026, 18:30 · angelo")).as("der Tooltip nennt auch die Zahlen")
                 .isEqualTo("16.11.2026, 18:30 · angelo · " + view.counts(actions.second()));

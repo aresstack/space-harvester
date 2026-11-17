@@ -156,6 +156,8 @@ final class SourceUpdatesView extends JPanel {
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         sky.setName("updates.sky");
+        // „Seit dem letzten Update“ ist noch kein Update: gestrichelt am Ende (ADR-0030-Nachtrag, Abschnitt 7).
+        sky.setDashed(section -> ChangeUpdate.OPEN.equals(section.id()));
         // Erstbefüllung und Updates ohne Änderung bleiben wählbar, treten aber zurück.
         sky.setPale(section -> {
             ChangeUpdate update = entry(updates, section.id());
@@ -285,11 +287,13 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /**
-     * Vorgewählt ist das jüngste abgeschlossene Update; nur wenn es noch keines gibt, „Seit dem letzten Update“
-     * (ADR-0030-Nachtrag, offener Punkt 2, gilt bis Angelo widerspricht).
+     * Vorgewählt ist „die letzte Änderung“ (Angelo): das jüngste abgeschlossene Update mit Änderungen in der Ebene,
+     * keine Erstbefüllung; sonst das jüngste abgeschlossene; nur wenn es keines gibt, „Seit dem letzten Update“
+     * (ADR-0030-Nachtrag, offener Punkt 2, Auflage des Architekten vom 17.11.2026).
      */
-    private static String preselected(List<ChangeUpdate> in) {
-        return in.stream().filter(update -> !update.open()).findFirst()
+    static String preselected(List<ChangeUpdate> in) {
+        return in.stream().filter(update -> !update.open() && !update.initial() && update.pages() > 0).findFirst()
+                .or(() -> in.stream().filter(update -> !update.open()).findFirst())
                 .or(() -> in.stream().findFirst()).map(ChangeUpdate::id).orElse(null);
     }
 
@@ -479,10 +483,8 @@ final class SourceUpdatesView extends JPanel {
     private void renderList() {
         List<Navigation.Section> clouds = new ArrayList<>();
         for (ChangeUpdate update : updates.reversed()) {
-            // „Seit dem letzten Update“ ist noch kein Update: gestrichelt wie ein erkannter Abschnitt (ADR-0030-Nachtrag).
-            clouds.add(new Navigation.Section(update.id(), heading(update),
-                    update.open() ? Navigation.Origin.TOPIC : Navigation.Origin.HEADING, 1, 0, -1, "", null,
-                    List.of()));
+            clouds.add(new Navigation.Section(update.id(), heading(update), Navigation.Origin.HEADING, 1, 0, -1, "",
+                    null, List.of()));
         }
         // Erst die Auswahl, dann die Reihe: so steht sie ohne Umweg über die erste Wolke gleich in der Mitte.
         if (selected != null) {
