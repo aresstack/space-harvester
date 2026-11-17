@@ -121,7 +121,13 @@ final class StandingTab extends JPanel {
             + "Erwähnung des Themas +1; neu oder geändert in den letzten 90 Tagen +3; Seite überholt −10; Entwurf "
             + "oder von Hand „geplant“/„unklar“ −5; Analyse veraltet −2. Ein Klick auf die Summe zeigt alle "
             + "Teilzahlen, ein Klick auf den Titel öffnet die Seite. Ein Thema im Feld oben rechts (▾ schlägt die "
-            + "häufigsten Begriffe vor, Enter übernimmt) zeigt nur Seiten, die es erwähnen; ✕ zeigt wieder alle.";
+            + "häufigsten Begriffe vor, Enter übernimmt) zeigt nur Seiten, die es erwähnen; ✕ zeigt wieder alle.\n\n"
+            + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
+            + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
+            + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
+            + "eine geltende und eine überholte Aussage, anders verneint oder mit anderem Handelnden. Nie verglichen "
+            + "werden unsichere Aussagen, Nebensätze, Zustandswechsel, Bedingungen und Original und Vorstufe "
+            + "desselben Satzes.";
     private static final int ROW_HEIGHT = 46;
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
