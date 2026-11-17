@@ -190,4 +190,38 @@ class JobLifecycleStateTest {
         // Angehalten zählt es wie ein Anhalten durch den Benutzer.
         assertThat(new JobLifecycleState.Paused(PauseReason.RETRY).key()).isEqualTo("PAUSED");
     }
+
+    @Test
+    void metadataAndAnalyticsExportsResumeRetryTheirFailuresButForceNothing() {
+        // Angelo 17.11.2026: eine Seite ohne Antwort macht den Auftrag unvollständig, ↻ fragt sie erneut.
+        assertThat(actions(JobType.METADATA_EXPORT, JobState.COMPLETED, 1, true))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(actions(JobType.ANALYTICS_EXPORT, JobState.COMPLETED, 0, false)).containsExactly(JobAction.DELETE);
+        assertThat(actions(JobType.METADATA_EXPORT, JobState.RUNNING, 0, false))
+                .containsExactly(JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
+        assertThat(actions(JobType.METADATA_EXPORT, JobState.RUNNING, 2, false))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.PAUSE, JobAction.CANCEL, JobAction.DELETE);
+        assertThat(actions(JobType.METADATA_EXPORT, JobState.FAILED, 0, false))
+                .containsExactly(JobAction.RESUME, JobAction.DELETE);
+        assertThat(actions(JobType.ANALYTICS_EXPORT, JobState.CANCELLED, 1, false))
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.RESUME, JobAction.DELETE);
+    }
+
+    @Test
+    void aJobInterruptedByTheEndOfTheServiceIsInterruptedNotFailedAndResumes() {
+        JobStatus interrupted = new JobStatus("j", JobType.METADATA_EXPORT, "confluence", "DEV", "client-a",
+                JobState.FAILED, new JobProgress(3, 1, 1, 0), new JobError(JobLifecycleState.INTERRUPTED, "beendet"),
+                false, T0, null, null, null, null, Map.of(), false, false, null);
+        assertThat(interrupted.lifecycle().key()).isEqualTo("INTERRUPTED");
+        assertThat(interrupted.lifecycle().actions()).containsExactly(JobAction.RESUME, JobAction.DELETE);
+        // Eine Art ohne Fortsetzen ist ebenso unterbrochen, bietet aber nur Löschen.
+        JobStatus enrichment = new JobStatus("e", JobType.ENRICHMENT, "confluence", "DEV", "client-a",
+                JobState.FAILED, JobProgress.NONE, new JobError(JobLifecycleState.INTERRUPTED, "beendet"), false, T0,
+                null, null, null, null, Map.of(), false, false, null);
+        assertThat(enrichment.lifecycle().key()).isEqualTo("INTERRUPTED");
+        assertThat(enrichment.lifecycle().actions()).containsExactly(JobAction.DELETE);
+        // Ein echter Fehler bleibt FAILED.
+        assertThat(status(JobType.METADATA_EXPORT, JobState.FAILED, 0, false, false, false).lifecycle().key())
+                .isEqualTo("FAILED");
+    }
 }
