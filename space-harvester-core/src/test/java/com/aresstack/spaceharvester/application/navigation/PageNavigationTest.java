@@ -55,6 +55,31 @@ class PageNavigationTest {
     private final PageNavigation navigation = new PageNavigation(catalog, null, new AccessGuard(policy));
 
     @Test
+    void cachedChildrenComeFromTheCacheSortedByTitleWithoutLockedPages() {
+        com.aresstack.spaceharvester.application.query.InMemoryPageCache cache =
+                new com.aresstack.spaceharvester.application.query.InMemoryPageCache();
+        cache.publish("wiki", "DEV", com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed("g1"),
+                List.of(com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "100", null),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "102", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "101", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "103", "100"),
+                        com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "104", "101")));
+        PageNavigation cached = new PageNavigation(catalog, cache, new AccessGuard(policy));
+
+        PageNavigation.Children roots = cached.cachedChildren(CLIENT, "wiki", "DEV", null);
+        PageNavigation.Children children = cached.cachedChildren(CLIENT, "wiki", "DEV", "100");
+
+        assertThat(roots.pages()).extracting(PageNode::pageId).containsExactly("100");
+        assertThat(roots.pages()).extracting(PageNode::hasChildren).containsExactly(true);
+        assertThat(children.pages()).extracting(PageNode::pageId).containsExactly("101", "102");
+        assertThat(children.pages()).extracting(PageNode::hasChildren).containsExactly(true, null);
+        assertThat(children.nextCursor()).isNull();
+        assertThat(children.spaceKey()).isEqualTo("DEV");
+        assertThat(new PageNavigation(catalog, null, new AccessGuard(policy))
+                .cachedChildren(CLIENT, "wiki", "DEV", null).pages()).isEmpty();
+    }
+
+    @Test
     void childrenKeepTheOrderOfTheSourceAndLeaveOutLockedPagesWithoutTrace() {
         PageNavigation.Children children = navigation.children(CLIENT, "wiki", null, "100", null);
 

@@ -40,6 +40,23 @@ public interface PageCacheReader {
      */
     Optional<CachedPage> page(PageKey key);
 
+    /**
+     * Direkte Kinder nach den aktuellen Kopfdaten im Cache, ohne Payload: mit {@code parentPageId} die Kinder dieser
+     * Seite, sonst die Wurzelseiten des Space. Für den Baum, der zuerst den gecachten Stand zeigt und die Quelle
+     * danach im Hintergrund fragt.
+     *
+     * @return höchstens {@code limit} Kopfdaten in beliebiger Reihenfolge; leer, wenn der Cache keine kennt
+     */
+    default List<com.aresstack.spaceharvester.application.snapshot.PageHeader> children(String sourceId,
+            String spaceKey, String parentPageId, int limit) {
+        return List.of();
+    }
+
+    /** Ob der Cache Kinder dieser Seite kennt. */
+    default boolean hasChildren(String sourceId, String pageId) {
+        return false;
+    }
+
     /** Ein Cache, der nicht eingerichtet ist: jede Abfrage scheitert mit {@link CacheUnavailableException}. */
     static PageCacheReader unavailable() {
         return new PageCacheReader() {

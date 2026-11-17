@@ -9,9 +9,19 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import java.lang.ref.SoftReference;
 import java.time.Clock;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 /**
  * Anwendungsfall „Lese-Ansicht einer Seite“ (#176): die Seite so, wie die Quelle sie rendert, mit ausgeführten
@@ -40,6 +50,26 @@ public class ReadingViews {
     private final AccessGuard access;
     private final ReadingViewStore store;
     private final Clock clock;
+    /**
+     * Besuchte und vorgeladene Ansichten im Speicher (Angelo 17.11.2026): weich gehalten, damit der Garbage Collector
+     * sie bei Speicherbedarf einsammelt; nie aktiv entladen, damit Vor- und Zurückspringen sofort zeigt.
+     */
+    private final Map<PageKey, SoftReference<Remembered>> remembered = new ConcurrentHashMap<>();
+    private final Set<PageKey> prefetching = ConcurrentHashMap.newKeySet();
+    private final Semaphore prefetchSlots = new Semaphore(PREFETCH_PARALLEL);
+    private final ExecutorService prefetcher = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("reading-prefetch-", 0).factory());
+
+    /** Höchstens so viele Seiten lädt {@link #prefetch} je Aufruf vor. */
+    public static final int MAX_PREFETCH = 25;
+    /** Höchstens so viele Vorladungen zugleich, damit der Hintergrund die Quelle nicht verstopft. */
+    static final int PREFETCH_PARALLEL = 2;
+    /** Ab so vielen Einträgen räumt der Speicher eingesammelte Verweise weg. */
+    private static final int PRUNE_AT = 4096;
+
+    /** Eine Ansicht zur Payload, aus der sie stammt. */
+    private record Remembered(String rawSha256, StoredReadingView view) {
+    }
 
     public ReadingViews(SourceCatalog catalog, PageQueries pages, AccessGuard access, ReadingViewStore store,
                         Clock clock) {
@@ -76,6 +106,91 @@ public class ReadingViews {
         return view;
     }
 
+    /**
+     * Die Lese-Ansicht nur aus dem Cache, ohne die Quelle zu fragen: zuerst zeigen, dann {@link #view} im Hintergrund
+     * prüfen lassen und nur bei einer anderen Version tauschen (Angelo 17.11.2026). Aus dem Speicher, sonst aus der
+     * Ablage neben dem Snapshot; Rechte wie bei {@link #view}.
+     *
+     * @return leer, wenn Seite oder passende Ansicht nicht lokal liegen, die Seite nicht lesbar ist oder eingebundene
+     *         Inhalte jedes Mal frisch geholt werden müssen
+     */
+    public Optional<ReadingView> cached(AccessContext caller, String sourceId, String pageId) {
+        Optional<DeliveredPage> found = pages.cached(caller, sourceId, pageId);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        DeliveredPage page = found.get();
+        ForeignContent foreign = ForeignContent.of(page.snapshot());
+        if (foreign.present()) {
+            return access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT) ? Optional.empty()
+                    : Optional.of(ReadingView.without(page.header(), ReadingView.Status.RESTRICTED, foreign));
+        }
+        String rawSha256 = page.snapshot().payload().rawSha256();
+        Optional<StoredReadingView> inMemory = memory(page.header().key(), rawSha256);
+        if (inMemory.isPresent()) {
+            return Optional.of(delivered(page, inMemory.get(), foreign, true));
+        }
+        Optional<StoredReadingView> stored = storedQuietly(page).filter(view -> view.rawSha256().equals(rawSha256));
+        stored.ifPresent(this::remember);
+        return stored.map(view -> delivered(page, view, foreign, true));
+    }
+
+    /** Die Ansicht aus dem Speicher, wenn sie zu dieser Payload gehört und noch nicht eingesammelt ist. */
+    private Optional<StoredReadingView> memory(PageKey key, String rawSha256) {
+        SoftReference<Remembered> reference = remembered.get(key);
+        Remembered memory = reference == null ? null : reference.get();
+        return memory != null && memory.rawSha256().equals(rawSha256) ? Optional.of(memory.view())
+                : Optional.empty();
+    }
+
+    /**
+     * Lädt die Lese-Ansichten dieser Seiten im Hintergrund vor, etwa die Kinder eines aufgeklappten Knotens (Angelo
+     * 17.11.2026, wie das Vorladen in MainframeMate): wie {@link #view} ohne {@code refresh}, also aus dem Cache, wenn
+     * er gilt, sonst von der Quelle, und behält sie im Speicher. Höchstens {@value #MAX_PREFETCH} Seiten je Aufruf und
+     * {@value #PREFETCH_PARALLEL} zugleich; schon laufende werden nicht doppelt geholt. Fehler bleiben still, das Öffnen
+     * versucht es selbst noch einmal. Kehrt sofort zurück.
+     */
+    public void prefetch(AccessContext caller, String sourceId, Collection<String> pageIds) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(sourceId, "sourceId");
+        int started = 0;
+        for (String pageId : pageIds) {
+            if (started >= MAX_PREFETCH) {
+                break;
+            }
+            PageKey key = new PageKey(sourceId, pageId);
+            if (!prefetching.add(key)) {
+                continue;
+            }
+            started++;
+            prefetcher.execute(() -> {
+                try {
+                    prefetchSlots.acquire();
+                    try {
+                        // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
+                        ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                    } finally {
+                        prefetchSlots.release();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
+                            sourceId, e.getClass().getName());
+                } finally {
+                    prefetching.remove(key);
+                }
+            });
+        }
+    }
+
+    private void remember(StoredReadingView view) {
+        if (remembered.size() >= PRUNE_AT) {
+            remembered.values().removeIf(reference -> reference.get() == null);
+        }
+        remembered.put(view.key(), new SoftReference<>(new Remembered(view.rawSha256(), view)));
+    }
+
     /** @return {@code null}, wenn die gelieferte Ansicht nicht zur geprüften Version gehört */
     private ReadingView view(AccessContext caller, DeliveredPage page, boolean refresh) {
         String sourceId = page.header().key().sourceId();
@@ -84,8 +199,10 @@ public class ReadingViews {
             return ReadingView.without(page.header(), ReadingView.Status.RESTRICTED, foreign);
         }
         String rawSha256 = page.snapshot().payload().rawSha256();
-        Optional<StoredReadingView> stored = storedQuietly(page).filter(view -> view.rawSha256().equals(rawSha256));
+        Optional<StoredReadingView> stored = memory(page.header().key(), rawSha256)
+                .or(() -> storedQuietly(page).filter(view -> view.rawSha256().equals(rawSha256)));
         if (stored.isPresent() && !refresh && !foreign.present()) {
+            remember(stored.get());
             return delivered(page, stored.get(), foreign, true);
         }
         HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
@@ -112,6 +229,9 @@ public class ReadingViews {
         StoredReadingView fresh = new StoredReadingView(page.header().key(), rawSha256, version, live.html(),
                 live.baseUri(), live.text(), live.images(), clock.instant());
         saveQuietly(fresh);
+        if (!foreign.present()) {
+            remember(fresh);
+        }
         return delivered(page, fresh, foreign, false);
     }
 

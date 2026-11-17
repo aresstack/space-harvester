@@ -88,6 +88,48 @@ public class PageNavigation {
                 batch.nextCursor());
     }
 
+    /** Höchstens so viele Kinder liefert {@link #cachedChildren} je Knoten. */
+    public static final int MAX_CACHED_CHILDREN = 1000;
+
+    /**
+     * Kindseiten, wie sie der Cache kennt, ohne die Quelle zu fragen: für den Baum, der zuerst diesen Stand zeigt und
+     * {@link #children} danach im Hintergrund holt (Angelo 17.11.2026). Ein Stapel ohne Cursor, nach Titel geordnet,
+     * weil der Cache die Reihenfolge der Quelle nicht kennt; {@code hasChildren} ist {@code true}, wenn der Cache Kinder
+     * kennt, sonst unbekannt. Rechte wie bei {@link #children}.
+     *
+     * @return leer ohne Cache oder wenn der Cache keine Kinder kennt
+     */
+    public Children cachedChildren(AccessContext caller, String sourceId, String spaceKey, String parentPageId) {
+        source(sourceId);
+        access.require(caller, parentPageId == null
+                ? ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"))
+                : ResourceScope.source(sourceId), AccessKind.METADATA);
+        if (cache == null) {
+            return new Children(sourceId, spaceKey, parentPageId, List.of(), null);
+        }
+        List<com.aresstack.spaceharvester.application.snapshot.PageHeader> headers;
+        try {
+            headers = cache.children(sourceId, spaceKey, parentPageId, MAX_CACHED_CHILDREN);
+        } catch (com.aresstack.spaceharvester.application.query.CacheUnavailableException e) {
+            return new Children(sourceId, spaceKey, parentPageId, List.of(), null);
+        }
+        String partition = spaceKey != null ? spaceKey
+                : headers.isEmpty() ? null : headers.getFirst().metadata().partitionKey();
+        if (parentPageId != null && partition != null) {
+            access.requireConcealed(caller, ResourceScope.page(sourceId, partition, parentPageId),
+                    AccessKind.METADATA);
+        }
+        List<PageNode> nodes = headers.stream()
+                .map(header -> header.metadata())
+                .sorted(java.util.Comparator.comparing((com.aresstack.spaceharvester.application.sources.PageMetadata
+                        page) -> page.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(
+                        com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
+                .map(page -> new PageNode(page.pageId(), page.title(), page.partitionKey(),
+                        cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null))
+                .toList();
+        return new Children(sourceId, partition, parentPageId, visible(caller, sourceId, nodes), null);
+    }
+
     /**
      * Wo eine Seite steht: Space mit Namen, Vorfahren von oben nach unten (Breadcrumbs) und die Seite selbst.
      *

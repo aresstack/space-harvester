@@ -135,6 +135,14 @@ public final class Workspace {
         return harvester.navigation().children(caller, sourceId, spaceKey, parentPageId, cursor);
     }
 
+    /**
+     * Kindseiten nur aus dem Cache, ohne die Quelle zu fragen ({@code PageNavigation.cachedChildren}): zuerst zeigen,
+     * dann {@link #children} im Hintergrund holen und tauschen (Angelo 17.11.2026).
+     */
+    public PageNavigation.Children cachedChildren(String sourceId, String spaceKey, String parentPageId) {
+        return harvester.navigation().cachedChildren(caller, sourceId, spaceKey, parentPageId);
+    }
+
     /** Wo eine Seite steht: Space und Vorfahren von oben nach unten ({@code PageNavigation.position}). */
     public PageNavigation.Position position(String sourceId, String pageId) {
         return harvester.navigation().position(caller, sourceId, pageId);
@@ -378,6 +386,27 @@ public final class Workspace {
      */
     public ReadingView readingView(String sourceId, String pageId, boolean refresh) {
         return harvester.readingViews().view(caller, sourceId, pageId, refresh);
+    }
+
+    /**
+     * Lese-Ansicht nur aus Speicher und Cache, ohne die Quelle zu fragen ({@code ReadingViews.cached}): sofort zeigen,
+     * dann {@link #readingView} mit {@code refresh=false} im Hintergrund prüfen und nur bei anderer Version tauschen
+     * (Angelo 17.11.2026). Leer, wenn nichts Passendes lokal liegt oder die Seite nicht lesbar ist.
+     */
+    public Optional<ReadingView> cachedReadingView(String sourceId, String pageId) {
+        try {
+            return harvester.readingViews().cached(caller, sourceId, pageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Lädt die Lese-Ansichten dieser Seiten im Hintergrund vor, etwa die Kinder eines eben aufgeklappten Knotens
+     * ({@code ReadingViews.prefetch}); kehrt sofort zurück.
+     */
+    public void prefetchReadingViews(String sourceId, java.util.Collection<String> pageIds) {
+        harvester.readingViews().prefetch(caller, sourceId, pageIds);
     }
 
     /**
