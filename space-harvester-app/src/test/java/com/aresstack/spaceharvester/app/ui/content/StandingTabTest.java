@@ -161,7 +161,7 @@ class StandingTabTest {
     void anOutdatedPageNamesTheWordThatMadeIt() {
         StatusQuoEntry archived = new StatusQuoEntry(page("3", "Altes Verfahren"), statement("v9",
                 ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
-                ParsedStatements.Derivation.ORIGINAL), StatementKind.ACTION, "Die Stelle", "stelle",
+                ParsedStatements.Derivation.ORIGINAL), StatementKind.ACTION, "Die Stelle", "stelle", null,
                 ParsedStatements.Quality.PLAUSIBLE, new StatementStanding(Standing.UEBERHOLT, StandingBasis.PAGE,
                 StandingReason.PAGE_OUTDATED, new PageMark(PageMark.Kind.OUTDATED, PageMark.Where.LABEL, "archiv",
                 "3")), null, false);
@@ -287,7 +287,7 @@ class StandingTabTest {
         StatusQuoEntry planned = new StatusQuoEntry(page("2", "Antragsverfahren"), statement("v3",
                 ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
                 ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.PLANNING, "Der Antrag wird geprüft")),
-                StatementKind.ACTION, "Der Antrag", "antrag", ParsedStatements.Quality.PLAUSIBLE,
+                StatementKind.ACTION, "Der Antrag", "antrag", null, ParsedStatements.Quality.PLAUSIBLE,
                 new StatementStanding(Standing.GEPLANT, StandingBasis.STAGE_FLAG, StandingReason.STAGE_PLANNING),
                 null, false);
         StatusQuoEntry unclear = entry("v4", Standing.UNKLAR, StatementKind.ACTION, "Jemand", "entscheidet",
@@ -315,7 +315,7 @@ class StandingTabTest {
                 predicate, ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of(), 0,
                 quality, List.of(), ParsedStatements.Review.UNREVIEWED,
                 new ParsedStatements.Features(negation, modality, ParsedStatements.Temporality.GILT));
-        return new StatusQuoEntry(page("1", "Seite 1"), statement, kind, subject, subject.toLowerCase(), quality,
+        return new StatusQuoEntry(page("1", "Seite 1"), statement, kind, subject, subject.toLowerCase(), null, quality,
                 new StatementStanding(standing, StandingBasis.FEATURES, StandingReason.TEMPORALITY_GILT), null, false);
     }
 
