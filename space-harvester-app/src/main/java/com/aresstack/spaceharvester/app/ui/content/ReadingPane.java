@@ -101,6 +101,16 @@ final class ReadingPane extends JPanel {
     private Map<String, VectorDiagram> vectors = Map.of();
     /** HTML der gezeigten Ansicht, für die Bildtitel im Betrachter. */
     private String html = "";
+    /** Bildspeicher des gezeigten Dokuments; nachgeladene Bilder landen hier und das Dokument holt sie sich. */
+    private Hashtable<URL, Image> cache = new Hashtable<>();
+    /** Die Bilder der gezeigten Ansicht, die nach dem Anzeigen im Hintergrund geladen werden. */
+    private List<Slot> slots = List.of();
+    /** Zähler der Bildzeile für die gezeigte Ansicht. */
+    private int images;
+    private int missing;
+    private boolean stored;
+    /** Jede neue Ansicht (oder das Leeren) zählt hoch; ein Nachladen der vorigen Ansicht verfällt damit. */
+    private volatile int generation;
     /** Was ein angeklickter Link auslöst; ohne Abnehmer öffnet er im Browser. */
     private java.util.function.Consumer<URL> links = ReadingPane::browse;
     /** Farben des Bildbetrachters beim nächsten Öffnen, aus der Einstellung; ohne Angabe die Vorgabe. */
@@ -248,6 +258,9 @@ final class ReadingPane extends JPanel {
     void clear(String text) {
         hideUpdate();
         overlay.setBusy(false);
+        generation++;
+        slots = List.of();
+        cache = new Hashtable<>();
         originals = Map.of();
         vectors = Map.of();
         html = "";
@@ -280,29 +293,36 @@ final class ReadingPane extends JPanel {
 
     /**
      * Zeigt eine vorbereitete Ansicht; auf dem EDT. Die Bildzeile steht nicht dauerhaft über dem Text, sondern in den
-     * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt.
+     * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt. Bilder, die
+     * die Ansicht noch nicht geladen hat ({@link Prepared#slots}), stehen zuerst als Platzhalter im Text und werden im
+     * Hintergrund nacheinander geladen und eingesetzt, ohne dass die Rollposition springt.
      */
     void show(Prepared prepared) {
         hideUpdate();
         overlay.setBusy(false);
-        originals = prepared.originals();
-        vectors = prepared.vectors();
+        generation++;
+        originals = new LinkedHashMap<>(prepared.originals());
+        vectors = new LinkedHashMap<>(prepared.vectors());
         html = prepared.html();
-        boolean visible = prepared.html().isEmpty() || prepared.missing() > 0;
-        details = prepared.html().isEmpty() ? "" : prepared.note();
-        hint.setText(visible ? prepared.note() : " ");
-        hint.setForeground(prepared.missing() > 0 ? Comic.ORANGE : Comic.TEXT);
+        slots = prepared.slots();
+        images = prepared.images();
+        missing = prepared.missing();
+        stored = prepared.stored();
         if (prepared.html().isEmpty()) {
+            details = "";
+            hint.setText(prepared.note());
+            hint.setForeground(Comic.TEXT);
             pane.setText("");
             return;
         }
+        showNote(prepared.note());
         HTMLEditorKit kit = new HTMLEditorKit();
         kit.getStyleSheet().addRule("body { font-family: " + Comic.regular(13.5f).getFamily() + "; font-size: 13pt; }");
         kit.getStyleSheet().addRule("table { border-collapse: collapse; } td, th { border: 1px solid #c8c8c8; "
                 + "padding: 3px; }");
         pane.setEditorKit(kit);
         HTMLDocument document = (HTMLDocument) kit.createDefaultDocument();
-        Hashtable<URL, Image> cache = new Hashtable<>();
+        cache = new Hashtable<>();
         prepared.scaled().forEach((src, image) -> {
             try {
                 cache.put(URI.create(src).toURL(), image);
@@ -321,15 +341,229 @@ final class ReadingPane extends JPanel {
         pane.setDocument(document);
         pane.setCaretPosition(0);
         page.contentChanged();
+        loadDeferred();
     }
 
-    /** Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. */
+    /** Die Bildzeile zur gezeigten Ansicht: in den Details immer, über dem Text nur mit nicht darstellbaren Bildern. */
+    private void showNote(String note) {
+        details = note;
+        hint.setText(missing > 0 ? note : " ");
+        hint.setForeground(missing > 0 ? Comic.ORANGE : Comic.TEXT);
+    }
+
+    /**
+     * Lädt die noch offenen Bilder der gezeigten Ansicht nacheinander im Hintergrund (ein Abruf zur Zeit, wie bisher,
+     * damit die Anmeldung der Quelle nicht mehrfach angestoßen wird) und setzt jedes sofort ein. Schon geladene Bilder
+     * derselben Ansicht erscheinen gleich.
+     */
+    private void loadDeferred() {
+        List<Slot> open = new java.util.ArrayList<>();
+        for (Slot slot : slots) {
+            Result known = slot.result();
+            if (known != null) {
+                apply(slot, known);
+            } else {
+                open.add(slot);
+            }
+        }
+        if (open.isEmpty()) {
+            return;
+        }
+        int shown = generation;
+        Background.execute(() -> {
+            for (Slot slot : open) {
+                if (shown != generation) {
+                    return;
+                }
+                Result result = slot.resolve();
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (shown == generation) {
+                        apply(slot, result);
+                    }
+                });
+            }
+        }, () -> { }, error -> { });
+    }
+
+    /** Für Tests: wie viele Bilder der gezeigten Ansicht noch nicht geladen sind. */
+    int pendingImages() {
+        int pending = 0;
+        for (Slot slot : slots) {
+            if (slot.result() == null) {
+                pending++;
+            }
+        }
+        return pending;
+    }
+
+    /** Für Tests: der Bildspeicher des gezeigten Dokuments. */
+    Map<URL, Image> imageCache() {
+        return Map.copyOf(cache);
+    }
+
+    /** Setzt ein geladenes Bild (oder seinen Platzhaltertext) an die Stelle des Platzhalters; auf dem EDT. */
+    private void apply(Slot slot, Result result) {
+        URL url;
+        try {
+            url = URI.create(slot.src()).toURL();
+        } catch (IOException | IllegalArgumentException e) {
+            return;
+        }
+        Image shown;
+        if (result.ok()) {
+            originals.put(slot.src(), result.original());
+            if (result.vector() != null) {
+                vectors.put(slot.src(), result.vector());
+            }
+            shown = result.shown();
+            images++;
+        } else {
+            shown = marker(result.missing(), pane.getFont());
+            missing++;
+        }
+        cache.put(url, shown);
+        int width = shown.getWidth(null);
+        int height = shown.getHeight(null);
+        keepingAnchor(() -> resize(slot.src(), result.ok() ? result.width() : width,
+                result.ok() ? result.height() : height));
+        showNote(note(images, missing, stored));
+    }
+
+    /**
+     * Gibt dem {@code <img>} mit dieser Adresse die neue Größe. Die geänderten Attribute lassen die Bildansicht ihr
+     * Bild neu aus dem Bildspeicher holen (Swing lädt es nach einer Attributänderung neu).
+     */
+    private void resize(String src, int width, int height) {
+        if (!(pane.getDocument() instanceof HTMLDocument document)) {
+            return;
+        }
+        HTMLDocument.Iterator imgs = document.getIterator(HTML.Tag.IMG);
+        for (; imgs.isValid(); imgs.next()) {
+            if (!src.equals(imgs.getAttributes().getAttribute(HTML.Attribute.SRC))) {
+                continue;
+            }
+            javax.swing.text.SimpleAttributeSet size = new javax.swing.text.SimpleAttributeSet();
+            size.addAttribute(HTML.Attribute.WIDTH, String.valueOf(width));
+            size.addAttribute(HTML.Attribute.HEIGHT, String.valueOf(height));
+            document.setCharacterAttributes(imgs.getStartOffset(), imgs.getEndOffset() - imgs.getStartOffset(),
+                    size, false);
+            pane.revalidate();
+            pane.repaint();
+            return;
+        }
+    }
+
+    /**
+     * Führt {@code change} aus und hält dabei die Zeile fest, die oben im Sichtfenster steht: Wird darüber ein Bild
+     * größer oder kleiner, rollt die Ansicht so nach, dass der Leser dieselbe Stelle sieht.
+     */
+    private void keepingAnchor(Runnable change) {
+        javax.swing.JViewport viewport = scroll.getViewport();
+        java.awt.Point before = viewport.getViewPosition();
+        int offset;
+        int lineAbove;
+        try {
+            offset = before.y <= 0 ? -1 : pane.viewToModel2D(before);
+            lineAbove = offset < 0 ? 0 : (int) Math.round(pane.modelToView2D(offset).getY()) - before.y;
+        } catch (javax.swing.text.BadLocationException | RuntimeException e) {
+            offset = -1;
+            lineAbove = 0;
+        }
+        change.run();
+        if (offset < 0) {
+            return;
+        }
+        int anchor = offset;
+        int above = lineAbove;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            try {
+                int y = (int) Math.round(pane.modelToView2D(anchor).getY()) - above;
+                if (y != viewport.getViewPosition().y) {
+                    viewport.setViewPosition(new java.awt.Point(before.x, Math.max(0, y)));
+                }
+            } catch (javax.swing.text.BadLocationException | RuntimeException e) {
+                // Die Stelle gibt es nicht mehr: die Ansicht bleibt, wo sie ist.
+            }
+        });
+    }
+
+    /**
+     * Vorbereitete Ansicht: HTML mit eigenen Bildadressen, die Bilder dazu und was fehlt. {@code slots} sind Bilder, die
+     * erst nach dem Anzeigen geladen werden ({@link #prepareDeferred}); {@code images} und {@code missing} zählen dann
+     * nur, was schon beim Vorbereiten feststand.
+     */
     record Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
-                    Map<String, VectorDiagram> vectors, int images, int missing, String note) {
+                    Map<String, VectorDiagram> vectors, int images, int missing, String note, List<Slot> slots,
+                    boolean stored) {
+
+        Prepared(String html, Map<String, Image> scaled, Map<String, BufferedImage> originals,
+                 Map<String, VectorDiagram> vectors, int images, int missing, String note) {
+            this(html, scaled, originals, vectors, images, missing, note, List.of(), true);
+        }
 
         /** Dieselbe Ansicht mit anderem HTML, etwa mit markierten Änderungen ({@link ReadingChanges}). */
         Prepared withHtml(String changed) {
-            return new Prepared(changed, scaled, originals, vectors, images, missing, note);
+            return new Prepared(changed, scaled, originals, vectors, images, missing, note, slots, stored);
+        }
+    }
+
+    /**
+     * Ein Bild der Ansicht, das erst nach dem Anzeigen geladen wird: seine eigene Adresse im Text und das Ergebnis,
+     * sobald es einmal geladen wurde (ein zweites Anzeigen derselben Ansicht lädt nicht erneut).
+     */
+    static final class Slot {
+
+        private final String src;
+        private final String label;
+        private final java.util.concurrent.Callable<Result> loader;
+        private volatile Result result;
+
+        private Slot(String src, String label, java.util.concurrent.Callable<Result> loader) {
+            this.src = src;
+            this.label = label;
+            this.loader = loader;
+        }
+
+        String src() {
+            return src;
+        }
+
+        String label() {
+            return label;
+        }
+
+        /** Das Ergebnis, sobald geladen; sonst {@code null}. */
+        Result result() {
+            return result;
+        }
+
+        /** Lädt das Bild (einmal) und merkt sich das Ergebnis; nie auf dem EDT. */
+        Result resolve() {
+            Result known = result;
+            if (known == null) {
+                try {
+                    known = loader.call();
+                } catch (Exception e) {
+                    known = Result.missing("Bild fehlt: " + label);
+                }
+                result = known;
+            }
+            return known;
+        }
+    }
+
+    /**
+     * Ein geladenes Bild: Original für den Betrachter, Anzeigebild und -größe im Text, die Vektorzeichnung bei
+     * draw.io; oder nur der Text des Platzhalters, wenn es sich nicht laden ließ.
+     */
+    record Result(BufferedImage original, Image shown, int width, int height, VectorDiagram vector, String missing) {
+
+        static Result missing(String text) {
+            return new Result(null, null, 0, 0, null, text);
+        }
+
+        boolean ok() {
+            return original != null;
         }
     }
 
@@ -350,6 +584,24 @@ final class ReadingPane extends JPanel {
     static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
                             Function<HarvestSource.ViewImage, byte[]> load, Function<String, byte[]> mermaid,
                             double scale) {
+        return build(view, vector, load, mermaid, scale, false);
+    }
+
+    /**
+     * Wie {@link #prepare(ReadingView, Function, Function, Function, double)}, lädt aber kein Bild: Jedes bekommt
+     * einen Platzhalter in der im HTML genannten Größe (sonst einer Standardgröße) und einen {@link Slot}, über den die
+     * Ansicht es nach dem Anzeigen im Hintergrund nachholt. Das HTML steht damit sofort (Angelo, 17.11.2026).
+     */
+    static Prepared prepareDeferred(ReadingView view,
+                                    Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                                    Function<HarvestSource.ViewImage, byte[]> load, Function<String, byte[]> mermaid,
+                                    double scale) {
+        return build(view, vector, load, mermaid, scale, true);
+    }
+
+    private static Prepared build(ReadingView view, Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                                  Function<HarvestSource.ViewImage, byte[]> load, Function<String, byte[]> mermaid,
+                                  double scale, boolean deferred) {
         switch (view.status()) {
             case RESTRICTED -> {
                 return note("Diese Seite bindet Inhalte ein, die du nicht nachweislich lesen darfst. Die Leseansicht "
@@ -366,36 +618,28 @@ final class ReadingPane extends JPanel {
         Map<String, Image> scaled = new LinkedHashMap<>();
         Map<String, BufferedImage> originals = new LinkedHashMap<>();
         Map<String, VectorDiagram> vectors = new LinkedHashMap<>();
+        List<Slot> slots = new java.util.ArrayList<>();
         int[] counts = new int[2];
         for (Element img : document.select("img")) {
             HarvestSource.ViewImage image = match(view, img);
             String label = label(img, image);
-            if (image == null || counts[0] >= MAX_IMAGES) {
+            if (image == null || counts[0] + slots.size() >= MAX_IMAGES) {
                 missing(img, "Bild fehlt: " + label);
                 counts[1]++;
                 continue;
             }
-            BufferedImage decoded;
-            try {
-                Optional<VectorDiagram> drawing = vectorOf(vector, image);
-                if (drawing.isPresent()) {
-                    placeVector(img, drawing.get(), label, scale, scaled, originals, vectors);
-                    counts[0]++;
-                    continue;
-                }
-                decoded = decode(load, image);
-            } catch (SignInPendingException e) {
-                // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
-                missing(img, SIGN_IN_PENDING + label);
+            if (deferred) {
+                slots.add(placeholder(img, label, slots.size(), scaled,
+                        () -> loadImage(vector, load, image, label, scale)));
+                continue;
+            }
+            Result result = loadImage(vector, load, image, label, scale);
+            if (!result.ok()) {
+                missing(img, result.missing());
                 counts[1]++;
                 continue;
             }
-            if (decoded == null) {
-                missing(img, "Bild fehlt: " + label);
-                counts[1]++;
-                continue;
-            }
-            place(img, decoded, label, scaled, originals);
+            place(img, IMAGE_BASE + originals.size(), result, label, scaled, originals, vectors);
             counts[0]++;
         }
         for (Element diagram : document.select("[class~=(?i)mermaid]")) {
@@ -403,38 +647,71 @@ final class ReadingPane extends JPanel {
             if (source.isEmpty()) {
                 continue;
             }
-            byte[] drawn;
-            try {
-                drawn = mermaid.apply(source);
-            } catch (RuntimeException e) {
-                drawn = null;
+            if (deferred) {
+                Element img = new Element(Tag.valueOf("img"), "");
+                diagram.replaceWith(img);
+                slots.add(placeholder(img, "Mermaid-Diagramm", slots.size(), scaled, () -> loadMermaid(mermaid, source)));
+                continue;
             }
-            BufferedImage decoded = drawn == null ? null : read(drawn);
-            if (decoded == null) {
+            Result result = loadMermaid(mermaid, source);
+            if (!result.ok()) {
                 Element marker = new Element(Tag.valueOf("p"), "");
-                missing(marker, "Diagramm nicht darstellbar");
+                missing(marker, result.missing());
                 diagram.before(marker);
                 counts[1]++;
                 continue;
             }
             Element img = new Element(Tag.valueOf("img"), "");
             diagram.replaceWith(img);
-            place(img, decoded, "Mermaid-Diagramm", scaled, originals);
+            place(img, IMAGE_BASE + originals.size(), result, "Mermaid-Diagramm", scaled, originals, vectors);
             counts[0]++;
         }
         for (Element element : document.body().getAllElements()) {
             clean(element);
         }
-        String note = Texts.count(counts[0], "Bild", "Bilder")
-                + (counts[1] == 0 ? "" : " · " + counts[1] + " nicht darstellbar, im Text markiert")
-                + (view.stored() ? " · aus dem Bestand" : " · live aus der Quelle")
-                + (counts[0] == 0 ? "" : " · Klick auf ein Bild vergrößert es");
         return new Prepared("<html><body>" + document.body().html() + "</body></html>", scaled, originals, vectors,
-                counts[0], counts[1], note);
+                counts[0], counts[1], note(counts[0], counts[1], view.stored()), List.copyOf(slots), view.stored());
+    }
+
+    /** Die Bildzeile („1 Bild · live aus der Quelle …“). */
+    private static String note(int images, int missing, boolean stored) {
+        return Texts.count(images, "Bild", "Bilder")
+                + (missing == 0 ? "" : " · " + missing + " nicht darstellbar, im Text markiert")
+                + (stored ? " · aus dem Bestand" : " · live aus der Quelle")
+                + (images == 0 ? "" : " · Klick auf ein Bild vergrößert es");
     }
 
     private static Prepared note(String text) {
         return new Prepared("", Map.of(), Map.of(), Map.of(), 0, 0, text);
+    }
+
+    /** Lädt ein Bild der Ansicht: zuerst die Vektorzeichnung, sonst die Bytes aus dem Core. */
+    private static Result loadImage(Function<HarvestSource.ViewImage, Optional<VectorDiagram>> vector,
+                                    Function<HarvestSource.ViewImage, byte[]> load, HarvestSource.ViewImage image,
+                                    String label, double scale) {
+        try {
+            Optional<VectorDiagram> drawing = vectorOf(vector, image);
+            if (drawing.isPresent()) {
+                return vectorResult(drawing.get(), scale);
+            }
+            BufferedImage decoded = decode(load, image);
+            return decoded == null ? Result.missing("Bild fehlt: " + label) : rasterResult(decoded);
+        } catch (SignInPendingException e) {
+            // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
+            return Result.missing(SIGN_IN_PENDING + label);
+        }
+    }
+
+    /** Zeichnet ein Mermaid-Diagramm über den Core. */
+    private static Result loadMermaid(Function<String, byte[]> mermaid, String source) {
+        byte[] drawn;
+        try {
+            drawn = mermaid.apply(source);
+        } catch (RuntimeException e) {
+            drawn = null;
+        }
+        BufferedImage decoded = drawn == null ? null : read(drawn);
+        return decoded == null ? Result.missing("Diagramm nicht darstellbar") : rasterResult(decoded);
     }
 
     /** Das Bild der Ansicht zu einem {@code <img>}: gleiche Adresse, roh oder gegen die Basis aufgelöst. */
@@ -515,22 +792,27 @@ final class ReadingPane extends JPanel {
     }
 
     /**
-     * Setzt ein draw.io-Diagramm ein: im Text höchstens {@link #MAX_WIDTH} breit, gerastert in dieser Breite mal der
+     * Ein draw.io-Diagramm: im Text höchstens {@link #MAX_WIDTH} breit, gerastert in dieser Breite mal der
      * Bildschirmskalierung, damit es auch auf hochauflösenden Bildschirmen scharf ist.
      */
-    private static void placeVector(Element img, VectorDiagram drawing, String label, double scale,
-                                    Map<String, Image> scaled, Map<String, BufferedImage> originals,
-                                    Map<String, VectorDiagram> vectors) {
-        String src = IMAGE_BASE + originals.size();
+    private static Result vectorResult(VectorDiagram drawing, double scale) {
         int width = Math.max(1, (int) Math.round(Math.min(MAX_WIDTH, drawing.width())));
         int height = Math.max(1, (int) Math.round(drawing.height() * (width / drawing.width())));
         BufferedImage shown = drawing.raster(Math.max(1, (int) Math.round(width * Math.max(1.0, scale))));
-        originals.put(src, shown);
-        vectors.put(src, drawing);
-        scaled.put(src, shown);
-        img.clearAttributes();
-        img.attr("src", src).attr("width", String.valueOf(width)).attr("height", String.valueOf(height))
-                .attr("alt", label).attr("title", label);
+        return new Result(shown, shown, width, height, drawing, null);
+    }
+
+    /** Ein geladenes Bild: im Text höchstens {@link #MAX_WIDTH} breit. */
+    private static Result rasterResult(BufferedImage decoded) {
+        int width = decoded.getWidth();
+        int height = decoded.getHeight();
+        Image shown = decoded;
+        if (width > MAX_WIDTH) {
+            height = Math.max(1, (int) Math.round(height * (MAX_WIDTH / (double) width)));
+            width = MAX_WIDTH;
+            shown = decoded.getScaledInstance(width, height, Image.SCALE_SMOOTH);
+        }
+        return new Result(decoded, new ImageIcon(shown).getImage(), width, height, null, null);
     }
 
     /** Skalierung des Bildschirms (Windows 150 % = 1,5); ohne Bildschirm 1. */
@@ -546,23 +828,99 @@ final class ReadingPane extends JPanel {
         }
     }
 
-    /** Setzt ein geladenes Bild ein: eigene Adresse, höchstens {@link #MAX_WIDTH} breit. */
-    private static void place(Element img, BufferedImage decoded, String label, Map<String, Image> scaled,
-                              Map<String, BufferedImage> originals) {
-        String src = IMAGE_BASE + originals.size();
-        int width = decoded.getWidth();
-        int height = decoded.getHeight();
-        Image shown = decoded;
-        if (width > MAX_WIDTH) {
+    /** Setzt ein geladenes Bild unter {@code src} ein. */
+    private static void place(Element img, String src, Result result, String label, Map<String, Image> scaled,
+                              Map<String, BufferedImage> originals, Map<String, VectorDiagram> vectors) {
+        originals.put(src, result.original());
+        if (result.vector() != null) {
+            vectors.put(src, result.vector());
+        }
+        scaled.put(src, result.shown());
+        attributes(img, src, result.width(), result.height(), label);
+    }
+
+    /** Breite × Höhe eines Platzhalters, wenn das HTML keine Größe nennt. */
+    static final int PLACEHOLDER_WIDTH = 240;
+    static final int PLACEHOLDER_HEIGHT = 135;
+
+    /**
+     * Setzt einen Platzhalter in der Größe aus dem HTML ({@code width}/{@code height}, auch {@code data-width} und
+     * {@code data-height} von Confluence; höchstens {@link #MAX_WIDTH} breit), sonst in Standardgröße; das Bild dazu
+     * kommt später über den {@link Slot}.
+     */
+    private static Slot placeholder(Element img, String label, int index, Map<String, Image> scaled,
+                                    java.util.concurrent.Callable<Result> loader) {
+        String src = IMAGE_BASE + index;
+        int width = size(img, "width", "data-width");
+        int height = size(img, "height", "data-height");
+        if (width <= 0 || height <= 0) {
+            width = PLACEHOLDER_WIDTH;
+            height = PLACEHOLDER_HEIGHT;
+        } else if (width > MAX_WIDTH) {
             height = Math.max(1, (int) Math.round(height * (MAX_WIDTH / (double) width)));
             width = MAX_WIDTH;
-            shown = decoded.getScaledInstance(width, height, Image.SCALE_SMOOTH);
         }
-        originals.put(src, decoded);
-        scaled.put(src, new ImageIcon(shown).getImage());
+        scaled.put(src, placeholderImage(width, height));
+        attributes(img, src, width, height, label);
+        return new Slot(src, label, loader);
+    }
+
+    private static int size(Element img, String attribute, String fallback) {
+        for (String name : new String[] {attribute, fallback}) {
+            String value = img.attr(name).trim().replace("px", "");
+            try {
+                int size = Integer.parseInt(value);
+                if (size > 0) {
+                    return size;
+                }
+            } catch (NumberFormatException notANumber) {
+                // nächstes Attribut
+            }
+        }
+        return -1;
+    }
+
+    /** Eigene Adresse, Größe und Beschriftung eines Bildes im Text; alle anderen Attribute fallen weg. */
+    private static void attributes(Element img, String src, int width, int height, String label) {
         img.clearAttributes();
         img.attr("src", src).attr("width", String.valueOf(width)).attr("height", String.valueOf(height))
                 .attr("alt", label).attr("title", label);
+    }
+
+    /** Eine helle Fläche an der Stelle eines Bildes, das noch lädt. */
+    static BufferedImage placeholderImage(int width, int height) {
+        BufferedImage image = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        try {
+            g.setColor(new java.awt.Color(0xEE, 0xEE, 0xEE));
+            g.fillRect(0, 0, image.getWidth(), image.getHeight());
+            g.setColor(new java.awt.Color(0xD8, 0xD8, 0xD8));
+            g.drawRect(0, 0, image.getWidth() - 1, image.getHeight() - 1);
+        } finally {
+            g.dispose();
+        }
+        return image;
+    }
+
+    /** Der rote Platzhaltertext („[Bild fehlt: …]“) als Bild, an der Stelle eines Bildes, das sich nicht laden ließ. */
+    static BufferedImage marker(String text, java.awt.Font font) {
+        String shown = "[" + text + "]";
+        java.awt.Font used = font == null ? Comic.regular(13.5f) : font;
+        java.awt.FontMetrics metrics = new java.awt.Canvas().getFontMetrics(used);
+        int width = Math.max(1, Math.min(MAX_WIDTH, metrics.stringWidth(shown) + 2));
+        int height = Math.max(1, metrics.getHeight());
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        try {
+            g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setFont(used);
+            g.setColor(new java.awt.Color(0xC0, 0x39, 0x2B));
+            g.drawString(shown, 1, metrics.getAscent());
+        } finally {
+            g.dispose();
+        }
+        return image;
     }
 
     /** Ersetzt ein Element durch einen sichtbaren Platzhalter wie in den Exporten. */
