@@ -91,7 +91,7 @@ public final class GlossaryRuleProposals {
                 retained.add(term.normalized());
                 continue;
             }
-            proposals.add(new Glossary.Proposal(term.term(), evidence, classification(term), null));
+            proposals.add(new Glossary.Proposal(term.term(), evidence, classification(term), definition(term)));
         }
         return new Batch(proposals, retained, derivation);
     }
@@ -103,6 +103,27 @@ public final class GlossaryRuleProposals {
     static GlossaryEntry.Classification classification(GlossaryDerivation.Term term) {
         return new GlossaryEntry.Classification(term.category(), GlossaryEntry.ClassifiedBy.RULE,
                 term.rule() == GlossaryDerivation.CategoryRule.NONE ? null : term.rule().name());
+    }
+
+    /**
+     * Vorschlag für die Begriffsbestimmung: ein Seitenbeleg einer Ist-Beziehung der Art
+     * {@link GlossaryDerivation.Relation#BESTIMMUNG} („X ist ein Y“) mit dem Begriff selbst als Träger (die Ableitung
+     * zählt nur Träger, die Begriffe sind), aus dem Original; bei mehreren die mit den meisten Seiten, bei Gleichstand
+     * die erste. Sonst {@code null}. Weitere zeigen die Einzelheiten; sichtbar nur, wenn der Aufrufer die Seite lesen
+     * darf (macht das Glossar).
+     */
+    static RelationEvidence definition(GlossaryDerivation.Term term) {
+        return term.isA().stream()
+                .filter(use -> use.relation() == GlossaryDerivation.Relation.BESTIMMUNG
+                        && use.origin() == ParsedStatements.Origin.ORIGINAL
+                        && use.evidence().stream().anyMatch(item -> item.document().isPage()))
+                .sorted(java.util.Comparator.comparingInt(GlossaryDerivation.Use::pages).reversed())
+                .limit(1)
+                .flatMap(use -> use.evidence().stream())
+                .filter(item -> item.document().isPage())
+                .map(item -> new RelationEvidence(item.document().page().sourceId(), item.document().page().pageId(),
+                        item.start(), item.end(), item.inputSha256()))
+                .findFirst().orElse(null);
     }
 
     /** Bis zu {@link GlossaryDerivation#MAX_EVIDENCE} Seitenbelege aus dem Original, ohne doppelte Sätze. */

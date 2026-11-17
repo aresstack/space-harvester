@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.nlp.pruefstand;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
@@ -29,6 +30,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
@@ -39,13 +41,28 @@ import org.junit.jupiter.api.Test;
  * Erwartungen {@code begriffe.tsv} (Einordnung) und {@code beziehungen.tsv} (Ist-Beziehungen) je Textsatz. Bericht in
  * {@code build/reports/pruefstand/glossar.md}.
  *
- * <p>Nur Bericht, kein Pin. Beim Kontrollsatz stehen nur Zahlen und Kennungen im Bericht, nie Ableitung oder Parse;
- * Zeilen zu Texten, die im Prüfstand noch fehlen, zählen getrennt.
+ * <p>Einordnung: nur Bericht. Ist-Beziehungen mit Art (Begleiter des Rollennomens): je Entwicklungssatz genau
+ * festgehalten in {@code beziehungen-stand.tsv} (schlechter = Rückschritt, besser = anheben); „falsche Art“ und
+ * „KEINE verletzt“ sind Fehler, „nicht gefunden“ ist eine Lücke. Beim Kontrollsatz nur Bericht mit Zahlen und
+ * Kennungen, nie Ableitung oder Parse, nie festgehalten. Zeilen zu Texten, die im Prüfstand noch fehlen, zählen
+ * getrennt.
  */
 class GlossarBerichtTest {
 
+    /** Zahlen der Ist-Beziehungen eines Textsatzes. */
+    record Beziehungen(int erwartet, int richtig, int falscheArt, int nichtGefunden, int keine, int keineVerletzt,
+                       int nichtVorgegeben) {
+
+        int[] werte() {
+            return new int[] {erwartet, richtig, falscheArt, nichtGefunden, keine, keineVerletzt, nichtVorgegeben};
+        }
+    }
+
     @Test
     void begriffeUndIstBeziehungenGegenDieErwartung() throws IOException {
+        Map<String, int[]> stand = stand();
+        List<String> verstoesse = new ArrayList<>();
+        int festgehalten = 0;
         StringBuilder bericht = new StringBuilder("# Begriffe aus dem Prüfstand (heute, FL5a)\n\n");
         int gemessen = 0;
         for (Textsatz satz : Textsatz.alle()) {
@@ -75,7 +92,20 @@ class GlossarBerichtTest {
             }
             String beziehungen = optional(Textsatz.BASIS + satz.name() + "/beziehungen.tsv");
             if (beziehungen != null) {
-                beziehungen(bericht, result, Textsatz.tsv(beziehungen), texte, kontrolle);
+                Beziehungen ist = beziehungen(bericht, result, Textsatz.tsv(beziehungen), texte, kontrolle);
+                if (!kontrolle) {
+                    int[] soll = stand.get(satz.name());
+                    if (soll == null) {
+                        verstoesse.add("kein Stand für " + satz.name() + " in beziehungen-stand.tsv, ist "
+                                + java.util.Arrays.toString(ist.werte()));
+                    } else {
+                        festgehalten++;
+                        if (!java.util.Arrays.equals(soll, ist.werte())) {
+                            verstoesse.add(satz.name() + ": soll " + java.util.Arrays.toString(soll) + ", ist "
+                                    + java.util.Arrays.toString(ist.werte()));
+                        }
+                    }
+                }
             }
             gemessen++;
         }
@@ -84,6 +114,25 @@ class GlossarBerichtTest {
         Files.createDirectories(report.getParent());
         Files.writeString(report, bericht.toString(), StandardCharsets.UTF_8);
         System.out.println(bericht);
+        assertTrue(verstoesse.isEmpty(), "Ist-Beziehungen weichen von beziehungen-stand.tsv ab (schlechter = "
+                + "Rückschritt, besser = anheben):\n" + String.join("\n", verstoesse));
+        assertEquals(stand.size(), festgehalten, "jede Zeile in beziehungen-stand.tsv gehört zu einem Entwicklungssatz");
+    }
+
+    /**
+     * {@code beziehungen-stand.tsv}: Textsatz, erwartet, richtig, falsche Art, nicht gefunden, KEINE, verletzt, nicht
+     * vorgegeben.
+     */
+    private static Map<String, int[]> stand() {
+        Map<String, int[]> result = new java.util.LinkedHashMap<>();
+        for (String[] f : Textsatz.tsv(Textsatz.resource(Textsatz.BASIS + "beziehungen-stand.tsv"))) {
+            int[] werte = new int[7];
+            for (int i = 0; i < werte.length; i++) {
+                werte[i] = Integer.parseInt(f[i + 1].strip());
+            }
+            result.put(f[0].strip(), werte);
+        }
+        return result;
     }
 
     private static void einordnung(StringBuilder bericht, GlossaryDerivation.Result result, List<String[]> zeilen,
@@ -130,14 +179,15 @@ class GlossarBerichtTest {
         }
     }
 
-    private static void beziehungen(StringBuilder bericht, GlossaryDerivation.Result result, List<String[]> zeilen,
-                                    Set<String> texte, boolean kontrolle) {
-        int gefunden = 0;
+    private static Beziehungen beziehungen(StringBuilder bericht, GlossaryDerivation.Result result,
+                                           List<String[]> zeilen, Set<String> texte, boolean kontrolle) {
+        int richtig = 0;
         int erwartet = 0;
         int keineEingehalten = 0;
         int keine = 0;
         int ohneText = 0;
         List<String> fehlt = new ArrayList<>();
+        List<String> falscheArt = new ArrayList<>();
         List<String> verletzt = new ArrayList<>();
         Set<String> vorgegeben = new HashSet<>();
         for (String[] zeile : zeilen) {
@@ -146,17 +196,23 @@ class GlossarBerichtTest {
                 ohneText++;
                 continue;
             }
-            String traeger = zeile[1].strip();
             String nomen = zeile[2].strip();
             String art = zeile[3].strip();
-            GlossaryDerivation.Term term = result.term(traeger);
-            boolean ist = term != null && term.isA().stream()
-                    .anyMatch(use -> TermText.normalize(use.lemma()).equals(TermText.normalize(nomen)));
-            boolean eigenschaft = term != null && term.properties().stream()
-                    .anyMatch(use -> use.lemma().equalsIgnoreCase(nomen));
+            List<GlossaryDerivation.Use> ist = new ArrayList<>();
+            boolean eigenschaft = false;
+            for (String traeger : zeile[1].split("\\|")) {
+                GlossaryDerivation.Term term = result.term(traeger.strip());
+                if (term == null) {
+                    continue;
+                }
+                term.isA().stream().filter(use -> TermText.normalize(use.lemma()).equals(TermText.normalize(nomen)))
+                        .forEach(ist::add);
+                eigenschaft |= term.properties().stream().anyMatch(use -> use.lemma().equalsIgnoreCase(nomen));
+                vorgegeben.add(term.normalized() + "\u0000" + TermText.normalize(nomen));
+            }
             if ("KEINE".equals(art)) {
                 keine++;
-                if (ist || eigenschaft) {
+                if (!ist.isEmpty() || eigenschaft) {
                     verletzt.add(kennung);
                 } else {
                     keineEingehalten++;
@@ -164,11 +220,12 @@ class GlossarBerichtTest {
                 continue;
             }
             erwartet++;
-            vorgegeben.add(TermText.normalize(traeger) + "\u0000" + TermText.normalize(nomen));
-            if (ist) {
-                gefunden++;
-            } else {
+            if (ist.isEmpty()) {
                 fehlt.add(kennung);
+            } else if (ist.stream().allMatch(use -> use.relation() != null && use.relation().name().equals(art))) {
+                richtig++;
+            } else {
+                falscheArt.add(kennung);
             }
         }
         int zusaetzlich = 0;
@@ -179,22 +236,28 @@ class GlossarBerichtTest {
                 }
             }
         }
-        bericht.append("**Ist-Beziehungen:** ").append(erwartet).append(" erwartet, gefunden ").append(gefunden)
-                .append("; KEINE ").append(keine).append(", eingehalten ").append(keineEingehalten)
-                .append(", **verletzt ").append(verletzt.size()).append("**; nicht vorgegebene Ist-Beziehungen ")
-                .append(zusaetzlich).append(ohneText > 0 ? "; Zeilen zu fehlenden Texten " + ohneText : "")
-                .append(".\n\n");
-        if (!fehlt.isEmpty()) {
-            bericht.append("Nicht gefunden: ").append(String.join(", ", fehlt)).append("\n\n");
+        bericht.append("**Ist-Beziehungen:** ").append(erwartet).append(" erwartet, richtig ").append(richtig)
+                .append(", **falsche Art ").append(falscheArt.size()).append("** (Fehler), nicht gefunden ")
+                .append(fehlt.size()).append(" (Lücke); KEINE ").append(keine).append(", eingehalten ")
+                .append(keineEingehalten).append(", **verletzt ").append(verletzt.size())
+                .append("** (Fehler); nicht vorgegebene Ist-Beziehungen ").append(zusaetzlich)
+                .append(ohneText > 0 ? "; Zeilen zu fehlenden Texten " + ohneText : "").append(".\n\n");
+        if (!falscheArt.isEmpty()) {
+            bericht.append("Falsche Art: ").append(String.join(", ", falscheArt)).append("\n\n");
         }
         if (!verletzt.isEmpty()) {
             bericht.append("KEINE verletzt: ").append(String.join(", ", verletzt)).append("\n\n");
         }
+        if (!fehlt.isEmpty()) {
+            bericht.append("Nicht gefunden: ").append(String.join(", ", fehlt)).append("\n\n");
+        }
         if (!kontrolle) {
             bericht.append("Ist-Beziehungen der Ableitung: ").append(result.terms().stream()
-                    .flatMap(t -> t.isA().stream().map(u -> t.term() + " → " + u.lemma()))
+                    .flatMap(t -> t.isA().stream().map(u -> t.term() + " → " + u.lemma() + " (" + u.relation() + ")"))
                     .collect(Collectors.joining(", "))).append("\n\n");
         }
+        return new Beziehungen(erwartet, richtig, falscheArt.size(), fehlt.size(), keine, verletzt.size(),
+                zusaetzlich);
     }
 
     private static String optional(String path) throws IOException {
@@ -236,7 +299,8 @@ class GlossarBerichtTest {
                     List.of(), ParsedStatements.Review.UNREVIEWED, new ParsedStatements.Features(
                     features.negated() ? ParsedStatements.Negation.NEGATED : ParsedStatements.Negation.AFFIRMED,
                     ParsedStatements.Modality.valueOf(features.modality().name()),
-                    ParsedStatements.Temporality.valueOf(features.temporality().name()))));
+                    ParsedStatements.Temporality.valueOf(features.temporality().name()),
+                    features.article() == null ? null : ParsedStatements.Article.valueOf(features.article().name()))));
         }
         PageKey key = new PageKey(satz, text);
         PageStatementAnalysis stored = new PageStatementAnalysis(key, null, text, "1", "sha256:" + "0".repeat(64),

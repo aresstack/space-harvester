@@ -72,6 +72,49 @@ class ExplorerTest {
         });
     }
 
+    /**
+     * Ordnerquellen: der Baum kommt aus der Quelle, nicht aus dem Bestand. Der Bestand kann hinterherhinken oder
+     * mitten in einer Befüllung nur einen Teil der Seiten haben; dann fehlten Seiten im Baum.
+     */
+    @Test
+    void aFolderTreeShowsTheSourceEvenWhenTheStockLagsBehind() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("anderes.md"), "# Anderes\n");
+        Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Explorer.SpaceItem space = (Explorer.SpaceItem) Explorer.children(context.runtime(),
+                new Explorer.SourceItem("handbuch", "Handbuch"), null).nodes().get(0).item();
+
+        var workspace = context.runtime().workspace();
+        var status = workspace.startSync("handbuch", space.spaceKey());
+        for (int i = 0; i < 600 && !status.state().terminal(); i++) {
+            Thread.sleep(50);
+            status = workspace.job(status.id());
+        }
+        assertThat(status.state().terminal()).as("Abgleich fertig").isTrue();
+        assertThat(workspace.tree("handbuch", space.spaceKey()).pages()).as("Bestand").hasSize(2);
+
+        // Eine neue Datei ist noch nicht im Bestand, gehört aber in den Baum.
+        Files.writeString(files.resolve("neu.md"), "# Neu\n");
+
+        assertThat(Explorer.children(context.runtime(), space, null).nodes()).hasSize(3);
+    }
+
     /** Ein geöffneter Treffer: der Explorer klappt Quelle und Space auf und wählt die Seite, ohne den Suchumfang. */
     @Test
     void revealPageExpandsTheTreeAndSelectsThePage() throws Exception {
@@ -101,8 +144,11 @@ class ExplorerTest {
         Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
                 null);
         Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
-        Explorer.PageItem target = Explorer.children(context.runtime(), space, null).nodes().stream()
+        // Beide Seiten aus einer Auflistung vor dem Explorer: später kann der Bestand erst teilweise gefüllt sein.
+        List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
                 .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .toList();
+        Explorer.PageItem target = pages.stream().filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
                 .filter(page -> page.title().toLowerCase(java.util.Locale.ROOT).contains("wartung"))
                 .findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
@@ -133,8 +179,7 @@ class ExplorerTest {
         assertThat(scopeCalls[0]).isZero();
 
         // Erst Treffer A (Pfad wird im Hintergrund geholt), dann B: die spätere Antwort für A überschreibt B nicht.
-        Explorer.PageItem other = Explorer.children(context.runtime(), space, null).nodes().stream()
-                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+        Explorer.PageItem other = pages.stream()
                 .filter(page -> !page.pageId().equals(wanted)).findFirst().orElseThrow();
         SwingUtilities.invokeAndWait(() -> {
             explorer[0].revealPage("handbuch", other.pageId());
@@ -247,8 +292,11 @@ class ExplorerTest {
         Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
                 null);
         Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
-        Explorer.PageItem target = Explorer.children(context.runtime(), space, null).nodes().stream()
+        // Beide Seiten aus einer Auflistung vor dem Explorer: später kann der Bestand erst teilweise gefüllt sein.
+        List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
                 .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .toList();
+        Explorer.PageItem target = pages.stream().filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
                 .filter(page -> page.title().contains("Modernisierung")).findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
                 List.of(), new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false));

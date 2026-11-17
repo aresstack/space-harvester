@@ -19,10 +19,10 @@ import java.util.function.IntFunction;
  * schlichtes Symbol, beim Darüberfahren der Kreis, Tooltip mit Name oder, wenn gesperrt, dem Grund. Ein Klick löst die
  * Aktion aus, ohne die Zeile erst wählen zu müssen; gesperrte Aktionen sind blass und tun nichts.
  */
-final class RowActions extends JComponent implements TableCellRenderer {
+public final class RowActions extends JComponent implements TableCellRenderer {
 
     /** Eine Aktion einer Zeile; {@link #EMPTY} hält nur den Platz frei, damit die Spalten untereinander stehen. */
-    record Action(Icon icon, String tooltip, boolean enabled, Runnable run) {
+    public record Action(Icon icon, String tooltip, boolean enabled, Runnable run) {
         boolean empty() {
             return icon == null;
         }
@@ -48,7 +48,7 @@ final class RowActions extends JComponent implements TableCellRenderer {
     }
 
     /** Ein freier Platz: nichts gezeichnet, kein Tooltip, kein Klick. */
-    static final Action EMPTY = new Action(null, null, false, () -> { });
+    public static final Action EMPTY = new Action(null, null, false, () -> { });
 
     static final int SLOT = 28;
 
@@ -70,7 +70,7 @@ final class RowActions extends JComponent implements TableCellRenderer {
      *
      * @param actions Aktionen je Zeile des Modells, von links nach rechts
      */
-    static RowActions install(JTable table, int column, int count, IntFunction<List<Action>> actions) {
+    public static RowActions install(JTable table, int column, int count, IntFunction<List<Action>> actions) {
         RowActions renderer = new RowActions(actions);
         TableColumn col = table.getColumnModel().getColumn(column);
         int width = count * SLOT + 8;

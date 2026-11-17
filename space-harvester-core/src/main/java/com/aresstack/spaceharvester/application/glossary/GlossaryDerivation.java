@@ -155,7 +155,8 @@ public final class GlossaryDerivation {
      * @param statements   ausgewertete Aussagen (zählen {@code PLAUSIBLE})
      * @param notCounted   übersprungene Aussagen: zählen nicht oder unter {@code PLAUSIBLE}
      * @param notPresent   Zustandsaussagen, die keinen Ist-Zustand beschreiben (verneint, Modalverb, früher,
-     *                     geplant, verworfen, Merkmale unbestimmt, Zustandswechsel) oder aus der Vorstufe stammen
+     *                     geplant, verworfen, Merkmale unbestimmt, Zustandswechsel), aus der Vorstufe stammen oder
+     *                     deren Rollennomen „kein“ oder einen anderen Begleiter trägt ({@link Relation#of})
      */
     public record Result(List<Term> terms, int pages, int stalePages, int statements, int notCounted,
                          int notPresent) {
@@ -223,12 +224,49 @@ public final class GlossaryDerivation {
      * @param negated  verneinte Aussagen, getrennt gezählt (nur beim Verhalten)
      * @param count    Aussagen
      * @param evidence bis zu {@link #MAX_EVIDENCE} Belege
+     * @param relation Art der Ist-Beziehung aus dem Begleiter des Rollennomens; {@code null} außer bei
+     *                 {@link Term#isA()} und {@link Term#instances()}. {@link Relation#GLEICHSETZUNG} wird nur
+     *                 gezeigt und führt nie von selbst zu Synonym oder Zusammenführung
+     * @param pages    Seiten und Dokumente mit dieser Aussage
      */
     public record Use(String lemma, ParsedStatements.Origin origin, boolean negated, int count,
-                      List<Evidence> evidence) {
+                      List<Evidence> evidence, Relation relation, int pages) {
 
         public Use {
             evidence = List.copyOf(evidence);
+        }
+
+        /** Ohne Art (Verhalten und Eigenschaften), Seiten unbekannt. */
+        public Use(String lemma, ParsedStatements.Origin origin, boolean negated, int count, List<Evidence> evidence) {
+            this(lemma, origin, negated, count, evidence, null, 0);
+        }
+    }
+
+    /**
+     * Art einer Ist-Beziehung „X ist (Begleiter) Y“ aus dem Begleiter des Rollennomens (ADR 0032, Merkmal Artikel,
+     * Regelfassung 13). „ist kein Y“ und andere Begleiter („unser“, „dieser“, „jeder“) ergeben keine Ist-Beziehung.
+     */
+    public enum Relation {
+        /** „X ist ein Y“: Begriffsbestimmung, Vorschlag für {@code GlossaryEntry#definitionProposal()}. */
+        BESTIMMUNG,
+        /** „X ist Y“ ohne Begleiter, auch Mehrzahl: Rolle. */
+        ROLLE,
+        /** „X ist der/die/das Y“: Gleichsetzung mit einem bestimmten Gegenstand. */
+        GLEICHSETZUNG,
+        /** Analyse vor Regelfassung 13 ohne Merkmal; bleibt sichtbar, bis neu analysiert wird. */
+        UNBEKANNT;
+
+        /** Die Art zu einem Begleiter oder {@code null}, wenn er keine Ist-Beziehung ergibt. */
+        public static Relation of(ParsedStatements.Article article) {
+            if (article == null) {
+                return UNBEKANNT;
+            }
+            return switch (article) {
+                case UNBESTIMMT -> BESTIMMUNG;
+                case OHNE -> ROLLE;
+                case BESTIMMT -> GLEICHSETZUNG;
+                case KEIN, SONSTIGER -> null;
+            };
         }
     }
 
@@ -472,7 +510,8 @@ public final class GlossaryDerivation {
 
         private void state(ParsedStatements.Statement statement, Map<String, ParsedStatements.Mention> mentions,
                            Evidence evidence) {
-            if (!present(statement)) {
+            Relation relation = statement.roleNoun() == null ? null : Relation.of(statement.features().article());
+            if (!present(statement) || statement.roleNoun() != null && relation == null) {
                 notPresent++;
                 return;
             }
@@ -493,8 +532,8 @@ public final class GlossaryDerivation {
                 String roleNoun = spelling(statement.roleNoun(), words[words.length - 1]);
                 Builder noun = builder(TermText.normalize(roleNoun));
                 noun.forms.putIfAbsent(roleNoun, 0);
-                bearer.isA.add(noun.normalized, ParsedStatements.Origin.ORIGINAL, false, evidence);
-                noun.instances.add(bearer.normalized, ParsedStatements.Origin.ORIGINAL, false, evidence);
+                bearer.isA.add(noun.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);
+                noun.instances.add(bearer.normalized, ParsedStatements.Origin.ORIGINAL, false, relation, evidence);
             }
         }
 
@@ -558,11 +597,19 @@ public final class GlossaryDerivation {
     /** Zählt Bezüge je Grundform, Herkunft und Verneinung. */
     private static final class Uses {
         private final Map<UseKey, Counter> counters = new TreeMap<>(Comparator.comparing(UseKey::lemma)
-                .thenComparing(UseKey::origin).thenComparing(UseKey::negated));
+                .thenComparing(UseKey::origin).thenComparing(UseKey::negated)
+                .thenComparing(UseKey::relation, Comparator.nullsFirst(Comparator.naturalOrder())));
 
         void add(String lemma, ParsedStatements.Origin origin, boolean negated, Evidence evidence) {
-            Counter counter = counters.computeIfAbsent(new UseKey(lemma, origin, negated), k -> new Counter());
+            add(lemma, origin, negated, null, evidence);
+        }
+
+        void add(String lemma, ParsedStatements.Origin origin, boolean negated, Relation relation,
+                 Evidence evidence) {
+            Counter counter = counters.computeIfAbsent(new UseKey(lemma, origin, negated, relation),
+                    k -> new Counter());
             counter.count++;
+            counter.documents.add(evidence.document());
             if (counter.evidence.size() < MAX_EVIDENCE && counter.evidence.stream()
                     .noneMatch(e -> e.statementId().equals(evidence.statementId()))) {
                 counter.evidence.add(evidence);
@@ -573,18 +620,20 @@ public final class GlossaryDerivation {
         List<Use> list(UnaryOperator<String> display) {
             List<Use> list = new ArrayList<>();
             counters.forEach((key, counter) -> list.add(new Use(display.apply(key.lemma()), key.origin(),
-                    key.negated(), counter.count, counter.evidence)));
+                    key.negated(), counter.count, counter.evidence, key.relation(),
+                    counter.documents.size())));
             list.sort(Comparator.comparing(Use::origin).thenComparing(Use::negated)
                     .thenComparing(Comparator.comparingInt(Use::count).reversed()));
             return list;
         }
     }
 
-    private record UseKey(String lemma, ParsedStatements.Origin origin, boolean negated) {
+    private record UseKey(String lemma, ParsedStatements.Origin origin, boolean negated, Relation relation) {
     }
 
     private static final class Counter {
         int count;
+        final Set<DocumentKey> documents = new HashSet<>();
         final List<Evidence> evidence = new ArrayList<>();
     }
 

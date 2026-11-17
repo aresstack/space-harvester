@@ -189,6 +189,18 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Verfeinern: `view(caller, vorigeSicht, query, cancelled)` nutzt das gehaltene Ergebnis und liest nur die Einträge
   neu; neue Auswahl oder Auftragsende = volle Sicht, Filter und Suche = Verfeinern.
 
+## Umsetzung FL5b-3 (Art der Ist-Beziehung aus dem Artikel)
+
+- `GlossaryDerivation.Relation` aus `Features.article`: UNBESTIMMT = BESTIMMUNG, OHNE = ROLLE, BESTIMMT =
+  GLEICHSETZUNG, KEIN und SONSTIGER = keine Beziehung (zählt unter `notPresent`), ohne Merkmal = UNBEKANNT bis zur
+  neuen Analyse. Tor unverändert (Original, bejaht, ohne Modalverb, GILT, kein Zustandswechsel).
+- GLEICHSETZUNG wird nur gezeigt, nie automatisch Synonym oder Zusammenführung.
+- `definitionProposal` der Regelphase: BESTIMMUNG mit dem Begriff als Träger, meiste Seiten, bei Gleichstand die
+  erste; nur Seitenbelege aus dem Original.
+- Gemessen in `GlossarBerichtTest` gegen `beziehungen.tsv`: Entwicklungssatz „foerderung“ festgehalten in
+  `beziehungen-stand.tsv` (falsche Art und KEINE verletzt sind Fehler, nicht gefunden ist eine Lücke); Kontrollsatz
+  „beschaffung“ nur berichtet.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).
