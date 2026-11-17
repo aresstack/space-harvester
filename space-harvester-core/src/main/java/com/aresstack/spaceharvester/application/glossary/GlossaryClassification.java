@@ -345,6 +345,7 @@ public class GlossaryClassification {
                     "„" + RULE_PHASE + "“: " + rules.describe(), null, null, null));
         }
         SkipReason skipped = null;
+        boolean perPage = false;
         Glossary.ProposalRun modelRun = null;
         GlossaryModelPhase.Run classified = null;
         GlossaryModelPhase phase = pages == null || released == null ? null
@@ -355,6 +356,7 @@ public class GlossaryClassification {
         } else if (phase != null) {
             if (!phase.anyReleased(pages)) {
                 skipped = SkipReason.NOT_RELEASED;
+                perPage = true;
             } else {
                 phase(context, PHASE);
                 classified = phase.run(scope, pages, context);
@@ -372,7 +374,8 @@ public class GlossaryClassification {
             phase(context, PHASE + ": ausgelassen");
             context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT,
                     skipped.code(), "„" + PHASE + "“ ausgelassen: " + (skipped == SkipReason.NO_MODEL
-                    ? "kein Modell eingestellt" : "Quelle nicht für die KI freigegeben"), null, null, null));
+                    ? "kein Modell eingestellt" : perPage ? "keine Seite des Bereichs für die KI freigegeben"
+                    : "Quelle nicht für die KI freigegeben"), null, null, null));
         }
         return new Outcome(rules, modelRun, skipped, classified);
     }

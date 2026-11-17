@@ -29,8 +29,9 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `explanation` | Erläuterung, schreibt nur der Mensch |
 | `revision` | für optimistisches Sperren: bei jeder Änderung mitgeben |
 
-Vorrang der Einordnung: Mensch vor KI vor Regel. Die KI ersetzt eine Regel-Einordnung nur bei `UNKLAR`; nach
-„Einordnen“ durch den Menschen ändert kein Lauf sie mehr.
+Vorrang der Einordnung, unabhängig von der Reihenfolge der Läufe: Mensch am Eintrag, dann bestimmte Regel (Technik,
+Rolle), dann KI, dann `UNKLAR` der Regel. Eine neue Wortliste wirkt also auch auf Einträge, die die KI schon
+eingeordnet hat; `UNKLAR` der Regel ersetzt die KI nie. Nach „Einordnen“ durch den Menschen ändert kein Lauf sie mehr.
 
 ## Lesen
 
@@ -159,8 +160,14 @@ boolean modelAvailable()  // ob die Phase mit Modell möglich ist
   | `SYSTEM_COMPONENT`, `DATA_FORMAT` | `TECHNISCH` |
   | `GENERIC_WORD`, `CONTEXT_UNCLEAR` | `UNKLAR` |
 
-  Fremde Kennungen und Begriffe fallen weg; eine unlesbare Antwort ändert nichts.
-- Die Einordnung merkt sich die Seiten ihrer Belege (`classification.pages`). Verliert eine davon die Freigabe, fällt
+  Fremde Kennungen und Begriffe fallen weg; eine unlesbare Antwort ändert nichts. Ein `UNKLAR` der KI
+  (`GENERIC_WORD`, `CONTEXT_UNCLEAR`) wird gespeichert und ist als „unklar · von der KI“ mit Grund sichtbar: Man
+  sieht, dass die KI schon geschaut hat; der nächste Lauf fragt ihn erneut (bei unveränderter Eingabe aus dem Cache).
+- Die App schlägt über die KI keine neuen Begriffe aus dem Begriffsindex mehr vor; sie ordnet nur vorhandene
+  Einträge ein. Frühere Vorschläge der Herkunft `AI` bleiben stehen: Kein Abgleich entfernt sie oder markiert sie als
+  veraltet.
+- Die Einordnung merkt sich die Seiten ihrer Belegsätze (`classification.pages`), nicht jede Seite, die in die
+  gestuften Zahlen und Verben einging. Verliert eine davon die Freigabe, fällt
   sie auf den Regelstand zurück (Verlauf `unclassify`), der nächste Lauf fragt neu.
 - Die Anweisung ist **ungemessen** (`glossary-classify-1-ungemessen`), bis ein Lauf mit echtem Modell gemessen ist.
 - Der Dienst (ohne Wissensgraph) behält die bisherige Kandidatenwahl aus dem Begriffsindex mit Freigabe je Quelle.

@@ -482,8 +482,10 @@ public class Glossary {
     }
 
     /**
-     * Einordnung nach einem Lauf: der Mensch geht immer vor, die KI vor der Regel; die KI ersetzt eine Regel-Einordnung
-     * nur, wenn die Regel {@code UNKLAR} ließ. Ohne Einordnung im Vorschlag bleibt die bisherige.
+     * Einordnung nach einem Lauf, unabhängig von der Reihenfolge der Läufe (ADR 0032, FL5c): der Mensch am Eintrag
+     * geht immer vor, dann eine bestimmte Regel (Technik, Rolle), dann die KI, dann {@code UNKLAR} der Regel. Eine
+     * bestimmte Regel ersetzt also die KI (eine neue Wortliste wirkt), {@code UNKLAR} der Regel ersetzt sie nie. Ohne
+     * Einordnung im Vorschlag bleibt die bisherige.
      */
     static GlossaryEntry.Classification nextClassification(GlossaryEntry.Classification current,
                                                            GlossaryEntry.Classification proposed) {
@@ -493,11 +495,16 @@ public class Glossary {
         if (current == null || current.by() == proposed.by()) {
             return proposed;
         }
-        if (current.by() == GlossaryEntry.ClassifiedBy.RULE && proposed.by() == GlossaryEntry.ClassifiedBy.AI) {
-            return current.category() == GlossaryDerivation.Category.UNKLAR ? proposed : current;
-        }
-        // Eine Regel überschreibt nie die KI.
-        return current;
+        return rank(proposed) >= rank(current) ? proposed : current;
+    }
+
+    /** Rang einer Einordnung ohne Mensch: bestimmte Regel 3, KI 2, {@code UNKLAR} der Regel 1. */
+    private static int rank(GlossaryEntry.Classification classification) {
+        return switch (classification.by()) {
+            case MANUAL -> 4;
+            case RULE -> classification.category() == GlossaryDerivation.Category.UNKLAR ? 1 : 3;
+            case AI -> 2;
+        };
     }
 
     /** Einordnung eines Eintrags für Filter; ohne Einordnung {@code UNKLAR}. */

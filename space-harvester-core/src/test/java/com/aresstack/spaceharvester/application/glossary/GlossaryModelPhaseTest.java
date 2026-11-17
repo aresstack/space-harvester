@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.glossary;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -14,6 +16,8 @@ import com.aresstack.spaceharvester.application.enrichment.language.TermProcesso
 import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.Category;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry.ClassifiedBy;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
@@ -31,8 +35,10 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
+import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.ResolutionCache;
+import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.persistence.files.FileGlossaryStore;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -50,6 +56,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -91,6 +98,7 @@ class GlossaryModelPhaseTest {
     private final Map<String, String> answers = new HashMap<>();
     private final List<String> foreign = new ArrayList<>();
     private boolean available = true;
+    private GlossaryRuleSettings settings = GlossaryRuleSettings.DEFAULT;
     private GlossaryStore store;
     private Glossary glossary;
     private GlossaryClassification classification;
@@ -177,7 +185,7 @@ class GlossaryModelPhaseTest {
                 new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
                 key -> Optional.ofNullable(texts.get(key)), glossary, model, ResolutionCache.inMemory(), jobs,
                 new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
-                () -> GlossaryRuleSettings.DEFAULT, released::contains, Clock.fixed(T0, ZoneOffset.UTC));
+                () -> settings, released::contains, Clock.fixed(T0, ZoneOffset.UTC));
         page("1", "Bewilligungsstelle", "prüft", "Zuwendung");
         page("2", "Antragsdatenbank", "speichert", "Zuwendung");
         page("3", "Geheimgremium", "verschließt", "Verschlusssache");
@@ -296,10 +304,114 @@ class GlossaryModelPhaseTest {
         assertThat(askedTerms()).as("Hand und KI-Entscheidung werden nicht gefragt").doesNotContain("Zuwendung");
         assertThat(entry("Zuwendung").classification().by()).isEqualTo(ClassifiedBy.MANUAL);
         assertThat(again.classified().asked()).isEqualTo(again.classified().reused() + askedTerms().size());
-        assertThat(Glossary.nextClassification(new GlossaryEntry.Classification(Category.FACHLICH, ClassifiedBy.AI,
-                "DOMAIN_OBJECT"), new GlossaryEntry.Classification(Category.TECHNISCH, ClassifiedBy.RULE,
-                "TECHNICAL_HEAD"))).as("Regel überschreibt nie die KI").extracting(GlossaryEntry.Classification::by)
-                .isEqualTo(ClassifiedBy.AI);
+    }
+
+    @Test
+    void precedenceDoesNotDependOnTheOrderOfTheRuns() {
+        GlossaryEntry.Classification ai = new GlossaryEntry.Classification(Category.FACHLICH, ClassifiedBy.AI,
+                "DOMAIN_OBJECT");
+        GlossaryEntry.Classification decided = new GlossaryEntry.Classification(Category.TECHNISCH,
+                ClassifiedBy.RULE, "TECHNICAL_HEAD");
+        GlossaryEntry.Classification open = new GlossaryEntry.Classification(Category.UNKLAR, ClassifiedBy.RULE,
+                null);
+        GlossaryEntry.Classification manual = new GlossaryEntry.Classification(Category.ROLLE, ClassifiedBy.MANUAL,
+                null);
+        for (List<GlossaryEntry.Classification> pair : List.of(List.of(ai, decided), List.of(ai, open),
+                List.of(ai, manual), List.of(decided, manual), List.of(open, manual))) {
+            // Zwei Regel-Einordnungen sind kein Vorrang: der neuere Regellauf gilt (Wortliste geändert).
+            GlossaryEntry.Classification forward = Glossary.nextClassification(
+                    Glossary.nextClassification(null, pair.get(0)), pair.get(1));
+            GlossaryEntry.Classification backward = Glossary.nextClassification(
+                    Glossary.nextClassification(null, pair.get(1)), pair.get(0));
+            assertThat(forward).as("gleich in beiden Reihenfolgen: %s", pair).isEqualTo(backward);
+        }
+        assertThat(Glossary.nextClassification(ai, decided)).as("bestimmte Regel vor KI").isEqualTo(decided);
+        assertThat(Glossary.nextClassification(ai, open)).as("UNKLAR der Regel nie über die KI").isEqualTo(ai);
+        assertThat(Glossary.nextClassification(decided, ai)).isEqualTo(decided);
+        assertThat(Glossary.nextClassification(manual, decided)).isEqualTo(manual);
+
+        classification.job(WIKI, null, EDITOR);
+        assertThat(entry("Zuwendung").classification().by()).isEqualTo(ClassifiedBy.AI);
+        settings = settings.with(GlossaryRuleSettings.Kind.TECHNICAL_WORDS, List.of("zuwendung"), List.of());
+
+        classification.job(WIKI, null, EDITOR);
+
+        assertThat(entry("Zuwendung").classification()).as("neue Wortliste wirkt auch nach der KI")
+                .isEqualTo(new GlossaryEntry.Classification(Category.TECHNISCH, ClassifiedBy.RULE,
+                        "TECHNICAL_HEAD"));
+    }
+
+    @Test
+    void aPageWithdrawnDuringTheRunIsNotInTheNextRequests() {
+        for (int i = 0; i < 30; i++) {
+            String suffix = String.valueOf((char) ('a' + i / 26)) + (char) ('a' + i % 26);
+            page("m" + i, "Mumpf" + suffix, "bewertet", "Plonk" + suffix);
+            released.add(new PageKey("wiki", "m" + i));
+        }
+        page("w", "Zuzzel", "verschiebt", "Zuzzelziel");
+        PageKey withdrawn = new PageKey("wiki", "w");
+        released.add(withdrawn);
+        List<String> seen = new ArrayList<>();
+        AcronymExpansionModel withdrawing = new AcronymExpansionModel() {
+            @Override
+            public String version() {
+                return "fake:model@1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public boolean mayProcess(String sourceId) {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                seen.add(input);
+                released.remove(withdrawn);
+                return "{\"terms\":[]}";
+            }
+        };
+        GlossaryClassification run = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
+                key -> Optional.ofNullable(texts.get(key)), glossary, withdrawing, ResolutionCache.inMemory(), jobs,
+                new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
+                () -> settings, released::contains, Clock.fixed(T0, ZoneOffset.UTC));
+
+        run.job(WIKI, null, EDITOR);
+
+        assertThat(seen).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(terms(seen.get(0))).hasSize(GlossaryModelPhase.BATCH).doesNotContain("Zuzzel", "Zuzzelziel");
+        for (String request : seen.subList(1, seen.size())) {
+            assertThat(request).as("nach dem Entzug nichts mehr von der Seite")
+                    .doesNotContain("Zuzzel", "verschiebt");
+        }
+    }
+
+    @Test
+    void earlierAiProposalsStayAndTheSkipNamesThePages() {
+        GlossaryEntry earlier = new GlossaryEntry("gai", "Haushaltsverfahren", "haushaltsverfahren", WIKI,
+                RelationOrigin.AI, ReviewStatus.PROPOSED, List.of(new com.aresstack.spaceharvester.application
+                .terms.RelationEvidence("wiki", "1", 0, 10, "sha256:" + "c".repeat(64))), false, null,
+                "fake:model@1", "ki", T0, T0, null, null, 1);
+        store.write(List.of(earlier), List.of(), List.of());
+
+        classification.job(WIKI, null, EDITOR);
+        released.clear();
+        JobContext context = mock(JobContext.class);
+        GlossaryClassification.Outcome skipped = classification.job(WIKI, context, EDITOR);
+
+        assertThat(store.find("gai")).as("kein Abgleich entfernt frühere KI-Vorschläge").get()
+                .satisfies(entry -> assertThat(entry.evidenceStale()).isFalse());
+        assertThat(skipped.modelSkipped()).isEqualTo(GlossaryClassification.SkipReason.NOT_RELEASED);
+        ArgumentCaptor<JobEvent.Draft> events = ArgumentCaptor.forClass(JobEvent.Draft.class);
+        verify(context, atLeastOnce()).record(events.capture());
+        assertThat(events.getAllValues()).filteredOn(event -> event.code().equals("GLOSSARY_MODEL_SKIPPED:NOT_RELEASED"))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .contains("keine Seite des Bereichs für die KI freigegeben"));
     }
 
     @Test
