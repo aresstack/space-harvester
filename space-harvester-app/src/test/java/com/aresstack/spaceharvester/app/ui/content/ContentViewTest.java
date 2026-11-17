@@ -71,6 +71,28 @@ class ContentViewTest {
         view = onEdt(() -> new ContentView(context));
     }
 
+    /** Bild für die Abnahme: Quelle links gewählt, „Analysen“ zeigt die drei Unterreiter des Stands. */
+    @Test
+    void renderSourceAnalyses() throws Exception {
+        String directory = System.getenv("SCREENSHOTS_DIR");
+        org.junit.jupiter.api.Assumptions.assumeTrue(directory != null && !directory.isBlank());
+        Files.createDirectories(Path.of(directory));
+        PageDetailPanel detail = view.detail();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            detail.tabs().select("Analysen");
+            return null;
+        });
+        Thread.sleep(2000);
+        onEdt(() -> {
+            javax.swing.JPanel page = new javax.swing.JPanel(new java.awt.BorderLayout());
+            page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
+            page.add(view.component(), java.awt.BorderLayout.CENTER);
+            AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            return null;
+        });
+    }
+
     @AfterEach
     void close() throws Exception {
         if (context != null) {
@@ -216,7 +238,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
+                .containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph");
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Leseansicht");
@@ -232,7 +254,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert", "Export", "Chat");
+        })).containsExactly("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert", "Export", "Chat");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -247,13 +269,29 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
-        // „Stand“ (ADR 0032) zeigt wie „Export“ seine eigene Karte zur Auswahl, mit Hilfe als ?-Knopf oben rechts.
+        // Der Stand (ADR 0032) hat kein eigenes Symbol: „Analysen“ zeigt ihn, solange links keine Seite gewählt ist
+        // (Quelle, Space, Wissensquellen-Kopf), mit Hilfe als ?-Knopf oben rechts (Angelo 17.11.2026).
         onEdt(() -> {
-            detail.tabs().select("Stand");
+            detail.tabs().select("Analysen");
             return null;
         });
+        assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", "DH", "p1", "Seite"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsStanding())).isFalse();
+        assertThat(onEdt(() -> detail.standing().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Absätze");
+        // Der Wissensquellen-Kopf: wieder der Stand.
+        onEdt(() -> {
+            view.selection(ExportPanel.Selection.ALL);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;
@@ -365,7 +403,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Stand", "Erweitert",
+        return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
                 "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 

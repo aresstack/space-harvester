@@ -421,8 +421,6 @@ public final class PageDetailPanel extends JPanel {
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
-                // Der Stand hängt wie Export und Chat an der Auswahl links, nicht an der gezeigten Seite.
-                .tab(STAND, new JPanel())
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
@@ -437,7 +435,6 @@ public final class PageDetailPanel extends JPanel {
         icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
         icons.put(ANALYSES, PageTabIcons.analyses());
-        icons.put(STAND, PageTabIcons.standing());
         icons.put(ADVANCED, PageTabIcons.advanced());
         icons.put(EXPORT, PageTabIcons.export());
         icons.put(CHAT, ChatIcons.chat());
@@ -656,8 +653,11 @@ public final class PageDetailPanel extends JPanel {
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
-        standingHelp.setVisible(STAND.equals(selected));
-        standing.shown(STAND.equals(selected));
+        // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
+        // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
+        boolean standingShown = ANALYSES.equals(selected) && wide;
+        standingHelp.setVisible(standingShown);
+        standing.shown(standingShown);
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
@@ -665,7 +665,7 @@ public final class PageDetailPanel extends JPanel {
                     : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
         }
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
-                : STAND.equals(selected) ? STAND_CARD : page);
+                : standingShown ? STAND_CARD : page);
     }
 
     /**
@@ -708,9 +708,29 @@ public final class PageDetailPanel extends JPanel {
         return chat;
     }
 
-    /** Der Reiter „Stand“ (ADR 0032, FL6); seine Grundlage ist die Auswahl links. */
+    /** Der Stand der Auswahl links (ADR 0032, FL6), im Reiter „Analysen“, solange links keine Seite gewählt ist. */
     StandingTab standing() {
         return standing;
+    }
+
+    /** Ob links mehr als eine Seite gewählt ist (Wissensquellen-Kopf, Quelle, Space, Ordner): dann Analysen = Stand. */
+    private boolean wide = true;
+
+    /**
+     * Die Ebene der Auswahl links: {@code true} für Wissensquellen-Kopf, Quelle, Space oder Ordner, {@code false} für
+     * eine Seite. „Analysen“ zeigt dann den Stand der Auswahl bzw. die Analysen der Seite.
+     */
+    void wide(boolean wide) {
+        if (this.wide != wide) {
+            this.wide = wide;
+            showDeck();
+            showTabStatus();
+        }
+    }
+
+    /** Für Tests: ob „Analysen“ gerade den Stand der Auswahl zeigt. */
+    boolean showsStanding() {
+        return ANALYSES.equals(tabs.selected()) && wide;
     }
 
     /**
@@ -784,6 +804,8 @@ public final class PageDetailPanel extends JPanel {
      * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
      */
     public void load(String sourceId, String pageId, boolean refresh) {
+        // Eine geöffnete Seite: „Analysen“ zeigt ihre eigenen Analysen (der Explorer folgt mit derselben Ebene).
+        wide(false);
         load(sourceId, pageId, refresh, null);
     }
 
@@ -2312,6 +2334,9 @@ public final class PageDetailPanel extends JPanel {
     /** Der sichtbare Reiter: unter „Analysen“ der gewählte Unterreiter, sonst der Hauptreiter. */
     String selectedTab() {
         String main = tabs.selected();
+        if (ANALYSES.equals(main) && wide) {
+            return STAND;
+        }
         return ANALYSES.equals(main) ? analysisTabs.selected() : main;
     }
 
