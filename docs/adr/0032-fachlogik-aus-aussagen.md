@@ -130,4 +130,6 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   gelöscht mit der Quelle; Änderungen per Beobachter.
 - Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
   60 000 Aussagen rund 0,1 s im Container.
-
+- Wortlisten (FL6 Teil 1b): einzige Stelle `StandingSettings` (`space-harvester.statements.standing.outdated-words`,
+  `.draft-words`), beide Loader und `ConfigurationParityTest`; fehlend oder leer heißt Vorgabe. Entscheidungen bleiben
+  beim Entfernen einer Seite aus dem Bestand stehen wie ihre Analyse und geprüfte Fakten, sie fallen mit der Quelle.
