@@ -435,6 +435,114 @@ class ChangeLogTest {
         assertThat(page.diff().steps()).isEmpty();
     }
 
+    // --- Update-Text (ADR 0031, Abschnitt 2, TZ2) ------------------------------------------------------------------
+
+    /** Update 1 mit Unterschied auf 100 unter „Handbuch“ und einer neuen Seite im Space OPS. */
+    private String updateWithText() {
+        twoUpdatesAndAnOpenOne();
+        entries.add(new ChangeEntry("wiki", "OPS", "200", at(25), ChangeKind.NEW, ChangeTrigger.MANUAL, null, "1",
+                null, "Ablauf", null, null, null, "OPS", null, false));
+        entries.sort(java.util.Comparator.comparing(ChangeEntry::at));
+        header("50", null, "Handbuch");
+        header("100", "50", "Startseite");
+        diff(20, "100", "1", "3", new ParagraphChange(ParagraphChange.Kind.CHANGED, "Alter\nSatz", "Neuer Satz"),
+                new ParagraphChange(ParagraphChange.Kind.ADDED, null, "Ganz neu"));
+        return log.updates(CALLER, "wiki").get(1).id();
+    }
+
+    @Test
+    void theUpdateTextHasAHeadAndPerPagePathKindsVersionsAndParagraphs() {
+        String id = updateWithText();
+
+        UpdateText text = log.updateText(CALLER, "wiki", id, null, 0, 50);
+
+        assertThat(text.format()).isEqualTo("update-text/v1");
+        assertThat(text.totalPages()).isEqualTo(4);
+        assertThat(text.more()).isFalse();
+        assertThat(text.markdown()).startsWith("# Update wiki\n")
+                .contains("Geänderte Seiten: 4")
+                .contains("## Handbuch › Startseite\nSpace DEV · Inhalt geändert, Umbenannt · Version 1 → 3")
+                .contains("Titel: „Start“ → „Startseite“")
+                .contains("~ Alter Satz\n  → Neuer Satz\n+ Ganz neu\n")
+                .contains("_Inhalt der neuen Version noch nicht geladen_");
+        assertThat(text.sections()).extracting(UpdateText.Section::pageId)
+                .containsExactlyElementsOf(text.report().pages().stream().map(ReportedPage::pageId).toList());
+        for (UpdateText.Section section : text.sections()) {
+            assertThat(text.markdown().substring(section.start(), section.start() + section.length())).startsWith("## ");
+        }
+    }
+
+    @Test
+    void theUpdateTextIsReadPageByPageWithTheHeadOnlyOnTheFirst() {
+        String id = updateWithText();
+
+        UpdateText first = log.updateText(CALLER, "wiki", id, null, 0, 1);
+        UpdateText second = log.updateText(CALLER, "wiki", id, null, 1, 2);
+        UpdateText beyond = log.updateText(CALLER, "wiki", id, null, 10, 2);
+
+        assertThat(first.report().pages()).hasSize(1);
+        assertThat(first.more()).isTrue();
+        assertThat(first.markdown()).startsWith("# Update").contains("weitere Seiten ab Nr. 2 von 4");
+        assertThat(second.offset()).isEqualTo(1);
+        assertThat(second.report().pages()).hasSize(2);
+        assertThat(second.markdown()).doesNotContain("# Update");
+        assertThat(second.sections().getFirst().start()).isZero();
+        assertThat(beyond.report().pages()).isEmpty();
+        assertThatThrownBy(() -> log.updateText(CALLER, "wiki", id, null, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> log.updateText(CALLER, "wiki", id, null, -1, 5))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theSpaceLevelHoldsOnlyThePagesOfTheSpace() {
+        String id = updateWithText();
+
+        UpdateText ops = log.updateText(CALLER, "wiki", id, "OPS", 0, 50);
+        UpdateText dev = log.updateText(CALLER, "wiki", id, "DEV", 0, 50);
+
+        assertThat(ops.markdown()).startsWith("# Update wiki · Space OPS\n");
+        assertThat(ops.report().pages()).extracting(ReportedPage::pageId).containsExactly("200");
+        assertThat(dev.report().pages()).extracting(ReportedPage::pageId).doesNotContain("200").contains("100");
+        assertThat(dev.totalPages()).isEqualTo(3);
+    }
+
+    @Test
+    void theModelTextLeavesOutPagesAndAncestorsWithoutReleaseAndAllLinks() {
+        String id = updateWithText();
+        Set<String> released = Set.of("100", "101", "200");
+
+        UpdateText text = log.modelText(CALLER, "wiki", id, null, key -> released.contains(key.pageId()), 0, 50);
+
+        assertThat(text.report().pages()).extracting(ReportedPage::pageId).containsExactlyInAnyOrder("100", "101", "200");
+        assertThat(text.markdown()).doesNotContain("Handbuch").doesNotContain("Neu\n").contains("## Startseite\n");
+        assertThat(text.report().pages()).extracting(ReportedPage::url).containsOnlyNulls();
+        assertThat(text.totalPages()).isEqualTo(3);
+    }
+
+    @Test
+    void theUpdateTextKeepsTheRightsOfTheReport() {
+        String id = updateWithText();
+        deniedContent.add("100");
+        denied.add("102");
+
+        UpdateText text = log.updateText(CALLER, "wiki", id, null, 0, 50);
+
+        assertThat(text.report().pages()).extracting(ReportedPage::pageId).doesNotContain("102");
+        assertThat(text.markdown()).contains("_Kein Leserecht für den Inhalt_").doesNotContain("Neuer Satz");
+    }
+
+    @Test
+    void theInitialLoadIsOnlyCountedInTheUpdateText() {
+        twoUpdatesAndAnOpenOne();
+        String initial = log.updates(CALLER, "wiki").getLast().id();
+
+        UpdateText text = log.updateText(CALLER, "wiki", initial, null, 0, 50);
+
+        assertThat(text.totalPages()).isZero();
+        assertThat(text.markdown()).contains("Erstbefüllung: 2 Seiten, nur gezählt");
+    }
+
     // --- Space-Ebene, Bearbeiter, Labels (ADR 0031, TZ1) ------------------------------------------------------------
 
     @Test

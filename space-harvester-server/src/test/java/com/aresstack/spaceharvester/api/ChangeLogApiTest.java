@@ -177,6 +177,39 @@ class ChangeLogApiTest {
     }
 
     @Test
+    void theUpdateTextComesAsJsonOrMarkdownPerLevelAndPageByPage() throws Exception {
+        HttpResponse<String> text = get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text");
+        assertThat(text.statusCode()).as(text.body()).isEqualTo(200);
+        JsonNode body = json.readTree(text.body());
+        assertThat(body.get("format").asString()).isEqualTo("update-text/v1");
+        assertThat(body.get("totalPages").asInt()).isEqualTo(2);
+        assertThat(body.get("markdown").asString()).startsWith("# Update wiki\n").contains("## Start › Betrieb\n");
+        assertThat(body.get("sections")).hasSize(2);
+
+        JsonNode ops = json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text?space=OPS").body());
+        assertThat(ops.get("totalPages").asInt()).isEqualTo(1);
+        assertThat(ops.get("markdown").asString()).contains("Space OPS").contains("Geheim");
+
+        JsonNode window = json.readTree(get(TestClient.TOKEN,
+                "/api/v1/sources/wiki/updates/open/text?offset=1&limit=1").body());
+        assertThat(window.get("offset").asInt()).isEqualTo(1);
+        assertThat(window.get("report").get("pages")).hasSize(1);
+
+        HttpResponse<String> markdown = http.send(HttpRequest.newBuilder(URI.create("http://localhost:"
+                        + environment.getProperty("local.server.port") + "/api/v1/sources/wiki/updates/open/text"))
+                .header("Authorization", "Bearer " + TestClient.TOKEN).header("Accept", "text/markdown").build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(markdown.statusCode()).as(markdown.body()).isEqualTo(200);
+        assertThat(markdown.headers().firstValue("Content-Type").orElse("")).startsWith("text/markdown");
+        assertThat(markdown.body()).startsWith("# Update wiki\n");
+
+        assertThat(get(DEV_ONLY_TOKEN, "/api/v1/sources/wiki/updates/open/text").body()).doesNotContain("Geheim");
+        assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text?limit=0").statusCode())
+                .isEqualTo(400);
+        assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345/text").statusCode()).isEqualTo(404);
+    }
+
+    @Test
     void unknownUpdatesAndInvalidFiltersAreProblems() throws Exception {
         HttpResponse<String> unknown = get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345");
         assertThat(unknown.statusCode()).isEqualTo(404);
@@ -195,6 +228,10 @@ class ChangeLogApiTest {
         HttpResponse<String> start = post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary");
         assertThat(start.statusCode()).as(start.body()).isEqualTo(409);
         assertThat(start.body()).contains("summary-unavailable", "NO_MODEL");
+        assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary?space=DEV").statusCode())
+                .isEqualTo(204);
+        assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary?space=DEV").statusCode())
+                .isEqualTo(409);
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345/summary").statusCode()).isEqualTo(404);
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/nirgends/updates/open/summary").statusCode())
                 .isEqualTo(404);

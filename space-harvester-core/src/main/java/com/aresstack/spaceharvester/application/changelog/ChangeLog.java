@@ -48,6 +48,10 @@ public final class ChangeLog implements AutoCloseable {
     private static final int MAX_PATH_DEPTH = 50;
     /** Höchstens so viele Schritte im Unterschied einer Seite. */
     static final int MAX_DIFF_STEPS = 20;
+    /** Reihenfolge der Seiten im Bericht: nach Art, dann Titel, dann Kennung. */
+    private static final Comparator<ReportedPage> REPORT_ORDER = Comparator.comparing(ReportedPage::kind)
+            .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)
+            .thenComparing(ReportedPage::pageId);
 
     private final ChangeLogStore store;
     private final AccessGuard access;
@@ -74,6 +78,8 @@ public final class ChangeLog implements AutoCloseable {
 
     /** Parameter des Auftrags „Zusammenfassen“: das Update. */
     public static final String UPDATE_PARAMETER = "update";
+    /** Parameter des Auftrags {@link JobType#UPDATE_SUMMARY}: Space der Ebene, fehlt für die ganze Quelle. */
+    public static final String SPACE_PARAMETER = "space";
 
     /**
      * @param headers jüngste Kopfdaten einer Seite im Cache, für Titel, Pfad und Verweis im Bericht
@@ -170,7 +176,7 @@ public final class ChangeLog implements AutoCloseable {
         List<ChangeEntry> entries = store.changeEntries(query, entry -> visible.within(entry, query), 0,
                 Integer.MAX_VALUE).entries();
         List<ChangeUpdate> updates = new ArrayList<>();
-        Set<String> summarized = spaceKey == null ? store.summarizedUpdates(sourceId) : Set.of();
+        Set<String> summarized = store.summarizedUpdates(sourceId, spaceKey);
         int next = 0;
         for (Span span : spans(sourceId)) {
             // Zeilen und Marken sind beide nach Zeit geordnet: jede Zeile gehört zum ersten Update, das nach ihr endet.
@@ -183,7 +189,7 @@ public final class ChangeLog implements AutoCloseable {
                 continue;
             }
             ChangeUpdate update = consolidate(span, rows).update();
-            if (summarized.contains(update.id()) && store.summary(sourceId, update.id())
+            if (summarized.contains(update.id()) && store.summary(sourceId, update.id(), spaceKey)
                     .filter(stored -> valid(stored, visible)).isPresent()) {
                 update = update.withSummarized();
             }
@@ -243,10 +249,70 @@ public final class ChangeLog implements AutoCloseable {
             ReportedPage located = withDirectory(page, visible);
             pages.add(withDiffs ? withDiff(caller, located, span.from(), span.to()) : located);
         }
-        pages.sort(Comparator.comparing(ReportedPage::kind)
-                .thenComparing(page -> page.title() == null ? "" : page.title(), String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(ReportedPage::pageId));
+        pages.sort(REPORT_ORDER);
         return new ChangeReport(consolidated.update(), pages);
+    }
+
+    /**
+     * Der Update-Text einer Ebene (ADR 0031, Abschnitt 2), seitenweise: Kopf mit Zeitraum und Zählern der Ebene, je
+     * Seite Pfad, Arten, Versionen, Zeitpunkt und geänderte Absätze. Rechte und Ebene wie {@link #report(AccessContext,
+     * String, String, String, boolean)}; Unterschiede werden nur für die Seiten des Ausschnitts gelesen.
+     *
+     * @param update   {@link ChangeUpdate#id()} oder {@link ChangeUpdate#OPEN}
+     * @param spaceKey der Space, {@code null} für die ganze Quelle
+     * @param offset   erste Seite, ab 0
+     * @param limit    höchstens so viele Seiten, 1 bis {@value UpdateText#MAX_LIMIT}
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws UnknownUpdateException wenn die Quelle kein solches Update hat
+     */
+    public UpdateText updateText(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
+                                 int limit) {
+        return text(caller, sourceId, update, spaceKey, offset, limit, null);
+    }
+
+    /**
+     * Der Update-Text als Material für ein Modell (ADR 0028, ADR 0031): nur Seiten mit KI-Freigabe, im Pfad nur
+     * freigegebene und sichtbare Vorfahren, ohne Verweise und ohne Namen von Personen.
+     */
+    UpdateText modelText(AccessContext caller, String sourceId, String update, String spaceKey,
+                         Predicate<PageKey> released, int offset, int limit) {
+        return text(caller, sourceId, update, spaceKey, offset, limit, Objects.requireNonNull(released, "released"));
+    }
+
+    private UpdateText text(AccessContext caller, String sourceId, String update, String spaceKey, int offset,
+                            int limit, Predicate<PageKey> released) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(update, "update");
+        if (offset < 0 || limit < 1 || limit > UpdateText.MAX_LIMIT) {
+            throw new IllegalArgumentException("Ausschnitt ungültig: " + offset + "/" + limit);
+        }
+        requireReadable(caller, sourceId);
+        Span span = span(sourceId, update);
+        Visibility visible = new Visibility(caller);
+        ChangeQuery query = rows(sourceId, spaceKey, span.from(), span.to());
+        List<ChangeEntry> rows = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+                Integer.MAX_VALUE).entries();
+        Consolidated consolidated = consolidate(span, rows);
+        List<ReportedPage> level = new ArrayList<>();
+        if (!consolidated.update().initial()) {
+            for (ReportedPage page : consolidated.pages()) {
+                if (released == null || released.test(new PageKey(page.sourceId(), page.pageId()))) {
+                    level.add(page);
+                }
+            }
+        }
+        level.sort(REPORT_ORDER);
+        int total = level.size();
+        List<ReportedPage> window = new ArrayList<>();
+        for (ReportedPage page : level.subList(Math.min(offset, total), Math.min(offset + limit, total))) {
+            ReportedPage located = released == null ? withDirectory(page, visible)
+                    : page.withDirectory(releasedPath(page, visible, released), null);
+            window.add(withDiff(caller, located, span.from(), span.to()));
+        }
+        UpdateTextRenderer.Rendered rendered = UpdateTextRenderer.render(consolidated.update(), spaceKey,
+                UpdateTextRenderer.counts(level), total, offset, window);
+        return new UpdateText(UpdateText.FORMAT, sourceId, consolidated.update().id(), spaceKey, total, offset,
+                new ChangeReport(consolidated.update(), window), rendered.markdown(), rendered.sections());
     }
 
     /** Rohe Zeilen für die Einsicht, neueste zuerst, seitenweise; nur Zeilen, die der Aufrufer sehen darf. */
@@ -290,16 +356,25 @@ public final class ChangeLog implements AutoCloseable {
      * @throws UnknownUpdateException wenn die Quelle kein solches Update hat
      */
     public Optional<UpdateSummary> summary(AccessContext caller, String sourceId, String update) {
+        return summary(caller, sourceId, update, null);
+    }
+
+    /**
+     * Wie {@link #summary(AccessContext, String, String)} für eine Ebene (ADR 0031): {@code spaceKey} {@code null} für
+     * die ganze Quelle, sonst die Zusammenfassung nur dieses Space.
+     */
+    public Optional<UpdateSummary> summary(AccessContext caller, String sourceId, String update, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         requireReadable(caller, sourceId);
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
-        Optional<StoredSummary> stored = store.summary(sourceId, update).filter(found -> valid(found, visible));
+        Optional<StoredSummary> stored = store.summary(sourceId, update, spaceKey)
+                .filter(found -> valid(found, visible));
         if (stored.isEmpty()) {
             return Optional.empty();
         }
-        ChangeReport report = report(caller, sourceId, update);
+        ChangeReport report = report(caller, sourceId, update, spaceKey);
         Map<String, String> titles = new HashMap<>();
         report.pages().forEach(page -> titles.put(page.pageId(), page.title()));
         List<SummaryStatement> statements = new ArrayList<>();
@@ -316,7 +391,8 @@ public final class ChangeLog implements AutoCloseable {
         // Offenes Update mit neuen Änderungen oder abgeschlossenes, in das ein Schritt später nachkam.
         boolean stale = !UpdateSummarizer.reportSha256(report, page -> contentState(page, span))
                 .equals(stored.get().reportSha256());
-        return Optional.of(new UpdateSummary(sourceId, update, stored.get().text(), statements, stored.get().model(),
+        return Optional.of(new UpdateSummary(sourceId, update, spaceKey, stored.get().text(), statements,
+                stored.get().model(),
                 stored.get().createdAt(), stored.get().unreadableChanges(), stale));
     }
 
@@ -331,6 +407,14 @@ public final class ChangeLog implements AutoCloseable {
      * @throws SummaryUnavailableException    ohne Modell oder für die Erstbefüllung
      */
     public JobStatus summarize(AccessContext caller, String sourceId, String update) {
+        return summarize(caller, sourceId, update, null);
+    }
+
+    /**
+     * Wie {@link #summarize(AccessContext, String, String)} für eine Ebene (ADR 0031): {@code spaceKey} {@code null} für
+     * die ganze Quelle, sonst nur die Seiten dieses Space; der Auftrag trägt den Space als Partition.
+     */
+    public JobStatus summarize(AccessContext caller, String sourceId, String update, String spaceKey) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(update, "update");
         // Recht wie beim Start der Aussagenanalyse (ADR 0024): wer die Quelle lesen darf; was an das Modell geht,
@@ -344,15 +428,17 @@ public final class ChangeLog implements AutoCloseable {
             throw new SummaryUnavailableException(SummaryUnavailableException.Reason.NO_MODEL, sourceId);
         }
         Summaries runtime = summaries;
-        return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, null, null, caller.jobOwner(),
-                Map.of(UPDATE_PARAMETER, update), JobTask.blocking(context -> {
+        Map<String, String> parameters = spaceKey == null ? Map.of(UPDATE_PARAMETER, update)
+                : Map.of(UPDATE_PARAMETER, update, SPACE_PARAMETER, spaceKey);
+        return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
+                parameters, JobTask.blocking(context -> {
                     // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.
-                    ChangeReport report = report(caller, sourceId, update, true);
+                    ChangeReport report = report(caller, sourceId, update, spaceKey, true);
                     Visibility visible = new Visibility(caller);
                     UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), context);
                     Instant now = runtime.clock().instant();
-                    store.saveSummary(new StoredSummary(sourceId, update, result.text(), result.statements(),
+                    store.saveSummary(new StoredSummary(sourceId, update, spaceKey, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,
                             result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span)),
                             result.inputPages()));
@@ -415,11 +501,9 @@ public final class ChangeLog implements AutoCloseable {
         }
         bySource.forEach((sourceId, withdrawnPages) -> {
             boolean removed = false;
-            for (String update : store.summarizedUpdates(sourceId)) {
-                Optional<StoredSummary> stored = store.summary(sourceId, update);
-                if (stored.isPresent() && stored.get().inputPages().stream()
-                        .anyMatch(page -> withdrawnPages.contains(page.pageId()))) {
-                    store.deleteSummary(sourceId, update);
+            for (StoredSummary stored : store.summaries(sourceId)) {
+                if (stored.inputPages().stream().anyMatch(page -> withdrawnPages.contains(page.pageId()))) {
+                    store.deleteSummary(sourceId, stored.updateId(), stored.spaceKey());
                     removed = true;
                 }
             }

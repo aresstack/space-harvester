@@ -184,6 +184,14 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      Protokoll, gelöscht mit der Quelle, beim Aufräumen und beim Entzug der Freigabe (`withdrawn`). Einstellung
      `space-harvester.cache.change-log.show-after-update` (Standard aus). Im Dienst
      `GET`/`POST /api/v1/sources/{sourceId}/updates/{updateId}/summary`.
+     Update-Text (ADR 0031, Abschnitt 2): `updateText` liefert je Ebene (Quelle oder ein Space) die feste Textform
+     `update-text/v1` seitenweise (Kopf mit Zeitraum und Zählern, je Seite Pfad, Arten, Versionen, Zeitpunkt, geänderte
+     Absätze; Unbekanntes als Zustand) samt Bericht des Ausschnitts und Lage jeder Seite im Text; das Material für ein
+     Modell enthält nur Seiten mit KI-Freigabe und keine Verweise. Im Dienst
+     `GET /api/v1/sources/{sourceId}/updates/{updateId}/text?space=&offset=&limit=` (JSON oder `text/markdown`).
+     Zusammenfassungen je Ebene (ADR 0031): `summary` und `summarize` nehmen einen optionalen Space; jede Ebene hat
+     ihre eigene Ablage, Gültigkeit und `stale`, gelöscht mit Quelle, Aufbewahrung und Entzug der Freigabe
+     (`?space=` an `…/summary`).
 
    Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
    `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,

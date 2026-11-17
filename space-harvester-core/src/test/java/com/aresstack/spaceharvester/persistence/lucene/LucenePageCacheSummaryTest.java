@@ -52,10 +52,10 @@ class LucenePageCacheSummaryTest {
         cache.saveSummary(summary("wiki", "1763319600000000000", "Zweite Fassung", end));
         cache.saveSummary(summary("other", "open", "Andere Quelle", end));
 
-        assertThat(cache.summary("wiki", "1763319600000000000")).contains(
+        assertThat(cache.summary("wiki", "1763319600000000000", null)).contains(
                 summary("wiki", "1763319600000000000", "Zweite Fassung", end));
-        assertThat(cache.summary("wiki", "open")).isEmpty();
-        assertThat(cache.summarizedUpdates("wiki")).containsExactly("1763319600000000000");
+        assertThat(cache.summary("wiki", "open", null)).isEmpty();
+        assertThat(cache.summarizedUpdates("wiki", null)).containsExactly("1763319600000000000");
         assertThat(recorded).containsExactly("wiki", "wiki", "other");
         assertThat(cache.documentCount()).isEqualTo(documents);
     }
@@ -67,10 +67,35 @@ class LucenePageCacheSummaryTest {
         cache.saveSummary(summary("other", "open", "Andere", Instant.parse("2026-11-16T19:00:00Z")));
 
         assertThat(cache.pruneChangeLog(Instant.parse("2026-01-01T00:00:00Z"))).isTrue();
-        assertThat(cache.summarizedUpdates("wiki")).containsExactly("neu");
+        assertThat(cache.summarizedUpdates("wiki", null)).containsExactly("neu");
 
         cache.removeSource("wiki");
-        assertThat(cache.summarizedUpdates("wiki")).isEmpty();
-        assertThat(cache.summarizedUpdates("other")).containsExactly("open");
+        assertThat(cache.summarizedUpdates("wiki", null)).isEmpty();
+        assertThat(cache.summarizedUpdates("other", null)).containsExactly("open");
+    }
+
+    @Test
+    void summariesAreStoredPerLevelAndTheSourceLevelKeepsItsId() {
+        Instant end = Instant.parse("2026-11-16T19:00:00Z");
+        StoredSummary source = summary("wiki", "u1", "Quelle", end);
+        StoredSummary dev = new StoredSummary("wiki", "u1", "DEV", "Nur DEV", source.statements(), source.model(),
+                source.createdAt(), end, 0, "sha256:cd", source.inputPages());
+
+        cache.saveSummary(source);
+        cache.saveSummary(dev);
+
+        assertThat(cache.summary("wiki", "u1", null)).contains(source);
+        assertThat(cache.summary("wiki", "u1", "DEV")).contains(dev);
+        assertThat(cache.summary("wiki", "u1", "OPS")).isEmpty();
+        assertThat(cache.summarizedUpdates("wiki", null)).containsExactly("u1");
+        assertThat(cache.summarizedUpdates("wiki", "DEV")).containsExactly("u1");
+        assertThat(cache.summaries("wiki")).containsExactlyInAnyOrder(source, dev);
+
+        cache.deleteSummary("wiki", "u1", "DEV");
+        assertThat(cache.summary("wiki", "u1", "DEV")).isEmpty();
+        assertThat(cache.summary("wiki", "u1", null)).contains(source);
+        cache.saveSummary(dev);
+        cache.removeSource("wiki");
+        assertThat(cache.summaries("wiki")).isEmpty();
     }
 }

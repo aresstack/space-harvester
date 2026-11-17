@@ -8,12 +8,13 @@ import java.util.Objects;
  * Eine abgelegte Zusammenfassung (ADR 0030, Abschnitt 5): Text, Aussagen mit Seiten-IDs, Modell, Zeitpunkt und der Stand
  * des Berichts, aus dem sie entstand. Titel liegen nicht darin; sie kommen beim Lesen mit den Rechten des Lesers.
  *
+ * @param spaceKey    der Space der Ebene (ADR 0031), {@code null} für die ganze Quelle
  * @param at          bis wann sie aufbewahrt wird: Ende des Updates, beim offenen der Zeitpunkt der Erstellung
  * @param reportSha256 Stand des Berichts bei der Erstellung
  * @param inputPages  die Seiten, deren Titel und Unterschiede an das Modell gingen; verliert eine die Freigabe, verfällt
  *                    die Zusammenfassung
  */
-public record StoredSummary(String sourceId, String updateId, String text, List<Statement> statements, String model,
+public record StoredSummary(String sourceId, String updateId, String spaceKey, String text, List<Statement> statements, String model,
                             Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
                             List<InputPage> inputPages) {
 
@@ -53,5 +54,13 @@ public record StoredSummary(String sourceId, String updateId, String text, List<
         Objects.requireNonNull(at, "at");
         Objects.requireNonNull(reportSha256, "reportSha256");
         inputPages = List.copyOf(inputPages);
+    }
+
+    /** Zusammenfassung der ganzen Quelle (ohne Space). */
+    public StoredSummary(String sourceId, String updateId, String text, List<Statement> statements, String model,
+                         Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
+                         List<InputPage> inputPages) {
+        this(sourceId, updateId, null, text, statements, model, createdAt, at, unreadableChanges, reportSha256,
+                inputPages);
     }
 }
