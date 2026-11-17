@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.PlaceholderList;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
@@ -81,7 +82,7 @@ final class ReadingFirstView extends JPanel {
     private final JButton suggest;
     private final JPopupMenu suggestions = new JPopupMenu();
     private final DefaultListModel<ReadingList.Recommendation> model = new DefaultListModel<>();
-    private final JList<ReadingList.Recommendation> list = new JList<>(model);
+    private final PlaceholderList<ReadingList.Recommendation> list = new PlaceholderList<>(model);
     private final JScrollPane scroll;
     private final BusyOverlay busy;
     private final InfoPopup popup;
@@ -312,6 +313,7 @@ final class ReadingFirstView extends JPanel {
             text = pages == 0 ? "Keine Seite erwähnt „" + current.topic() + "“"
                     : Texts.count(pages, "Seite erwähnt", "Seiten erwähnen") + " „" + current.topic() + "“";
         }
+        list.placeholder(pages == 0 ? text : null);
         onStatus.accept(text);
     }
 

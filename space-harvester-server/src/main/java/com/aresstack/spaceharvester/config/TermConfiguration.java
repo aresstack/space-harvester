@@ -62,9 +62,13 @@ class TermConfiguration {
     TermRelations termRelations(SourceCatalog catalog, AccessGuard access,
                                 @Value("${space-harvester.term-relations.directory:data/term-relations}")
                                 Path directory,
-                                ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader) {
+                                ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
+                                Enrichments enrichments, SentenceSegmenter sentences) {
+        // BG1: Beziehungen je Seitenmenge über denselben Begriffsindex wie TermQueries.
+        TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         return new TermRelations(catalog, new FileTermRelationStore(directory), access,
-                headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
+                headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC(), index,
+                termsVersion(sentences));
     }
 
     @Bean
