@@ -201,7 +201,7 @@ public final class ExportPanel extends JPanel {
 
     private final AppContext context;
     private final Feedback feedback = new Feedback();
-    private final Facts stand = new Facts();
+    final Facts stand = new Facts();
     private final ComposerButton load = Comic.button(LOAD_SPACE, "Startet den Download sofort; der Auftrag läuft "
             + "unter Aufträge");
     private final ComposerButton loadPage = Comic.button(LOAD_PAGE, "Nur diese Seite laden, ohne Unterseiten");
@@ -393,6 +393,11 @@ public final class ExportPanel extends JPanel {
                         row.space().key())).toList());
     }
 
+    /** Für Tests: die Wurzeln, die ein Start für die gezeigte Auswahl dem Core gibt. */
+    com.aresstack.spaceharvester.application.holdings.Selection coreSelectionForTest() {
+        return coreSelection(context.runtime(), selection);
+    }
+
     /** Nur „Wissensquellen“ fragt vor einem Start zurück (Architekt 17.11.2026); eine Quelle startet sofort. */
     private boolean confirmed(String question) {
         return selection == null || !selection.global() || confirmAll.test(ALL_TITLE, question);
@@ -574,15 +579,24 @@ public final class ExportPanel extends JPanel {
                             dataset == null ? List.of() : outputFiles(directory, dataset.exportId()), sourceRunning));
                 }
             }
+            // Spaces der Quelle, von denen der Bestand nichts hat: die Zeile „Bestand“ darf dann nicht grün sein.
+            Set<String> loaded = new java.util.HashSet<>();
+            for (SpaceSummary summary : holdings.spaces()) {
+                if (summary.counts().stored() > 0 || summary.inventoried()) {
+                    loaded.add(summary.sourceId() + "\u0000" + summary.spaceKey());
+                }
+            }
+            int notLoaded = (int) rows.stream().filter(row -> !loaded.contains(row.sourceId() + "\u0000"
+                    + row.space().key())).count();
             return new Data(selection, null, running(jobs, selection), null, List.of(), rows, holdings,
-                    conversion(jobs, selection), finished, finishedSource, produced, restQueries);
+                    conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded);
         }
         JobStatus newest = newest(jobs, selection, preferred.get(selection.normalized()));
         ExportDatasetInfo dataset = newest == null ? null
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings,
-                conversion(jobs, selection), finished, finishedSource, produced, restQueries);
+                conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0);
     }
 
     /** Ein noch nicht beendeter Auftrag „Datei erzeugen“ dieser Auswahl (wartend, laufend, angehalten). */
@@ -609,6 +623,11 @@ public final class ExportPanel extends JPanel {
                 && job.state() == JobState.COMPLETED).findFirst().orElseGet(() -> newest(jobs, selection));
     }
 
+    /** „1 Space noch nicht geladen“ bzw. „3 Spaces noch nicht geladen“. */
+    static String notLoadedText(int spaces) {
+        return Texts.count(spaces, "Space", "Spaces") + " noch nicht geladen";
+    }
+
     /** Der jüngste erfolgreich beendete Download genau dieser Auswahl. */
     static JobStatus newest(List<JobStatus> jobs, Selection selection) {
         return jobs.stream().filter(selection::matches).filter(job -> job.state() == JobState.COMPLETED)
@@ -626,9 +645,9 @@ public final class ExportPanel extends JPanel {
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
                 List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus conversion,
                 List<JobStatus> finished, List<JobStatus> finishedSource,
-                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries) {
+                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries, int notLoaded) {
         static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, null, List.of(),
-                List.of(), Map.of(), false);
+                List.of(), Map.of(), false, 0);
     }
 
     /**
@@ -765,8 +784,11 @@ public final class ExportPanel extends JPanel {
         boolean stored = holdings != null && holdings.counts().stored() > 0;
         if (holdings != null) {
             boolean all = holdings.size() > 0 && holdings.counts().stored() >= holdings.size();
-            stand.add("Bestand", holdingsText(holdings) + (current.page() ? " · samt Unterseiten" : ""),
-                    holdings.size() == 0 ? Comic.MUTED : all && holdings.complete() ? Comic.GREEN : Comic.ORANGE);
+            // Nie geladene Spaces kennt der Bestand nicht: sie fehlen in den Zahlen, die Zeile nennt sie und ist nie grün.
+            String missing = data.notLoaded() == 0 ? "" : " · " + notLoadedText(data.notLoaded());
+            stand.add("Bestand", holdingsText(holdings) + (current.page() ? " · samt Unterseiten" : "") + missing,
+                    holdings.size() == 0 && data.notLoaded() == 0 ? Comic.MUTED
+                            : all && holdings.complete() && data.notLoaded() == 0 ? Comic.GREEN : Comic.ORANGE);
         }
         if (newest == null) {
             // Ohne Download in der Auftragsablage sagt der Bestand den Stand; nur ohne beides „Noch nicht geladen“.
