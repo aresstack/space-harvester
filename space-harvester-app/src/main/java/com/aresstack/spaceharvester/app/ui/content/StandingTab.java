@@ -931,11 +931,21 @@ final class StandingTab extends JPanel {
         return subject + entry.statement().predicateText();
     }
 
-    /** Was unter dem Satz steht: Seite und Kennzeichen, die nicht in der Farbe stecken dürfen. */
+    /** Herkunft in der grauen Zeile unter dem Satz, wenn die Aussage nicht aus dem Originalsatz stammt. */
+    static final String FROM_STAGE = "Vorstufe (KI)";
+    static final String FROM_MODEL = CheckTexts.ORIGIN_MODEL + " (KI)";
+
+    /** Was unter dem Satz steht: Seite, Herkunft und Kennzeichen, die nicht in der Farbe stecken dürfen. */
     static String meta(StatusQuoEntry entry) {
         List<String> parts = new ArrayList<>();
         parts.add(entry.page().title() == null || entry.page().title().isBlank() ? entry.page().key().pageId()
                 : entry.page().title());
+        // Nicht aus dem Originalsatz: schon in der Zeile als Wort, nicht erst im Overlay (Auflage AT).
+        if (entry.origin() == ParsedStatements.Origin.VORSTUFE) {
+            parts.add(FROM_STAGE);
+        } else if (entry.origin() == ParsedStatements.Origin.MODELL) {
+            parts.add(FROM_MODEL);
+        }
         if (entry.kind() == StatementKind.STATE) {
             parts.add("Zustand");
         }
