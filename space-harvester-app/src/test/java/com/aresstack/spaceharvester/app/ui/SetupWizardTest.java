@@ -312,6 +312,11 @@ class SetupWizardTest {
             wizard[0].ai.simplifyMode.setSelectedItem(AiSettingsPanel.SIMPLIFY_ALWAYS);
             wizard[0].ai.simplifyParallel.setValue(3);
             wizard[0].ai.simplifyModel.setText("einfach-m");
+            assertThat(wizard[0].ai.check()).as("Vorgabe des Prüfschritts, Modellfeld leer").isEqualTo(
+                    com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT);
+            wizard[0].ai.checkScope.setSelectedItem(AiSettingsPanel.CHECK_ALL);
+            wizard[0].ai.checkParallel.setValue(5);
+            wizard[0].ai.checkModel.setText("pruef-m");
             wizard[0].next.doClick();
             assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
         });
@@ -329,11 +334,13 @@ class SetupWizardTest {
         }
         assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y", "chat-z",
                 AiSettingsPanel.JUDGED_PAIRS_LABEL, "30 " + AiSettingsPanel.JUDGED_PAIRS_UNIT, "im Tresor",
-                AiSettingsPanel.SIMPLIFY_LABEL, "immer · 3 Abschnitte zugleich · Modell einfach-m")
+                AiSettingsPanel.SIMPLIFY_LABEL, "immer · 3 Abschnitte zugleich · Modell einfach-m",
+                AiSettingsPanel.CHECK_SCOPE_LABEL, "alle · 5 Sätze zugleich · Modell pruef-m")
                 .doesNotContain("fehlt");
         assertThat(String.join("\n", summary)).doesNotContain("sk-wizard-geheim");
         assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-x", "rerank-y",
-                "http://127.0.0.1:9/v1", "max-judged-pairs: 30", "mode: always", "parallel: 3",
+                "http://127.0.0.1:9/v1", "max-judged-pairs: 30", "mode: always", "parallel: 3", "scope: all",
+                "parallel: 5", "pruef-m",
                 "model: \"einfach-m\"").doesNotContain("sk-wizard-geheim");
         SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].ai.modelRetry.active())
                 .as("„Modelle“ verlassen: keine Wiederholung").isFalse());
@@ -374,10 +381,11 @@ class SetupWizardTest {
             AiSettingsPanel panel = new AiSettingsPanel(context);
             javax.swing.JComponent models = panel.modelsComponent();
             // Hoch genug für alle Zeilen: Reicht die Höhe nicht, legt das Raster nach Mindestgrößen aus.
-            models.setSize(700, 1000);
+            models.setSize(700, 1200);
             layout(models);
             assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
             assertThat(panel.simplifyParallel.getParent().isVisible()).as("Abschnitte zugleich unter „Erweitert“").isFalse();
+            assertThat(panel.checkParallel.getParent().isVisible()).as("Sätze zugleich unter „Erweitert“").isFalse();
             assertThat(panel.chunkTokens.isVisible()).isFalse();
             panel.advanced.doClick();
             layout(models);
@@ -387,7 +395,7 @@ class SetupWizardTest {
             int left = javax.swing.SwingUtilities.convertPoint(chatFrame, 0, 0, models).x;
             for (java.awt.Component field : java.util.List.of(panel.embeddingModel.getParent(),
                     panel.visionModel.getParent(), panel.rerankModel.getParent(),
-                    panel.simplifyModel.getParent(), panel.dimensions,
+                    panel.simplifyModel.getParent(), panel.checkModel.getParent(), panel.dimensions,
                     panel.chunkTokens)) {
                 assertThat(javax.swing.SwingUtilities.convertPoint(field, 0, 0, models).x).isEqualTo(left);
             }

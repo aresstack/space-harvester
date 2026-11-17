@@ -109,6 +109,13 @@ public final class Explorer {
     static final String ANALYZE_UNAVAILABLE = "Nicht verfügbar: In dieser Installation ist kein Satzanalysator "
             + "(MaltParser-Modell) eingerichtet";
     static final String ANALYZE_NOT_STARTED = "Nicht verfügbar: Die Laufzeit ist nicht gestartet";
+    static final String CHECK = com.aresstack.spaceharvester.app.ui.content.CheckTexts.JOB;
+    static final String CHECK_TIP = "Das Chat-Modell beurteilt die Aussagen der analysierten Seiten mit KI-Freigabe; "
+            + "mehrere Seiten erst nach Bestätigung, Fortschritt unter Aufträge";
+    static final String CHECK_PAGE = "Nur diese Seite prüfen";
+    static final String CHECK_PAGE_TIP = "Nur die Aussagen dieser Seite ohne Unterseiten prüfen; Auftrag startet sofort";
+    static final String CHECK_NO_MODEL = "Nicht verfügbar: Es ist kein Modell für „" + CHECK + "“ eingestellt "
+            + "(Einstellungen › Modelle)";
     static final String REANALYZE = "Bereits analysierte Seiten erneut analysieren";
     static final String SIMPLIFY = "Sätze vorher vereinfachen (Vorstufe mit Chat-Modell, nur Seiten mit KI-Freigabe)";
     /** Sicherheitsgrenze: bis hierhin zählt die Schätzung, darüber fragt der Dialog ausdrücklich nach allen Seiten. */
@@ -290,6 +297,21 @@ public final class Explorer {
         return chosen == null ? null : new AnalysisChoice(chosen[0], chosen[1]);
     };
 
+    /** Rückfrage vor „Aussagen prüfen“ über mehrere Seiten: Ja oder Nein; Tests antworten ohne Dialog. */
+    private CheckConfirmation checkConfirmation = Dialogs::confirm;
+
+    /** Fragt vor einem großen Prüfauftrag; {@code true} nur nach „Ja“. */
+    interface CheckConfirmation {
+        boolean ask(java.awt.Component parent, String title, String question);
+    }
+
+    /** Einstellungen des Prüfschritts für den Start; ohne geladene Datei die Vorgabe des Core. */
+    private com.aresstack.spaceharvester.application.configuration.CheckSettings checkSettings() {
+        return context.settings() == null
+                ? com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT
+                : context.settings().check();
+    }
+
     /** Einstellungen der Vorstufe „Sätze vereinfachen“ für den Start; ohne geladene Datei die Vorgabe des Core. */
     private com.aresstack.spaceharvester.application.configuration.SimplificationSettings simplification() {
         return context.settings() == null
@@ -305,6 +327,16 @@ public final class Explorer {
         StatementAnalysisJobs.Estimate estimate(StatementAnalysisJobs.Scope scope, int limit);
 
         JobStatus start(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options);
+
+        /** {@code null}, wenn „Aussagen prüfen“ möglich ist, sonst der Grund für den Hinweis am Menüeintrag. */
+        default String checkUnavailable() {
+            return unavailable();
+        }
+
+        /** Startet den Auftrag „Aussagen prüfen“ (ADR 0032, FL4). */
+        default JobStatus startCheck(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.CheckOptions options) {
+            throw new UnsupportedOperationException("Aussagen prüfen");
+        }
     }
 
     /** Fragt vor einem großen Analyseauftrag; {@code null} heißt abgebrochen, sonst die angekreuzten Felder. */
@@ -333,6 +365,24 @@ public final class Explorer {
             } catch (RuntimeException e) {
                 return ANALYZE_UNAVAILABLE;
             }
+        }
+
+        @Override
+        public String checkUnavailable() {
+            AppRuntime runtime = context.runtime();
+            if (runtime == null) {
+                return ANALYZE_NOT_STARTED;
+            }
+            try {
+                return runtime.workspace().statementCheckAvailable() ? null : CHECK_NO_MODEL;
+            } catch (RuntimeException e) {
+                return CHECK_NO_MODEL;
+            }
+        }
+
+        @Override
+        public JobStatus startCheck(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.CheckOptions options) {
+            return runtime().workspace().startStatementCheck(scope, options);
         }
 
         @Override
@@ -1937,6 +1987,20 @@ public final class Explorer {
                 only.addActionListener(e -> analyze(item, true));
                 menu.add(only);
             }
+            // ADR 0032, FL4: Der Prüfschritt steht direkt unter der Analyse, deren Aussagen er beurteilt.
+            String noCheck = analyses.checkUnavailable();
+            javax.swing.JMenuItem check = new javax.swing.JMenuItem(CHECK);
+            check.setEnabled(noCheck == null);
+            check.setToolTipText(noCheck == null ? CHECK_TIP : noCheck);
+            check.addActionListener(e -> check(item, false));
+            menu.add(check);
+            if (item instanceof PageItem page && !leafPage(page)) {
+                javax.swing.JMenuItem only = new javax.swing.JMenuItem(CHECK_PAGE);
+                only.setEnabled(noCheck == null);
+                only.setToolTipText(noCheck == null ? CHECK_PAGE_TIP : noCheck);
+                only.addActionListener(e -> check(item, true));
+                menu.add(only);
+            }
         }
         if (item instanceof PageItem page) {
             javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
@@ -2002,6 +2066,73 @@ public final class Explorer {
         }, error -> notice("Analyse ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
     }
 
+    /**
+     * „Aussagen prüfen“: eine einzelne Seite startet sofort; größere Umfänge zählt der Core erst im Hintergrund, dann
+     * fragt der Dialog mit der Zahl und „wirklich“, Antwort Ja oder Nein. Umfang und Modell kommen aus den
+     * Einstellungen (Einstellungen › Modelle, „Prüfumfang“).
+     */
+    private void check(Item item, boolean pageOnly) {
+        StatementAnalysisJobs.Scope scope = analysisScope(item, pageOnly);
+        if (scope == null) {
+            return;
+        }
+        if (scope instanceof StatementAnalysisJobs.Scope.SinglePage) {
+            startCheck(scope, StatementAnalysisJobs.CheckOptions.of(ANALYSIS_LIMIT, checkSettings()));
+            return;
+        }
+        notice("Umfang der Prüfung wird ermittelt …", Severity.INFO);
+        String where = analysisWhere(item);
+        Background.run(() -> analyses.estimate(scope, ANALYSIS_LIMIT), estimate -> {
+            if (estimate.exact() && estimate.pages() == 0) {
+                notice("Keine Seiten zum Prüfen", Severity.INFO);
+                return;
+            }
+            if (!checkConfirmation.ask(tree, CHECK, checkQuestion(estimate, where))) {
+                return;
+            }
+            // Wie bei der Analyse: Über der Grenze hat der Benutzer ausdrücklich alle bestätigt.
+            startCheck(scope, StatementAnalysisJobs.CheckOptions.of(estimate.exceeded() ? 0 : ANALYSIS_LIMIT,
+                    checkSettings()));
+        }, error -> notice("Prüfung ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
+    }
+
+    private void startCheck(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.CheckOptions options) {
+        notice("Prüfung wird gestartet …", Severity.INFO);
+        Background.run(() -> analyses.startCheck(scope, options), started -> {
+            notice(scope instanceof StatementAnalysisJobs.Scope.SinglePage ? "Prüfung der Seite gestartet"
+                    : "Prüfung gestartet", Severity.INFO);
+            if (context.navigator() != null) {
+                context.navigator().showJob(started.id());
+            }
+        }, error -> notice(error
+                instanceof com.aresstack.spaceharvester.application.check.CheckUnavailableException
+                ? com.aresstack.spaceharvester.app.ui.content.CheckTexts.NO_MODEL
+                : "Prüfung ließ sich nicht starten: " + Problems.describe(error).title(), Severity.ERROR));
+    }
+
+    /** Text der Rückfrage vor „Aussagen prüfen“: mit „wirklich“, Zahl exakt, „mehr als“ oder geschätzt. */
+    static String checkQuestion(StatementAnalysisJobs.Estimate estimate, String where) {
+        String pages = Texts.count(estimate.pages(), "Seite", "Seiten");
+        StringBuilder text = new StringBuilder("Die Aussagen von ");
+        if (estimate.exceeded()) {
+            text.append("mehr als ").append(pages);
+        } else if (estimate.incomplete()) {
+            text.append(estimate.pages() == 0 ? "noch unbekannt vielen Seiten" : "etwa " + pages);
+        } else {
+            text.append(pages);
+        }
+        text.append(" wirklich prüfen?\n\nUmfang: ").append(where).append('.');
+        if (estimate.exceeded()) {
+            text.append("\n\nDas ist mehr als die Sicherheitsgrenze von ").append(ANALYSIS_LIMIT)
+                    .append(" Seiten. Nach „Ja“ werden alle Seiten des Umfangs geprüft.");
+        } else if (estimate.incomplete()) {
+            text.append("\n\nDer Umfang ließ sich nicht vollständig ermitteln; der Auftrag meldet fehlende Teile.");
+        }
+        text.append("\n\nDas Chat-Modell bekommt nur Seiten mit KI-Freigabe und aktueller Analyse; die übrigen "
+                + "zählt der Auftrag. Fortschritt und Abbruch unter Aufträge.");
+        return text.toString();
+    }
+
     private void startAnalysis(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {
         notice("Analyse wird gestartet …", Severity.INFO);
         Background.run(() -> analyses.start(scope, options), started -> {
@@ -2051,6 +2182,11 @@ public final class Explorer {
     /** Eine kurze Meldung in der Statuszeile (wie beim Herunterladen). */
     private void notice(String text, Severity severity) {
         context.events().publish(new StatusMessageEvent(text, NOTICE_MS, severity));
+    }
+
+    /** Für Tests. */
+    void checkConfirmation(CheckConfirmation confirmation) {
+        this.checkConfirmation = confirmation;
     }
 
     /** Für Tests. */
