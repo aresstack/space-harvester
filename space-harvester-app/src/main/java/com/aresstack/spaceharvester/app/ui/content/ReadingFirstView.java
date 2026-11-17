@@ -84,7 +84,8 @@ final class ReadingFirstView extends JPanel {
     private final JList<ReadingList.Recommendation> list = new JList<>(model);
     private final JScrollPane scroll;
     private final BusyOverlay busy;
-    private final InfoPopup popup = new InfoPopup();
+    private final InfoPopup popup;
+    private java.util.function.Function<PageStanding, JComponent> pageControls = standing -> null;
     private Consumer<String> onStatus = text -> { };
     private Consumer<KnowledgeGraph.PageRef> onOpen = page -> { };
     private Loader loader;
@@ -96,9 +97,11 @@ final class ReadingFirstView extends JPanel {
     private int generation;
     private AtomicBoolean cancelled = new AtomicBoolean();
 
-    ReadingFirstView(StandingTab.Runner runner) {
+    /** @param popup das Overlay von „Stand“, eines für alle Unterreiter */
+    ReadingFirstView(StandingTab.Runner runner, InfoPopup popup) {
         super(new BorderLayout());
         this.runner = Objects.requireNonNull(runner, "runner");
+        this.popup = Objects.requireNonNull(popup, "popup");
         setOpaque(false);
 
         topic.setToolTipText(TOPIC_TIP);
@@ -174,6 +177,11 @@ final class ReadingFirstView extends JPanel {
     /** Öffnet eine Seite (Klick auf den Titel oder „Seite öffnen“ im Overlay). */
     void onOpen(Consumer<KnowledgeGraph.PageRef> listener) {
         this.onOpen = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Die Zeile „Seite von Hand:“ im Overlay (Pillen, Löschen, Protokoll); {@code null} ohne. */
+    void pageControls(java.util.function.Function<PageStanding, JComponent> controls) {
+        this.pageControls = Objects.requireNonNull(controls, "controls");
     }
 
     /** Neue Auswahl links; {@code null} ohne Auswahl. Das Thema bleibt stehen. */
@@ -348,6 +356,7 @@ final class ReadingFirstView extends JPanel {
         popup.controls(null);
         popup.text(title(recommendation.page()), details(recommendation,
                 reading == null ? null : reading.changesSince()));
+        popup.controls(pageControls.apply(recommendation.standing()));
         popup.link(OPEN_PAGE, () -> {
             popup.setVisible(false);
             onOpen.accept(recommendation.page());
@@ -418,6 +427,9 @@ final class ReadingFirstView extends JPanel {
         }
         PageStanding standing = recommendation.standing();
         text.append("\n\nStand der Seite: „").append(StandingTab.word(standing.standing())).append("“");
+        if (standing.decision() != null) {
+            text.append(" (von Hand)");
+        }
         return text.toString();
     }
 

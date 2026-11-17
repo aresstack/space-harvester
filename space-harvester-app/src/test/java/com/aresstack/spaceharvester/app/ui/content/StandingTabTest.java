@@ -489,6 +489,13 @@ class StandingTabTest {
                 .contains("+3  neu oder geändert seit 19.08.2026")
                 .endsWith("Stand der Seite: „gilt“");
         assertThat(reading.popup().linkTexts()).containsExactly(ReadingFirstView.OPEN_PAGE);
+        assertThat(reading.popup()).as("ein Overlay für ganz „Stand“").isSameAs(tab.popup());
+        assertThat(tab.overlayButton(StandingTab.CLEAR_TIP).isEnabled()).as("noch keine Entscheidung zur Seite")
+                .isFalse();
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+        assertThat(fixture.writes).as("Stand der ganzen Seite von Hand").containsExactly("decide 1 null UEBERHOLT 0");
+        assertThat(fixture.status.get()).isEqualTo("Stand von Hand gesetzt: „überholt“");
+        assertThat(fixture.topics).as("neu gerechnet nach dem eigenen Schreiben erst über den Core").hasSize(1);
         assertThat(ReadingFirstView.details(reading.rows().get(1), null)).startsWith("Summe: \u22125")
                 .contains("\u22125  Seite ist Entwurf");
 

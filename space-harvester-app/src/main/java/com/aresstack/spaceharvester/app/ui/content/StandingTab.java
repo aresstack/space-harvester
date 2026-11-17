@@ -99,6 +99,7 @@ final class StandingTab extends JPanel {
     static final String STALE_GROUP = "Entscheidungen ohne Aussage";
     static final String OPEN_TEXT = "Im Lesetext zeigen";
     static final String SET_LABEL = "Stand von Hand:";
+    static final String PAGE_SET_LABEL = "Seite von Hand:";
     static final String CLEAR_TIP = "Entscheidung von Hand löschen; danach gilt wieder der berechnete Stand";
     static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
@@ -119,12 +120,12 @@ final class StandingTab extends JPanel {
             + "Die Suche findet Handelnde, Träger, Prädikate, die übrigen Beteiligten in Grundform, Seitentitel und "
             + "vereinfachte Sätze, nicht aber Wörter, die nur im Originalsatz stehen. "
             + "Die Zahlen oben zählen alle Aussagen der Auswahl; ein Klick filtert auf den Stand.\n\n"
-            + "„Zuerst lesen“ ordnet die Seiten der Auswahl nach Lesewert, ohne KI und ohne verdeckte Formel: je "
-            + "sichere Aussage, die gilt, +1, je überholte −1; je häufigster Begriff der Auswahl auf der Seite +2; je "
-            + "Erwähnung des Themas +1; neu oder geändert in den letzten 90 Tagen +3; Seite überholt −10; Entwurf "
-            + "oder von Hand „geplant“/„unklar“ −5; Analyse veraltet −2. Ein Klick auf die Summe zeigt alle "
-            + "Teilzahlen, ein Klick auf den Titel öffnet die Seite. Ein Thema im Feld oben rechts (▾ schlägt die "
-            + "häufigsten Begriffe vor, Enter übernimmt) zeigt nur Seiten, die es erwähnen; ✕ zeigt wieder alle.\n\n"
+            + "„Zuerst lesen“ ist eine Empfehlung zur Lesereihenfolge, keine Bewertung der Seiten. Die Summe zählt "
+            + "Punkte für geltende sichere Aussagen, häufige Begriffe der Auswahl, Erwähnungen des Themas und jüngste "
+            + "Änderungen und zieht Punkte für Überholtes, Entwürfe und veraltete Analysen ab; die Punktwerte kommen "
+            + "aus dem Core und stehen je Seite im Overlay an der Summe. Dort lässt sich auch der Stand der ganzen "
+            + "Seite von Hand setzen; ein Klick auf den Titel öffnet die Seite, ein Thema im Feld oben rechts (▾ für "
+            + "Vorschläge) zeigt nur Seiten, die es erwähnen.\n\n"
             + "„Mögliche Widersprüche“ ist nur ein Hinweis: sichere Aussagen derselben Sachlage, die beide gelten, "
             + "mit gleicher Verbindlichkeit, eine bejaht, eine verneint. Setzt man eine davon von Hand auf "
             + "„überholt“, verschwindet der Hinweis. „Ablösungen“ stehen getrennt darunter und sind kein Konflikt: "
@@ -258,7 +259,7 @@ final class StandingTab extends JPanel {
     private final JList<Row> conflictList = new JList<>(conflictModel);
     private StatementConflicts conflicts;
     /** Die Liste, an der das Overlay zuletzt aufging (Aussagen oder Widersprüche). */
-    private JList<Row> popupOwner = list;
+    private JComponent popupOwner = list;
     private final BusyOverlay busy;
     private final ReadingFirstView reading;
     private final InfoPopup popup = new InfoPopup();
@@ -401,7 +402,8 @@ final class StandingTab extends JPanel {
         JPanel counts = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         counts.setOpaque(false);
         chips.values().forEach(counts::add);
-        reading = new ReadingFirstView(runner);
+        reading = new ReadingFirstView(runner, popup);
+        reading.pageControls(this::pageControls);
         reading.onStatus(text -> {
             if (READING.equals(tabs.selected())) {
                 onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
@@ -1110,16 +1112,28 @@ final class StandingTab extends JPanel {
      * Keine Standardknöpfe; das Overlay schließt mit Esc.
      */
     private JComponent decisionControls(StatusQuoEntry entry) {
+        return decisionControls(entry.page().key(), entry.statement().id(), entry.decision(), SET_LABEL);
+    }
+
+    /**
+     * Stand der ganzen Seite von Hand (Overlay in „Zuerst lesen“): dieselben Pillen, Löschen und Protokoll wie an der
+     * Aussage, mit {@code statementId null}.
+     */
+    private JComponent pageControls(com.aresstack.spaceharvester.application.standing.PageStanding standing) {
+        popupOwner = reading.rowList();
+        StandingDecision decision = standing.decision();
+        return decisionControls(standing.page().key(), null, decision != null && decision.statementId() == null
+                ? decision : null, PAGE_SET_LABEL);
+    }
+
+    private JComponent decisionControls(PageKey page, String statementId, StandingDecision decision, String title) {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         row.setOpaque(false);
-        JLabel label = new JLabel(SET_LABEL);
+        JLabel label = new JLabel(title);
         label.setFont(Comic.regular(12.5f));
         label.setForeground(Comic.MUTED);
         row.add(label);
-        StandingDecision decision = entry.decision();
         long revision = decision == null ? 0 : decision.revision();
-        PageKey page = entry.page().key();
-        String statementId = entry.statement().id();
         for (Standing standing : Standing.values()) {
             CountChip chip = CountChip.choice(word(standing), tone(standing));
             chip.setSelected(decision != null && decision.standing() == standing);
@@ -1196,7 +1210,7 @@ final class StandingTab extends JPanel {
         if (current == null) {
             return;
         }
-        JList<Row> owner = popupOwner;
+        JComponent owner = popupOwner;
         Point at = popup.isVisible() && owner.isShowing() ? historyAt(owner) : null;
         runner.run(() -> current.history(page, statementId), entries -> {
             popup.clearLinks();
@@ -1209,7 +1223,7 @@ final class StandingTab extends JPanel {
                 : "Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
     }
 
-    private Point historyAt(JList<Row> owner) {
+    private Point historyAt(JComponent owner) {
         Point screen = popup.getLocationOnScreen();
         SwingUtilities.convertPointFromScreen(screen, owner);
         return screen;
