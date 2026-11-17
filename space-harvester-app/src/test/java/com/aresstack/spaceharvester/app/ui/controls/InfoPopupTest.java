@@ -30,6 +30,25 @@ class InfoPopupTest {
     }
 
     @Test
+    void aShortHeadingTakesTheFullWidthAndDoesNotBreakInsideAWord() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            InfoPopup popup = new InfoPopup();
+            popup.text("Updates", "Ein Update entsteht mit jeder manuellen Synchronisierung. ".repeat(8));
+            Dimension size = popup.sizeFor(600);
+            popup.setSize(size);
+            popup.doLayout();
+            javax.swing.JComponent content = (javax.swing.JComponent) popup.getComponent(0);
+            content.setSize(content.getPreferredSize());
+            content.doLayout();
+            WrappedText title = (WrappedText) content.getComponent(0);
+            int inner = size.width - 2 * 12;
+            assertThat(title.getWidth()).as("die Überschrift bekommt die ganze Breite").isEqualTo(inner);
+            int oneLine = title.getFontMetrics(title.getFont()).getHeight();
+            assertThat(title.getHeight()).as("„Updates“ bleibt in einer Zeile").isLessThan(2 * oneLine);
+        });
+    }
+
+    @Test
     void enterOnTheLinkRunsItsAction() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             java.util.List<String> ran = new java.util.ArrayList<>();

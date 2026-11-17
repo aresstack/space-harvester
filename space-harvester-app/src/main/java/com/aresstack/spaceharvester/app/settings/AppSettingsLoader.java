@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.configuration.TermSettings;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -223,7 +224,31 @@ public final class AppSettingsLoader {
                 localFiles(map(get(root, "local-files")), problems), sourceKeePass(app, problems),
                 inactiveRoots(get(app, "inactive-roots"), problems), terms(map(get(root, "terms")), problems),
                 consoleOutput(get(map(get(map(get(document, "logging")), "threshold")), "console"), problems),
-                enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems));
+                enrichment(map(get(root, "enrichment")), problems), analytics(map(get(app, "analytics")), problems),
+                simplification(map(get(map(get(root, "statements")), "simplification")), problems));
+    }
+
+    /**
+     * {@code space-harvester.statements.simplification.*}: Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3), wie beim
+     * Dienst ({@link SimplificationSettings}). Ein unlesbarer Wert ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private SimplificationSettings simplification(Map<?, ?> simplification, List<String> problems) {
+        SimplificationSettings.Mode mode = SimplificationSettings.Mode.WHERE_NEEDED;
+        Object modeValue = get(simplification, "mode");
+        try {
+            mode = SimplificationSettings.Mode.parse(modeValue == null ? null : modeValue.toString());
+        } catch (IllegalArgumentException e) {
+            problems.add(ROOT + "." + SimplificationSettings.MODE + ": " + e.getMessage());
+        }
+        String parallelKey = ROOT + "." + SimplificationSettings.PARALLEL;
+        long parallel = longNumber(get(simplification, "parallel"), SimplificationSettings.DEFAULT_PARALLEL,
+                parallelKey, problems);
+        if (parallel < 1 || parallel > Integer.MAX_VALUE) {
+            problems.add(parallelKey + ": Mindestens ein Abschnitt zugleich");
+            parallel = SimplificationSettings.DEFAULT_PARALLEL;
+        }
+        Object model = get(simplification, "model");
+        return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString());
     }
 
     /**
