@@ -1,0 +1,4 @@
+# Ist-Beziehungen mit Art (GlossarBerichtTest, FL5), nur Entwicklungssätze, genau festgehalten: schlechter = Rückschritt,
+# besser = im selben PR anheben. Der Kontrollsatz wird nur berichtet, nie festgehalten.
+# Textsatz	erwartet	richtig	falsche Art	nicht gefunden	KEINE	KEINE verletzt	nicht vorgegeben
+foerderung	11	11	0	0	9	0	0
