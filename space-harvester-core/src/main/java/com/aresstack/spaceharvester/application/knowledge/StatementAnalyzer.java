@@ -32,4 +32,36 @@ public interface StatementAnalyzer {
      * @throws CancellationException        nach einem Abbruch
      */
     ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled);
+
+    /**
+     * Wie {@link #analyze(String, String, BooleanSupplier)}, mit der Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3):
+     * Der Analysator parst das Original, wählt nach {@link Simplification#mode()} Sätze und Abschnitte, gibt sie an
+     * {@link Simplification#simplify}, parst nur die vereinfachten Sätze und führt je Originalsatz zusammen.
+     * PLAUSIBLE-Aussagen des Originals bleiben immer; Merkmale kommen aus dem Original, sobald es eine Aussage zum
+     * selben Verb hat; Aussagen der Vorstufe tragen {@link ParsedStatements.Derivation}. Ohne eigene Umsetzung ohne
+     * Vorstufe.
+     *
+     * @param simplification Vorstufe des Core: Freigabe, Modell, Ablage; nie {@code null}
+     */
+    default ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                     Simplification simplification) {
+        return analyze(documentId, text, cancelled);
+    }
+
+    /** Die Vorstufe, wie der Core sie dem Analysator gibt (ADR 0032, FL3). */
+    interface Simplification {
+
+        /** Welche Sätze vereinfacht werden. */
+        com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode mode();
+
+        /**
+         * Vereinfacht die gewählten Sätze der Abschnitte: je Satzindex die vereinfachten Sätze, leer, wenn keiner
+         * galt. Ein Abschnitt enthält wie in der Messung alle seine Zeilen; nur die gewählten werden vereinfacht.
+         *
+         * @throws java.util.concurrent.CancellationException nach einem Abbruch
+         * @throws RuntimeException                           wenn das Modell scheitert oder die Freigabe fehlt
+         */
+        java.util.Map<Integer, java.util.List<com.aresstack.spaceharvester.application.simplification.SimplifiedSentence>>
+        simplify(java.util.List<com.aresstack.spaceharvester.application.simplification.SimplificationSection> sections);
+    }
 }

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiPredicate;
+import java.util.function.BinaryOperator;
 import java.util.function.Predicate;
 import java.util.function.ToIntFunction;
 import java.util.regex.Pattern;
@@ -161,6 +162,21 @@ public final class SimplificationSelection {
      */
     public static <S> List<S> merge(List<S> original, List<S> simplified, Set<Integer> simplify,
                                     ToIntFunction<S> sentence, Predicate<S> plausible, BiPredicate<S, S> sameVerb) {
+        return merge(original, simplified, simplify, sentence, plausible, sameVerb, (vorstufe, own) -> vorstufe);
+    }
+
+    /**
+     * Wie {@link #merge(List, List, Set, ToIntFunction, Predicate, BiPredicate)}, dazu die Merkmale (Verneinung,
+     * Verbindlichkeit, Zeitbezug) aus dem Original: Weicht eine Aussage des Originals einer Vorstufen-Aussage mit
+     * demselben Verb, bekommt diese die Merkmale der Original-Aussage ({@code adopt}). Nur eine Vorstufen-Aussage zu
+     * einem Verb, zu dem das Original im selben Satz keine Aussage hat, behält ihre eigenen; sie ist an ihrer Herkunft
+     * als abgeleitet erkennbar. Die eine Funktion für Prüfstand, App und Auftrag.
+     *
+     * @param adopt Vorstufen-Aussage mit den Merkmalen der Original-Aussage desselben Verbs
+     */
+    public static <S> List<S> merge(List<S> original, List<S> simplified, Set<Integer> simplify,
+                                    ToIntFunction<S> sentence, Predicate<S> plausible, BiPredicate<S, S> sameVerb,
+                                    BinaryOperator<S> adopt) {
         List<S> result = new ArrayList<>();
         int last = -1;
         for (S s : original) {
@@ -180,7 +196,11 @@ public final class SimplificationSelection {
             List<S> added = simplified.stream().filter(s -> sentence.applyAsInt(s) == index
                     && kept.stream().noneMatch(o -> sameVerb.test(o, s))).toList();
             result.addAll(kept);
-            result.addAll(added);
+            for (S s : added) {
+                S replaced = own.stream().filter(o -> !plausible.test(o) && sameVerb.test(s, o)).findFirst()
+                        .orElse(null);
+                result.add(replaced == null ? s : adopt.apply(s, replaced));
+            }
             own.stream().filter(s -> !plausible.test(s) && added.stream().noneMatch(n -> sameVerb.test(n, s)))
                     .forEach(result::add);
         }

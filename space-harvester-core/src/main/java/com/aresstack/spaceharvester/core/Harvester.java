@@ -907,12 +907,20 @@ public final class Harvester implements AutoCloseable {
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
             this.simplifications = new Simplifications(new ChatSimplificationModel(
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    () -> liveAi ? this.settings.ai() : startAi,
+                    () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
             Simplifications simplified = this.simplifications;
+            java.util.concurrent.atomic.AtomicReference<StatementAnalysis> graphAnalysis =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
                 simplified.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                // ADR 0032, FL3: Aussagen der Vorstufe tragen Modelltext der Seite und fallen aus dem Graph
+                StatementAnalysis graph = graphAnalysis.get();
+                if (graph != null) {
+                    graph.withdrawStage(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
+                }
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
@@ -930,7 +938,8 @@ public final class Harvester implements AutoCloseable {
                 }
             };
             this.statementAnalysis = new StatementAnalysis(readerText, graphStore, access, () -> statementAnalyzer,
-                    clock);
+                    clock, simplified);
+            graphAnalysis.set(this.statementAnalysis);
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             this.statementAnalysisJobs = new StatementAnalysisJobs(jobs, new StatementAnalysisJobs.Discovery() {

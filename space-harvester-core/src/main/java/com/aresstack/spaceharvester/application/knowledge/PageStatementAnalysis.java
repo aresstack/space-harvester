@@ -23,10 +23,17 @@ import java.util.Objects;
  * @param analyzedAt      Zeitpunkt
  * @param result          Ergebnis; {@link ParsedStatements#conllu()} nur, wenn geladen
  * @param document        das Dokument; {@link DocumentKey#page()} ist {@code key}
+ * @param stage           Stand der Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3): {@code null} ohne Vorstufe,
+ *                        {@code <Betriebsart>|<Simplifications#version()>} mit ihr, {@link #STAGE_WITHDRAWN} nach dem
+ *                        Entzug der KI-Freigabe (dann veraltet: weggefallene Aussagen der Vorstufe ließen die zuvor
+ *                        ersetzten Original-Aussagen fehlen)
  */
 public record PageStatementAnalysis(PageKey key, String spaceKey, String title, String revision, String inputSha256,
                                     String analyzerId, String analyzerVersion, Instant analyzedAt,
-                                    ParsedStatements result, DocumentKey document) {
+                                    ParsedStatements result, DocumentKey document, String stage) {
+
+    /** {@link #stage()} nach dem Entzug der KI-Freigabe: Aussagen der Vorstufe entfernt, Analyse veraltet. */
+    public static final String STAGE_WITHDRAWN = "withdrawn";
 
     /** Schema der Ablage; steigt mit jeder inkompatiblen Änderung. */
     public static final String SCHEMA = "page-statements/v1";
@@ -44,6 +51,14 @@ public record PageStatementAnalysis(PageKey key, String spaceKey, String title, 
         }
     }
 
+    /** Ohne Vorstufe. */
+    public PageStatementAnalysis(PageKey key, String spaceKey, String title, String revision, String inputSha256,
+                                 String analyzerId, String analyzerVersion, Instant analyzedAt,
+                                 ParsedStatements result, DocumentKey document) {
+        this(key, spaceKey, title, revision, inputSha256, analyzerId, analyzerVersion, analyzedAt, result, document,
+                null);
+    }
+
     /** Analyse der Seite selbst (wie vor ADR 0026). */
     public PageStatementAnalysis(PageKey key, String spaceKey, String title, String revision, String inputSha256,
                                  String analyzerId, String analyzerVersion, Instant analyzedAt,
@@ -53,7 +68,13 @@ public record PageStatementAnalysis(PageKey key, String spaceKey, String title, 
 
     public PageStatementAnalysis withResult(ParsedStatements other) {
         return new PageStatementAnalysis(key, spaceKey, title, revision, inputSha256, analyzerId, analyzerVersion,
-                analyzedAt, other, document);
+                analyzedAt, other, document, stage);
+    }
+
+    /** Dieselbe Analyse mit anderem Stand der Vorstufe. */
+    public PageStatementAnalysis withStage(String other) {
+        return new PageStatementAnalysis(key, spaceKey, title, revision, inputSha256, analyzerId, analyzerVersion,
+                analyzedAt, result, document, other);
     }
 
     /** Ob die Analyse zu einem Anhang oder einer enthaltenen Datei gehört, nicht zur Seite selbst. */

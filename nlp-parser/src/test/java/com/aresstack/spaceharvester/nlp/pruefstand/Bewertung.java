@@ -105,6 +105,10 @@ final class Bewertung {
     private record Befund(Statement statement, int satz, String lemma, StatementQuality.Level stufe,
                           Map<Rolle, List<Set<String>>> rollen, Set<String> alleNamen, String kurz,
                           StatementFeatures.Features merkmale) {
+
+        Befund mitMerkmalen(StatementFeatures.Features andere) {
+            return new Befund(statement, satz, lemma, stufe, rollen, alleNamen, kurz, andere);
+        }
     }
 
     static Zahlen bewerten(Textsatz satz, Variante variante, Text text) {
@@ -145,9 +149,12 @@ final class Bewertung {
                 });
             }
             List<Befund> ausVorstufe = List.copyOf(befunde);
+            // Merkmale aus dem Original, sobald es eine Aussage zum selben Verb hat (dieselbe Funktion wie im Auftrag)
             List<Befund> zusammen = SimplificationSelection.merge(ausOriginal, ausVorstufe, vereinfacht, Befund::satz,
-                    b -> b.stufe() == StatementQuality.Level.PLAUSIBLE, Bewertung::gleichesVerb);
-            ergaenzbar = zusammen.stream().filter(ausVorstufe::contains).toList();
+                    b -> b.stufe() == StatementQuality.Level.PLAUSIBLE, Bewertung::gleichesVerb,
+                    (vorstufeBefund, originalBefund) -> vorstufeBefund.mitMerkmalen(originalBefund.merkmale()));
+            ergaenzbar = zusammen.stream().filter(z -> ausVorstufe.stream().anyMatch(v -> v.statement() == z.statement()))
+                    .toList();
             befunde.clear();
             befunde.addAll(zusammen);
         }

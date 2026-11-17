@@ -560,6 +560,37 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         return read(searcher -> searcher.count(query) > 0);
     }
 
+    /**
+     * Die Seiten-IDs der Kinder in der Reihenfolge, in der die Quelle sie zuletzt lieferte; leer, wenn unbekannt.
+     *
+     * @param parentPageId Elternseite oder {@code null} für die Wurzelseiten von {@code spaceKey}
+     */
+    public List<String> childOrder(String sourceId, String spaceKey, String parentPageId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Term term = PageCacheSchema.childOrderTerm(sourceId, spaceKey, parentPageId);
+        return read(searcher -> {
+            TopDocs top = searcher.search(new TermQuery(term), 1);
+            return top.scoreDocs.length == 0 ? List.<String>of()
+                    : PageCacheSchema.childOrder(searcher.storedFields().document(top.scoreDocs[0].doc));
+        });
+    }
+
+    /**
+     * Merkt sich die Reihenfolge der Kinder in einem eigenen Commit und ersetzt die vorige. Nur ein Hinweis für die
+     * Anzeige: kein Seitenstand, keine Protokollzeile, keine neue Suchgeneration.
+     */
+    public void saveChildOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(pageIds, "pageIds");
+        Term term = PageCacheSchema.childOrderTerm(sourceId, spaceKey, parentPageId);
+        try (Batch batch = begin()) {
+            batch.dirty = true;
+            write(() -> writer.updateDocument(term,
+                    PageCacheSchema.childOrder(sourceId, spaceKey, parentPageId, pageIds)));
+            batch.commit();
+        }
+    }
+
     /** Seiten eines Space ohne Elternseite nach aktuellen Kopfdaten, nach Seiten-ID; ohne Payload. */
     public List<CachedPageHeader> rootPages(String sourceId, String spaceKey, int limit) {
         return headers(pages(sourceId)

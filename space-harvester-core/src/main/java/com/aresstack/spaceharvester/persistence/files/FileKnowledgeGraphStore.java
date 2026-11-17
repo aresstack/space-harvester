@@ -270,6 +270,10 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         root.put("analyzerId", analysis.analyzerId());
         root.put("analyzerVersion", analysis.analyzerVersion());
         root.put("analyzedAt", analysis.analyzedAt().toString());
+        if (analysis.stage() != null) {
+            // ADR 0032, FL3: Stand der Vorstufe; fehlt das Feld, wurde ohne Vorstufe gerechnet
+            root.put("stage", analysis.stage());
+        }
         ParsedStatements result = analysis.result();
         ObjectNode node = root.putObject("result");
         ArrayNode sentences = node.putArray("sentences");
@@ -322,6 +326,13 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("negation", statement.features().negation().name());
                 entry.put("modality", statement.features().modality().name());
                 entry.put("temporality", statement.features().temporality().name());
+            }
+            if (statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL) {
+                // ADR 0032, FL3: nur bei Aussagen der Vorstufe; fehlt das Feld, stammt die Aussage aus dem Original
+                entry.put("origin", statement.derivation().origin().name());
+                entry.put("stageFlag", statement.derivation().stageFlag().name());
+                entry.put("simplifiedSentence", statement.derivation().simplifiedSentence());
+                entry.put("featuresFrom", statement.derivation().featuresFrom().name());
             }
         }
         ArrayNode attachments = node.putArray("attachments");
@@ -394,7 +405,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                     enumOr(ParsedStatements.Negation.class, entry, "negation", ParsedStatements.Negation.UNKNOWN),
                     enumOr(ParsedStatements.Modality.class, entry, "modality", ParsedStatements.Modality.UNKNOWN),
                     enumOr(ParsedStatements.Temporality.class, entry, "temporality",
-                            ParsedStatements.Temporality.UNKNOWN)));
+                            ParsedStatements.Temporality.UNKNOWN)), derivation(entry));
             statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
@@ -417,7 +428,22 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         return new PageStatementAnalysis(key, text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
                 root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result,
-                document);
+                document, text(root, "stage"));
+    }
+
+    /** Herkunft einer Aussage (ADR 0032, FL3); ohne oder mit unlesbaren Feldern aus dem Original. */
+    private static ParsedStatements.Derivation derivation(JsonNode entry) {
+        ParsedStatements.Origin origin = enumOr(ParsedStatements.Origin.class, entry, "origin",
+                ParsedStatements.Origin.ORIGINAL);
+        ParsedStatements.StageFlag flag = enumOr(ParsedStatements.StageFlag.class, entry, "stageFlag",
+                ParsedStatements.StageFlag.NONE);
+        String sentence = text(entry, "simplifiedSentence");
+        if (origin != ParsedStatements.Origin.VORSTUFE || flag == ParsedStatements.StageFlag.NONE || sentence == null
+                || sentence.isBlank()) {
+            return ParsedStatements.Derivation.ORIGINAL;
+        }
+        return new ParsedStatements.Derivation(origin, flag, sentence, enumOr(ParsedStatements.Origin.class, entry,
+                "featuresFrom", ParsedStatements.Origin.VORSTUFE));
     }
 
     /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */

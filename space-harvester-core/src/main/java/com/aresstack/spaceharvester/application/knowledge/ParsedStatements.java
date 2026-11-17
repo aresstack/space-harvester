@@ -164,10 +164,78 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         }
     }
 
+    /** Herkunft einer Aussage (ADR 0032, FL3). */
+    public enum Origin {
+        /** Aus dem Originalsatz. */
+        ORIGINAL,
+        /** Aus einem vereinfachten Satz der Vorstufe „Sätze vereinfachen“. */
+        VORSTUFE
+    }
+
+    /**
+     * Kennzeichen der Vorstufe an einer Aussage aus einem vereinfachten Satz (ADR 0032, FL3). Ein eigenes Feld mit
+     * Herkunft „Vorstufe“, nie in den Zeitbezug ({@link Temporality}) übersetzt.
+     */
+    public enum StageFlag {
+        /** Aussage aus dem Original: kein Kennzeichen. */
+        NONE,
+        /** T: Tatsache. */
+        FACT,
+        /** B: Bedingung. */
+        CONDITION,
+        /** P: Planung oder Absicht. */
+        PLANNING,
+        /** V: verworfen oder früher. */
+        DISCARDED
+    }
+
+    /**
+     * Woher eine Aussage stammt (ADR 0032, FL3).
+     *
+     * @param origin             Original oder Vorstufe
+     * @param stageFlag          Kennzeichen der Vorstufe; {@link StageFlag#NONE} beim Original
+     * @param simplifiedSentence der vereinfachte Satz, aus dem die Aussage stammt, damit die Oberfläche ihn neben dem
+     *                           Originalsatz zeigen kann; {@code null} beim Original
+     */
+    public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom) {
+
+        /** Aus dem Originalsatz (auch alle Analysen vor FL3). */
+        public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null,
+                Origin.ORIGINAL);
+
+        /**
+         * @param featuresFrom woher Verneinung, Verbindlichkeit und Zeitbezug stammen: {@link Origin#ORIGINAL}, wenn
+         *                     das Original eine Aussage zum selben Verb hat (übernommen), sonst {@link Origin#VORSTUFE}
+         */
+        public Derivation {
+            Objects.requireNonNull(origin, "origin");
+            Objects.requireNonNull(stageFlag, "stageFlag");
+            featuresFrom = featuresFrom == null ? origin : featuresFrom;
+            if (origin == Origin.ORIGINAL && (stageFlag != StageFlag.NONE || simplifiedSentence != null
+                    || featuresFrom != Origin.ORIGINAL)) {
+                throw new IllegalArgumentException("Eine Aussage aus dem Original hat kein Kennzeichen der Vorstufe");
+            }
+            if (origin == Origin.VORSTUFE && (stageFlag == StageFlag.NONE || simplifiedSentence == null
+                    || simplifiedSentence.isBlank())) {
+                throw new IllegalArgumentException("Eine Aussage der Vorstufe braucht Kennzeichen und Satz");
+            }
+        }
+
+        /** Aus einem vereinfachten Satz, mit eigenen Merkmalen. */
+        public static Derivation vorstufe(StageFlag stageFlag, String simplifiedSentence) {
+            return new Derivation(Origin.VORSTUFE, stageFlag, simplifiedSentence, Origin.VORSTUFE);
+        }
+
+        /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
+        public Derivation withFeaturesFromOriginal() {
+            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL);
+        }
+    }
+
     public record Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
                             Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
                             int paragraph, Quality quality, List<String> qualityReasons, Review review,
-                            Features features) {
+                            Features features, Derivation derivation) {
 
         public Statement {
             Objects.requireNonNull(id, "id");
@@ -177,9 +245,19 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             Objects.requireNonNull(quality, "quality");
             Objects.requireNonNull(review, "review");
             Objects.requireNonNull(features, "features");
+            derivation = derivation == null ? Derivation.ORIGINAL : derivation;
             arguments = List.copyOf(arguments);
             findings = Set.copyOf(findings);
             qualityReasons = List.copyOf(qualityReasons);
+        }
+
+        /** Eine Aussage aus dem Original ({@link Derivation#ORIGINAL}), etwa jede Analyse vor ADR 0032, FL3. */
+        public Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
+                         Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
+                         int paragraph, Quality quality, List<String> qualityReasons, Review review,
+                         Features features) {
+            this(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core, arguments, findings,
+                    paragraph, quality, qualityReasons, review, features, Derivation.ORIGINAL);
         }
 
         /** Eine Aussage ohne Merkmale (Analysen vor ADR 0032, FL2): Merkmale {@link Features#UNKNOWN}. */

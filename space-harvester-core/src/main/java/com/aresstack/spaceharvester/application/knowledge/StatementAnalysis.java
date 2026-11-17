@@ -4,17 +4,25 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.simplification.SimplificationSection;
+import com.aresstack.spaceharvester.application.simplification.SimplificationUnavailableException;
+import com.aresstack.spaceharvester.application.simplification.Simplifications;
+import com.aresstack.spaceharvester.application.simplification.SimplifiedSentence;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -45,6 +53,7 @@ public class StatementAnalysis {
     private final AccessGuard access;
     private final Supplier<StatementAnalyzer> analyzer;
     private final Clock clock;
+    private final Simplifications simplifications;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -52,6 +61,16 @@ public class StatementAnalysis {
      */
     public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
                              AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock) {
+        this(texts, store, access, analyzer, clock, null);
+    }
+
+    /**
+     * @param simplifications die Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3) oder {@code null} ohne sie
+     */
+    public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
+                             AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
+                             Simplifications simplifications) {
+        this.simplifications = simplifications;
         this.texts = Objects.requireNonNull(texts, "texts");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -100,6 +119,56 @@ public class StatementAnalysis {
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Leserecht auf die Seite
      */
     public PageStatements analyze(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled) {
+        return analyze(caller, snapshot, cancelled, null, costs -> {
+        });
+    }
+
+    /**
+     * Der Stand der Vorstufe, den ein Lauf mit {@code request} an der Analyse hinterlässt:
+     * {@code <Betriebsart>|<Simplifications#version()>}.
+     */
+    public String stage(SimplificationRequest request) {
+        return request.mode().value() + "|" + simplifications.version();
+    }
+
+    /**
+     * Ob ein Auftrag die Seite überspringen kann: die gespeicherte Analyse ist aktuell und, wenn die Vorstufe für die
+     * Seite läuft, mit demselben Stand der Vorstufe gerechnet. Ein Lauf ohne Vorstufe (oder ohne Freigabe der Seite)
+     * lässt eine Analyse mit Vorstufe als aktuell stehen.
+     */
+    public boolean current(AccessContext caller, PageSnapshot snapshot, SimplificationRequest request) {
+        PageStatements read = read(caller, snapshot);
+        if (read.state() != PageStatements.State.CURRENT) {
+            return false;
+        }
+        if (request == null || simplificationUnavailable(snapshot.key()).isPresent()) {
+            return true;
+        }
+        return stage(request).equals(read.analysis().stage());
+    }
+
+    /** Ob die Vorstufe für diese Seite laufen kann: eingerichtet, Modell eingestellt, Seite für die KI freigegeben. */
+    public Optional<String> simplificationUnavailable(PageKey key) {
+        if (simplifications == null || !simplifications.available()) {
+            return Optional.of(SimplificationUnavailableException.Reason.NO_MODEL.name());
+        }
+        if (!simplifications.released(key)) {
+            return Optional.of(SimplificationUnavailableException.Reason.NOT_RELEASED.name());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Wie {@link #analyze(AccessContext, PageSnapshot, BooleanSupplier)}, mit der Vorstufe „Sätze vereinfachen“
+     * (ADR 0032, FL3), wenn {@code request} sie verlangt und sie für die Seite laufen kann
+     * ({@link #simplificationUnavailable}); sonst ohne. An das Modell gehen nur Seiten mit KI-Freigabe.
+     *
+     * @param request Betriebsart und Obergrenze der Vorstufe oder {@code null} ohne sie
+     * @param costs   bekommt die Zahlen der Vorstufe, wenn sie lief; nie Inhalte
+     */
+    public PageStatements analyze(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled,
+                                  SimplificationRequest request, Consumer<Simplifications.Costs> costs) {
+        Objects.requireNonNull(costs, "costs");
         require(caller, snapshot);
         StatementAnalyzer parser = analyzer.get();
         if (parser == null) {
@@ -114,14 +183,45 @@ public class StatementAnalysis {
         String input = text.get().inputSha256();
         // Die Version steht vor dem Rechnen fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = parser.version();
-        ParsedStatements result = parser.analyze(PageStatementAnalysis.documentId(key, input),
-                analyzerText(text.get()), cancelled);
+        String documentId = PageStatementAnalysis.documentId(key, input);
+        ParsedStatements result;
+        String stage = null;
+        if (request != null && simplificationUnavailable(key).isEmpty()) {
+            stage = stage(request);
+            result = parser.analyze(documentId, analyzerText(text.get()), cancelled,
+                    new StatementAnalyzer.Simplification() {
+                        @Override
+                        public SimplificationSettings.Mode mode() {
+                            return request.mode();
+                        }
+
+                        @Override
+                        public Map<Integer, List<SimplifiedSentence>> simplify(List<SimplificationSection> sections) {
+                            if (sections.isEmpty()) {
+                                return Map.of();
+                            }
+                            Simplifications.Result run = simplifications.simplify(key, input, sections,
+                                    request.parallel(), cancelled);
+                            costs.accept(run.costs());
+                            return run.sentences();
+                        }
+                    });
+        } else {
+            result = parser.analyze(documentId, analyzerText(text.get()), cancelled);
+        }
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
         check(result, text.get().text().length());
+        if (stage != null && !simplifications.released(key)) {
+            // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph; ohne die Aussagen
+            // der Vorstufe fehlen die ersetzten Original-Aussagen, also gilt die Analyse als veraltet
+            ParsedStatements stripped = withoutStage(result);
+            stage = stripped == result ? null : PageStatementAnalysis.STAGE_WITHDRAWN;
+            result = stripped;
+        }
         PageStatementAnalysis analysis = new PageStatementAnalysis(key, snapshot.spaceKey(), snapshot.metadata().title(),
-                snapshot.revision(), input, parser.id(), version, clock.instant(), result);
+                snapshot.revision(), input, parser.id(), version, clock.instant(), result, null, stage);
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
                 analysis.withResult(result.withoutConllu()));
@@ -139,6 +239,9 @@ public class StatementAnalysis {
         if (parser != null && !(parser.id().equals(stored.analyzerId())
                 && parser.version().equals(stored.analyzerVersion()))) {
             return PageStatements.ANALYZER_CHANGED;
+        }
+        if (PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.stage())) {
+            return PageStatements.STAGE_WITHDRAWN;
         }
         return null;
     }
@@ -263,6 +366,88 @@ public class StatementAnalysis {
             if (!mentions.contains(attachment.head()) || !mentions.contains(attachment.dependent())) {
                 throw new IllegalStateException("Nominaler Bezug ohne Erwähnung");
             }
+        }
+    }
+
+    /**
+     * Entfernt nach dem Entzug der KI-Freigabe (ADR 0028) aus den gespeicherten Analysen der Seiten ohne Freigabe die
+     * Aussagen der Vorstufe samt ihren Erwähnungen, ohne neu zu rechnen (der Server hat keinen Parser).
+     *
+     * @return Zahl der geänderten Analysen
+     */
+    public int withdrawStage(java.util.Collection<PageKey> pages, java.util.function.Predicate<PageKey> released) {
+        int changed = 0;
+        for (PageKey page : pages) {
+            if (released.test(page)) {
+                continue;
+            }
+            Optional<PageStatementAnalysis> stored = store.find(page);
+            if (stored.isEmpty()) {
+                continue;
+            }
+            ParsedStatements result = stored.get().result();
+            ParsedStatements stripped = withoutStage(result);
+            if (stripped != result) {
+                // Die ersetzten Original-Aussagen fehlen jetzt: veraltet, der nächste Lauf rechnet ohne Vorstufe
+                store.replace(stored.get().withResult(stripped).withStage(PageStatementAnalysis.STAGE_WITHDRAWN));
+                changed++;
+            } else if (stored.get().stage() != null
+                    && !PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.get().stage())) {
+                store.replace(stored.get().withStage(null)); // keine Aussage der Vorstufe übrig, nichts fehlt
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Die Analyse ohne Aussagen der Vorstufe und ohne die Erwähnungen, auf die nur sie zeigten; dieselbe Instanz, wenn
+     * es keine gab.
+     */
+    static ParsedStatements withoutStage(ParsedStatements result) {
+        List<ParsedStatements.Statement> kept = result.statements().stream()
+                .filter(statement -> statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL).toList();
+        if (kept.size() == result.statements().size()) {
+            return result;
+        }
+        Set<String> stillUsed = new HashSet<>();
+        kept.forEach(statement -> statement.arguments().forEach(argument -> stillUsed.add(argument.mention())));
+        result.attachments().forEach(attachment -> {
+            stillUsed.add(attachment.head());
+            stillUsed.add(attachment.dependent());
+        });
+        Set<String> onlyStage = new HashSet<>();
+        result.statements().stream()
+                .filter(statement -> statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL)
+                .forEach(statement -> statement.arguments().forEach(argument -> {
+                    if (argument.mention() != null && !stillUsed.contains(argument.mention())) {
+                        onlyStage.add(argument.mention());
+                    }
+                }));
+        List<ParsedStatements.Mention> mentions = result.mentions().stream()
+                .filter(mention -> !onlyStage.contains(mention.id())).toList();
+        return new ParsedStatements(result.sentences(), mentions, kept, result.attachments(), result.components(),
+                result.conllu());
+    }
+
+    /**
+     * Die Vorstufe für einen Analyselauf (ADR 0032, FL3).
+     *
+     * @param mode     welche Sätze vereinfacht werden
+     * @param parallel so viele Abschnitte einer Seite höchstens zugleich beim Modell
+     */
+    public record SimplificationRequest(SimplificationSettings.Mode mode, int parallel) {
+
+        public SimplificationRequest {
+            Objects.requireNonNull(mode, "mode");
+            if (parallel < 1) {
+                throw new IllegalArgumentException("parallel muss mindestens 1 sein");
+            }
+        }
+
+        /** Nach den Einstellungen. */
+        public static SimplificationRequest of(SimplificationSettings settings) {
+            return new SimplificationRequest(settings.mode(), settings.parallel());
         }
     }
 }
