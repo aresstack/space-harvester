@@ -33,6 +33,8 @@ public final class ContentView implements View {
             positionListener = shown -> { };
     /** Markiert Quelle ({@code spaceKey} {@code null}) oder Space im Baum; die Auswahl dort bestimmt die Mitte. */
     private java.util.function.BiConsumer<String, String> locate = (source, space) -> { };
+    /** Wählt eine Seite im Baum, wenn Zurück/Vor sie wieder zeigt. */
+    private java.util.function.BiConsumer<String, String> locatePage = (source, pageId) -> { };
     private final PageDetailPanel detail;
     /** Stand des gezeigten Reiters (etwa „50 Knoten, 51 Kanten“) links in der Statuszeile des Hauptfensters. */
     private final JLabel statusInfo = Comic.muted(" ");
@@ -58,6 +60,17 @@ public final class ContentView implements View {
             position = shown;
             renderCrumbs();
             positionListener.accept(shown);
+        });
+        // Zurück/Vor (Statuszeile, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
+        detail.onNavigated(place -> {
+            sourceId = place.sourceId();
+            spaceKey = place.page() ? null : place.spaceKey();
+            renderCrumbs();
+            if (place.page()) {
+                locatePage.accept(place.sourceId(), place.pageId());
+            } else {
+                locate.accept(place.sourceId(), place.spaceKey());
+            }
         });
 
         JPanel top = new JPanel(new BorderLayout(12, 0));
@@ -162,6 +175,11 @@ public final class ContentView implements View {
      */
     public void onLocate(java.util.function.BiConsumer<String, String> listener) {
         locate = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Zurück/Vor zeigt eine Seite wieder: {@code listener} wählt sie im Baum (Quelle, Seiten-ID). */
+    public void onLocatePage(java.util.function.BiConsumer<String, String> listener) {
+        locatePage = Objects.requireNonNull(listener, "listener");
     }
 
     /** Nach dem Laden kennt die Seite ihren Space. */
@@ -291,7 +309,9 @@ public final class ContentView implements View {
                 if (!detail.showsLevel(selection.sourceId(), space)) {
                     detail.showSource(selection.sourceId(), space, selection.title());
                 }
-            } else if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
+            } else if (!Objects.equals(selection.sourceId(), sourceId)
+                    && !detail.showsPage(selection.sourceId(), selection.pageId())) {
+                // Die Seite selbst öffnet der Navigator gleich; wird sie schon gezeigt (Zurück/Vor), bleibt sie.
                 detail.clear();
             }
             sourceId = selection.sourceId();
