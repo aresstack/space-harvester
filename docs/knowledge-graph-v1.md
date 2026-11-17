@@ -62,6 +62,11 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   Merkmale aus dem Satz (ADR 0032, FL2; fehlen bei älteren Analysen = unbekannt): `sh:negated` (true/false),
   `sh:modality` (`NONE`/`MUSS`/`SOLL`/`KANN`/`DARF`), `sh:temporality` (`GILT`/`GEPLANT`/`FRUEHER`/`VERWORFEN`, nur aus
   Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum),
+  Herkunft (ADR 0032, FL3; fehlt bei Aussagen aus dem Original): `sh:origin` (`VORSTUFE`, wenn die Aussage aus einem
+  vereinfachten Satz der Vorstufe „Sätze vereinfachen“ stammt), `sh:stageFlag` (Kennzeichen der Vorstufe: `FACT`,
+  `CONDITION`, `PLANNING`, `DISCARDED`; ein eigenes Feld, kein Zeitbezug) und `sh:simplifiedSentence` (der vereinfachte
+  Satz; Spannen und `sh:sentence` zeigen auf den Originalsatz). Merkmale einer solchen Aussage stammen aus dem
+  Originalsatz, sobald er eine Aussage zum selben Verb hat,
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
   `sh:instrument`, `sh:time`, `sh:circumstance`.

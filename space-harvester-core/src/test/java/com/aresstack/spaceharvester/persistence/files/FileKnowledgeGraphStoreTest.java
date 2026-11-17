@@ -145,6 +145,34 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void originFlagAndSimplifiedSentenceOfTheStageSurviveARestartAndOriginalsWriteNothing() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement s = base.result().statements().get(0);
+        ParsedStatements.Statement fromStage = new ParsedStatements.Statement(s.id(), s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.vorstufe(
+                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg."));
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(fromStage))));
+
+        ParsedStatements.Statement read = new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow()
+                .result().statements().get(0);
+        assertThat(read).isEqualTo(fromStage);
+        assertThat(read.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.CONDITION);
+
+        new FileKnowledgeGraphStore(directory).replace(base);
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("origin", "stageFlag",
+                "simplifiedSentence");
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
+                .get(0).derivation()).isEqualTo(ParsedStatements.Derivation.ORIGINAL);
+    }
+
+    @Test
     void aFileWithoutOrWithUnknownQualityFieldsStillLoads() throws IOException {
         new FileKnowledgeGraphStore(directory).replace(analysis("wiki", "1", "Beleg"));
         Path file;

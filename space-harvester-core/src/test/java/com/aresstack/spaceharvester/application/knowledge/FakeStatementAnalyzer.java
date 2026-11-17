@@ -27,6 +27,8 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
     RuntimeException failure;
     /** Bricht nach so vielen Sätzen ab (über den Abbruch-Schalter des Aufrufers), -1 = nie. */
     int cancelAfterSentences = -1;
+    /** Herkunft aller Aussagen; {@code null} = Original. */
+    ParsedStatements.Derivation derivation;
     /** Liefert eine Erwähnung außerhalb des Texts. */
     boolean broken;
 
@@ -111,12 +113,39 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
                         // Merkmale nur, wenn der Satz „nicht“ enthält; sonst unbekannt wie bei älteren Analysen
                         text.substring(start, end).contains(" nicht") ? new ParsedStatements.Features(
                                 ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.NONE,
-                                ParsedStatements.Temporality.GILT) : ParsedStatements.Features.UNKNOWN));
+                                ParsedStatements.Temporality.GILT) : ParsedStatements.Features.UNKNOWN,
+                        derivation));
             }
             start = end;
             index++;
         }
         return new ParsedStatements(sentences, mentions, statements, attachments, List.of("parser=fake"),
                 conllu.toString());
+    }
+
+    /** Antworten der Vorstufe aus dem letzten Aufruf mit Vorstufe (Satzindex → vereinfachte Sätze). */
+    final List<java.util.Map<Integer, List<com.aresstack.spaceharvester.application.simplification.SimplifiedSentence>>>
+            stages = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Mit Vorstufe: jeder Satz bis {@code .} wird gewählt, alle in einem Abschnitt; das Ergebnis bleibt das Original. */
+    @Override
+    public ParsedStatements analyze(String documentId, String text, BooleanSupplier cancelled,
+                                    Simplification simplification) {
+        List<com.aresstack.spaceharvester.application.simplification.SimplificationSection.Sentence> chosen =
+                new ArrayList<>();
+        int start = 0;
+        while (start < text.length()) {
+            int end = text.indexOf('.', start);
+            end = end < 0 ? text.length() : end + 1;
+            String sentence = text.substring(start, end).strip();
+            if (!sentence.isEmpty()) {
+                chosen.add(new com.aresstack.spaceharvester.application.simplification.SimplificationSection.Sentence(
+                        chosen.size(), sentence));
+            }
+            start = end;
+        }
+        stages.add(simplification.simplify(chosen.isEmpty() ? List.of() : List.of(
+                new com.aresstack.spaceharvester.application.simplification.SimplificationSection(List.of(), chosen))));
+        return analyze(documentId, text, cancelled);
     }
 }

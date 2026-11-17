@@ -4,17 +4,25 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.simplification.SimplificationSection;
+import com.aresstack.spaceharvester.application.simplification.SimplificationUnavailableException;
+import com.aresstack.spaceharvester.application.simplification.Simplifications;
+import com.aresstack.spaceharvester.application.simplification.SimplifiedSentence;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -45,6 +53,7 @@ public class StatementAnalysis {
     private final AccessGuard access;
     private final Supplier<StatementAnalyzer> analyzer;
     private final Clock clock;
+    private final Simplifications simplifications;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -52,6 +61,16 @@ public class StatementAnalysis {
      */
     public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
                              AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock) {
+        this(texts, store, access, analyzer, clock, null);
+    }
+
+    /**
+     * @param simplifications die Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3) oder {@code null} ohne sie
+     */
+    public StatementAnalysis(Function<PageSnapshot, Optional<PageText>> texts, KnowledgeGraphStore store,
+                             AccessGuard access, Supplier<StatementAnalyzer> analyzer, Clock clock,
+                             Simplifications simplifications) {
+        this.simplifications = simplifications;
         this.texts = Objects.requireNonNull(texts, "texts");
         this.store = Objects.requireNonNull(store, "store");
         this.access = Objects.requireNonNull(access, "access");
@@ -100,6 +119,32 @@ public class StatementAnalysis {
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Leserecht auf die Seite
      */
     public PageStatements analyze(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled) {
+        return analyze(caller, snapshot, cancelled, null, costs -> {
+        });
+    }
+
+    /** Ob die Vorstufe für diese Seite laufen kann: eingerichtet, Modell eingestellt, Seite für die KI freigegeben. */
+    public Optional<String> simplificationUnavailable(PageKey key) {
+        if (simplifications == null || !simplifications.available()) {
+            return Optional.of(SimplificationUnavailableException.Reason.NO_MODEL.name());
+        }
+        if (!simplifications.released(key)) {
+            return Optional.of(SimplificationUnavailableException.Reason.NOT_RELEASED.name());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Wie {@link #analyze(AccessContext, PageSnapshot, BooleanSupplier)}, mit der Vorstufe „Sätze vereinfachen“
+     * (ADR 0032, FL3), wenn {@code request} sie verlangt und sie für die Seite laufen kann
+     * ({@link #simplificationUnavailable}); sonst ohne. An das Modell gehen nur Seiten mit KI-Freigabe.
+     *
+     * @param request Betriebsart und Obergrenze der Vorstufe oder {@code null} ohne sie
+     * @param costs   bekommt die Zahlen der Vorstufe, wenn sie lief; nie Inhalte
+     */
+    public PageStatements analyze(AccessContext caller, PageSnapshot snapshot, BooleanSupplier cancelled,
+                                  SimplificationRequest request, Consumer<Simplifications.Costs> costs) {
+        Objects.requireNonNull(costs, "costs");
         require(caller, snapshot);
         StatementAnalyzer parser = analyzer.get();
         if (parser == null) {
@@ -114,8 +159,30 @@ public class StatementAnalysis {
         String input = text.get().inputSha256();
         // Die Version steht vor dem Rechnen fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = parser.version();
-        ParsedStatements result = parser.analyze(PageStatementAnalysis.documentId(key, input),
-                analyzerText(text.get()), cancelled);
+        String documentId = PageStatementAnalysis.documentId(key, input);
+        ParsedStatements result;
+        if (request != null && simplificationUnavailable(key).isEmpty()) {
+            result = parser.analyze(documentId, analyzerText(text.get()), cancelled,
+                    new StatementAnalyzer.Simplification() {
+                        @Override
+                        public SimplificationSettings.Mode mode() {
+                            return request.mode();
+                        }
+
+                        @Override
+                        public Map<Integer, List<SimplifiedSentence>> simplify(List<SimplificationSection> sections) {
+                            if (sections.isEmpty()) {
+                                return Map.of();
+                            }
+                            Simplifications.Result run = simplifications.simplify(key, input, sections,
+                                    request.parallel(), cancelled);
+                            costs.accept(run.costs());
+                            return run.sentences();
+                        }
+                    });
+        } else {
+            result = parser.analyze(documentId, analyzerText(text.get()), cancelled);
+        }
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
@@ -263,6 +330,27 @@ public class StatementAnalysis {
             if (!mentions.contains(attachment.head()) || !mentions.contains(attachment.dependent())) {
                 throw new IllegalStateException("Nominaler Bezug ohne Erwähnung");
             }
+        }
+    }
+
+    /**
+     * Die Vorstufe für einen Analyselauf (ADR 0032, FL3).
+     *
+     * @param mode     welche Sätze vereinfacht werden
+     * @param parallel so viele Abschnitte einer Seite höchstens zugleich beim Modell
+     */
+    public record SimplificationRequest(SimplificationSettings.Mode mode, int parallel) {
+
+        public SimplificationRequest {
+            Objects.requireNonNull(mode, "mode");
+            if (parallel < 1) {
+                throw new IllegalArgumentException("parallel muss mindestens 1 sein");
+            }
+        }
+
+        /** Nach den Einstellungen. */
+        public static SimplificationRequest of(SimplificationSettings settings) {
+            return new SimplificationRequest(settings.mode(), settings.parallel());
         }
     }
 }

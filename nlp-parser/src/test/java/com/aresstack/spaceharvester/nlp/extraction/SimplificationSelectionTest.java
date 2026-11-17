@@ -54,4 +54,21 @@ class SimplificationSelectionTest {
         assertEquals(java.util.List.of(new S(0, "prüfen", true, "o"), new S(0, "senden", true, "v"),
                 new S(0, "buchen", true, "v"), new S(1, "zahlen", false, "o")), merged);
     }
+
+    @Test
+    void featuresComeFromTheOriginalStatementOfTheSameVerb() {
+        record S(int sentence, String verb, boolean plausible, String features) {
+        }
+        java.util.List<S> original = java.util.List.of(new S(0, "senden", false, "verneint"));
+        java.util.List<S> simplified = java.util.List.of(new S(0, "senden", true, "-"), new S(0, "buchen", true,
+                "muss"));
+
+        java.util.List<S> merged = SimplificationSelection.merge(original, simplified, Set.of(0), S::sentence,
+                S::plausible, (a, b) -> a.verb().equals(b.verb()),
+                (vorstufe, own) -> new S(vorstufe.sentence(), vorstufe.verb(), vorstufe.plausible(), own.features()));
+
+        // „senden“ hat eine Aussage im Original: deren Merkmale; „buchen“ fehlt dort: eigene Merkmale der Vorstufe
+        assertEquals(java.util.List.of(new S(0, "senden", true, "verneint"), new S(0, "buchen", true, "muss")),
+                merged);
+    }
 }

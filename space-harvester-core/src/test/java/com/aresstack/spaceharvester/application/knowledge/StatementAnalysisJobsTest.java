@@ -8,7 +8,9 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
+import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -17,6 +19,9 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.simplification.SimplificationModel;
+import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
+import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
@@ -329,6 +334,57 @@ class StatementAnalysisJobsTest {
         assertThat(done.state()).isEqualTo(JobState.FAILED);
         assertThat(done.error().code()).isEqualTo(StatementAnalysisJobs.ANALYZER_UNAVAILABLE);
         assertThat(store.all()).isEmpty();
+    }
+
+    @Test
+    void theStageSendsOnlyReleasedPagesToTheModelAndReportsItsCountsAsNumbersOnly() {
+        List<String> inputs = new java.util.concurrent.CopyOnWriteArrayList<>();
+        SimplificationModel model = new SimplificationModel() {
+            @Override
+            public String version() {
+                return "fake:m1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                inputs.add(input);
+                String[] parts = input.strip().split(" ", 2);
+                return parts[0] + "|T|" + parts[1] + "\n9|T|Fremd.\n";
+            }
+        };
+        Simplifications stage = new Simplifications(model, new SimplificationStore(new InMemoryEnrichmentStore(),
+                StatementAnalysisTest.clock()), page -> page.pageId().equals("1"));
+        StatementAnalysis withStage = new StatementAnalysis(snapshot -> Optional.of(StatementAnalysisTest
+                .text(snapshot)), store, access, configured::get, StatementAnalysisTest.clock(), stage);
+        StatementAnalysisJobs jobsWithStage = new StatementAnalysisJobs(jobs, tree,
+                (caller, sourceId, pageId) -> page(sourceId, pageId), withStage, access, "desktop");
+        tree.space("wiki", "DEV", "1", "2");
+        StatementAnalysisJobs.Options options = new StatementAnalysisJobs.Options(false, 0,
+                new StatementAnalysis.SimplificationRequest(SimplificationSettings.Mode.WHERE_NEEDED, 2));
+
+        JobStatus done = jobs.status(jobsWithStage.start(CALLER, new StatementAnalysisJobs.Scope.Space("wiki", "DEV"),
+                options).id());
+
+        assertThat(done.progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        assertThat(inputs).hasSize(1).allSatisfy(input -> assertThat(input).contains("Sachbearbeiter 1")
+                .doesNotContain("Sachbearbeiter 2"));
+        assertThat(parser.stages).hasSize(1);
+        assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.message()).isEqualTo(
+                "Vorstufe „nur wo nötig“: 1 Seiten, 1 Sätze gewählt, 1 Abschnitte mit Modellaufruf, 0 Sätze aus der "
+                        + "Ablage, 1 Antwortzeilen verworfen, 0 Sätze mit ergänzten Wörtern verworfen, 0 unvollständig; "
+                        + "1 Seiten ohne Vorstufe (kein Modell oder keine KI-Freigabe)"));
+
+        // Zweiter Lauf: die aktuelle Analyse zählt nicht als erledigt, der Satz kommt aus der Ablage
+        JobStatus again = jobs.status(jobsWithStage.start(CALLER, new StatementAnalysisJobs.Scope.Space("wiki",
+                "DEV"), options).id());
+        assertThat(inputs).hasSize(1);
+        assertThat(jobs.events(again.id())).anySatisfy(event -> assertThat(event.message())
+                .contains("0 Abschnitte mit Modellaufruf, 1 Sätze aus der Ablage"));
     }
 
     private JobStatus run(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {

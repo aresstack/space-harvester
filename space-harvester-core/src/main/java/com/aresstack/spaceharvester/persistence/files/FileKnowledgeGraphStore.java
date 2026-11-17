@@ -323,6 +323,12 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("modality", statement.features().modality().name());
                 entry.put("temporality", statement.features().temporality().name());
             }
+            if (statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL) {
+                // ADR 0032, FL3: nur bei Aussagen der Vorstufe; fehlt das Feld, stammt die Aussage aus dem Original
+                entry.put("origin", statement.derivation().origin().name());
+                entry.put("stageFlag", statement.derivation().stageFlag().name());
+                entry.put("simplifiedSentence", statement.derivation().simplifiedSentence());
+            }
         }
         ArrayNode attachments = node.putArray("attachments");
         for (ParsedStatements.Attachment attachment : result.attachments()) {
@@ -394,7 +400,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                     enumOr(ParsedStatements.Negation.class, entry, "negation", ParsedStatements.Negation.UNKNOWN),
                     enumOr(ParsedStatements.Modality.class, entry, "modality", ParsedStatements.Modality.UNKNOWN),
                     enumOr(ParsedStatements.Temporality.class, entry, "temporality",
-                            ParsedStatements.Temporality.UNKNOWN)));
+                            ParsedStatements.Temporality.UNKNOWN)), derivation(entry));
             statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
@@ -421,6 +427,20 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
     }
 
     /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */
+    /** Herkunft einer Aussage (ADR 0032, FL3); ohne oder mit unlesbaren Feldern aus dem Original. */
+    private static ParsedStatements.Derivation derivation(JsonNode entry) {
+        ParsedStatements.Origin origin = enumOr(ParsedStatements.Origin.class, entry, "origin",
+                ParsedStatements.Origin.ORIGINAL);
+        ParsedStatements.StageFlag flag = enumOr(ParsedStatements.StageFlag.class, entry, "stageFlag",
+                ParsedStatements.StageFlag.NONE);
+        String sentence = text(entry, "simplifiedSentence");
+        if (origin != ParsedStatements.Origin.VORSTUFE || flag == ParsedStatements.StageFlag.NONE || sentence == null
+                || sentence.isBlank()) {
+            return ParsedStatements.Derivation.ORIGINAL;
+        }
+        return ParsedStatements.Derivation.vorstufe(flag, sentence);
+    }
+
     private static <E extends Enum<E>> E enumOr(Class<E> type, JsonNode entry, String field, E fallback) {
         JsonNode value = entry.path(field);
         if (!value.isString()) {
