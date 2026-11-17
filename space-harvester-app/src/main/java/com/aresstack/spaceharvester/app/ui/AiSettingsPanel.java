@@ -167,13 +167,13 @@ final class AiSettingsPanel {
     static final String AUTOMATIC_SYNONYMS_OFF = "nur auf Klick";
     static final String AUTOMATIC_SYNONYMS_HELP = "Mit Häkchen schlägt Space Harvester nach jedem Abgleich einer "
             + "Quelle und immer dann, wenn eine Seite neu für die KI freigegeben wird, von selbst Synonyme für diese "
-            + "Quelle vor; der Lauf erscheint unter Aufträge. Ohne Häkchen gibt es Vorschläge nur, wenn du unter "
-            + "Begriffe auf „Synonyme vorschlagen“ klickst.\n\n"
+            + "Quelle vor; der Lauf erscheint unter Aufträge. Ohne Häkchen gibt es Vorschläge nur über „Synonyme "
+            + "vorschlagen“ an der Liste der Beziehungen.\n\n"
             + "Für Vorschläge aus der Bedeutung braucht es ein Embedding-Modell und für die KI freigegebene Seiten. "
             + "Fehlt eins davon, findet der Lauf nur Schreibvarianten und Stellen wie „auch genannt“ oder "
             + "„kurz: …“.\n\n"
-            + "Bestätigt wird dabei nichts: Alles bleibt ein Vorschlag, den du unter Begriffe › Synonyme annimmst oder "
-            + "ablehnst. Was du dort entschieden hast, bleibt bestehen. Gilt ohne Neustart beim nächsten Abgleich. "
+            + "Bestätigt wird dabei nichts: Alles bleibt ein Vorschlag, den du in der Liste der Beziehungen annimmst "
+            + "oder ablehnst. Was du dort entschieden hast, bleibt bestehen. Gilt ohne Neustart beim nächsten Abgleich. "
             + "Schlüssel in der Konfigurationsdatei: space-harvester.terms.synonyms.automatic.";
     /**
      * Vorstufe „Sätze vereinfachen“ der Aussagenanalyse ({@code space-harvester.statements.simplification.*},
