@@ -124,3 +124,8 @@ J05	J	5	Annahmestelle	Poststelle	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist d
 J06	J	6	Ansprechpartner	Pförtner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Zeitangabe „am“ davor, „für“ danach
 J07	J	7	Stellvertreterin	Frau|Lindner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv (weiblich) und Angabe „im“ danach
 J08	J	8	Vorgesetzter	Schichtführer	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv und Angabe „beim“ danach
+K01	K	1	prüfen	Datenschutzbeauftragte|Datenschutzbeauftragter	Lieferantenliste	-	nein	-	GILT	nominalisiertes Adjektiv als Handelnder
+K02	K	2	melden	Angestellter|Angestellte	Schaden	-	nein	-	GILT	nominalisiertes Adjektiv mit „ein“; „des Lagers“ ist Genitiv
+K03	K	3	Vorsitzende|Vorsitzender	Frau|Kern	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, nominalisiertes Adjektiv als Rollennomen
+K04	K	4	informieren	Einkäufer	Bevollmächtigten|Bevollmächtigte|Bevollmächtigter	-	nein	-	GILT	nominalisiertes Adjektiv als Betroffener
+K05	K	5	bestätigen	Angestellten|Angestellte|Angestellter	Wareneingang	-	nein	-	GILT	nominalisiertes Adjektiv in der Mehrzahl

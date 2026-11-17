@@ -113,3 +113,8 @@ S	1	referentin(H=Berger) PLAUSIBLE	STIMMT
 S	2	poststelle(H=Kanzlei) PLAUSIBLE	STIMMT
 S	3	dienstleister(H=Rechenzentrum) PLAUSIBLE	STIMMT
 S	5	vertreter(H=Roth) PLAUSIBLE	STIMMT
+N	1	prüfen(H=Beauftragte, B=Antrag) PLAUSIBLE	STIMMT
+N	2	unterschreiben(H=Beauftragter, B=Bescheid) PLAUSIBLE	STIMMT
+N	3	informieren(H=Stelle, B=Angestellten) PLAUSIBLE	STIMMT
+N	4	vorsitzende(H=Lang) PLAUSIBLE	STIMMT
+N	5	bevollmächtigte(H=Wolf) PLAUSIBLE	STIMMT

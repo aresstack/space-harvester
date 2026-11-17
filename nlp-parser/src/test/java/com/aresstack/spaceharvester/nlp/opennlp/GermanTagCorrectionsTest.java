@@ -120,4 +120,43 @@ class GermanTagCorrectionsTest {
         assertEquals("geraten", GermanTagCorrections.lemma("gerät", "VERB", "gerät", false), "klein mitten im Satz");
         assertEquals("halten", GermanTagCorrections.lemma("Hält", "VERB", "halten", false), "Grundform von OpenNLP bleibt");
     }
+
+    @Test
+    void everyInflectedFormOfAListedNominalizedAdjectiveHasOneBaseForm() {
+        for (String form : new String[] {"Bevollmächtigte", "Bevollmächtigter", "Bevollmächtigten", "Bevollmächtigtem",
+                "Bevollmächtigtes"}) {
+            assertEquals("bevollmächtigte", GermanTagCorrections.lemma(form, "NOUN", form.toLowerCase(), false), form);
+        }
+        assertEquals("vorgesetzte", GermanTagCorrections.lemma("Vorgesetzte", "NOUN", "vorgesetzt", false));
+        assertEquals("vorgesetzte", GermanTagCorrections.lemma("Vorgesetzter", "NOUN", "vorgesetzte", false));
+        assertEquals("sachverständige", GermanTagCorrections.lemma("Sachverständiger", "NOUN", "sachverständiger",
+                false));
+        assertEquals("datenschutzbeauftragte", GermanTagCorrections.lemma("Datenschutzbeauftragten", "NOUN",
+                null, false), "auch als Ende einer Zusammensetzung");
+    }
+
+    @Test
+    void ordinaryNounsOnTerDerAndErStayAsTheyAre() {
+        for (String form : new String[] {"Vertreter", "Bearbeiter", "Berater", "Verwalter", "Gesellschafter", "Anwender",
+                "Absender", "Spender", "Leiter", "Sachbearbeiter", "Mitarbeiter", "Empfänger", "Antrag", "Beamtenrecht"}) {
+            assertNull(GermanTagCorrections.nominalizedAdjective(form), form);
+            String lemma = form.toLowerCase();
+            assertEquals(lemma, GermanTagCorrections.lemma(form, "NOUN", lemma, false), form);
+        }
+    }
+
+    @Test
+    void aNominalizedAdjectiveOutsideTheListStaysAsTheLemmatizerGivesIt() {
+        assertNull(GermanTagCorrections.nominalizedAdjective("Bevorrechtigter"), "nicht in der Liste: Lücke");
+        assertEquals("bevorrechtigter", GermanTagCorrections.lemma("Bevorrechtigter", "NOUN", "bevorrechtigter",
+                false));
+    }
+
+    @Test
+    void aListedNominalizedAdjectiveIsNeverAProperNoun() {
+        String[] forms = {"Der", "Bevollmächtigte", "prüft", "Herr", "Wolf"};
+        String[] upos = {"DET", "PROPN", "VERB", "NOUN", "PROPN"};
+        GermanTagCorrections.correctTags(forms, upos);
+        assertArrayEquals(new String[] {"DET", "NOUN", "VERB", "NOUN", "PROPN"}, upos);
+    }
 }
