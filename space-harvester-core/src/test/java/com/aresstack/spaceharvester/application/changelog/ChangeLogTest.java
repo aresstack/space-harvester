@@ -41,6 +41,7 @@ class ChangeLogTest {
     private final List<ContentChange> diffs = new ArrayList<>();
     private Consumer<String> recorded = ignored -> {
     };
+    private long pageCount = -1;
     private final ChangeLogStore store = new ChangeLogStore() {
         @Override
         public List<ChangeEntry> changeEntries(String sourceId) {
@@ -60,6 +61,11 @@ class ChangeLogTest {
         @Override
         public void mark(UpdateMark mark) {
             marks.add(mark);
+        }
+
+        @Override
+        public long pageCount(String sourceId) {
+            return pageCount;
         }
 
         @Override
@@ -641,5 +647,50 @@ class ChangeLogTest {
         assertThat(page.labels()).containsExactly("neu", "api");
         assertThat(log.entries(CALLER, new ChangeFilter("wiki", null, Set.of(), Set.of(), null, null, null, 0, 10))
                 .entries()).extracting(ChangeEntry::editor).containsExactly("Ada", "Bea", "Ada");
+    }
+
+    // --- Erstbefüllung nur bei echter Inventur (Befund 17.11.) ----------------------------------------------------
+
+    @Test
+    void aFirstUpdateOfASourceAlreadyInTheCacheIsAnOrdinaryUpdateWithItsPages() {
+        pageCount = 15_567;
+        row(5, "100", ChangeKind.CONTENT_CHANGED, ChangeTrigger.MANUAL, "Start", "Start", "1", "2", false);
+        row(6, "101", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "Neu", null, "1", false);
+        mark(10, true);
+
+        ChangeUpdate first = log.updates(CALLER, "wiki").getFirst();
+
+        assertThat(first.initial()).isFalse();
+        assertThat(first.pages()).isEqualTo(2);
+        assertThat(log.report(CALLER, "wiki", first.id()).pages()).extracting(ReportedPage::pageId)
+                .containsExactlyInAnyOrder("100", "101");
+    }
+
+    @Test
+    void aRealInventoryStaysTheInitialLoadWhenTheSourceGrowsLater() {
+        pageCount = 3;
+        row(1, "100", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "A", null, "1", false);
+        row(2, "101", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "B", null, "1", false);
+        row(3, "102", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "C", null, "1", false);
+        mark(10, true);
+        for (int i = 0; i < 10; i++) {
+            row(20 + i, "2" + i, ChangeKind.NEW, ChangeTrigger.MANUAL, null, "Neu " + i, null, "1", false);
+        }
+        pageCount = 13;
+
+        List<ChangeUpdate> updates = log.updates(CALLER, "wiki");
+
+        assertThat(updates.getLast().initial()).isTrue();
+        assertThat(updates.getFirst().id()).isEqualTo(ChangeUpdate.OPEN);
+        assertThat(updates.getFirst().pages()).isEqualTo(10);
+    }
+
+    @Test
+    void reloadedContentAloneOpensNoUpdate() {
+        row(1, "100", ChangeKind.NEW, ChangeTrigger.MANUAL, null, "A", null, "1", false);
+        mark(10, true);
+        row(12, "100", ChangeKind.RELOADED, ChangeTrigger.BACKGROUND, "A", "A", "1", "1", false);
+
+        assertThat(log.updates(CALLER, "wiki")).extracting(ChangeUpdate::id).doesNotContain(ChangeUpdate.OPEN);
     }
 }

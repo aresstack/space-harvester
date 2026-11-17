@@ -31,6 +31,11 @@ public interface ChangeLogStore extends UpdateMarks {
         return window.result();
     }
 
+    /** Zahl der Seiten der Quelle im Bestand; negativ, wenn unbekannt. */
+    default long pageCount(String sourceId) {
+        return -1;
+    }
+
     /** Die abgelegte Zusammenfassung eines Updates in einer Ebene ({@code spaceKey} {@code null}: ganze Quelle). */
     default java.util.Optional<StoredSummary> summary(String sourceId, String updateId, String spaceKey) {
         return java.util.Optional.empty();
