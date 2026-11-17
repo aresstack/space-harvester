@@ -205,6 +205,8 @@ public final class Explorer {
     static final class Node extends DefaultMutableTreeNode {
         boolean loaded;
         boolean loading;
+        /** Die gezeigten Kinder kommen aus dem Cache; die Abfrage bei der Quelle steht noch aus oder ist gescheitert. */
+        boolean fromCache;
         /** Läuft einmal, sobald die Kinder geladen sind (siehe {@link #reveal}). */
         Runnable then;
 
@@ -966,7 +968,12 @@ public final class Explorer {
         return node;
     }
 
-    /** Lädt die Kinder eines Knotens beim ersten Aufklappen; nach einem Fehler beim nächsten erneut. */
+    /**
+     * Lädt die Kinder eines Knotens beim ersten Aufklappen; nach einem Fehler beim nächsten erneut. Seiten erscheinen
+     * zuerst aus dem Cache (sofort, nach Titel geordnet), dann fragt der Baum die Quelle und gleicht nach Seiten-ID ab,
+     * ohne Aufklappung und Auswahl darunter zu verlieren; danach lädt der Core die Leseansichten der Kinder vor
+     * (Angelo, 17.11.2026). Ist im Cache nichts, bleibt „Lädt …“ bis zur Antwort der Quelle.
+     */
     private void load(Node node) {
         if (node.loaded || node.loading) {
             return;
@@ -982,12 +989,40 @@ public final class Explorer {
         } else if (item instanceof PageItem page) {
             states.open(page.sourceId(), page.spaceKey());
         }
-        Background.run(() -> children(runtime, item, null), batch -> {
+        if (node.fromCache || !(item instanceof SpaceItem || item instanceof PageItem)) {
+            loadLive(runtime, node);
+            return;
+        }
+        Background.run(() -> cachedChildren(runtime, item), cached -> {
+            if (!cached.nodes().isEmpty()) {
+                // Noch steht nur „Lädt …“ darunter: Neuaufbau dieses Knotens verliert nichts.
+                node.removeAllChildren();
+                append(node, cached);
+                node.fromCache = true;
+                model.nodeStructureChanged(node);
+            }
+            loadLive(runtime, node);
+        }, error -> loadLive(runtime, node));
+    }
+
+    /** Fragt die Kinder bei der Quelle ab; über einem Stand aus dem Cache per Abgleich, sonst wie bisher. */
+    private void loadLive(AppRuntime runtime, Node node) {
+        Item item = node.item();
+        Background.run(() -> {
+            Batch batch = children(runtime, item, null);
+            prefetch(runtime, item, batch);
+            return batch;
+        }, batch -> {
             node.loading = false;
             node.loaded = true;
-            node.removeAllChildren();
-            append(node, batch);
-            model.nodeStructureChanged(node);
+            if (node.fromCache) {
+                node.fromCache = false;
+                merge(node, batch);
+            } else {
+                node.removeAllChildren();
+                append(node, batch);
+                model.nodeStructureChanged(node);
+            }
             // Neue Spaces im Baum zählen für den Gesamtstand der Kopfzeile.
             if (item instanceof SourceItem) {
                 statesChanged();
@@ -1000,10 +1035,56 @@ public final class Explorer {
         }, error -> {
             node.loading = false;
             node.then = null;
+            if (node.fromCache) {
+                // Der Stand aus dem Cache bleibt stehen; beim nächsten Aufklappen fragt der Baum die Quelle erneut.
+                note.setText("Nicht geladen: " + Problems.describe(error).title());
+                return;
+            }
             node.removeAllChildren();
             node.add(new Node(new Note("Nicht geladen: " + Problems.describe(error).title())));
             model.nodeStructureChanged(node);
         });
+    }
+
+    /** Höchstens so viele Leseansichten lädt der Core je aufgeklapptem Knoten vor. */
+    static final int PREFETCH_LIMIT = 25;
+
+    /** Lässt den Core die Leseansichten der eben geholten Kindseiten vorladen; still, wenn das nicht geht. */
+    private static void prefetch(AppRuntime runtime, Item item, Batch batch) {
+        String sourceId = switch (item) {
+            case SpaceItem space -> space.sourceId();
+            case PageItem page -> page.sourceId();
+            default -> null;
+        };
+        if (sourceId == null) {
+            return;
+        }
+        List<String> pageIds = batch.nodes().stream().map(Node::item)
+                .filter(PageItem.class::isInstance).map(child -> ((PageItem) child).pageId())
+                .limit(PREFETCH_LIMIT).toList();
+        if (pageIds.isEmpty()) {
+            return;
+        }
+        try {
+            runtime.workspace().prefetchReadingViews(sourceId, pageIds);
+        } catch (RuntimeException ignored) {
+            // Vorladen ist nur eine Beschleunigung.
+        }
+    }
+
+    /** Die Kindseiten aus dem Cache, ohne die Quelle zu fragen; leer, wenn dort nichts liegt oder es nicht geht. */
+    static Batch cachedChildren(AppRuntime runtime, Item item) {
+        try {
+            return switch (item) {
+                case SpaceItem space -> nodes(space.sourceId(),
+                        runtime.workspace().cachedChildren(space.sourceId(), space.spaceKey(), null));
+                case PageItem page -> nodes(page.sourceId(),
+                        runtime.workspace().cachedChildren(page.sourceId(), page.spaceKey(), page.pageId()));
+                default -> new Batch(List.of(), null);
+            };
+        } catch (RuntimeException notCached) {
+            return new Batch(List.of(), null);
+        }
     }
 
     /** Ein Klick: Seite öffnen bzw. den nächsten Stapel holen. */
@@ -1187,6 +1268,10 @@ public final class Explorer {
             }
             throw e;
         }
+        return nodes(sourceId, children);
+    }
+
+    private static Batch nodes(String sourceId, PageNavigation.Children children) {
         List<Node> nodes = new ArrayList<>();
         for (HarvestSource.PageNode page : children.pages()) {
             PageItem item = new PageItem(sourceId, page.partitionKey() == null ? children.spaceKey()

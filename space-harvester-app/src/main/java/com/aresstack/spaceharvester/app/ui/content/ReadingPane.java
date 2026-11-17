@@ -81,6 +81,13 @@ final class ReadingPane extends JPanel {
 
     private final JEditorPane pane = new JEditorPane();
     private final JLabel hint = Comic.muted(" ");
+    /** Hinweis oben, wenn die Quelle einen neueren Stand hat als der gezeigte aus dem Cache (Angelo, 17.11.2026). */
+    private final JPanel update = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 4));
+    private final JLabel updateText = new JLabel();
+    private final JLabel updateLink = new JLabel(RELOAD);
+    private Runnable reload = () -> { };
+    /** Text des Links im Hinweis auf einen neueren Stand. */
+    static final String RELOAD = "Seite neu laden";
     /** Oberer Innenabstand der Ansicht ohne Wolkenbanner. */
     private static final int PADDING_TOP = 10;
     /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
@@ -130,9 +137,81 @@ final class ReadingPane extends JPanel {
         });
         overlay.setHighlight(Comic.BLUE);
         overlay.setVeilColor(Comic.SURFACE);
-        add(hint, BorderLayout.NORTH);
+        update.setBackground(new java.awt.Color(0xFFF6D5));
+        update.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.YELLOW, 1, true),
+                BorderFactory.createEmptyBorder(2, 6, 2, 6)));
+        updateText.setFont(Comic.regular(13f));
+        updateText.setForeground(Comic.TEXT);
+        updateLink.setFont(Comic.semiBold(13f));
+        updateLink.setForeground(Comic.BLUE);
+        updateLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        updateLink.getAccessibleContext().setAccessibleName(RELOAD);
+        updateLink.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                clickUpdate();
+            }
+        });
+        update.add(updateText);
+        update.add(updateLink);
+        update.setVisible(false);
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new javax.swing.BoxLayout(top, javax.swing.BoxLayout.Y_AXIS));
+        update.setAlignmentX(LEFT_ALIGNMENT);
+        hint.setAlignmentX(LEFT_ALIGNMENT);
+        top.add(update);
+        top.add(hint);
+        add(top, BorderLayout.NORTH);
         add(overlay, BorderLayout.CENTER);
         clear(" ");
+    }
+
+    /**
+     * Der Satz über einen neueren Stand: „Es gibt N Updates seit Ihrem letzten Besuch –“, N aus den Versionsnummern
+     * (neu minus gezeigt); sind es keine Zahlen oder ist die Differenz nicht positiv, ohne Zahl.
+     */
+    static String updateSentence(String shownVersion, String freshVersion) {
+        long count = 0;
+        try {
+            count = Long.parseLong(freshVersion.trim()) - Long.parseLong(shownVersion.trim());
+        } catch (RuntimeException notNumbers) {
+            count = 0;
+        }
+        if (count == 1) {
+            return "Es gibt 1 Update seit Ihrem letzten Besuch –";
+        }
+        return "Es gibt " + (count > 1 ? count + " " : "") + "Updates seit Ihrem letzten Besuch –";
+    }
+
+    /** Zeigt oben den Hinweis auf einen neueren Stand; „Seite neu laden“ führt {@code reload} aus und blendet ihn aus. */
+    void offerUpdate(String sentence, Runnable reload) {
+        this.reload = java.util.Objects.requireNonNull(reload, "reload");
+        updateText.setText(sentence);
+        update.setVisible(true);
+        revalidate();
+        repaint();
+    }
+
+    private void hideUpdate() {
+        reload = () -> { };
+        if (update.isVisible()) {
+            update.setVisible(false);
+            revalidate();
+            repaint();
+        }
+    }
+
+    /** Für Tests: der Satz des Hinweises auf einen neueren Stand, leer ohne Hinweis. */
+    String updateOffer() {
+        return update.isVisible() ? updateText.getText() : "";
+    }
+
+    /** Ein Klick auf „Seite neu laden“ (auch für Tests). */
+    void clickUpdate() {
+        Runnable action = reload;
+        hideUpdate();
+        action.run();
     }
 
     /**
@@ -174,6 +253,7 @@ final class ReadingPane extends JPanel {
 
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
+        hideUpdate();
         overlay.setBusy(false);
         originals = Map.of();
         vectors = Map.of();
@@ -210,6 +290,7 @@ final class ReadingPane extends JPanel {
      * Seitendetails (ⓘ); über dem Text nur, wenn etwas nicht darstellbar ist oder es keinen Text gibt.
      */
     void show(Prepared prepared) {
+        hideUpdate();
         overlay.setBusy(false);
         originals = prepared.originals();
         vectors = prepared.vectors();
