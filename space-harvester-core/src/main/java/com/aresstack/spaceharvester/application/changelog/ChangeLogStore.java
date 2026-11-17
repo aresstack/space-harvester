@@ -31,23 +31,28 @@ public interface ChangeLogStore extends UpdateMarks {
         return window.result();
     }
 
-    /** Die abgelegte Zusammenfassung eines Updates. */
-    default java.util.Optional<StoredSummary> summary(String sourceId, String updateId) {
+    /** Die abgelegte Zusammenfassung eines Updates in einer Ebene ({@code spaceKey} {@code null}: ganze Quelle). */
+    default java.util.Optional<StoredSummary> summary(String sourceId, String updateId, String spaceKey) {
         return java.util.Optional.empty();
     }
 
-    /** Die Updates einer Quelle mit abgelegter Zusammenfassung. */
-    default java.util.Set<String> summarizedUpdates(String sourceId) {
+    /** Die Updates einer Quelle mit abgelegter Zusammenfassung in einer Ebene ({@code null}: ganze Quelle). */
+    default java.util.Set<String> summarizedUpdates(String sourceId, String spaceKey) {
         return java.util.Set.of();
     }
 
-    /** Legt die Zusammenfassung ab und ersetzt eine frühere desselben Updates; meldet danach die Quelle. */
+    /** Alle abgelegten Zusammenfassungen einer Quelle, jeder Ebene. */
+    default List<StoredSummary> summaries(String sourceId) {
+        return List.of();
+    }
+
+    /** Legt die Zusammenfassung ab und ersetzt eine frühere desselben Updates und derselben Ebene; meldet die Quelle. */
     default void saveSummary(StoredSummary summary) {
         throw new IllegalStateException("Ohne Cache gibt es keine Ablage für Zusammenfassungen");
     }
 
-    /** Entfernt die Zusammenfassung eines Updates, ohne Meldung. */
-    default void deleteSummary(String sourceId, String updateId) {
+    /** Entfernt die Zusammenfassung eines Updates in einer Ebene, ohne Meldung. */
+    default void deleteSummary(String sourceId, String updateId, String spaceKey) {
     }
 
     /**

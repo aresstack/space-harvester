@@ -189,6 +189,9 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      Absätze; Unbekanntes als Zustand) samt Bericht des Ausschnitts und Lage jeder Seite im Text; das Material für ein
      Modell enthält nur Seiten mit KI-Freigabe und keine Verweise. Im Dienst
      `GET /api/v1/sources/{sourceId}/updates/{updateId}/text?space=&offset=&limit=` (JSON oder `text/markdown`).
+     Zusammenfassungen je Ebene (ADR 0031): `summary` und `summarize` nehmen einen optionalen Space; jede Ebene hat
+     ihre eigene Ablage, Gültigkeit und `stale`, gelöscht mit Quelle, Aufbewahrung und Entzug der Freigabe
+     (`?space=` an `…/summary`).
 
    Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
    `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,

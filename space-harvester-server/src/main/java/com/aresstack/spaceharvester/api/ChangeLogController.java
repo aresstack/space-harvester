@@ -116,6 +116,7 @@ public class ChangeLogController {
                 .body(text.markdown());
     }
 
+    /** Der Space der Ebene, {@code null} für die ganze Quelle. */
     private static String textWindow(String space) {
         return space == null || space.isBlank() ? null : space.strip();
     }
@@ -139,8 +140,11 @@ public class ChangeLogController {
             + "(update-not-found)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<UpdateSummary> summary(@Parameter(hidden = true) AccessContext caller,
-                                                 @PathVariable String sourceId, @PathVariable String updateId) {
-        return changeLog.summary(caller, sourceId, updateId).map(ResponseEntity::ok)
+                                                 @PathVariable String sourceId, @PathVariable String updateId,
+                                                 @Parameter(description = "Space der Ebene (ADR 0031); ohne die ganze "
+                                                         + "Quelle")
+                                                 @RequestParam(required = false) String space) {
+        return changeLog.summary(caller, sourceId, updateId, textWindow(space)).map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
@@ -157,8 +161,11 @@ public class ChangeLogController {
             + "(summary-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<JobStatus> summarize(@Parameter(hidden = true) AccessContext caller,
-                                               @PathVariable String sourceId, @PathVariable String updateId) {
-        return ResponseEntity.accepted().body(changeLog.summarize(caller, sourceId, updateId));
+                                               @PathVariable String sourceId, @PathVariable String updateId,
+                                               @Parameter(description = "Space der Ebene (ADR 0031); ohne die ganze "
+                                                       + "Quelle")
+                                               @RequestParam(required = false) String space) {
+        return ResponseEntity.accepted().body(changeLog.summarize(caller, sourceId, updateId, textWindow(space)));
     }
 
     @GetMapping(path = ENTRIES, produces = MediaType.APPLICATION_JSON_VALUE)

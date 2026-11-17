@@ -214,6 +214,10 @@ class ChangeLogApiTest {
         HttpResponse<String> start = post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary");
         assertThat(start.statusCode()).as(start.body()).isEqualTo(409);
         assertThat(start.body()).contains("summary-unavailable", "NO_MODEL");
+        assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary?space=DEV").statusCode())
+                .isEqualTo(204);
+        assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/summary?space=DEV").statusCode())
+                .isEqualTo(409);
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345/summary").statusCode()).isEqualTo(404);
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/nirgends/updates/open/summary").statusCode())
                 .isEqualTo(404);

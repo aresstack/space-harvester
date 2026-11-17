@@ -779,37 +779,58 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     // --- Zusammenfassungen (ADR 0030, Abschnitt 5) ---------------------------------------------------------------
 
     @Override
-    public Optional<StoredSummary> summary(String sourceId, String updateId) {
+    public Optional<StoredSummary> summary(String sourceId, String updateId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(updateId, "updateId");
         return read(searcher -> {
-            TopDocs top = searcher.search(new TermQuery(ChangeLogSchema.summaryTerm(sourceId, updateId)), 1);
+            TopDocs top = searcher.search(new TermQuery(ChangeLogSchema.summaryTerm(sourceId, updateId, spaceKey)), 1);
             return top.scoreDocs.length == 0 ? Optional.<StoredSummary>empty()
                     : Optional.of(ChangeLogSchema.summary(searcher.storedFields().document(top.scoreDocs[0].doc)));
         });
     }
 
     @Override
-    public Set<String> summarizedUpdates(String sourceId) {
+    public Set<String> summarizedUpdates(String sourceId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         return read(searcher -> {
             TopDocs top = searcher.search(ChangeLogSchema.summariesOf(sourceId), Integer.MAX_VALUE);
             StoredFields stored = searcher.storedFields();
             Set<String> found = new HashSet<>();
             for (ScoreDoc hit : top.scoreDocs) {
-                found.add(ChangeLogSchema.summaryUpdate(stored.document(hit.doc)));
+                org.apache.lucene.document.Document doc = stored.document(hit.doc);
+                if (Objects.equals(ChangeLogSchema.summarySpace(doc), spaceKey)) {
+                    found.add(ChangeLogSchema.summaryUpdate(doc));
+                }
             }
             return found;
         });
     }
 
-    /** Legt die Zusammenfassung in einem eigenen Commit ab, ersetzt die vorige desselben Updates und meldet die Quelle. */
+    @Override
+    public List<StoredSummary> summaries(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return read(searcher -> {
+            TopDocs top = searcher.search(ChangeLogSchema.summariesOf(sourceId), Integer.MAX_VALUE);
+            StoredFields stored = searcher.storedFields();
+            List<StoredSummary> found = new ArrayList<>(top.scoreDocs.length);
+            for (ScoreDoc hit : top.scoreDocs) {
+                found.add(ChangeLogSchema.summary(stored.document(hit.doc)));
+            }
+            return found;
+        });
+    }
+
+    /**
+     * Legt die Zusammenfassung in einem eigenen Commit ab, ersetzt die vorige desselben Updates und derselben Ebene und
+     * meldet die Quelle.
+     */
     @Override
     public void saveSummary(StoredSummary summary) {
         Objects.requireNonNull(summary, "summary");
         try (Batch batch = begin()) {
             batch.dirty = true;
-            write(() -> writer.updateDocument(ChangeLogSchema.summaryTerm(summary.sourceId(), summary.updateId()),
+            write(() -> writer.updateDocument(
+                    ChangeLogSchema.summaryTerm(summary.sourceId(), summary.updateId(), summary.spaceKey()),
                     ChangeLogSchema.summary(summary)));
             batch.commit();
         }
@@ -817,12 +838,12 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     }
 
     @Override
-    public void deleteSummary(String sourceId, String updateId) {
+    public void deleteSummary(String sourceId, String updateId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(updateId, "updateId");
         try (Batch batch = begin()) {
             batch.dirty = true;
-            write(() -> writer.deleteDocuments(ChangeLogSchema.summaryTerm(sourceId, updateId)));
+            write(() -> writer.deleteDocuments(ChangeLogSchema.summaryTerm(sourceId, updateId, spaceKey)));
             batch.commit();
         }
     }
