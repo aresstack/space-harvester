@@ -1,0 +1,8 @@
+Der Besteller erstellt eine Bestellanforderung.
+Die Einkaufsabteilung prüft die Bestellanforderung.
+Der Einkäufer holt drei Angebote ein.
+Der Lieferant liefert die Ware innerhalb von fünf Tagen.
+Der Lagerist bucht den Wareneingang.
+Die Buchhaltung bezahlt die Rechnung.
+Der Lagerleiter übergibt dem Besteller die Ware.
+Das Lagerverzeichnis enthält alle Lagerplätze.

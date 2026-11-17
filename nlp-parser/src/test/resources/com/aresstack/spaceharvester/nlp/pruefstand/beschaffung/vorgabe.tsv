@@ -1,0 +1,68 @@
+# Handvorgabe Textsatz „beschaffung“ (Kontrollsatz, erfundene Texte, Strang AT 17.11.2026).
+# Von Hand festgelegt, BEVOR die Kette über die Texte lief. Regeln werden hieran NICHT entwickelt, nur gemessen.
+# Schreibweisen wie in foerderung/vorgabe.tsv (-, ?X, §v, ~X, A|B). „an“-Gruppen sind Ergänzung, kein Empfänger.
+# Fallen: B03 („durch“ als Mittel), B12 (gereihtes Verb ohne eigenes Objekt), A07/B16/E09 (Dativ als Empfänger).
+# id	text	satz	verb	handelnder	betroffenes	empfaenger	verneint	verbindlichkeit	zeitbezug	bemerkung
+A01	A	1	erstellen	Besteller	Bestellanforderung	-	nein	-	GILT	
+A02	A	2	prüfen	Einkaufsabteilung	Bestellanforderung	-	nein	-	GILT	
+A03	A	3	einholen	Einkäufer	Angebote	-	nein	-	GILT	
+A04	A	4	liefern	Lieferant	Ware	-	nein	-	GILT	
+A05	A	5	buchen	Lagerist	Wareneingang	-	nein	-	GILT	
+A06	A	6	bezahlen	Buchhaltung	Rechnung	-	nein	-	GILT	
+A07	A	7	übergeben	Lagerleiter	Ware	Besteller	nein	-	GILT	Dativ als Empfänger im Aktivsatz
+A08	A	8	enthalten	Lagerverzeichnis	Lagerplätze	-	nein	-	GILT	
+B01	B	1	freigeben	Kostenstellenleiter	Bestellanforderung	-	nein	-	GILT	Passiv mit von-Gruppe
+B02	B	2	prüfen	Lagerist|Lageristen	Ware	-	nein	-	GILT	„durch“ im Passiv ist Handelnder
+B03	B	3	begleichen	-	Rechnung	-	nein	-	GILT	FALLE: „durch Überweisung“ ist Mittel, kein Handelnder
+B04	B	4	aussondern	Lagerist	Artikel	-	nein	-	GILT	Relativpronomen „die“ = Artikel
+B05	B	4	zurücksenden	-	Artikel	-	nein	-	GILT	
+B06	B	5	durchführen	Lagerleiter	Inventur	-	nein	MUSS	GILT	„ist … durchzuführen“
+B07	B	6	unterschreiten	-	Mindestbestand	-	nein	-	GILT	Bedingung (sofern), Passiv
+B08	B	6	auslösen	Lagersystem	Nachbestellung	-	nein	-	GILT	
+B09	B	6	benachrichtigen	Lagersystem	Einkäufer	-	nein	-	GILT	gemeinsames Subjekt der Reihung
+B10	B	7	vergeben	Einkäufer	Auftrag	-	ja	DARF	GILT	„darf … nicht“
+B11	B	7	fehlen	Freigabe	-	-	nein	-	GILT	Bedingung (solange)
+B12	B	8	erscheinen	Lagerist	-	-	nein	-	GILT	FALLE: „den Bestand“ gehört nicht zu erscheinen
+B13	B	8	zählen	Lagerist	Bestand	-	nein	-	GILT	
+B14	B	9	vergleichen	Einkäufer	Angebote	-	nein	-	GILT	gemeinsames Objekt der Reihung
+B15	B	9	bewerten	Einkäufer	Angebote	-	nein	-	GILT	
+B16	B	10	erteilen	-	Auftrag	Lieferant|Lieferanten	nein	-	GILT	Dativ als Empfänger im Passiv
+C01	C	1	speichern	Lagersystem	Bestände	-	nein	-	GILT	
+C02	C	2	bereitstellen	Bestelldienst	Schnittstelle	-	nein	-	GILT	
+C03	C	3	übertragen	Scanner	Artikelnummer	-	nein	-	GILT	„an das Lagersystem“ ist Ergänzung (wie foerderung C04)
+C04	C	4	erzeugen	Druckserver	Lieferscheine	-	nein	-	GILT	
+C05	C	5	verteilen	Message Broker	Nachrichten	-	nein	-	GILT	mehrteiliger Name
+C06	C	6	erfolgen	Anmeldung	-	-	nein	-	GILT	
+C07	C	7	aufrufen	Bestellportal	Bestelldienst	-	nein	-	GILT	
+D01	D	2	prüfen	Lagerist	Lieferung	-	nein	-	GILT	Kennung „Verantwortlich:“
+D02	D	4	abgleichen	?Lagerist	Lieferschein	-	nein	-	GILT	Stichpunkt
+D03	D	5	prüfen	?Lagerist	Ware	-	nein	-	GILT	Stichpunkt
+D04	D	6	buchen	?Lagerist	Wareneingang	-	nein	-	GILT	Stichpunkt
+D05	D	6	zuweisen	?Lagerist	Lagerplatz	-	nein	-	GILT	Stichpunkt
+D06	D	7	vorsehen	-	§vergeben	-	nein	-	FRUEHER	„Stand 2022: Es war vorgesehen“
+D07	D	7	vergeben	-	Lagerplätze	-	nein	-	FRUEHER	aufgegeben erst durch Satz 8 (satzübergreifend)
+D08	D	8	aufgeben	-	Plan	-	nein	-	FRUEHER	
+D09	D	9	vergeben	Lagerleiter	Lagerplätze	-	nein	-	GILT	„Derzeit“
+D10	D	10	erfassen	Scanner	Lieferscheine	-	nein	SOLL	GEPLANT	„Ab 2027 soll“
+D11	D	12	klären	-	Anbindung	-	ja	-	GILT	„noch nicht geklärt“
+E01	E	1	bestätigen	Lagerist	§vollständig|Lieferung|Vollständigkeit	-	nein	-	GILT	dass-Satz als Objekt im Aktivsatz
+E02	E	2	auslösen	Wer|Besteller	Bestellung	-	nein	-	GILT	
+E03	E	2	erhalten	§auslösen|Besteller	Auftragsnummer	-	nein	-	GILT	wer-Satz als Subjekt
+E04	E	3	nachbestellen	-	Artikel	-	nein	-	GILT	ob-Satz im Passiv
+E05	E	3	entscheiden	Einkäufer	§nachbestellen|~Nachbestellung	-	nein	-	GILT	ob-Satz als Objekt
+E06	E	4	prüfen	?Buchhaltung	Rechnung	-	nein	-	GILT	Infinitivgruppe
+E07	E	4	gehören	§prüfen|Prüfen	-	-	nein	-	GILT	Infinitivgruppe als Subjekt; „zu den Aufgaben“ ist Ergänzung
+E08	E	5	verpacken	Lagerist	Ware	-	nein	-	GILT	
+E09	E	5	übergeben	Lagerist	Ware	Fahrer	nein	-	GILT	Pronomen „sie“ = Ware
+E10	E	6	einholen	Einkäufer	Angebote	-	nein	-	GILT	
+E11	E	6	vergleichen	Einkäufer	Preise	-	nein	-	GILT	
+E12	E	6	vergeben	Einkäufer	Auftrag	-	nein	-	GILT	
+E13	E	7	bezahlen	Buchhaltung	Rechnung	-	nein	-	GILT	
+E14	E	7	buchen	Lagerist	Wareneingang	-	nein	-	GILT	nachdem-Satz
+E15	E	8	prüfen	-	§einhalten|Lieferfrist|Einhaltung	-	nein	-	GILT	ob-Satz als Subjekt im Passiv
+E16	E	8	einhalten	Lieferant	Lieferfrist	-	nein	-	GILT	
+E17	E	9	beanstanden	Lagerist	Was|Ware|Artikel	-	nein	-	GILT	
+E18	E	9	ersetzen	Lieferant	§beanstanden|Ware|Artikel|Beanstandung	-	nein	MUSS	GILT	was-Satz als Objekt
+E19	E	10	buchen	Lagersystem	Abgang	-	nein	-	GILT	
+E20	E	10	quittieren	Fahrer	Übernahme	-	nein	-	GILT	sobald-Satz
+E21	E	10	drucken	Lagersystem	Lieferschein	-	nein	-	GILT	gemeinsames Subjekt über den Nebensatz hinweg

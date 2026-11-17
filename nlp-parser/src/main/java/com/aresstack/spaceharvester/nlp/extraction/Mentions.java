@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -51,6 +52,30 @@ final class Mentions {
             mention = build(document, sentence, token);
             add(sentence.index(), mention);
         }
+        return mention;
+    }
+
+    /**
+     * Teilsatz mit Kopf {@code head} als Erwähnung der Art {@link Mention.Kind#CLAUSE}: der ganze Teilbaum ohne
+     * Satzzeichen am Rand, Grundform = Grundform des Kopfs. Eine vorhandene Erwähnung am selben Kopf bleibt.
+     */
+    Mention clause(ParsedDocument document, Sentence sentence, Token head) {
+        Mention existing = byToken.get(key(sentence.index(), head.id()));
+        if (existing != null && existing.kind() == Mention.Kind.CLAUSE) {
+            return existing;
+        }
+        Set<Integer> ids = new TreeSet<>();
+        collectGroup(sentence, head.id(), ids);
+        List<Integer> ordered = new ArrayList<>(ids);
+        while (ordered.size() > 1 && "punct".equals(sentence.token(ordered.get(ordered.size() - 1)).deprel())) {
+            ordered.remove(ordered.size() - 1);
+        }
+        int start = sentence.token(ordered.get(0)).start();
+        int end = sentence.token(ordered.get(ordered.size() - 1)).end();
+        Mention mention = new Mention(id(document.ref(), sentence.index(), head.id()), sentence.index(), head.id(),
+                ordered, start, end, document.text().substring(start, end), head.form(), head.lemma(),
+                Mention.Kind.CLAUSE, Resolution.SURFACE, Set.of(), null);
+        add(sentence.index(), mention);
         return mention;
     }
 
@@ -123,10 +148,48 @@ final class Mentions {
                 }
             }
         }
+        // Mehrteilige Namen („Batch-Job“, „Load Balancer“): unmittelbar angrenzende compound-/flat-Teile gehören
+        // zum Kopf (ADR 0032); Form aus dem Originaltext, Grundform mit der Grundform des Kopfs.
+        int first = head.id();
+        int last = head.id();
+        while (first > 1 && namePart(sentence, sentence.token(first - 1), head, true)) {
+            first--;
+        }
+        while (last < sentence.tokens().size() && namePart(sentence, sentence.token(last + 1), head, false)) {
+            last++;
+        }
+        String headForm = head.form();
+        String headLemma = head.lemma();
+        if ((first != head.id() || last != head.id()) && sentence.multiwordToken(first) == null
+                && sentence.multiwordToken(last) == null) {
+            String text = document.text();
+            headForm = text.substring(sentence.token(first).start(), sentence.token(last).end());
+            if (headLemma != null) {
+                headLemma = text.substring(sentence.token(first).start(), head.start()).toLowerCase(Locale.ROOT)
+                        + headLemma + text.substring(head.end(), sentence.token(last).end()).toLowerCase(Locale.ROOT);
+            }
+        }
         return new Mention(id(document.ref(), sentence.index(), head.id()), sentence.index(), head.id(),
-                new ArrayList<>(ids), start, end, document.text().substring(start, end), head.form(), head.lemma(),
+                new ArrayList<>(ids), start, end, document.text().substring(start, end), headForm, headLemma,
                 kind, kind == Mention.Kind.PRONOUN ? Resolution.UNRESOLVED : Resolution.SURFACE, cases,
                 cases.isEmpty() ? null : caseBasis);
+    }
+
+    /**
+     * Ob {@code token} direkt neben dem Namen von {@code head} ein Namensteil ist: davor ein {@code compound} am Kopf
+     * mit Bindestrich oder dieser Bindestrich, dahinter ein {@code flat} am Kopf.
+     */
+    private static boolean namePart(Sentence sentence, Token token, Token head, boolean before) {
+        if (before) {
+            if ("-".equals(token.form()) && token.id() > 1) {
+                Token previous = sentence.token(token.id() - 1);
+                return "compound".equals(previous.deprel()) && previous.head() == head.id();
+            }
+            // Nur mit Bindestrich („Batch-Job“); ohne ihn hängt der Parser auch Adjektive als compound an.
+            return "compound".equals(token.deprel()) && token.head() == head.id() && token.hasUpos("NOUN", "PROPN")
+                    && "-".equals(sentence.token(token.id() + 1).form());
+        }
+        return "flat".equals(token.baseRelation()) && token.head() == head.id() && token.hasUpos("NOUN", "PROPN", "X");
     }
 
     private static List<Integer> range(MultiwordToken multiword) {

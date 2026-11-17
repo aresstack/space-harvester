@@ -44,7 +44,7 @@ class MaltStatementAnalyzerTest {
     void theVersionNamesModelAndRulesWithoutLoadingAnything() {
         MaltStatementAnalyzer analyzer = new MaltStatementAnalyzer(empty, TestModel.EXPECTED);
 
-        assertThat(analyzer.version()).isEqualTo("1|maltparser-de-test-v0.1.0|43cc823cf1a3|rules-6");
+        assertThat(analyzer.version()).isEqualTo("1|maltparser-de-test-v0.1.0|43cc823cf1a3|rules-7");
         assertThat(analyzer.id()).isEqualTo("maltparser-de");
         assertThat(analyzer.loaded()).isFalse();
     }

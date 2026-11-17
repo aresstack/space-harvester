@@ -694,6 +694,13 @@ final class StatementsTab extends JPanel {
             case "HEURISTIC_PARTICIPANT" -> "Beteiligter aus dem Kasus geschlossen";
             case "UNCONFIRMED_DATIVE" -> "Dativ nicht bestätigt";
             case "TIME_FROM_NOMINAL" -> "Zeitangabe hing am Empfänger und ist nur unsicher zugeordnet";
+            case "CLAUSE_PARTICIPANT" -> "ein Beteiligter ist ein Teilsatz";
+            case "OBJECT_FROM_COORDINATION" -> "Objekt vom gereihten Verb übernommen (unsicher)";
+            case "RELATIVE_PRONOUN_RESOLVED" -> "Relativpronomen auf sein Bezugswort aufgelöst";
+            case "PRONOUN_FROM_COORDINATION" -> "Pronomen auf das Objekt des gereihten Verbs bezogen (unsicher)";
+            case "SUBJECT_OF_INFINITIVE" -> "Infinitivgruppe ohne eigenes Subjekt";
+            case "AGENT_FROM_DURCH" -> "Handelnder aus der durch-Gruppe abgeleitet (unsicher)";
+            case "AGENT_FROM_VON" -> "Handelnder aus der von-Gruppe bei „ist … zu“ abgeleitet (unsicher)";
             default -> code;
         };
     }

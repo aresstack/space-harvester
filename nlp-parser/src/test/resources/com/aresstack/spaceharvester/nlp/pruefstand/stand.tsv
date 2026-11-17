@@ -1,6 +1,7 @@
-# Stand des Prüfstands (ADR 0032). Darf nur besser werden: richtig/streng nicht sinken, falsch trotz PLAUSIBLE nicht steigen.
-# Wird es besser, hebt derselbe PR die Werte an (PruefstandTest meldet „BESSER“).
-# Textsatz	Variante	vollständig richtig (min)	streng (min)	falsch trotz PLAUSIBLE (max)
-foerderung	heute	43	43	12
-foerderung	vorstufe-hand	59	58	5
-foerderung	vorstufe-gemma4-12b	55	51	8
+# Stand des Prüfstands (ADR 0032), genau festgehalten: schlechter = Rückschritt, besser = im selben PR anheben.
+# (PruefstandTest nennt die neuen Werte.)
+# Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE
+foerderung	heute	58	58	3
+foerderung	vorstufe-hand	60	59	4
+foerderung	vorstufe-gemma4-12b	57	53	6
+beschaffung	heute	49	49	5

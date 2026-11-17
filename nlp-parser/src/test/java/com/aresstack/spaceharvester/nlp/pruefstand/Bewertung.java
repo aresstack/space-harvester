@@ -234,6 +234,11 @@ final class Bewertung {
     /** Vergleichsnamen eines Beteiligten: Form und Grundform des Kopfs in Kleinschreibung. */
     private static Set<String> namen(Mention mention) {
         Set<String> namen = new LinkedHashSet<>();
+        if (mention != null && mention.kind() == Mention.Kind.CLAUSE) {
+            // Teilsatz als Beteiligter: „§“ + Grundform des Kopfs (Schreibweise der Vorgabe)
+            namen.add("§" + (mention.lemma() != null ? mention.lemma() : mention.headForm()).toLowerCase(Locale.ROOT));
+            return namen;
+        }
         if (mention != null) {
             namen.add(mention.headForm().toLowerCase(Locale.ROOT));
             if (mention.lemma() != null) {

@@ -1,0 +1,120 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/D@heute
+# sent_id = 1
+# text = Wareneingang
+1	Wareneingang	wareneingang	NOUN	_	_	0	root	_	_
+
+# sent_id = 2
+# text = Verantwortlich: Der Lagerist prüft jede Lieferung am Tag des Eingangs.
+1	Verantwortlich	verantwortlich	ADJ	_	_	0	root	_	SpaceAfter=No
+2	:	:	PUNCT	_	_	5	punct	_	_
+3	Der	der	DET	_	_	4	det	_	_
+4	Lagerist	lagerist	NOUN	_	_	5	nsubj	_	_
+5	prüft	prüfen	VERB	_	_	1	parataxis	_	_
+6	jede	jeder	DET	_	_	7	det	_	_
+7	Lieferung	lieferung	NOUN	_	_	5	nsubj	_	_
+8-9	am	_	_	_	_	_	_	_	_
+8	an	an	ADP	_	_	10	case	_	_
+9	dem	der	DET	_	_	10	det	_	_
+10	Tag	tag	NOUN	_	_	5	obl	_	_
+11	des	der	DET	_	_	12	det	_	_
+12	Eingangs	eingangs	NOUN	_	_	10	nmod	_	SpaceAfter=No
+13	.	.	PUNCT	_	_	1	punct	_	_
+
+# sent_id = 3
+# text = Ablauf:
+1	Ablauf	ablauf	NOUN	_	_	0	root	_	SpaceAfter=No
+2	:	:	PUNCT	_	_	1	punct	_	_
+
+# sent_id = 4
+# text = - Lieferschein mit Bestellung abgleichen
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Lieferschein	lieferschein	NOUN	_	_	0	root	_	_
+3	mit	mit	ADP	_	_	4	case	_	_
+4	Bestellung	bestellung	NOUN	_	_	2	nmod	_	_
+5	abgleichen	abgleich	ADJ	_	_	2	punct	_	_
+
+# sent_id = 5
+# text = - Ware auf Schäden prüfen
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Ware	ware	NOUN	_	_	0	root	_	_
+3	auf	auf	ADP	_	_	4	case	_	_
+4	Schäden	schaden	NOUN	_	_	2	nmod	_	_
+5	prüfen	prüfen	VERB	_	_	2	dep	_	_
+
+# sent_id = 6
+# text = - Wareneingang buchen und Lagerplatz zuweisen
+1	-	-	PUNCT	_	_	2	punct	_	_
+2	Wareneingang	wareneingang	NOUN	_	_	3	obl	_	_
+3	buchen	buchen	VERB	_	_	0	root	_	_
+4	und	und	CCONJ	_	_	6	cc	_	_
+5	Lagerplatz	lagerplatz	NOUN	_	_	6	obj	_	_
+6	zuweisen	zuweisen	VERB	_	_	3	conj	_	_
+
+# sent_id = 7
+# text = Stand 2022: Es war vorgesehen, die Lagerplätze automatisch zu vergeben.
+1	Stand	stand	NOUN	_	_	2	dep	_	_
+2	2022	2022	VERB	_	_	0	root	_	SpaceAfter=No
+3	:	:	PUNCT	_	_	6	punct	_	_
+4	Es	es	PRON	_	_	6	nsubj	_	_
+5	war	sein	AUX	_	_	6	cop	_	_
+6	vorgesehen	vorsehen	ADJ	_	_	2	parataxis	_	SpaceAfter=No
+7	,	,	PUNCT	_	_	12	punct	_	_
+8	die	der	DET	_	_	9	det	_	_
+9	Lagerplätze	lagerplätze	NOUN	_	_	12	obj	_	_
+10	automatisch	automatisch	ADJ	_	_	12	advmod	_	_
+11	zu	zu	PART	_	_	12	mark	_	_
+12	vergeben	vergeben	VERB	_	_	6	advcl	_	SpaceAfter=No
+13	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 8
+# text = Dieser Plan wurde aufgegeben.
+1	Dieser	dieser	DET	_	_	2	det	_	_
+2	Plan	plan	NOUN	_	_	4	nsubj:pass	_	_
+3	wurde	werden	AUX	_	_	4	aux:pass	_	_
+4	aufgegeben	aufgeben	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 9
+# text = Derzeit vergibt der Lagerleiter die Lagerplätze von Hand.
+1	Derzeit	derzeit	DET	_	_	2	nsubj	_	_
+2	vergibt	vergeben	VERB	_	_	0	root	_	_
+3	der	der	DET	_	_	4	det	_	_
+4	Lagerleiter	lagerleiter	NOUN	_	_	2	obl:arg	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Lagerplätze	lagerplätze	NOUN	_	_	4	nmod	_	_
+7	von	von	ADP	_	_	8	case	_	_
+8	Hand	hand	NOUN	_	_	6	nmod	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 10
+# text = Ab 2027 soll ein Scanner die Lieferscheine erfassen.
+1	Ab	ab	ADP	_	_	2	case	_	_
+2	2027	2027	NUM	_	_	8	obl	_	_
+3	soll	sollen	AUX	_	_	8	aux	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Scanner	scanner	NOUN	_	_	8	nsubj	_	_
+6	die	der	DET	_	_	7	det	_	_
+7	Lieferscheine	lieferscheine	NOUN	_	_	8	obj	_	_
+8	erfassen	erfassen	VERB	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 11
+# text = Offene Fragen
+1	Offene	offen	ADJ	_	_	2	amod	_	_
+2	Fragen	frage	NOUN	_	_	0	root	_	_
+
+# sent_id = 12
+# text = Die Anbindung an die Buchhaltung ist noch nicht geklärt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Anbindung	anbindung	NOUN	_	_	9	nsubj:pass	_	_
+3	an	an	ADP	_	_	5	case	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Buchhaltung	buchhaltung	NOUN	_	_	2	nmod	_	_
+6	ist	sein	AUX	_	_	9	aux:pass	_	_
+7	noch	noch	ADV	_	_	8	advmod	_	_
+8	nicht	nicht	PART	_	_	9	advmod	_	_
+9	geklärt	klären	VERB	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
