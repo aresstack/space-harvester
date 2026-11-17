@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
@@ -32,7 +33,8 @@ import org.springframework.core.io.ByteArrayResource;
  * Ein neuer gemeinsamer Schlüssel unter {@code space-harvester} gehört in beide Loader und hierher. Der KI-API-Key
  * bleibt bewusst außen vor: die App bezieht ihn aus KeePass oder dem Tresor ({@code AiAccess}), nie aus der YAML.
  * Die Terminal-Ausgabe ({@code logging.threshold.console}) liest der Dienst über Spring Boot selbst; verglichen wird
- * mit dem, was Spring Boot daraus an Logback gibt.
+ * mit dem, was Spring Boot daraus an Logback gibt. Schlüssel unter {@code space-harvester-app} gehören nur der App
+ * (etwa der Hintergrund des Bildbetrachters); hier steht nur, dass sie den Dienst nicht stören.
  */
 class ConfigurationParityTest {
 
@@ -40,6 +42,9 @@ class ConfigurationParityTest {
             logging:
               threshold:
                 console: warn
+            space-harvester-app:
+              viewer:
+                background: dark
             space-harvester:
               sources:
                 - id: confluence
@@ -245,6 +250,12 @@ class ConfigurationParityTest {
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);
         assertThat(springConsoleThreshold(environment)).isEqualToIgnoringCase(app.consoleOutput().name());
+
+        // Hintergrund des Bildbetrachters (Angelo 17.11.2026): nur die App unter space-harvester-app; der Dienst zeigt
+        // keine Bilder und bindet nichts darunter, der Schlüssel stört ihn nicht.
+        assertThat(app.viewerBackground()).isEqualTo(ViewerBackground.DARK);
+        assertThat(environment.getProperty("space-harvester-app.viewer.background")).isEqualTo("dark");
+        assertThat(service).isNotNull();
     }
 
     @Test

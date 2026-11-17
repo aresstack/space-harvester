@@ -63,6 +63,8 @@ import java.util.Set;
  *                        ({@code space-harvester.statements.standing.*}, ADR 0032 FL6), wie beim Dienst
  * @param check           Prüfschritt der Aussagenanalyse ({@code space-harvester.statements.check.*}, ADR 0032 FL4),
  *                        wie beim Dienst
+ * @param viewerBackground Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background}); ohne
+ *                        Angabe {@link ViewerBackground#DEFAULT}, die Oberfläche der App; nur die App
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -74,7 +76,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
                           EnrichmentSettings enrichment, AnalyticsSettings analytics,
                           SimplificationSettings simplification, StandingSettings standing,
-                          CheckSettings check) {
+                          CheckSettings check, ViewerBackground viewerBackground) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -102,6 +104,25 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         simplification = simplification == null ? SimplificationSettings.DEFAULT : simplification;
         standing = standing == null ? StandingSettings.DEFAULT : standing;
         check = check == null ? CheckSettings.DEFAULT : check;
+        viewerBackground = viewerBackground == null ? ViewerBackground.DEFAULT : viewerBackground;
+    }
+
+    /** Mit dem Hintergrund des Bildbetrachters ohne Angabe ({@link ViewerBackground#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                       EnrichmentSettings enrichment, AnalyticsSettings analytics,
+                       SimplificationSettings simplification, StandingSettings standing,
+                       CheckSettings check) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check,
+                ViewerBackground.DEFAULT);
     }
 
     /** Mit den Vorgabewörtern des Stands ({@link StandingSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
@@ -266,7 +287,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -274,7 +295,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
-                consoleOutput, enrichment, analytics, simplification, standing, check);
+                consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
     }
 
     /**
@@ -285,13 +306,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
-                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
+                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
     }
 
     /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
      * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner, parallele Vorbereitungen und Downloads,
-     * Terminal-Ausgabe, Export „Analytics“. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     * Terminal-Ausgabe, Export „Analytics“, Hintergrund des Bildbetrachters. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
@@ -300,28 +321,36 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
-                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check);
+                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check, other.viewerBackground);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
     public AppSettings withConsoleOutput(ConsoleOutput output) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check);
+                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check, viewerBackground);
+    }
+
+    /** Dieselbe Konfiguration mit anderem Hintergrund des Bildbetrachters; die Laufzeit braucht ihn nicht. */
+    public AppSettings withViewerBackground(ViewerBackground background) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification,
+                standing, check, background);
     }
 
     /** Dieselbe Konfiguration mit anderem Export „Analytics“; die Laufzeit braucht ihn nicht. */
     public AppSettings withAnalytics(AnalyticsSettings analytics) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check, viewerBackground);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */

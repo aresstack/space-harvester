@@ -20,8 +20,11 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Feedback;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection;
+import com.aresstack.spaceharvester.app.ui.controls.ActionChip;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
@@ -120,6 +123,16 @@ public final class ChatPanel extends JPanel {
     static final String NOT_ALLOWED = "Quelle nicht für KI freigegeben; Senden gibt die gewählten Seiten dauerhaft "
             + "frei (Einstellungen › Sicherheit)";
     static final String EMPTY_TRANSCRIPT = "Noch keine Nachrichten";
+    // Schnellaktionen in der unteren Leiste (Angelo 17.11.2026): immer auf den gewählten Knoten samt Unterknoten,
+    // nie auf Eltern; sie gehen den normalen Sendeweg.
+    static final String SUMMARIZE_PAGE = "Seite zusammenfassen";
+    static final String SUMMARIZE_SUBTREE = "Seite samt Unterseiten zusammenfassen";
+    static final String SUMMARIZE_AREA = "Bereich zusammenfassen";
+    static final String WHATS_NEW = "Was ist neu?";
+    static final String SUMMARIZE_PAGE_TIP = "Nur die gewählte Seite, ohne Unterseiten";
+    static final String SUMMARIZE_SUBTREE_TIP = "Die gewählte Seite und alle Unterseiten";
+    static final String SUMMARIZE_AREA_TIP = "Alle Seiten des links gewählten Bereichs";
+    static final String WHATS_NEW_TIP = "Seit dem letzten Abgleich geänderte Seiten der Auswahl";
     static final List<String> EFFORTS = List.of("Niedrig", "Mittel", "Hoch");
     private static final int ARC = 18;
 
@@ -132,7 +145,12 @@ public final class ChatPanel extends JPanel {
     /** Nur der Pfeil, durchsichtig: öffnet die Chats dieses Bereichs. */
     private final ComposerButton chats = ComposerButton.iconButton(ComposerIcons.chevronDown(),
             "Chats dieses Bereichs");
-    private final ComposerButton newChat = Comic.button(NEW_CHAT, "Einen neuen Chat beginnen");
+    /** Oben rechts in der Kopfzeile des Inhaltsbereichs, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb. */
+    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT).compact();
+    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE).compact();
+    /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile; der Name kürzt sich mit „…“, wenn der Platz nicht reicht. */
+    private final JPanel header = new JPanel(new BorderLayout(6, 0));
+    private final JPanel headerActions = Comic.row(newChat, deleteChat);
     private final ChatStore store;
     /** Der Bereich der Chats: die Auswahl links als Knoten; {@code null} ohne Auswahl. */
     private ChatNode node;
@@ -177,6 +195,8 @@ public final class ChatPanel extends JPanel {
     private boolean editorFocused;
 
     private Selection selection;
+    /** Die Schnellaktionen für die untere Leiste; sichtbar nur im Reiter Chat. */
+    private final JPanel quickActions = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
     /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl. */
     /** Anmeldungen bei den Bestandsmeldungen: eine je Quelle und Space der Auswahl, global eine je Quelle. */
     private final List<Subscription> subscriptions = new ArrayList<>();
@@ -242,16 +262,15 @@ public final class ChatPanel extends JPanel {
         chats.setOpaque(false);
         chats.addActionListener(e -> showChatsMenu());
         newChat.addActionListener(e -> newChat());
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        left.setOpaque(false);
-        left.add(heading);
-        left.add(nameHolder);
-        left.add(chats);
-        JPanel top = new JPanel(new BorderLayout(8, 0));
-        top.setOpaque(false);
-        top.add(left, BorderLayout.CENTER);
-        top.add(newChat, BorderLayout.EAST);
-        add(top, BorderLayout.NORTH);
+        newChat.getAccessibleContext().setAccessibleName(NEW_CHAT);
+        deleteChat.addActionListener(e -> deleteChat());
+        deleteChat.getAccessibleContext().setAccessibleName(DELETE);
+        // Die Zeile gehört in die Kopfzeile des Inhaltsbereichs (Angelo, 17.11.2026): mittig statt der
+        // Seitenüberschrift; hier oben steht nichts mehr.
+        header.setOpaque(false);
+        header.add(heading, BorderLayout.WEST);
+        header.add(nameHolder, BorderLayout.CENTER);
+        header.add(chats, BorderLayout.EAST);
         showChatName();
 
         transcript.setLayout(new BoxLayout(transcript, BoxLayout.Y_AXIS));
@@ -351,6 +370,9 @@ public final class ChatPanel extends JPanel {
 
         chips.setOpaque(false);
         chips.setVisible(false);
+        quickActions.setOpaque(false);
+        quickActions.setVisible(false);
+        updateQuickActions();
 
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
@@ -536,9 +558,72 @@ public final class ChatPanel extends JPanel {
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         send.setEnabled(current != null && settled);
+        updateQuickActions();
         if (onResolved != null) {
             onResolved.accept(resolved);
         }
+    }
+
+    // ------------------------------------------------------------------ Schnellaktionen
+
+    /**
+     * Die Schnellaktionen für die untere Leiste des Hauptfensters, mittig (Angelo 17.11.2026): bei einer Seite
+     * „Seite zusammenfassen“ und „Seite samt Unterseiten zusammenfassen“, sonst „Bereich zusammenfassen“, dazu
+     * „Was ist neu?“. Sie wirken immer auf den gewählten Knoten samt Unterknoten, nie auf Eltern.
+     */
+    public JComponent quickActions() {
+        return quickActions;
+    }
+
+    /** Baut die Chips zur Auswahl neu; gesperrt ohne aufgelöste Auswahl oder während einer Antwort. */
+    private void updateQuickActions() {
+        quickActions.removeAll();
+        Selection current = selection;
+        if (current != null) {
+            // Bereit wie Senden: Auswahl aufgelöst und keine Antwort unterwegs.
+            boolean ready = settled && turn == null;
+            String area = areaText(current, resolved == null ? null : resolved.counts());
+            if (current.pageId() != null) {
+                // Nur die Seite: der Bereichstext folgt dem Umfang der Aktion, nicht der Auswahl samt Unterseiten.
+                quickActions.add(chip(SUMMARIZE_PAGE, SUMMARIZE_PAGE_TIP, ready, () -> submit(
+                        "Fasse die Seite „" + current.title() + "“ zusammen.", onlyPage(resolved, current),
+                        pageAreaText(current), ChatTurn.Kind.QUESTION)));
+                quickActions.add(chip(SUMMARIZE_SUBTREE, SUMMARIZE_SUBTREE_TIP, ready, () -> submit(
+                        "Fasse die Seite „" + current.title() + "“ samt ihren Unterseiten zusammen.", resolved, area,
+                        ChatTurn.Kind.QUESTION)));
+            } else {
+                quickActions.add(chip(SUMMARIZE_AREA, SUMMARIZE_AREA_TIP, ready, () -> submit(
+                        "Fasse den Bereich „" + current.title() + "“ zusammen.", resolved, area,
+                        ChatTurn.Kind.QUESTION)));
+            }
+            quickActions.add(chip(WHATS_NEW, WHATS_NEW_TIP, ready, () -> submit(WHATS_NEW, resolved, area,
+                    ChatTurn.Kind.WHATS_NEW)));
+        }
+        quickActions.revalidate();
+        quickActions.repaint();
+    }
+
+    private static ActionChip chip(String text, String tip, boolean enabled, Runnable action) {
+        ActionChip chip = new ActionChip(text, tip);
+        chip.setEnabled(enabled);
+        chip.addActionListener(e -> action.run());
+        return chip;
+    }
+
+    /** Der Bereichstext für „Seite zusammenfassen“: nur die Seite, eine Seite. */
+    static String pageAreaText(Selection current) {
+        return current.title() + " · 1 Seite";
+    }
+
+    /** Dieselbe Auswahl auf die gewählte Seite allein verengt, ohne Unterseiten. */
+    static PageSelection onlyPage(PageSelection resolved, Selection current) {
+        if (resolved == null || current == null || current.pageId() == null
+                || !resolved.contains(current.sourceId(), current.pageId())) {
+            return resolved;
+        }
+        return new PageSelection(com.aresstack.spaceharvester.application.snapshot.PageSet.of(
+                java.util.Map.of(current.sourceId(), List.of(current.pageId()))), resolved.counts(),
+                resolved.spaces(), resolved.complete());
     }
 
     /** Für die globale Auswahl: ob jede Wissensquelle der Laufzeit Inhalte an den KI-Dienst geben darf. */
@@ -561,7 +646,23 @@ public final class ChatPanel extends JPanel {
         if (selection == null) {
             return NO_SELECTION;
         }
-        StringBuilder text = new StringBuilder("Wissen: ");
+        StringBuilder text = new StringBuilder("Wissen: ").append(areaText(selection, counts));
+        if (!complete) {
+            // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
+            text.append(" · ").append(ExportPanel.INCOMPLETE);
+        }
+        if (!allowed) {
+            text.append(" · ").append(NOT_ALLOWED);
+        }
+        return text.toString();
+    }
+
+    /** Der gewählte Bereich in Worten, für die Zeile „Wissen:“ und die Systemnachricht; {@code null} ohne Auswahl. */
+    static String areaText(Selection selection, HoldingCounts counts) {
+        if (selection == null) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
         if (selection.global()) {
             text.append("alle Wissensquellen");
         } else if (selection.pageId() != null) {
@@ -580,13 +681,6 @@ public final class ChatPanel extends JPanel {
             if (missing > 0) {
                 text.append(" · ").append(missing).append(" davon nicht geladen");
             }
-        }
-        if (!complete) {
-            // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
-            text.append(" · ").append(ExportPanel.INCOMPLETE);
-        }
-        if (!allowed) {
-            text.append(" · ").append(NOT_ALLOWED);
         }
         return text.toString();
     }
@@ -810,6 +904,19 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
+        submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
+                ChatTurn.Kind.QUESTION);
+    }
+
+    /**
+     * Der gemeinsame Sendeweg für Eingabe und Schnellaktionen: {@code question} geht an das Modell und steht ebenso
+     * in Sprechblase und Verlauf; {@code scope} sind die Seiten, aus denen das Wissen kommt, {@code area} nennt sie in
+     * der Systemnachricht. Die Freigabe gilt immer dem links Gewählten (Angelo 13.11.2026).
+     */
+    private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind) {
+        if (turn != null || !send.isEnabled()) {
+            return;
+        }
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             status.setText(NO_RUNTIME);
@@ -822,8 +929,7 @@ public final class ChatPanel extends JPanel {
             status.setText(NO_CHAT_MODEL);
             return;
         }
-        String question = withAttachments(text);
-        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", text);
+        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
         chat = chat.plus(ChatRecord.Message.user(question, now), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
@@ -844,11 +950,12 @@ public final class ChatPanel extends JPanel {
         ChatNode targetNode = node;
         TurnListener listener = new TurnListener(target, targetNode, answering);
         listening = listener;
-        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, resolved,
+        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
+        updateHeaderActions();
         send.setToolTipText("Antwort abbrechen");
         turn.start();
     }
@@ -958,6 +1065,7 @@ public final class ChatPanel extends JPanel {
             status.setText(note);
             send.setText(SEND);
             send.setIcon(ComposerIcons.send());
+            updateHeaderActions();
             send.setToolTipText("Senden (Enter)");
             showChatName();
         }
@@ -1060,6 +1168,24 @@ public final class ChatPanel extends JPanel {
     private void showChatName() {
         chatName.setText(chat.title());
         chats.setEnabled(node != null);
+        updateHeaderActions();
+    }
+
+    /** Löschen geht nur bei einem gespeicherten Chat (einer mit Nachrichten) und nicht während einer Antwort. */
+    private void updateHeaderActions() {
+        newChat.setEnabled(node != null);
+        deleteChat.setEnabled(node != null && !chat.isEmpty() && turn == null);
+        updateQuickActions();
+    }
+
+    /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile des Inhaltsbereichs. */
+    public JComponent header() {
+        return header;
+    }
+
+    /** Neuer Chat und Chat löschen als Symbole für die Kopfzeile des Inhaltsbereichs, rechts. */
+    public JComponent headerActions() {
+        return headerActions;
     }
 
     /** Der Pfeil: die Chats dieses Bereichs, zuletzt geänderte zuerst, der aktuelle mit Haken. */

@@ -12,9 +12,20 @@ import java.util.Objects;
  */
 public final class ChatKnowledge {
 
-    /** Die Rolle des Modells; der Kontextblock folgt, wenn es Auszüge gibt. */
+    /**
+     * Die Rolle des Modells; danach der gewählte Bereich und der Kontextblock. Das Wissen kommt immer von hier (aus dem
+     * Bestand), nie vom Benutzer: Das Modell darf deshalb nie nach Links, Adressen oder Dateien fragen (Angelo,
+     * 17.11.2026: der Assistent bat um URLs, obwohl ein Bereich mit Tausenden Seiten gewählt war).
+     */
     public static final String SYSTEM_PROMPT = "Du bist der Assistent von Space Harvester und beantwortest Fragen zu "
-            + "den Wissensquellen, die der Benutzer links gewählt hat. Antworte auf Deutsch, knapp und sachlich.";
+            + "dem Bereich der Wissensquellen, den der Benutzer links gewählt hat. Antworte auf Deutsch, knapp und "
+            + "sachlich. Das Wissen aus diesem Bereich bekommst du automatisch als Auszüge aus dem Bestand; der "
+            + "Benutzer kann dir keine Links, Adressen oder Dateien geben, frage nie danach. Reichen die Auszüge nicht, "
+            + "sage, was im gewählten Bereich dazu nicht zu finden war.";
+
+    /** Steht statt des Kontextblocks, wenn kein Auszug passte. */
+    public static final String NO_CONTEXT = "Zu dieser Frage wurde im gewählten Bereich kein passender Auszug "
+            + "gefunden. Sage das und beantworte die Frage nur, soweit es ohne den Bestand geht.";
 
     /** Der Hinweis über den Auszügen, wörtlich wie {@code ContextSettings.DEFAULT_INSTRUCTION} des EAC. */
     public static final String INSTRUCTION = "Die folgenden Auszüge stammen aus der Wissensbasis. Beantworte die Frage "
@@ -63,6 +74,19 @@ public final class ChatKnowledge {
         public boolean isEmpty() {
             return accepted.isEmpty();
         }
+    }
+
+    /**
+     * Die Systemnachricht: Rolle, der gewählte Bereich (wie die Zeile „Wissen:“ im Chat, ohne Warnungen) und der
+     * Kontextblock oder der Hinweis, dass kein Auszug passte.
+     */
+    public static String systemMessage(String area, Context context) {
+        StringBuilder text = new StringBuilder(SYSTEM_PROMPT);
+        if (area != null && !area.isBlank()) {
+            text.append("\n\nGewählter Bereich: ").append(oneLine(area));
+        }
+        text.append("\n\n").append(context == null || context.isEmpty() ? NO_CONTEXT : context.text());
+        return text.toString();
     }
 
     /** Baut den Block aus den Auszügen, bis Budget oder Höchstzahl erreicht sind; Auszüge ohne Text fallen weg. */

@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.AnalyticsSettings;
+import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.settings.ConsoleOutput;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -455,6 +456,37 @@ public final class AppContext {
     }
 
     private volatile AnalyticsSettings analyticsWanted;
+
+    /**
+     * Speichert den Hintergrund des Bildbetrachters ({@code space-harvester-app.viewer.background}) in der Datei, ohne
+     * Neustart der Laufzeit: der Betrachter liest die Farbe beim nächsten Öffnen aus den Einstellungen. Schnell
+     * aufeinanderfolgende Änderungen schreiben immer die jüngste zuletzt.
+     */
+    public void viewerBackground(ViewerBackground background, Runnable done, Consumer<Throwable> failed) {
+        viewerWanted = background;
+        Background.run(() -> {
+            synchronized (consoleLock) {
+                ViewerBackground wanted = viewerWanted;
+                ConfigFileEditor editor = new ConfigFileEditor(loader);
+                String text = Files.isRegularFile(configFile)
+                        ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+                editor.save(configFile, editor.withViewerBackground(configFile,
+                        new ConfigFileEditor.Draft(text, null), wanted), !editor.fileHasPlaintextSecret(configFile));
+                return wanted;
+            }
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withViewerBackground(saved);
+            }
+            fire();
+            done.run();
+        }, error -> {
+            fire();
+            failed.accept(error);
+        });
+    }
+
+    private volatile ViewerBackground viewerWanted;
 
     /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab

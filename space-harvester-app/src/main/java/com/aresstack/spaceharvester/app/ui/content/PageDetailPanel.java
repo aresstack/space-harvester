@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
@@ -157,6 +158,11 @@ public final class PageDetailPanel extends JPanel {
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
     private final Feedback feedback = new Feedback();
+    /**
+     * Hinweis über der Seite, wenn die Quelle einen neueren Stand hat als der sofort gezeigte aus dem Bestand (dieselbe
+     * Platte wie in der Leseansicht, Angelo 17.11.2026); „Seite neu laden“ zeigt den schon geladenen neuen Stand.
+     */
+    private final MessagePlate update = new MessagePlate();
     private final JTextPane reader = new JTextPane() {
         @Override
         public String getToolTipText(MouseEvent event) {
@@ -200,26 +206,38 @@ public final class PageDetailPanel extends JPanel {
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position shownPosition;
     /** Die Überschrift für die Zeile der Bereichsanzeige ({@link #headerTitle()}): mittig, nie breiter als ihr Text. */
     private final JPanel heading = new JPanel(null) {
+        /** Die Seitenüberschrift oder, im Reiter Chat, „Chat: ‹Name› ▾“ (Angelo, 17.11.2026): das sichtbare Kind. */
+        private java.awt.Component shown() {
+            for (java.awt.Component child : getComponents()) {
+                if (child.isVisible()) {
+                    return child;
+                }
+            }
+            return title;
+        }
+
         @Override
         public void doLayout() {
-            java.awt.Dimension t = title.getPreferredSize();
+            java.awt.Component shown = shown();
+            java.awt.Dimension t = shown.getPreferredSize();
             int width = Math.min(t.width, getWidth());
-            title.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
+            shown.setBounds((getWidth() - width) / 2, (getHeight() - t.height) / 2, width, t.height);
         }
 
         @Override
         public java.awt.Dimension getPreferredSize() {
-            return title.getPreferredSize();
+            return shown().getPreferredSize();
         }
 
         @Override
         public java.awt.Dimension getMinimumSize() {
-            return new java.awt.Dimension(0, title.getPreferredSize().height);
+            return new java.awt.Dimension(0, shown().getPreferredSize().height);
         }
     };
     /** Weitere Aktionen zur Seite hinter einem Dreieck neben dem Stern, wie im Audio Studio (Angelo, 16.11.2026). */
     private final com.aresstack.spaceharvester.app.ui.IconButton more =
-            new com.aresstack.spaceharvester.app.ui.IconButton(new DownTriangle(), MORE_ACTIONS);
+            new com.aresstack.spaceharvester.app.ui.IconButton(
+                    new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE_ACTIONS);
     static final String MORE_ACTIONS = "Weitere Aktionen zur Seite";
     private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
             "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
@@ -264,9 +282,14 @@ public final class PageDetailPanel extends JPanel {
     static final int MOUSE_BACK_BUTTON = 4;
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
     static final int MOUSE_FORWARD_BUTTON = 5;
-    /** Verlauf wie im Lesebereich des EAC: zuvor gezeigte Seiten und die per Zurück verlassenen. */
-    private final java.util.Deque<PageKey> backStack = new java.util.ArrayDeque<>();
-    private final java.util.Deque<PageKey> forwardStack = new java.util.ArrayDeque<>();
+    /**
+     * Verlauf wie im Lesebereich des EAC, hier über alles, was die Mitte zeigt (Angelo, 17.11.2026): zuvor gezeigte
+     * Seiten und Quellenseiten (Quelle oder Space) und die per Zurück verlassenen.
+     */
+    private final java.util.Deque<Place> backStack = new java.util.ArrayDeque<>();
+    private final java.util.Deque<Place> forwardStack = new java.util.ArrayDeque<>();
+    /** Erfährt jeden Schritt per Zurück/Vor, damit Bereichsanzeige und Baum folgen. */
+    private java.util.function.Consumer<Place> navigated = place -> { };
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
@@ -279,7 +302,7 @@ public final class PageDetailPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.IconButton forwardButton = new com.aresstack.spaceharvester.app
             .ui.IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronRight(),
             "Vor (Maustaste Vor)");
-    /** Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, beim Loslassen wie im EAC. */
+    /** Die Maustasten Zurück (4) und Vor (5) irgendwo im Fenster, beim Loslassen wie im EAC. */
     private final java.awt.event.AWTEventListener mouseNavigation = event -> {
         if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED) {
             mouseButton(mouse.getButton(), mouse.getComponent());
@@ -496,6 +519,9 @@ public final class PageDetailPanel extends JPanel {
         recompute.addActionListener(e -> recompute());
         recomputeReader.addActionListener(e -> recompute());
         readingPane.onLink(this::linkActivated);
+        readingPane.onViewerLook(() -> Comic.viewerLook(context.settings() == null
+                ? com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT
+                : context.settings().viewerBackground()));
         backButton.addActionListener(e -> back());
         forwardButton.addActionListener(e -> forward());
         updateNavigation();
@@ -515,9 +541,19 @@ public final class PageDetailPanel extends JPanel {
         // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
+        heading.add(chat.header());
+        chat.header().setVisible(false);
+        chat.headerActions().setVisible(false);
         more.addActionListener(e -> PopupHover.clearOnClose(moreMenu(), more)
                 .show(more, 0, more.getHeight()));
-        header.add(feedback, BorderLayout.SOUTH);
+        JPanel notices = new JPanel();
+        notices.setOpaque(false);
+        notices.setLayout(new javax.swing.BoxLayout(notices, javax.swing.BoxLayout.Y_AXIS));
+        update.setAlignmentX(LEFT_ALIGNMENT);
+        feedback.setAlignmentX(LEFT_ALIGNMENT);
+        notices.add(update);
+        notices.add(feedback);
+        header.add(notices, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
         page.add(header, BorderLayout.NORTH);
@@ -542,6 +578,12 @@ public final class PageDetailPanel extends JPanel {
      * Neuberechnungsaufträge, damit keine Seite einer anderen Quelle nachträglich erscheint.
      */
     public void clear() {
+        remember(null);
+        clearState();
+    }
+
+    /** Wie {@link #clear()}, ohne den Verlauf zu berühren: für den Wechsel auf eine Quellenseite. */
+    private void clearState() {
         request++;
         sourceId = null;
         pageId = null;
@@ -658,6 +700,15 @@ public final class PageDetailPanel extends JPanel {
         boolean standingShown = ANALYSES.equals(selected) && wide;
         standingHelp.setVisible(standingShown);
         standing.shown(standingShown);
+        // Im Reiter Chat steht mittig der Chat statt der Seitenüberschrift, rechts Neuer Chat und Chat löschen.
+        boolean chatTab = CHAT.equals(selected);
+        title.setVisible(!chatTab);
+        chat.header().setVisible(chatTab);
+        chat.headerActions().setVisible(chatTab);
+        // Die Schnellaktionen in der unteren Leiste gehören nur zum Chat.
+        chat.quickActions().setVisible(chatTab);
+        heading.revalidate();
+        heading.repaint();
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
@@ -681,8 +732,9 @@ public final class PageDetailPanel extends JPanel {
      * als Ausschnitt dieses Space; {@code spaceKey == null} die ganze Quelle.
      */
     public void showSource(String sourceId, String spaceKey, String title) {
-        clear();
         String shownTitle = title == null || title.isBlank() ? spaceKey == null ? sourceId : spaceKey : title;
+        remember(Place.level(sourceId, spaceKey, shownTitle));
+        clearState();
         this.title.setText(shownTitle);
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, spaceKey, shownTitle);
@@ -778,6 +830,11 @@ public final class PageDetailPanel extends JPanel {
                 && java.util.Objects.equals(sourceView.spaceKey(), spaceKey);
     }
 
+    /** Ob gerade genau diese Seite gezeigt wird oder lädt. */
+    boolean showsPage(String sourceId, String pageId) {
+        return sourceId != null && sourceId.equals(this.sourceId) && pageId != null && pageId.equals(this.pageId);
+    }
+
     public KnowledgeGraphTab graph() {
         return graphView;
     }
@@ -800,8 +857,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
-     * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
+     * Lädt eine Seite. Ohne {@code refresh} zuerst aus dem Bestand, ohne die Quelle zu fragen: Liegt sie dort, steht
+     * sie sofort, und die Versionsprüfung bei der Quelle läuft danach im Hintergrund ({@link #checkSource}); fehlt sie
+     * dort, holt der Core sie bei der Quelle, legt sie im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie
+     * live geprüft und, wenn sie neuer ist, live geladen; die Ansicht wartet dann (Angelo, 17.11.2026).
      */
     public void load(String sourceId, String pageId, boolean refresh) {
         // Eine geöffnete Seite: „Analysen“ zeigt ihre eigenen Analysen (der Explorer folgt mit derselben Ebene).
@@ -831,7 +890,7 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
-        remember(sourceId, pageId);
+        remember(Place.page(sourceId, pageId));
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
@@ -844,6 +903,7 @@ public final class PageDetailPanel extends JPanel {
         positionShown.accept(null);
         references.message(" ");
         int current = ++request;
+        update.dismiss();
         showCard(PAGE);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
@@ -865,15 +925,14 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> {
             // Zuerst die ID: Der Core zieht dabei fehlende Absätze nach, die der Lesetext danach schon kennt.
             PassageLookup passage = passageId == null ? null : runtime.workspace().passage(passageId);
+            if (!refresh) {
+                Optional<DeliveredPage> cached = runtime.workspace().cachedPage(sourceId, pageId);
+                if (cached.isPresent()) {
+                    return loaded(runtime, sourceId, pageId, cached.get(), font, false, passage, true);
+                }
+            }
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
-            List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-            PageText text = runtime.workspace().pageText(delivered.snapshot());
-            ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
-            relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
-            navigation(runtime, document, sourceId, pageId);
-            return new Loaded(delivered, enrichments, document,
-                    Payloads.display(delivered.snapshot().payload()),
-                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh, passage);
+            return loaded(runtime, sourceId, pageId, delivered, font, refresh, passage, false);
         }, loaded -> {
             if (current != request) {
                 return;
@@ -889,6 +948,9 @@ public final class PageDetailPanel extends JPanel {
             if (jump != null && jump.sourceId().equals(sourceId) && jump.pageId().equals(pageId)) {
                 jumpTo(List.of(new TermsTab.Span(jump.start(), jump.end())));
             }
+            if (loaded.unchecked()) {
+                checkSource(runtime, sourceId, pageId, loaded.page(), font, current);
+            }
         }, error -> {
             if (current != request) {
                 return;
@@ -898,6 +960,94 @@ public final class PageDetailPanel extends JPanel {
             page = null;
             acronymHint.setText(" ");
         });
+    }
+
+    /** Alles, was {@link #show} zu einer ausgelieferten Seite braucht; außerhalb des EDT. */
+    private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
+                          boolean checked, PassageLookup passage, boolean unchecked) {
+        List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
+        PageText text = runtime.workspace().pageText(delivered.snapshot());
+        ReaderDocument document = document(source, id, enrichments, text, font);
+        relations(runtime, document, source, delivered.header().metadata().partitionKey());
+        navigation(runtime, document, source, id);
+        return new Loaded(delivered, enrichments, document,
+                Payloads.display(delivered.snapshot().payload()),
+                Payloads.storage(delivered.snapshot().payload()).orElse(null), checked, passage, unchecked);
+    }
+
+    /**
+     * Prüft die sofort aus dem Bestand gezeigte Seite im Hintergrund bei der Quelle ({@code page(…, refresh=false)},
+     * dieselbe Prüfung wie bisher vor dem Anzeigen). Hat die Quelle eine andere Fassung, bleibt der gezeigte Stand
+     * stehen und oben erscheint „Es gibt N Updates seit Ihrem letzten Besuch – Seite neu laden“; der Klick zeigt die
+     * schon geladene neue Fassung. Sonst wird nur die Zustandszeile still nachgeführt; ein Fehler der Prüfung ändert
+     * nichts, der Bestand bleibt lesbar.
+     */
+    private void checkSource(AppRuntime runtime, String source, String id, DeliveredPage shown, Font font,
+                             int current) {
+        String shownRevision = shown.snapshot().revision();
+        String shownVersion = shown.header().metadata().version();
+        Background.run(() -> {
+            DeliveredPage checked = runtime.workspace().page(source, id, false);
+            boolean newer = checked.live() || !java.util.Objects.equals(checked.snapshot().revision(), shownRevision);
+            if (!newer) {
+                return new Checked(checked, null);
+            }
+            return new Checked(checked, loaded(runtime, source, id, checked, font, false, null, false));
+        }, checked -> {
+            if (current != request || shown != page) {
+                return;
+            }
+            if (checked.newer() == null) {
+                state.setText(origin(checked.page()) + checkedNote(checked.page()));
+                renderDetails();
+                return;
+            }
+            Loaded newer = checked.newer();
+            update.show(ReadingPane.updateSentence(shownVersion, newer.page().header().metadata().version()),
+                    ReadingPane.RELOAD, () -> {
+                        if (current != request || shown != page) {
+                            return;
+                        }
+                        assetsLoaded = false;
+                        readingLoaded = false;
+                        referencesLoaded = false;
+                        imagesLoaded = false;
+                        closeAttachmentOverlay();
+                        assetsModel.set(null);
+                        show(newer);
+                        loadVisible();
+                        loadPosition();
+                    });
+        }, error -> {
+            // Der Bestand steht; die Prüfung bei der Quelle ist still gescheitert (etwa nicht erreichbar).
+        });
+    }
+
+    /** Zusatz der Zustandszeile nach der Hintergrundprüfung: was die Quelle zur gezeigten Fassung sagt. */
+    private static String checkedNote(DeliveredPage checked) {
+        if (checked.refresh() == null) {
+            return "";
+        }
+        return switch (checked.refresh()) {
+            case CURRENT -> " · mit der Quelle verglichen: aktuell";
+            case HEADER_CHANGED -> " · Kopfdaten in der Quelle geändert";
+            case GONE -> " · in der Quelle nicht mehr sichtbar";
+            default -> "";
+        };
+    }
+
+    /** Ergebnis der Hintergrundprüfung: die geprüfte Seite und, bei anderer Fassung, der fertig gebaute neue Stand. */
+    private record Checked(DeliveredPage page, Loaded newer) {
+    }
+
+    /** Für Tests: der Satz des Hinweises auf einen neueren Stand der Seite, leer ohne Hinweis. */
+    String updateOffer() {
+        return update.sentence();
+    }
+
+    /** Für Tests: ein Klick auf „Seite neu laden“ im Hinweis. */
+    void clickUpdate() {
+        update.clickAction();
     }
 
     /** Meldet den Pfad der angezeigten Seite, sobald er geladen ist; ohne Seitenbaum der Quelle nie. */
@@ -1339,7 +1489,8 @@ public final class PageDetailPanel extends JPanel {
 
     private static ReadingPane.Prepared prepare(AppRuntime runtime,
                                                 com.aresstack.spaceharvester.application.reading.ReadingView view) {
-        return ReadingPane.prepare(view, image -> runtime.workspace().viewDiagramVector(view, image),
+        // Ohne Bilder: Das HTML steht sofort, die Bilder holt die Ansicht nach dem Anzeigen nach (Angelo, 17.11.2026).
+        return ReadingPane.prepareDeferred(view, image -> runtime.workspace().viewDiagramVector(view, image),
                 image -> image(runtime, view, image),
                 diagram -> runtime.workspace().mermaid(view, diagram).orElse(null), ReadingPane.screenScale());
     }
@@ -1448,26 +1599,69 @@ public final class PageDetailPanel extends JPanel {
         return lower.startsWith("www.") ? lower.substring(4) : lower;
     }
 
-    /** Merkt die gezeigte Seite im Verlauf, bevor eine andere geladen wird; Zurück/Vor selbst merken nichts. */
-    private void remember(String nextSource, String nextPage) {
+    /**
+     * Ein Ort im Verlauf: eine Seite ({@code pageId} gesetzt) oder die Quellenseite einer Quelle ({@code spaceKey}
+     * {@code null}) bzw. eines Space, mit dem Titel, den die Quellenseite trug.
+     */
+    public record Place(String sourceId, String spaceKey, String pageId, String title) {
+
+        static Place page(String sourceId, String pageId) {
+            return new Place(sourceId, null, pageId, null);
+        }
+
+        static Place level(String sourceId, String spaceKey, String title) {
+            return new Place(sourceId, spaceKey, null, title);
+        }
+
+        public boolean page() {
+            return pageId != null;
+        }
+
+        /** Derselbe Ort, der Titel zählt nicht. */
+        boolean sameAs(Place other) {
+            return other != null && sourceId.equals(other.sourceId) && java.util.Objects.equals(spaceKey, other.spaceKey)
+                    && java.util.Objects.equals(pageId, other.pageId);
+        }
+    }
+
+    /** Was die Mitte gerade zeigt: die Seite, die Quellenseite oder nichts. */
+    private Place current() {
+        if (sourceId != null && pageId != null) {
+            return Place.page(sourceId, pageId);
+        }
+        if (showsSource() && sourceView.sourceId() != null) {
+            return Place.level(sourceView.sourceId(), sourceView.spaceKey(), title.getText());
+        }
+        return null;
+    }
+
+    /**
+     * Merkt das Gezeigte im Verlauf, bevor {@code next} an seine Stelle tritt ({@code null}: die Mitte wird leer);
+     * Zurück/Vor selbst merken nichts, und derselbe Ort noch einmal auch nicht.
+     */
+    private void remember(Place next) {
         pendingAnchor = null;
-        if (navigating || nextSource.equals(this.sourceId) && nextPage.equals(this.pageId)) {
+        if (navigating) {
             return;
         }
-        // Eine neu geöffnete Seite verwirft den Vor-Verlauf, auch wenn gerade keine Seite gezeigt wird.
-        if (this.sourceId != null && this.pageId != null) {
-            backStack.push(new PageKey(this.sourceId, this.pageId));
+        Place now = current();
+        if (next != null && next.sameAs(now)) {
+            return;
         }
+        if (now != null) {
+            backStack.push(now);
+        }
+        // Ein neu geöffneter Ort verwirft den Vor-Verlauf, auch wenn gerade nichts gezeigt wird.
         forwardStack.clear();
         updateNavigation();
     }
 
-    /** Zurück zur zuvor gezeigten Seite; die aktuelle kommt in den Vor-Verlauf. */
+    /** Zurück zum zuvor Gezeigten; das Aktuelle kommt in den Vor-Verlauf. */
     public boolean back() {
         return step(backStack, forwardStack);
     }
 
-    /** Vor zur zuletzt per Zurück verlassenen Seite. */
+    /** Vor zum zuletzt per Zurück Verlassenen. */
     public boolean forward() {
         return step(forwardStack, backStack);
     }
@@ -1480,21 +1674,32 @@ public final class PageDetailPanel extends JPanel {
         return !forwardStack.isEmpty();
     }
 
-    private boolean step(java.util.Deque<PageKey> from, java.util.Deque<PageKey> to) {
+    /** Erfährt jeden Schritt per Zurück/Vor (die Bereichsanzeige oben, der Baum links). */
+    public void onNavigated(java.util.function.Consumer<Place> listener) {
+        this.navigated = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
         if (from.isEmpty() || context.runtime() == null) {
             return false;
         }
-        PageKey next = from.pop();
-        if (sourceId != null && pageId != null) {
-            to.push(new PageKey(sourceId, pageId));
+        Place next = from.pop();
+        Place now = current();
+        if (now != null) {
+            to.push(now);
         }
         navigating = true;
         try {
-            load(next.sourceId(), next.pageId(), false);
+            if (next.page()) {
+                load(next.sourceId(), next.pageId(), false);
+            } else {
+                showSource(next.sourceId(), next.spaceKey(), next.title());
+            }
         } finally {
             navigating = false;
         }
         updateNavigation();
+        navigated.accept(next);
         return true;
     }
 
@@ -1504,13 +1709,18 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, wie im Lesebereich des EAC.
+     * Die Maustasten Zurück (4) und Vor (5) irgendwo im Fenster der Seitenansicht, auch über dem Baum (Angelo,
+     * 17.11.2026); im EAC nur im Lesebereich.
      *
      * @return ob die Taste behandelt wurde
      */
     boolean mouseButton(int button, java.awt.Component source) {
-        if (source == null || !javax.swing.SwingUtilities.isDescendingFrom(source, this)
-                || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
+        if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
+            return false;
+        }
+        java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(this);
+        if (!javax.swing.SwingUtilities.isDescendingFrom(source, this)
+                && (window == null || javax.swing.SwingUtilities.getWindowAncestor(source) != window)) {
             return false;
         }
         if (button == MOUSE_BACK_BUTTON) {
@@ -2218,7 +2428,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
-                standingHelp, star, more);
+                standingHelp, chat.headerActions(), star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */
@@ -2246,28 +2456,6 @@ public final class PageDetailPanel extends JPanel {
             menu.add(item);
         }
         return menu;
-    }
-
-    /** Gefülltes Dreieck nach unten, in der Vordergrundfarbe des Knopfs. */
-    private static final class DownTriangle implements javax.swing.Icon {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(c.isEnabled() ? c.getForeground() : Comic.MUTED);
-            g2.fillPolygon(new int[] {x + 3, x + 13, x + 8}, new int[] {y + 5, y + 5, y + 11}, 3);
-            g2.dispose();
-        }
-
-        @Override
-        public int getIconWidth() {
-            return 16;
-        }
-
-        @Override
-        public int getIconHeight() {
-            return 16;
-        }
     }
 
     Breadcrumbs breadcrumbs() {
@@ -2409,8 +2597,9 @@ public final class PageDetailPanel extends JPanel {
 
     /** @param checked ob der Bediener ausdrücklich „Aktualität prüfen“ gewählt hat */
     /** {@code passage} nur beim Öffnen über eine Passage-ID ({@link #openPassage}). */
+    /** {@code unchecked}: sofort aus dem Bestand gezeigt, die Prüfung bei der Quelle läuft noch ({@link #checkSource}). */
     private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
-                          String display, String storage, boolean checked, PassageLookup passage) {
+                          String display, String storage, boolean checked, PassageLookup passage, boolean unchecked) {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {
