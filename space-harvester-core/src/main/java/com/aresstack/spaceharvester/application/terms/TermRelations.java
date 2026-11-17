@@ -613,7 +613,6 @@ public class TermRelations {
         }
     }
 
-    /** Sichtbarkeit von Beziehungen und Belegen für einen Aufrufer, je Seite und Geltungsbereich einmal geprüft. */
     /**
      * Wo die Begriffe einer Seitenmenge vorkommen (BG1): je Suchwert die lesbaren Seiten der Menge mit Quelle und
      * Space, aus dem Begriffsindex, nur Seiten selbst. Je Suchwert einmal gefragt.
@@ -671,6 +670,7 @@ public class TermRelations {
     private record PageScope(String sourceId, String spaceKey) {
     }
 
+    /** Sichtbarkeit von Beziehungen und Belegen für einen Aufrufer, je Seite und Geltungsbereich einmal geprüft. */
     private final class Visibility {
 
         private final AccessContext caller;
