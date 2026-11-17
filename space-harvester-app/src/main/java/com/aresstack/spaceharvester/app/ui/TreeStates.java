@@ -445,7 +445,8 @@ final class TreeStates {
         tip.append(counts.local() + counts.outdated()).append(" von ").append(counts.pages())
                 .append(counts.pages() == 1 ? " Seite" : " Seiten").append(" lokal");
         if (counts.outdated() > 0) {
-            tip.append(", ").append(counts.outdated()).append(" veraltet");
+            tip.append(", ").append(counts.outdated()).append(" veraltet (neuere Version in der Quelle, Inhalt nicht "
+                    + "geladen)");
         }
         if (counts.locked() > 0) {
             tip.append(", ").append(counts.locked()).append(" gesperrt");

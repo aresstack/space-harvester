@@ -50,7 +50,8 @@ final class SourcePropertiesView extends JPanel {
 
     static final String HELP = "Die Kennzahlen stammen aus dem lokalen Bestand: „Seiten“ zählt alle Seiten, die der "
             + "Bestand von der Quelle kennt, „lokal“ die mit gespeichertem Inhalt, „veraltet“ die, deren Inhalt seit dem "
-            + "Laden in der Quelle geändert wurde. Ein Space ohne Inventur kennt nur einzelne Seiten; seine Zahlen gelten "
+            + "Laden in der Quelle geändert wurde und noch nicht neu geladen ist, meist weil die Betriebsart der Quelle "
+            + "„Nur katalogisieren“ ist (Quellen › „Diese Quelle anpassen …“ › Betriebsart). Ein Space ohne Inventur kennt nur einzelne Seiten; seine Zahlen gelten "
             + "nur für diese.\n\n"
             + "Die Einstellungen stehen in der Konfigurationsdatei. Der Stift öffnet die Quelle unter Quellen, dort lässt "
             + "sich alles ändern.";
@@ -368,7 +369,7 @@ final class SourcePropertiesView extends JPanel {
                 : inventoried == 0 ? ", keiner mit Inventur" : ", davon " + inventoried + " mit Inventur"));
         figures.add("Seiten", String.valueOf(total.pages()));
         figures.add("Lokal", total.local() + " aktuell, " + total.outdated() + " veraltet",
-                total.outdated() > 0 ? Comic.ORANGE : Comic.INK);
+                total.outdated() > 0 ? Comic.ORANGE : Comic.INK, null, total.outdated() > 0 ? Texts.OUTDATED_WHY : null);
         figures.add("Nicht lokal", String.valueOf(Math.max(0, total.pages() - total.stored() - total.locked())));
         figures.add("Gesperrt", String.valueOf(total.locked()), total.locked() > 0 ? Comic.RED : Comic.INK);
         figures.add("Stand vom", asOf == null ? "keine Inventur" : when(asOf));
@@ -395,7 +396,8 @@ final class SourcePropertiesView extends JPanel {
                 parts.add(counts.locked() + " gesperrt");
             }
             parts.add(space.inventoried() ? "Stand " + when(space.asOf()) : "keine Inventur");
-            spaces.add(space.spaceKey(), String.join(" · ", parts), space.inventoried() ? Comic.INK : Comic.MUTED);
+            spaces.add(space.spaceKey(), String.join(" · ", parts), space.inventoried() ? Comic.INK : Comic.MUTED,
+                    null, counts.outdated() > 0 ? Texts.OUTDATED_WHY : null);
         });
     }
 

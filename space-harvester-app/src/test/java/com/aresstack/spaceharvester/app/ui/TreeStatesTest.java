@@ -38,7 +38,7 @@ class TreeStatesTest {
         assertThat(empty.tooltip()).isEqualTo("0 von 2010 Seiten lokal");
         TreeStates.Badge partial = TreeStates.node(new HoldingCounts(2010, 176, 8, 2), false);
         assertThat(partial.glyph()).isEqualTo(Glyph.CIRCLE_HALF);
-        assertThat(partial.tooltip()).isEqualTo("184 von 2010 Seiten lokal, 8 veraltet, 2 gesperrt");
+        assertThat(partial.tooltip()).isEqualTo("184 von 2010 Seiten lokal, 8 veraltet (neuere Version in der Quelle, Inhalt nicht geladen), 2 gesperrt");
         TreeStates.Badge full = TreeStates.node(new HoldingCounts(12, 12, 0, 0), false);
         assertThat(full.glyph()).isEqualTo(Glyph.CIRCLE_FULL);
         assertThat(full.kind()).isEqualTo(TreeStates.Kind.FULL);

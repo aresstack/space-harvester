@@ -70,6 +70,8 @@ final class SourceUpdatesView extends JPanel {
             + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
             + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
             + "gespeichert und lässt sich später nachlesen oder neu erstellen. Von selbst wird nie zusammengefasst.";
+    /** Vor den Zahlen von „Seit dem letzten Update“: kein hängender Auftrag, sondern was seither dazukam. */
+    static final String OPEN_COUNTS = "Änderungen seit dem letzten manuellen Update: ";
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
     static final String SUMMARIZING = "Wird zusammengefasst …";
@@ -891,7 +893,9 @@ final class SourceUpdatesView extends JPanel {
             return "Seit dem letzten Update";
         }
         String user = update.mark().user();
-        return when(update.to()) + (user == null || user.isBlank() ? "" : " · " + user);
+        // Der Core selbst (Desktop-App) ist kein Benutzer: dann nur das Datum.
+        boolean named = user != null && !user.isBlank() && !com.aresstack.spaceharvester.core.Harvester.OWNER.equals(user);
+        return when(update.to()) + (named ? " · " + user : "");
     }
 
     String counts(ChangeUpdate update) {
@@ -913,7 +917,7 @@ final class SourceUpdatesView extends JPanel {
         if (update.summarized()) {
             text += " · zusammengefasst";
         }
-        return update.open() ? "noch nicht abgeschlossen · " + text : text;
+        return update.open() ? OPEN_COUNTS + text : text;
     }
 
     private String period(ChangeUpdate update) {
