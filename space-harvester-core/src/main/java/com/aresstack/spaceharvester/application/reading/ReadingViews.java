@@ -177,15 +177,18 @@ public class ReadingViews {
                             // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
                             ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
                         }
+                    } catch (SourceAccessException e) {
+                        // Aufgeben noch mit gehaltenem Platz, sonst fragt der nächste Abruf die Quelle doch noch.
+                        if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
+                            gaveUp.set(true);
+                        }
+                        throw e;
                     } finally {
                         prefetchSlots.release();
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (SourceAccessException e) {
-                    if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
-                        gaveUp.set(true);
-                    }
                     LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
                             sourceId, e.getClass().getName());
                 } catch (RuntimeException e) {
