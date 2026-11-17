@@ -142,9 +142,11 @@ public final class OpenNlpGermanPreprocessor implements GermanPreprocessor {
         GermanTagCorrections.correctTags(forms, upos);
         String[] lemma = forms.length == 0 ? new String[0] : lemmatizer.lemmatize(forms, upos);
         List<Token> tagged = new ArrayList<>();
+        boolean start = true;
         for (int i = 0; i < words.size(); i++) {
             String given = lemma(lemma[i]);
-            String corrected = GermanTagCorrections.lemma(forms[i], upos[i], given);
+            String corrected = GermanTagCorrections.lemma(forms[i], upos[i], given, start);
+            start = start && !forms[i].matches(".*\\p{L}.*");
             // Erzeugte Grundform bekommt einen Hinweis (ADR 0032, FL2); der Parser liest nur Form und Wortart
             tagged.add(words.get(i).withTags(corrected, upos[i], null, corrected != null && !corrected.equals(given)
                     ? Map.of(Token.LEMMA_FROM, "Form") : Map.of()));

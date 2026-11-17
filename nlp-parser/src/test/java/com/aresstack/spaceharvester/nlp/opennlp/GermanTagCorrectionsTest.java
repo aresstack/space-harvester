@@ -101,4 +101,23 @@ class GermanTagCorrectionsTest {
         assertEquals("halten", GermanTagCorrections.lemma("hält", "VERB", "halten"));
         assertEquals("hielt", GermanTagCorrections.lemma("hielt", "VERB", "hielt"), "kein Präteritum");
     }
+
+    @Test
+    void oldSpellingOfTheSameFormsAndWissen() {
+        java.util.Map<String, String> forms = java.util.Map.of("läßt", "lassen", "mißt", "messen", "ißt", "essen",
+                "frißt", "fressen", "vergißt", "vergessen", "weiß", "wissen", "weißt", "wissen");
+        forms.forEach((form, lemma) -> assertEquals(lemma, GermanTagCorrections.lemma(form, "VERB", form), form));
+        // keine allgemeine Ersetzung von ß: unbekannte Formen mit ß bleiben
+        assertEquals("grüßt", GermanTagCorrections.lemma("grüßt", "VERB", "grüßt"));
+    }
+
+    @Test
+    void capitalisedFormInsideTheSentenceKeepsItsForm() {
+        assertEquals("Gerät", GermanTagCorrections.lemma("Gerät", "VERB", "Gerät", false), "mitten im Satz kein Verb");
+        assertEquals("Hält", GermanTagCorrections.lemma("Hält", "VERB", "Hält", false));
+        assertNull(GermanTagCorrections.lemma("Bereitzustellen", "VERB", null, false));
+        assertEquals("halten", GermanTagCorrections.lemma("Hält", "VERB", "Hält", true), "am Satzanfang groß");
+        assertEquals("geraten", GermanTagCorrections.lemma("gerät", "VERB", "gerät", false), "klein mitten im Satz");
+        assertEquals("halten", GermanTagCorrections.lemma("Hält", "VERB", "halten", false), "Grundform von OpenNLP bleibt");
+    }
 }

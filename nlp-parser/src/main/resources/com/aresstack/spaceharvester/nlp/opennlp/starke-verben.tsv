@@ -1,7 +1,10 @@
 # Starke und unregelmäßige Verben mit Vokalwechsel im Präsens (ADR 0032): Grundform, 3. Person Singular, 2. Person
 # Singular. Allgemeine deutsche Grammatik, von Hand zusammengestellt nach der üblichen Standardliste der starken und
 # unregelmäßigen Verben (Wechsel e → i/ie, a → ä, au → äu, o → ö); nur einfache Verben, Verbzusätze und untrennbare
-# Vorsilben (ein-, ver-, be-, ent- …) ergänzt GermanTagCorrections. Keine Formen des Präteritums.
+# Vorsilben (ein-, ver-, be-, ent- …) ergänzt GermanTagCorrections. Keine Formen des Präteritums. Eine weitere Spalte
+# nennt die alte Schreibung derselben Form (läßt, mißt); das ist keine allgemeine Ersetzung von ß.
+# Bekannte Grenze: „fällt“ gehört zu „fallen“, aber auch zu „fällen“ („fällt eine Entscheidung“); am Wort allein nicht
+# entscheidbar. Die Tabelle gilt nur, wenn OpenNLP keine Grundform kennt, und nimmt dann „fallen“.
 backen	bäckt	bäckst
 befehlen	befiehlt	befiehlst
 bergen	birgt	birgst
@@ -13,13 +16,13 @@ dreschen	drischt	drischst
 empfehlen	empfiehlt	empfiehlst
 erlöschen	erlischt	erlischst
 erschrecken	erschrickt	erschrickst
-essen	isst	isst
+essen	isst	isst	ißt
 fahren	fährt	fährst
 fallen	fällt	fällst
 fangen	fängt	fängst
 fechten	ficht	fichtst
 flechten	flicht	flichtst
-fressen	frisst	frisst
+fressen	frisst	frisst	frißt
 gebären	gebiert	gebierst
 geben	gibt	gibst
 gelten	gilt	giltst
@@ -28,10 +31,10 @@ graben	gräbt	gräbst
 halten	hält	hältst
 helfen	hilft	hilfst
 laden	lädt	lädst
-lassen	lässt	lässt
+lassen	lässt	lässt	läßt
 laufen	läuft	läufst
 lesen	liest	liest
-messen	misst	misst
+messen	misst	misst	mißt
 nehmen	nimmt	nimmst
 quellen	quillt	quillst
 raten	rät	rätst
@@ -51,9 +54,10 @@ tragen	trägt	trägst
 treffen	trifft	triffst
 treten	tritt	trittst
 verderben	verdirbt	verdirbst
-vergessen	vergisst	vergisst
+vergessen	vergisst	vergisst	vergißt
 wachsen	wächst	wächst
 waschen	wäscht	wäschst
 werben	wirbt	wirbst
 werden	wird	wirst
 werfen	wirft	wirfst
+wissen	weiß	weißt

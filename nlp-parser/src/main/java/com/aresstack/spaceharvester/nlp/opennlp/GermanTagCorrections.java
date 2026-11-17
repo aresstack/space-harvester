@@ -94,6 +94,19 @@ final class GermanTagCorrections {
      * ({@code anzupfen}, {@code aufzucken}: „pf“, „ck“ sind kein Verbstamm).
      */
     static String lemma(String form, String upos, String lemma) {
+        return lemma(form, upos, lemma, true);
+    }
+
+    /**
+     * Wie {@link #lemma(String, String, String)}; {@code sentenceStart} sagt, ob vor der Form nur Satzzeichen stehen.
+     * Eine großgeschriebene Form mitten im Satz ist kein Verb („Gerät“, auch wenn der Tagger es als Verb liest), also
+     * wird ihre Grundform nicht aus der Form gebildet.
+     */
+    static String lemma(String form, String upos, String lemma, boolean sentenceStart) {
+        if (!sentenceStart && !form.isEmpty() && Character.isUpperCase(form.charAt(0))
+                && (lemma == null || lemma.equalsIgnoreCase(form))) {
+            return lemma;
+        }
         return verbLemma(form, upos, lemma);
     }
 
