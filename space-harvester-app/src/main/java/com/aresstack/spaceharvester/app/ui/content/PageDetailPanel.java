@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
@@ -157,6 +158,11 @@ public final class PageDetailPanel extends JPanel {
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
     private final Feedback feedback = new Feedback();
+    /**
+     * Hinweis über der Seite, wenn die Quelle einen neueren Stand hat als der sofort gezeigte aus dem Bestand (dieselbe
+     * Platte wie in der Leseansicht, Angelo 17.11.2026); „Seite neu laden“ zeigt den schon geladenen neuen Stand.
+     */
+    private final MessagePlate update = new MessagePlate();
     private final JTextPane reader = new JTextPane() {
         @Override
         public String getToolTipText(MouseEvent event) {
@@ -517,7 +523,14 @@ public final class PageDetailPanel extends JPanel {
         heading.add(title);
         more.addActionListener(e -> PopupHover.clearOnClose(moreMenu(), more)
                 .show(more, 0, more.getHeight()));
-        header.add(feedback, BorderLayout.SOUTH);
+        JPanel notices = new JPanel();
+        notices.setOpaque(false);
+        notices.setLayout(new javax.swing.BoxLayout(notices, javax.swing.BoxLayout.Y_AXIS));
+        update.setAlignmentX(LEFT_ALIGNMENT);
+        feedback.setAlignmentX(LEFT_ALIGNMENT);
+        notices.add(update);
+        notices.add(feedback);
+        header.add(notices, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
         page.add(header, BorderLayout.NORTH);
@@ -800,8 +813,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
-     * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
+     * Lädt eine Seite. Ohne {@code refresh} zuerst aus dem Bestand, ohne die Quelle zu fragen: Liegt sie dort, steht
+     * sie sofort, und die Versionsprüfung bei der Quelle läuft danach im Hintergrund ({@link #checkSource}); fehlt sie
+     * dort, holt der Core sie bei der Quelle, legt sie im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie
+     * live geprüft und, wenn sie neuer ist, live geladen; die Ansicht wartet dann (Angelo, 17.11.2026).
      */
     public void load(String sourceId, String pageId, boolean refresh) {
         // Eine geöffnete Seite: „Analysen“ zeigt ihre eigenen Analysen (der Explorer folgt mit derselben Ebene).
@@ -844,6 +859,7 @@ public final class PageDetailPanel extends JPanel {
         positionShown.accept(null);
         references.message(" ");
         int current = ++request;
+        update.dismiss();
         showCard(PAGE);
         showReader(null, false);
         statementsView.pending(new PageKey(sourceId, pageId));
@@ -865,15 +881,14 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> {
             // Zuerst die ID: Der Core zieht dabei fehlende Absätze nach, die der Lesetext danach schon kennt.
             PassageLookup passage = passageId == null ? null : runtime.workspace().passage(passageId);
+            if (!refresh) {
+                Optional<DeliveredPage> cached = runtime.workspace().cachedPage(sourceId, pageId);
+                if (cached.isPresent()) {
+                    return loaded(runtime, sourceId, pageId, cached.get(), font, false, passage, true);
+                }
+            }
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
-            List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-            PageText text = runtime.workspace().pageText(delivered.snapshot());
-            ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
-            relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
-            navigation(runtime, document, sourceId, pageId);
-            return new Loaded(delivered, enrichments, document,
-                    Payloads.display(delivered.snapshot().payload()),
-                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh, passage);
+            return loaded(runtime, sourceId, pageId, delivered, font, refresh, passage, false);
         }, loaded -> {
             if (current != request) {
                 return;
@@ -889,6 +904,9 @@ public final class PageDetailPanel extends JPanel {
             if (jump != null && jump.sourceId().equals(sourceId) && jump.pageId().equals(pageId)) {
                 jumpTo(List.of(new TermsTab.Span(jump.start(), jump.end())));
             }
+            if (loaded.unchecked()) {
+                checkSource(runtime, sourceId, pageId, loaded.page(), font, current);
+            }
         }, error -> {
             if (current != request) {
                 return;
@@ -898,6 +916,94 @@ public final class PageDetailPanel extends JPanel {
             page = null;
             acronymHint.setText(" ");
         });
+    }
+
+    /** Alles, was {@link #show} zu einer ausgelieferten Seite braucht; außerhalb des EDT. */
+    private Loaded loaded(AppRuntime runtime, String source, String id, DeliveredPage delivered, Font font,
+                          boolean checked, PassageLookup passage, boolean unchecked) {
+        List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
+        PageText text = runtime.workspace().pageText(delivered.snapshot());
+        ReaderDocument document = document(source, id, enrichments, text, font);
+        relations(runtime, document, source, delivered.header().metadata().partitionKey());
+        navigation(runtime, document, source, id);
+        return new Loaded(delivered, enrichments, document,
+                Payloads.display(delivered.snapshot().payload()),
+                Payloads.storage(delivered.snapshot().payload()).orElse(null), checked, passage, unchecked);
+    }
+
+    /**
+     * Prüft die sofort aus dem Bestand gezeigte Seite im Hintergrund bei der Quelle ({@code page(…, refresh=false)},
+     * dieselbe Prüfung wie bisher vor dem Anzeigen). Hat die Quelle eine andere Fassung, bleibt der gezeigte Stand
+     * stehen und oben erscheint „Es gibt N Updates seit Ihrem letzten Besuch – Seite neu laden“; der Klick zeigt die
+     * schon geladene neue Fassung. Sonst wird nur die Zustandszeile still nachgeführt; ein Fehler der Prüfung ändert
+     * nichts, der Bestand bleibt lesbar.
+     */
+    private void checkSource(AppRuntime runtime, String source, String id, DeliveredPage shown, Font font,
+                             int current) {
+        String shownRevision = shown.snapshot().revision();
+        String shownVersion = shown.header().metadata().version();
+        Background.run(() -> {
+            DeliveredPage checked = runtime.workspace().page(source, id, false);
+            boolean newer = checked.live() || !java.util.Objects.equals(checked.snapshot().revision(), shownRevision);
+            if (!newer) {
+                return new Checked(checked, null);
+            }
+            return new Checked(checked, loaded(runtime, source, id, checked, font, false, null, false));
+        }, checked -> {
+            if (current != request || shown != page) {
+                return;
+            }
+            if (checked.newer() == null) {
+                state.setText(origin(checked.page()) + checkedNote(checked.page()));
+                renderDetails();
+                return;
+            }
+            Loaded newer = checked.newer();
+            update.show(ReadingPane.updateSentence(shownVersion, newer.page().header().metadata().version()),
+                    ReadingPane.RELOAD, () -> {
+                        if (current != request || shown != page) {
+                            return;
+                        }
+                        assetsLoaded = false;
+                        readingLoaded = false;
+                        referencesLoaded = false;
+                        imagesLoaded = false;
+                        closeAttachmentOverlay();
+                        assetsModel.set(null);
+                        show(newer);
+                        loadVisible();
+                        loadPosition();
+                    });
+        }, error -> {
+            // Der Bestand steht; die Prüfung bei der Quelle ist still gescheitert (etwa nicht erreichbar).
+        });
+    }
+
+    /** Zusatz der Zustandszeile nach der Hintergrundprüfung: was die Quelle zur gezeigten Fassung sagt. */
+    private static String checkedNote(DeliveredPage checked) {
+        if (checked.refresh() == null) {
+            return "";
+        }
+        return switch (checked.refresh()) {
+            case CURRENT -> " · mit der Quelle verglichen: aktuell";
+            case HEADER_CHANGED -> " · Kopfdaten in der Quelle geändert";
+            case GONE -> " · in der Quelle nicht mehr sichtbar";
+            default -> "";
+        };
+    }
+
+    /** Ergebnis der Hintergrundprüfung: die geprüfte Seite und, bei anderer Fassung, der fertig gebaute neue Stand. */
+    private record Checked(DeliveredPage page, Loaded newer) {
+    }
+
+    /** Für Tests: der Satz des Hinweises auf einen neueren Stand der Seite, leer ohne Hinweis. */
+    String updateOffer() {
+        return update.sentence();
+    }
+
+    /** Für Tests: ein Klick auf „Seite neu laden“ im Hinweis. */
+    void clickUpdate() {
+        update.clickAction();
     }
 
     /** Meldet den Pfad der angezeigten Seite, sobald er geladen ist; ohne Seitenbaum der Quelle nie. */
@@ -1339,7 +1445,8 @@ public final class PageDetailPanel extends JPanel {
 
     private static ReadingPane.Prepared prepare(AppRuntime runtime,
                                                 com.aresstack.spaceharvester.application.reading.ReadingView view) {
-        return ReadingPane.prepare(view, image -> runtime.workspace().viewDiagramVector(view, image),
+        // Ohne Bilder: Das HTML steht sofort, die Bilder holt die Ansicht nach dem Anzeigen nach (Angelo, 17.11.2026).
+        return ReadingPane.prepareDeferred(view, image -> runtime.workspace().viewDiagramVector(view, image),
                 image -> image(runtime, view, image),
                 diagram -> runtime.workspace().mermaid(view, diagram).orElse(null), ReadingPane.screenScale());
     }
@@ -2409,8 +2516,9 @@ public final class PageDetailPanel extends JPanel {
 
     /** @param checked ob der Bediener ausdrücklich „Aktualität prüfen“ gewählt hat */
     /** {@code passage} nur beim Öffnen über eine Passage-ID ({@link #openPassage}). */
+    /** {@code unchecked}: sofort aus dem Bestand gezeigt, die Prüfung bei der Quelle läuft noch ({@link #checkSource}). */
     private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
-                          String display, String storage, boolean checked, PassageLookup passage) {
+                          String display, String storage, boolean checked, PassageLookup passage, boolean unchecked) {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {
