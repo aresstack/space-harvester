@@ -1,21 +1,32 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.spaceharvester.app.event.Severity;
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
+import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
+import com.aresstack.spaceharvester.app.ui.controls.CountChip;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationType;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
+import com.aresstack.spaceharvester.application.terms.SynonymScope;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermRelation;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.TermText;
 
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.Component;
 import java.awt.FlowLayout;
@@ -23,6 +34,7 @@ import java.awt.Font;
 import java.awt.font.TextAttribute;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -44,10 +56,15 @@ import static com.aresstack.spaceharvester.app.ui.TermsView.REMOVE;
 import static com.aresstack.spaceharvester.app.ui.TermsView.UNDO;
 
 /**
- * Ein Reiter mit Beziehungen zwischen Begriffen unter Begriffe (#120): „Beziehungen“ zeigt alle Arten, „Synonyme“ nur
- * Synonyme und Schreibvarianten. Liste mit Buchstabenleiste, Suchfeld und sortierbaren Spalten, Bestätigen, Ablehnen
- * und Entfernen mit Rückgängig; „Neue Beziehung …“ ({@link #createButton()}) setzt der Einbau oben rechts in die
- * Reiterzeile. Die Liste blättert wie die Bezeichner: Seiten von je
+ * Die Liste der Beziehungen zwischen Begriffen (#120), eine eigenständige Komponente ohne Annahmen über ihren Einbau
+ * (heute unter Begriffe, später im Reiter Analyse der Seite, ADR 0029). Liste mit Buchstabenleiste, Suchfeld, Chips
+ * zum Filtern nach Art (Abkürzung, Synonym, Schreibvariante, Verwandt; wie im Reiter Stand: kein Chip gedrückt =
+ * alles, gedrückte = nur diese Arten; der Filter fragt den Core) und
+ * sortierbaren Spalten, Bestätigen, Ablehnen und Entfernen mit Rückgängig. Die Aktionen „Neue Beziehung …“
+ * ({@link #createButton()}) und „Synonyme vorschlagen“ ({@link #proposeButton()}, #336: Umfang und Budget im Dialog,
+ * Lauf mit Wartekreis über der Liste und Abbrechen, Ergebnis in der Statuszeile) setzt der Einbau oben rechts in seine
+ * Reiterzeile. Eine optionale Seitenmenge ({@link #pages(PageSet)}) begrenzt auf die Auswahl links; ohne Menge gilt
+ * alles. Die Liste blättert wie die Bezeichner: Seiten von je
  * {@link TermsView#RELATION_LIMIT} über einen {@link Pager}, die nächste beim Scrollen ans Ende; vorgeschlagene und
  * bestätigte zuerst, danach die abgelehnten, beides in der Ordnung des Core (Schlüssel). Den Anfangsbuchstaben und die
  * Arten grenzt der Core ein ({@code RelationSearch.startsWith}, {@code RelationSearch.type}); die App leitet nichts
@@ -72,6 +89,25 @@ final class RelationTab {
             + "ablehnen");
     private final ComposerButton create = Comic.button(TermsView.NEW_RELATION, "Eine eigene Beziehung zwischen zwei "
             + "Begriffen anlegen; sie gilt sofort als bestätigt");
+    /** „Synonyme vorschlagen“ (#336): nur auf Klick, Umfang und Budget im Dialog, Lauf mit Fortschritt und Abbrechen. */
+    static final String PROPOSE_SYNONYMS = "Synonyme vorschlagen";
+    static final String PROPOSING = "Synonyme werden vorgeschlagen …";
+    /** Meldungen in der Statuszeile des Hauptfensters; kein Meldungsband unter der Liste. */
+    static final String RULES_ONLY = "Ohne Embedding-Modell nur Regelvorschläge";
+    static final String CANCELLED = "Synonymerkennung abgebrochen; bisherige Vorschläge bleiben";
+    private static final int NOTICE_MS = 8000;
+    private final ComposerButton proposeSynonyms = Comic.button(PROPOSE_SYNONYMS, "Schreibvarianten und "
+            + "Formulierungen im Text als Regelvorschläge; mit Chat-Modell werden Kandidatenpaare anhand kurzer "
+            + "Fundstellen aus freigegebenen Quellen geprüft. Nur Vorschläge, nichts wird bestätigt");
+    private final BusyOverlay overlay;
+    /** Anmeldung bei den Aufträgen, solange die Synonymerkennung läuft (ADR 0027, kein Zeitgeber). */
+    private com.aresstack.spaceharvester.application.observe.Subscription synonymSubscription;
+    private String synonymJob;
+    private boolean synonymRulesOnly;
+    /** Chips je Art; leer, wenn die Liste nur eine Art zeigt. */
+    private final Map<RelationType, CountChip> typeChips = new EnumMap<>(RelationType.class);
+    /** Begrenzung auf die Auswahl links oder {@code null} für alles. */
+    private PageSet pages;
 
     private List<Relation> shownRelations = List.of();
     /** Beziehungen der Liste nach Kennung, für Auswahl und Darstellung. */
@@ -153,6 +189,68 @@ final class RelationTab {
         directory.onSearch(q -> load(null));
         directory.onScrolledToEnd(this::more);
         onReview = this::reviewInCore;
+        List<RelationType> offered = dialogTypes();
+        if (offered.size() > 1) {
+            JPanel chips = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            chips.setOpaque(false);
+            for (RelationType type : offered) {
+                // Wie im Reiter Stand: kein Chip gedrückt = alles; gedrückt = nur diese Arten, mehrere möglich.
+                CountChip chip = CountChip.choice(Relation.typeText(type.name()), typeTone(type));
+                String word = Relation.typeText(type.name());
+                chip.tips("Nur „" + word + "“ zeigen", "Filter „" + word + "“ aufheben");
+                chip.addActionListener(e -> load(null));
+                typeChips.put(type, chip);
+                chips.add(chip);
+            }
+            directory.filters(chips);
+        }
+        overlay = new BusyOverlay(directory);
+        overlay.setHighlight(Comic.BLUE);
+        overlay.setVeilColor(Comic.SURFACE);
+        overlay.onCancel(this::cancelSynonymRun);
+        proposeSynonyms.setEnabled(context != null);
+        proposeSynonyms.addActionListener(e -> askSynonymRun());
+    }
+
+    private static java.awt.Color typeTone(RelationType type) {
+        return switch (type) {
+            case ABBREVIATION -> Comic.PETROL;
+            case SYNONYM -> Comic.BLUE;
+            case VARIANT -> Comic.STANDING_CURRENT;
+            case RELATED -> Comic.STANDING_OUTDATED;
+        };
+    }
+
+    /** Die Arten, die der Core liefern soll: die gedrückten Chips; keiner gedrückt heißt ohne Eingrenzung. */
+    List<RelationType> queriedTypes() {
+        if (typeChips.values().stream().noneMatch(CountChip::isSelected)) {
+            return types;
+        }
+        return typeChips.entrySet().stream().filter(e -> e.getValue().isSelected()).map(Map.Entry::getKey).toList();
+    }
+
+    CountChip typeChip(RelationType type) {
+        return typeChips.get(type);
+    }
+
+    /** Begrenzt die Liste auf diese Seiten (Auswahl links, ADR 0029) oder mit {@code null} auf alles; lädt neu. */
+    void pages(PageSet pages) {
+        this.pages = pages;
+        load(null);
+    }
+
+    /**
+     * Kopf für den Einbau: Titel und Unterzeile ({@code null} lässt die Zeile weg). Im Hauptreiter Begriffe bleiben
+     * „Beziehungen zwischen Begriffen“ und „Alle berechtigten, aktuell indexierten Seiten“; mit einer Seitenmenge oder
+     * einer eigenen Überschrift darüber setzt der Einbau beides passend oder entfernt den Kopf.
+     */
+    void heading(String title, String subtitle) {
+        directory.heading(title, subtitle);
+    }
+
+    /** Die Liste samt dem Wartekreis des Synonymlaufs; das ist das Element für den Einbau. */
+    JComponent component() {
+        return overlay;
     }
 
     /** Tests: liest Beziehungen von {@code fetch} statt aus der Laufzeit. */
@@ -215,7 +313,7 @@ final class RelationTab {
         }
         Workspace workspace = context.runtime().workspace();
         return (type, status, term, startsWith, cursor) -> workspace.termRelations(term, type, status, startsWith,
-                RELATION_LIMIT, cursor);
+                RELATION_LIMIT, cursor, pages);
     }
 
     /** Der Bereich wird sichtbar: entfernte Zeilen sind besiegelt, die Liste lädt neu. */
@@ -253,7 +351,8 @@ final class RelationTab {
         String q = directory.query();
         String term = q.isEmpty() ? null : q;
         String letter = directory.letter();
-        List<RelationType> queried = types.isEmpty() ? java.util.Collections.singletonList(null) : types;
+        List<RelationType> chosen = queriedTypes();
+        List<RelationType> queried = chosen.isEmpty() ? java.util.Collections.singletonList(null) : chosen;
         List<Pager.Fetch<TermRelation>> open = new ArrayList<>();
         List<Pager.Fetch<TermRelation>> rejected = new ArrayList<>();
         for (RelationType type : queried) {
@@ -445,6 +544,134 @@ final class RelationTab {
         }
         TermRelation restored = core.restore(relation.id());
         return before.status() == ReviewStatus.CONFIRMED ? core.confirm(relation.id()) : restored;
+    }
+
+    // ---- Synonyme vorschlagen (#336)
+
+    /** Dialog „Synonyme vorschlagen“: Umfang, Budget, was der Lauf kann; „Starten“ reiht den Auftrag ein. */
+    private void askSynonymRun() {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null) {
+            directory.message(NO_RUNTIME);
+            return;
+        }
+        Workspace workspace = runtime.workspace();
+        SynonymRunForm form;
+        try {
+            form = new SynonymRunForm(workspace.sources(), workspace::spaces, workspace::synonymAvailability,
+                    workspace.synonymAvailability(SynonymScope.ALL).budget().maxJudgedPairs());
+        } catch (RuntimeException e) {
+            directory.message("Nicht möglich: " + e.getMessage());
+            return;
+        }
+        javax.swing.JDialog dialog = Dialogs.dialog(directory, PROPOSE_SYNONYMS);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        ComposerButton start = Comic.primary("Starten", "Den Lauf im Hintergrund einreihen; der Kreis zeigt den "
+                + "Fortschritt, Abbrechen lässt bisherige Vorschläge stehen");
+        cancel.addActionListener(e -> dialog.dispose());
+        start.addActionListener(e -> {
+            SynonymDiscovery.Request request = form.request();
+            dialog.dispose();
+            startSynonymRun(request);
+        });
+        Dialogs.show(dialog, PROPOSE_SYNONYMS, form, cancel, start);
+    }
+
+    /** Startet den Lauf und zeigt ihn über der Liste; jeden neuen Stand meldet der Core (ADR 0027). */
+    void startSynonymRun(SynonymDiscovery.Request request) {
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (runtime == null || synonymJob != null) {
+            return;
+        }
+        Workspace workspace = runtime.workspace();
+        overlay.setText(PROPOSING);
+        overlay.setBusy(true);
+        proposeSynonyms.setEnabled(false);
+        Background.run(() -> {
+            synonymRulesOnly = !workspace.synonymAvailability(request.scope()).embeddingModel();
+            return workspace.startSynonymDiscovery(request.scope(), request.maxJudgedPairs());
+        }, status -> {
+            synonymJob = status.id();
+            // Erst anmelden, dann einmal lesen: was zwischen Start und Anmeldung geschah, bringt das Lesen.
+            synonymSubscription = workspace.subscribeSynonymJob(status.id(),
+                    changed -> SwingUtilities.invokeLater(() -> showSynonymRun(changed)));
+            String jobId = synonymJob;
+            Background.run(() -> workspace.synonymJob(jobId), this::showSynonymRun,
+                    failure -> finishSynonymRun(null));
+        }, failure -> {
+            overlay.setBusy(false);
+            proposeSynonyms.setEnabled(true);
+            notice("Synonymerkennung nicht gestartet: " + failure.getMessage(), Severity.WARN);
+        });
+    }
+
+    /** Ein Stand des laufenden Auftrags, auf dem EDT; ein Stand eines anderen Auftrags zählt nicht. */
+    private void showSynonymRun(JobStatus status) {
+        if (!status.id().equals(synonymJob)) {
+            return;
+        }
+        overlay.setText(progressText(status));
+        if (status.state().terminal()) {
+            finishSynonymRun(status);
+        }
+    }
+
+    static String progressText(JobStatus status) {
+        if (status.progress().discovered() == 0) {
+            return PROPOSING;
+        }
+        return PROPOSING + " " + status.progress().processed() + " von " + status.progress().discovered()
+                + " Paaren geprüft";
+    }
+
+    private void finishSynonymRun(JobStatus status) {
+        if (synonymSubscription != null) {
+            synonymSubscription.close();
+            synonymSubscription = null;
+        }
+        synonymJob = null;
+        overlay.setBusy(false);
+        proposeSynonyms.setEnabled(true);
+        if (status != null) {
+            String text = outcomeText(status, synonymRulesOnly);
+            notice(text, status.state() == JobState.FAILED ? Severity.WARN : Severity.INFO);
+        }
+        load(null);
+    }
+
+    /** Die Statuszeile nach dem Lauf: Zahl der neuen oder geänderten Vorschläge, Fehler oder Abbruch. */
+    static String outcomeText(JobStatus status, boolean rulesOnly) {
+        return switch (status.state()) {
+            case COMPLETED -> "Synonymerkennung abgeschlossen: " + Texts.count(status.progress().written(),
+                    "Vorschlag", "Vorschläge") + " neu oder geändert" + (rulesOnly ? "; " + RULES_ONLY : "");
+            case CANCELLED -> CANCELLED;
+            case FAILED -> "Synonymerkennung gescheitert: " + (status.error() == null ? "unbekannter Fehler"
+                    : status.error().message()) + "; bisherige Vorschläge bleiben";
+            default -> PROPOSING;
+        };
+    }
+
+    private void cancelSynonymRun() {
+        String jobId = synonymJob;
+        AppRuntime runtime = context == null ? null : context.runtime();
+        if (jobId == null || runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().cancelSynonymJob(jobId), ignored -> { }, failure -> { });
+    }
+
+    private void notice(String text, Severity severity) {
+        if (context != null) {
+            context.events().publish(new StatusMessageEvent(text, NOTICE_MS, severity));
+        }
+    }
+
+    ComposerButton proposeButton() {
+        return proposeSynonyms;
+    }
+
+    BusyOverlay overlay() {
+        return overlay;
     }
 
     /** Die Arten im Dialog „Neue Beziehung“: die des Reiters, sonst alle. */

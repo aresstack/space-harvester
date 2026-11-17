@@ -31,7 +31,7 @@ class TermsViewTest {
     }
 
     @Test
-    void theTabsAreAcronymsIdentifiersRelationsSynonymsGlossaryGraph() throws Exception {
+    void theTabsAreAcronymsIdentifiersRelationsGlossaryGraph() throws Exception {
         List<String> names = new ArrayList<>();
         List<String> order = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
@@ -42,20 +42,19 @@ class TermsViewTest {
             }
         });
         assertThat(order).containsExactly(TermsView.ACRONYMS, TermsView.IDENTIFIERS, TermsView.RELATIONS,
-                TermsView.SYNONYMS, TermsView.GLOSSARY, TermsView.GRAPH);
-        assertThat(names).containsExactly("Akronyme", "Bezeichner", "Beziehungen", "Synonyme", "Fachglossar",
-                "Graph");
+                TermsView.GLOSSARY, TermsView.GRAPH);
+        assertThat(names).containsExactly("Akronyme", "Bezeichner", "Beziehungen", "Fachglossar", "Graph");
     }
 
     @Test
-    void synonymsReadAsTermSynonymKindOriginStatusAndOfferOnlyTheirKinds() throws Exception {
+    void relationsReadAsTermKindOtherTermStatusOriginAndFilterByKindWithChips() throws Exception {
         Relation synonym = new Relation("r2", "Sachbearbeitung", "SYNONYM", "Fallbearbeitung", "REJECTED",
                 "AI", 3);
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            RelationTab synonyms = new TermsView(null).synonyms();
-            synonyms.show(List.of(synonym), TermsView.NO_SYNONYMS);
-            javax.swing.JTable table = synonyms.directory().table();
+            RelationTab relations = new TermsView(null).relationTab();
+            relations.show(List.of(synonym), TermsView.NO_RELATIONS);
+            javax.swing.JTable table = relations.directory().table();
             for (int column = 0; column < table.getColumnCount(); column++) {
                 seen.add(table.getColumnName(column) + "=" + table.getValueAt(0, column));
             }
@@ -64,12 +63,26 @@ class TermsViewTest {
                     == javax.swing.SwingConstants.LEFT));
             seen.add(String.valueOf(TermsView.REJECTED_BACKGROUND.equals(cell.getBackground())));
             seen.add(String.valueOf(table.getRowSorter() instanceof javax.swing.table.TableRowSorter));
+            // Chips je Art wie im Reiter Stand: keiner gedrückt = alles; gedrückte = nur diese Arten.
+            seen.add(relations.queriedTypes().toString());
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM).doClick();
+            seen.add(relations.queriedTypes().toString());
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.VARIANT).doClick();
+            seen.add(relations.queriedTypes().toString());
+            seen.add(relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM)
+                    .getToolTipText());
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM).doClick();
+            relations.typeChip(com.aresstack.spaceharvester.application.terms.RelationType.VARIANT).doClick();
+            seen.add(relations.queriedTypes().toString());
+            // Kopf für den Einbau: Titel und Unterzeile lassen sich setzen oder weglassen.
+            relations.heading("Beziehungen", null);
+            seen.add(String.valueOf(relations.directory().getComponentCount() > 0));
         });
-        assertThat(seen).containsExactly("Begriff=Sachbearbeitung", "Synonym=Fallbearbeitung", "Art=Synonym",
-                "Herkunft=KI", "Status=Abgelehnt", "true", "true", "true");
-        assertThat(new TermsView(null).synonyms().dialogTypes()).containsExactly(
-                com.aresstack.spaceharvester.application.terms.RelationType.SYNONYM,
-                com.aresstack.spaceharvester.application.terms.RelationType.VARIANT);
+        assertThat(seen).containsExactly("Begriff=Sachbearbeitung", "Beziehung=Synonym",
+                "Zu Begriff=Fallbearbeitung", "Status=Abgelehnt", "Herkunft=KI", "true", "true", "true", "[]",
+                "[SYNONYM]", "[SYNONYM, VARIANT]", "Filter „Synonym“ aufheben", "[]", "true");
+        assertThat(new TermsView(null).relationTab().dialogTypes()).containsExactly(
+                com.aresstack.spaceharvester.application.terms.RelationType.values());
     }
 
     @Test
@@ -77,38 +90,37 @@ class TermsViewTest {
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             TermsView view = new TermsView(null);
-            seen.add(view.proposeSynonymsButton().getText());
-            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
-            view.tabs().select(TermsView.SYNONYMS);
-            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
-            // In der Reiterzeile (Aktionen rechts), nicht unter dem Inhalt.
-            seen.add(String.valueOf(SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.tabs())
-                    && !SwingUtilities.isDescendingFrom(view.proposeSynonymsButton(), view.synonyms().directory())));
-            seen.add(String.valueOf(view.synonymOverlay().content() == view.synonyms().directory()));
-            // „Neue Beziehung …“ steht ebenfalls in der Reiterzeile, je Reiter sein eigener Knopf.
-            seen.add(view.synonyms().createButton().isVisible() + " " + view.createButton().isVisible());
+            RelationTab relations = view.relationTab();
+            seen.add(relations.proposeButton().getText());
+            seen.add(relations.proposeButton().isVisible() + " " + relations.createButton().isVisible());
             view.tabs().select(TermsView.RELATIONS);
-            seen.add(String.valueOf(view.proposeSynonymsButton().isVisible()));
-            seen.add(view.synonyms().createButton().isVisible() + " " + view.createButton().isVisible() + " "
-                    + SwingUtilities.isDescendingFrom(view.createButton(), view.tabs()));
+            seen.add(relations.proposeButton().isVisible() + " " + relations.createButton().isVisible());
+            // In der Reiterzeile (Aktionen rechts), nicht unter dem Inhalt.
+            seen.add(String.valueOf(SwingUtilities.isDescendingFrom(relations.proposeButton(), view.tabs())
+                    && !SwingUtilities.isDescendingFrom(relations.proposeButton(), relations.directory())
+                    && SwingUtilities.isDescendingFrom(relations.createButton(), view.tabs())));
+            seen.add(String.valueOf(relations.overlay().content() == relations.directory()
+                    && relations.component() == relations.overlay()));
+            view.tabs().select(TermsView.GLOSSARY);
+            seen.add(relations.proposeButton().isVisible() + " " + relations.createButton().isVisible());
         });
-        assertThat(seen).containsExactly(TermsView.PROPOSE_SYNONYMS, "false", "true", "true", "true", "true false",
-                "false", "false true true");
+        assertThat(seen).containsExactly(RelationTab.PROPOSE_SYNONYMS, "false false", "true true", "true", "true",
+                "false false");
 
         com.aresstack.spaceharvester.application.jobs.JobStatus done = job(
                 com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED, 12, 12, 3, null);
-        assertThat(TermsView.outcomeText(done, false)).isEqualTo("Synonymerkennung abgeschlossen: 3 Vorschläge neu "
+        assertThat(RelationTab.outcomeText(done, false)).isEqualTo("Synonymerkennung abgeschlossen: 3 Vorschläge neu "
                 + "oder geändert");
-        assertThat(TermsView.outcomeText(done, true)).endsWith(TermsView.RULES_ONLY);
-        assertThat(TermsView.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED, 12, 4,
-                0, null), false)).isEqualTo(TermsView.CANCELLED);
-        assertThat(TermsView.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.FAILED, 12, 4, 0,
+        assertThat(RelationTab.outcomeText(done, true)).endsWith(RelationTab.RULES_ONLY);
+        assertThat(RelationTab.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED, 12, 4,
+                0, null), false)).isEqualTo(RelationTab.CANCELLED);
+        assertThat(RelationTab.outcomeText(job(com.aresstack.spaceharvester.application.jobs.JobState.FAILED, 12, 4, 0,
                 new com.aresstack.spaceharvester.application.jobs.JobError("ai-unreachable", "KI-Dienst nicht "
                         + "erreichbar")), false)).contains("KI-Dienst nicht erreichbar").contains("bleiben");
-        assertThat(TermsView.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 12, 4,
-                0, null))).isEqualTo(TermsView.PROPOSING + " 4 von 12 Paaren geprüft");
-        assertThat(TermsView.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 0, 0,
-                0, null))).isEqualTo(TermsView.PROPOSING);
+        assertThat(RelationTab.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 12, 4,
+                0, null))).isEqualTo(RelationTab.PROPOSING + " 4 von 12 Paaren geprüft");
+        assertThat(RelationTab.progressText(job(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING, 0, 0,
+                0, null))).isEqualTo(RelationTab.PROPOSING);
     }
 
     private static com.aresstack.spaceharvester.application.jobs.JobStatus job(

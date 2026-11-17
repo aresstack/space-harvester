@@ -182,8 +182,19 @@ public final class Workspace {
      */
     public TermRelations.RelationList termRelations(String term, RelationType type, ReviewStatus status,
                                                     String startsWith, int limit, String cursor) {
+        return termRelations(term, type, status, startsWith, limit, cursor, null);
+    }
+
+    /**
+     * Wie {@link #termRelations(String, RelationType, ReviewStatus, String, int, String)}, mit {@code pages} nur
+     * Beziehungen, von denen ein Begriff auf einer dieser Seiten vorkommt (Auswahl links, ADR 0029); {@code null}
+     * ohne diese Grenze.
+     */
+    public TermRelations.RelationList termRelations(String term, RelationType type, ReviewStatus status,
+                                                    String startsWith, int limit, String cursor,
+                                                    com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
         return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, type, status, null,
-                null, limit, cursor, startsWith));
+                null, limit, cursor, startsWith, pages));
     }
 
     /**
