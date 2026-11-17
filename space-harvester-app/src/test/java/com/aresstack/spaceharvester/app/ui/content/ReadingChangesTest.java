@@ -43,6 +43,33 @@ class ReadingChangesTest {
     }
 
     @Test
+    void theMarkedPageKeepsTheShellOfThePreparedPage() {
+        // So wie ReadingPane.prepare den Stand liefert.
+        String before = "<html><body><p>Eins</p><p>Zwei</p></body></html>";
+        String after = "<html><body><p>Eins</p><p>Zwei</p><p>Drei</p></body></html>";
+
+        ReadingChanges.Marked marked = ReadingChanges.mark(before, after);
+
+        assertThat(marked.any()).isTrue();
+        assertThat(marked.html()).startsWith("<html><body>").endsWith("</body></html>");
+        assertThat(after).startsWith("<html><body>").endsWith("</body></html>");
+    }
+
+    @Test
+    void aRemovedParagraphWithAnImageKeepsOnlyItsText() {
+        String before = "<p>Eins</p><p><img src=\"file:/alt/bild.png\" width=\"400\">Bildunterschrift</p><p>Zwei</p>";
+        String after = "<p>Eins</p><p>Zwei</p>";
+
+        ReadingChanges.Marked marked = ReadingChanges.mark(before, after);
+
+        Document document = Jsoup.parse(marked.html());
+        assertThat(marked.removed()).isEqualTo(1);
+        assertThat(style(document, "Bildunterschrift")).contains(ReadingChanges.REMOVED).contains("line-through");
+        assertThat(document.select("img")).isEmpty();
+        assertThat(document.body().text()).isEqualTo("Eins Bildunterschrift Zwei");
+    }
+
+    @Test
     void anUnchangedTextStaysAsItIs() {
         String html = "<p>Gleich</p><ul><li>Punkt</li></ul>";
         ReadingChanges.Marked marked = ReadingChanges.mark(html, html);

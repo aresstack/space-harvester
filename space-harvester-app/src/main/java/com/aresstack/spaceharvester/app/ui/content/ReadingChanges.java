@@ -89,7 +89,8 @@ final class ReadingChanges {
         if (added + changed + removed == 0) {
             return new Marked(after, 0, 0, 0);
         }
-        return new Marked(fresh.body().html(), added, changed, removed);
+        // Dieselbe Hülle wie ReadingPane.prepare, damit markierter und unmarkierter Stand gleich aussehen.
+        return new Marked("<html><body>" + fresh.body().html() + "</body></html>", added, changed, removed);
     }
 
     /**
@@ -101,6 +102,8 @@ final class ReadingChanges {
         Element chain = null;
         for (Element block : gone) {
             Element copy = block.clone();
+            // Bilder des alten Stands sind nicht mehr vorbereitet (kein skaliertes Original); nur der Text bleibt.
+            copy.select("img").remove();
             paint(copy, REMOVED, true);
             String name = copy.normalName();
             if (chain != null) {
