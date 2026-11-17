@@ -78,10 +78,21 @@ class StandingTabTest {
         assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_TIP);
         assertThat(fixture.status.get()).isEqualTo("3 Aussagen auf 2 Seiten");
 
+        assertThat(groups(tab)).containsExactly("gilt · 1", "geplant · 1", "unklar · 1");
+
         tab.staleChip().doClick();
         assertThat(lines(tab)).hasSize(5);
         assertThat(tab.staleChip().getToolTipText()).isEqualTo(StandingTab.STALE_HIDE_TIP);
         assertThat(fixture.status.get()).isEqualTo("5 Aussagen auf 2 Seiten");
+        // AT: eine eigene Gruppe am Ende; die Gruppen der Stände zählen weiter nur Aktuelles.
+        assertThat(groups(tab)).containsExactly("gilt · 1", "geplant · 1", "unklar · 1", "veraltet · 2");
+        assertThat(lines(tab).subList(3, 5)).allMatch(StatusQuoEntry::analysisStale);
+        // Ein Stand-Chip wirkt nicht auf die veraltete Gruppe, die Suche schon.
+        tab.chip(Standing.GEPLANT).doClick();
+        assertThat(groups(tab)).containsExactly("geplant · 1", "veraltet · 2");
+        tab.chip(Standing.GEPLANT).doClick();
+        tab.searchField().setText("Poststelle");
+        assertThat(groups(tab)).containsExactly("veraltet · 1");
     }
 
     @Test

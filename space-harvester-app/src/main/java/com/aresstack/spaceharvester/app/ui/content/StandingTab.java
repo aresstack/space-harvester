@@ -850,6 +850,7 @@ final class StandingTab extends JPanel {
                     kept.forEach(entry -> rows.add(new Line(entry, true)));
                 }
             }
+            staleGroup(view, filter, rows);
             return rows;
         }
         Map<Standing, List<StatusQuoEntry>> groups = new LinkedHashMap<>();
@@ -857,7 +858,7 @@ final class StandingTab extends JPanel {
             groups.put(standing, new ArrayList<>());
         }
         for (StatusQuoEntry entry : view.entries()) {
-            if (keeps(entry, filter)) {
+            if (!entry.analysisStale() && keeps(entry, filter)) {
                 groups.get(entry.standing().standing()).add(entry);
             }
         }
@@ -867,12 +868,27 @@ final class StandingTab extends JPanel {
                 entries.forEach(entry -> rows.add(new Line(entry, false)));
             }
         });
+        staleGroup(view, filter, rows);
         return rows;
     }
 
+    /**
+     * Eingeblendete Einträge aus veralteten Analysen als eigene Gruppe „veraltet“ am Ende: Ihr Stand sagt nichts aus,
+     * also stehen sie unter keinem Stand und die Gruppen der Stände zählen wie die Chips nur Aktuelles.
+     */
+    private static void staleGroup(StatusQuoView view, Filter filter, List<Row> rows) {
+        List<StatusQuoEntry> stale = view.entries().stream()
+                .filter(entry -> entry.analysisStale() && keeps(entry, filter)).toList();
+        if (!stale.isEmpty()) {
+            rows.add(new Group(STALE_WORD, Comic.MUTED, stale.size()));
+            stale.forEach(entry -> rows.add(new Line(entry, false)));
+        }
+    }
+
     static boolean keeps(StatusQuoEntry entry, Filter filter) {
-        if (entry.analysisStale() && !filter.stale()) {
-            return false;
+        if (entry.analysisStale()) {
+            // Nur die Suche wirkt auf sie; Stand-Chips und Filter beziehen sich auf aktuelle Aussagen.
+            return filter.stale() && matches(entry, filter);
         }
         if (filter.only() != null && entry.standing().standing() != filter.only()) {
             return false;
@@ -888,6 +904,10 @@ final class StandingTab extends JPanel {
         if (filter.certainOnly() && entry.uncertain()) {
             return false;
         }
+        return matches(entry, filter);
+    }
+
+    private static boolean matches(StatusQuoEntry entry, Filter filter) {
         String text = filter.text() == null ? "" : filter.text().strip().toLowerCase(Locale.ROOT);
         return text.isEmpty() || haystack(entry).contains(text);
     }
@@ -990,9 +1010,6 @@ final class StandingTab extends JPanel {
         }
         if (entry.uncertain()) {
             parts.add("unsicher");
-        }
-        if (entry.analysisStale()) {
-            parts.add("Analyse veraltet");
         }
         if (entry.decision() != null) {
             parts.add("von Hand");
@@ -1394,9 +1411,10 @@ final class StandingTab extends JPanel {
                 markText = "";
                 metaText = "Seite " + pageName(decision.page()) + " · löschen im Overlay";
             }
-            Color tone = tone(standing);
-            boolean faded = standing == Standing.UEBERHOLT;
-            badge.setText(word(standing));
+            boolean stale = row instanceof Line l && l.entry().analysisStale();
+            Color tone = stale ? Comic.MUTED : tone(standing);
+            boolean faded = stale || standing == Standing.UEBERHOLT;
+            badge.setText(stale ? STALE_WORD : word(standing));
             badge.setForeground(tone);
             badge.setBackground(Comic.SURFACE);
             badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
