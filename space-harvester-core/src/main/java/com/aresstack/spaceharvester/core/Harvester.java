@@ -208,7 +208,10 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatSimplificationModel;
 import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
+import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
+import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.source.ai.ChatSynonymJudgmentModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
@@ -344,6 +347,7 @@ public final class Harvester implements AutoCloseable {
     private final Assets assets;
     private final ConnectionBudget connections;
     private final PageImageAnalysis imageAnalysis;
+    private final Simplifications simplifications;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
     private final StatementAnalysisJobs statementAnalysisJobs;
@@ -900,8 +904,15 @@ public final class Harvester implements AutoCloseable {
             PageImageAnalysis pageImages = this.imageAnalysis;
             AiRelease withdrawn = this.aiRelease;
             ChangeLog summaries = this.changeLog;
+            // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
+            // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
+            this.simplifications = new Simplifications(new ChatSimplificationModel(
+                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
+            Simplifications simplified = this.simplifications;
             releaseRecomputation.withdrawal(pages -> {
                 pageImages.withdraw(pages, withdrawn::mayProcess);
+                simplified.withdraw(pages.stream().map(PageSnapshot::key).toList(), withdrawn::mayProcess);
                 documentEnrichments.withdrawn(pages, withdrawn::mayProcess);
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
@@ -1605,6 +1616,11 @@ public final class Harvester implements AutoCloseable {
 
     public Assets assets() {
         return assets;
+    }
+
+    /** Vorstufe „Sätze vereinfachen“ (ADR 0032, FL3): Modellaufruf und Ablage je Satz, nur für freigegebene Seiten. */
+    public Simplifications simplifications() {
+        return simplifications;
     }
 
     /**
