@@ -1,0 +1,13 @@
+# Erwarteter Begleiter am Rollennomen (Entwicklungssatz „foerderung“, Strang FL, 17.11.2026), von Hand festgelegt.
+# Werte: UNBESTIMMT (ein/eine), BESTIMMT (der/die/das), OHNE (auch Mehrzahl ohne Artikel), KEIN (kein/keine), SONSTIGER.
+# id	artikel
+F03	OHNE
+F10	UNBESTIMMT
+R01	UNBESTIMMT
+R02	BESTIMMT
+R03	OHNE
+R04	KEIN
+R05	BESTIMMT
+R06	SONSTIGER
+R07	OHNE
+R08	BESTIMMT

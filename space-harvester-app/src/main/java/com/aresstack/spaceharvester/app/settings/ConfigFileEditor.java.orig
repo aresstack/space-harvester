@@ -1,0 +1,1300 @@
+package com.aresstack.spaceharvester.app.settings;
+
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
+import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.terms.SynonymBudget;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
+import org.yaml.snakeyaml.error.YAMLException;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+/**
+ * Trägt Quellen in die Konfigurationsdatei ein, ersetzt oder entfernt sie, ohne den Rest der Datei anzufassen:
+ * Kommentare, Reihenfolge und Platzhalter bleiben, ein neuer Eintrag kommt ans Ende von {@code space-harvester.sources},
+ * ein geänderter an seine bisherige Stelle. Vor dem Schreiben wird der neue Text wie beim Start gelesen; scheitert das,
+ * bleibt die Datei unverändert. Die vorige Fassung liegt danach als {@code <datei>.bak} daneben.
+ */
+public final class ConfigFileEditor {
+
+    // Schlüssel locker wie beim Laden: space-harvester, space_harvester, spaceHarvester; sources, Sources.
+    private static final Pattern ROOT = Pattern.compile("([A-Za-z_-]+):\\s*(#.*)?");
+    private static final Pattern SCALAR_KEY = Pattern.compile("\\s*([A-Za-z_-]+):");
+    private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
+    private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
+    private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
+    /** Ein Schlüssel mit Wert in derselben Zeile; „retry: # Kommentar“ ist ein Blockkopf, kein Wert. */
+    private static final Pattern SCALAR = Pattern.compile(" *([A-Za-z_-]+):\\s*[^\\s#].*");
+    /** Schlüssel (normalisiert wie im Loader), deren Wert ein Geheimnis ist. */
+    private static final Set<String> SECRET_KEYS = Set.of("password", "token", "secret", "clientsecret", "passphrase",
+            "apikey", "keypassword", "storepassword");
+    private static final String HEADER = """
+            # Space Harvester Desktop – Konfiguration (angelegt von der App)
+            # Geheimnisse nie hier eintragen: Hier steht nur ${NAME}; den Wert legt die App verschlüsselt ab.
+            """;
+
+    private final AppSettingsLoader loader;
+
+    public ConfigFileEditor(AppSettingsLoader loader) {
+        this.loader = loader;
+    }
+
+    /** Ergebnis eines Entwurfs: der neue Dateitext und wie die App ihn liest. */
+    public record Draft(String text, AppSettings settings) {
+    }
+
+    /**
+     * Der Dateitext mit der neuen Quelle, gelesen wie beim Start.
+     *
+     * @throws IllegalArgumentException wenn die Eingaben unvollständig sind, die ID schon vergeben ist oder die Datei
+     *                                  so aufgebaut ist, dass der Eintrag nicht sicher eingefügt werden kann
+     */
+    public Draft draft(Path file, SourceDraft source) throws IOException {
+        List<String> problems = source.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String current = Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : "";
+        if (configuredIds(current).contains(source.id())) {
+            throw new IllegalArgumentException("Eine Quelle mit der ID " + source.id() + " gibt es schon.");
+        }
+        String text = insert(current, source);
+        AppSettings settings = loader.read(file, text);
+        boolean present = settings.sources().stream().anyMatch(entry -> entry.id().equals(source.id()));
+        if (!present) {
+            List<String> mine = settings.problems().stream().filter(p -> p.contains(source.id())).toList();
+            throw new IllegalArgumentException(mine.isEmpty()
+                    ? "Die Quelle ließ sich nicht in die Konfigurationsdatei einfügen; bitte die Datei von Hand ergänzen."
+                    : String.join(" ", mine));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Dateitext, in dem der Eintrag mit der ID von {@code source} an derselben Stelle durch die neuen Angaben
+     * ersetzt ist.
+     */
+    public Draft replace(Path file, SourceDraft source) throws IOException {
+        List<String> problems = source.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String current = Files.readString(file, StandardCharsets.UTF_8);
+        List<String> before = configuredIds(current);
+        Edit edit = locate(current, source.id());
+        List<String> lines = edit.lines();
+        lines.subList(edit.start(), edit.end()).clear();
+        add(lines, edit.start(), source.yaml(edit.indent()));
+        String text = String.join(edit.newline(), lines) + edit.newline();
+        if (!configuredIds(text).equals(before)) {
+            throw unsupported("der Eintrag ließ sich nicht eindeutig abgrenzen");
+        }
+        AppSettings settings = loader.read(file, text);
+        if (settings.sources().stream().noneMatch(entry -> entry.id().equals(source.id()))) {
+            List<String> mine = settings.problems().stream().filter(p -> p.contains(source.id())).toList();
+            throw new IllegalArgumentException(mine.isEmpty()
+                    ? "Die geänderte Quelle ließ sich nicht lesen; bitte die Datei von Hand bearbeiten."
+                    : String.join(" ", mine));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Der Dateitext ohne den Eintrag {@code sourceId}; Kommentare um ihn herum bleiben stehen. */
+    public Draft remove(Path file, String sourceId) throws IOException {
+        String current = Files.readString(file, StandardCharsets.UTF_8);
+        List<String> expected = new ArrayList<>(configuredIds(current));
+        expected.remove(sourceId);
+        Edit edit = locate(current, sourceId);
+        List<String> lines = edit.lines();
+        lines.subList(edit.start(), edit.end()).clear();
+        String text = String.join(edit.newline(), lines) + edit.newline();
+        if (!configuredIds(text).equals(expected)) {
+            throw unsupported("der Eintrag ließ sich nicht eindeutig abgrenzen");
+        }
+        return new Draft(text, loader.read(file, text));
+    }
+
+    /**
+     * Der Eintrag {@code sourceId} so, wie der Assistent ihn bearbeiten kann.
+     *
+     * @throws IllegalArgumentException wenn der Eintrag Schlüssel enthält, die der Assistent nicht kennt; sie gingen
+     *                                  beim Speichern verloren
+     */
+    public SourceDraft.Editable editable(Path file, String sourceId) throws IOException {
+        Map<?, ?> raw = rawSource(Files.readString(file, StandardCharsets.UTF_8), sourceId);
+        return SourceDraft.from(raw);
+    }
+
+    /**
+     * Ob der Eintrag Passwort, Token oder Zertifikatspasswort im Klartext enthält, auch als Standardwert eines
+     * Platzhalters ({@code ${TOKEN:geheim}}) oder in einem abgeschalteten Client-Zertifikat.
+     */
+    public boolean hasPlaintextSecret(Path file, String sourceId) throws IOException {
+        Map<?, ?> raw = rawSource(Files.readString(file, StandardCharsets.UTF_8), sourceId);
+        Map<?, ?> auth = AppSettingsLoader.map(AppSettingsLoader.get(raw, "auth"));
+        Map<?, ?> certificate = AppSettingsLoader.map(AppSettingsLoader.get(raw, "client-certificate"));
+        return Stream.of(AppSettingsLoader.get(auth, "password"), AppSettingsLoader.get(auth, "token"),
+                        AppSettingsLoader.get(certificate, "password"))
+                .filter(value -> value != null && !String.valueOf(value).isBlank())
+                .anyMatch(value -> !SourceDraft.isBarePlaceholder(String.valueOf(value)));
+    }
+
+    /**
+     * Ob irgendwo in der Datei ein Passwort, Token oder Geheimnis im Klartext steht (alle Quellen, Vertrauensspeicher,
+     * auch nicht ausgewertete Felder). Nur eine Datei ohne Klartext-Geheimnis darf beim Bearbeiten und Entfernen als
+     * {@code .bak} liegen bleiben.
+     */
+    public boolean fileHasPlaintextSecret(Path file) throws IOException {
+        if (!Files.isRegularFile(file)) {
+            return false;
+        }
+        return containsPlaintextSecret(AppSettingsLoader.yaml().load(Files.readString(file, StandardCharsets.UTF_8)));
+    }
+
+    private static boolean containsPlaintextSecret(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                Object value = entry.getValue();
+                if (SECRET_KEYS.contains(AppSettingsLoader.normalize(String.valueOf(entry.getKey())))
+                        && !(value instanceof Map<?, ?>) && !(value instanceof List<?>)
+                        && value != null && !String.valueOf(value).isBlank()
+                        && !SourceDraft.isBarePlaceholder(String.valueOf(value))) {
+                    return true;
+                }
+                if (containsPlaintextSecret(value)) {
+                    return true;
+                }
+            }
+        } else if (node instanceof List<?> list) {
+            return list.stream().anyMatch(ConfigFileEditor::containsPlaintextSecret);
+        }
+        return false;
+    }
+
+    /** Schreibt den Entwurf; die bisherige Datei bleibt als {@code .bak} erhalten. */
+    public void save(Path file, Draft draft) throws IOException {
+        save(file, draft, true);
+    }
+
+    /**
+     * @param backup {@code false}, wenn die bisherige Fassung ein Geheimnis im Klartext enthält: Dann entsteht keine
+     *               Sicherung, und eine alte {@code .bak} wird gelöscht, damit das Geheimnis nicht liegen bleibt
+     */
+    public void save(Path file, Draft draft, boolean backup) throws IOException {
+        Path target = file.toAbsolutePath();
+        Files.createDirectories(target.getParent());
+        Path bak = target.resolveSibling(target.getFileName() + ".bak");
+        if (!backup) {
+            Files.deleteIfExists(bak);
+        } else if (Files.isRegularFile(target)) {
+            Files.copy(target, bak, StandardCopyOption.REPLACE_EXISTING);
+        }
+        Path temp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".tmp");
+        try {
+            Files.writeString(temp, draft.text(), StandardCharsets.UTF_8);
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Proxy-Einstellungen unter {@code space-harvester.network.proxy}; sie gelten
+     * für alle Quellen. Nur der Block {@code proxy:} wird ersetzt (fehlt er, angelegt); Kommentare und alles andere
+     * bleiben.
+     */
+    public Draft withProxy(Path file, Draft base, ProxyDraft proxy) {
+        List<String> problems = proxy.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = proxy(base.text(), proxy);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.proxy().equals(proxy.settings())) {
+            throw new IllegalArgumentException("Die Proxy-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.network.proxy von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Ersetzt oder ergänzt {@code space-harvester.network.proxy}. */
+    static String proxy(String text, ProxyDraft proxy) {
+        return network(text, "proxy", proxy::yaml);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Vertrauen für Quellen ohne eigenes {@code trust-bundle} unter
+     * {@code space-harvester.network.tls} (#189). Nur dieser Block ändert sich.
+     */
+    public Draft withTls(Path file, Draft base, TrustSettings tls) {
+        List<String> problems = TrustPolicy.problems(tls);
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = network(base.text(), "tls", indent -> tls(indent, tls));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.tls().equals(tls)) {
+            throw new IllegalArgumentException("Die Zertifikatseinstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.network.tls von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Der Block {@code tls:} mit allen Schaltern, damit die Vorgabe des Betriebssystems nicht mehr hineinspielt. */
+    static String tls(String indent, TrustSettings tls) {
+        String inner = indent + "  ";
+        StringBuilder yaml = new StringBuilder(indent).append("tls:\n")
+                .append(inner).append("use-jvm-default: ").append(tls.useJvmDefault()).append('\n')
+                .append(inner).append("use-windows-root: ").append(tls.useWindowsRoot()).append('\n')
+                .append(inner).append("use-windows-ca-stores: ").append(tls.useWindowsCaStores()).append('\n');
+        if (tls.caCertificatesFile() != null) {
+            yaml.append(inner).append("ca-certificates-file: \"").append(tls.caCertificatesFile().toString()
+                    .replace("\\", "\\\\").replace("\"", "\\\"")).append("\"\n");
+        }
+        return yaml.toString();
+    }
+
+    /** Ersetzt oder ergänzt den Block {@code key} unter {@code space-harvester.network}. */
+    private static String network(String text, String key, java.util.function.Function<String, String> yaml) {
+        return nested(text, "network", key, yaml);
+    }
+
+    /** Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code space-harvester.<parent>}. */
+    private static String nested(String text, String parent, String key,
+                                 java.util.function.Function<String, String> yaml) {
+        return nested(text, AppSettingsLoader.ROOT, parent, key, yaml);
+    }
+
+    /**
+     * Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code <rootKey>.<parent>}, etwa {@code logging.threshold}
+     * wie beim Dienst; fehlt die Wurzel, kommt sie ans Ende der Datei.
+     */
+    private static String nested(String text, String rootKey, String parent, String key,
+                                 java.util.function.Function<String, String> yaml) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        String normalizedRoot = AppSettingsLoader.normalize(rootKey);
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, normalizedRoot)) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, normalizedRoot)) {
+                throw unsupported(rootKey + " steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            lines.add("");
+            lines.add(rootKey + ":");
+            lines.add("  " + parent + ":");
+            add(lines, lines.size(), yaml.apply("    "));
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int network = child(lines, root, rootEnd, childIndent, AppSettingsLoader.normalize(parent));
+        if (network < 0) {
+            lines.add(root + 1, " ".repeat(childIndent) + parent + ":");
+            add(lines, root + 2, yaml.apply(" ".repeat(childIndent * 2)));
+            return String.join(newline, lines) + newline;
+        }
+        int networkEnd = blockEnd(lines, network, childIndent);
+        int proxyIndent = childIndent(lines, network, networkEnd, childIndent * 2);
+        String normalized = AppSettingsLoader.normalize(key);
+        for (int i = network + 1; i < networkEnd; i++) {
+            // Ein einzelner Wert wie „max-age: 6h“ wird in seiner Zeile ersetzt, ein Kommentar dahinter entfällt.
+            String line = lines.get(i);
+            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SCALAR, line, 1, normalized)) {
+                lines.remove(i);
+                add(lines, i, yaml.apply(" ".repeat(proxyIndent)));
+                return String.join(newline, lines) + newline;
+            }
+        }
+        int block = child(lines, network, networkEnd, proxyIndent, normalized);
+        if (block < 0) {
+            add(lines, network + 1, yaml.apply(" ".repeat(proxyIndent)));
+            return String.join(newline, lines) + newline;
+        }
+        int end = blockEnd(lines, block, proxyIndent);
+        lines.subList(block, end).clear();
+        add(lines, block, yaml.apply(" ".repeat(proxyIndent)));
+        return String.join(newline, lines) + newline;
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Cache-Frische ({@code space-harvester.cache.max-age}, {@code version-check})
+     * und Sperrfrist ({@code space-harvester.sync.withheld-retention}, ADR 0014); dieselben Schlüssel wie im Server.
+     * Nur diese drei Werte ändern sich, dazu die Aufbewahrung des Änderungsprotokolls
+     * ({@code space-harvester.cache.change-log.retention}, ADR 0030; {@code 0} heißt unbegrenzt), wenn sie von dem
+     * abweicht, was die Datei schon liest.
+     */
+    public Draft withCache(Path file, Draft base, AppSettings.Cache cache) {
+        String text = nested(base.text(), "cache", "max-age", indent -> indent + "max-age: " + duration(cache.maxAge())
+                + "\n");
+        text = nested(text, "cache", "version-check", indent -> indent + "version-check: " + cache.versionCheck()
+                + "\n");
+        text = nested(text, "sync", "withheld-retention", indent -> indent + "withheld-retention: "
+                + duration(cache.withheldRetention()) + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.cache().changeLog().equals(cache.changeLog())) {
+            String retention = cache.changeLog().unlimited() ? "0" : duration(cache.changeLog().retention());
+            text = nested(text, "cache", "change-log", indent -> indent + "change-log:\n" + indent + "  retention: "
+                    + retention + "\n" + indent + "  show-after-update: " + cache.changeLog().showAfterUpdate() + "\n");
+            settings = loader.read(file, text);
+        }
+        if (!settings.cache().equals(cache)) {
+            throw new IllegalArgumentException("Die Cache-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.cache und space-harvester.sync von Hand "
+                    + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Hintergrundfüllung für alle Quellen ({@code space-harvester.sync.background-fill},
+     * {@code background-parallelism}, ADR 0016); nur diese beiden Werte ändern sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withBackground(Path file, Draft base, boolean fill, int parallelism) {
+        String text = nested(base.text(), "sync", "background-fill", indent -> indent + "background-fill: " + fill
+                + "\n");
+        text = nested(text, "sync", "background-parallelism", indent -> indent + "background-parallelism: "
+                + parallelism + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.sync().backgroundFill() != fill || settings.sync().backgroundParallelism() != parallelism) {
+            throw new IllegalArgumentException("Die Hintergrundfüllung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit den gemeinsamen Erkennungsregeln aller Quellen ({@code space-harvester.sync.interval},
+     * {@code inventory-interval}, {@code mode}, {@code catch-up-on-start}, {@code before-search}, {@code events}),
+     * dieselben Schlüssel wie im Dienst; nur diese Werte ändern sich. Ein Abstand {@code null} („aus“) entfernt seinen
+     * Schlüssel. Frist, Sperrfrist und Hintergrund schreiben {@link #withCache} und
+     * {@link #withBackground}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSync(Path file, Draft base, SyncSettings sync) {
+        String text = nested(base.text(), "sync", "interval", indent -> sync.interval() == null ? ""
+                : indent + "interval: " + duration(sync.interval()) + "\n");
+        text = nested(text, "sync", "inventory-interval", indent -> sync.inventoryInterval() == null ? ""
+                : indent + "inventory-interval: " + duration(sync.inventoryInterval()) + "\n");
+        text = nested(text, "sync", "mode", indent -> indent + "mode: " + sync.mode().key() + "\n");
+        text = nested(text, "sync", "catch-up-on-start", indent -> indent + "catch-up-on-start: "
+                + sync.catchUpOnStart() + "\n");
+        text = nested(text, "sync", "before-search", indent -> indent + "before-search: " + sync.beforeSearch() + "\n");
+        text = nested(text, "sync", "events", indent -> indent + "events: " + sync.events() + "\n");
+        AppSettings settings = loader.read(file, text);
+        SyncSettings read = settings.sync();
+        if (!Objects.equals(read.interval(), sync.interval())
+                || !Objects.equals(read.inventoryInterval(), sync.inventoryInterval()) || read.mode() != sync.mode()
+                || read.catchUpOnStart() != sync.catchUpOnStart() || read.beforeSearch() != sync.beforeSearch()
+                || read.events() != sync.events()) {
+            throw new IllegalArgumentException("Die Synchronisierung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Wiederholungen ({@code space-harvester.jobs.retry.*}, ADR 0025), dieselben
+     * Schlüssel wie im Dienst; nur der Block {@code retry} unter {@code jobs} ändert sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withRetry(Path file, Draft base, RetrySettings retry) {
+        String text = nested(base.text(), "jobs", "retry", indent -> {
+            String inner = indent + "  ";
+            return indent + "retry:\n"
+                    + inner + RetrySettings.MAX_ATTEMPTS + ": " + retry.maxAttempts() + "\n"
+                    + inner + RetrySettings.INITIAL_DELAY + ": " + delay(retry.initialDelay()) + "\n"
+                    + inner + RetrySettings.MAX_DELAY + ": " + delay(retry.maxDelay()) + "\n"
+                    + inner + RetrySettings.PAUSE_AFTER_FAILURES + ": " + retry.pauseAfterFailures() + "\n"
+                    + inner + RetrySettings.RESUME_INITIAL_DELAY + ": " + delay(retry.resumeInitialDelay()) + "\n"
+                    + inner + RetrySettings.RESUME_MAX_DELAY + ": " + delay(retry.resumeMaxDelay()) + "\n";
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.jobLimits().retry().equals(retry)) {
+            throw new IllegalArgumentException("Die Wiederholungen ließen sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.jobs.retry von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Budget der Synonymerkennung ({@code space-harvester.terms.synonyms.*},
+     * #336), dieselben Schlüssel wie im Dienst; nur der Block {@code synonyms} unter {@code terms} ändert sich.
+     * {@code max-judged-pairs} über 0 schaltet die Prüfung der Kandidatenpaare durch das Text-Modell zu.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSynonymBudget(Path file, Draft base, SynonymBudget budget) {
+        String text = nested(base.text(), "terms", "synonyms", indent -> {
+            String inner = indent + "  ";
+            return indent + "synonyms:\n"
+                    + inner + SynonymBudget.MAX_TERMS + ": " + budget.maxTerms() + "\n"
+                    + inner + SynonymBudget.MAX_EMBEDDED_TERMS + ": " + budget.maxEmbeddedTerms() + "\n"
+                    + inner + SynonymBudget.MAX_JUDGED_PAIRS + ": " + budget.maxJudgedPairs() + "\n";
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.terms().synonyms().equals(budget)) {
+            throw new IllegalArgumentException("Das Budget der Synonymerkennung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.terms.synonyms von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Vorstufe „Sätze vereinfachen“ ({@code space-harvester.statements.
+     * simplification.*}, ADR 0032), dieselben Schlüssel wie im Dienst; nur der Block {@code simplification} unter
+     * {@code statements} ändert sich. Ohne eigenes Modell entfällt der Schlüssel {@code model}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSimplification(Path file, Draft base, SimplificationSettings simplification) {
+        String text = nested(base.text(), "statements", "simplification", indent -> {
+            String inner = indent + "  ";
+            return indent + "simplification:\n"
+                    + inner + "mode: " + simplification.mode().value() + "\n"
+                    + inner + "parallel: " + simplification.parallel() + "\n"
+                    + (simplification.model() == null ? "" : inner + "model: " + quoted(simplification.model()) + "\n");
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.simplification().equals(simplification)) {
+            throw new IllegalArgumentException("Die Vorstufe „Sätze vereinfachen“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.statements.simplification von Hand "
+                    + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Prüfschritt „Aussagen prüfen“ ({@code space-harvester.statements.check.*},
+     * ADR 0032), dieselben Schlüssel wie im Dienst; nur der Block {@code check} unter {@code statements} ändert sich.
+     * Ohne eigenes Modell entfällt der Schlüssel {@code model}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withCheck(Path file, Draft base, CheckSettings check) {
+        String text = nested(base.text(), "statements", "check", indent -> {
+            String inner = indent + "  ";
+            return indent + "check:\n"
+                    + inner + "scope: " + check.scope().value() + "\n"
+                    + inner + "parallel: " + check.parallel() + "\n"
+                    + (check.model() == null ? "" : inner + "model: " + quoted(check.model()) + "\n");
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.check().equals(check)) {
+            throw new IllegalArgumentException("Der Prüfschritt „Aussagen prüfen“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.statements.check von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Grenzen für Bilder- und Anhängeaufträge ({@code space-harvester.jobs.
+     * parallel-preparations} und {@code parallel-downloads}, ADR 0025), dieselben Schlüssel wie im Dienst; nur diese
+     * beiden Werte ändern sich.
+     *
+     * @param preparations gleichzeitig vorbereitende Aufträge (1 bis {@value JobLimits#MAX_PARALLEL_PREPARATIONS})
+     * @param downloads    gleichzeitig ladende Aufträge (0 bis {@value JobLimits#MAX_PARALLEL_DOWNLOADS}); 0 bereitet
+     *                     nur vor
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withParallel(Path file, Draft base, int preparations, int downloads) {
+        JobLimits.requirePreparations(preparations);
+        JobLimits.requireDownloads(downloads);
+        String text = nested(base.text(), "jobs", JobLimits.PARALLEL_PREPARATIONS,
+                indent -> indent + JobLimits.PARALLEL_PREPARATIONS + ": " + preparations + "\n");
+        text = nested(text, "jobs", JobLimits.PARALLEL_DOWNLOADS,
+                indent -> indent + JobLimits.PARALLEL_DOWNLOADS + ": " + downloads + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().parallelPreparations() != preparations
+                || settings.jobLimits().parallelDownloads() != downloads) {
+            throw new IllegalArgumentException("Die Grenzen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Gesamtbudget an Verbindungen für Bilder und Anhänge ({@code space-harvester.
+     * jobs.download-connections}, Angelo 11.11.2026), derselbe Schlüssel wie im Dienst; nur dieser Wert ändert sich.
+     *
+     * @param connections Verbindungen aller ladenden Aufträge zusammen (0 bis
+     *                    {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS}); 0 lädt keine Bilder und Anhänge
+     * @throws IllegalArgumentException außerhalb der Grenzen oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConnections(Path file, Draft base, int connections) {
+        JobLimits.requireConnections(connections);
+        String text = nested(base.text(), "jobs", JobLimits.DOWNLOAD_CONNECTIONS,
+                indent -> indent + JobLimits.DOWNLOAD_CONNECTIONS + ": " + connections + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.jobLimits().downloadConnections() != connections) {
+            throw new IllegalArgumentException("Die Verbindungen für Downloads ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.jobs von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Terminal-Ausgabe ({@code logging.threshold.console}, derselbe Schlüssel wie
+     * beim Dienst, Angelo 12.11.2026); nur dieser Wert ändert sich. Der Wert steht in Anführungszeichen, denn ein
+     * unquotiertes {@code off} wäre in YAML {@code false}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withConsoleOutput(Path file, Draft base, ConsoleOutput output) {
+        String text = nested(base.text(), "logging", "threshold", "console",
+                indent -> indent + "console: \"" + output.key() + "\"\n");
+        AppSettings settings = loader.read(file, text);
+        // Ein neues Problem heißt: Der Text liest sich nicht mehr wie vorher (etwa kein gültiges YAML). Der Loader fiele
+        // dann auf die Vorgaben zurück, deren Terminal-Ausgabe „Aus“ ist; der Vergleich allein ließe das durch.
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.consoleOutput() != output) {
+            throw new IllegalArgumentException("Die Terminal-Ausgabe ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte " + ConsoleOutput.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit dem Export „Analytics“ ({@code space-harvester-app.analytics}, nur die App, Angelo
+     * 16.11.2026): Zeitraum und die drei Pfade; nur Angaben, die von der Vorgabe abweichen, stehen in der Datei, alles
+     * Vorgabe entfernt den Block. Pfade stehen in Anführungszeichen, denn sie enthalten {@code {} und {@code :}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAnalytics(Path file, Draft base, AnalyticsSettings analytics) {
+        String value = null;
+        if (!analytics.isDefault()) {
+            StringBuilder block = new StringBuilder("analytics:");
+            if (analytics.period() != null) {
+                block.append("\n  period: ").append(duration(analytics.period()));
+            }
+            if (analytics.details() != null) {
+                block.append("\n  details: ").append(quoted(analytics.details()));
+            }
+            if (analytics.activityByDate() != null) {
+                block.append("\n  activity-by-date: ").append(quoted(analytics.activityByDate()));
+            }
+            if (analytics.contentViews() != null) {
+                block.append("\n  content-views: ").append(quoted(analytics.contentViews()));
+            }
+            value = block.toString();
+        }
+        String text = appValue(base.text(), "analytics", value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.analytics().equals(analytics)) {
+            throw new IllegalArgumentException("Der Export „Analytics“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + AnalyticsSettings.KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Eine Wartezeit wie {@link #duration}, Bruchteile einer Sekunde in Millisekunden (500ms). */
+    public static String delay(java.time.Duration delay) {
+        return delay.toMillis() % 1000 == 0 ? duration(delay) : delay.toMillis() + "ms";
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Dateizugriff ({@code space-harvester.local-files.allow-all} und
+     * {@code .roots} als YAML-Liste), dieselben Schlüssel wie im Server; nur diese beiden Werte ändern sich.
+     *
+     * @param roots freigegebene Ordner, absolut (auch UNC-Pfade); leer gibt keinen Ordner über die Quellen hinaus frei
+     * @throws IllegalArgumentException bei einem relativen Pfad oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots) {
+        return withFileAccess(file, base, allowAll, roots, List.of());
+    }
+
+    /**
+     * Wie {@link #withFileAccess(Path, Draft, boolean, List)}, zusätzlich mit den vorübergehend abgeschalteten Ordnern
+     * unter {@code space-harvester-app.inactive-roots} (nur die App; leer entfernt den Schlüssel). Ein Ordner steht
+     * entweder in {@code roots} oder in {@code inactive-roots}.
+     */
+    public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots,
+                                List<String> inactiveRoots) {
+        List<Path> expected = absolutePaths(roots);
+        List<Path> expectedInactive = absolutePaths(inactiveRoots).stream().map(Path::normalize).toList();
+        String text = nested(base.text(), "local-files", "allow-all", indent -> indent + "allow-all: " + allowAll
+                + "\n");
+        text = nested(text, "local-files", "roots", indent -> rootsYaml(indent, roots));
+        String inactive = inactiveRoots.isEmpty() ? null : "inactive-roots: [" + inactiveRoots.stream()
+                .map(root -> "\"" + root.strip().replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                .collect(java.util.stream.Collectors.joining(", ")) + "]";
+        text = appValue(text, "inactiveroots", inactive);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.localFiles().equals(new LocalFileSettings(allowAll, expected))
+                || !settings.inactiveRoots().equals(expectedInactive)) {
+            throw new IllegalArgumentException("Der Dateizugriff ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.local-files von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** @throws IllegalArgumentException bei einem ungültigen oder relativen Pfad */
+    private static List<Path> absolutePaths(List<String> roots) {
+        List<Path> expected = new ArrayList<>();
+        for (String root : roots) {
+            Path path;
+            try {
+                path = Path.of(root.strip());
+            } catch (java.nio.file.InvalidPathException e) {
+                throw new IllegalArgumentException("Ungültiger Pfad: " + root);
+            }
+            if (!path.isAbsolute()) {
+                throw new IllegalArgumentException("Nur absolute Pfade lassen sich freigeben, z. B. D:\\Wissen oder "
+                        + "\\\\server\\freigabe: " + root);
+            }
+            expected.add(path);
+        }
+        return expected;
+    }
+
+    /** {@code roots:} als Liste in Anführungszeichen; Backslashes von Windows- und UNC-Pfaden bleiben erhalten. */
+    private static String rootsYaml(String indent, List<String> roots) {
+        if (roots.isEmpty()) {
+            return indent + "roots: []\n";
+        }
+        StringBuilder yaml = new StringBuilder(indent).append("roots:\n");
+        for (String root : roots) {
+            yaml.append(indent).append("  - \"").append(root.strip().replace("\\", "\\\\").replace("\"", "\\\""))
+                    .append("\"\n");
+        }
+        return yaml.toString();
+    }
+
+    /**
+     * Setzt die Regeln einer Quelle unter {@code space-harvester.sync.sources.<Quelle>}; {@link SourceSyncOverride#NONE}
+     * entfernt ihren Eintrag, dann gilt für sie alles global. Die Regeln der anderen Quellen bleiben.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSyncRule(Path file, Draft base, String sourceId, SourceSyncOverride rule) {
+        AppSettings before = base.settings() != null ? base.settings() : loader.read(file, base.text());
+        java.util.Map<String, SourceSyncOverride> rules = new java.util.TreeMap<>(before.syncRules());
+        if (rule == null || rule.equals(SourceSyncOverride.NONE)) {
+            rules.remove(sourceId);
+        } else {
+            rules.put(sourceId, rule);
+        }
+        String text = nested(base.text(), "sync", "sources", indent -> syncRulesYaml(indent, rules));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.syncRules().equals(rules)) {
+            throw new IllegalArgumentException("Die Regeln der Quelle ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync.sources von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    private static String syncRulesYaml(String indent, java.util.Map<String, SourceSyncOverride> rules) {
+        if (rules.isEmpty()) {
+            return "";
+        }
+        StringBuilder yaml = new StringBuilder(indent).append("sources:\n");
+        String inner = indent + "  ";
+        String field = inner + "  ";
+        rules.forEach((id, rule) -> {
+            yaml.append(inner).append('"').append(id.replace("\\", "\\\\").replace("\"", "\\\"")).append("\":\n");
+            line(yaml, field, SourceSyncOverride.CHANGE_SEARCH_INTERVAL, rule.changeSearchInterval());
+            line(yaml, field, SourceSyncOverride.INVENTORY_INTERVAL, rule.inventoryInterval());
+            line(yaml, field, SourceSyncOverride.EVENTS, rule.events());
+            line(yaml, field, SourceSyncOverride.CATCH_UP_ON_START, rule.catchUpOnStart());
+            line(yaml, field, SourceSyncOverride.BEFORE_SEARCH, rule.beforeSearch());
+            line(yaml, field, SourceSyncOverride.MODE, rule.mode() == null ? null : rule.mode().key());
+            line(yaml, field, SourceSyncOverride.REFRESH_STRATEGY,
+                    rule.refreshStrategy() == null ? null : rule.refreshStrategy().key());
+            line(yaml, field, SourceSyncOverride.MAX_AGE, rule.maxAge());
+            line(yaml, field, SourceSyncOverride.WITHHELD_RETENTION, rule.withheldRetention());
+            line(yaml, field, SourceSyncOverride.BACKGROUND_FILL, rule.backgroundFill());
+        });
+        return yaml.toString();
+    }
+
+    private static void line(StringBuilder yaml, String indent, String key, Object value) {
+        if (value != null) {
+            yaml.append(indent).append(key).append(": ")
+                    .append(value instanceof java.time.Duration d ? duration(d) : value).append('\n');
+        }
+    }
+
+    /** Eine Dauer so kurz wie möglich: 30d, 6h, 15m, 0s. */
+    public static String duration(java.time.Duration duration) {
+        long seconds = duration.toSeconds();
+        if (seconds != 0 && seconds % 86_400 == 0) {
+            return seconds / 86_400 + "d";
+        }
+        if (seconds != 0 && seconds % 3_600 == 0) {
+            return seconds / 3_600 + "h";
+        }
+        if (seconds != 0 && seconds % 60 == 0) {
+            return seconds / 60 + "m";
+        }
+        return seconds + "s";
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Einstellungen des KI-Dienstes unter {@code space-harvester.ai}; ein leerer
+     * Entwurf entfernt den Block. Nur dieser Block ändert sich; Kommentare und alles andere bleiben.
+     */
+    public Draft withAi(Path file, Draft base, AiDraft ai) {
+        List<String> problems = ai.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = ai(base.text(), ai);
+        AppSettings settings = loader.read(file, text);
+        if (!AiDraft.of(settings.ai()).equals(ai)) {
+            throw new IllegalArgumentException("Die KI-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.ai von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Ersetzt, ergänzt oder entfernt {@code space-harvester.ai}. */
+    static String ai(String text, AiDraft ai) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
+                throw unsupported("space-harvester steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            if (!ai.empty()) {
+                lines.add("");
+                lines.add("space-harvester:");
+                add(lines, lines.size(), ai.yaml("  "));
+            }
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int block = child(lines, root, rootEnd, childIndent, "ai");
+        if (block >= 0) {
+            lines.subList(block, blockEnd(lines, block, childIndent)).clear();
+        }
+        if (!ai.empty()) {
+            add(lines, block >= 0 ? block : root + 1, ai.yaml(" ".repeat(childIndent)));
+        }
+        return String.join(newline, lines) + newline;
+    }
+
+    /**
+     * Setzt {@code space-harvester-app.output-directory}; {@code null} entfernt den Schlüssel, dann gilt Downloads.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withOutputDirectory(Path file, Draft base, Path directory) {
+        String text = outputDirectory(base.text(), directory == null ? null : directory.toAbsolutePath().toString());
+        AppSettings settings = loader.read(file, text);
+        Path expected = directory == null ? AppSettings.defaultOutputDirectory() : directory.toAbsolutePath();
+        if (!expected.equals(settings.outputDirectory())) {
+            throw new IllegalArgumentException("Der Ausgabeordner ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester-app.output-directory von Hand bearbeiten.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt {@code space-harvester-app.disabled-sources}; leer entfernt den Schlüssel, dann sind alle Quellen an.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withDisabledSources(Path file, Draft base, Set<String> disabled) {
+        String value = disabled.isEmpty() ? null : "disabled-sources: [" + disabled.stream().sorted()
+                .map(id -> "\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                .collect(java.util.stream.Collectors.joining(", ")) + "]";
+        String text = appValue(base.text(), "disabledsources", value);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.disabledSources().equals(Set.copyOf(disabled))) {
+            throw new IllegalArgumentException("Die abgeschalteten Quellen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.disabled-sources von Hand bearbeiten.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt {@code space-harvester-app.setup-completed: true}: Der Einrichtungsassistent öffnet sich beim Start nicht
+     * mehr, bleibt aber unter Einstellungen erreichbar.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSetupCompleted(Path file, Draft base) {
+        String text = appValue(base.text(), "setupcompleted", "setup-completed: true");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.setupCompleted()) {
+            throw new IllegalArgumentException("Der Abschluss der Einrichtung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.setup-completed von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt Bezugsart und KeePass-Eintrag des KI-Keys ({@code space-harvester-app.ai-access},
+     * {@code .ai-keepass-entry}); das Geheimnis selbst steht nie in der Datei.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAiAccess(Path file, Draft base, AiAccess access) {
+        String text = appValue(base.text(), "aiaccess", access.mode() == null ? null
+                : "ai-access: " + access.mode().key());
+        text = appValue(text, "aikeepassentry", access.entry() == null ? null
+                : "ai-keepass-entry: \"" + access.entry().replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.aiAccess().equals(access)) {
+            throw new IllegalArgumentException("Der Bezug des API-Keys ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.ai-access von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt oder entfernt den KeePass-Eintrag einer Quelle ({@code space-harvester-app.source-keepass-entries}, eine
+     * Zeile als Flow-Map); nur der Titel, nie Benutzer oder Geheimnis.
+     *
+     * @param entry Titel oder {@code null} für „Manuell“
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSourceKeePass(Path file, Draft base, String sourceId, String entry) {
+        Map<String, String> entries = new java.util.TreeMap<>(base.settings().sourceKeePass());
+        if (entry == null || entry.isBlank()) {
+            entries.remove(sourceId);
+        } else {
+            entries.put(sourceId, entry.strip());
+        }
+        StringBuilder line = new StringBuilder("source-keepass-entries: {");
+        entries.forEach((id, title) -> line.append(line.charAt(line.length() - 1) == '{' ? "" : ", ")
+                .append(quoted(id)).append(": ").append(quoted(title)));
+        String text = appValue(base.text(), "sourcekeepassentries", entries.isEmpty() ? null : line + "}");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.sourceKeePass().equals(entries)) {
+            throw new IllegalArgumentException("Der KeePass-Eintrag der Quelle ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.source-keepass-entries von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
+    private static String quoted(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
+    static String outputDirectory(String text, String directory) {
+        return appValue(text, "outputdirectory", directory == null ? null
+                : "output-directory: \"" + directory.replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
+    }
+
+    /**
+     * Ersetzt, ergänzt oder entfernt einen einzeiligen Schlüssel unter {@code space-harvester-app}.
+     *
+     * @param key   normalisierter Schlüssel ({@link AppSettingsLoader#normalize})
+     * @param value ganze Zeile ohne Einrückung, {@code null} entfernt den Schlüssel
+     */
+    private static String appValue(String text, String key, String value) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvesterapp")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvesterapp")) {
+                throw unsupported("space-harvester-app steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            if (value != null) {
+                // Oben in der Datei, wie im Beispiel; der Rest bleibt unverändert.
+                List<String> fresh = new ArrayList<>(List.of("space-harvester-app:"));
+                fresh.addAll(valueLines(value, "  "));
+                fresh.add("");
+                lines.addAll(0, fresh);
+            }
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int line = -1;
+        for (int i = root + 1; i < rootEnd && line < 0; i++) {
+            Matcher found = SCALAR_KEY.matcher(lines.get(i));
+            if (!blankOrComment(lines.get(i)) && indent(lines.get(i)) == childIndent && found.lookingAt()
+                    && AppSettingsLoader.normalize(found.group(1)).equals(key)) {
+                line = i;
+            }
+        }
+        if (line >= 0) {
+            lines.subList(line, blockEnd(lines, line, childIndent)).clear();
+        }
+        if (value != null) {
+            lines.addAll(line >= 0 ? line : root + 1, valueLines(value, " ".repeat(childIndent)));
+        }
+        return String.join(newline, lines) + newline;
+    }
+
+    /** Ein Wert mit Zeilenumbrüchen ist ein Block: jede Zeile bekommt den Einzug des Schlüssels davor. */
+    private static List<String> valueLines(String value, String indent) {
+        List<String> result = new ArrayList<>();
+        for (String line : value.split("\n", -1)) {
+            result.add(indent + line);
+        }
+        return result;
+    }
+
+    /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */
+    private static int blockEnd(List<String> lines, int start, int indent) {
+        int last = start;
+        for (int i = start + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            if (indent(line) <= indent) {
+                break;
+            }
+            last = i;
+        }
+        return last + 1;
+    }
+
+    private static int childIndent(List<String> lines, int start, int end, int fallback) {
+        for (int i = start + 1; i < end; i++) {
+            if (!blankOrComment(lines.get(i))) {
+                return indent(lines.get(i));
+            }
+        }
+        return fallback;
+    }
+
+    /** Zeile des Schlüssels {@code key} mit Einrückung {@code indent} im Block; -1, wenn er fehlt. */
+    private static int child(List<String> lines, int start, int end, int indent, String key) {
+        for (int i = start + 1; i < end; i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line) || indent(line) != indent) {
+                continue;
+            }
+            Matcher matcher = SOURCES.matcher(line);
+            if (matcher.matches() && AppSettingsLoader.normalize(matcher.group(2)).equals(key)) {
+                if (matcher.group(3) != null) {
+                    lines.set(i, " ".repeat(indent) + matcher.group(2) + ":");
+                }
+                return i;
+            }
+            if (isKey(SOURCES_INLINE, line, 1, key)) {
+                throw unsupported(key + " steht in einer Zeile");
+            }
+        }
+        return -1;
+    }
+
+    /** Fügt den Eintrag am Ende von {@code space-harvester.sources} ein; legt fehlende Schlüssel an. */
+    static String insert(String text, SourceDraft source) {
+        if (text.isBlank()) {
+            return HEADER + "\nspace-harvester:\n  sources:\n" + source.yaml("    ");
+        }
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
+                throw unsupported("space-harvester steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            lines.add("");
+            lines.add("space-harvester:");
+            lines.add("  sources:");
+            add(lines, lines.size(), source.yaml("    "));
+            return String.join(newline, lines) + newline;
+        }
+        int end = root + 1;
+        int childIndent = -1;
+        int sources = -1;
+        for (; end < lines.size(); end++) {
+            String line = lines.get(end);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            if (indent == 0) {
+                break;
+            }
+            if (childIndent < 0) {
+                childIndent = indent;
+            }
+            if (indent == childIndent) {
+                Matcher matcher = SOURCES.matcher(line);
+                if (matcher.matches() && AppSettingsLoader.normalize(matcher.group(2)).equals("sources")) {
+                    sources = end;
+                    if (matcher.group(3) != null) {
+                        lines.set(end, " ".repeat(indent) + matcher.group(2) + ":");
+                    }
+                } else if (isKey(SOURCES_INLINE, line, 1, "sources")) {
+                    throw unsupported("sources steht in einer Zeile");
+                }
+            }
+        }
+        if (childIndent < 0) {
+            childIndent = 2;
+        }
+        String itemIndent = " ".repeat(childIndent + 2);
+        if (sources < 0) {
+            lines.add(root + 1, " ".repeat(childIndent) + "sources:");
+            add(lines, root + 2, source.yaml(itemIndent));
+            return String.join(newline, lines) + newline;
+        }
+        int last = sources;
+        for (int i = sources + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            boolean item = indent > childIndent || (indent == childIndent && line.strip().startsWith("- "));
+            if (!item) {
+                break;
+            }
+            if (last == sources) {
+                itemIndent = " ".repeat(indent);
+            }
+            last = i;
+        }
+        // Auskommentierte Zeilen direkt am Ende der Liste (Beispiele, Optionen des letzten Eintrags) gehören noch dazu.
+        while (last + 1 < lines.size() && lines.get(last + 1).strip().startsWith("#")
+                && indent(lines.get(last + 1)) > childIndent) {
+            last++;
+        }
+        add(lines, last + 1, source.yaml(itemIndent));
+        return String.join(newline, lines) + newline;
+    }
+
+    /** IDs aller Einträge unter {@code space-harvester.sources}, auch solcher, die die App wegen Fehlern auslässt. */
+    static List<String> configuredIds(String text) {
+        List<String> ids = new ArrayList<>();
+        if (text.isBlank()) {
+            return ids;
+        }
+        Object document;
+        try {
+            document = AppSettingsLoader.yaml().load(text);
+        } catch (YAMLException e) {
+            throw new IllegalArgumentException("Die Konfigurationsdatei ist kein gültiges YAML; bitte zuerst die Datei "
+                    + "korrigieren (Einstellungen › Datei öffnen).");
+        }
+        if (document instanceof Map<?, ?> map
+                && AppSettingsLoader.get(map, AppSettingsLoader.ROOT) instanceof Map<?, ?> root
+                && AppSettingsLoader.get(root, "sources") instanceof List<?> list) {
+            for (Object entry : list) {
+                if (entry instanceof Map<?, ?> source && AppSettingsLoader.get(source, "id") != null) {
+                    ids.add(String.valueOf(AppSettingsLoader.get(source, "id")).strip());
+                }
+            }
+        }
+        return ids;
+    }
+
+    /** Zeilen eines Eintrags in der Liste {@code sources}: {@code [start, end)} ohne folgende Leer-/Kommentarzeilen. */
+    private record Edit(List<String> lines, int start, int end, String indent, String newline) {
+    }
+
+    private static Edit locate(String text, String sourceId) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size() && root < 0; i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+                root = i;
+            }
+        }
+        int sources = -1;
+        int childIndent = -1;
+        for (int i = root + 1; root >= 0 && i < lines.size() && sources < 0; i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            if (indent == 0) {
+                break;
+            }
+            if (childIndent < 0) {
+                childIndent = indent;
+            }
+            if (indent == childIndent && isKey(SOURCES, line, 2, "sources")) {
+                sources = i;
+            }
+        }
+        if (sources < 0) {
+            throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
+        }
+        List<Integer> starts = new ArrayList<>();
+        int itemIndent = -1;
+        int listEnd = sources + 1;
+        for (int i = sources + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            boolean item = indent > childIndent || (indent == childIndent && line.strip().startsWith("- "));
+            if (!item) {
+                break;
+            }
+            if (itemIndent < 0) {
+                itemIndent = indent;
+            }
+            if (indent == itemIndent && line.strip().startsWith("- ")) {
+                starts.add(i);
+            }
+            listEnd = i + 1;
+        }
+        starts.add(listEnd);
+        for (int k = 0; k + 1 < starts.size(); k++) {
+            int start = starts.get(k);
+            int end = starts.get(k + 1);
+            while (end > start + 1 && blankOrComment(lines.get(end - 1))) {
+                end--;
+            }
+            StringBuilder block = new StringBuilder();
+            for (int i = start; i < end; i++) {
+                String line = lines.get(i);
+                block.append(line.length() >= itemIndent ? line.substring(itemIndent) : line.strip()).append('\n');
+            }
+            Object parsed;
+            try {
+                parsed = AppSettingsLoader.yaml().load(block.toString());
+            } catch (YAMLException e) {
+                continue;
+            }
+            if (parsed instanceof List<?> list && list.size() == 1 && list.get(0) instanceof Map<?, ?> entry
+                    && sourceId.equals(String.valueOf(AppSettingsLoader.get(entry, "id")).strip())) {
+                return new Edit(lines, start, end, " ".repeat(itemIndent), newline);
+            }
+        }
+        throw new IllegalArgumentException("Der Eintrag der Quelle " + sourceId + " ließ sich in der Datei nicht "
+                + "abgrenzen; bitte von Hand bearbeiten (Einstellungen › Datei öffnen).");
+    }
+
+    private static Map<?, ?> rawSource(String text, String sourceId) {
+        Object document = AppSettingsLoader.yaml().load(text);
+        if (document instanceof Map<?, ?> map
+                && AppSettingsLoader.get(map, AppSettingsLoader.ROOT) instanceof Map<?, ?> root
+                && AppSettingsLoader.get(root, "sources") instanceof List<?> list) {
+            for (Object entry : list) {
+                if (entry instanceof Map<?, ?> source
+                        && sourceId.equals(String.valueOf(AppSettingsLoader.get(source, "id")).strip())) {
+                    return source;
+                }
+            }
+        }
+        throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
+    }
+
+    private static boolean isKey(Pattern pattern, String line, int group, String normalized) {
+        Matcher matcher = pattern.matcher(line);
+        return matcher.matches() && AppSettingsLoader.normalize(matcher.group(group)).equals(normalized);
+    }
+
+    private static void add(List<String> lines, int at, String block) {
+        // Ein leerer Block entfernt den Schlüssel, ohne eine Leerzeile zu hinterlassen.
+        if (!block.isEmpty()) {
+            lines.addAll(at, List.of(block.split("\n")));
+        }
+    }
+
+    private static boolean blankOrComment(String line) {
+        String stripped = line.strip();
+        return stripped.isEmpty() || stripped.startsWith("#");
+    }
+
+    private static int indent(String line) {
+        int i = 0;
+        while (i < line.length() && line.charAt(i) == ' ') {
+            i++;
+        }
+        return i;
+    }
+
+    private static IllegalArgumentException unsupported(String what) {
+        return new IllegalArgumentException("Die Konfigurationsdatei lässt sich nicht automatisch ergänzen (" + what
+                + "). Die Quelle bitte von Hand eintragen; die Vorschau zeigt den Eintrag.");
+    }
+}

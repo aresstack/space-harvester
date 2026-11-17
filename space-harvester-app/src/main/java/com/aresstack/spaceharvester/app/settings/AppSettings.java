@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import com.aresstack.spaceharvester.application.configuration.ChangeLogSettings;
 import com.aresstack.spaceharvester.application.configuration.EnrichmentSettings;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
@@ -60,6 +61,8 @@ import java.util.Set;
  *                        ADR 0032), wie beim Dienst
  * @param standing        Wörter für überholte Seiten und Entwürfe der Status-quo-Sicht
  *                        ({@code space-harvester.statements.standing.*}, ADR 0032 FL6), wie beim Dienst
+ * @param check           Prüfschritt der Aussagenanalyse ({@code space-harvester.statements.check.*}, ADR 0032 FL4),
+ *                        wie beim Dienst
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
@@ -70,7 +73,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           LocalFileSettings localFiles, Map<String, String> sourceKeePass,
                           List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
                           EnrichmentSettings enrichment, AnalyticsSettings analytics,
-                          SimplificationSettings simplification, StandingSettings standing) {
+                          SimplificationSettings simplification, StandingSettings standing,
+                          CheckSettings check) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -97,6 +101,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         analytics = analytics == null ? AnalyticsSettings.DEFAULT : analytics;
         simplification = simplification == null ? SimplificationSettings.DEFAULT : simplification;
         standing = standing == null ? StandingSettings.DEFAULT : standing;
+        check = check == null ? CheckSettings.DEFAULT : check;
     }
 
     /** Mit den Vorgabewörtern des Stands ({@link StandingSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
@@ -112,7 +117,25 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                        SimplificationSettings simplification) {
         this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
                 disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, StandingSettings.DEFAULT);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, StandingSettings.DEFAULT,
+                CheckSettings.DEFAULT);
+    }
+
+    /** Mit dem Prüfschritt ohne Angabe ({@link CheckSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                       LocalFileSettings localFiles, Map<String, String> sourceKeePass,
+                       List<Path> inactiveRoots, TermSettings terms, ConsoleOutput consoleOutput,
+                       EnrichmentSettings enrichment, AnalyticsSettings analytics,
+                       SimplificationSettings simplification, StandingSettings standing) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing,
+                CheckSettings.DEFAULT);
     }
 
     /** Mit der Vorstufe ohne Angabe ({@link SimplificationSettings#DEFAULT}), für Aufrufer ohne Bedarf. */
@@ -243,7 +266,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
     }
 
     /** Dieselbe Konfiguration mit anderen Grenzen für Bilder- und Anhängeaufträge ({@link JobLimits#withParallel}). */
@@ -251,7 +274,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads), ai, outputDirectory, problems, disabledSources, tls,
                 cache, setupCompleted, syncRules, sync, aiAccess, localFiles, sourceKeePass, inactiveRoots, terms,
-                consoleOutput, enrichment, analytics, simplification, standing);
+                consoleOutput, enrichment, analytics, simplification, standing, check);
     }
 
     /**
@@ -262,7 +285,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(preparations, downloads).withConnections(connections), ai, outputDirectory,
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles,
-                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing);
+                sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
     }
 
     /**
@@ -277,28 +300,28 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
-                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing);
+                other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles, sourceKeePass,
-                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing);
+                inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
     }
 
     /** Dieselbe Konfiguration mit anderer Terminal-Ausgabe; die Laufzeit braucht sie nicht. */
     public AppSettings withConsoleOutput(ConsoleOutput output) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing);
+                localFiles, sourceKeePass, inactiveRoots, terms, output, enrichment, analytics, simplification, standing, check);
     }
 
     /** Dieselbe Konfiguration mit anderem Export „Analytics“; die Laufzeit braucht ihn nicht. */
     public AppSettings withAnalytics(AnalyticsSettings analytics) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
                 outputDirectory, problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess,
-                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing);
+                localFiles, sourceKeePass, inactiveRoots, terms, consoleOutput, enrichment, analytics, simplification, standing, check);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */

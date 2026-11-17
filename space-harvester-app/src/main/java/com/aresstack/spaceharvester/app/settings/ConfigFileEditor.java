@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
@@ -506,6 +507,32 @@ public final class ConfigFileEditor {
             throw new IllegalArgumentException("Die Vorstufe „Sätze vereinfachen“ ließ sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester.statements.simplification von Hand "
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Prüfschritt „Aussagen prüfen“ ({@code space-harvester.statements.check.*},
+     * ADR 0032), dieselben Schlüssel wie im Dienst; nur der Block {@code check} unter {@code statements} ändert sich.
+     * Ohne eigenes Modell entfällt der Schlüssel {@code model}.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withCheck(Path file, Draft base, CheckSettings check) {
+        String text = nested(base.text(), "statements", "check", indent -> {
+            String inner = indent + "  ";
+            return indent + "check:\n"
+                    + inner + "scope: " + check.scope().value() + "\n"
+                    + inner + "parallel: " + check.parallel() + "\n"
+                    + (check.model() == null ? "" : inner + "model: " + quoted(check.model()) + "\n");
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.check().equals(check)) {
+            throw new IllegalArgumentException("Der Prüfschritt „Aussagen prüfen“ ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.statements.check von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
     }

@@ -251,6 +251,11 @@ public class StatementAnalysis {
                 analysis.withResult(result.withoutConllu()));
     }
 
+    /** Ob der Prüfschritt eingerichtet ist und ein Chat-Modell eingestellt ist; ruft kein Modell. */
+    public boolean checkAvailable() {
+        return checks != null && checks.available();
+    }
+
     /** Ob der Prüfschritt für diese Seite laufen kann: eingerichtet, Modell eingestellt, Seite für die KI freigegeben. */
     public Optional<CheckUnavailableException.Reason> checkUnavailable(PageKey key) {
         if (checks == null || !checks.available()) {

@@ -14,6 +14,8 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.application.check.CheckScope;
+import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
@@ -176,6 +178,32 @@ final class AiSettingsPanel {
             + "Abschnitte einer Seite höchstens gleichzeitig beim Modell sind.\n\n"
             + "Die Werte gelten ohne Neustart beim nächsten Lauf. Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.statements.simplification.mode, .parallel und .model.";
+    /**
+     * Prüfschritt „Aussagen prüfen“ ({@code space-harvester.statements.check.*}, ADR 0032): Prüfumfang, Sätze zugleich
+     * und das Modell nur für diesen Schritt. Die Auswahl heißt „Prüfumfang“, damit Einstellung und Auftrag nicht
+     * gleich heißen.
+     */
+    final JComboBox<String> checkScope = Comic.combo();
+    final JSpinner checkParallel = countSpinner(1, MAX_CHECK_PARALLEL, 1);
+    final JTextField checkModel = Comic.field(24);
+    final ComposerButton pickCheck = Comic.button("▾", "Modell zum Prüfen aus der Liste des Dienstes wählen");
+    final HelpButton checkHelp = new HelpButton(Dialogs.CLOSE_SIZE, CHECK_SCOPE_LABEL, CHECK_HELP);
+    static final String CHECK_JOB = com.aresstack.spaceharvester.app.ui.content.CheckTexts.JOB;
+    static final String CHECK_SCOPE_LABEL = "Prüfumfang";
+    static final String CHECK_UNCERTAIN_AND_STAGE = "unsichere und Vorstufe";
+    static final String CHECK_ALL = "alle";
+    static final String CHECK_PARALLEL_UNIT = "Sätze zugleich";
+    static final String CHECK_PARALLEL_LABEL = "Prüfen parallel";
+    static final String CHECK_MODEL_LABEL = "Prüf-Modell";
+    static final int MAX_CHECK_PARALLEL = 16;
+    static final String CHECK_HELP = "Der Prüfschritt „" + CHECK_JOB + "“ gibt nur Seiten mit KI-Freigabe an das "
+            + "Modell und hebt nie eine Stufe.\n\n"
+            + "„" + CHECK_UNCERTAIN_AND_STAGE + "“ prüft Aussagen unterhalb von „plausibel“ und alle Aussagen der "
+            + "Vorstufe. „" + CHECK_ALL + "“ prüft alle Aussagen außer den ungültigen.\n\n"
+            + "Ohne eigenes „" + CHECK_MODEL_LABEL + "“ gilt das Text-Modell. Unter „Erweitert“ steht, wie viele "
+            + "Sätze einer Seite höchstens gleichzeitig beim Modell sind.\n\n"
+            + "Die Werte gelten ohne Neustart beim nächsten Auftrag. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.statements.check.scope, .parallel und .model.";
     final ComposerButton parserInstall = Comic.button(ParserModelSetup.INSTALL,
             "Lädt das freigegebene deutsche MaltParser-Modell aus dem GitHub-Release, prüft die Prüfsumme und "
                     + "entpackt es ins Datenverzeichnis");
@@ -252,6 +280,13 @@ final class AiSettingsPanel {
         modelRows.add(SIMPLIFY_LABEL, Comic.row(simplifyMode, simplifyHelp), null);
         modelRows.add(SIMPLIFY_MODEL_LABEL, Comic.fieldWithButton(simplifyModel, pickSimplify),
                 "Nur für „" + SIMPLIFY_LABEL + "“; leer: das Text-Modell");
+        checkScope.addItem(CHECK_UNCERTAIN_AND_STAGE);
+        checkScope.addItem(CHECK_ALL);
+        checkScope.setToolTipText("Welche Aussagen der Auftrag „" + CHECK_JOB + "“ dem Modell zeigt");
+        checkParallel.setToolTipText("Höchstens so viele Sätze einer Seite sind gleichzeitig beim Modell");
+        modelRows.add(CHECK_SCOPE_LABEL, Comic.row(checkScope, checkHelp), null);
+        modelRows.add(CHECK_MODEL_LABEL, Comic.fieldWithButton(checkModel, pickCheck),
+                "Nur für „" + CHECK_JOB + "“; leer: das Text-Modell");
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
@@ -285,16 +320,21 @@ final class AiSettingsPanel {
             modelRows.add(SIMPLIFY_PARALLEL_LABEL, Comic.row(simplifyParallel, Comic.text(SIMPLIFY_PARALLEL_UNIT)),
                     "„" + SIMPLIFY_LABEL + "“: so viele Abschnitte einer Seite sind höchstens gleichzeitig beim "
                             + "Modell; Vorgabe " + SimplificationSettings.DEFAULT_PARALLEL);
+            modelRows.add(CHECK_PARALLEL_LABEL, Comic.row(checkParallel, Comic.text(CHECK_PARALLEL_UNIT)),
+                    "„" + CHECK_JOB + "“: so viele Sätze einer Seite sind höchstens gleichzeitig beim Modell; "
+                            + "Vorgabe " + CheckSettings.DEFAULT_PARALLEL);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
         pickChat.setEnabled(false);
         pickSimplify.setEnabled(false);
+        pickCheck.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
+        pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
@@ -357,10 +397,15 @@ final class AiSettingsPanel {
                 : SIMPLIFY_WHERE_NEEDED);
         simplifyParallel.setValue(Math.min(simplification.parallel(), MAX_SIMPLIFY_PARALLEL));
         simplifyModel.setText(simplification.model() == null ? "" : simplification.model());
+        CheckSettings check = savedCheck(settings);
+        checkScope.setSelectedItem(check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE);
+        checkParallel.setValue(Math.min(check.parallel(), MAX_CHECK_PARALLEL));
+        checkModel.setText(check.model() == null ? "" : check.model());
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
-                || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL);
+                || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL
+                || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL);
         timeout = current.timeout();
         releasedIds = current.externalProcessingSources();
         renderReleased(settings, releasedIds);
@@ -673,7 +718,8 @@ final class AiSettingsPanel {
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
         return !draft().equals(current) || typedKey().length > 0 || !accessDraft().equals(shownAccess)
                 || judgedPairs() != savedBudget(settings).maxJudgedPairs()
-                || !simplification().equals(savedSimplification(settings));
+                || !simplification().equals(savedSimplification(settings))
+                || !check().equals(savedCheck(settings));
     }
 
     /** Ob gerade gespeichert wird (Assistent: Übernehmen beim Schrittwechsel). */
@@ -727,9 +773,10 @@ final class AiSettingsPanel {
         AiAccess chosen = accessDraft();
         int judged = judgedPairs();
         SimplificationSettings simplification = simplification();
+        CheckSettings check = check();
         if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)
                 && judged == savedBudget(settings).maxJudgedPairs()
-                && simplification.equals(savedSimplification(settings))) {
+                && simplification.equals(savedSimplification(settings)) && check.equals(savedCheck(settings))) {
             if (!quiet) {
                 feedback.info("Nichts geändert", null);
             }
@@ -792,7 +839,7 @@ final class AiSettingsPanel {
                 try {
                     Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
                             false);
-                    store(context, measured.draft(), new char[0], chosen, judged, simplification);
+                    store(context, measured.draft(), new char[0], chosen, judged, simplification, check);
                     return measured;
                 } finally {
                     if (resolved != null) {
@@ -801,7 +848,7 @@ final class AiSettingsPanel {
                 }
             }
             Measured measured = measure(context, runtime, draft, key, true);
-            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, simplification);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen, judged, simplification, check);
             return measured;
         }, measured -> {
             if (!chosen.fromKeePass() && !vault && key.length > 0) {
@@ -886,15 +933,16 @@ final class AiSettingsPanel {
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs)
             throws IOException {
-        store(context, draft, key, access, judgedPairs, null);
+        store(context, draft, key, access, judgedPairs, null, null);
     }
 
     /**
      * Wie {@link #store(AppContext, AiDraft, char[], AiAccess, Integer)}, dazu die Vorstufe „Sätze vereinfachen“
-     * ({@code statements.simplification.*}); {@code null} oder unverändert lässt den Block {@code statements} in Ruhe.
+     * ({@code statements.simplification.*}) und der Prüfschritt ({@code statements.check.*}); {@code null} oder
+     * unverändert lässt den jeweiligen Block in Ruhe.
      */
     static void store(AppContext context, AiDraft draft, char[] key, AiAccess access, Integer judgedPairs,
-                      SimplificationSettings simplification) throws IOException {
+                      SimplificationSettings simplification, CheckSettings check) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
@@ -907,6 +955,9 @@ final class AiSettingsPanel {
         }
         if (simplification != null && !simplification.equals(savedSimplification(context.settings()))) {
             written = editor.withSimplification(context.configFile(), written, simplification);
+        }
+        if (check != null && !check.equals(savedCheck(context.settings()))) {
+            written = editor.withCheck(context.configFile(), written, check);
         }
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
@@ -954,6 +1005,25 @@ final class AiSettingsPanel {
         return (simplification.mode() == SimplificationSettings.Mode.ALWAYS ? SIMPLIFY_ALWAYS : SIMPLIFY_WHERE_NEEDED)
                 + " · " + simplification.parallel() + " " + SIMPLIFY_PARALLEL_UNIT + " · "
                 + (simplification.model() == null ? "mit dem Text-Modell" : "Modell " + simplification.model());
+    }
+
+    /** Der Prüfschritt aus der Datei; ohne Datei die Vorgabe des Core. */
+    static CheckSettings savedCheck(AppSettings settings) {
+        return settings == null ? CheckSettings.DEFAULT : settings.check();
+    }
+
+    /** Der eingestellte Prüfschritt. */
+    CheckSettings check() {
+        return new CheckSettings(CHECK_ALL.equals(checkScope.getSelectedItem()) ? CheckScope.ALL
+                : CheckScope.UNCERTAIN_AND_STAGE, ((Number) checkParallel.getValue()).intValue(),
+                checkModel.getText());
+    }
+
+    /** Der Prüfschritt in einer Zeile, für Abschlussseite und Übersichten. */
+    static String checkSummary(CheckSettings check) {
+        return (check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE)
+                + " · " + check.parallel() + " " + CHECK_PARALLEL_UNIT + " · "
+                + (check.model() == null ? "mit dem Text-Modell" : "Modell " + check.model());
     }
 
     /** Die eingestellten Paare je Synonymlauf für das Text-Modell; 0 = Prüfung aus. */
@@ -1240,6 +1310,7 @@ final class AiSettingsPanel {
         loadModels.setEnabled(true);
         pickChat.setEnabled(false);
         pickSimplify.setEnabled(false);
+        pickCheck.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
@@ -1275,6 +1346,7 @@ final class AiSettingsPanel {
         modelRows.visible(chunkTokens, open);
         modelRows.visible(chunkOverlap, open);
         modelRows.visible(simplifyParallel, open);
+        modelRows.visible(checkParallel, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
@@ -1306,6 +1378,7 @@ final class AiSettingsPanel {
         preselectIfPresent(rerankModel, "rerank");
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickSimplify.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickCheck.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
         pickVision.setEnabled(!choices(AiModel.VISION).isEmpty());

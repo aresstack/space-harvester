@@ -101,3 +101,11 @@ W	10	fördern(B=Ehrenamt) PLAUSIBLE	STIMMT
 W	11	enthalten(H=Aktenordner, B=Ausbildungszertifikat) PLAUSIBLE	STIMMT
 W	12	übernehmen(H=Krankenkasse, B=Kosten) PLAUSIBLE	STIMMT
 W	13	fördern(B=Wärmespeicher) PLAUSIBLE	STIMMT
+R	1	behörde(H=Prüfstelle) PLAUSIBLE	STIMMT
+R	2	ansprechpartnerin(H=Weber) PLAUSIBLE	STIMMT
+R	3	ansprechpartner(H=Referenten) PLAUSIBLE	STIMMT
+R	4	förderung(H=Darlehen) PLAUSIBLE	STIMMT
+R	5	bewilligungsstelle(H=Prüfstelle) PLAUSIBLE	STIMMT
+R	6	partner(H=Kammer) PLAUSIBLE	STIMMT
+R	7	referat(H=Klein) PLAUSIBLE	FALSCH
+R	8	träger(H=Bewilligungsstelle) PLAUSIBLE	STIMMT
