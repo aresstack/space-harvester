@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
@@ -483,7 +484,8 @@ public final class PageDetailPanel extends JPanel {
         // Text (mit „…“ bei Platzmangel), damit nur der Titel das Popup öffnet.
         heading.setOpaque(false);
         heading.add(title);
-        more.addActionListener(e -> moreMenu().show(more, 0, more.getHeight()));
+        more.addActionListener(e -> PopupHover.clearOnClose(moreMenu(), more)
+                .show(more, 0, more.getHeight()));
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
         page.setOpaque(false);
