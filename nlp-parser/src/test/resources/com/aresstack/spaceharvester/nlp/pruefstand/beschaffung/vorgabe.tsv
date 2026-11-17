@@ -122,3 +122,5 @@ J03	J	3	Stabsstelle	Revision	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist 
 J04	J	4	Vertreter	Herr|Brandt	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist der“, Genitiv und Angabe „im“ danach
 J05	J	5	Annahmestelle	Poststelle	-	-	nein	-	GILT	Zustand; Gleichsetzung „ist die“, Ortsangabe „im“
 J06	J	6	Ansprechpartner	Pförtner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Zeitangabe „am“ davor, „für“ danach
+J07	J	7	Stellvertreterin	Frau|Lindner	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv (weiblich) und Angabe „im“ danach
+J08	J	8	Vorgesetzter	Schichtführer	-	-	nein	-	GILT	Zustand; Rolle ohne Artikel, Genitiv und Angabe „beim“ danach

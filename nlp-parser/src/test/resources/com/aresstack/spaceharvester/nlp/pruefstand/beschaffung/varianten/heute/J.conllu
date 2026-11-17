@@ -80,3 +80,31 @@
 9	Lieferanten	lieferant	NOUN	_	_	7	nmod	_	SpaceAfter=No
 10	.	.	PUNCT	_	_	6	punct	_	_
 
+# sent_id = 7
+# text = Frau Lindner ist Stellvertreterin der Einkaufsleitung im Krankheitsfall.
+1	Frau	frau	NOUN	_	_	2	compound	_	_
+2	Lindner	lindner	PROPN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Stellvertreterin	stellvertreterin	NOUN	_	_	0	root	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Einkaufsleitung	einkaufsleitung	NOUN	_	_	4	nmod	_	_
+7-8	im	_	_	_	_	_	_	_	_
+7	in	in	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Krankheitsfall	krankheitsfall	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 8
+# text = Der Schichtführer ist Vorgesetzter des Lageristen beim Nachtdienst.
+1	Der	der	DET	_	_	2	det	_	_
+2	Schichtführer	schichtführer	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Vorgesetzter	vorgesetzte	NOUN	_	_	0	root	_	_
+5	des	der	DET	_	_	6	det	_	_
+6	Lageristen	lageristen	NOUN	_	_	4	nmod	_	_
+7-8	beim	_	_	_	_	_	_	_	_
+7	bei	bei	ADP	_	_	9	case	_	_
+8	dem	der	DET	_	_	9	det	_	_
+9	Nachtdienst	nachtdienst	NOUN	_	_	4	nmod	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	4	punct	_	_
+
