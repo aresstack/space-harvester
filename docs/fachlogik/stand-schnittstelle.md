@@ -97,7 +97,7 @@ Subscription subscribe(Runnable listener)
 - Liste der Aussagen nach Stand gruppiert, Überholtes blass am Ende; darunter oder als Unterreiter „Zustände“ je Träger.
 - Aktionen zu einer Zeile (Stand setzen, Entscheidung löschen, Protokoll) erst im Overlay am Mausklick; Ja/Nein-Rückfrage
   beim Löschen.
-- Wortlisten unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
+- Wortlisten (Leerlassen = Vorgabe, „-“ allein = keine Wörter) unter Einstellungen (mehrwertig: Tabelle mit Icon-Zeilenaktionen) und auf der Abschlussseite des
   Assistenten; die App schreibt sie als YAML-Liste in die Konfigurationsdatei.
 
 ## Leseempfehlung: `ReadingAdvice#recommend` (PR 2)
@@ -128,8 +128,10 @@ Mausklick auf die Summe), nie nur die Summe. Verweise zwischen Seiten und Aufruf
 Core hat dafür keinen abgelegten Bestand.
 
 Bekannte Schwäche bis zur Einordnung durch FL5: Unter den häufigsten Begriffen (`topTerms`, `TOP_TERMS`) stehen auch
-Allerweltsnomen (etwa „Seite“, „Fall“). Schlüssel und Rangfolge der Begriffe kommen künftig aus der einen Zählstelle
-von FL5 (`GlossaryDerivation`), sobald diese auf main ist. Das Änderungsprotokoll wird nur für die Quellen der Auswahl
+Allerweltsnomen (etwa „Seite“, „Fall“). Schlüssel, Schreibweise und Rangfolge der Begriffe kommen aus der einen
+Zählstelle von FL5 (`GlossaryDerivation`: `isTerm`, `keyOf`, Wichtigkeit). Dort zählen nur aktuelle Analysen, darum
+stammen die häufigsten Begriffe nur aus Seiten mit aktueller Analyse. Das Thema wird wie im Glossar verglichen
+(`TermText#normalize`), über den Schlüssel oder die Wortform im Text. Das Änderungsprotokoll wird nur für die Quellen der Auswahl
 gelesen, und nur für ihren Space, wenn die Auswahl einer Quelle in genau einem Space liegt.
 
 Vorschlag für die Oberfläche: Unterreiter „Leseempfehlung“ neben der Status-quo-Sicht, Themenfeld mit ✕ oben rechts
@@ -165,6 +167,10 @@ der Hinweis von selbst.
 - Jede Gruppe trägt ihre Einträge. Daraus kommen Seite, Aussage-ID und Satzposition (`statement().sentence()`,
   `start()`, `end()`). `pages()` liefert die beteiligten Seiten. Die Gruppen sind sortiert nach der Zahl der Seiten,
   die meisten zuerst.
+
+Bekannte Grenze: Die Sachlage vergleicht nur die Grundform des Kopfs, Beiwörter zählen nicht. „Der externe Prüfer
+prüft den Antrag“ gegen „Der interne Prüfer prüft den Antrag nicht“ wird deshalb als möglicher Widerspruch gemeldet.
+Darum heißt es „möglich“, und die Anzeige zeigt beide Sätze im Wortlaut.
 
 Vorschlag für die Oberfläche: In der Status-quo-Sicht ein Hinweis-Symbol an betroffenen Zeilen. Ein Overlay am
 Mausklick zeigt die Gegenaussagen mit Seite und springt zur Stelle. Ablösungen erscheinen als Verweis „löst ab“ bzw.
