@@ -329,6 +329,7 @@ public final class Harvester implements AutoCloseable {
     private final AcronymResolution acronymResolution;
     private final Glossary glossary;
     private final GlossaryClassification glossaryClassification;
+    private final com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview;
     private final SynonymDiscovery synonymDiscovery;
     private final FactEdits factEdits;
     private final Jobs jobs;
@@ -950,6 +951,10 @@ public final class Harvester implements AutoCloseable {
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
                     termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
             // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.
+            // ADR 0032, FL5b: Teilzahlen der Begriffsableitung je Aufrufer für den Glossar-Reiter.
+            this.glossaryOverview = new com.aresstack.spaceharvester.application.glossary.GlossaryOverview(
+                    knowledgeGraph::analysed,
+                    () -> (this.settings != null ? this.settings.terms() : builder.terms).glossaryRules());
             this.statusQuo = new com.aresstack.spaceharvester.application.standing.StatusQuo(knowledgeGraph::analysed,
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
@@ -1521,6 +1526,11 @@ public final class Harvester implements AutoCloseable {
     /** „Fachbegriffe ermitteln“: KI-Lauf nur auf ausdrücklichen Wunsch. */
     public GlossaryClassification glossaryClassification() {
         return glossaryClassification;
+    }
+
+    /** Teilzahlen und Einzelheiten der Begriffsableitung je Aufrufer (ADR 0032, FL5b), nichts gespeichert. */
+    public com.aresstack.spaceharvester.application.glossary.GlossaryOverview glossaryOverview() {
+        return glossaryOverview;
     }
 
     /**
