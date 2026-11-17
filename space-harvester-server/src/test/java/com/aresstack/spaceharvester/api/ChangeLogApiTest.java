@@ -207,6 +207,11 @@ class ChangeLogApiTest {
         assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text?limit=0").statusCode())
                 .isEqualTo(400);
         assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/12345/text").statusCode()).isEqualTo(404);
+        assertThat(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text?zone=Mars/Olymp").statusCode())
+                .isEqualTo(400);
+        assertThat(body.get("markdown").asString()).doesNotContain("Z bis").containsPattern("\\d{2}\\.\\d{2}\\.\\d{4}, \\d{2}:\\d{2}");
+        assertThat(json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open/text?zone=UTC").body())
+                .get("markdown").asString()).isNotEqualTo(body.get("markdown").asString());
     }
 
     @Test

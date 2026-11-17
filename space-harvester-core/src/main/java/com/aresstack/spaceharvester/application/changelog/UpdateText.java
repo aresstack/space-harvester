@@ -13,8 +13,11 @@ import java.util.Objects;
  * @param totalPages geänderte Seiten der Ebene insgesamt
  * @param offset     erste Seite dieses Ausschnitts
  * @param report     der Bericht mit Unterschieden, nur mit den Seiten dieses Ausschnitts
- * @param markdown   der Text dieses Ausschnitts
- * @param sections   Lage jeder Seite in {@code markdown}, in Textreihenfolge
+ * @param markdown   der Text dieses Ausschnitts; der Kopf steht nur im ersten Ausschnitt ({@code offset} 0), danach
+ *                   beginnt er mit der ersten Seite des Ausschnitts
+ * @param sections   Lage jeder Seite in {@code markdown}, in Textreihenfolge; {@link Section#start()} zählt je
+ *                   Ausschnitt ab dessen erstem Zeichen. Wer Ausschnitte aneinanderhängt, addiert die Länge der
+ *                   vorigen Texte.
  */
 public record UpdateText(String format, String sourceId, String updateId, String spaceKey, int totalPages, int offset,
                          ChangeReport report, String markdown, List<Section> sections) {
@@ -27,8 +30,8 @@ public record UpdateText(String format, String sourceId, String updateId, String
     /**
      * Lage einer Seite im Text.
      *
-     * @param start  erstes Zeichen in {@code markdown}
-     * @param length Zeichen bis zum Beginn der nächsten Seite
+     * @param start  erstes Zeichen in {@code markdown} dieses Ausschnitts (nicht des ganzen Updates)
+     * @param length Zeichen bis zum Beginn der nächsten Seite oder bis zum Hinweis auf weitere Seiten
      * @param kind   die Art, unter der die Seite im Bericht steht
      */
     public record Section(String pageId, int start, int length, ChangeKind kind) {
