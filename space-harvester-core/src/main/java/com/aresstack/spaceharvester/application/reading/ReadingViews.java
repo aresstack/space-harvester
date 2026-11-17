@@ -149,11 +149,17 @@ public class ReadingViews {
      * er gilt, sonst von der Quelle, und behält sie im Speicher. Höchstens {@value #MAX_PREFETCH} Seiten je Aufruf und
      * {@value #PREFETCH_PARALLEL} zugleich; schon laufende werden nicht doppelt geholt. Fehler bleiben still, das Öffnen
      * versucht es selbst noch einmal. Kehrt sofort zurück.
+     *
+     * <p>Das Vorladen löst nie einen Anmelde- oder Codedialog aus: es fragt die Quelle nur mit der bestehenden Anmeldung
+     * und meldet keine Einmalcode-Abfrage an ({@code SignInRequests} bleibt unberührt). Fehlt die Anmeldung, verlangt die
+     * Quelle einen Code, ist sie nicht erreichbar oder drosselt sie, gibt es still auf: die übrigen Seiten dieses
+     * Aufrufs fragt es nicht mehr.
      */
     public void prefetch(AccessContext caller, String sourceId, Collection<String> pageIds) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(sourceId, "sourceId");
         int started = 0;
+        java.util.concurrent.atomic.AtomicBoolean gaveUp = new java.util.concurrent.atomic.AtomicBoolean();
         for (String pageId : pageIds) {
             if (started >= MAX_PREFETCH) {
                 break;
@@ -167,13 +173,21 @@ public class ReadingViews {
                 try {
                     prefetchSlots.acquire();
                     try {
-                        // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
-                        ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                        if (!gaveUp.get()) {
+                            // ADR 0030: was das Vorladen ablegt, schreibt als Hintergrund.
+                            ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                        }
                     } finally {
                         prefetchSlots.release();
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                } catch (SourceAccessException e) {
+                    if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
+                        gaveUp.set(true);
+                    }
+                    LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
+                            sourceId, e.getClass().getName());
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
                             sourceId, e.getClass().getName());

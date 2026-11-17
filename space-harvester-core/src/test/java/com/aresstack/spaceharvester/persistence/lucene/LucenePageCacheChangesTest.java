@@ -58,6 +58,20 @@ class LucenePageCacheChangesTest {
     }
 
     @Test
+    void rememberingTheOrderOfChildrenReportsNothing() {
+        try (LucenePageCache cache = LucenePageCache.open(directory)) {
+            cache.save(page("wiki", "1", "DEV", null, "1", json("{}")));
+            cache.changes(recorder);
+
+            cache.saveChildOrder("wiki", null, "1", List.of("3", "2"));
+            cache.saveChildOrder("wiki", "DEV", null, List.of("1"));
+
+            // Nur ein Hinweis für die Anzeige: der Baum liest deshalb nicht noch einmal nach (ADR 0027).
+            assertThat(recorder.take()).isEmpty();
+        }
+    }
+
+    @Test
     void theOtherWritePathsReportToo() {
         try (LucenePageCache cache = LucenePageCache.open(directory)) {
             cache.changes(recorder);

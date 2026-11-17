@@ -33,7 +33,7 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
 
 /**
- * Feldschema {@value #VERSION} des Seiten-Caches. Drei Dokumentarten im selben Index, unterschieden durch
+ * Feldschema {@value #VERSION} des Seiten-Caches. Mehrere Dokumentarten im selben Index, unterschieden durch
  * {@value #TYPE}:
  *
  * <ul>
@@ -57,6 +57,9 @@ import org.apache.lucene.util.BytesRef;
  *       Generationen dieser Quelle ändert, mit dem Commit-Zeitpunkt.</li>
  *   <li>{@code baseline} – je Seite einer bestätigten Generation ihr {@code BaselineEntry}, nur gespeichert und über
  *       {@value #BASELINE_OF} dem Space zugeordnet. Wird mit jeder Generation vollständig ersetzt.</li>
+ *   <li>{@code childOrder} – je Elternseite bzw. je Space für die Wurzelseiten die Seiten-IDs der Kinder in der
+ *       Reihenfolge, in der die Quelle sie zuletzt lieferte (Live-Navigation); nur gespeichert. Fehlt sie, gilt die
+ *       Reihenfolge als unbekannt; ein Index ohne diese Dokumente bleibt daher gültig.</li>
  * </ul>
  *
  * <p>Die Schemaversion steht in den Commit-Daten des Index. Ein Index mit anderem oder fehlendem Schema wird nicht
@@ -129,6 +132,9 @@ public final class PageCacheSchema {
     static final String SOURCE = "source";
     /** Zurückgehaltener Stand einer gesperrten Seite (ADR 0014): nur gespeicherte Felder, kein Lesepfad. */
     static final String WITHHELD = "withheld";
+    /** Reihenfolge der Kinder eines Knotens, wie die Quelle sie zuletzt lieferte. */
+    static final String CHILD_ORDER = "childOrder";
+    static final String CHILD_ORDER_PAGE = CHILD_ORDER + ".pageId";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
     static final Set<String> HEADER_FIELDS = Set.of(SOURCE_ID, PAGE_ID, SPACE_KEY, PARENT_ID, RESOURCE_ID, TITLE,
@@ -195,13 +201,34 @@ public final class PageCacheSchema {
 
     /**
      * Alle Dokumente einer Quelle außer ihrer Suchgeneration (#188): Seiten, Verlauf, bestätigte Generationen und ihre
-     * Seiteneinträge, zurückgehaltene Stände gesperrter Seiten.
+     * Seiteneinträge, zurückgehaltene Stände gesperrter Seiten, Reihenfolgen der Kinder.
      */
     static Query[] ofSource(String sourceId) {
         String prefix = SEPARATOR + sourceId + SEPARATOR;
         return new Query[]{new PrefixQuery(new Term(ID, PAGE + prefix)), new PrefixQuery(new Term(ID, REVISION + prefix)),
                 new PrefixQuery(new Term(ID, SPACE + prefix)), new PrefixQuery(new Term(BASELINE_OF, SPACE + prefix)),
-                new PrefixQuery(new Term(ID, WITHHELD + prefix))};
+                new PrefixQuery(new Term(ID, WITHHELD + prefix)), new PrefixQuery(new Term(ID, CHILD_ORDER + prefix))};
+    }
+
+    /** Die Reihenfolge der Kinder einer Seite oder, ohne Elternseite, der Wurzelseiten eines Space. */
+    static Term childOrderTerm(String sourceId, String spaceKey, String parentPageId) {
+        return new Term(ID, parentPageId == null ? id(CHILD_ORDER, sourceId, SPACE, spaceKey)
+                : id(CHILD_ORDER, sourceId, PAGE, parentPageId));
+    }
+
+    /** Seiten-IDs der Kinder in der Reihenfolge der Quelle, nur gespeichert; Lucene behält die Reihenfolge der Werte. */
+    static Document childOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+        Document doc = new Document();
+        doc.add(new StringField(TYPE, CHILD_ORDER, Field.Store.NO));
+        doc.add(new StringField(ID, childOrderTerm(sourceId, spaceKey, parentPageId).text(), Field.Store.NO));
+        for (String pageId : pageIds) {
+            doc.add(new StoredField(CHILD_ORDER_PAGE, pageId));
+        }
+        return doc;
+    }
+
+    static List<String> childOrder(Document doc) {
+        return List.of(doc.getValues(CHILD_ORDER_PAGE));
     }
 
     /** Alle Seiteneinträge der bestätigten Generation eines Space. */
