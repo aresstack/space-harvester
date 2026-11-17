@@ -323,7 +323,8 @@ public final class GlossaryDerivation {
                 || argument.basis() == ParsedStatements.Basis.LEXICON);
     }
 
-    private static boolean term(ParsedStatements.Mention mention) {
+    /** Ob eine Erwähnung als Begriff zählt (Nomen oder Eigenname, Bezug geklärt, brauchbare Grundform). */
+    public static boolean isTerm(ParsedStatements.Mention mention) {
         return (mention.kind() == ParsedStatements.MentionKind.NOUN
                 || mention.kind() == ParsedStatements.MentionKind.PROPER_NOUN)
                 && !mention.unresolved() && mention.key() != null && TermText.usable(mention.key());
@@ -394,7 +395,7 @@ public final class GlossaryDerivation {
             Set<String> stageOnly = stageMentions(result);
             Set<String> onPage = new HashSet<>();
             for (ParsedStatements.Mention mention : result.mentions()) {
-                if (stageOnly.contains(mention.id()) || !term(mention)) {
+                if (stageOnly.contains(mention.id()) || !isTerm(mention)) {
                     continue;
                 }
                 Builder builder = builder(keyOf(mention));
@@ -427,7 +428,7 @@ public final class GlossaryDerivation {
             String lemma = statement.predicateLemma() == null ? statement.predicateText() : statement.predicateLemma();
             for (ParsedStatements.Argument argument : statement.withRole(ParsedStatements.Role.BEARER)) {
                 ParsedStatements.Mention mention = mentions.get(argument.mention());
-                if (mention == null || !term(mention) || !sure(argument)) {
+                if (mention == null || !isTerm(mention) || !sure(argument)) {
                     continue;
                 }
                 Builder bearer = builder(keyOf(mention));
@@ -460,7 +461,7 @@ public final class GlossaryDerivation {
                     continue;
                 }
                 ParsedStatements.Mention mention = mentions.get(argument.mention());
-                if (mention == null || !term(mention)) {
+                if (mention == null || !isTerm(mention)) {
                     continue;
                 }
                 Builder builder = builder(keyOf(mention));

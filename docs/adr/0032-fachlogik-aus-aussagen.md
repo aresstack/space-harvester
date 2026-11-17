@@ -152,7 +152,7 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Reine Auswertung, abbrechbar, speichert nichts; nur Kopfdaten aus dem Bestand. Laufzeit: 3000 erzeugte Seiten mit
   60 000 Aussagen rund 0,1 s im Container.
 - Wortlisten (FL6 Teil 1b): einzige Stelle `StandingSettings` (`space-harvester.statements.standing.outdated-words`,
-  `.draft-words`), beide Loader und `ConfigurationParityTest`; fehlend oder leer heißt Vorgabe. Entscheidungen bleiben
+  `.draft-words`), beide Loader und `ConfigurationParityTest`; fehlend oder leer heißt Vorgabe, „-“ allein heißt keine Wörter. Entscheidungen bleiben
   beim Entfernen einer Seite aus dem Bestand stehen wie ihre Analyse und geprüfte Fakten, sie fallen mit der Quelle.
 
 ## Umsetzung FL6 Teil 2 (Leseempfehlung, Core)
@@ -177,6 +177,6 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Nie verglichen: unsichere Aussagen, Zustandswechsel, Nebensätze, Vorstufen-Kennzeichen Bedingung, zwei Aussagen
   desselben Satzes derselben Seite.
 - Laufzeit an 3000 erzeugten Seiten mit 60 000 Aussagen: rund 0,13 s im Container.
-- Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,16 s im
-  Container (mit Thema 0,12 s).
+- Reine Auswertung, abbrechbar, speichert nichts. Laufzeit: 3000 erzeugte Seiten mit 60 000 Aussagen rund 0,4 s im
+  Container, samt Begriffsableitung über `GlossaryDerivation`.
 
