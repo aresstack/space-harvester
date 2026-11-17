@@ -64,7 +64,8 @@ Optional<GlossaryDerivation.Term> term(AccessContext caller, String sourceId, St
   Eigenschaften (`properties`), Ist-Beziehungen (`isA`, `instances`), je mit Anzahl, Herkunft (Original/Vorstufe) und
   bis zu drei Belegen. Nur Original zählt für Wichtigkeit; Vorstufe getrennt zeigen.
 - Gerechnet wird nur über die Seiten mit Aussagenanalyse, die der Aufrufer lesen darf; nichts wird gespeichert, kein
-  Modell, keine Quelle. Im Hintergrund rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen
+  Modell, keine Quelle. Laufzeit wie die Ableitung selbst (`GlossaryDerivationTest`, 5000 Seiten rund 0,8 s im
+  Container), je Aufruf einmal über alle Seiten des Geltungsbereichs. Im Hintergrund rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen
   (`CancellationException`, nichts bleibt zurück).
 
 **Zusammenführen im Reiter:** Glossareinträge des Geltungsbereichs über `entries` lesen (alle Seiten), die Liste
