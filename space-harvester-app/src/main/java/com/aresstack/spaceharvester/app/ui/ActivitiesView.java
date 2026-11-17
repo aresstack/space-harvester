@@ -1121,6 +1121,13 @@ public final class ActivitiesView implements View {
                         + " Seiten, " + p.written() + " analysiert, " + skipped + " übersprungen",
                         p.processed(), total);
             }
+            if (type == JobType.STATEMENT_CHECK) {
+                // Wie die Analyse: Seiten ohne aktuelle Analyse oder ohne KI-Freigabe zählen als übersprungen.
+                long skipped = p.processed() - p.written() - p.failed();
+                return new Step((phase == null ? "Aussagen prüfen" : phase) + " · " + p.processed() + " von " + total
+                        + " Seiten, " + p.written() + " geprüft, " + skipped + " übersprungen",
+                        p.processed(), total);
+            }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
                         p.written(), total);
@@ -1175,6 +1182,7 @@ public final class ActivitiesView implements View {
                 case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
                 case ATTACHMENTS -> new Counters("Anhänge", "Geprüft", "Abgelegt", "Fehlend");
                 case STATEMENT_ANALYSIS -> new Counters("Seiten", "Erledigt", "Analysiert", "Fehlgeschlagen");
+                case STATEMENT_CHECK -> new Counters("Seiten", "Erledigt", "Geprüft", "Fehlgeschlagen");
                 case PURGE -> new Counters("Ablagen", "Bearbeitet", "Geleert", "Fehlgeschlagen");
                 case KNOWLEDGE_GRAPH_EXPORT -> new Counters("Seiten mit Analyse", "Gelesen", "Exportiert",
                         "Fehlgeschlagen");
