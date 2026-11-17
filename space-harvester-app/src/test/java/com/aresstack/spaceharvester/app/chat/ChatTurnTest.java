@@ -248,6 +248,28 @@ class ChatTurnTest {
         assertThat(asked).startsWith("Was ist neu?").contains("Grundlage: 1 geänderte Seite seit dem ")
                 .contains("Erfinde keine Unterschiede");
 
+        // Ein Fehler des Änderungsprotokolls behauptet nie „nichts geändert“: der Turn endet lesbar als Fehler.
+        events = new Events();
+        AiChat.Request before = port.lastRequest;
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", onlyA, "Quelle A",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).changeLog(new ChatTurn.ChangeLogReader() {
+                    @Override
+                    public List<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> updates(
+                            String sourceId) {
+                        throw new IllegalStateException("Index geschlossen");
+                    }
+
+                    @Override
+                    public java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey, java.time.Instant>
+                            latestContentChanges(String sourceId, String spaceKey, java.time.Instant from) {
+                        throw new IllegalStateException("Index geschlossen");
+                    }
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.failed).startsWith(ChatTurn.CHANGE_LOG_UNREADABLE).contains("Index geschlossen");
+        assertThat(events.completed).isNull();
+        assertThat(port.lastRequest).isSameAs(before);
+
         // Beide Quellen: jede seit ihrer eigenen Marke, die jüngste Änderung zuerst.
         PageSelection both = workspace.resolveSelection(Selection.of(Selection.Root.source("a"),
                 Selection.Root.source("b")));
@@ -262,6 +284,20 @@ class ChatTurnTest {
                 });
         asked = port.lastRequest.messages().get(port.lastRequest.messages().size() - 1).text();
         assertThat(asked).contains("Grundlage: 2 geänderte Seiten seit dem ");
+
+        // Zwei Abgleiche ohne Änderung danach: Grundlage ist nur die vorige Marke, die alte Änderung gilt nicht mehr
+        // als neu, der feste Satz kommt ohne Modellaufruf.
+        workspace.startSync("a", spaceA, SyncMode.FULL);
+        awaitMarks(workspace, "a", 3);
+        workspace.startSync("a", spaceA, SyncMode.FULL);
+        awaitMarks(workspace, "a", 4);
+        before = port.lastRequest;
+        events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", onlyA, "Quelle A",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.completed).isEqualTo(ChatTurn.NOTHING_NEW);
+        assertThat(port.lastRequest).isSameAs(before);
     }
 
     /** Wartet, bis die Quelle so viele abgeschlossene Updates (Marken) im Änderungsprotokoll hat. */

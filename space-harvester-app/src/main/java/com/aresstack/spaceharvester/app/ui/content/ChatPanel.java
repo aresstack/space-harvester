@@ -582,19 +582,21 @@ public final class ChatPanel extends JPanel {
         if (current != null) {
             // Bereit wie Senden: Auswahl aufgelöst und keine Antwort unterwegs.
             boolean ready = settled && turn == null;
+            String area = areaText(current, resolved == null ? null : resolved.counts());
             if (current.pageId() != null) {
+                // Nur die Seite: der Bereichstext folgt dem Umfang der Aktion, nicht der Auswahl samt Unterseiten.
                 quickActions.add(chip(SUMMARIZE_PAGE, SUMMARIZE_PAGE_TIP, ready, () -> submit(
-                        "Fasse die Seite „" + current.title() + "“ zusammen.", SUMMARIZE_PAGE, onlyPage(resolved,
-                                current), ChatTurn.Kind.QUESTION)));
+                        "Fasse die Seite „" + current.title() + "“ zusammen.", onlyPage(resolved, current),
+                        pageAreaText(current), ChatTurn.Kind.QUESTION)));
                 quickActions.add(chip(SUMMARIZE_SUBTREE, SUMMARIZE_SUBTREE_TIP, ready, () -> submit(
-                        "Fasse die Seite „" + current.title() + "“ samt ihren Unterseiten zusammen.",
-                        SUMMARIZE_SUBTREE, resolved, ChatTurn.Kind.QUESTION)));
+                        "Fasse die Seite „" + current.title() + "“ samt ihren Unterseiten zusammen.", resolved, area,
+                        ChatTurn.Kind.QUESTION)));
             } else {
                 quickActions.add(chip(SUMMARIZE_AREA, SUMMARIZE_AREA_TIP, ready, () -> submit(
-                        "Fasse den Bereich „" + current.title() + "“ zusammen.", SUMMARIZE_AREA, resolved,
+                        "Fasse den Bereich „" + current.title() + "“ zusammen.", resolved, area,
                         ChatTurn.Kind.QUESTION)));
             }
-            quickActions.add(chip(WHATS_NEW, WHATS_NEW_TIP, ready, () -> submit(WHATS_NEW, WHATS_NEW, resolved,
+            quickActions.add(chip(WHATS_NEW, WHATS_NEW_TIP, ready, () -> submit(WHATS_NEW, resolved, area,
                     ChatTurn.Kind.WHATS_NEW)));
         }
         quickActions.revalidate();
@@ -606,6 +608,11 @@ public final class ChatPanel extends JPanel {
         chip.setEnabled(enabled);
         chip.addActionListener(e -> action.run());
         return chip;
+    }
+
+    /** Der Bereichstext für „Seite zusammenfassen“: nur die Seite, eine Seite. */
+    static String pageAreaText(Selection current) {
+        return current.title() + " · 1 Seite";
     }
 
     /** Dieselbe Auswahl auf die gewählte Seite allein verengt, ohne Unterseiten. */
@@ -897,14 +904,16 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
-        submit(withAttachments(text), text, resolved, ChatTurn.Kind.QUESTION);
+        submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
+                ChatTurn.Kind.QUESTION);
     }
 
     /**
-     * Der gemeinsame Sendeweg für Eingabe und Schnellaktionen: {@code question} geht an das Modell, {@code shown}
-     * steht in der Sprechblase und im Verlauf, {@code scope} sind die Seiten, aus denen das Wissen kommt.
+     * Der gemeinsame Sendeweg für Eingabe und Schnellaktionen: {@code question} geht an das Modell und steht ebenso
+     * in Sprechblase und Verlauf; {@code scope} sind die Seiten, aus denen das Wissen kommt, {@code area} nennt sie in
+     * der Systemnachricht. Die Freigabe gilt immer dem links Gewählten (Angelo 13.11.2026).
      */
-    private void submit(String question, String shown, PageSelection scope, ChatTurn.Kind kind) {
+    private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind) {
         if (turn != null || !send.isEnabled()) {
             return;
         }
@@ -920,7 +929,7 @@ public final class ChatPanel extends JPanel {
             status.setText(NO_CHAT_MODEL);
             return;
         }
-        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", shown);
+        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
         chat = chat.plus(ChatRecord.Message.user(question, now), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
@@ -941,9 +950,8 @@ public final class ChatPanel extends JPanel {
         ChatNode targetNode = node;
         TurnListener listener = new TurnListener(target, targetNode, answering);
         listening = listener;
-        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope,
-                areaText(selection, resolved == null ? null : resolved.counts()), kind, listener,
-                SwingUtilities::invokeLater);
+        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
+                listener, SwingUtilities::invokeLater);
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());

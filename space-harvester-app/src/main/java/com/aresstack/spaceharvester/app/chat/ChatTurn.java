@@ -15,7 +15,9 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 
 import java.time.Instant;
@@ -72,6 +74,8 @@ public final class ChatTurn {
     public static final String NO_MARK = "Für diese Quelle gibt es noch keinen Abgleich, mit dem sich vergleichen ließe.";
     /** Die feste Antwort ohne Auswahl. */
     public static final String NO_AREA = "Links eine Wissensquelle, einen Space oder eine Seite wählen.";
+    /** Die Fehlermeldung, wenn das Änderungsprotokoll nicht lesbar war; nie ein „nichts geändert“. */
+    public static final String CHANGE_LOG_UNREADABLE = "Das Änderungsprotokoll ließ sich nicht lesen.";
     /** Höchstens so viele geänderte Seiten gehen mit Text an das Modell. */
     static final int CHANGED_PAGES = ChatKnowledge.MAX_SOURCES;
     static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
@@ -93,7 +97,15 @@ public final class ChatTurn {
         void cancelled(String partial);
     }
 
+    /** Der Zugriff auf das Änderungsprotokoll, für Tests austauschbar. */
+    interface ChangeLogReader {
+        List<ChangeUpdate> updates(String sourceId);
+
+        Map<PageKey, Instant> latestContentChanges(String sourceId, String spaceKey, Instant from);
+    }
+
     private final Workspace workspace;
+    private ChangeLogReader changeLog;
     private final AiChat port;
     private final String model;
     private final String effort;
@@ -129,8 +141,25 @@ public final class ChatTurn {
         this.scope = scope;
         this.area = area;
         this.kind = Objects.requireNonNull(kind, "kind");
+        this.changeLog = new ChangeLogReader() {
+            @Override
+            public List<ChangeUpdate> updates(String sourceId) {
+                return workspace.changeUpdates(sourceId);
+            }
+
+            @Override
+            public Map<PageKey, Instant> latestContentChanges(String sourceId, String spaceKey, Instant from) {
+                return workspace.latestContentChanges(sourceId, spaceKey, from);
+            }
+        };
         this.listener = Objects.requireNonNull(listener, "listener");
         this.ui = Objects.requireNonNull(ui, "ui");
+    }
+
+    /** Für Tests: ein anderer Zugriff auf das Änderungsprotokoll. */
+    ChatTurn changeLog(ChangeLogReader reader) {
+        this.changeLog = Objects.requireNonNull(reader, "reader");
+        return this;
     }
 
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
@@ -161,7 +190,11 @@ public final class ChatTurn {
             try {
                 changes = changes();
             } catch (RuntimeException e) {
-                changes = new Changes(NOTHING_NEW, List.of(), 0, null);
+                // Ein Fehler behauptet nie „nichts geändert“: der Turn endet lesbar als Fehler.
+                String message = CHANGE_LOG_UNREADABLE + "\nTechnische Ursache: " + e.getClass().getSimpleName()
+                        + (e.getMessage() == null ? "" : ": " + e.getMessage());
+                finish(() -> listener.failed(message));
+                return;
             }
             if (changes.fixed() != null) {
                 // Ohne Änderung kein Modellaufruf: der feste Satz ist die Antwort.
@@ -244,10 +277,10 @@ public final class ChatTurn {
     }
 
     /**
-     * Die geänderten Seiten der Auswahl seit der vorigen Update-Marke jeder Quelle (ADR 0030): Grundlage ist je Quelle
-     * das jüngste Update mit Änderungen, das keine Erstbefüllung ist (das offene nach der letzten Marke, sonst das
-     * letzte abgeschlossene); „seit“ ist dessen Marke. Der Core liefert je Quelle und Space die Seiten mit ihrer
-     * jüngsten Inhaltsänderung; hier bleibt nur die Schnittmenge mit den Seiten der Auswahl.
+     * Die geänderten Seiten der Auswahl seit der vorigen Update-Marke jeder Quelle (ADR 0030): „seit“ ist je Quelle
+     * der Anfang des jüngsten abgeschlossenen Updates (bei der Erstbefüllung seine Marke), also alles, was der letzte
+     * Abgleich brachte und was seither im Hintergrund dazukam. Der Core liefert je Quelle und Space die Seiten mit
+     * ihrer jüngsten Inhaltsänderung; hier bleibt nur die Schnittmenge mit den Seiten der Auswahl.
      */
     private Changes changes() {
         if (scope == null) {
@@ -260,15 +293,22 @@ public final class ChatTurn {
         for (String sourceId : sourceIds) {
             List<ChangeUpdate> updates;
             try {
-                updates = workspace.changeUpdates(sourceId);
-            } catch (RuntimeException gone) {
+                updates = changeLog.updates(sourceId);
+            } catch (UnknownSourceException | AccessDeniedException gone) {
+                // Quelle entfernt oder nicht lesbar: sie zählt nicht; jeder andere Fehler bricht den Turn ab.
                 continue;
             }
-            if (updates.stream().anyMatch(update -> !update.open())) {
-                anyMark = true;
+            // Grundlage ist die vorige Marke: das jüngste abgeschlossene Update, gleich wie viele Seiten es hat; bei
+            // der Erstbefüllung (oder ohne Anfang) seine eigene Marke. Weiter zurück nie.
+            ChangeUpdate latest = updates.stream().filter(update -> !update.open()).findFirst().orElse(null);
+            if (latest == null) {
+                continue;
             }
-            updates.stream().filter(update -> !update.initial() && update.pages() > 0 && update.from() != null)
-                    .findFirst().ifPresent(update -> since.put(sourceId, update.from()));
+            anyMark = true;
+            Instant from = latest.initial() || latest.from() == null ? latest.to() : latest.from();
+            if (from != null) {
+                since.put(sourceId, from);
+            }
         }
         if (!anyMark) {
             return new Changes(NO_MARK, List.of(), 0, null);
@@ -281,8 +321,8 @@ public final class ChatTurn {
             }
             Map<PageKey, Instant> latest;
             try {
-                latest = workspace.latestContentChanges(space.sourceId(), space.spaceKey(), from);
-            } catch (RuntimeException gone) {
+                latest = changeLog.latestContentChanges(space.sourceId(), space.spaceKey(), from);
+            } catch (UnknownSourceException | AccessDeniedException gone) {
                 continue;
             }
             for (Map.Entry<PageKey, Instant> entry : latest.entrySet()) {
