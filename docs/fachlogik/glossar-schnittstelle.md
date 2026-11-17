@@ -79,6 +79,10 @@ GlossaryOverview.View view(AccessContext caller, PageSelection selection, Glossa
   rufen (`BusyOverlay`), `cancelled` beim Abbrechen setzen (`CancellationException`, nichts bleibt zurück). Laufzeit:
   5000 Seiten mit 500 Einträgen rund 0,4 s im Container (`GlossaryOverviewViewTest`), je Aufruf einmal über die
   Auswahl.
+- **Volle Sicht oder Verfeinern:** Eine neue Auswahl oder das Ende eines Auftrags verlangt die volle Sicht. Ändern
+  sich nur Suchtext, Status oder Einordnung, verfeinert der Reiter mit `view(caller, vorigeSicht, query, cancelled)`:
+  Dabei werden die Einträge neu gelesen, gefiltert, gezählt und sortiert, ohne die Ableitung noch einmal zu rechnen.
+  Der Aufrufer ist derselbe wie bei der vorigen Sicht. Auch nach `Glossary#subscribe` reicht Verfeinern.
 - Ohne Auswahl im Bestand: `view(caller, RelationScope, Predicate<PageKey>, query, cancelled)`.
 - Weiter vorhanden für den Dienst und Einzelzugriffe: `importance(caller, sourceId, spaceKey, cancelled)` (Teilzahlen
   ohne Einträge) und `term(caller, sourceId, spaceKey, term, cancelled)`; der Reiter braucht beide nicht.
@@ -119,8 +123,8 @@ boolean modelAvailable()  // ob die Phase mit Modell möglich ist
 
 ## Beobachter (kein Polling, ADR 0027)
 
-- `Glossary#subscribe(Runnable)`: jede Änderung am Glossar (Lauf, Mensch, „Daten bereinigen“). Danach die Sicht neu
-  holen; die Rückgabe abmelden, wenn der Reiter schließt.
+- `Glossary#subscribe(Runnable)`: jede Änderung am Glossar (Lauf, Mensch, „Daten bereinigen“). Danach die Sicht
+  verfeinern (`view(caller, vorigeSicht, query, cancelled)`); die Rückgabe abmelden, wenn der Reiter schließt.
 - Die Sicht auch neu holen, wenn ein Auftrag `STATEMENT_ANALYSIS` („Aussagen analysieren“), `STATEMENT_CHECK` (Aussagen prüfen, sobald dieser Auftrag auf main ist) oder
   `GLOSSARY` endet (`Jobs#subscribe`) und wenn sich die Auswahl links ändert; nie zeitgesteuert.
 
