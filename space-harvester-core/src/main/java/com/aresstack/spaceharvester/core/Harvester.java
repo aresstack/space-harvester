@@ -963,9 +963,6 @@ public final class Harvester implements AutoCloseable {
             }, access, clock, OWNER);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
-            // Dienste reihen Aufträge mit dem Aufrufer ein („Zusammenfassen“, Synonymlauf, Glossar); die App sieht und
-            // steuert sie wie ihre eigenen.
-            jobs.ownerAlias(OWNER, caller.jobOwner());
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
                     (owner, sourceId) -> OWNER.equals(owner)
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns,

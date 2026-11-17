@@ -1331,8 +1331,6 @@ public final class Workspace {
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
-        // „Zusammenfassen“ stößt auch die Leseansicht selbst an; ohne Eintrag in der gemerkten Liste.
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.UPDATE_SUMMARY));
         // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
         followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
         for (JobStatus followUp : followUps) {
