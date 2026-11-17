@@ -121,11 +121,15 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   Modalverb, `GILT`, kein `STATE_CHANGE`, nur `ORIGINAL`, sicherer Träger), Belege als Position (Satzspanne,
   Eingabe-Hash), Einordnung nach Regeln.
 - `application.knowledge.CountedStatements`: die eine Stelle, ob eine Aussage zählt und mit welcher Stufe (vom
-  Menschen abgelehnte nie); FL4 und FL6 hängen sich dort ein.
+  Menschen abgelehnte nie); FL4 (`Statement#effectiveQuality`) und FL6 hängen sich dort ein. Aussagen anderer Herkunft
+  als das Original (Vorstufe, später Modell) zählen getrennt und sind nie Beleg.
 - Schlüssel: `GlossaryDerivation#keyOf` = Grundform in der Schreibung des Textes (`spelling`: Großschreibung aus dem
   Text, „ss“ des Textes statt „ß“ der alten Rechtschreibung), normalisiert wie das Glossar.
 - Einordnung: technisch (Schreibweise; Kopf-Wortliste), Rolle/Stelle (Kopf-Wortliste), sonst `UNKLAR`. Wortlisten an
-  einer Stelle: `glossar-regeln.tsv`. Ist-Beziehungen ordnen noch nicht ein und geben keinen Definitionsvorschlag, bis
+  einer Stelle: `glossar-regeln.tsv`. Köpfe unter fünf Buchstaben und mehrdeutige Köpfe gelten nur als ganzes Wort oder
+  nach Bindestrich/Leerzeichen (`technik-wort`, `rolle-wort`), nie als Ende eines zusammengeschriebenen Worts
+  („Import“, „Rechtssystem“, „Leerstelle“); lieber `UNKLAR` als falsch. Belegt am Entwicklungstext W (trügerische
+  Wortenden). Ist-Beziehungen ordnen noch nicht ein und geben keinen Definitionsvorschlag, bis
   der Parser den Artikel am Rollennomen festhält (Strang FL).
 - Messung: `GlossarBerichtTest` gegen von Hand vorab festgelegte `begriffe.tsv`/`beziehungen.tsv` je Textsatz
   (Bericht `build/reports/pruefstand/glossar.md`, kein Pin; beim Kontrollsatz nur Zahlen und Kennungen).

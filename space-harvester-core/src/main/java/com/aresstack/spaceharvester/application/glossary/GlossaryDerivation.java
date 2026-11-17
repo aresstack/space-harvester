@@ -59,7 +59,8 @@ import java.util.regex.Pattern;
  *
  * <p>Die Einordnung nach Regeln entscheidet nur, wenn eine Regel greift; alles Übrige bleibt {@link Category#UNKLAR}
  * und geht später an das Chat-Modell (FL5c). Reihenfolge: technisch (Schreibweise, Kopf-Wortliste), Rolle oder Stelle
- * (Kopf-Wortliste). Ist-Beziehungen ergeben noch keine Einordnung und keinen Definitionsvorschlag: dazu braucht es den
+ * (Kopf-Wortliste). Kurze oder mehrdeutige Köpfe gelten nur als ganzes Wort oder nach Bindestrich oder Leerzeichen,
+ * nie als Ende eines zusammengeschriebenen Worts („Import“ endet auf „port“, „Rechtssystem“ auf „system“). Ist-Beziehungen ergeben noch keine Einordnung und keinen Definitionsvorschlag: dazu braucht es den
  * Artikel am Rollennomen („ist eine Förderung“ = Begriffsbestimmung, „ist Ansprechpartner“ = Rolle), den der Parser
  * noch nicht festhält.
  */
@@ -72,9 +73,12 @@ public final class GlossaryDerivation {
     static final String RULES_RESOURCE = "glossar-regeln.tsv";
 
     private static final Map<String, Set<String>> WORDS = words();
+    /** Kürzester Kopf, der auch als Ende eines zusammengeschriebenen Worts gilt (Auflage des Architekten). */
+    static final int MIN_COMPOUND_HEAD = 5;
     private static final Set<String> TECHNICAL_HEADS = WORDS.getOrDefault("technik", Set.of());
+    private static final Set<String> TECHNICAL_WORDS = WORDS.getOrDefault("technik-wort", Set.of());
     private static final Set<String> ROLE_HEADS = WORDS.getOrDefault("rolle", Set.of());
-    private static final Set<String> ROLE_EXCEPTIONS = WORDS.getOrDefault("keine-rolle", Set.of());
+    private static final Set<String> ROLE_WORDS = WORDS.getOrDefault("rolle-wort", Set.of());
     /**
      * Binnenmajuskel vor Kleinbuchstabe („SharePoint“, nicht „GmbH“, „BAföG“) oder Punkt/Unterstrich im Wort
      * („config.yaml“, „ANTRAG_ID“).
@@ -101,9 +105,9 @@ public final class GlossaryDerivation {
     public enum CategoryRule {
         /** Schreibweise eines Bezeichners: Binnenmajuskel, Punkt oder Unterstrich im Wort. */
         TECHNICAL_SHAPE,
-        /** Kopf steht in der Wortliste technischer Begriffe ({@value #RULES_RESOURCE}, Art {@code technik}). */
+        /** Kopf in der Wortliste technischer Begriffe ({@value #RULES_RESOURCE}, {@code technik}, {@code technik-wort}). */
         TECHNICAL_HEAD,
-        /** Kopf steht in der Wortliste der Rollen und Stellen ({@value #RULES_RESOURCE}, Art {@code rolle}). */
+        /** Kopf in der Wortliste der Rollen und Stellen ({@value #RULES_RESOURCE}, {@code rolle}, {@code rolle-wort}). */
         ROLE_HEAD,
         /** Keine Regel greift. */
         NONE
@@ -286,10 +290,10 @@ public final class GlossaryDerivation {
         if (TECHNICAL_SHAPE.matcher(term).matches()) {
             return CategoryRule.TECHNICAL_SHAPE;
         }
-        if (endsWithHead(normalized, TECHNICAL_HEADS)) {
+        if (endsWithHead(normalized, TECHNICAL_HEADS, true) || endsWithHead(normalized, TECHNICAL_WORDS, false)) {
             return CategoryRule.TECHNICAL_HEAD;
         }
-        if (!ROLE_EXCEPTIONS.contains(normalized) && endsWithHead(normalized, ROLE_HEADS)) {
+        if (endsWithHead(normalized, ROLE_HEADS, true) || endsWithHead(normalized, ROLE_WORDS, false)) {
             return CategoryRule.ROLE_HEAD;
         }
         return CategoryRule.NONE;
@@ -325,15 +329,17 @@ public final class GlossaryDerivation {
                 && !mention.unresolved() && mention.key() != null && TermText.usable(mention.key());
     }
 
-    private static boolean endsWithHead(String normalized, Set<String> heads) {
+    /**
+     * Ob der Suchwert so heißt oder nach Bindestrich oder Leerzeichen so endet; mit {@code compound} auch als Ende eines
+     * zusammengeschriebenen Worts mit mindestens drei Buchstaben davor („Antragsdatenbank“).
+     */
+    private static boolean endsWithHead(String normalized, Set<String> heads, boolean compound) {
         if (heads.contains(normalized)) {
             return true;
         }
-        String compact = normalized.replace("-", "");
         for (String head : heads) {
-            // Kompositum: mindestens drei Buchstaben Bestimmungswort vor dem Kopf („Fachreferat“, nicht „Samt“)
-            if (compact.length() >= head.length() + 3 && compact.endsWith(head)
-                    || normalized.endsWith(" " + head) || normalized.endsWith("-" + head)) {
+            if (normalized.endsWith(" " + head) || normalized.endsWith("-" + head)
+                    || compound && normalized.length() >= head.length() + 3 && normalized.endsWith(head)) {
                 return true;
             }
         }
@@ -355,8 +361,13 @@ public final class GlossaryDerivation {
                 if (columns.length != 2) {
                     throw new IllegalStateException("Ungültige Zeile in " + RULES_RESOURCE + ": " + line);
                 }
-                words.computeIfAbsent(columns[0].strip(), k -> new HashSet<>())
-                        .add(TermText.normalize(columns[1]));
+                String kind = columns[0].strip();
+                String word = TermText.normalize(columns[1]);
+                if (("technik".equals(kind) || "rolle".equals(kind)) && word.length() < MIN_COMPOUND_HEAD) {
+                    throw new IllegalStateException("Kopf unter " + MIN_COMPOUND_HEAD + " Buchstaben gilt nur als "
+                            + "ganzes Wort (" + kind + "-wort): " + word);
+                }
+                words.computeIfAbsent(kind, k -> new HashSet<>()).add(word);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -478,12 +489,12 @@ public final class GlossaryDerivation {
                     page.analysis().inputSha256());
         }
 
-        /** Erwähnungen, auf die nur Aussagen der Vorstufe zeigen. */
+        /** Erwähnungen, auf die nur Aussagen anderer Herkunft als das Original zeigen (Vorstufe, später Modell). */
         private static Set<String> stageMentions(ParsedStatements result) {
             Set<String> stage = new HashSet<>();
             Set<String> original = new HashSet<>();
             for (ParsedStatements.Statement statement : result.statements()) {
-                Set<String> target = statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE ? stage
+                Set<String> target = statement.derivation().origin() != ParsedStatements.Origin.ORIGINAL ? stage
                         : original;
                 statement.arguments().forEach(argument -> target.add(argument.mention()));
             }

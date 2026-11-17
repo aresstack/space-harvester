@@ -191,8 +191,8 @@ class GlossaryDerivationTest {
         assertThat(stelle.acts()).extracting(GlossaryDerivation.Use::lemma, GlossaryDerivation.Use::origin)
                 .containsExactly(tuple("genehmigen", Origin.ORIGINAL), tuple("prüfen", Origin.ORIGINAL),
                         tuple("prüfen", Origin.VORSTUFE));
-        assertThat(stelle.category()).isEqualTo(Category.ROLLE);
-        assertThat(stelle.rule()).isEqualTo(CategoryRule.ROLE_HEAD);
+        assertThat(stelle.category()).as("Stelle nur als ganzes Wort").isEqualTo(Category.UNKLAR);
+        assertThat(result.term("Prüfer").category()).isEqualTo(Category.ROLLE);
 
         GlossaryDerivation.Term zuschuss = result.term("Zuschuss");
         assertThat(zuschuss.isA()).extracting(GlossaryDerivation.Use::lemma).containsExactly("Förderung");
@@ -201,7 +201,7 @@ class GlossaryDerivationTest {
         assertThat(foerderung.instances()).extracting(GlossaryDerivation.Use::lemma).containsExactly("Zuschuss");
         assertThat(foerderung.importance().pages()).as("nur als Prädikatsnomen genannt").isZero();
 
-        assertThat(result.term("Antragssystem").category()).isEqualTo(Category.TECHNISCH);
+        assertThat(result.term("Antragssystem").category()).as("system nur als ganzes Wort").isEqualTo(Category.UNKLAR);
         assertThat(result.term("Kunde").acts()).as("UNCERTAIN zählt nicht").isEmpty();
         assertThat(result.term("Prüfer").acts()).as("unsicherer Handelnder zählt nicht").isEmpty();
 
@@ -313,17 +313,23 @@ class GlossaryDerivationTest {
     void rulesClassifyByHeadAndShape() {
         assertThat(GlossaryDerivation.ruleFor("Antragsdatenbank")).isEqualTo(CategoryRule.TECHNICAL_HEAD);
         assertThat(GlossaryDerivation.ruleFor("Load Balancer")).isEqualTo(CategoryRule.TECHNICAL_HEAD);
+        assertThat(GlossaryDerivation.ruleFor("REST-API")).isEqualTo(CategoryRule.TECHNICAL_HEAD);
+        assertThat(GlossaryDerivation.ruleFor("System")).isEqualTo(CategoryRule.TECHNICAL_HEAD);
         assertThat(GlossaryDerivation.ruleFor("SharePoint")).isEqualTo(CategoryRule.TECHNICAL_SHAPE);
         assertThat(GlossaryDerivation.ruleFor("antrag.yaml")).isEqualTo(CategoryRule.TECHNICAL_SHAPE);
         assertThat(GlossaryDerivation.ruleFor("GmbH")).isEqualTo(CategoryRule.NONE);
         assertThat(GlossaryDerivation.ruleFor("BAföG")).isEqualTo(CategoryRule.NONE);
         assertThat(GlossaryDerivation.ruleFor("Schnittstelle")).as("technisch vor Stelle")
                 .isEqualTo(CategoryRule.TECHNICAL_HEAD);
-        assertThat(GlossaryDerivation.ruleFor("Fachreferat")).isEqualTo(CategoryRule.ROLE_HEAD);
+        assertThat(GlossaryDerivation.ruleFor("Wirtschaftsprüfer")).isEqualTo(CategoryRule.ROLE_HEAD);
         assertThat(GlossaryDerivation.ruleFor("Sachbearbeiterin")).isEqualTo(CategoryRule.ROLE_HEAD);
-        assertThat(GlossaryDerivation.ruleFor("Fundstelle")).isEqualTo(CategoryRule.NONE);
-        assertThat(GlossaryDerivation.ruleFor("Urkunde")).isEqualTo(CategoryRule.NONE);
-        assertThat(GlossaryDerivation.ruleFor("Samt")).as("kein Kompositum").isEqualTo(CategoryRule.NONE);
+        assertThat(GlossaryDerivation.ruleFor("Stelle")).isEqualTo(CategoryRule.ROLE_HEAD);
+        // trügerische Wortenden: kurze und mehrdeutige Köpfe nie als Ende eines zusammengeschriebenen Worts
+        for (String word : List.of("Import", "Support", "Rechtssystem", "Partnernetzwerk", "Aktienindex",
+                "Rohrleitung", "Leerstelle", "Fundstelle", "Urkunde", "Halbleiter", "Ehrenamt", "Samt",
+                "Studienmodul", "Leistungsverzeichnis", "Wärmespeicher")) {
+            assertThat(GlossaryDerivation.ruleFor(word)).as(word).isEqualTo(CategoryRule.NONE);
+        }
         assertThat(GlossaryDerivation.categoryOf(CategoryRule.NONE)).isEqualTo(Category.UNKLAR);
     }
 
