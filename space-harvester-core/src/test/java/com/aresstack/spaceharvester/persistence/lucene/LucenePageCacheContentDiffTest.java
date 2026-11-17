@@ -261,4 +261,62 @@ class LucenePageCacheContentDiffTest {
 
         assertThat(diffs(cache)).singleElement().satisfies(change -> assertThat(change.paragraphs()).isEmpty());
     }
+
+    /** Confluence-Fassung mit Storage-Text, Bearbeiter in version.by und Labels in den Kopfdaten. */
+    private static PageSnapshot confluence(String version, String storage, String editor, String labels) {
+        PageMetadata metadata = new PageMetadata("101", "confluence:wiki/page/101", "Seite 101", "DEV", null, version,
+                Instant.parse("2026-10-15T10:30:00Z"), java.net.URI.create("https://wiki.example.org/101"),
+                PageMetadata.sorted(java.util.Map.of("confluence.labels", labels)));
+        String body = "{\"version\":{\"number\":" + version + ",\"by\":{\"displayName\":\"" + editor
+                + "\",\"username\":\"u" + version + "\"}},\"body\":{\"storage\":{\"value\":\"" + storage
+                + "\"}}}";
+        return PageSnapshot.of("wiki", metadata, new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                body.getBytes(StandardCharsets.UTF_8), "application/json",
+                "confluence-rest-content+json;expand=body.storage,version"), LATER);
+    }
+
+    @Test
+    void theRowNamesTheEditorAndLabelsAndTheDiffTheHeadingPath() {
+        LucenePageCache cache = LucenePageCache.open(directory);
+        opened.add(cache);
+        cache.contentDiffer(new TextContentDiffer(
+                new com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector()));
+        cache.editors(new com.aresstack.spaceharvester.source.confluence.ConfluenceEditors());
+        cache.save(confluence("1", "<p>Vorwort</p><h1>Betrieb</h1><p>Alt</p>", "Ada Muster", "api,intern"));
+
+        cache.save(confluence("2", "<p>Vorwort</p><h1>Betrieb</h1><p>Neu</p>", "Bea Beispiel", "api"));
+
+        List<com.aresstack.spaceharvester.application.changelog.ChangeEntry> rows = cache.changeEntries("wiki");
+        assertThat(rows).extracting(com.aresstack.spaceharvester.application.changelog.ChangeEntry::editor)
+                .containsExactly("Ada Muster", "Bea Beispiel", "Bea Beispiel");
+        assertThat(rows.getLast().labels()).containsExactly("api");
+        assertThat(rows.getFirst().labels()).containsExactly("api", "intern");
+        assertThat(diffs(cache)).singleElement().satisfies(change -> assertThat(change.paragraphs())
+                .containsExactly(new ParagraphChange(Kind.CHANGED, "Alt", "Neu", List.of("Betrieb"))));
+
+        cache.close();
+        opened.clear();
+        LucenePageCache reopened = LucenePageCache.open(directory);
+        opened.add(reopened);
+        assertThat(reopened.changeEntries("wiki").getLast().editor()).isEqualTo("Bea Beispiel");
+        assertThat(reopened.contentChanges(KEY, null, 10).getFirst().paragraphs().getFirst().headings())
+                .containsExactly("Betrieb");
+    }
+
+    @Test
+    void unchangedContentIsNotReadForAnEditorAndTheTitleSearchNeverFindsEditors() {
+        LucenePageCache cache = open();
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        cache.editors(snapshot -> {
+            reads.incrementAndGet();
+            return Optional.of("Ada");
+        });
+        cache.save(version("1", "A"));
+        cache.save(version("1", "A"));
+
+        assertThat(reads).hasValue(1);
+        assertThat(cache.changeEntries(new com.aresstack.spaceharvester.application.changelog.ChangeQuery(
+                java.util.Set.of("wiki"), java.util.Set.of(), java.util.Set.of(), null, "Ada", null, false, null,
+                false, false), entry -> entry, 0, 10).total()).isZero();
+    }
 }

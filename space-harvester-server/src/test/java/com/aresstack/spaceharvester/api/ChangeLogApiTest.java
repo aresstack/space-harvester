@@ -144,6 +144,20 @@ class ChangeLogApiTest {
     }
 
     @Test
+    void theSpaceLevelIsASliceOfTheSameUpdates() throws Exception {
+        JsonNode ops = json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates?space=OPS").body());
+        JsonNode all = json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates").body());
+        assertThat(ops).hasSize(all.size());
+        assertThat(ops.get(0).get("id").asString()).isEqualTo("open");
+        assertThat(ops.get(0).get("pages").asInt()).isEqualTo(1);
+
+        JsonNode report = json.readTree(get(TestClient.TOKEN, "/api/v1/sources/wiki/updates/open?space=DEV")
+                .body());
+        assertThat(report.get("pages")).hasSize(1);
+        assertThat(report.get("pages").get(0).get("pageId").asString()).isEqualTo("101");
+    }
+
+    @Test
     void rawRowsAreSearchedAndAPageOutsideTheGrantIsWithheld() throws Exception {
         JsonNode all = json.readTree(get(TestClient.TOKEN, "/api/v1/change-log?sourceId=wiki").body());
         assertThat(all.get("total").asInt()).isEqualTo(3);

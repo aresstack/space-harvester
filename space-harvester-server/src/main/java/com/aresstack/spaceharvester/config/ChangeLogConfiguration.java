@@ -48,6 +48,8 @@ class ChangeLogConfiguration {
             available.contentDiffer(new TextContentDiffer(PageTextProjector.firstOf(List.of(
                     new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
                     new KnowledgeDocumentTextProjector()))));
+            // ADR 0031: Bearbeiter der gespeicherten Fassung in der Protokollzeile.
+            available.editors(new com.aresstack.spaceharvester.source.confluence.ConfluenceEditors());
         }
         ChangeLogStore store = available == null ? ChangeLogStore.NONE : available;
         Function<PageKey, Optional<PageHeader>> headers = available == null ? key -> Optional.empty()
