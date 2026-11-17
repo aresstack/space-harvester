@@ -517,6 +517,8 @@ class JobsTest {
         JobStatus status = jobs.status(id.get());
         assertThat(status.state()).isEqualTo(JobState.CANCELLED);
         assertThat(status.error()).isNull();
+        assertThat(jobs.events(id.get(), "client-a")).anySatisfy(event -> assertThat(event.message())
+                .isEqualTo("Schritt endete nach dem Abbruch mit java.lang.IllegalStateException"));
     }
 
     @Test

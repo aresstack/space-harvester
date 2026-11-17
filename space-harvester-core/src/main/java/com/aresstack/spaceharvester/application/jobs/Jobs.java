@@ -1560,6 +1560,11 @@ public class Jobs implements AutoCloseable {
             open.remove(job.id);
             lock.notifyAll();
             finished = job.snapshot();
+            if (cause != null && !(cause instanceof JobCancelledException) && finished.state() != JobState.FAILED) {
+                // Nach Abbruch oder Anhalten anders gescheitert: nur die Klasse als Hinweis, kein Fehler am Auftrag.
+                job.emit(true, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                        "Schritt endete nach dem Abbruch mit " + cause.getClass().getName(), null, null, null, null);
+            }
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);
             store.save(finished);
