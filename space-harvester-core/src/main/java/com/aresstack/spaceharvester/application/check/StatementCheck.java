@@ -24,7 +24,10 @@ import java.util.regex.Pattern;
  * Prüfstand gelaufen ist. Jede Änderung an Anweisung, Eingabe oder Format ist eine neue {@link #PROMPT_VERSION}.
  *
  * <p>Eingabe je Aufruf: eine Zeile {@code Satz: <Originalsatz>}, dann je Aussage {@code <Nummer> <Aussage>}, die
- * Nummern ab 1 ({@link #render}). Der Seitentext ist Material, keine Anweisung: Er geht nur als Benutzernachricht
+ * Nummern ab 1 ({@link #render}). Enthält der Aufruf eine Aussage der Vorstufe, stehen davor unter
+ * {@code Zusammenhang:} die Zeilen ihres Abschnitts, je mit {@code > } (derselbe Abschnitt wie bei der Vorstufe):
+ * Eine Vorstufen-Aussage darf Beteiligte aus Nachbarzeilen tragen, etwa den Handelnden eines Stichpunkts aus der Zeile
+ * darüber. Korrekturen werden dann gegen Satz und Zusammenhang abgeglichen. Der Seitentext ist Material, keine Anweisung: Er geht nur als Benutzernachricht
  * hinaus, und von der Antwort zählt nur, was dem Format genau entspricht.
  *
  * <p>Lesen der Antwort:
@@ -125,9 +128,24 @@ public final class StatementCheck {
         return INSTRUCTIONS;
     }
 
-    /** Die Eingabe eines Aufrufs: der Originalsatz, dann die Aussagen nummeriert ab 1. */
+    /** Die Eingabe eines Aufrufs ohne Zusammenhang: der Originalsatz, dann die Aussagen nummeriert ab 1. */
     public static String input(String sentence, List<Item> items) {
-        StringBuilder input = new StringBuilder("Satz: ").append(oneLine(sentence)).append('\n');
+        return input(sentence, List.of(), items);
+    }
+
+    /**
+     * Die Eingabe eines Aufrufs: der Zusammenhang (falls vorhanden), der Originalsatz, dann die Aussagen nummeriert
+     * ab 1.
+     *
+     * @param context die Zeilen des Abschnitts in Textreihenfolge, leer ohne Zusammenhang
+     */
+    public static String input(String sentence, List<String> context, List<Item> items) {
+        StringBuilder input = new StringBuilder();
+        if (!context.isEmpty()) {
+            input.append("Zusammenhang:\n");
+            context.forEach(line -> input.append("> ").append(oneLine(line)).append('\n'));
+        }
+        input.append("Satz: ").append(oneLine(sentence)).append('\n');
         int number = 1;
         for (Item item : items) {
             input.append(number++).append(' ').append(render(item)).append('\n');
@@ -196,6 +214,15 @@ public final class StatementCheck {
      * @param count    Zahl der Aussagen im Aufruf
      */
     public static Parsed parse(String sentence, int count, String response) {
+        return parse(sentence, List.of(), count, response);
+    }
+
+    /**
+     * Liest die Antwort zu einem Aufruf mit Zusammenhang streng; Korrekturen werden gegen Satz und Zusammenhang
+     * abgeglichen ({@link #source}).
+     */
+    public static Parsed parse(String sentence, List<String> context, int count, String response) {
+        String source = source(sentence, context);
         Map<Integer, Answer> answers = new LinkedHashMap<>();
         Set<Integer> conflicts = new HashSet<>();
         int rejected = 0;
@@ -225,7 +252,7 @@ public final class StatementCheck {
             if (correction != null) {
                 String text = correction.replaceAll("\\s+", " ").strip();
                 if (!text.isEmpty() && text.length() <= MAX_CORRECTION_CHARS && !text.contains("|")
-                        && SentenceSimplifier.derivable(sentence, text)) {
+                        && SentenceSimplifier.derivable(source, text)) {
                     accepted = text;
                 } else {
                     correctionsRejected++;
@@ -246,6 +273,16 @@ public final class StatementCheck {
         }
         return new Parsed(java.util.Collections.unmodifiableMap(answers), rejected, conflicts.size(),
                 correctionsRejected);
+    }
+
+    /** Der Text, gegen den Korrekturen abgeglichen werden: der Satz und, falls vorhanden, sein Zusammenhang. */
+    public static String source(String sentence, List<String> context) {
+        if (context.isEmpty()) {
+            return sentence;
+        }
+        StringBuilder source = new StringBuilder(sentence);
+        context.forEach(line -> source.append('\n').append(line));
+        return source.toString();
     }
 
     private static String oneLine(String text) {

@@ -80,11 +80,22 @@ public final class StatementChecks {
         return removed;
     }
 
-    /** Ein Originalsatz mit den gewählten Aussagen. */
-    public record Group(String sentence, List<StatementCheck.Item> items) {
+    /**
+     * Ein Originalsatz mit den gewählten Aussagen.
+     *
+     * @param context die Zeilen seines Abschnitts als Zusammenhang, wenn eine Aussage aus der Vorstufe stammt; sonst
+     *                leer
+     */
+    public record Group(String sentence, List<String> context, List<StatementCheck.Item> items) {
+
+        /** Ohne Zusammenhang. */
+        public Group(String sentence, List<StatementCheck.Item> items) {
+            this(sentence, List.of(), items);
+        }
 
         public Group {
             Objects.requireNonNull(sentence, "sentence");
+            context = List.copyOf(context);
             items = List.copyOf(items);
             if (items.isEmpty()) {
                 throw new IllegalArgumentException("Ein Satz ohne Aussage wird nicht geprüft");
@@ -128,7 +139,8 @@ public final class StatementChecks {
             Map<Integer, StatementCheck.Answer> hits = new LinkedHashMap<>();
             for (int i = 0; i < group.items().size(); i++) {
                 statements++;
-                String key = StatementCheckStore.key(group.sentence(), StatementCheck.render(group.items().get(i)));
+                String key = StatementCheckStore.key(group.sentence(), group.context(),
+                        StatementCheck.render(group.items().get(i)));
                 keys.add(key);
                 groupKeys.add(key);
                 StatementCheckStore.Line found = stored.get(key);
@@ -179,9 +191,9 @@ public final class StatementChecks {
                         }
                         Group group = work.group();
                         String response = model.complete(StatementCheck.instructions(),
-                                StatementCheck.input(group.sentence(), group.items()));
-                        StatementCheck.Parsed parsed = StatementCheck.parse(group.sentence(), group.items().size(),
-                                response);
+                                StatementCheck.input(group.sentence(), group.context(), group.items()));
+                        StatementCheck.Parsed parsed = StatementCheck.parse(group.sentence(), group.context(),
+                                group.items().size(), response);
                         if (!released.test(page)) {
                             throw new CheckUnavailableException(CheckUnavailableException.Reason.NOT_RELEASED);
                         }
@@ -233,7 +245,8 @@ public final class StatementChecks {
         return new Result(List.copyOf(ordered), new Costs(statements, pending.size(), fromStore, rejected.get(),
                 conflicting.get(), correctionsRejected.get(), verdicts[ParsedStatements.Verdict.STIMMT.ordinal()],
                 verdicts[ParsedStatements.Verdict.UNVOLLSTAENDIG.ordinal()],
-                verdicts[ParsedStatements.Verdict.FALSCH.ordinal()]));
+                verdicts[ParsedStatements.Verdict.FALSCH.ordinal()],
+                statements - verdicts[0] - verdicts[1] - verdicts[2]));
     }
 
     private record Pending(int index, Group group, List<String> keys) {
@@ -259,8 +272,9 @@ public final class StatementChecks {
      * @param stimmt              Urteile STIMMT
      * @param unvollstaendig      Urteile UNVOLLSTAENDIG
      * @param falsch              Urteile FALSCH
+     * @param unanswered          Aussagen ohne gültiges Urteil; ihr Satz wird im nächsten Lauf erneut gefragt
      */
     public record Costs(int statements, int modelCalls, int fromStore, int rejected, int conflicting,
-                        int correctionsRejected, int stimmt, int unvollstaendig, int falsch) {
+                        int correctionsRejected, int stimmt, int unvollstaendig, int falsch, int unanswered) {
     }
 }

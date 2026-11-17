@@ -89,7 +89,7 @@ class StatementAnalysisCheckTest {
         analysis.check(CALLER, page, () -> false, STANDARD, costs -> { });
 
         assertThat(model.inputs).singleElement().satisfies(input -> assertThat(input).contains("prüft")
-                .doesNotContain("sendet"));
+                .doesNotContain("sendet").as("Original-Aussagen ohne Zusammenhang").startsWith("Satz: "));
         assertThat(stored().statements().get(0).check()).isNull();
     }
 
@@ -250,6 +250,104 @@ class StatementAnalysisCheckTest {
         PageGraph graph = PageGraph.of(store.find(page.key()).orElseThrow(), PageGraph.DEFAULT_QUALITIES);
 
         assertThat(graph.nodes()).noneMatch(node -> node.kind() == PageGraph.NodeKind.STATEMENT);
+    }
+
+    /** Erfundener Stichpunkt-Abschnitt: der Handelnde steht in der Zeile über dem Stichpunkt. */
+    private static final String BULLETS = "Die Prüfstelle hat zwei Aufgaben. Den Bescheid senden. Den Beleg ablegen.";
+
+    /**
+     * Die Seite {@link #BULLETS}, analysiert, mit einer Aussage der Vorstufe im zweiten Satz („senden“, Handelnder
+     * „Die Prüfstelle“ aus dem ersten), PLAUSIBLE, mit Abschnitt 0..2 oder ohne (Analyse vor FL4).
+     */
+    private PageSnapshot bulletPage(boolean withSection) {
+        PageSnapshot bullets = EnrichmentTestPages.text("wiki", "2", "1", BULLETS);
+        analysis.analyze(CALLER, bullets, () -> false);
+        PageStatementAnalysis analyzed = store.find(bullets.key()).orElseThrow();
+        ParsedStatements.Sentence second = analyzed.result().sentences().get(1);
+        String prefix = analyzed.documentId() + "#s2.p1.";
+        List<ParsedStatements.Mention> mentions = List.of(
+                new ParsedStatements.Mention(prefix + "t1", 1, second.start(), second.end(), "Die Prüfstelle",
+                        "Prüfstelle", "Prüfstelle", ParsedStatements.MentionKind.NOUN, false, Set.of()),
+                new ParsedStatements.Mention(prefix + "t3", 1, second.start(), second.end(), "den Bescheid",
+                        "Bescheid", "Bescheid", ParsedStatements.MentionKind.NOUN, false, Set.of()));
+        ParsedStatements.Derivation stage = ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.FACT,
+                "Die Prüfstelle sendet den Bescheid.");
+        ParsedStatements.Statement fromStage = new ParsedStatements.Statement(prefix + "v2", 1, second.start(),
+                second.end(), "sendet", "senden", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true,
+                List.of(new ParsedStatements.Argument(ParsedStatements.Role.ACTOR, prefix + "t1", "nsubj", null,
+                                ParsedStatements.Priority.CORE, ParsedStatements.Basis.PARSER, true),
+                        new ParsedStatements.Argument(ParsedStatements.Role.AFFECTED_OBJECT, prefix + "t3", "obj",
+                                null, ParsedStatements.Priority.CORE, ParsedStatements.Basis.PARSER, true)),
+                Set.of(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE,
+                        ParsedStatements.Temporality.GILT),
+                withSection ? stage.withSection(new ParsedStatements.Section(0, 2)) : stage);
+        store.replace(analyzed.withResult(new ParsedStatements(analyzed.result().sentences(), mentions,
+                List.of(fromStage), List.of(), analyzed.result().components(), null)));
+        return bullets;
+    }
+
+    @Test
+    void aStageStatementIsCheckedWithItsSectionAsContext() {
+        PageSnapshot bullets = bulletPage(true);
+        // Ein Modell, das sich an „nur, was im Satz steht“ hält: ohne Zusammenhang fehlt ihm der Handelnde
+        model.answer = input -> input.contains("> Die Prüfstelle hat zwei Aufgaben.") ? "1|STIMMT" : "1|FALSCH";
+        List<StatementAnalysis.CheckCosts> costs = new ArrayList<>();
+
+        analysis.check(CALLER, bullets, () -> false, STANDARD, costs::add);
+
+        assertThat(model.inputs).singleElement().isEqualTo("""
+                Zusammenhang:
+                > Die Prüfstelle hat zwei Aufgaben.
+                > Den Bescheid senden.
+                > Den Beleg ablegen.
+                Satz: Den Bescheid senden.
+                1 Verb: senden; Handelnder: Die Prüfstelle; Betroffenes: den Bescheid; verneint: nein; \
+                Verbindlichkeit: keine; Zeitbezug: gilt
+                """);
+        ParsedStatements.Statement checked = store.find(bullets.key()).orElseThrow().result().statements().get(0);
+        assertThat(checked.check().verdict()).isEqualTo(ParsedStatements.Verdict.STIMMT);
+        assertThat(checked.effectiveQuality()).as("nicht abgewertet").isEqualTo(ParsedStatements.Quality.PLAUSIBLE);
+        assertThat(costs.getFirst().withoutSection()).isZero();
+        assertThat(costs.getFirst().run().unanswered()).isZero();
+    }
+
+    @Test
+    void aCorrectionOfAStageStatementMayUseWordsFromItsSection() {
+        PageSnapshot bullets = bulletPage(true);
+        // „Aufgaben“ steht nur im Zusammenhang, nicht im Stichpunkt selbst
+        model.answer = input -> "1|UNVOLLSTAENDIG|Die Prüfstelle sendet den Bescheid Aufgaben.";
+        List<StatementAnalysis.CheckCosts> costs = new ArrayList<>();
+
+        analysis.check(CALLER, bullets, () -> false, STANDARD, costs::add);
+
+        assertThat(costs.getFirst().run().correctionsRejected()).as("Wortabgleich gegen den Abschnitt").isZero();
+        assertThat(parser.last.get()).isEqualTo("Die Prüfstelle sendet den Bescheid Aufgaben.\n");
+    }
+
+    @Test
+    void aStageStatementWithoutStoredSectionStaysUnchecked() {
+        PageSnapshot bullets = bulletPage(false);
+        model.answer = input -> "1|FALSCH";
+        List<StatementAnalysis.CheckCosts> costs = new ArrayList<>();
+
+        analysis.check(CALLER, bullets, () -> false, STANDARD, costs::add);
+
+        assertThat(model.calls).hasValue(0);
+        assertThat(costs.getFirst().withoutSection()).isEqualTo(1);
+        assertThat(store.find(bullets.key()).orElseThrow().result().statements().get(0).check()).isNull();
+    }
+
+    @Test
+    void statementsWithoutAValidVerdictAreCountedAsUnanswered() {
+        analysis.analyze(CALLER, page, () -> false);
+        model.answer = input -> input.contains("sendet") ? "1|STIMMT" : "keine Ahnung";
+        List<StatementAnalysis.CheckCosts> costs = new ArrayList<>();
+
+        analysis.check(CALLER, page, () -> false, ALL, costs::add);
+
+        assertThat(costs.getFirst().run().unanswered()).isEqualTo(1);
+        assertThat(costs.getFirst().run().rejected()).isEqualTo(1);
     }
 
     private ParsedStatements stored() {

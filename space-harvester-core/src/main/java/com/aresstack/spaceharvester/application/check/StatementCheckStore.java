@@ -25,8 +25,8 @@ import tools.jackson.databind.node.ObjectNode;
  * Prozessor-ID {@link Enrichments#STATEMENT_CHECKS} bei der Seite in der Ablage der Anreicherungen, hat deren Rechte
  * und fällt mit der Seite und mit der Quelle weg; den Entzug der KI-Freigabe nimmt {@link #remove} zurück (ADR 0028).
  *
- * <p>Schlüssel eines Eintrags ist {@link #key}: Hash aus Originalsatz und der Aussage, wie das Modell sie sah
- * ({@link StatementCheck#render}), ohne Seitenfassung und Satznummer; Modell und {@link StatementCheck#PROMPT_VERSION}
+ * <p>Schlüssel eines Eintrags ist {@link #key}: Hash aus Originalsatz, gegebenenfalls seinem Zusammenhang und der
+ * Aussage, wie das Modell sie sah ({@link StatementCheck#render}), ohne Seitenfassung und Satznummer; Modell und {@link StatementCheck#PROMPT_VERSION}
  * stehen als Version am Ergebnis der Seite. So läuft nach einer Änderung der Seite oder des Parsers nur neu, was sich
  * am Satz oder an der Aussage geändert hat, nach einem Wechsel von Modell oder Anweisung alles. Inhalte gehen nie in
  * Logs oder Ausnahmen.
@@ -44,9 +44,23 @@ public final class StatementCheckStore {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    /** Schlüssel einer Aussage: SHA-256 über den Originalsatz und die Aussage, wie das Modell sie sah. */
+    /** Schlüssel einer Aussage ohne Zusammenhang, wie {@link #key(String, List, String)} mit leerem. */
     public static String key(String sentence, String renderedItem) {
-        String basis = sentence.replaceAll("\\s+", " ").strip() + '\u0000' + renderedItem;
+        return key(sentence, List.of(), renderedItem);
+    }
+
+    /**
+     * Schlüssel einer Aussage: SHA-256 über den Zusammenhang (die Zeilen des Abschnitts, falls er mitging), den
+     * Originalsatz und die Aussage, wie das Modell sie sah. Ohne Zusammenhang derselbe Schlüssel wie
+     * {@link #key(String, String)}.
+     */
+    public static String key(String sentence, List<String> context, String renderedItem) {
+        StringBuilder prefix = new StringBuilder();
+        context.forEach(line -> prefix.append(line.replaceAll("\\s+", " ").strip()).append('\n'));
+        if (!context.isEmpty()) {
+            prefix.append('\u0001');
+        }
+        String basis = prefix + sentence.replaceAll("\\s+", " ").strip() + '\u0000' + renderedItem;
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(basis.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);

@@ -5,14 +5,18 @@ import com.aresstack.spaceharvester.application.check.Corrections;
 import com.aresstack.spaceharvester.application.check.StatementCheck;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.nlp.extraction.Argument;
+import com.aresstack.spaceharvester.nlp.extraction.ExtractionSettings;
 import com.aresstack.spaceharvester.nlp.extraction.Mention;
+import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Role;
+import com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
 import com.aresstack.spaceharvester.nlp.extraction.StatementFeatures;
 import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
 import com.aresstack.spaceharvester.nlp.pruefstand.Bewertung.Befund;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Text;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Variante;
+import com.aresstack.spaceharvester.nlp.syntax.ParsedDocument;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -43,9 +47,15 @@ final class Pruefschritt {
      * @param ungueltig ob die Stufe INVALID ist (nie geprüft)
      * @param richtig   Urteil der Vorgabe
      * @param satzText  der Originalsatz
+     * @param zusammenhang bei einer Aussage der Vorstufe die Zeilen ihres Abschnitts (wie im Auftrag), sonst leer
      */
     record Aussage(Befund befund, boolean vorstufe, boolean plausibel, boolean ungueltig, boolean richtig,
-                   StatementCheck.Item item, Corrections.View view, String satzText) {
+                   StatementCheck.Item item, Corrections.View view, String satzText, List<String> zusammenhang) {
+
+        /** Der Text, gegen den Korrekturen abgeglichen werden ({@link StatementCheck#source}). */
+        String quelle() {
+            return StatementCheck.source(satzText, zusammenhang);
+        }
 
         /** Ob die Aussage zur Auswahl gehört, nach derselben Regel wie im Auftrag ({@link CheckScope#includes}). */
         boolean in(CheckScope scope) {
@@ -69,14 +79,34 @@ final class Pruefschritt {
 
     /** Die Aussagen eines Textes. */
     static List<Aussage> aussagen(Textsatz satz, Text text) {
-        Bewertung.Aufbau aufbau = Bewertung.aufbauen(satz, variante(satz), text, zeile -> true);
+        Variante variante = variante(satz);
+        Bewertung.Aufbau aufbau = Bewertung.aufbauen(satz, variante, text, zeile -> true);
+        ParsedDocument original = aufbau.original();
+        // Abschnitte wie bei der Vorstufe (ADR 0032, FL4): Aussagen der Vorstufe gehen mit ihrem Abschnitt hinaus
+        List<SimplificationSelection.Section> abschnitte = SimplificationSelection.sections(original,
+                SimplificationSelection.select(original, new ObjectCentricExtraction(ExtractionSettings.defaults())
+                        .analyze(original), "immer".equals(variante.art()) ? SimplificationSelection.Mode.ALWAYS
+                        : SimplificationSelection.Mode.WHERE_NEEDED));
         List<Aussage> result = new ArrayList<>();
         for (Befund befund : aufbau.befunde()) {
-            String satzText = aufbau.original().sentences().get(befund.satz() - 1).text();
-            result.add(new Aussage(befund, aufbau.vorstufe().contains(befund.statement()),
-                    befund.stufe() == StatementQuality.Level.PLAUSIBLE,
+            String satzText = original.sentences().get(befund.satz() - 1).text();
+            boolean ausVorstufe = aufbau.vorstufe().contains(befund.statement());
+            List<String> zusammenhang = new ArrayList<>();
+            if (ausVorstufe) {
+                abschnitte.stream().filter(a -> a.first() <= befund.satz() - 1 && befund.satz() - 1 <= a.last())
+                        .findFirst().ifPresent(a -> {
+                            for (int i = a.first(); i <= a.last(); i++) {
+                                String zeile = original.sentences().get(i).text().replaceAll("\\s+", " ").strip();
+                                if (!zeile.isEmpty()) {
+                                    zusammenhang.add(zeile);
+                                }
+                            }
+                        });
+            }
+            result.add(new Aussage(befund, ausVorstufe, befund.stufe() == StatementQuality.Level.PLAUSIBLE,
                     befund.stufe() == StatementQuality.Level.INVALID, Bewertung.richtig(satz, text, befund),
-                    item(befund, aufbau.mentions()), view(befund, aufbau.mentions()), satzText));
+                    item(befund, aufbau.mentions()), view(befund, aufbau.mentions()), satzText,
+                    List.copyOf(zusammenhang)));
         }
         return result;
     }

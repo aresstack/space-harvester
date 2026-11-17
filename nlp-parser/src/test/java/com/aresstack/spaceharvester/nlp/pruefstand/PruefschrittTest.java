@@ -174,7 +174,8 @@ class PruefschrittTest {
                                      ObjectCentricAnalysis analyse, Map<String, Mention> mentions,
                                      List<String> befunde) {
         // Antwort wie vom Modell, durch das strenge Lesen des Core
-        StatementCheck.Parsed parsed = StatementCheck.parse(aussage.satzText(), 1, "1|" + antwort);
+        StatementCheck.Parsed parsed = StatementCheck.parse(aussage.satzText(), aussage.zusammenhang(), 1,
+                "1|" + antwort);
         StatementCheck.Answer answer = parsed.answers().get(1);
         String prefix = text.name() + " Satz " + aussage.befund().satz() + " " + aussage.befund().kurz() + ": ";
         if (answer == null) {
@@ -195,7 +196,7 @@ class PruefschrittTest {
         Bewertung.Befund kandidatBefund = kandidat == null ? null
                 : Bewertung.befundZu(analyse, mentions, kandidat, aussage.befund().satz());
         Corrections.Outcome outcome = Corrections.accept(aussage.view(), kandidatBefund == null ? null
-                : Pruefschritt.view(kandidatBefund, mentions), aussage.satzText());
+                : Pruefschritt.view(kandidatBefund, mentions), aussage.quelle());
         if (outcome != Corrections.Outcome.ACCEPTED) {
             befunde.add(prefix + "Korrektur nicht übernommen (" + outcome + "): „" + roh + "“");
             return new Bewertet(answer.verdict(), true, true, false, false);

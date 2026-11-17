@@ -202,6 +202,7 @@ public class StatementAnalysis {
         String documentId = PageStatementAnalysis.documentId(key, input);
         ParsedStatements result;
         String stage = null;
+        Map<Integer, ParsedStatements.Section> stageSections = new java.util.concurrent.ConcurrentHashMap<>();
         if (request != null && simplificationUnavailable(key).isEmpty()) {
             stage = stage(request);
             result = parser.analyze(documentId, analyzerText(text.get()), cancelled,
@@ -216,6 +217,12 @@ public class StatementAnalysis {
                             if (sections.isEmpty()) {
                                 return Map.of();
                             }
+                            for (SimplificationSection section : sections) {
+                                List<SimplificationSection.Sentence> lines = section.lines();
+                                ParsedStatements.Section range = new ParsedStatements.Section(lines.get(0).index(),
+                                        lines.get(lines.size() - 1).index());
+                                section.sentences().forEach(sentence -> stageSections.put(sentence.index(), range));
+                            }
                             Simplifications.Result run = simplifications.simplify(key, input, sections,
                                     request.parallel(), cancelled);
                             costs.accept(run.costs());
@@ -228,6 +235,7 @@ public class StatementAnalysis {
         if (cancelled.getAsBoolean()) {
             throw new CancellationException("Analyse abgebrochen");
         }
+        result = withSections(result, stageSections);
         check(result, text.get().text().length());
         if (stage != null && !simplifications.released(key)) {
             // ADR 0028: Freigabe während der Analyse entzogen, kein Modelltext der Seite in den Graph; ohne die Aussagen
@@ -300,23 +308,38 @@ public class StatementAnalysis {
         Map<Integer, ParsedStatements.Sentence> sentences = new java.util.HashMap<>();
         base.sentences().forEach(sentence -> sentences.put(sentence.index(), sentence));
         Map<Integer, List<ParsedStatements.Statement>> chosen = new java.util.TreeMap<>();
+        Map<Integer, ParsedStatements.Section> sectionOf = new java.util.HashMap<>();
+        int withoutSection = 0;
         for (ParsedStatements.Statement statement : base.statements()) {
-            if (request.scope().includes(statement) && sentences.containsKey(statement.sentence())) {
-                chosen.computeIfAbsent(statement.sentence(), index -> new java.util.ArrayList<>()).add(statement);
+            if (!request.scope().includes(statement) || !sentences.containsKey(statement.sentence())) {
+                continue;
             }
+            if (statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE) {
+                // Ohne den Abschnitt der Vorstufe (Analyse vor FL4) sähe das Modell nicht, woher ihre Beteiligten
+                // stammen; solche Aussagen bleiben ungeprüft, bis die Seite neu analysiert ist
+                if (statement.derivation().section() == null) {
+                    withoutSection++;
+                    continue;
+                }
+                sectionOf.merge(statement.sentence(), statement.derivation().section(), StatementAnalysis::wider);
+            }
+            chosen.computeIfAbsent(statement.sentence(), index -> new java.util.ArrayList<>()).add(statement);
         }
         List<StatementChecks.Group> groups = new java.util.ArrayList<>();
         List<List<ParsedStatements.Statement>> grouped = new java.util.ArrayList<>();
-        List<String> sentenceTexts = new java.util.ArrayList<>();
+        List<String> sources = new java.util.ArrayList<>();
         chosen.forEach((index, statements) -> {
             String sentence = sentenceText(content, sentences.get(index));
-            groups.add(new StatementChecks.Group(sentence, statements.stream()
+            // ADR 0032, FL4: Mit einer Aussage der Vorstufe geht derselbe Abschnitt wie bei der Vorstufe mit
+            List<String> context = sectionOf.containsKey(index)
+                    ? lines(content, base.sentences(), sectionOf.get(index)) : List.of();
+            groups.add(new StatementChecks.Group(sentence, context, statements.stream()
                     .map(statement -> StatementCheck.Item.of(statement, mentions)).toList()));
             grouped.add(statements);
-            sentenceTexts.add(sentence);
+            sources.add(StatementCheck.source(sentence, context));
         });
         StatementChecks.Costs run = groups.isEmpty()
-                ? new StatementChecks.Costs(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                ? new StatementChecks.Costs(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 : null;
         List<Map<Integer, StatementCheck.Answer>> answers = List.of();
         if (!groups.isEmpty()) {
@@ -330,7 +353,7 @@ public class StatementAnalysis {
             for (Map.Entry<Integer, StatementCheck.Answer> entry : answers.get(g).entrySet()) {
                 if (entry.getValue().correction() != null) {
                     lines.add(new Corrections.Line(grouped.get(g).get(entry.getKey() - 1),
-                            entry.getValue().correction()));
+                            entry.getValue().correction(), sources.get(g)));
                 }
             }
         }
@@ -374,7 +397,7 @@ public class StatementAnalysis {
         check(checked, content.length());
         store.replace(analysis.withResult(withConllu(key, checked)));
         int rejectedCorrections = unparsed + merged.rejected().values().stream().mapToInt(Integer::intValue).sum();
-        costs.accept(new CheckCosts(run, merged.corrected().size(), rejectedCorrections));
+        costs.accept(new CheckCosts(run, merged.corrected().size(), rejectedCorrections, withoutSection));
         return new PageStatements(PageStatements.State.CURRENT, null, analysis.withResult(checked));
     }
 
@@ -405,9 +428,42 @@ public class StatementAnalysis {
         return changed;
     }
 
+    /**
+     * Gibt jeder Aussage der Vorstufe den Abschnitt ihres Aufrufs mit (ADR 0032, FL4): Der Prüfschritt zeigt dem Modell
+     * dieselben Zeilen als Zusammenhang, denn eine Vorstufen-Aussage darf Beteiligte aus Nachbarzeilen tragen.
+     */
+    static ParsedStatements withSections(ParsedStatements result, Map<Integer, ParsedStatements.Section> sections) {
+        if (sections.isEmpty() || result.statements().stream()
+                .noneMatch(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE)) {
+            return result;
+        }
+        return new ParsedStatements(result.sentences(), result.mentions(), result.statements().stream()
+                .map(statement -> statement.derivation().origin() == ParsedStatements.Origin.VORSTUFE
+                        && sections.containsKey(statement.sentence())
+                        ? statement.withDerivation(statement.derivation().withSection(
+                        sections.get(statement.sentence()))) : statement).toList(),
+                result.attachments(), result.components(), result.conllu());
+    }
+
     /** Die Analyse mit der gespeicherten CoNLL-U der Seite, damit ein Ersetzen die Syntaxdetails behält. */
     private ParsedStatements withConllu(PageKey page, ParsedStatements result) {
         return result.conllu() != null ? result : result.withConllu(store.conllu(page).orElse(null));
+    }
+
+    /** Der größere von zwei Abschnitten desselben Satzes (sie sind gleich, solange eine Analyse sie setzte). */
+    private static ParsedStatements.Section wider(ParsedStatements.Section a, ParsedStatements.Section b) {
+        return new ParsedStatements.Section(Math.min(a.first(), b.first()), Math.max(a.last(), b.last()));
+    }
+
+    /** Die nicht leeren Sätze eines Abschnitts in Textreihenfolge, je eine Zeile, wie die Vorstufe sie sah. */
+    private static List<String> lines(String text, List<ParsedStatements.Sentence> sentences,
+                                      ParsedStatements.Section section) {
+        List<String> lines = new java.util.ArrayList<>();
+        sentences.stream().filter(sentence -> section.contains(sentence.index()))
+                .sorted(java.util.Comparator.comparingInt(ParsedStatements.Sentence::index))
+                .map(sentence -> sentenceText(text, sentence).replaceAll("\\s+", " ").strip())
+                .filter(line -> !line.isEmpty()).forEach(lines::add);
+        return List.copyOf(lines);
     }
 
     private static String sentenceText(String text, ParsedStatements.Sentence sentence) {
@@ -678,8 +734,10 @@ public class StatementAnalysis {
      * @param corrections         übernommene Korrekturen
      * @param rejectedCorrections Korrekturen, die nach dem Wortabgleich nicht als Aussage taugten (Verb, Verneinung,
      *                            Handelnder, Beteiligte) oder ohne Satzanalysator ungeparst blieben
+     * @param withoutSection      gewählte Aussagen der Vorstufe ohne gespeicherten Abschnitt (Analyse vor FL4),
+     *                            ungeprüft geblieben
      */
-    public record CheckCosts(StatementChecks.Costs run, int corrections, int rejectedCorrections) {
+    public record CheckCosts(StatementChecks.Costs run, int corrections, int rejectedCorrections, int withoutSection) {
     }
 
     /**

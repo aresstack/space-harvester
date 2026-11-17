@@ -77,6 +77,34 @@ class StatementCheckTest {
     }
 
     @Test
+    void withContextTheSectionLinesComeFirstAndCorrectionsMayUseTheirWords() {
+        List<String> context = List.of("Die Prüfstelle hat zwei Aufgaben.", "Den Bescheid senden.");
+        StatementCheck.Item item = new StatementCheck.Item("senden", false, List.of(
+                new StatementCheck.Participant(ParsedStatements.Role.ACTOR, null, "Die Prüfstelle")),
+                ParsedStatements.Features.UNKNOWN);
+
+        assertThat(StatementCheck.input("Den Bescheid senden.", context, List.of(item))).isEqualTo("""
+                Zusammenhang:
+                > Die Prüfstelle hat zwei Aufgaben.
+                > Den Bescheid senden.
+                Satz: Den Bescheid senden.
+                1 Verb: senden; Handelnder: Die Prüfstelle
+                """);
+        assertThat(StatementCheck.input("Den Bescheid senden.", List.of(), List.of(item)))
+                .as("ohne Zusammenhang wie bisher").startsWith("Satz: ");
+        String answer = "1|UNVOLLSTAENDIG|Die Prüfstelle sendet den Bescheid.";
+        assertThat(StatementCheck.parse("Den Bescheid senden.", context, 1, answer).answers().get(1).correction())
+                .isEqualTo("Die Prüfstelle sendet den Bescheid.");
+        assertThat(StatementCheck.parse("Den Bescheid senden.", 1, answer).correctionsRejected())
+                .as("ohne Zusammenhang fehlt „Prüfstelle“").isEqualTo(1);
+        assertThat(StatementCheckStore.key("Den Bescheid senden.", context, "x"))
+                .as("der Zusammenhang gehört zum Schlüssel")
+                .isNotEqualTo(StatementCheckStore.key("Den Bescheid senden.", "x"));
+        assertThat(StatementCheckStore.key("Den Bescheid senden.", List.of(), "x"))
+                .isEqualTo(StatementCheckStore.key("Den Bescheid senden.", "x"));
+    }
+
+    @Test
     void aCorrectionMayNotAddANegationOrAModalVerb() {
         String sentence = "Die Stelle sendet dem Kunden den Bescheid.";
         StatementCheck.Parsed parsed = StatementCheck.parse(sentence, 2, """

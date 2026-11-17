@@ -336,6 +336,11 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 if (statement.derivation().corrects() != null) {
                     entry.put("corrects", statement.derivation().corrects()); // ADR 0032, FL4
                 }
+                if (statement.derivation().section() != null) {
+                    // ADR 0032, FL4: der Abschnitt der Vorstufe, den der Prüfschritt als Zusammenhang zeigt
+                    entry.putObject("section").put("first", statement.derivation().section().first())
+                            .put("last", statement.derivation().section().last());
+                }
             }
             if (statement.check() != null) {
                 // ADR 0032, FL4: Urteil des Prüfschritts, neben der Stufe des Parsers; fehlt es, ist nichts geprüft
@@ -471,7 +476,17 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
             return ParsedStatements.Derivation.ORIGINAL;
         }
         return new ParsedStatements.Derivation(origin, flag, sentence, enumOr(ParsedStatements.Origin.class, entry,
-                "featuresFrom", ParsedStatements.Origin.VORSTUFE));
+                "featuresFrom", ParsedStatements.Origin.VORSTUFE), null, section(entry.path("section")));
+    }
+
+    /** Abschnitt einer Aussage der Vorstufe oder {@code null}, wenn er fehlt oder unlesbar ist. */
+    private static ParsedStatements.Section section(JsonNode node) {
+        if (!node.isObject() || !node.path("first").isInt() || !node.path("last").isInt()) {
+            return null;
+        }
+        int first = node.path("first").asInt();
+        int last = node.path("last").asInt();
+        return first >= 0 && last >= first ? new ParsedStatements.Section(first, last) : null;
     }
 
     /** Urteil des Prüfschritts (ADR 0032, FL4) oder {@code null}, wenn es fehlt oder unlesbar ist. */

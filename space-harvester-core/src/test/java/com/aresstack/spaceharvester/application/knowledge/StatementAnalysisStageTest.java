@@ -128,8 +128,11 @@ class StatementAnalysisStageTest {
         });
 
         assertThat(store.find(page.key()).orElseThrow().result().statements()).hasSize(2)
-                .allSatisfy(statement -> assertThat(statement.derivation().origin())
-                        .isEqualTo(ParsedStatements.Origin.VORSTUFE));
+                .allSatisfy(statement -> {
+                    assertThat(statement.derivation().origin()).isEqualTo(ParsedStatements.Origin.VORSTUFE);
+                    // ADR 0032, FL4: der Abschnitt des Aufrufs, den der Prüfschritt als Zusammenhang zeigt
+                    assertThat(statement.derivation().section()).isEqualTo(new ParsedStatements.Section(0, 1));
+                });
     }
 
     @Test

@@ -23,8 +23,8 @@ import java.util.Set;
  *     ist kein „unvollständig“, sondern „falsch“.</li>
  *     <li>Handelnder: Hat die korrigierte Aussage einen Handelnden oder Träger, hat die Korrektur einen mit demselben
  *     Kopf; ohne einen darf sie ihn ergänzen.</li>
- *     <li>Beteiligte: Jeder steht wörtlich oder als Form desselben Stamms im Originalsatz, und mindestens einer ist
- *     neu.</li>
+ *     <li>Beteiligte: Jeder steht wörtlich oder als Form desselben Stamms im Originalsatz (bei einer Aussage der
+ *     Vorstufe auch im Zusammenhang, ihrem Abschnitt), und mindestens einer ist neu.</li>
  * </ul>
  *
  * <p>Zusammenführen ({@link #merge}): Die korrigierte Aussage bleibt stehen, ihr Urteil senkt die wirksame Stufe. Die
@@ -101,7 +101,7 @@ public final class Corrections {
      *
      * @param corrected  die korrigierte Aussage
      * @param candidate  die Aussage aus dem Parse der Korrektur zum selben Verb; {@code null}, wenn es keine gab
-     * @param sentence   der Originalsatz
+     * @param sentence   der Originalsatz, bei einem Aufruf mit Zusammenhang samt diesem
      */
     public static Outcome accept(View corrected, View candidate, String sentence) {
         if (candidate == null || !sameVerb(corrected.lemma(), candidate.lemma())) {
@@ -133,12 +133,22 @@ public final class Corrections {
         return text.replaceAll("\\s+", " ").strip().toLowerCase(Locale.GERMAN);
     }
 
-    /** Eine Korrektur zum Zusammenführen: die korrigierte Aussage, der Satz des Modells und sein Parse. */
-    public record Line(ParsedStatements.Statement corrected, String correction) {
+    /**
+     * Eine Korrektur zum Zusammenführen: die korrigierte Aussage und der Satz des Modells.
+     *
+     * @param source der Text, gegen den die Beteiligten abgeglichen werden: der Originalsatz samt Zusammenhang, wenn
+     *               der Aufruf einen hatte ({@link StatementCheck#source}); {@code null} = nur der Originalsatz
+     */
+    public record Line(ParsedStatements.Statement corrected, String correction, String source) {
 
         public Line {
             Objects.requireNonNull(corrected, "corrected");
             Objects.requireNonNull(correction, "correction");
+        }
+
+        /** Gegen den Originalsatz allein. */
+        public Line(ParsedStatements.Statement corrected, String correction) {
+            this(corrected, correction, null);
         }
     }
 
@@ -198,7 +208,7 @@ public final class Corrections {
             ParsedStatements.Statement candidate = byLine.getOrDefault(index, List.of()).stream()
                     .filter(statement -> sameVerb(targetView.lemma(), lemma(statement))).findFirst().orElse(null);
             Outcome outcome = accept(targetView, candidate == null ? null : View.of(candidate, parsedMentions),
-                    sentenceText);
+                    line.source() != null ? line.source() : sentenceText);
             if (outcome != Outcome.ACCEPTED) {
                 rejected.merge(outcome, 1, Integer::sum);
                 continue;

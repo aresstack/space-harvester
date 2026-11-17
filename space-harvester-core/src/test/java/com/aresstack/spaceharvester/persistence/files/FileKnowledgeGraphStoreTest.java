@@ -152,7 +152,8 @@ class FileKnowledgeGraphStoreTest {
                 s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
                 s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
                 ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.vorstufe(
-                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg.").withFeaturesFromOriginal());
+                        ParsedStatements.StageFlag.CONDITION, "Die Stelle prüft den Beleg.").withFeaturesFromOriginal()
+                        .withSection(new ParsedStatements.Section(0, 2)));
         new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
                 List.of(fromStage))).withStage("always|fake:m1|prompt-1"));
 
@@ -161,6 +162,8 @@ class FileKnowledgeGraphStoreTest {
         assertThat(read).isEqualTo(fromStage);
         assertThat(read.derivation().stageFlag()).isEqualTo(ParsedStatements.StageFlag.CONDITION);
         assertThat(read.derivation().featuresFrom()).isEqualTo(ParsedStatements.Origin.ORIGINAL);
+        assertThat(read.derivation().section()).as("Abschnitt für den Prüfschritt")
+                .isEqualTo(new ParsedStatements.Section(0, 2));
         assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().stage())
                 .isEqualTo("always|fake:m1|prompt-1");
 
@@ -170,7 +173,7 @@ class FileKnowledgeGraphStoreTest {
             file = files.findFirst().orElseThrow();
         }
         assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("origin", "stageFlag",
-                "simplifiedSentence", "featuresFrom", "\"stage\"");
+                "simplifiedSentence", "featuresFrom", "\"stage\"", "\"section\"");
         assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
                 .get(0).derivation()).isEqualTo(ParsedStatements.Derivation.ORIGINAL);
     }

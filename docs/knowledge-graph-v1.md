@@ -78,7 +78,9 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   nach der wirksamen Stufe. Eine übernommene Korrektur ist eine eigene Aussage mit `sh:origin "MODELL"`, ihrem Satz in
   `sh:simplifiedSentence` und `sh:corrects` → korrigierte Aussage (nur, wenn diese selbst im Export steht); ihre Rollen
   stammen aus dem Parse der Korrektur, nie vom Modell. Nach dem Entzug der KI-Freigabe oder vor jedem neuen Prüflauf
-  fallen Urteile und Korrekturen weg, ohne dass die Analyse veraltet,
+  fallen Urteile und Korrekturen weg, ohne dass die Analyse veraltet. Enthält ein Aufruf eine Aussage der Vorstufe,
+  sieht das Modell die Zeilen ihres Abschnitts als Zusammenhang (derselbe Abschnitt wie bei der Vorstufe, intern an der
+  Aussage gespeichert, nicht exportiert), und Korrekturen werden gegen Satz und Abschnitt abgeglichen,
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
   `sh:instrument`, `sh:time`, `sh:circumstance`, `sh:bearer`; `sh:corrects` (Prüfschritt) zeigt auf eine Aussage.

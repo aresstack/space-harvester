@@ -203,9 +203,11 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      *                           stammt, damit die Oberfläche ihn neben dem Originalsatz zeigen kann; {@code null} beim
      *                           Original
      * @param corrects           bei einer Korrektur die ID der Aussage, die sie korrigiert; sonst {@code null}
+     * @param section            bei einer Aussage der Vorstufe der Abschnitt, den das Modell zu ihr sah (der
+     *                           Prüfschritt zeigt ihn als Zusammenhang); {@code null} sonst und bei Analysen vor FL4
      */
     public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
-                             String corrects) {
+                             String corrects, Section section) {
 
         /** Aus dem Originalsatz (auch alle Analysen vor FL3). */
         public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null,
@@ -231,11 +233,20 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
                     || simplifiedSentence.isBlank() || corrects == null || corrects.isBlank())) {
                 throw new IllegalArgumentException("Eine Korrektur braucht ihren Satz und die korrigierte Aussage");
             }
+            if (section != null && origin != Origin.VORSTUFE) {
+                throw new IllegalArgumentException("Nur eine Aussage der Vorstufe hat einen Abschnitt");
+            }
         }
 
-        /** Ohne Bezug auf eine korrigierte Aussage (Original und Vorstufe). */
+        /** Ohne Abschnitt. */
+        public Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
+                          String corrects) {
+            this(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, null);
+        }
+
+        /** Ohne Bezug auf eine korrigierte Aussage und ohne Abschnitt (Original und Vorstufe). */
         public Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom) {
-            this(origin, stageFlag, simplifiedSentence, featuresFrom, null);
+            this(origin, stageFlag, simplifiedSentence, featuresFrom, null, null);
         }
 
         /** Aus einem vereinfachten Satz, mit eigenen Merkmalen. */
@@ -256,7 +267,30 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
 
         /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
         public Derivation withFeaturesFromOriginal() {
-            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects);
+            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects, section);
+        }
+
+        /** Dieselbe Herkunft mit dem Abschnitt der Vorstufe. */
+        public Derivation withSection(Section other) {
+            return new Derivation(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, other);
+        }
+    }
+
+    /**
+     * Ein Abschnitt der Seite als Satzindizes (ab 0, einschließlich): die Zeilen, die die Vorstufe in einem Aufruf an
+     * das Modell gab (ADR 0032, FL3); leere Sätze darin gingen nicht mit.
+     */
+    public record Section(int first, int last) {
+
+        public Section {
+            if (first < 0 || last < first) {
+                throw new IllegalArgumentException("Abschnitt " + first + ".." + last + " ungültig");
+            }
+        }
+
+        /** Ob der Satz im Abschnitt liegt. */
+        public boolean contains(int sentence) {
+            return sentence >= first && sentence <= last;
         }
     }
 
@@ -384,6 +418,12 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         public Statement withCheck(Check other) {
             return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
                     arguments, findings, paragraph, quality, qualityReasons, review, features, derivation, other);
+        }
+
+        /** Dieselbe Aussage mit dieser Herkunft. */
+        public Statement withDerivation(Derivation other) {
+            return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
+                    arguments, findings, paragraph, quality, qualityReasons, review, features, other, check);
         }
 
         /** Alle Beteiligten mit dieser Rolle. */
