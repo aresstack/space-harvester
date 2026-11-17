@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -83,9 +84,22 @@ public class Glossary {
      * @param startsWith nur Suchwerte, die so beginnen (A–Z-Leiste), oder {@code null}
      * @param limit      1 bis {@link #MAX_LIMIT}
      * @param cursor     {@code nextCursor} der vorigen Antwort oder {@code null}
+     * @param categories nur Einträge mit einer dieser Einordnungen (ADR 0032, FL5), oder {@code null} für alle; ein
+     *                   Eintrag ohne Einordnung zählt als {@code UNKLAR}. Der Reiter fragt ohne {@code TECHNISCH},
+     *                   der Filter „Technik“ nur {@code TECHNISCH}.
      */
     public record Search(String q, ReviewStatus status, RelationOrigin origin, String sourceId, String spaceKey,
-                         String startsWith, int limit, String cursor) {
+                         String startsWith, int limit, String cursor, Set<GlossaryDerivation.Category> categories) {
+
+        public Search {
+            categories = categories == null ? null : Set.copyOf(categories);
+        }
+
+        /** Suche über alle Einordnungen (wie vor ADR 0032, FL5). */
+        public Search(String q, ReviewStatus status, RelationOrigin origin, String sourceId, String spaceKey,
+                      String startsWith, int limit, String cursor) {
+            this(q, status, origin, sourceId, spaceKey, startsWith, limit, cursor, null);
+        }
     }
 
     /** Ein Stapel Einträge, sortiert nach Suchwert; {@code nextCursor} ist {@code null} am Ende. */
@@ -105,11 +119,25 @@ public class Glossary {
         }
     }
 
-    /** Ein Vorschlag eines Laufs: Begriff mit den Belegen, die das Modell sah. */
-    public record Proposal(String term, List<RelationEvidence> evidence) {
+    /**
+     * Ein Vorschlag eines Laufs: Begriff mit den Belegen, die das Modell oder die Regel sah.
+     *
+     * @param classification Einordnung des Laufs oder {@code null}; Urheber {@code RULE} oder {@code AI}
+     * @param definition     Beleg einer Begriffsbestimmung oder {@code null}
+     */
+    public record Proposal(String term, List<RelationEvidence> evidence, GlossaryEntry.Classification classification,
+                           RelationEvidence definition) {
 
         public Proposal {
             evidence = List.copyOf(evidence);
+            if (classification != null && classification.by() == GlossaryEntry.ClassifiedBy.MANUAL) {
+                throw new IllegalArgumentException("Ein Lauf ordnet nie als Mensch ein");
+            }
+        }
+
+        /** Ein Vorschlag ohne Einordnung (wie vor ADR 0032, FL5). */
+        public Proposal(String term, List<RelationEvidence> evidence) {
+            this(term, evidence, null, null);
         }
     }
 
@@ -140,6 +168,7 @@ public class Glossary {
                     || search.origin() != null && entry.origin() != search.origin()
                     || (search.status() == null ? entry.status() == ReviewStatus.REJECTED
                     : entry.status() != search.status())
+                    || search.categories() != null && !search.categories().contains(categoryOf(entry))
                     || search.sourceId() != null && !entry.scope().global()
                     && !(search.sourceId().equals(entry.scope().sourceId()) && (search.spaceKey() == null
                     || entry.scope().spaceKey() == null || search.spaceKey().equals(entry.scope().spaceKey())))) {
@@ -278,7 +307,17 @@ public class Glossary {
      */
     public synchronized ProposalRun propose(String actor, RelationScope scope, String generation,
                                             List<Proposal> proposals, Set<String> retained) {
-        return merge(actor, scope, generation, proposals, retained, true);
+        return merge(RelationOrigin.AI, actor, scope, generation, proposals, retained, true);
+    }
+
+    /**
+     * Wie {@link #propose(String, RelationScope, String, List, Set)} für einen Lauf der Herkunft {@code origin}
+     * ({@link RelationOrigin#AI} oder {@link RelationOrigin#RULE}, ADR 0032, FL5): neue Einträge bekommen diese
+     * Herkunft, der Abgleich am Ende betrifft nur ungeprüfte Vorschläge derselben Herkunft.
+     */
+    public synchronized ProposalRun propose(RelationOrigin origin, String actor, RelationScope scope,
+                                            String generation, List<Proposal> proposals, Set<String> retained) {
+        return merge(origin, actor, scope, generation, proposals, retained, true);
     }
 
     /**
@@ -288,7 +327,29 @@ public class Glossary {
      */
     public synchronized ProposalRun proposeSome(String actor, RelationScope scope, String generation,
                                                 List<Proposal> proposals) {
-        return merge(actor, scope, generation, proposals, Set.of(), false);
+        return merge(RelationOrigin.AI, actor, scope, generation, proposals, Set.of(), false);
+    }
+
+    /** Teilergebnis eines Laufs der Herkunft {@code origin} (siehe {@link #propose(RelationOrigin, String, RelationScope, String, List, Set)}). */
+    public synchronized ProposalRun proposeSome(RelationOrigin origin, String actor, RelationScope scope,
+                                                String generation, List<Proposal> proposals) {
+        return merge(origin, actor, scope, generation, proposals, Set.of(), false);
+    }
+
+    /**
+     * Der Mensch setzt die Einordnung (ADR 0032, FL5); danach ändert kein Lauf sie mehr. Fehler wie {@link #confirm}.
+     */
+    public synchronized GlossaryEntry categorize(AccessContext caller, String id, GlossaryDerivation.Category category,
+                                                 Long expectedRevision) {
+        Objects.requireNonNull(category, "category");
+        GlossaryEntry current = writable(caller, id, expectedRevision);
+        GlossaryEntry.Classification next = new GlossaryEntry.Classification(category,
+                GlossaryEntry.ClassifiedBy.MANUAL, null);
+        if (next.equals(current.classification())) {
+            return shown(caller, current);
+        }
+        return shown(caller, save(current.classified(next, current.definitionProposal(), clock.instant()),
+                "categorize", caller.jobOwner()));
     }
 
     /**
@@ -315,8 +376,11 @@ public class Glossary {
         }
     }
 
-    private ProposalRun merge(String actor, RelationScope scope, String generation, List<Proposal> proposals,
-                              Set<String> retained, boolean reconcile) {
+    private ProposalRun merge(RelationOrigin origin, String actor, RelationScope scope, String generation,
+                              List<Proposal> proposals, Set<String> retained, boolean reconcile) {
+        if (origin == RelationOrigin.MANUAL) {
+            throw new IllegalArgumentException("Ein Lauf ist nie manuell");
+        }
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(generation, "generation");
@@ -343,24 +407,37 @@ public class Glossary {
             GlossaryEntry current = store.find(id).orElse(null);
             if (current == null) {
                 put.put(id, new GlossaryEntry(id, proposal.term().strip(), TermText.normalize(proposal.term()), scope,
-                        RelationOrigin.AI, ReviewStatus.PROPOSED, proposal.evidence(), false, null, generation, actor,
-                        now, now, null, null, 1));
+                        origin, ReviewStatus.PROPOSED, proposal.evidence(), false, null, generation, actor,
+                        now, now, null, null, 1, proposal.classification(), proposal.definition(),
+                        Set.of(origin)));
                 audit.add(new GlossaryStore.AuditEntry(id, "propose", actor, now, ReviewStatus.PROPOSED, 1));
                 added++;
-            } else if (current.origin() == RelationOrigin.MANUAL || current.status() == ReviewStatus.REJECTED) {
-                // Benutzerdaten haben Vorrang; eine Ablehnung gilt für jedes Modell.
+                continue;
+            }
+            if (current.origin() == RelationOrigin.MANUAL || current.status() == ReviewStatus.REJECTED) {
+                // Benutzerdaten haben Vorrang; eine Ablehnung gilt für jedes Modell und jede Regel.
                 suppressed++;
-            } else if (current.status() == ReviewStatus.CONFIRMED) {
-                if (current.evidenceStale()) {
-                    // Wieder belegt: die Markierung fällt, Belege und Entscheidung bleiben.
-                    GlossaryEntry fresh = current.proposedAgain(current.evidence(), current.generation(), now);
-                    put.put(id, fresh);
-                    audit.add(new GlossaryStore.AuditEntry(id, "propose", actor, now, fresh.status(),
-                            fresh.revision()));
-                    updated++;
-                }
-            } else if (!current.evidence().equals(proposal.evidence())) {
-                GlossaryEntry fresh = current.proposedAgain(proposal.evidence(), generation, now);
+                continue;
+            }
+            List<RelationEvidence> evidence = current.evidence();
+            String run = current.generation();
+            if (current.status() == ReviewStatus.PROPOSED && !evidence.equals(proposal.evidence())) {
+                // Bestätigte Einträge behalten ihre Belege; ungeprüfte zeigen die des letzten Laufs.
+                evidence = proposal.evidence();
+                run = generation;
+            }
+            Set<RelationOrigin> support = EnumSet.of(origin);
+            support.addAll(current.supportedBy());
+            GlossaryEntry.Classification classification = nextClassification(current.classification(),
+                    proposal.classification());
+            RelationEvidence definition = current.status() == ReviewStatus.PROPOSED && proposal.definition() != null
+                    ? proposal.definition() : current.definitionProposal();
+            if (current.evidenceStale() || !evidence.equals(current.evidence())
+                    || !support.equals(current.supportedBy())
+                    || !Objects.equals(classification, current.classification())
+                    || !Objects.equals(definition, current.definitionProposal())) {
+                // Wieder belegt: eine Markierung „Beleg veraltet“ fällt, die Entscheidung bleibt.
+                GlossaryEntry fresh = current.merged(evidence, run, support, classification, definition, now);
                 put.put(id, fresh);
                 audit.add(new GlossaryStore.AuditEntry(id, "propose", actor, now, fresh.status(), fresh.revision()));
                 updated++;
@@ -368,27 +445,64 @@ public class Glossary {
         }
         Set<String> kept = retained == null ? Set.of() : retained;
         for (GlossaryEntry entry : reconcile ? store.all() : List.<GlossaryEntry>of()) {
-            if (entry.origin() != RelationOrigin.AI || !entry.scope().equals(scope) || named.contains(entry.id())
+            if (entry.origin() == RelationOrigin.MANUAL || entry.status() == ReviewStatus.REJECTED
+                    || !entry.supportedBy().contains(origin)
+                    || !entry.scope().equals(scope) || named.contains(entry.id())
                     || kept.contains(entry.normalized())) {
                 continue;
             }
-            if (entry.status() == ReviewStatus.PROPOSED) {
+            Set<RelationOrigin> rest = entry.supportWithout(origin);
+            if (!rest.isEmpty()) {
+                // Ein anderer Lauf stützt den Begriff weiter: nur dieser Lauf trägt sich aus.
+                GlossaryEntry less = entry.supported(rest, now);
+                put.put(entry.id(), less);
+                audit.add(new GlossaryStore.AuditEntry(entry.id(), "unsupport", actor, now, less.status(),
+                        less.revision()));
+            } else if (entry.status() == ReviewStatus.PROPOSED) {
                 removed.add(entry.id());
                 audit.add(new GlossaryStore.AuditEntry(entry.id(), "withdraw", actor, now, null,
                         entry.revision() + 1));
                 withdrawn++;
-            } else if (entry.status() == ReviewStatus.CONFIRMED && !entry.evidenceStale()) {
-                GlossaryEntry marked = entry.stale(now);
+            } else {
+                GlossaryEntry marked = entry.evidenceStale() ? entry.supported(rest, now)
+                        : entry.stale(now).supported(rest, now);
                 put.put(entry.id(), marked);
                 audit.add(new GlossaryStore.AuditEntry(entry.id(), "stale", actor, now, marked.status(),
                         marked.revision()));
-                stale++;
+                if (!entry.evidenceStale()) {
+                    stale++;
+                }
             }
         }
         if (!put.isEmpty() || !removed.isEmpty()) {
             write(put.values(), removed, audit);
         }
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
+    }
+
+    /**
+     * Einordnung nach einem Lauf: der Mensch geht immer vor, die KI vor der Regel; die KI ersetzt eine Regel-Einordnung
+     * nur, wenn die Regel {@code UNKLAR} ließ. Ohne Einordnung im Vorschlag bleibt die bisherige.
+     */
+    static GlossaryEntry.Classification nextClassification(GlossaryEntry.Classification current,
+                                                           GlossaryEntry.Classification proposed) {
+        if (proposed == null || current != null && current.by() == GlossaryEntry.ClassifiedBy.MANUAL) {
+            return current;
+        }
+        if (current == null || current.by() == proposed.by()) {
+            return proposed;
+        }
+        if (current.by() == GlossaryEntry.ClassifiedBy.RULE && proposed.by() == GlossaryEntry.ClassifiedBy.AI) {
+            return current.category() == GlossaryDerivation.Category.UNKLAR ? proposed : current;
+        }
+        // Eine Regel überschreibt nie die KI.
+        return current;
+    }
+
+    /** Einordnung eines Eintrags für Filter; ohne Einordnung {@code UNKLAR}. */
+    static GlossaryDerivation.Category categoryOf(GlossaryEntry entry) {
+        return entry.classification() == null ? GlossaryDerivation.Category.UNKLAR
+                : entry.classification().category();
     }
 
     /**
@@ -546,23 +660,21 @@ public class Glossary {
                 return Optional.empty();
             }
             List<RelationEvidence> evidence = entry.evidence().stream().filter(this::readable).toList();
-            if (entry.origin() == RelationOrigin.AI && !entry.evidence().isEmpty() && evidence.isEmpty()) {
+            // Vorschläge eines Laufs (KI und Regel) ohne lesbaren Beleg verraten nichts und bleiben verborgen.
+            if (entry.origin() != RelationOrigin.MANUAL && !entry.evidence().isEmpty() && evidence.isEmpty()) {
                 return Optional.empty();
             }
-            if (evidence.size() == entry.evidence().size()) {
+            RelationEvidence definition = entry.definitionProposal() != null && readable(entry.definitionProposal())
+                    ? entry.definitionProposal() : null;
+            if (evidence.size() == entry.evidence().size()
+                    && Objects.equals(definition, entry.definitionProposal())) {
                 return Optional.of(entry);
             }
-            return Optional.of(new GlossaryEntry(entry.id(), entry.term(), entry.normalized(), entry.scope(),
-                    entry.origin(), entry.status(), evidence, entry.evidenceStale(), entry.explanation(),
-                    entry.generation(), entry.createdBy(), entry.createdAt(), entry.updatedAt(), entry.reviewedBy(),
-                    entry.reviewedAt(), entry.revision()));
+            return Optional.of(entry.showing(evidence, definition));
         }
 
         GlossaryEntry withoutEvidence(GlossaryEntry entry) {
-            return new GlossaryEntry(entry.id(), entry.term(), entry.normalized(), entry.scope(), entry.origin(),
-                    entry.status(), List.of(), entry.evidenceStale(), entry.explanation(), entry.generation(),
-                    entry.createdBy(), entry.createdAt(), entry.updatedAt(), entry.reviewedBy(), entry.reviewedAt(),
-                    entry.revision());
+            return entry.showing(List.of(), null);
         }
 
         private boolean scope(RelationScope scope) {
