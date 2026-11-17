@@ -780,15 +780,24 @@ public final class Workspace {
      * @return Zahl der gelöschten Analysen (Seiten und Dokumente)
      */
     public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.knowledgeGraph().delete(caller, analysesOf(selection, resolveSelection(selection)));
+    }
+
+    /**
+     * Welche Analysen zur Auswahl gehören: bei einer ganzen Quelle jede mit ihrer {@code sourceId}, auch zu Seiten, die
+     * der Bestand nicht mehr kennt (sonst ließen sie sich nie mehr löschen); bei Space, Ordner und Seite nur die Seiten
+     * aus dem Bestand ({@code pages}).
+     */
+    static java.util.function.Predicate<PageKey> analysesOf(
+            com.aresstack.spaceharvester.application.holdings.Selection selection,
+            com.aresstack.spaceharvester.application.holdings.PageSelection pages) {
         java.util.Set<String> wholeSources = new java.util.HashSet<>();
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : selection.roots()) {
             if (root.spaceKey() == null && root.pageId() == null) {
                 wholeSources.add(root.sourceId());
             }
         }
-        com.aresstack.spaceharvester.application.holdings.PageSelection pages = resolveSelection(selection);
-        return harvester.knowledgeGraph().delete(caller,
-                key -> wholeSources.contains(key.sourceId()) || pages.contains(key));
+        return key -> wholeSources.contains(key.sourceId()) || pages.contains(key);
     }
 
     /**

@@ -224,6 +224,23 @@ class WorkspaceTest {
             assertThat(heard).hasValue(0);
         }
         assertThat(workspace.cachedPages("handbuch", space, null, 100).pages()).as("die Seiten bleiben").hasSize(2);
+
+        // Eine Analyse zu einer Seite, die der Bestand nicht mehr kennt: Die ganze Quelle nimmt sie mit (sie zählt in
+        // der gemeldeten Zahl des Core), der Space nicht; eine bekannte Seite gehört zu beiden.
+        var spaceSelection = com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space));
+        var sourceSelection = com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("handbuch"));
+        var gone = new com.aresstack.spaceharvester.application.snapshot.PageKey("handbuch", "gibt-es-nicht-mehr");
+        var known = workspace.cachedPages("handbuch", space, null, 100).pages().get(0).header().key();
+        var bySpace = Workspace.analysesOf(spaceSelection, workspace.resolveSelection(spaceSelection));
+        var bySource = Workspace.analysesOf(sourceSelection, workspace.resolveSelection(sourceSelection));
+        assertThat(bySource.test(gone)).isTrue();
+        assertThat(bySpace.test(gone)).isFalse();
+        assertThat(bySpace.test(known)).isTrue();
+        assertThat(bySource.test(known)).isTrue();
+        assertThat(bySource.test(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "100")))
+                .isFalse();
     }
 
     @Test
