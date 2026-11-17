@@ -186,6 +186,15 @@ class StandingTabTest {
                 .contains(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL)
                 .contains(CheckTexts.MODEL_SENTENCE_LABEL + ": „Der Antrag wird vom Sachbearbeiter geprüft.“")
                 .doesNotContain(CheckTexts.VERDICT_LABEL);
+        // Die Herkunft steht schon in der grauen Zeile unter dem Satz, als Wort.
+        assertThat(StandingTab.meta(corrected)).isEqualTo("Antragsverfahren · Korrektur des Modells (KI)");
+        assertThat(StandingTab.meta(entry)).isEqualTo("Antragsverfahren · unsicher");
+        StatusQuoEntry staged = new StatusQuoEntry(page("2", "Antragsverfahren"), statement("v6",
+                ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Quality.PLAUSIBLE,
+                ParsedStatements.Derivation.vorstufe(ParsedStatements.StageFlag.FACT, "Der Antrag wird geprüft")),
+                StatementKind.ACTION, "Der Antrag", "antrag", null, ParsedStatements.Quality.PLAUSIBLE,
+                new StatementStanding(Standing.GILT, StandingBasis.STAGE_FLAG, StandingReason.STAGE_FACT), null, false);
+        assertThat(StandingTab.meta(staged)).startsWith("Antragsverfahren · Vorstufe (KI)");
     }
 
     @Test
