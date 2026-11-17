@@ -13,6 +13,18 @@ class ProblemsTest {
             SourceAccessException.Reason.UNAVAILABLE, "Seite 42: Confluence nicht erreichbar (Lese-Timeout)", null);
 
     @Test
+    void missingBscwProxyRouteNamesTheNetworkConfigurationProblem() {
+        SourceAccessException error = new SourceAccessException("bscw",
+                SourceAccessException.Reason.UNAVAILABLE,
+                "BSCW WebDAV route-unavailable: pac-url-not-found", null);
+
+        Problems.Problem problem = Problems.describe(error);
+        assertThat(problem.title()).isEqualTo("Proxy-Route nicht ermittelt");
+        assertThat(problem.hint()).contains("Proxy-Ausnahme");
+        assertThat(Problems.describe(error, Problems.Step.PAGE_LIST).hint()).contains("Proxy-Ausnahme");
+    }
+
+    @Test
     void eachStepHasItsOwnHeading() {
         assertThat(Problems.describe(UNAVAILABLE, Problems.Step.SPACES).title())
                 .isEqualTo("Spaces nicht abrufbar: Quelle nicht erreichbar");

@@ -112,6 +112,8 @@ final class SourceForm {
     private java.util.Map<String, String> keePassFields;
     /** Adresse des gelesenen Eintrags ("" ohne Adresse); {@code null}: keiner gelesen. Leeres Adressfeld = sie gilt. */
     private String keePassUrl;
+    /** Track only the automatically applied BSCW URL; preserve explicit user edits. */
+    private String autoFilledBscwAddress;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
     private String suggestedEntry;
     private boolean suggesting;
@@ -557,6 +559,7 @@ final class SourceForm {
             java.util.Map<String, String> fields = (java.util.Map<String, String>) read[3];
             keePassFields = fields;
             keePassUrl = read[2] == null ? "" : ((String) read[2]).strip();
+            prefillBscwAddressFromKeePass();
             if (!authPickedInKeePass) {
                 deriveAuthFromKeePass(keePassUser);
             }
@@ -575,6 +578,25 @@ final class SourceForm {
             keePassStatus = AiSettingsPanel.keePassReason(error);
             form.hint(keePassRow, keePassStatus);
         });
+    }
+
+    /** Prefill the BSCW folder URL without replacing a manually entered value. */
+    private void prefillBscwAddressFromKeePass() {
+        JTextField addressField = fields.address();
+        if (!"bscw".equals(typeId()) || addressField == null || !keePassOrigin()) {
+            return;
+        }
+        String existing = addressField.getText().strip();
+        String saved = keePassAddress();
+        boolean automatic = autoFilledBscwAddress != null
+                && autoFilledBscwAddress.equals(existing);
+        if (saved != null && (existing.isEmpty() || automatic)) {
+            addressField.setText(saved);
+            autoFilledBscwAddress = saved;
+        } else if (saved == null && automatic) {
+            addressField.setText("");
+            autoFilledBscwAddress = null;
+        }
     }
 
     private void forgetKeePassSecret() {
@@ -795,6 +817,8 @@ final class SourceForm {
         List<SourceFieldSpec> specs = ownForm ? List.of() : SourceFields.fields(selectedType());
         boolean same = editing != null && editing.draft().type().equals(type);
         fields.load(specs, same ? editing.draft().extraOptions() : Map.of(), !same, addressOption());
+        autoFilledBscwAddress = null;
+        prefillBscwAddressFromKeePass();
     }
 
     /**
@@ -832,8 +856,8 @@ final class SourceForm {
             } else if (SourceDraft.CONFLUENCE.equals(typeId())) {
                 auth.setSelectedItem(offered ? before : PAT);
             } else {
-                auth.setSelectedItem(type != null && type.needsCredentials() && modes.contains(AuthMode.BASIC) ? BASIC
-                        : NONE);
+                auth.setSelectedItem(type != null && modes.contains(AuthMode.BASIC)
+                        && (type.needsCredentials() || "bscw".equals(typeId())) ? BASIC : NONE);
             }
         } finally {
             deriving = was;

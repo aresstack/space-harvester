@@ -56,6 +56,7 @@ class HarvesterEacSourcesTest {
                     .containsExactly(
                             tuple("confluence", "Confluence", false, null, false),
                             tuple("files", "Ordner", false, "directory", false),
+                            tuple("bscw", "BSCW Classic (WebDAV)", false, "rootUrl", false),
                             tuple("ftp", "FTP", false, "host", false),
                             tuple("jes", "JES", true, "host", false),
                             tuple("ndv", "NDV", true, "host", false),
@@ -90,6 +91,7 @@ class HarvesterEacSourcesTest {
 
             assertThat(types.get("confluence").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
+            assertThat(types.get("bscw").authModes()).containsExactly(SourceType.AuthMode.BASIC);
             assertThat(types.get("ftp").authModes()).containsExactly(SourceType.AuthMode.NONE,
                     SourceType.AuthMode.BASIC);
             assertThat(types.get("files").authModes()).containsExactly(SourceType.AuthMode.NONE);

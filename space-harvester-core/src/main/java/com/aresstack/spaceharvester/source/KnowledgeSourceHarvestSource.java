@@ -584,6 +584,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             return List.of(new Partition(id, title, null));
         }
         try {
+            if (port instanceof SourceConnectionVerifier verifier) {
+                verifier.verifyConnection();
+            }
             return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
