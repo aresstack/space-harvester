@@ -75,14 +75,25 @@ public record GlossaryEntry(String id, String term, String normalized, RelationS
      * @param by       Urheber
      * @param reason   Kennung des Grunds ({@link #REASON}, etwa {@code TECHNICAL_HEAD}) oder {@code null}
      */
-    public record Classification(GlossaryDerivation.Category category, ClassifiedBy by, String reason) {
+    public record Classification(GlossaryDerivation.Category category, ClassifiedBy by, String reason,
+                                 List<com.aresstack.spaceharvester.application.snapshot.PageKey> pages) {
 
+        /**
+         * @param pages bei der KI die Seiten der Belege, die an das Modell gingen (ADR 0028, je Beleg die Seite):
+         *              verliert eine die Freigabe, fällt die Einordnung auf den Regelstand zurück; sonst leer
+         */
         public Classification {
             Objects.requireNonNull(category, "category");
             Objects.requireNonNull(by, "by");
             if (reason != null && !REASON.matcher(reason).matches()) {
                 throw new IllegalArgumentException("Grund der Einordnung ist keine Kennung");
             }
+            pages = pages == null ? List.of() : List.copyOf(new java.util.LinkedHashSet<>(pages));
+        }
+
+        /** Ohne Seiten (Regel, Mensch). */
+        public Classification(GlossaryDerivation.Category category, ClassifiedBy by, String reason) {
+            this(category, by, reason, List.of());
         }
     }
 
