@@ -78,6 +78,8 @@ class SourceUpdatesViewTest {
                 .as("das älteste links, das jüngste rechts")
                 .containsExactly("10.11.2026, 08:00 · angelo", "16.11.2026, 18:30 · angelo", "Seit dem letzten Update");
         assertThat(view.markedUpdate()).as("standardmäßig die letzte Änderung").isEqualTo(ChangeUpdate.OPEN);
+        assertThat(view.cloudTooltip("16.11.2026, 18:30 · angelo")).as("der Tooltip nennt auch die Zahlen")
+                .isEqualTo("16.11.2026, 18:30 · angelo · " + view.counts(actions.second()));
 
         assertThat(view.clickUpdate("16.11.2026, 18:30 · angelo")).isTrue();
         assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isNotEqualTo(ChangeUpdate.OPEN);

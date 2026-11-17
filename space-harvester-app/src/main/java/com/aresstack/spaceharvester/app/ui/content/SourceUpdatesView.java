@@ -156,6 +156,11 @@ final class SourceUpdatesView extends JPanel {
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
 
         sky.setName("updates.sky");
+        // In der Wolke Datum und Benutzer, im Tooltip auch die Zahl der Änderungen (Architekt, 17.11.2026).
+        sky.setTooltips(section -> {
+            ChangeUpdate update = entry(updates, section.id());
+            return update == null ? section.label() : section.label() + " · " + counts(update);
+        });
         sky.setListener(section -> {
             select(section.id());
             onSelected.accept(section.id());
@@ -1035,6 +1040,17 @@ final class SourceUpdatesView extends JPanel {
 
     DocumentNavigationSky sky() {
         return sky;
+    }
+
+    /** Der Tooltip der Wolke dieses Updates. */
+    String cloudTooltip(String heading) {
+        List<ChangeUpdate> clouds = updates.reversed();
+        for (int i = 0; i < clouds.size(); i++) {
+            if (heading.equals(heading(clouds.get(i)))) {
+                return sky.tooltipForTest(i);
+            }
+        }
+        return null;
     }
 
     private static boolean click(java.awt.Container container, String text) {
