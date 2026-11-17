@@ -50,12 +50,18 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
 - `sh:Mention` (eine Textstelle, **keine Entität**): `sh:text`, `sh:lemma`, `sh:headForm`, `sh:mentionKind`,
   `sh:unresolved` (offenes Pronomen), `sh:grammaticalCase`, `sh:sentence`, `sh:start`, `sh:end` (Zeichen im Lesetext
   der Fassung), `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `sh:lexicalKey` (normalisierte Grundform; gleiche
-  Werte auf verschiedenen Seiten sind **lexikalische Kandidaten**, keine bestätigte Identität).
+  Werte auf verschiedenen Seiten sind **lexikalische Kandidaten**, keine bestätigte Identität). Eine Erwähnung mit
+  `sh:mentionKind "CLAUSE"` ist ein Teilsatz als Beteiligter (ADR 0032, „dass der Antrag vollständig ist“): sie hat nie
+  einen `sh:lexicalKey` und ist nie ein Begriff; `sh:refersToStatement` → die Aussage des Teilsatzes (gleicher Satz,
+  Prädikat am Kopf des Teilsatzes), fehlt, wenn der Kopf kein Vollverb ist (z. B. Kopula).
 - `sh:Statement` (Aussage/Handlung als eigener Knoten): `sh:predicate`, `sh:predicateLemma`, `sh:voice`
   (`ACTIVE`/`PASSIVE`/…), `sh:clause` (`MAIN`/`SUBORDINATE`/…), `sh:core` (Kernsicht), `sh:finding` (Unsicherheiten
   und Hinweise), `sh:sentence`, `sh:paragraph` (Absatz im Lesetext, ab 0; fehlt, wenn unbekannt), `sh:start`, `sh:end`, `sh:extractionQuality`
   (`PLAUSIBLE`/`UNCERTAIN`/`INVALID`), `sh:qualityReason` (Gründe, keine Prozentwerte), `sh:verificationStatus`
   (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen Prüfung, sonst `CONFIRMED`/`REJECTED`),
+  Merkmale aus dem Satz (ADR 0032, FL2; fehlen bei älteren Analysen = unbekannt): `sh:negated` (true/false),
+  `sh:modality` (`NONE`/`MUSS`/`SOLL`/`KANN`/`DARF`), `sh:temporality` (`GILT`/`GEPLANT`/`FRUEHER`/`VERWORFEN`, nur aus
+  Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum),
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
   `sh:instrument`, `sh:time`, `sh:circumstance`.

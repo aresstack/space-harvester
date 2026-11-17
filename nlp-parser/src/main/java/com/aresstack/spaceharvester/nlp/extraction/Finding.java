@@ -48,5 +48,41 @@ public enum Finding {
      * Verbzusatz, den der Parser als prädikatives Adjektiv anhängt („stellt … sicher“), ist ins Prädikat übernommen;
      * ein daran hängendes Subjekt gilt als unsicheres Objekt.
      */
-    PREDICATIVE_PARTICLE
+    PREDICATIVE_PARTICLE,
+    /**
+     * Die Grundform des Prädikats ist aus der Wortform erzeugt, weil OpenNLP keine eigene lieferte (ADR 0032, FL2):
+     * „abruft“ → „abrufen“. Merkmal {@code LemmaFrom=Form} am Token; reiner Hinweis, ändert die Stufe nicht.
+     */
+    LEMMA_FROM_FORM,
+    /**
+     * Ein Beteiligter ist ein Teilsatz (Erwähnung der Art {@link Mention.Kind#CLAUSE}): „Wer … stellt, erhält …“,
+     * „Es wird geprüft, ob …“. Er verweist auf die Aussage des Teilsatzes. Aus {@code csubj} oder nachgestelltem
+     * {@code ccomp} ist das Parserevidenz; ein vorangestellter dass-/ob-Satz ({@code advcl}) oder eine Infinitivgruppe
+     * im Vorfeld ist abgeleitet ({@link Basis#HEURISTIC}, unsicher). wenn-/falls-/sofern-Sätze sind nie Beteiligte.
+     */
+    CLAUSE_PARTICIPANT,
+    /**
+     * Gereihte Verben mit einem Objekt am Ende („erfasst, prüft und genehmigt den Mittelabruf“): das Objekt ist von
+     * hinten übernommen, unsicher (es gibt kein Valenzlexikon: „erscheint und unterschreibt den Antrag“).
+     */
+    OBJECT_FROM_COORDINATION,
+    /** Relativpronomen auf das Nomen aufgelöst, an dem der Relativsatz hängt („die Mittel, die … abruft“). */
+    RELATIVE_PRONOUN_RESOLVED,
+    /**
+     * Personalpronomen als Objekt eines gereihten Verbs auf das Objekt des Bezugsverbs aufgelöst („prüft den Antrag
+     * und leitet ihn weiter“); nur bei genau einem Kandidaten, unsicher.
+     */
+    PRONOUN_FROM_COORDINATION,
+    /**
+     * Eine zu-Infinitivgruppe hat kein Subjekt: ein Subjekt laut Parser ist bei fehlendem Objekt das Objekt
+     * (unsicher), sonst verworfen („Die Unterlagen einzureichen, obliegt …“).
+     */
+    SUBJECT_OF_INFINITIVE,
+    /**
+     * Im Passiv ohne von-Gruppe ist eine durch-Gruppe als Handelnder übernommen, abgeleitet und unsicher („wird durch
+     * die Bewilligungsstelle erlassen“); im Aktiv bleibt sie Umstand oder Mittel.
+     */
+    AGENT_FROM_DURCH,
+    /** „ist … zu + Infinitiv“: die von-Gruppe ist als Handelnder übernommen, abgeleitet und unsicher. */
+    AGENT_FROM_VON
 }

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricAnalysis;
 import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Role;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
+import com.aresstack.spaceharvester.nlp.extraction.StatementFeatures;
 import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Text;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Variante;
@@ -58,6 +59,11 @@ final class Bewertung {
         int ergaenztAbschnitt;
         int ergaenztSonst;
         int merkmaleVorgegeben;
+        /** Je Merkmal (Verneinung, Verbindlichkeit, Zeitbezug), nur Erwartungen mit gefundenem Verb. */
+        final int[] merkmalVorgegeben = new int[3];
+        final int[] merkmalRichtig = new int[3];
+        final int[] merkmalOhne = new int[3];
+        final int[] merkmalFaelschlich = new int[3];
         final List<String> fehler = new ArrayList<>();
 
         void add(Zahlen other) {
@@ -72,7 +78,21 @@ final class Bewertung {
             ergaenztAbschnitt += other.ergaenztAbschnitt;
             ergaenztSonst += other.ergaenztSonst;
             merkmaleVorgegeben += other.merkmaleVorgegeben;
+            for (int i = 0; i < 3; i++) {
+                merkmalVorgegeben[i] += other.merkmalVorgegeben[i];
+                merkmalRichtig[i] += other.merkmalRichtig[i];
+                merkmalOhne[i] += other.merkmalOhne[i];
+                merkmalFaelschlich[i] += other.merkmalFaelschlich[i];
+            }
             fehler.addAll(other.fehler);
+        }
+
+        int merkmaleRichtig() {
+            return merkmalRichtig[0] + merkmalRichtig[1] + merkmalRichtig[2];
+        }
+
+        int merkmaleFaelschlich() {
+            return merkmalFaelschlich[0] + merkmalFaelschlich[1] + merkmalFaelschlich[2];
         }
 
         int fehlt() {
@@ -82,7 +102,8 @@ final class Bewertung {
 
     /** Eine erzeugte Aussage mit Originalsatz und den Namen ihrer Beteiligten. */
     private record Befund(Statement statement, int satz, String lemma, StatementQuality.Level stufe,
-                          Map<Rolle, List<Set<String>>> rollen, Set<String> alleNamen, String kurz) {
+                          Map<Rolle, List<Set<String>>> rollen, Set<String> alleNamen, String kurz,
+                          StatementFeatures.Features merkmale) {
     }
 
     static Zahlen bewerten(Textsatz satz, Variante variante, Text text) {
@@ -113,6 +134,8 @@ final class Bewertung {
             boolean grundform = false;
             boolean richtig = false;
             boolean streng = false;
+            boolean[] merkmal = new boolean[3];
+            List<String> merkmalIst = new ArrayList<>();
             List<String> gesehen = new ArrayList<>();
             for (Lesart lesart : erwartung.lesarten()) {
                 for (Befund befund : befunde) {
@@ -123,6 +146,12 @@ final class Bewertung {
                     grundform |= lesart.verb().equals(befund.lemma());
                     richtig |= rollenPassen(lesart, befund, false);
                     streng |= rollenPassen(lesart, befund, true);
+                    // Merkmale an jeder Aussage mit passendem Verb, unabhängig von den Rollen
+                    StatementFeatures.Features m = befund.merkmale();
+                    merkmal[0] |= m.negated() == lesart.verneint();
+                    merkmal[1] |= verbindlichkeit(m).equals(lesart.verbindlichkeit());
+                    merkmal[2] |= m.temporality().name().equals(lesart.zeitbezug());
+                    merkmalIst.add((m.negated() ? "verneint " : "") + verbindlichkeit(m) + " " + m.temporality());
                     gesehen.add(befund.kurz());
                 }
             }
@@ -130,6 +159,25 @@ final class Bewertung {
             zahlen.grundformRichtig += grundform ? 1 : 0;
             zahlen.richtig += richtig ? 1 : 0;
             zahlen.streng += streng ? 1 : 0;
+            if (verb) {
+                Lesart erste = erwartung.lesarten().get(0);
+                boolean[] vorgegeben = {erste.verneint(), !"-".equals(erste.verbindlichkeit()),
+                    !"GILT".equals(erste.zeitbezug())};
+                for (int i = 0; i < 3; i++) {
+                    if (vorgegeben[i]) {
+                        zahlen.merkmalVorgegeben[i]++;
+                        zahlen.merkmalRichtig[i] += merkmal[i] ? 1 : 0;
+                    } else {
+                        zahlen.merkmalOhne[i]++;
+                        zahlen.merkmalFaelschlich[i] += merkmal[i] ? 0 : 1;
+                    }
+                }
+                if (!(merkmal[0] && merkmal[1] && merkmal[2])) {
+                    zahlen.fehler.add(prefix + " " + erwartung.id() + " (" + erste.verb() + "): Merkmale ist "
+                            + String.join(" / ", merkmalIst) + ", soll " + (erste.verneint() ? "verneint " : "")
+                            + erste.verbindlichkeit() + " " + erste.zeitbezug());
+                }
+            }
             if (!richtig) {
                 zahlen.fehler.add(prefix + " " + erwartung.id() + " (Satz " + erwartung.satz() + ", "
                         + erwartung.lesarten().get(0).verb() + "): "
@@ -228,12 +276,22 @@ final class Bewertung {
         kurz.append(')');
         StatementQuality.Level stufe = StatementQuality.assess(mentions, analysis, statement).level();
         kurz.append(' ').append(stufe);
-        return new Befund(statement, satz, lemma, stufe, rollen, alle, kurz.toString());
+        return new Befund(statement, satz, lemma, stufe, rollen, alle, kurz.toString(),
+                StatementFeatures.assess(mentions, analysis, statement));
+    }
+
+    private static String verbindlichkeit(StatementFeatures.Features merkmale) {
+        return merkmale.modality() == StatementFeatures.Modality.NONE ? "-" : merkmale.modality().name();
     }
 
     /** Vergleichsnamen eines Beteiligten: Form und Grundform des Kopfs in Kleinschreibung. */
     private static Set<String> namen(Mention mention) {
         Set<String> namen = new LinkedHashSet<>();
+        if (mention != null && mention.kind() == Mention.Kind.CLAUSE) {
+            // Teilsatz als Beteiligter: „§“ + Grundform des Kopfs (Schreibweise der Vorgabe)
+            namen.add("§" + (mention.lemma() != null ? mention.lemma() : mention.headForm()).toLowerCase(Locale.ROOT));
+            return namen;
+        }
         if (mention != null) {
             namen.add(mention.headForm().toLowerCase(Locale.ROOT));
             if (mention.lemma() != null) {

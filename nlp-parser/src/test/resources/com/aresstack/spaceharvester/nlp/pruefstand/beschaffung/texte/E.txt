@@ -1,0 +1,10 @@
+Dass die Lieferung vollständig ist, bestätigt der Lagerist.
+Wer eine Bestellung auslöst, erhält eine Auftragsnummer.
+Ob ein Artikel nachbestellt wird, entscheidet der Einkäufer.
+Die Rechnung zu prüfen, gehört zu den Aufgaben der Buchhaltung.
+Der Lagerist verpackt die Ware und übergibt sie dem Fahrer.
+Der Einkäufer holt Angebote ein, vergleicht die Preise und vergibt den Auftrag.
+Die Buchhaltung bezahlt die Rechnung, nachdem der Lagerist den Wareneingang gebucht hat.
+Es wird geprüft, ob der Lieferant die Lieferfrist einhält.
+Was der Lagerist beanstandet, muss der Lieferant ersetzen.
+Das Lagersystem bucht den Abgang, sobald der Fahrer die Übernahme quittiert, und druckt den Lieferschein.

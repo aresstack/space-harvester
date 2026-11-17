@@ -214,6 +214,29 @@ class UpdateSummaryTest {
     }
 
     @Test
+    void aWaitingOrRunningSummaryIsReturnedInsteadOfStartingASecondOne() {
+        String id = oneUpdate();
+
+        JobStatus first = log.summarize(CALLER, "wiki", id);
+        JobStatus again = log.summarize(READER, "wiki", id);
+        JobStatus space = log.summarize(CALLER, "wiki", id, "DEV");
+
+        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(log.summarize(CALLER, "wiki", id, "DEV").id()).isEqualTo(space.id());
+        assertThat(space.id()).isNotEqualTo(first.id());
+        assertThat(jobs.listAll(JobType.UPDATE_SUMMARY)).hasSize(2);
+
+        jobs.cancel(space.id());
+        assertThat(log.summarize(CALLER, "wiki", id, "DEV").id()).isNotEqualTo(space.id());
+
+        run(first);
+        assertThat(jobs.status(first.id()).state()).isEqualTo(JobState.COMPLETED);
+        JobStatus fresh = log.summarize(CALLER, "wiki", id);
+        assertThat(fresh.id()).isNotEqualTo(first.id());
+        assertThat(fresh.state()).isEqualTo(JobState.QUEUED);
+    }
+
+    @Test
     void theSummaryIsAJobThatSendsOnlyReleasedTitlesAndStoresStatementsWithKnownPages() {
         String id = oneUpdate();
 

@@ -107,7 +107,11 @@ final class FakeStatementAnalyzer implements StatementAnalyzer {
                         ParsedStatements.Clause.MAIN, true, arguments,
                         pronoun ? Set.of("UNRESOLVED_PRONOUN") : Set.of(), 0,
                         pronoun ? ParsedStatements.Quality.UNCERTAIN : ParsedStatements.Quality.PLAUSIBLE,
-                        pronoun ? List.of("UNRESOLVED_PRONOUN") : List.of(), ParsedStatements.Review.UNREVIEWED));
+                        pronoun ? List.of("UNRESOLVED_PRONOUN") : List.of(), ParsedStatements.Review.UNREVIEWED,
+                        // Merkmale nur, wenn der Satz „nicht“ enthält; sonst unbekannt wie bei älteren Analysen
+                        text.substring(start, end).contains(" nicht") ? new ParsedStatements.Features(
+                                ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.NONE,
+                                ParsedStatements.Temporality.GILT) : ParsedStatements.Features.UNKNOWN));
             }
             start = end;
             index++;

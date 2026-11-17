@@ -70,7 +70,18 @@ final class PrimaryRelationExtraction {
 
     private static Statement statement(ParsedDocument document, Mentions mentions, Sentence sentence, Token verb) {
         Set<Finding> findings = EnumSet.noneOf(Finding.class);
+        if ("Form".equals(verb.feats().get(Token.LEMMA_FROM))) {
+            findings.add(Finding.LEMMA_FROM_FORM);
+        }
         Token subject = firstOf(sentence, verb.id(), "nsubj", "nsubj:pass");
+        // Eine zu-Infinitivgruppe ohne Hilfsverb hat kein Subjekt; der Parser hängt dort gern das Objekt an.
+        Token infinitiveSubject = null;
+        if (subject != null && "nsubj".equals(subject.deprel()) && zuInfinitive(sentence, verb)
+                && sentence.dependents(verb.id()).stream().noneMatch(PrimaryRelationExtraction::auxiliary)) {
+            infinitiveSubject = subject;
+            subject = null;
+            findings.add(Finding.SUBJECT_OF_INFINITIVE);
+        }
         Token inherited = null;
         if (subject == null) {
             inherited = coordinatedSubject(sentence, verb);
@@ -101,6 +112,43 @@ final class PrimaryRelationExtraction {
                 objects.add(object);
             }
         }
+        boolean infinitiveObject = false;
+        if (infinitiveSubject != null && objects.isEmpty() && infinitiveSubject.hasUpos("NOUN", "PROPN")) {
+            objects.add(infinitiveSubject);
+            infinitiveObject = true;
+        }
+        // Teilsätze als Beteiligte (ADR 0032): csubj ist Subjekt, neben einem nominalen Subjekt Objekt („Was …,
+        // muss er nachbessern“); ccomp ist Objekt, im Vorfeld ohne Subjekt abgeleitetes Subjekt; ein vorangestellter
+        // dass-/ob-Satz (advcl) ist abgeleitet Subjekt bzw. Objekt.
+        Token clauseSubject = null;
+        boolean clauseSubjectDerived = false;
+        Token clauseObject = null;
+        boolean clauseObjectDerived = false;
+        Token csubj = firstOf(sentence, verb.id(), "csubj", "csubj:pass");
+        if (csubj != null && subject == null && inherited == null) {
+            clauseSubject = csubj;
+        } else if (csubj != null) {
+            clauseObject = csubj;
+        }
+        if (clauseSubject == null && subject == null && inherited == null) {
+            clauseSubject = frontClause(sentence, verb, true);
+            clauseSubjectDerived = clauseSubject != null;
+        }
+        if (clauseObject == null && objects.isEmpty()) {
+            for (Token dependent : sentence.dependents(verb.id(), "ccomp")) {
+                if (dependent != clauseSubject && dependent.id() > verb.id()) {
+                    clauseObject = dependent;
+                    break;
+                }
+            }
+            if (clauseObject == null && (subject != null || inherited != null || clauseSubject != null)) {
+                clauseObject = frontClause(sentence, verb, false);
+                clauseObjectDerived = clauseObject != null && clauseObject != clauseSubject;
+                if (clauseObject == clauseSubject) {
+                    clauseObject = null;
+                }
+            }
+        }
         int[] label = listLabel(sentence);
         boolean subjectIsLabel = subject != null && inside(label, subject);
         if (subjectIsLabel) {
@@ -124,7 +172,11 @@ final class PrimaryRelationExtraction {
             findings.add(Finding.HEURISTIC_PARTICIPANT);
         } else if (subject != null) {
             // Auch eine Kennung vor dem Doppelpunkt, die der Parser selbst als Subjekt anhängt, ist Parserevidenz.
-            Mention mention = mentions.at(document, sentence, subject);
+            Token antecedent = relativeAntecedent(sentence, verb, subject);
+            if (antecedent != null) {
+                findings.add(Finding.RELATIVE_PRONOUN_RESOLVED);
+            }
+            Mention mention = mentions.at(document, sentence, antecedent != null ? antecedent : subject);
             arguments.add(new Argument(passive ? Role.AFFECTED_OBJECT : Role.ACTOR, mention.id(), subject.deprel(),
                     null, Priority.CORE, Basis.PARSER, true));
         } else if (inherited != null) {
@@ -132,6 +184,12 @@ final class PrimaryRelationExtraction {
             arguments.add(new Argument(passive ? Role.AFFECTED_OBJECT : Role.ACTOR, mention.id(),
                     inherited.deprel(), null, Priority.CORE, Basis.COORDINATION, false));
             findings.add(Finding.SUBJECT_FROM_COORDINATION);
+        } else if (clauseSubject != null) {
+            Mention mention = mentions.clause(document, sentence, clauseSubject);
+            arguments.add(new Argument(passive ? Role.AFFECTED_OBJECT : Role.ACTOR, mention.id(),
+                    clauseSubject.deprel(), null, Priority.CORE,
+                    clauseSubjectDerived ? Basis.HEURISTIC : Basis.PARSER, !clauseSubjectDerived));
+            findings.add(Finding.CLAUSE_PARTICIPANT);
         } else if (label != null && !passive && ownClauseOfTheEntry(sentence, verb)) {
             // Listeneintrag ohne Subjekt („Datenkatalog: organisiert und stellt … bereit“): die Kennung ist der
             // implizite Handelnde, höchstens unsicher.
@@ -175,6 +233,26 @@ final class PrimaryRelationExtraction {
             }
         }
         for (Token object : objects) {
+            if (infinitiveObject && object == infinitiveSubject) {
+                Mention mention = mentions.at(document, sentence, object);
+                arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), object.deprel(), null, Priority.CORE,
+                        Basis.HEURISTIC, false));
+                continue;
+            }
+            Token antecedent = relativeAntecedent(sentence, verb, object);
+            Token parallel = antecedent == null ? parallelObject(sentence, verb, object) : null;
+            if (antecedent != null) {
+                findings.add(Finding.RELATIVE_PRONOUN_RESOLVED);
+                arguments.add(object(document, mentions, sentence, antecedent, "obj"));
+                continue;
+            }
+            if (parallel != null) {
+                findings.add(Finding.PRONOUN_FROM_COORDINATION);
+                Mention mention = mentions.at(document, sentence, parallel);
+                arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), "obj", null, Priority.CORE,
+                        Basis.COORDINATION, false));
+                continue;
+            }
             arguments.add(object(document, mentions, sentence, object, "obj"));
             for (Token conjunct : sentence.dependents(object.id(), "conj")) {
                 if (conjunct.hasUpos("NOUN", "PROPN", "PRON")) {
@@ -183,14 +261,158 @@ final class PrimaryRelationExtraction {
                 }
             }
         }
+        boolean clauseObjectAdded = objects.isEmpty() && clauseObject != null;
+        if (clauseObjectAdded) {
+            Mention mention = mentions.clause(document, sentence, clauseObject);
+            arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), clauseObject.deprel(), null,
+                    Priority.CORE, clauseObjectDerived ? Basis.HEURISTIC : Basis.PARSER, !clauseObjectDerived));
+            findings.add(Finding.CLAUSE_PARTICIPANT);
+        }
+        if (objects.isEmpty() && !passive && arguments.stream().noneMatch(a -> a.role() == Role.AFFECTED_OBJECT)) {
+            Token shared = sharedObject(sentence, verb);
+            if (shared != null) {
+                Mention mention = mentions.at(document, sentence, shared);
+                arguments.add(new Argument(Role.AFFECTED_OBJECT, mention.id(), "obj", null, Priority.CORE,
+                        Basis.COORDINATION, false));
+                findings.add(Finding.OBJECT_FROM_COORDINATION);
+            }
+        }
         if (objects.isEmpty() && arguments.stream().noneMatch(a -> a.role() == Role.AFFECTED_OBJECT
-                && a.basis() == Basis.HEURISTIC)) {
+                && (a.basis() == Basis.HEURISTIC || a.basis() == Basis.COORDINATION)) && !clauseObjectAdded) {
             findings.add(Finding.NO_ACCUSATIVE_OBJECT);
         }
         Statement statement = new Statement(id(document, sentence.index(), verb.id()), sentence.index(),
                 predicate(document, sentence, verb), passive ? Voice.PASSIVE : Voice.ACTIVE, clause, List.of(),
                 Set.of());
         return statement.with(arguments, withPronouns(mentions, arguments, findings));
+    }
+
+    /** Einleitewörter eines Inhaltssatzes, der Subjekt oder Objekt sein kann. */
+    private static final Set<String> CONTENT_CLAUSE_MARKS = Set.of("dass", "daß", "ob");
+    /** Formen eines Relativpronomens. */
+    private static final Set<String> RELATIVE_PRONOUNS = Set.of("der", "die", "das", "den", "dem", "denen", "deren",
+            "dessen", "welcher", "welche", "welches", "welchen", "welchem");
+    /** Personalpronomen, die auf ein Objekt im selben Satz verweisen können. */
+    private static final Set<String> OBJECT_PRONOUNS = Set.of("ihn", "sie", "es");
+
+    /**
+     * Ein Teilsatz im Vorfeld vor {@code verb}: {@code ccomp} oder {@code advcl} mit dass/ob; als Subjektkandidat
+     * zusätzlich eine Infinitivgruppe ({@code ccomp}/{@code xcomp} ohne Einleitewort, „Die Unterlagen einzureichen,
+     * obliegt …“). wenn-/falls-/sobald-Sätze nie.
+     */
+    private static Token frontClause(Sentence sentence, Token verb, boolean asSubject) {
+        for (Token dependent : sentence.dependents(verb.id())) {
+            if (dependent.id() > verb.id()) {
+                continue;
+            }
+            String relation = dependent.baseRelation();
+            boolean content = sentence.dependents(dependent.id(), "mark").stream()
+                    .anyMatch(mark -> CONTENT_CLAUSE_MARKS.contains(mark.form().toLowerCase(Locale.ROOT)));
+            boolean marked = !sentence.dependents(dependent.id(), "mark").isEmpty();
+            if (("advcl".equals(relation) || "ccomp".equals(relation)) && content) {
+                return dependent;
+            }
+            if (asSubject && ("ccomp".equals(relation) || "xcomp".equals(relation)) && !marked
+                    && dependent.hasUpos("VERB") && zuInfinitive(sentence, dependent)) {
+                return dependent;
+            }
+        }
+        return null;
+    }
+
+    /** Ob {@code verb} ein zu-Infinitiv ist: {@code zu} als Abhängiger oder eingeschoben („einzureichen“). */
+    static boolean zuInfinitive(Sentence sentence, Token verb) {
+        if (sentence.dependents(verb.id(), "mark").stream().anyMatch(t -> "zu".equalsIgnoreCase(t.form()))) {
+            return true;
+        }
+        String form = verb.form().toLowerCase(Locale.ROOT);
+        String lemma = verb.lemma() == null ? null : verb.lemma().toLowerCase(Locale.ROOT);
+        if (lemma == null || form.equals(lemma)) {
+            return false;
+        }
+        for (int i = 1; i + 2 < form.length(); i++) {
+            if (form.startsWith("zu", i) && (form.substring(0, i) + form.substring(i + 2)).equals(lemma)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Bezugsnomen eines Relativpronomens: {@code pronoun} ist ein Pronomen in Relativpronomenform, erstes Wort des
+     * Relativsatzes von {@code verb} ({@code acl}/{@code acl:relcl}), und der Relativsatz hängt an einem Nomen.
+     */
+    static Token relativeAntecedent(Sentence sentence, Token verb, Token pronoun) {
+        if (!pronoun.hasUpos("PRON") || !RELATIVE_PRONOUNS.contains(pronoun.form().toLowerCase(Locale.ROOT))
+                || !"acl".equals(verb.baseRelation())) {
+            return null;
+        }
+        Token noun = sentence.head(verb);
+        if (noun == null || !noun.hasUpos("NOUN", "PROPN")) {
+            return null;
+        }
+        int[] span = span(sentence, verb.id());
+        for (int id = span[0]; id < pronoun.id(); id++) {
+            Token before = sentence.token(id);
+            if (!before.hasUpos("PUNCT", "ADP")) {
+                return null;
+            }
+        }
+        return noun;
+    }
+
+    /**
+     * Objekt des Bezugsverbs für ein Personalpronomen als Objekt eines gereihten Verbs („prüft den Antrag und leitet
+     * ihn weiter“): nur wenn das Bezugsverb genau ein nominales Objekt hat.
+     */
+    private static Token parallelObject(Sentence sentence, Token verb, Token pronoun) {
+        if (!pronoun.hasUpos("PRON") || !OBJECT_PRONOUNS.contains(pronoun.form().toLowerCase(Locale.ROOT))
+                || !"conj".equals(verb.baseRelation())) {
+            return null;
+        }
+        Token head = sentence.head(verb);
+        if (head == null || !head.hasUpos("VERB")) {
+            return null;
+        }
+        List<Token> candidates = sentence.dependents(head.id(), "obj").stream()
+                .filter(t -> t.hasUpos("NOUN", "PROPN")).toList();
+        return candidates.size() == 1 ? candidates.get(0) : null;
+    }
+
+    /**
+     * Objekt am letzten von mehreren gereihten Verben, wenn dazwischen nur Verben, Kommas und Konjunktionen stehen
+     * („erfasst, prüft und genehmigt den Mittelabruf“), sonst {@code null}. Nicht im eingeleiteten Nebensatz oder
+     * Relativsatz (Verbletztstellung).
+     */
+    private static Token sharedObject(Sentence sentence, Token verb) {
+        // Im eingeleiteten Nebensatz steht das Objekt vor dem Verb; ein Objekt dahinter gehört nie dazu.
+        if (!sentence.dependents(verb.id(), "mark").isEmpty() || "acl".equals(verb.baseRelation())) {
+            return null;
+        }
+        Token last = verb;
+        boolean extended = true;
+        while (extended) {
+            extended = false;
+            for (Token dependent : sentence.dependents(last.id(), "conj")) {
+                if (dependent.id() > last.id() && dependent.hasUpos("VERB")) {
+                    last = dependent;
+                    extended = true;
+                    break;
+                }
+            }
+        }
+        if (last == verb) {
+            return null;
+        }
+        for (int id = verb.id() + 1; id < last.id(); id++) {
+            Token between = sentence.token(id);
+            if (!between.hasUpos("VERB", "CCONJ") && !",".equals(between.form())) {
+                return null;
+            }
+        }
+        List<Token> objects = sentence.dependents(last.id(), "obj").stream()
+                .filter(t -> !reflexive(t) && t.id() > verb.id()).toList();
+        return objects.size() == 1 && objects.get(0).id() > last.id() ? objects.get(0) : null;
     }
 
     private static Argument object(ParsedDocument document, Mentions mentions, Sentence sentence, Token token,

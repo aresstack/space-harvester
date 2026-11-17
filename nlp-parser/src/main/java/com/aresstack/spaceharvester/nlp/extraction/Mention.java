@@ -49,6 +49,11 @@ public record Mention(String id, int sentence, int head, List<Integer> tokens, i
         PROPER_NOUN,
         PRONOUN,
         /** Andere nominal gebrauchte Wörter (Zahlen, substantivierte Adjektive). */
-        OTHER
+        OTHER,
+        /**
+         * Ein Teilsatz als Beteiligter („Dass der Antrag vollständig ist, …“, „Wer … stellt, …“): Kopf ist das
+         * Prädikat des Teilsatzes, die Erwähnung verweist auf dessen Aussage und ist nie ein Begriff (ADR 0032).
+         */
+        CLAUSE
     }
 }

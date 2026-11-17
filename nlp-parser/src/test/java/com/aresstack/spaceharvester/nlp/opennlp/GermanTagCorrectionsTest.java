@@ -62,4 +62,25 @@ class GermanTagCorrectionsTest {
         assertEquals("verstehen", GermanTagCorrections.lemma("verstehen", "VERB", "verstehen"));
         assertNull(GermanTagCorrections.lemma("Zuzug", "VERB", null));
     }
+
+    @Test
+    void finiteFormsAndParticiplesKeptAsLemmaByOpenNlp() {
+        assertEquals("abrufen", GermanTagCorrections.lemma("abruft", "VERB", "abruft"));
+        assertEquals("sammeln", GermanTagCorrections.lemma("sammelt", "VERB", "sammelt"));
+        assertEquals("ändert", GermanTagCorrections.lemma("ändert", "VERB", "ändert"), "mit Umlaut: bleibt");
+        assertEquals("arbeiten", GermanTagCorrections.lemma("arbeitet", "VERB", "arbeitet"));
+        assertEquals("einhält", GermanTagCorrections.lemma("einhält", "VERB", "einhält"), "starkes Verb: unsicher");
+        assertEquals("prüft", GermanTagCorrections.lemma("prüft", "NOUN", "prüft"), "nur Verben");
+        assertEquals("erfassen", GermanTagCorrections.lemma("erfasst", "VERB", "erfassen"), "Grundform bleibt");
+        assertNull(GermanTagCorrections.lemma("holt", "VERB", null), "ohne Grundform nichts erfinden");
+        assertEquals("zurücksenden", GermanTagCorrections.lemma("zurückgesendet", "VERB", "zurückgesenden"));
+        assertEquals("angegeben", GermanTagCorrections.lemma("angegeben", "VERB", "angegeben"));
+        assertEquals("Maßnahme", GermanTagCorrections.lemma("Maßnahme", "NOUN", "Maßnahme"), "kein ß→ss");
+        // Gegenproben: im Zweifel die Form lassen statt ein Wort zu erfinden
+        for (String form : java.util.List.of("gibt", "gilt", "nimmt", "misst", "gebucht", "gehört")) {
+            assertEquals(form, GermanTagCorrections.lemma(form, "VERB", form), form);
+        }
+        assertEquals("bilden", GermanTagCorrections.lemma("bildet", "VERB", "bildet"));
+        assertEquals("liefern", GermanTagCorrections.lemma("liefert", "VERB", "liefert"));
+    }
 }

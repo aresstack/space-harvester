@@ -128,6 +128,8 @@ class KnowledgeGraphExportUseCaseTest {
             assertThat(node.path("extractionQuality").asString()).isEqualTo("PLAUSIBLE");
             assertThat(node.path("verificationStatus").asString()).isEqualTo("UNVERIFIED_PARSER_OUTPUT");
             assertThat(node.has("paragraph")).isTrue();
+            assertThat(node.has("negated") || node.has("modality") || node.has("temporality"))
+                    .as("unbekannte Merkmale fehlen").isFalse();
         });
         assertThat(nodes(doc, "GraphExport").getFirst().path("exportedQuality").toString()).contains("PLAUSIBLE")
                 .doesNotContain("UNCERTAIN");
@@ -141,6 +143,48 @@ class KnowledgeGraphExportUseCaseTest {
         assertThat(both).filteredOn(node -> node.path("extractionQuality").asString().equals("UNCERTAIN"))
                 .singleElement().satisfies(node -> assertThat(node.path("qualityReason").toString())
                         .contains("UNRESOLVED_PRONOUN"));
+    }
+
+    @Test
+    void knownFeaturesAreExported() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt nicht den Beleg.");
+
+        run(new Scope.Page("wiki", "1"));
+        assertThat(nodes(read(), "Statement")).singleElement().satisfies(node -> {
+            assertThat(node.path("negated").asBoolean()).isTrue();
+            assertThat(node.path("modality").asString()).isEqualTo("NONE");
+            assertThat(node.path("temporality").asString()).isEqualTo("GILT");
+        });
+    }
+
+    @Test
+    void aClauseParticipantPointsToTheStatementOfItsClauseAndIsNoTerm() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter prüft den Beleg. Die Buchhaltung sendet den Antrag.");
+        PageStatementAnalysis stored = store.find(new PageKey("wiki", "1")).orElseThrow();
+        ParsedStatements result = stored.result();
+        String second = result.statements().get(1).id();
+        String prefix = second.substring(0, second.lastIndexOf(".v"));
+        // Kopf mit eigener Aussage (…#s1.t1 → …#s1.v1) und Kopf ohne Vollverb (keine Aussage …#s0.v9)
+        ParsedStatements.Mention withStatement = new ParsedStatements.Mention(prefix + ".t1", 1, 36, 70,
+                "dass die Buchhaltung den Antrag sendet", "sendet", "senden", ParsedStatements.MentionKind.CLAUSE,
+                false, Set.of());
+        ParsedStatements.Mention copula = new ParsedStatements.Mention(
+                second.substring(0, second.indexOf('#')) + "#s0.t9", 0, 0, 10, "dass er vollständig ist", "ist",
+                "sein", ParsedStatements.MentionKind.CLAUSE, false, Set.of());
+        List<ParsedStatements.Mention> mentions = new java.util.ArrayList<>(result.mentions());
+        mentions.add(withStatement);
+        mentions.add(copula);
+        store.replace(stored.withResult(new ParsedStatements(result.sentences(), mentions, result.statements(),
+                result.attachments(), result.components(), result.conllu())));
+
+        run(new Scope.Page("wiki", "1"));
+        List<JsonNode> clauses = nodes(read(), "Mention").stream()
+                .filter(node -> node.path("mentionKind").asString().equals("CLAUSE")).toList();
+        assertThat(clauses).hasSize(2).allSatisfy(node -> assertThat(node.has("lexicalKey")).isFalse());
+        assertThat(clauses).filteredOn(node -> node.path("text").asString().contains("Buchhaltung")).singleElement()
+                .satisfies(node -> assertThat(node.path("refersToStatement").asString()).endsWith("s1.v1"));
+        assertThat(clauses).filteredOn(node -> node.path("text").asString().contains("vollständig")).singleElement()
+                .satisfies(node -> assertThat(node.has("refersToStatement")).as("Kopf ist kein Vollverb").isFalse());
     }
 
     private static List<JsonNode> nodes(JsonNode doc, String type) {

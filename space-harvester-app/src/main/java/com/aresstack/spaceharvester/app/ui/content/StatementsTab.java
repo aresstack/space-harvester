@@ -626,6 +626,10 @@ final class StatementsTab extends JPanel {
                     case COORDINATED -> "koordinierter Satz";
                     case SUBORDINATE -> "Nebensatz";
                 });
+        String features = features(statement.features());
+        if (!features.isEmpty()) {
+            body.add("Merkmale: " + features);
+        }
         for (ParsedStatements.Attachment attachment : result.attachments()) {
             boolean involved = statement.arguments().stream()
                     .anyMatch(argument -> argument.mention().equals(attachment.head()));
@@ -669,6 +673,28 @@ final class StatementsTab extends JPanel {
         return notes.isEmpty() ? "" : " (" + String.join(", ", notes) + ")";
     }
 
+    /** Abweichungen vom Standard (nicht verneint, ohne Modalverb, gilt), leer wenn nichts abweicht oder unbekannt. */
+    static String features(ParsedStatements.Features features) {
+        List<String> parts = new ArrayList<>();
+        if (features.negation() == ParsedStatements.Negation.NEGATED) {
+            parts.add("verneint");
+        }
+        switch (features.modality()) {
+            case MUSS -> parts.add("muss");
+            case SOLL -> parts.add("soll");
+            case KANN -> parts.add("kann");
+            case DARF -> parts.add("darf");
+            default -> { }
+        }
+        switch (features.temporality()) {
+            case GEPLANT -> parts.add("geplant");
+            case FRUEHER -> parts.add("früher");
+            case VERWORFEN -> parts.add("verworfen");
+            default -> { }
+        }
+        return String.join(" · ", parts);
+    }
+
     static String roleLabel(ParsedStatements.Role role) {
         return switch (role) {
             case ACTOR -> "Handelnder";
@@ -694,6 +720,14 @@ final class StatementsTab extends JPanel {
             case "HEURISTIC_PARTICIPANT" -> "Beteiligter aus dem Kasus geschlossen";
             case "UNCONFIRMED_DATIVE" -> "Dativ nicht bestätigt";
             case "TIME_FROM_NOMINAL" -> "Zeitangabe hing am Empfänger und ist nur unsicher zugeordnet";
+            case "CLAUSE_PARTICIPANT" -> "ein Beteiligter ist ein Teilsatz";
+            case "OBJECT_FROM_COORDINATION" -> "Objekt vom gereihten Verb übernommen (unsicher)";
+            case "RELATIVE_PRONOUN_RESOLVED" -> "Relativpronomen auf sein Bezugswort aufgelöst";
+            case "PRONOUN_FROM_COORDINATION" -> "Pronomen auf das Objekt des gereihten Verbs bezogen (unsicher)";
+            case "SUBJECT_OF_INFINITIVE" -> "Infinitivgruppe ohne eigenes Subjekt";
+            case "AGENT_FROM_DURCH" -> "Handelnder aus der durch-Gruppe abgeleitet (unsicher)";
+            case "AGENT_FROM_VON" -> "Handelnder aus der von-Gruppe bei „ist … zu“ abgeleitet (unsicher)";
+            case "LEMMA_FROM_FORM" -> "Grundform des Verbs aus der Wortform erzeugt";
             default -> code;
         };
     }

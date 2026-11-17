@@ -61,6 +61,8 @@ public final class ChangeLog implements AutoCloseable {
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
     private final Summaries summaries;
+    /** Hält „schon offen?“ und Einreihen von „Zusammenfassen“ zusammen. */
+    private final Object summarizing = new Object();
     /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
     private final Map<String, Boolean> inventories = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -417,7 +419,8 @@ public final class ChangeLog implements AutoCloseable {
      * {@link #subscribe} für die Quelle, sobald es abgelegt ist; eine frühere Zusammenfassung desselben Updates wird
      * ersetzt.
      *
-     * @return der Auftrag im Zustand {@code QUEUED}
+     * @return der neue Auftrag im Zustand {@code QUEUED}; wartet oder läuft für dieses Update in dieser Ebene schon einer
+     *         (ohne angeforderten Abbruch), dieser, ohne einen zweiten zu starten
      * @throws UnknownSourceException         wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws UnknownUpdateException         wenn die Quelle kein solches Update hat
      * @throws SummaryUnavailableException    ohne Modell oder für die Erstbefüllung
@@ -446,6 +449,21 @@ public final class ChangeLog implements AutoCloseable {
         Summaries runtime = summaries;
         Map<String, String> parameters = spaceKey == null ? Map.of(UPDATE_PARAMETER, update)
                 : Map.of(UPDATE_PARAMETER, update, SPACE_PARAMETER, spaceKey);
+        synchronized (summarizing) {
+            // Kein Doppelstart (die Leseansicht stößt „Zusammenfassen“ selbst an, auch aus zwei Fenstern): Wartet oder
+            // läuft der Auftrag für dieses Update in dieser Ebene schon, ist er die Antwort.
+            for (JobStatus open : runtime.jobs().listAll(JobType.UPDATE_SUMMARY)) {
+                if (!open.state().terminal() && !open.cancelRequested() && sourceId.equals(open.sourceId())
+                        && Objects.equals(spaceKey, open.partitionKey()) && parameters.equals(open.parameters())) {
+                    return open;
+                }
+            }
+            return submitSummary(caller, sourceId, update, spaceKey, span, runtime, parameters);
+        }
+    }
+
+    private JobStatus submitSummary(AccessContext caller, String sourceId, String update, String spaceKey, Span span,
+                                    Summaries runtime, Map<String, String> parameters) {
         return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
                 parameters, JobTask.blocking(context -> {
                     // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.

@@ -18,6 +18,14 @@ import java.util.Locale;
 /** Fachliche Bezeichnungen und Formate der Oberfläche, auf Deutsch. */
 public final class Texts {
 
+    /**
+     * Warum Seiten „veraltet“ sind: Die Quelle hat eine neuere Version, der Inhalt ist noch nicht geladen, meist weil
+     * die Betriebsart der Quelle „Nur katalogisieren“ ist.
+     */
+    public static final String OUTDATED_WHY = "Veraltet: In der Quelle gibt es eine neuere Version, der Inhalt ist noch "
+            + "nicht geladen, meist wegen der Betriebsart „Nur katalogisieren“. Ändern unter Quellen › „Diese Quelle "
+            + "anpassen …“ › Betriebsart.";
+
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMANY)
             .withZone(ZoneId.systemDefault());
 

@@ -129,6 +129,19 @@ public final class KnowledgeGraphJsonLd {
     }
 
     /**
+     * Aussage, auf die ein Teilsatz-Beteiligter verweist: gleicher Satz, Prädikat am Kopf des Teilsatzes
+     * ({@code …#s3.t4} → {@code …#s3.v4}), oder {@code null}, wenn der Kopf kein Vollverb ist.
+     */
+    static String clauseStatement(ParsedStatements result, ParsedStatements.Mention mention) {
+        int at = mention.id().lastIndexOf(".t");
+        if (at < 0) {
+            return null;
+        }
+        String candidate = mention.id().substring(0, at) + ".v" + mention.id().substring(at + 2);
+        return result.statements().stream().anyMatch(s -> s.id().equals(candidate)) ? candidate : null;
+    }
+
+    /**
      * IRI einer Erwähnung oder Aussage aus ihrer lokalen ID ({@code quelle/seite@fassung#s1.t2}): Fassung plus lokaler
      * Teil, kollisionsfrei über Quellen, Seiten und Fassungen.
      */
@@ -191,7 +204,7 @@ public final class KnowledgeGraphJsonLd {
                 "staleReason", "analyzer",
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
-                "verificationStatus",
+                "verificationStatus", "negated", "modality", "temporality",
                 "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
@@ -202,7 +215,7 @@ public final class KnowledgeGraphJsonLd {
         set(json, "exportedQuality", "sh:exportedQuality");
         for (String link : List.of("revisionOf", "documentOf", "page", "mention", "participant", "head",
                 "dependent", "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
-                "instrument", "time", "circumstance")) {
+                "instrument", "time", "circumstance", "refersToStatement")) {
             reference(json, link, "sh:" + link);
         }
         json.writeName("participation");
@@ -326,7 +339,14 @@ public final class KnowledgeGraphJsonLd {
             optional(json, "headForm", mention.headForm());
             json.writeStringProperty("mentionKind", mention.kind().name());
             json.writeBooleanProperty("unresolved", mention.unresolved());
-            if (!mention.unresolved() && mention.lemma() != null && !TermText.normalize(mention.lemma()).isEmpty()) {
+            if (mention.kind() == ParsedStatements.MentionKind.CLAUSE) {
+                // Teilsatz als Beteiligter (ADR 0032): Kante zur Aussage des Teilsatzes, nie ein Begriff
+                String clauseStatement = clauseStatement(result, mention);
+                if (clauseStatement != null) {
+                    json.writeStringProperty("refersToStatement", node(analysis, clauseStatement));
+                }
+            } else if (!mention.unresolved() && mention.lemma() != null
+                    && !TermText.normalize(mention.lemma()).isEmpty()) {
                 json.writeStringProperty("lexicalKey", TermText.normalize(mention.lemma()));
             }
             if (!mention.cases().isEmpty()) {
@@ -362,6 +382,16 @@ public final class KnowledgeGraphJsonLd {
             json.writeStringProperty("verificationStatus", statement.review() == ParsedStatements.Review.UNREVIEWED
                     ? UNVERIFIED : statement.review().name());
             json.writeStringProperty("extractionQuality", statement.quality().name());
+            ParsedStatements.Features features = statement.features();
+            if (features.negation() != ParsedStatements.Negation.UNKNOWN) {
+                json.writeBooleanProperty("negated", features.negation() == ParsedStatements.Negation.NEGATED);
+            }
+            if (features.modality() != ParsedStatements.Modality.UNKNOWN) {
+                json.writeStringProperty("modality", features.modality().name());
+            }
+            if (features.temporality() != ParsedStatements.Temporality.UNKNOWN) {
+                json.writeStringProperty("temporality", features.temporality().name());
+            }
             if (!statement.qualityReasons().isEmpty()) {
                 json.writeName("qualityReason");
                 json.writeStartArray();

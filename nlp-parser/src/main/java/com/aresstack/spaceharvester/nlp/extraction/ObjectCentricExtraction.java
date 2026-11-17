@@ -19,7 +19,7 @@ public final class ObjectCentricExtraction {
      * andere Sätze, Erwähnungen, Aussagen, Rollen, Hinweise oder Stufen liefert; gespeicherte Aussagenanalysen der
      * Desktop-App (#499) gelten dann als veraltet.
      */
-    public static final String RULES_VERSION = "6";
+    public static final String RULES_VERSION = "8";
 
     private final ExtractionSettings settings;
 
