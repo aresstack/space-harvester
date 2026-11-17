@@ -104,7 +104,8 @@ final class BscwWebDavTransport {
         URI target = checked(resource);
         HttpRoute route = routes.routeFor(target);
         if (route.isUnavailable()) {
-            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Proxy route unavailable");
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE,
+                    "BSCW WebDAV route-unavailable: " + route.describe());
         }
         HttpClient client = clientFor(route);
 
@@ -135,7 +136,8 @@ final class BscwWebDavTransport {
         } catch (SecretUnavailableException e) {
             throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "BSCW credentials unavailable");
         } catch (IOException e) {
-            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "BSCW WebDAV connection failed");
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE,
+                    "BSCW WebDAV connection failed (" + e.getClass().getSimpleName() + ")", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, "BSCW WebDAV request interrupted");
@@ -169,7 +171,8 @@ final class BscwWebDavTransport {
     }
 
     private static KnowledgeSourceException status(int status) {
-        Kind kind = status == 401 || status == 403 || status == 407 ? Kind.ACCESS_DENIED
+        Kind kind = status == 401 || status == 403 ? Kind.ACCESS_DENIED
+                : status == 407 ? Kind.UNAVAILABLE
                 : status == 404 ? Kind.NOT_FOUND
                 : status == 429 || status >= 500 ? Kind.UNAVAILABLE : Kind.INVALID_RESPONSE;
         return new KnowledgeSourceException(kind, "BSCW WebDAV HTTP " + status);

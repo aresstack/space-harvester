@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
+import com.aresstack.spaceharvester.source.BscwSourceAdapter;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
@@ -80,10 +81,19 @@ public final class SourceManagement {
     public ConnectionCheck test(SourceSettingsConfig draft, boolean replacing) {
         try {
             List<Partition> partitions = catalog.probe(draft, replacing, source -> source.partitions());
+            if (BscwSourceAdapter.TYPE.equals(draft.type())) {
+                return new ConnectionCheck(true, partitions.size(), "BSCW-WebDAV-Ordner erreichbar");
+            }
             return ConnectionCheck.success(partitions.size());
         } catch (InvalidSourceConfigurationException e) {
             return ConnectionCheck.failure("Einstellungen: " + String.join("; ", e.problems()));
         } catch (SourceAccessException e) {
+            if (BscwSourceAdapter.TYPE.equals(draft.type())
+                    && e.getMessage() != null && e.getMessage().startsWith("BSCW WebDAV route-unavailable")) {
+                return ConnectionCheck.failure("BSCW: Proxy-Route nicht bestimmbar. Unter Einstellungen > Netzwerk "
+                        + "> Erweitert eine Proxy-Ausnahme für den direkt erreichbaren Host eintragen oder den "
+                        + "Proxy konfigurieren.");
+            }
             return ConnectionCheck.failure(SourceDiagnostics.message(e.reason()));
         } catch (RuntimeException e) {
             return ConnectionCheck.failure("Unerwarteter Fehler (" + e.getClass().getSimpleName() + ")");

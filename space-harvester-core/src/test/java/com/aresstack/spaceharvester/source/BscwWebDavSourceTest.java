@@ -1,9 +1,13 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
+import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
@@ -12,6 +16,8 @@ import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.sources.ConnectionStep;
+import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
@@ -43,6 +49,7 @@ final class BscwWebDavSourceTest {
 
     private HttpServer server;
     private AtomicInteger downloads;
+    private AtomicInteger propfinds;
     private String root;
 
     @TempDir
@@ -52,6 +59,7 @@ final class BscwWebDavSourceTest {
     void startWebDavServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         downloads = new AtomicInteger();
+        propfinds = new AtomicInteger();
         server.createContext("/sec/bscw.cgi/", this::handle);
         server.start();
         root = "http://127.0.0.1:" + server.getAddress().getPort() + "/sec/bscw.cgi/146377797";
@@ -61,6 +69,83 @@ final class BscwWebDavSourceTest {
     void stopWebDavServer() {
         if (server != null) {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void navigatesFoldersLazilyAndKeepsFilesAsLeafNodes() throws Exception {
+        KnowledgeSourcePort port = open("reader", "secret");
+        PageNavigationSource navigation = (PageNavigationSource) port;
+
+        NavigationChildren rootChildren = navigation.children(
+                NavigationNode.root("space:bscw-test", "BSCW", "bscw-test", NavigationNode.Children.YES), "");
+        assertThat(rootChildren.nodes()).extracting(NavigationNode::title)
+                .containsExactly("Nested", "readme.txt");
+        assertThat(rootChildren.nodes().get(0).children()).isEqualTo(NavigationNode.Children.YES);
+        assertThat(rootChildren.nodes().get(1).children()).isEqualTo(NavigationNode.Children.NO);
+        assertThat(propfinds).hasValue(1);
+        assertThat(downloads).hasValue(0);
+
+        NavigationChildren folderChildren = navigation.children(rootChildren.nodes().get(0), "");
+        assertThat(folderChildren.nodes()).extracting(NavigationNode::title).containsExactly("archive.zip");
+        assertThat(propfinds).hasValue(2);
+        assertThat(downloads).hasValue(0);
+
+        assertThat(((ResourceMetadataSource) port).resourceMetadata(
+                ((ResourceMetadataSource) port).localId(rootChildren.nodes().get(0).resource()))
+                .contentType()).isEqualTo("inode/directory");
+        assertThat(navigation.position(folderChildren.nodes().get(0).resource()).ancestors())
+                .extracting(NavigationNode::title).containsExactly("Nested");
+    }
+
+    @Test
+    void coreNavigationLoadsOnlyTheCurrentWebDavFolder() {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root));
+
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            com.aresstack.spaceharvester.application.navigation.PageNavigation.Children top =
+                    harvester.navigation().children(harvester.caller(), "bscw-test", "bscw-test", null, null);
+            assertThat(top.pages()).extracting(
+                    com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
+                    .containsExactly("Nested", "readme.txt");
+            assertThat(propfinds).hasValue(1);
+            assertThat(downloads).hasValue(0);
+
+            com.aresstack.spaceharvester.application.navigation.PageNavigation.Children subfolder =
+                    harvester.navigation().children(harvester.caller(), "bscw-test", "bscw-test",
+                            top.pages().get(0).pageId(), null);
+            assertThat(subfolder.pages()).extracting(
+                    com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
+                    .containsExactly("archive.zip");
+            assertThat(propfinds).hasValue(2);
+            assertThat(downloads).hasValue(0);
+        }
+    }
+
+    @Test
+    void readsCsvWithGenericWebDavContentTypeAsText() throws Exception {
+        String csvRoot = root.replace("/146377797", "/888");
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW test", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", csvRoot));
+        String csvUrl = csvRoot.replace("/888", "/777");
+        String localId = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(csvUrl.getBytes(StandardCharsets.UTF_8));
+
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).source(config).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "bscw-test", localId,
+                    false).snapshot();
+            assertThat(snapshot.metadata().title()).isEqualTo("metrics.csv");
+            assertThat(snapshot.payload().mediaType()).isEqualTo("text/csv");
+            assertThat(harvester.pageText(snapshot)).map(PageText::text)
+                    .hasValueSatisfying(text -> assertThat(text).contains("first,second", "abc,def"));
+            com.aresstack.spaceharvester.application.reading.ReadingView view =
+                    harvester.readingViews().view(harvester.caller(), "bscw-test", localId, false);
+            assertThat(view.status()).isEqualTo(
+                    com.aresstack.spaceharvester.application.reading.ReadingView.Status.AVAILABLE);
+            assertThat(view.html()).contains("first,second", "abc,def");
         }
     }
 
@@ -136,6 +221,55 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void connectionTestChecksWebDavInsteadOfOnlyReturningAnOfflinePartition() throws Exception {
+        SourceSettingsConfig valid = new SourceSettingsConfig("bscw-test", "bscw", "BSCW", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root));
+        SourceSettingsConfig invalid = new SourceSettingsConfig("bscw-test", "bscw", "BSCW", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "wrong", null),
+                Map.of("rootUrl", root));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            assertThat(harvester.sourceManagement().test(valid, false).successful()).isTrue();
+            assertThat(propfinds.get()).isGreaterThan(0);
+            assertThat(harvester.sourceManagement().test(invalid, false).successful()).isFalse();
+        }
+    }
+
+    @Test
+    void networkDiagnosisUsesTheWebDavRootInsteadOfSkippingTheNetworkStages() throws Exception {
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "BSCW", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceDiagnosis diagnosis = harvester.sourceManagement().diagnose(config, false);
+            assertThat(diagnosis.successful()).isTrue();
+            assertThat(diagnosis.steps()).extracting(ConnectionStep::stage)
+                    .contains(ConnectionStep.Stage.PROXY_ROUTE, ConnectionStep.Stage.API);
+            assertThat(diagnosis.steps()).extracting(ConnectionStep::message)
+                    .doesNotContain("keine Netzverbindung für Quellentyp bscw")
+                    .contains("BSCW-Startordner über WebDAV erreichbar");
+        }
+    }
+
+    @Test
+    void unavailableProxyRouteHasARecognizableErrorWithoutSendingCredentials() throws Exception {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("bscw-test", "reader", "secret");
+        BscwWebDavTransport transport = new BscwWebDavTransport(URI.create(root), "bscw-test", secrets,
+                destination -> HttpRoute.unavailable("pac-url-not-found", "no PAC/WPAD URL was discovered"),
+                ProxyCredentials.none(), "test-agent", 1024, null);
+
+        assertThatThrownBy(() -> transport.properties(URI.create(root), 0))
+                .isInstanceOf(KnowledgeSourceException.class)
+                .satisfies(error -> {
+                    KnowledgeSourceException failure = (KnowledgeSourceException) error;
+                    assertThat(failure.kind()).isEqualTo(KnowledgeSourceException.Kind.UNAVAILABLE);
+                    assertThat(failure.getMessage()).contains("BSCW WebDAV route-unavailable");
+                });
+        assertThat(propfinds.get()).isZero();
+    }
+
+    @Test
     void refusesInvalidCredentialsAndNonBscwUrls() throws Exception {
         KnowledgeSourcePort wrong = open("reader", "wrong");
         assertThatThrownBy(() -> ((PartitionListingSource) wrong).resources("bscw-test", null, 2))
@@ -170,6 +304,7 @@ final class BscwWebDavSourceTest {
             }
             String path = exchange.getRequestURI().getRawPath();
             if ("PROPFIND".equals(exchange.getRequestMethod())) {
+                propfinds.incrementAndGet();
                 String depth = exchange.getRequestHeaders().getFirst("Depth");
                 String body = directoryResponse(path, "1".equals(depth));
                 respond(exchange, 207, body.getBytes(StandardCharsets.UTF_8), "application/xml");
@@ -183,6 +318,10 @@ final class BscwWebDavSourceTest {
                 }
                 if ("/sec/bscw.cgi/666".equals(path)) {
                     respond(exchange, 200, TEXT_CONTENT, "text/plain");
+                    return;
+                }
+                if ("/sec/bscw.cgi/777".equals(path)) {
+                    respond(exchange, 200, "first,second\\nabc,def".getBytes(StandardCharsets.UTF_8), "text/csv");
                     return;
                 }
             }
@@ -211,6 +350,13 @@ final class BscwWebDavSourceTest {
             if (children) {
                 xml.append(entry("/sec/bscw.cgi/555", "archive.zip", false, "application/zip"));
             }
+        } else if ("/sec/bscw.cgi/888".equals(path)) {
+            xml.append(entry(path, "CSV root", true, null));
+            if (children) {
+                xml.append(entry("/sec/bscw.cgi/777", "metrics.csv", false, "application/octet-stream"));
+            }
+        } else if ("/sec/bscw.cgi/777".equals(path)) {
+            xml.append(entry(path, "metrics.csv", false, "application/octet-stream"));
         } else if ("/sec/bscw.cgi/555".equals(path)) {
             xml.append(entry(path, "archive.zip", false, "application/zip"));
         } else if ("/sec/bscw.cgi/666".equals(path)) {

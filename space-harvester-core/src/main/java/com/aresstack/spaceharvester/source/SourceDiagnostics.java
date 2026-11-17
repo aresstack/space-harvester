@@ -77,6 +77,9 @@ public final class SourceDiagnostics implements SourceDiagnoses {
     private SourceDiagnosis run(SourceSettingsConfig config, IntSupplier partitions) {
         List<ConnectionStep> steps = new ArrayList<>();
         URI base = config.baseUrl();
+        if (base == null && BscwSourceAdapter.TYPE.equals(config.type())) {
+            base = URI.create(config.options().get("rootUrl"));
+        }
         boolean network = base != null && base.getHost() != null
                 && ("https".equalsIgnoreCase(base.getScheme()) || "http".equalsIgnoreCase(base.getScheme()));
         if (network) {
@@ -109,7 +112,10 @@ public final class SourceDiagnostics implements SourceDiagnoses {
             steps.add(anonymous ? ConnectionStep.info(Stage.AUTHENTICATION, "ohne Anmeldung (anonym)")
                     : ConnectionStep.ok(Stage.AUTHENTICATION, "angenommen ("
                     + config.auth().type().name().toLowerCase(Locale.ROOT) + ")"));
-            steps.add(ConnectionStep.ok(Stage.API, partitions == 1 ? "1 Space sichtbar" : partitions + " Spaces sichtbar"));
+            String description = BscwSourceAdapter.TYPE.equals(config.type())
+                    ? "BSCW-Startordner über WebDAV erreichbar"
+                    : partitions == 1 ? "1 Space sichtbar" : partitions + " Spaces sichtbar";
+            steps.add(ConnectionStep.ok(Stage.API, description));
         } catch (SourceAccessException e) {
             if (e.reason() == SourceAccessException.Reason.ACCESS_DENIED) {
                 String hint = anonymous ? "Die Quelle verlangt eine Anmeldung: auth (basic oder pat) einstellen."

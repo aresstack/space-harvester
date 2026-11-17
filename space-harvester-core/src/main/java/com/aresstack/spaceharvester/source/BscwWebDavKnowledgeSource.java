@@ -9,6 +9,13 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.CrossReferences;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
+import com.aresstack.enterpriseai.source.api.PageView;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.PagePosition;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
@@ -36,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -52,11 +60,12 @@ import org.xml.sax.SAXException;
  * Keep directory discovery separate from document downloads.
  */
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
-        ResourceMetadataSource, StoredContentSource {
+        ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource {
 
     static final String STORED_FORMAT = "file";
     private static final String DAV = "DAV:";
     private static final int MAX_BATCH = 500;
+    private static final int NAVIGATION_BATCH = 200;
     private static final int MAX_ACTIVE_INVENTORIES = 4;
     private static final Pattern CURSOR = Pattern.compile("b1\\.([a-f0-9-]{36})\\.(\\d{1,9})");
 
@@ -65,6 +74,15 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     private final BscwWebDavTransport transport;
     private final int maxDepth;
     private final DocumentText extractor;
+    private final Map<URI, URI> parentFolders = new ConcurrentHashMap<>();
+    private final Map<URI, DavEntry> knownEntries = new ConcurrentHashMap<>();
+    private final Map<String, NavigationInventory> navigationInventories =
+            Collections.synchronizedMap(new LinkedHashMap<String, NavigationInventory>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, NavigationInventory> eldest) {
+                    return size() > 32;
+                }
+            });
     private final Map<String, Inventory> inventories = Collections.synchronizedMap(
             new LinkedHashMap<String, Inventory>(8, 0.75f, true) {
                 @Override
@@ -90,6 +108,13 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     @Override
     public List<SourcePartition> partitions() {
         return List.of(new SourcePartition(sourceId.value(), sourceId.value()));
+    }
+
+    @Override
+    public void verifyConnection() throws KnowledgeSourceException {
+        if (entries(root, 0).stream().noneMatch(entry -> entry.folder && sameResource(entry.uri, root))) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV root is not a folder");
+        }
     }
 
     @Override
@@ -139,8 +164,13 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     @Override
     public KnowledgeResource resourceMetadata(String localId) throws KnowledgeSourceException {
         URI uri = uriOf(localId);
+        DavEntry known = knownEntries.get(uri);
+        if (known != null && known.folder) {
+            // Keep folder navigation lazy: a prior depth-1 listing already supplied its metadata.
+            return resource(known);
+        }
         for (DavEntry entry : entries(uri, 0)) {
-            if (entry.uri.equals(uri) && !entry.folder) {
+            if (sameResource(entry.uri, uri)) {
                 return resource(entry);
             }
         }
@@ -170,6 +200,9 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     @Override
     public StoredContent storedContent(String localId) throws KnowledgeSourceException {
         KnowledgeResource resource = resourceMetadata(localId);
+        if ("inode/directory".equals(resource.contentType())) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cannot download a BSCW folder");
+        }
         byte[] bytes = transport.download(uriOf(localId));
         return new StoredContent(resource, bytes, resource.contentType(), STORED_FORMAT, Instant.now());
     }
@@ -193,8 +226,130 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     }
 
     @Override
+    public PageView pageView(KnowledgeResourceId page) throws KnowledgeSourceException {
+        KnowledgeDocument document = load(page);
+        String text = document.text();
+        String html = "<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere\">"
+                + escapeHtml(text) + "</pre>";
+        return new PageView(html, root.toString(), List.of());
+    }
+
+    @Override
+    public byte[] loadViewImage(String src) throws KnowledgeSourceException {
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "BSCW WebDAV does not render inline images");
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    @Override
+    public NavigationChildren children(NavigationNode parent, String cursor) throws KnowledgeSourceException {
+        URI folder = parent.isRoot() ? root : uriOf(localId(parent.resource()));
+        NavigationInventory inventory;
+        int offset;
+        if (cursor == null || cursor.isEmpty()) {
+            List<DavEntry> entries = directChildren(folder);
+            List<NavigationNode> nodes = new ArrayList<>(entries.size());
+            for (DavEntry entry : entries) {
+                nodes.add(NavigationNode.page(idOf(entry.uri), entry.name,
+                        entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO));
+            }
+            inventory = new NavigationInventory(UUID.randomUUID().toString(), folder, List.copyOf(nodes));
+            synchronized (navigationInventories) {
+                navigationInventories.put(inventory.id, inventory);
+            }
+            offset = 0;
+        } else {
+            String[] fields = cursor.split(":", -1);
+            if (fields.length != 2) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW navigation cursor");
+            }
+            synchronized (navigationInventories) {
+                inventory = navigationInventories.get(fields[0]);
+            }
+            if (inventory == null || !sameResource(inventory.folder, folder)) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "BSCW navigation cursor expired");
+            }
+            try {
+                offset = Integer.parseInt(fields[1]);
+            } catch (NumberFormatException error) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid BSCW navigation offset");
+            }
+            if (offset < 1 || offset >= inventory.nodes.size()) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "BSCW navigation offset out of range");
+            }
+        }
+        int end = Math.min(inventory.nodes.size(), offset + NAVIGATION_BATCH);
+        String next = end < inventory.nodes.size() ? inventory.id + ":" + end : "";
+        return new NavigationChildren(inventory.nodes.subList(offset, end), next);
+    }
+
+    @Override
+    public PagePosition position(KnowledgeResourceId page) throws KnowledgeSourceException {
+        String local = localId(page);
+        if (local == null) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "BSCW resource not found");
+        }
+        URI uri = uriOf(local);
+        DavEntry entry = entryOf(uri);
+        List<NavigationNode> ancestors = new ArrayList<>();
+        Set<URI> visited = new HashSet<>();
+        URI parent = parentFolders.get(uri);
+        while (parent != null && !sameResource(parent, root) && visited.add(parent)) {
+            DavEntry ancestor = entryOf(parent);
+            ancestors.add(NavigationNode.page(idOf(ancestor.uri), ancestor.name, NavigationNode.Children.YES));
+            parent = parentFolders.get(parent);
+        }
+        Collections.reverse(ancestors);
+        NavigationNode node = NavigationNode.page(page, entry.name,
+                entry.folder ? NavigationNode.Children.YES : NavigationNode.Children.NO);
+        return new PagePosition(NavigationNode.root("space:" + sourceId.value(), sourceId.value(),
+                sourceId.value(), NavigationNode.Children.YES), ancestors, node);
+    }
+
+    @Override
+    public CrossReferences crossReferences(KnowledgeResourceId page) {
+        return CrossReferences.outgoingOnly(List.of());
+    }
+
+    private DavEntry entryOf(URI uri) throws KnowledgeSourceException {
+        DavEntry known = knownEntries.get(uri);
+        if (known != null) {
+            return known;
+        }
+        for (DavEntry entry : entries(uri, 0)) {
+            if (sameResource(entry.uri, uri)) {
+                return entry;
+            }
+        }
+        throw new KnowledgeSourceException(Kind.NOT_FOUND, "BSCW resource metadata unavailable");
+    }
+
+    private List<DavEntry> directChildren(URI folder) throws KnowledgeSourceException {
+        List<DavEntry> children = new ArrayList<>();
+        for (DavEntry entry : entries(folder, 1)) {
+            if (!sameResource(entry.uri, folder)) {
+                parentFolders.put(entry.uri, folder);
+                children.add(entry);
+            }
+        }
+        children.sort(Comparator.comparing((DavEntry entry) -> !entry.folder)
+                .thenComparing(entry -> entry.name, String.CASE_INSENSITIVE_ORDER));
+        return children;
+    }
+
+    @Override
     public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
         return List.of();
+    }
+
+    private static boolean sameResource(URI first, URI second) {
+        return first.getScheme().equalsIgnoreCase(second.getScheme())
+                && first.getHost().equalsIgnoreCase(second.getHost())
+                && first.getPort() == second.getPort()
+                && first.getRawPath().replaceAll("/+$", "").equals(second.getRawPath().replaceAll("/+$", ""));
     }
 
     private List<KnowledgeResource> listResources(int depthLimit) throws KnowledgeSourceException {
@@ -207,10 +362,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             if (!visited.add(folder.uri)) {
                 continue;
             }
-            for (DavEntry entry : entries(folder.uri, 1)) {
-                if (entry.uri.equals(folder.uri)) {
-                    continue;
-                }
+            for (DavEntry entry : directChildren(folder.uri)) {
                 if (entry.folder) {
                     if (folder.depth < depthLimit) {
                         pending.addLast(new Folder(entry.uri, folder.depth + 1));
@@ -247,8 +399,16 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             String date = firstText(prop, "getlastmodified");
             String length = firstText(prop, "getcontentlength");
             String mediaType = firstText(prop, "getcontenttype");
-            entries.add(new DavEntry(uri, displayName, folderEntry, etag, parseDate(date), length,
-                    mediaType == null || mediaType.isBlank() ? mimeType(displayName) : mediaType));
+            String inferred = mimeType(displayName);
+            if ("text/csv".equals(inferred) || "text/tab-separated-values".equals(inferred)
+                    || mediaType == null || mediaType.isBlank()
+                    || "application/octet-stream".equalsIgnoreCase(mediaType.trim())) {
+                mediaType = inferred;
+            }
+            DavEntry entry = new DavEntry(uri, displayName, folderEntry, etag, parseDate(date), length,
+                    folderEntry ? "inode/directory" : mediaType);
+            knownEntries.put(uri, entry);
+            entries.add(entry);
         }
         return entries;
     }
@@ -262,11 +422,15 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (entry.length != null) {
             attributes.put("dav.contentLength", entry.length);
         }
-        return KnowledgeResource.builder(idOf(entry.uri), sourceId)
+        KnowledgeResource.Builder builder = KnowledgeResource.builder(idOf(entry.uri), sourceId)
                 .title(entry.name).contentType(entry.mediaType)
                 .revision(KnowledgeRevision.of(entry.modified, entry.etag))
-                .scope(sourceId.value()).location(entry.uri).metadata(KnowledgeMetadata.of(attributes))
-                .build();
+                .scope(sourceId.value()).location(entry.uri).metadata(KnowledgeMetadata.of(attributes));
+        URI parent = parentFolders.get(entry.uri);
+        if (parent != null && !sameResource(parent, root)) {
+            builder.parentId(idOf(parent));
+        }
+        return builder.build();
     }
 
     private KnowledgeResourceId idOf(URI uri) {
@@ -356,6 +520,9 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
 
     private static String mimeType(String displayName) {
         String name = displayName.toLowerCase(java.util.Locale.ROOT);
+        if (name.endsWith(".csv")) return "text/csv";
+        if (name.endsWith(".tsv")) return "text/tab-separated-values";
+        if (name.endsWith(".log")) return "text/plain";
         if (name.endsWith(".pdf")) return "application/pdf";
         if (name.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -367,6 +534,18 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (name.endsWith(".xml")) return "application/xml";
         if (name.endsWith(".zip")) return "application/zip";
         return "application/octet-stream";
+    }
+
+    private static final class NavigationInventory {
+        private final String id;
+        private final URI folder;
+        private final List<NavigationNode> nodes;
+
+        private NavigationInventory(String id, URI folder, List<NavigationNode> nodes) {
+            this.id = id;
+            this.folder = folder;
+            this.nodes = nodes;
+        }
     }
 
     private static final class Inventory {

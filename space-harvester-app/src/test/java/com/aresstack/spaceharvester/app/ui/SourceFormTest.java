@@ -125,6 +125,46 @@ class SourceFormTest {
      * Client (Pflichtangaben oben, der Rest unter „Erweitert“), nur ihre Anmeldearten und Zertifikate nur mit TLS.
      */
     @Test
+    void bscwClassicPrefillsItsWebDavFolderFromKeePassWithoutReplacingUserInput() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass();
+        keePass.entries.put("BSCW Server", new String[] {
+                "https://bscw.example.org/sec/bscw.cgi/146377797", "secret"
+        });
+        keePass.entries.put("Andere Quelle", new String[] {
+                "https://bscw.example.org/sec/bscw.cgi/222222222", "secret"
+        });
+        start(config, null);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SourceForm(context);
+            form[0].kind.setSelectedItem("BSCW Classic (WebDAV)");
+        });
+        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 2);
+        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("BSCW Server"));
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "https://bscw.example.org/sec/bscw.cgi/146377797".equals(
+                        ((JTextField) form[0].fields.input("rootUrl")).getText()));
+        SwingUtilities.invokeAndWait(() -> {
+            JTextField url = (JTextField) form[0].fields.input("rootUrl");
+            assertThat(form[0].draft().extraOptions().get("rootUrl")).isEqualTo(url.getText());
+            url.setText("https://bscw.example.org/sec/bscw.cgi/333333333");
+            form[0].keePassEntry.setSelectedItem("Andere Quelle");
+        });
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "Andere Quelle".equals(form[0].keePassEntry.getSelectedItem()));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(((JTextField) form[0].fields.input("rootUrl")).getText())
+                    .isEqualTo("https://bscw.example.org/sec/bscw.cgi/333333333");
+        });
+    }
+
+    @Test
     void bscwClassicSelectsBasicAuthenticationAndExposesTheFolderUrl() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """

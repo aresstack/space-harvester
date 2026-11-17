@@ -275,6 +275,8 @@ public final class Explorer {
     private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
     private List<String> shownSources = List.of();
+    /** Source IDs whose navigable nodes represent WebDAV folders instead of pages. */
+    private java.util.Set<String> folderSourceIds = java.util.Set.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
     private Consumer<com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection> selectionListener =
             selection -> { };
@@ -460,7 +462,8 @@ public final class Explorer {
                     }
                 } else if (single) {
                     activate(path);
-                } else if (event.getClickCount() == 2) {
+                } else if (event.getClickCount() == 2
+                        && !isBscwFolder(((Node) path.getLastPathComponent()).item())) {
                     toggle(path);
                 }
             }
@@ -1008,6 +1011,8 @@ public final class Explorer {
         AppRuntime runtime = context.runtime();
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
         List<String> ids = sources.stream().map(HarvestSource::id).toList();
+        folderSourceIds = sources.stream().filter(source -> "bscw".equals(source.type()))
+                .map(HarvestSource::id).collect(java.util.stream.Collectors.toUnmodifiableSet());
         // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
         states.watch(ids);
         if (ids.equals(shownSources) && top.getChildCount() > 0) {
@@ -1136,7 +1141,9 @@ public final class Explorer {
             case PageItem page -> page.sourceId();
             default -> null;
         };
-        if (sourceId == null) {
+        if (sourceId == null || runtime.workspace().sources().stream()
+                .anyMatch(source -> source.id().equals(sourceId) && "bscw".equals(source.type()))) {
+            // Do not download WebDAV document content while only browsing a folder.
             return;
         }
         List<String> pageIds = batch.nodes().stream().map(Node::item)
@@ -1176,7 +1183,13 @@ public final class Explorer {
             return;
         }
         switch (node.item()) {
-            case PageItem page -> context.navigator().openPage(page.sourceId(), page.pageId());
+            case PageItem page -> {
+                if (isBscwFolder(page)) {
+                    toggle(path);
+                } else {
+                    context.navigator().openPage(page.sourceId(), page.pageId());
+                }
+            }
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
@@ -1675,7 +1688,7 @@ public final class Explorer {
             switch (item) {
                 case SourceItem ignored -> setIcon(MainWindow.database());
                 case SpaceItem ignored -> setIcon(SidebarIcons.folder());
-                case PageItem ignored -> setIcon(SidebarIcons.page());
+                case PageItem page -> setIcon(isBscwFolder(page) ? SidebarIcons.folder() : SidebarIcons.page());
                 case MoreItem ignored -> {
                     setIcon(null);
                     setForeground(Comic.BLUE);
@@ -1685,7 +1698,7 @@ public final class Explorer {
                     setForeground(Comic.MUTED);
                 }
             }
-            action = downloadable(item);
+            action = downloadable(item) && !isBscwFolder(item);
             starred = starrable(item);
             favorite = starred && isFavorite(item);
             badge = badge(item);
@@ -1766,6 +1779,12 @@ public final class Explorer {
     }
 
     /** Herunterladen gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
+    /** Distinguish BSCW directories from regular pages without changing other source types. */
+    private boolean isBscwFolder(Item item) {
+        return item instanceof PageItem page && folderSourceIds.contains(page.sourceId())
+                && !Boolean.FALSE.equals(page.hasChildren());
+    }
+
     static boolean downloadable(Item item) {
         return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
     }
@@ -1785,6 +1804,7 @@ public final class Explorer {
     private boolean onAction(TreePath path, java.awt.Point point) {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
         return bounds != null && path.getLastPathComponent() instanceof Node node && downloadable(node.item())
+                && !isBscwFolder(node.item())
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
     }
 
@@ -1975,7 +1995,7 @@ public final class Explorer {
             open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
             menu.add(open);
         }
-        if (downloadable(item)) {
+        if (downloadable(item) && !isBscwFolder(item)) {
             javax.swing.JMenuItem download = new javax.swing.JMenuItem("Herunterladen");
             download.setToolTipText(DOWNLOAD_TIP);
             download.addActionListener(e -> download(item));

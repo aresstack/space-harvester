@@ -36,13 +36,13 @@ public final class BscwSourceAdapter implements SourceAdapter {
     public List<SourceField> fields() {
         return List.of(
                 new SourceField("rootUrl", "WebDAV-Ordner-URL",
-                        "Use a concrete BSCW folder URL, not the personal workspace overview.",
+                        "URL eines echten BSCW-Ordners verwenden; der persönliche Arbeitsbereich ist kein Ordner.",
                         SourceField.Kind.TEXT, true, false, null),
                 new SourceField("maxDepth", "Maximale Ordnertiefe",
-                        "Limit the number of nested folders to traverse.",
+                        "Anzahl der Ebenen, in denen Unterordner durchsucht werden.",
                         SourceField.Kind.NUMBER, false, true, Integer.toString(DEFAULT_DEPTH)),
                 new SourceField("maxFileMegabytes", "Maximale Dateigroesse (MiB)",
-                        "Limit individual downloads to the in-memory file size supported by the harvester.",
+                        "Einzelne Downloads auf die zulässige Dateigröße begrenzen.",
                         SourceField.Kind.NUMBER, false, true, Integer.toString(DEFAULT_FILE_MEGABYTES)));
     }
 

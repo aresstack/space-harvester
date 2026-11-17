@@ -112,6 +112,8 @@ final class SourceForm {
     private java.util.Map<String, String> keePassFields;
     /** Adresse des gelesenen Eintrags ("" ohne Adresse); {@code null}: keiner gelesen. Leeres Adressfeld = sie gilt. */
     private String keePassUrl;
+    /** Track only automatically applied generic addresses; preserve explicit user edits. */
+    private String autoFilledKeePassAddress;
     /** Der automatisch vorgeschlagene Eintrag, solange niemand von Hand gewählt hat. */
     private String suggestedEntry;
     private boolean suggesting;
@@ -557,6 +559,7 @@ final class SourceForm {
             java.util.Map<String, String> fields = (java.util.Map<String, String>) read[3];
             keePassFields = fields;
             keePassUrl = read[2] == null ? "" : ((String) read[2]).strip();
+            prefillGenericAddressFromKeePass();
             if (!authPickedInKeePass) {
                 deriveAuthFromKeePass(keePassUser);
             }
@@ -575,6 +578,25 @@ final class SourceForm {
             keePassStatus = AiSettingsPanel.keePassReason(error);
             form.hint(keePassRow, keePassStatus);
         });
+    }
+
+    /** Prefill the current source address without replacing a manually entered value. */
+    private void prefillGenericAddressFromKeePass() {
+        JTextField addressField = fields.address();
+        if (addressField == null || !keePassOrigin()) {
+            return;
+        }
+        String existing = addressField.getText().strip();
+        String saved = keePassAddress();
+        boolean automatic = autoFilledKeePassAddress != null
+                && autoFilledKeePassAddress.equals(existing);
+        if (saved != null && (existing.isEmpty() || automatic)) {
+            addressField.setText(saved);
+            autoFilledKeePassAddress = saved;
+        } else if (saved == null && automatic) {
+            addressField.setText("");
+            autoFilledKeePassAddress = null;
+        }
     }
 
     private void forgetKeePassSecret() {
@@ -795,6 +817,8 @@ final class SourceForm {
         List<SourceFieldSpec> specs = ownForm ? List.of() : SourceFields.fields(selectedType());
         boolean same = editing != null && editing.draft().type().equals(type);
         fields.load(specs, same ? editing.draft().extraOptions() : Map.of(), !same, addressOption());
+        autoFilledKeePassAddress = null;
+        prefillGenericAddressFromKeePass();
     }
 
     /**
