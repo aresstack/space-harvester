@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.application.check.CheckUnavailableException;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
@@ -55,6 +56,7 @@ final class StatementsTab extends JPanel {
     static final String NOT_ANALYSED = "Noch nicht analysiert. „" + ANALYZE + "“ zerlegt die Sätze dieser Seite "
             + "lokal; beim ersten Mal wird das Modell geladen (einige Sekunden).";
     static final String NOT_AVAILABLE = "In dieser Installation ist kein Parsermodell hinterlegt.";
+    static final String CHECKING = "Aussagen werden geprüft …";
     static final String RUNNING = "Wird analysiert … (beim ersten Mal wird das Modell geladen)";
     static final String NO_PAGE = "Keine Seite geladen.";
     static final String LOADING_PAGE = "Seite wird geladen …";
@@ -92,10 +94,15 @@ final class StatementsTab extends JPanel {
     private final JPanel syntaxPanel = new JPanel(new BorderLayout(0, 4));
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton analyze = Comic.button(ANALYZE,
             "Analysiert nur diese Seite lokal mit MaltParser und übernimmt die Aussagen in den Wissensgraphen");
+    /** „Aussagen prüfen“ (ADR 0032, FL4) für die offene Seite; nur mit aktueller Analyse. */
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton check = Comic.button(CheckTexts.JOB,
+            "Lässt das Chat-Modell die Aussagen dieser Seite beurteilen; nur für Seiten mit KI-Freigabe");
+    /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
+    private boolean current;
     /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Mit MaltParser analysieren“. */
     private final javax.swing.JCheckBox simplify = Comic.checkBox(WITH_STAGE);
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton cancel = Comic.button(CANCEL,
-            "Bricht die laufende Analyse ab; die bisherige Analyse bleibt");
+            "Bricht den laufenden Vorgang ab; die bisherige Analyse bleibt");
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton syntaxToggle = Comic.button(
             "Syntaxdetails anzeigen", "Vollständige UD-Abhängigkeiten (CoNLL-U) zur Diagnose");
     private final List<String> lines = new ArrayList<>();
@@ -123,8 +130,9 @@ final class StatementsTab extends JPanel {
 
     /** @param workspace die Aktionen der laufenden App oder {@code null}, solange keine läuft */
     StatementsTab(Supplier<Workspace> workspace, ParserModelSetup setup,
-                  Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification) {
-        this(() -> Actions.of(workspace.get(), simplification), new Runner() {
+                  Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification,
+                  Supplier<com.aresstack.spaceharvester.application.configuration.CheckSettings> checkSettings) {
+        this(() -> Actions.of(workspace.get(), simplification, checkSettings), new Runner() {
             @Override
             public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
                 Background.run(work, onSuccess, onFailure);
@@ -146,6 +154,8 @@ final class StatementsTab extends JPanel {
         simplify.setToolTipText(SIMPLIFY_TIP);
         head.badge("Experimentell", Comic.PETROL).action(progress, cancel, analyze).copy(copyText::toString);
         analyze.addActionListener(e -> analyze());
+        check.addActionListener(e -> check());
+        check.setEnabled(false);
         cancel.addActionListener(e -> cancelRun());
         cancel.setVisible(false);
         list.setOpaque(false);
@@ -168,9 +178,15 @@ final class StatementsTab extends JPanel {
         body.add(syntaxPanel, BorderLayout.SOUTH);
         // Die Option steht in einer eigenen Zeile rechts unter dem Knopf, zu dem sie gehört: In der Kopfzeile selbst
         // überdeckt sie bei schmalem Fenster das Abzeichen neben dem Titel.
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        // „Aussagen prüfen“ steht in derselben Zeile links: Neben „Mit MaltParser analysieren“ in der Kopfzeile ist bei
+        // schmalem Fenster kein Platz, und rechts neben dem Ankreuzfeld läse es sich, als gälte das Feld für die Prüfung.
+        JPanel options = new JPanel(new BorderLayout(8, 0));
         options.setOpaque(false);
-        options.add(simplify);
+        JPanel checkRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        checkRow.setOpaque(false);
+        checkRow.add(check);
+        options.add(checkRow, BorderLayout.WEST);
+        options.add(simplify, BorderLayout.EAST);
         JPanel top = new JPanel(new BorderLayout(0, 4));
         top.setOpaque(false);
         top.add(head, BorderLayout.NORTH);
@@ -393,6 +409,8 @@ final class StatementsTab extends JPanel {
         setState(" ", Comic.MUTED);
         hint.setText(message);
         analyze.setEnabled(false);
+        current = false;
+        check.setEnabled(false);
         list.revalidate();
         list.repaint();
     }
@@ -407,6 +425,7 @@ final class StatementsTab extends JPanel {
         AtomicBoolean cancelled = new AtomicBoolean();
         running = cancelled;
         analyze.setEnabled(false);
+        check.setEnabled(false);
         cancel.setVisible(true);
         progress.setText(RUNNING);
         boolean withStage = simplify.isSelected();
@@ -459,11 +478,66 @@ final class StatementsTab extends JPanel {
         });
     }
 
+    /**
+     * „Aussagen prüfen“ für die offene Seite: derselbe Fortschritt und dasselbe „Abbrechen“ wie bei der Analyse. Ohne
+     * Modell, ohne KI-Freigabe der Seite oder ohne aktuelle Analyse sagt die Statuszeile den Grund.
+     */
+    private void check() {
+        Actions actions = workspace.get();
+        PageSnapshot page = snapshot;
+        if (actions == null || page == null || running != null || !current) {
+            return;
+        }
+        int mine = generation;
+        AtomicBoolean cancelled = new AtomicBoolean();
+        running = cancelled;
+        analyze.setEnabled(false);
+        check.setEnabled(false);
+        cancel.setVisible(true);
+        progress.setText(CHECKING);
+        runner.run(() -> {
+            // Vor dem Lauf gefragt, damit ohne Modell oder Freigabe nichts an den Dienst geht.
+            Optional<CheckUnavailableException.Reason> unavailable = actions.checkUnavailable(page.key());
+            if (unavailable.isPresent()) {
+                throw new CheckUnavailableException(unavailable.get());
+            }
+            return new Loaded(actions.checkStatements(page, cancelled::get), true,
+                    actions.statementLinks(page.key()));
+        }, loaded -> {
+            finished(cancelled);
+            if (mine != generation) {
+                return;
+            }
+            onAnalysed.run();
+            render(loaded.statements(), loaded.links());
+        }, error -> {
+            finished(cancelled);
+            if (mine != generation) {
+                return;
+            }
+            progress.setText(error instanceof CancellationException ? "Abgebrochen; die bisherige Analyse bleibt."
+                    : " ");
+            if (error instanceof CheckUnavailableException unavailable) {
+                status(CheckTexts.unavailable(unavailable.reason()));
+            } else if (!(error instanceof CancellationException)) {
+                status("„" + CheckTexts.JOB + "“ fehlgeschlagen: " + Problems.describe(error).title()
+                        + ". Die bisherige Analyse bleibt.");
+            }
+        });
+    }
+
+    /** Eine Meldung zum letzten Vorgang in der Statuszeile; die Aussagen bleiben stehen. */
+    private void status(String message) {
+        explanation = message;
+        onStatus.accept(message);
+    }
+
     /** Der Lauf ist wirklich zu Ende: erst jetzt ist „Analysieren“ wieder möglich. */
     private void finished(AtomicBoolean run) {
         if (running == run) {
             running = null;
             analyze.setEnabled(snapshot != null && !modelMissing());
+            check.setEnabled(snapshot != null && current);
             cancel.setVisible(false);
             progress.setText(" ");
         }
@@ -478,6 +552,7 @@ final class StatementsTab extends JPanel {
         if (run != null && !run.get()) {
             run.set(true);
             analyze.setEnabled(false);
+            check.setEnabled(false);
             cancel.setVisible(false);
             progress.setText("Wird abgebrochen …");
         }
@@ -542,6 +617,8 @@ final class StatementsTab extends JPanel {
     /** Zeigt Stand, Aussagen und Verbindungen; veraltete Aussagen bleiben lesbar, aber ausgegraut. */
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
         analyze.setEnabled(running == null && snapshot != null && !modelMissing());
+        current = statements.state() == PageStatements.State.CURRENT && statements.analysis() != null;
+        check.setEnabled(running == null && snapshot != null && current);
         list.removeAll();
         lines.clear();
         jumps.clear();
@@ -675,7 +752,20 @@ final class StatementsTab extends JPanel {
         ParsedStatements.Derivation derivation = statement.derivation();
         if (derivation.origin() == ParsedStatements.Origin.VORSTUFE) {
             // ADR 0032, FL3: Die Aussage stammt aus einem vereinfachten Satz; der Originalsatz bleibt der Beleg.
-            body.add("Herkunft: Vorstufe „" + SIMPLIFY + "“ · Kennzeichen: " + stageFlag(derivation.stageFlag()));
+            body.add(CheckTexts.ORIGIN_LABEL + ": Vorstufe „" + SIMPLIFY + "“ · Kennzeichen: "
+                    + stageFlag(derivation.stageFlag()));
+        }
+        boolean correction = derivation.origin() == ParsedStatements.Origin.MODELL;
+        if (correction) {
+            // ADR 0032, FL4: Die Aussage stammt aus dem Satz, mit dem das Modell eine andere vervollständigt hat.
+            body.add(CheckTexts.ORIGIN_LABEL + ": " + CheckTexts.ORIGIN_MODEL);
+        }
+        if (statement.check() != null) {
+            body.add(CheckTexts.VERDICT_LABEL + ": " + CheckTexts.verdict(statement.check()));
+            String lowered = CheckTexts.lowered(statement);
+            if (lowered != null) {
+                body.add(CheckTexts.QUALITY_LABEL + ": " + lowered);
+            }
         }
         for (ParsedStatements.Attachment attachment : result.attachments()) {
             boolean involved = statement.arguments().stream()
@@ -698,10 +788,13 @@ final class StatementsTab extends JPanel {
         }
         boolean staged = derivation.origin() == ParsedStatements.Origin.VORSTUFE;
         if (evidence != null && !evidence.isBlank()) {
-            body.add((staged ? "Beleg (Originalsatz): „" : "Beleg: „") + evidence.strip() + "“");
+            body.add((staged || correction ? "Beleg (Originalsatz): „" : "Beleg: „") + evidence.strip() + "“");
         }
         if (staged) {
             body.add("Vereinfachter Satz: „" + derivation.simplifiedSentence().strip() + "“");
+        }
+        if (correction) {
+            body.add(CheckTexts.MODEL_SENTENCE_LABEL + ": „" + derivation.simplifiedSentence().strip() + "“");
         }
         return body;
     }
@@ -816,7 +909,14 @@ final class StatementsTab extends JPanel {
         }
         return "Analysiert am " + statements.analysis().analyzedAt().toString().replace('T', ' ').replace("Z", " UTC")
                 + " mit " + statements.analysis().analyzerVersion().replace('|', ' ')
-                + ", " + stage(statements.analysis().stage()) + ". Grammatische Zuordnung, keine geprüften Fakten.";
+                + ", " + stage(statements.analysis().stage()) + checked(statements)
+                + ". Grammatische Zuordnung, keine geprüften Fakten.";
+    }
+
+    /** Was „Aussagen prüfen“ an der Seite hinterlassen hat, als Satzteil; leer ohne Urteile. */
+    private static String checked(PageStatements statements) {
+        String checked = CheckTexts.checked(statements.analysis().result());
+        return checked == null ? "" : ", " + checked;
     }
 
     /**
@@ -916,13 +1016,37 @@ final class StatementsTab extends JPanel {
             return Optional.empty();
         }
 
+        /** Warum „Aussagen prüfen“ für diese Seite nicht laufen kann (kein Modell, keine KI-Freigabe); sonst leer. */
+        default Optional<CheckUnavailableException.Reason> checkUnavailable(
+                com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            return Optional.empty();
+        }
+
+        /** „Aussagen prüfen“: Das Modell beurteilt die Aussagen der gespeicherten, aktuellen Analyse der Seite. */
+        default PageStatements checkStatements(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
+            return statements(page);
+        }
+
         /** {@code null} ohne laufende App. */
         static Actions of(Workspace workspace,
-                Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification) {
+                Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification,
+                Supplier<com.aresstack.spaceharvester.application.configuration.CheckSettings> checkSettings) {
             if (workspace == null) {
                 return null;
             }
             return new Actions() {
+                @Override
+                public Optional<CheckUnavailableException.Reason> checkUnavailable(
+                        com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                    return workspace.checkUnavailable(key);
+                }
+
+                @Override
+                public PageStatements checkStatements(PageSnapshot page,
+                                                      java.util.function.BooleanSupplier cancelled) {
+                    return workspace.checkStatements(page, cancelled, checkSettings.get());
+                }
+
                 @Override
                 public PageStatements analyzeSimplified(PageSnapshot page,
                                                         java.util.function.BooleanSupplier cancelled) {
@@ -994,6 +1118,14 @@ final class StatementsTab extends JPanel {
 
     boolean cancelOffered() {
         return cancel.isVisible();
+    }
+
+    boolean checkOffered() {
+        return check.isVisible() && check.isEnabled();
+    }
+
+    void clickCheck() {
+        check.doClick();
     }
 
     /** Kreuzt „Sätze vereinfachen“ an oder ab. */

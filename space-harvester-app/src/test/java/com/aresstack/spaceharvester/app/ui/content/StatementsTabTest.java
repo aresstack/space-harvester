@@ -109,6 +109,88 @@ class StatementsTabTest {
     }
 
     @Test
+    void aCheckedStatementShowsVerdictAndLoweredStageAndACorrectionItsOrigin() {
+        ParsedStatements result = analysed().analysis().result();
+        ParsedStatements.Statement first = result.statements().getFirst();
+        ParsedStatements.Statement original = new ParsedStatements.Statement(first.id(), first.sentence(),
+                first.start(), first.end(), first.predicateText(), first.predicateLemma(), first.voice(),
+                first.clause(), first.core(), first.arguments(), first.findings(), first.paragraph(),
+                ParsedStatements.Quality.PLAUSIBLE, List.of(), first.review(), first.features(), first.derivation());
+        Map<String, ParsedStatements.Mention> mentions = new java.util.LinkedHashMap<>();
+        result.mentions().forEach(mention -> mentions.put(mention.id(), mention));
+
+        assertThat(StatementsTab.describe(first.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.FALSCH, "modell|v1", false)), result, mentions, TEXT))
+                .as("schon unsicher: das Urteil senkt nichts, also keine Stufenzeile")
+                .contains("Urteil des Modells: falsch").noneMatch(line -> line.startsWith("Stufe"));
+        assertThat(StatementsTab.describe(original, result, mentions, TEXT)).as("ungeprüft: keine Zeile")
+                .noneMatch(line -> line.startsWith(CheckTexts.VERDICT_LABEL) || line.startsWith("Stufe"));
+        assertThat(StatementsTab.describe(original.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.STIMMT, "modell|v1", false)), result, mentions, TEXT))
+                .contains("Urteil des Modells: stimmt").as("stimmt hebt und senkt nie")
+                .noneMatch(line -> line.startsWith("Stufe"));
+        assertThat(StatementsTab.describe(original.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.FALSCH, "modell|v1", false)), result, mentions, TEXT))
+                .containsSubsequence("Urteil des Modells: falsch", "Stufe: unsicher (vom Parser: plausibel)");
+        assertThat(StatementsTab.describe(original.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.UNVOLLSTAENDIG, "modell|v1", true)), result, mentions, TEXT))
+                .containsSubsequence("Urteil des Modells: unvollständig (Korrektur ergänzt)",
+                        "Stufe: unsicher (vom Parser: plausibel)");
+        assertThat(StatementsTab.describe(original.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.UNVOLLSTAENDIG, "modell|v1", false)), result, mentions, TEXT))
+                .contains("Urteil des Modells: unvollständig").noneMatch(line -> line.startsWith("Stufe"));
+
+        ParsedStatements.Statement correction = new ParsedStatements.Statement("c1", original.sentence(),
+                original.start(), original.end(), original.predicateText(), original.predicateLemma(),
+                original.voice(), original.clause(), original.core(), original.arguments(), original.findings(),
+                original.paragraph(), original.quality(), original.qualityReasons(), original.review(),
+                original.features(), ParsedStatements.Derivation.modell(
+                        "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.", original.id(),
+                        ParsedStatements.Origin.ORIGINAL));
+        assertThat(StatementsTab.describe(correction, result, mentions, TEXT)).containsSubsequence(
+                "Herkunft: Korrektur des Modells", "Beleg (Originalsatz): „" + TEXT + "“",
+                "Satz des Modells: „Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.“")
+                .noneMatch(line -> line.startsWith("Vereinfachter Satz"));
+    }
+
+    @Test
+    void checkingIsOfferedOnlyForACurrentAnalysisAndSaysWhyItCouldNotRun() {
+        List<String> status = new ArrayList<>();
+        tab.onStatus(status::add);
+        tab.page(page("1"), text());
+        runner.runAll();
+        assertThat(tab.checkOffered()).as("nicht analysiert").isFalse();
+
+        tab.clickAnalyze();
+        runner.runAll();
+        assertThat(tab.checkOffered()).isTrue();
+
+        tab.clickCheck();
+        assertThat(tab.cancelOffered()).as("Abbrechen wie bei der Analyse").isTrue();
+        assertThat(tab.progressText()).isEqualTo(StatementsTab.CHECKING);
+        assertThat(tab.analyzeOffered()).as("nie zwei Läufe zugleich").isFalse();
+        runner.runAll();
+        assertThat(actions.checks).isEqualTo(1);
+        assertThat(tab.cancelOffered()).isFalse();
+        assertThat(tab.lines().get(1)).contains("Urteil des Modells: falsch");
+        assertThat(status.getLast()).contains(", geprüft: 1 Urteil. Grammatische");
+
+        actions.checkUnavailable = Optional.of(
+                com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NOT_RELEASED);
+        tab.clickCheck();
+        runner.runAll();
+        assertThat(actions.checks).as("ohne Freigabe geht nichts an das Modell").isEqualTo(1);
+        assertThat(status.getLast()).isEqualTo(CheckTexts.NOT_RELEASED);
+        assertThat(tab.lines().get(1)).as("die Aussagen bleiben stehen").contains("Urteil des Modells: falsch");
+        actions.checkUnavailable = Optional.of(
+                com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason.NO_MODEL);
+        tab.clickCheck();
+        runner.runAll();
+        assertThat(status.getLast()).isEqualTo(CheckTexts.NO_MODEL);
+        assertThat(tab.checkOffered()).isTrue();
+    }
+
+    @Test
     void thePageSaysWhetherTheStageWasUsedAndWhyAWithdrawnOneIsStale() {
         PageStatements plain = analysed();
         assertThat(StatementsTab.hint(plain)).contains(", ohne Vorstufe. Grammatische Zuordnung");
@@ -370,6 +452,29 @@ class StatementsTabTest {
         BooleanSupplier lastCancelled = () -> false;
         int simplified;
         Optional<String> stageUnavailable = Optional.empty();
+        int checks;
+        Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason> checkUnavailable =
+                Optional.empty();
+
+        @Override
+        public Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason>
+                checkUnavailable(PageKey key) {
+            return checkUnavailable;
+        }
+
+        @Override
+        public PageStatements checkStatements(PageSnapshot page, BooleanSupplier cancelled) {
+            checks++;
+            ParsedStatements result = stored.analysis().result();
+            List<ParsedStatements.Statement> judged = new ArrayList<>(result.statements());
+            judged.set(0, judged.getFirst().withCheck(new ParsedStatements.Check(ParsedStatements.Verdict.FALSCH,
+                    "schein-modell|v1", false)));
+            stored = new PageStatements(PageStatements.State.CURRENT, null, stored.analysis().withResult(
+                    new ParsedStatements(result.sentences(), result.mentions(), judged, result.attachments(),
+                            result.components(),
+                            result.conllu())));
+            return stored;
+        }
 
         @Override
         public PageStatements analyzeSimplified(PageSnapshot page, BooleanSupplier cancelled) {

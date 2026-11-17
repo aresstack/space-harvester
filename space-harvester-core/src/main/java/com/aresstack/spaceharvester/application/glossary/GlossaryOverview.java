@@ -156,6 +156,30 @@ public final class GlossaryOverview {
                 .filter(page -> pages.test(page.page().key())).toList();
         GlossaryDerivation.Result result = GlossaryDerivation.of(selected, cancelled,
                 GlossaryDerivation.Rules.of(settings.get()));
+        return assemble(caller, scope, result, query, cancelled);
+    }
+
+    /**
+     * Verfeinern: dieselbe Auswahl mit anderem Suchtext, Status oder Einordnung. Nutzt das gehaltene Ergebnis der
+     * vorigen Sicht und liest nur die Einträge neu (sie können sich seither geändert haben), ohne die Ableitung noch
+     * einmal zu rechnen. Neue Auswahl oder Ende eines Auftrags verlangen die volle Sicht. {@code caller} muss derselbe
+     * sein wie bei der vorigen Sicht, denn die Wichtigkeit gilt je Aufrufer.
+     *
+     * @throws CancellationException sobald {@code cancelled} zutrifft; es bleibt nichts zurück
+     */
+    public View view(AccessContext caller, View previous, Query query, BooleanSupplier cancelled) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(previous, "previous");
+        Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(cancelled, "cancelled");
+        if (glossary == null) {
+            throw new IllegalStateException("Sicht ohne Glossar");
+        }
+        return assemble(caller, previous.scope(), previous.derivation(), query, cancelled);
+    }
+
+    private View assemble(AccessContext caller, RelationScope scope, GlossaryDerivation.Result result, Query query,
+                          BooleanSupplier cancelled) {
         List<GlossaryEntry> entries = new ArrayList<>(entries(caller, scope, query.q(), null, cancelled));
         entries.addAll(entries(caller, scope, query.q(), ReviewStatus.REJECTED, cancelled));
         Map<GlossaryDerivation.Category, Integer> byCategory = new EnumMap<>(GlossaryDerivation.Category.class);

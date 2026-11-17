@@ -694,6 +694,42 @@ public final class Workspace {
         return harvester.statementAnalysis().simplificationUnavailable(key);
     }
 
+    /**
+     * „Aussagen prüfen“ für genau diese Seite (ADR 0032, FL4): Das Chat-Modell beurteilt die Aussagen der gespeicherten,
+     * aktuellen Analyse nach {@code check}; nur auf ausdrückliche Anforderung, nie auf dem EDT.
+     *
+     * @throws com.aresstack.spaceharvester.application.check.CheckUnavailableException ohne Modell, ohne KI-Freigabe
+     *         der Seite oder ohne aktuelle Analyse
+     */
+    public PageStatements checkStatements(PageSnapshot snapshot, java.util.function.BooleanSupplier cancelled,
+            com.aresstack.spaceharvester.application.configuration.CheckSettings check) {
+        return harvester.statementAnalysis().check(caller, snapshot, cancelled,
+                new com.aresstack.spaceharvester.application.knowledge.StatementAnalysis.CheckRequest(check.scope(),
+                        check.parallel()), costs -> {
+                });
+    }
+
+    /** Warum der Prüfschritt für diese Seite nicht laufen kann (kein Modell, keine KI-Freigabe); sonst leer. */
+    public Optional<com.aresstack.spaceharvester.application.check.CheckUnavailableException.Reason> checkUnavailable(
+            PageKey key) {
+        return harvester.statementAnalysis().checkUnavailable(key);
+    }
+
+    /** Ob „Aussagen prüfen“ laufen kann: Chat-Modell eingestellt; ruft kein Modell. */
+    public boolean statementCheckAvailable() {
+        return harvester.statementAnalysisJobs().checkAvailable();
+    }
+
+    /**
+     * „Aussagen prüfen“ aus dem Baum: startet den Auftrag {@code STATEMENT_CHECK} für Seite, Unterzweig, Space oder
+     * Quelle; Fortschritt und Abbruch wie bei jedem Auftrag.
+     *
+     * @throws com.aresstack.spaceharvester.application.check.CheckUnavailableException ohne eingestelltes Modell
+     */
+    public JobStatus startStatementCheck(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.CheckOptions options) {
+        return harvester.statementAnalysisJobs().startCheck(caller, scope, options);
+    }
+
     /** CoNLL-U der gespeicherten Analyse für die aufklappbaren Syntaxdetails. */
     public Optional<String> syntaxDetails(PageSnapshot snapshot) {
         return harvester.statementAnalysis().syntaxDetails(caller, snapshot);
@@ -1610,6 +1646,16 @@ public final class Workspace {
             com.aresstack.spaceharvester.application.holdings.PageSelection selection,
             java.util.function.BooleanSupplier cancelled) {
         return harvester.statusQuo().view(caller, selection, cancelled);
+    }
+
+    /**
+     * Die Leseempfehlung der Auswahl links (ADR 0032, FL6): Seiten mit Summe und offenen Teilzahlen. Mit Thema
+     * ({@code topic}) nur Seiten, die es erwähnen; {@code null} oder leer für die ganze Auswahl. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.standing.ReadingList readingList(
+            com.aresstack.spaceharvester.application.holdings.PageSelection selection, String topic,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.readingAdvice().recommend(caller, selection, topic, cancelled);
     }
 
     /**

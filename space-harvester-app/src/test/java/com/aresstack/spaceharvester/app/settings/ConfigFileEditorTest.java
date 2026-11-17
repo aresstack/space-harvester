@@ -587,6 +587,34 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theCheckStepGoesUnderStatementsCheckAndLeavesTheStageAlone() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: always\n"
+                + "      model: einfach\n  jobs:\n    max-concurrent: 3\n");
+        var all = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
+                com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "pruef:1b");
+        editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), all));
+        editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), all));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("    check:\n      scope: all\n      parallel: 4\n      model: \"pruef:1b\"\n",
+                "      mode: always\n      model: einfach\n", "max-concurrent: 3");
+        assertThat(text.indexOf("check:")).as("zweimal gespeichert, ein Block").isEqualTo(text.lastIndexOf("check:"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.check()).isEqualTo(all);
+        assertThat(settings.simplification().model()).as("Vorstufe unberührt").isEqualTo("einfach");
+
+        Files.writeString(file, "space-harvester:\n  jobs:\n    max-concurrent: 3\n");
+        var plain = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
+                com.aresstack.spaceharvester.application.check.CheckScope.UNCERTAIN_AND_STAGE, 1, null);
+        editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), plain));
+        assertThat(Files.readString(file)).as("ohne eigenes Modell kein Schlüssel model")
+                .contains("scope: uncertain-and-stage").doesNotContain("model:");
+        assertThat(loader.load(file).check()).isEqualTo(plain);
+    }
+
+    @Test
     void theSimplificationStageGoesUnderStatementsSimplificationAndKeepsTheOtherKeys() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  statements:\n    simplification:\n      mode: where-needed\n"

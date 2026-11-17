@@ -189,6 +189,24 @@ class WorkspaceTest {
         assertThat(again.refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
     }
 
+    /** „Stand › Zuerst lesen“ (ADR 0032): die Leseempfehlung kommt über den echten Harvester, mit und ohne Thema. */
+    @Test
+    void theReadingListOfASelectionComesFromTheCore() throws Exception {
+        Workspace workspace = start().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
+        var selection = workspace.resolveSelection(com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space)));
+
+        var all = workspace.readingList(selection, null, () -> false);
+        var topic = workspace.readingList(selection, "Gibtsnichtbegriff", () -> false);
+
+        assertThat(all.topic()).isNull();
+        assertThat(all.changesSince()).isNotNull();
+        assertThat(topic.topic()).isEqualTo("Gibtsnichtbegriff");
+        assertThat(topic.pages()).as("mit Thema nur Seiten, die es erwähnen").isEmpty();
+    }
+
     @Test
     void readsLocalFilesWithoutNetwork() throws Exception {
         Workspace workspace = start().workspace();
