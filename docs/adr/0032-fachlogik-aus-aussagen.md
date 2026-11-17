@@ -214,6 +214,13 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Die Anweisung ist ungemessen. Die Tests nutzen nur ein Fake-Modell; Handantworten prüfen Verarbeitung und Vorrang,
   nie Qualität.
 
+## Umsetzung FL5d (Rolle einer Person)
+
+- `CategoryRule.ROLE_OF_PERSON`: Rollennomen einer Ist-Beziehung (Art ROLLE oder BESTIMMUNG), deren Träger in
+  `Mention.text` mit Frau, Herr oder Herrn und einem weiteren Wort beginnt; am Parser nichts geändert. Nur wenn keine
+  Wortliste greift; bestimmte Regel (Rang 3).
+- Gemessen: Kontrollsatz FALSCH bleibt 0; Entwicklungssätze erfunden im Unit-Test.
+
 ## Umsetzung FL6 Teil 1 (Stand und Status-quo-Sicht, Core)
 - Paket `application.standing`, erreichbar über `Harvester#statusQuo()`; Schnittstelle für die Anzeige:
   [docs/fachlogik/stand-schnittstelle.md](../fachlogik/stand-schnittstelle.md).

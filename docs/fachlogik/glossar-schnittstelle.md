@@ -21,13 +21,19 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `scope` | Geltungsbereich: global, Quelle oder Space |
 | `origin` | wer angelegt hat: `MANUAL` (Mensch), `RULE` (Regel), `AI` (Modell); ändert sich nie |
 | `status` | `PROPOSED`, `CONFIRMED`, `REJECTED` |
-| `classification` | Einordnung: `category` (`FACHLICH`, `TECHNISCH`, `ROLLE`, `UNKLAR`), `by` (`RULE`, `AI`, `MANUAL`), `reason` (Kennung wie `TECHNICAL_HEAD`, `TECHNICAL_SHAPE`, `ROLE_HEAD` der Regel oder eine Kennung der KI, siehe unten; nie Freitext, Text dazu in der App), `pages` (nur bei der KI: Seiten ihrer Belege, für den Entzug) oder `null` (alte Einträge: als `UNKLAR` zeigen) |
+| `classification` | Einordnung: `category` (`FACHLICH`, `TECHNISCH`, `ROLLE`, `UNKLAR`), `by` (`RULE`, `AI`, `MANUAL`), `reason` (Kennung wie `TECHNICAL_HEAD`, `TECHNICAL_SHAPE`, `ROLE_HEAD`, `ROLE_OF_PERSON` der Regel oder eine Kennung der KI, siehe unten; nie Freitext, Text dazu in der App), `pages` (nur bei der KI: Seiten ihrer Belege, für den Entzug) oder `null` (alte Einträge: als `UNKLAR` zeigen) |
 | `supportedBy` | welche Läufe den Begriff zuletzt nannten (`RULE`, `AI`); leer bei manuellen Einträgen |
 | `evidence` | bis zu drei Belegstellen (Seite, Position, Hash); nur lesbare, der Core filtert |
 | `definitionProposal` | Beleg einer Begriffsbestimmung („X ist ein Y“, Art `BESTIMMUNG`) als Position oder `null`: nur mit dem Begriff selbst als Träger, aus dem Original; bei mehreren die mit den meisten Seiten. Der Eintrag sagt nicht, ob es weitere gab; die Einzelheiten (`isA`) zeigen alle |
 | `evidenceStale` | „Beleg veraltet“: ein bestätigter Eintrag, den kein Lauf mehr stützt |
 | `explanation` | Erläuterung, schreibt nur der Mensch |
 | `revision` | für optimistisches Sperren: bei jeder Änderung mitgeben |
+
+Regel `ROLE_OF_PERSON`: Ein Begriff ist `ROLLE`, wenn er Rollennomen einer Ist-Beziehung der Art `ROLLE` oder
+`BESTIMMUNG` ist (nie bei bestimmtem Artikel, nie bei `KEIN` oder einem anderen Begleiter) und der Träger mit einer
+Anrede aus der geschlossenen Liste Frau, Herr, Herrn beginnt, gefolgt von mindestens einem weiteren Wort („Herr Klein
+ist Sachbearbeiter“). Erkennt eine Wortliste den Begriff (Technik oder Rolle), gewinnt die Wortliste. Sie zählt als
+bestimmte Regel.
 
 Vorrang der Einordnung, unabhängig von der Reihenfolge der Läufe: Mensch am Eintrag, dann bestimmte Regel (Technik,
 Rolle), dann KI, dann `UNKLAR` der Regel. Eine neue Wortliste wirkt also auch auf Einträge, die die KI schon

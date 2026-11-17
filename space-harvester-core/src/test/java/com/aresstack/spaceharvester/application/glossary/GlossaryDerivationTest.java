@@ -57,6 +57,15 @@ class GlossaryDerivationTest {
             return mentionId;
         }
 
+        /** Ein Träger mit Anrede: Text „Frau Weber“, Kopf „Weber“, wie ihn der Parser als Nominalgruppe liefert. */
+        String person(int sentence, String text, String head) {
+            String mentionId = "wiki/" + id + "@1#s" + sentence + ".t" + (counter++);
+            ParsedStatements.Sentence s = sentences.get(sentence);
+            mentions.add(new ParsedStatements.Mention(mentionId, sentence, s.start(), s.start() + text.length(), text,
+                    head, head, MentionKind.PROPER_NOUN, false, Set.of()));
+            return mentionId;
+        }
+
         String noun(int sentence, String key) {
             return mention(sentence, key, MentionKind.NOUN);
         }
@@ -282,6 +291,54 @@ class GlossaryDerivationTest {
         int sentence = page.sentence(40);
         page.statement(sentence, noun, Voice.ACTIVE, Quality.PLAUSIBLE, null, with(article),
                 Set.of(ParsedStatements.Statement.STATE_ROLE_NOUN), sure(Role.BEARER, page.noun(sentence, bearer)));
+    }
+
+    private static void personRole(PageBuilder page, String bearer, String head, String noun,
+                                   ParsedStatements.Article article) {
+        int sentence = page.sentence(40);
+        page.statement(sentence, noun, Voice.ACTIVE, Quality.PLAUSIBLE, null, with(article),
+                Set.of(ParsedStatements.Statement.STATE_ROLE_NOUN), sure(Role.BEARER, page.person(sentence, bearer,
+                        head)));
+    }
+
+    @Test
+    void aRoleNounOfAPersonWithSalutationIsARoleUnlessAWordListDecides() {
+        // Erfundene Entwicklungssätze: „Herr Kranich ist Fallbetreuer.“, „Frau Amsel ist eine Vertrauensperson.“ …
+        PageBuilder first = new PageBuilder("1");
+        personRole(first, "Herr Kranich", "Kranich", "Fallbetreuer", ParsedStatements.Article.OHNE);
+        personRole(first, "Frau Amsel", "Amsel", "Vertrauensperson", ParsedStatements.Article.UNBESTIMMT);
+        personRole(first, "Frau Drossel", "Drossel", "Schlüsselträgerin", ParsedStatements.Article.BESTIMMT);
+        personRole(first, "Herrn Fink", "Fink", "Kassenwart", ParsedStatements.Article.KEIN);
+        personRole(first, "Herr Specht", "Specht", "Mitglied", ParsedStatements.Article.SONSTIGER);
+        personRole(first, "Herr Star", "Star", "Pate", null);
+        personRole(first, "Frau", "Frau", "Lotsin", ParsedStatements.Article.OHNE);
+        personRole(first, "Kranich", "Kranich", "Wegweiser", ParsedStatements.Article.OHNE);
+        personRole(first, "Herr Reiher", "Reiher", "Antragsdatenbank", ParsedStatements.Article.OHNE);
+        PageBuilder second = new PageBuilder("2");
+        role(second, "Server", "Antragsdatenbank", ParsedStatements.Article.UNBESTIMMT);
+
+        GlossaryDerivation.Result result = GlossaryDerivation.of(List.of(first.build(PageStatements.State.CURRENT),
+                second.build(PageStatements.State.CURRENT)), () -> false);
+
+        assertThat(result.term("Fallbetreuer").rule()).as("ohne Artikel")
+                .isEqualTo(GlossaryDerivation.CategoryRule.ROLE_OF_PERSON);
+        assertThat(result.term("Fallbetreuer").category()).isEqualTo(GlossaryDerivation.Category.ROLLE);
+        assertThat(result.term("Vertrauensperson").rule()).as("unbestimmter Artikel")
+                .isEqualTo(GlossaryDerivation.CategoryRule.ROLE_OF_PERSON);
+        assertThat(result.term("Schlüsselträgerin").rule()).as("nie bei bestimmtem Artikel")
+                .isEqualTo(GlossaryDerivation.CategoryRule.NONE);
+        assertThat(result.term("Kassenwart")).as("kein: keine Beziehung").isNull();
+        assertThat(result.term("Mitglied")).as("anderer Begleiter: keine Beziehung").isNull();
+        assertThat(result.term("Pate").rule()).as("Artikel unbekannt").isEqualTo(GlossaryDerivation.CategoryRule.NONE);
+        assertThat(result.term("Lotsin").rule()).as("Anrede ohne Namen").isEqualTo(GlossaryDerivation.CategoryRule.NONE);
+        assertThat(result.term("Wegweiser").rule()).as("Eigenname ohne Anrede genügt nicht")
+                .isEqualTo(GlossaryDerivation.CategoryRule.NONE);
+        assertThat(result.term("Antragsdatenbank").rule()).as("Wortliste gewinnt über Rolle einer Person")
+                .isEqualTo(GlossaryDerivation.CategoryRule.TECHNICAL_HEAD);
+        assertThat(GlossaryRuleProposals.of(List.of(first.build(PageStatements.State.CURRENT)), 500, () -> false)
+                .proposals()).filteredOn(p -> p.term().equals("Fallbetreuer")).singleElement()
+                .satisfies(p -> assertThat(p.classification()).isEqualTo(new GlossaryEntry.Classification(
+                        GlossaryDerivation.Category.ROLLE, GlossaryEntry.ClassifiedBy.RULE, "ROLE_OF_PERSON")));
     }
 
     @Test
