@@ -29,6 +29,7 @@ public final class Facts extends JPanel {
 
     private final java.util.List<Row> rows = new java.util.ArrayList<>();
     private int row;
+    private java.awt.Component labelStrut;
 
     public Facts() {
         super(new GridBagLayout());
@@ -117,6 +118,35 @@ public final class Facts extends JPanel {
         Row line = new Row(name, text);
         rows.add(line);
         return line;
+    }
+
+    /** Breite der sichtbaren Bezeichnungen, ohne Abstand; zum Angleichen mehrerer Listen untereinander. */
+    public int labelColumnWidth() {
+        int width = 0;
+        for (Row line : rows) {
+            if (line.name.isVisible()) {
+                width = Math.max(width, line.name.getPreferredSize().width);
+            }
+        }
+        return width;
+    }
+
+    /**
+     * Mindestbreite der Bezeichnungsspalte: Mehrere Listen untereinander bekommen so bündige Werte (Formularfelder
+     * bündig untereinander, Angelo).
+     */
+    public void labelWidth(int pixels) {
+        if (labelStrut != null) {
+            remove(labelStrut);
+        }
+        labelStrut = javax.swing.Box.createHorizontalStrut(Math.max(0, pixels));
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = 10_000;
+        c.anchor = GridBagConstraints.NORTHWEST;
+        c.insets = new Insets(0, 0, 0, 14);
+        super.add(labelStrut, c);
+        revalidate();
     }
 
     /**
