@@ -300,6 +300,41 @@ class SetupWizardTest {
         });
     }
 
+    /**
+     * SY3 (Angelo 17.11.2026): Häkchen „Nach jedem Abgleich vorschlagen“ im Schritt „Modelle“; aus schreibt
+     * {@code automatic: false}, an (Standard) nimmt den Schlüssel wieder aus der Datei; die Abschlussseite nennt es.
+     */
+    @Test
+    void theAutomaticSynonymRunIsSwitchedOffInTheModelsStepAndBackOnAgain() throws Exception {
+        SetupWizard[] wizard = new SetupWizard[1];
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            wizard[0].show(SetupWizard.MODELS);
+            assertThat(wizard[0].ai.automaticSynonyms()).isTrue();
+            assertThat(wizard[0].ai.changed()).isFalse();
+            wizard[0].ai.automaticSynonyms.setSelected(false);
+            assertThat(wizard[0].ai.changed()).as("nur das Häkchen geändert zählt als Änderung").isTrue();
+            wizard[0].next.doClick();
+            assertThat(wizard[0].step()).isEqualTo(SetupWizard.SUMMARY);
+        });
+        await(() -> !context.settings().terms().synonyms().automatic());
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("automatic: false");
+        SwingUtilities.invokeAndWait(() -> assertThat(texts(wizard[0].summary)).containsSubsequence(
+                AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL, AiSettingsPanel.AUTOMATIC_SYNONYMS_OFF));
+
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            wizard[0].show(SetupWizard.MODELS);
+            assertThat(wizard[0].ai.automaticSynonyms()).as("liest den gespeicherten Stand").isFalse();
+            wizard[0].ai.automaticSynonyms.setSelected(true);
+            wizard[0].next.doClick();
+        });
+        await(() -> context.settings().terms().synonyms().automatic());
+        assertThat(Files.readString(config, StandardCharsets.UTF_8)).doesNotContain("automatic");
+        SwingUtilities.invokeAndWait(() -> assertThat(texts(wizard[0].summary)).containsSubsequence(
+                AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL, AiSettingsPanel.AUTOMATIC_SYNONYMS_ON));
+    }
+
     @Test
     void theWizardHasNoSaveButtonAndTheSummaryShowsWhatStepsThreeAndFourEntered() throws Exception {
         SetupWizard[] wizard = new SetupWizard[1];
@@ -318,6 +353,7 @@ class SetupWizardTest {
             wizard[0].ai.rerankModel.setText("rerank-y");
             wizard[0].ai.chatModel.setText("chat-z");
             assertThat(wizard[0].ai.judgedPairs()).as("Standard: Chat-Prüfung aus").isZero();
+            assertThat(wizard[0].ai.automaticSynonyms()).as("Standard: Lauf nach jedem Abgleich an").isTrue();
             wizard[0].ai.judgedPairs.setValue(30);
             assertThat(wizard[0].ai.changed()).as("nur das Budget geändert zählt als Änderung").isTrue();
             assertThat(wizard[0].ai.simplification()).as("Vorgabe der Vorstufe").isEqualTo(
@@ -347,6 +383,7 @@ class SetupWizardTest {
         }
         assertThat(summary).as("ohne „Speichern“ übernommen").contains("vision-x", "rerank-y", "chat-z",
                 AiSettingsPanel.JUDGED_PAIRS_LABEL, "30 " + AiSettingsPanel.JUDGED_PAIRS_UNIT, "im Tresor",
+                AiSettingsPanel.AUTOMATIC_SYNONYMS_LABEL, AiSettingsPanel.AUTOMATIC_SYNONYMS_ON,
                 AiSettingsPanel.SIMPLIFY_LABEL, "immer · 3 Abschnitte zugleich · Modell einfach-m",
                 AiSettingsPanel.CHECK_SCOPE_LABEL, "alle · 5 Sätze zugleich · Modell pruef-m")
                 .doesNotContain("fehlt");
@@ -354,7 +391,8 @@ class SetupWizardTest {
         assertThat(Files.readString(config, StandardCharsets.UTF_8)).contains("vision-x", "rerank-y",
                 "http://127.0.0.1:9/v1", "max-judged-pairs: 30", "mode: always", "parallel: 3", "scope: all",
                 "parallel: 5", "pruef-m",
-                "model: \"einfach-m\"").doesNotContain("sk-wizard-geheim");
+                "model: \"einfach-m\"").doesNotContain("sk-wizard-geheim")
+                .as("Häkchen an ist der Standard und steht nicht in der Datei").doesNotContain("automatic");
         SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].ai.modelRetry.active())
                 .as("„Modelle“ verlassen: keine Wiederholung").isFalse());
     }
