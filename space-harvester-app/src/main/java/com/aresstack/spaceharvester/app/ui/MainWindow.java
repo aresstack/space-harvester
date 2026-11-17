@@ -42,8 +42,8 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste (Tooltip mit Namen,
- * Strg+1 … Strg+6): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
- * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Begriffe und Aufträge, dann abgetrennt
+ * Strg+1 … Strg+5): links die Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften,
+ * Anhänge, Analysen, Erweitert) als Umschalter der Mitte; rechts Aufträge, dann abgetrennt
  * Wissensquellen verwalten und Einstellungen, dann ✕ (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben
  * entscheiden, wie die Mitte das Gewählte zeigt). Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
