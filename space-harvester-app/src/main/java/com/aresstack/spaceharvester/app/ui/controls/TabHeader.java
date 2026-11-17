@@ -60,6 +60,11 @@ public final class TabHeader extends JPanel {
         title.setText(heading);
     }
 
+    /** Der Titel, wie er gerade steht. */
+    public String titleText() {
+        return title.getText();
+    }
+
     /** Ein kleines Abzeichen neben dem Titel, etwa „Experimentell“. */
     public TabHeader badge(String text, Color tone) {
         JLabel label = new JLabel(text);

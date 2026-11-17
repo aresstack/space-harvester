@@ -50,6 +50,136 @@ class TermsTabTest {
     }
 
     @Test
+    void aSelectionShowsTheSameViewSummedUpOverItsPagesAndAsksTheCoreWhenFiltering() throws Exception {
+        List<String> queries = new ArrayList<>();
+        List<com.aresstack.spaceharvester.application.terms.TermQueries.Occurrence> opened = new ArrayList<>();
+        TermsTab.Totals[] known = new TermsTab.Totals[1];
+        TermsTab.Selection selection = new TermsTab.Selection() {
+            @Override
+            public String title() {
+                return "Handbuch";
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> acronyms(String q) {
+                queries.add("acronyms:" + q);
+                return pager(q.isEmpty() ? List.of(summary("RSL", TermKind.ACRONYM, "Rückmeldeschlüssel"))
+                        : List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> identifiers(String q) {
+                return pager(q.isEmpty() ? List.of(summary("Antrag", TermKind.NOUN, null),
+                        summary("ISO27001", TermKind.IDENTIFIER, null)) : List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<com.aresstack.spaceharvester.app.ui.Relation> relations(
+                    String q) {
+                return pager(q.isEmpty() ? List.of(new com.aresstack.spaceharvester.app.ui.Relation("r1", "RSL",
+                        "ABBREVIATION", "Rückmeldeschlüssel", "PROPOSED", "RULE", 1)) : List.of());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList occurrences(
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary term) {
+                return new com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList(term.normalized(),
+                        List.of(occurrence("1", "Seite 1"), occurrence("1", "Seite 1"), occurrence("2", "Seite 2")),
+                        null);
+            }
+
+            @Override
+            public TermsTab.Totals totals() {
+                return known[0];
+            }
+        };
+        TermsTab[] tab = new TermsTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new TermsTab();
+            tab[0].runner(new TermsTab.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    try {
+                        onSuccess.accept(work.call());
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                }
+            });
+            tab[0].onOpen(opened::add);
+            tab[0].selection(selection);
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = tab[0];
+            assertThat(terms.title()).isEqualTo("Begriffe in Handbuch");
+            assertThat(terms.analysisShown()).as("Seitenabgleich und Plaketten nur auf der Seite").isFalse();
+            assertThat(terms.stateLabel()).isBlank();
+            assertThat(terms.counts()).as("echte Gesamtzahlen folgen vom Core").containsExactly("…", "…", "…");
+            assertThat(terms.chips()).extracting(chip -> chip.getText()).containsExactly("RSL · Rückmeldeschlüssel");
+            assertThat(terms.identifierChips()).extracting(chip -> chip.getText()).containsExactly("Antrag",
+                    "ISO27001");
+            assertThat(terms.relationLines()).containsExactly("RSL · Abkürzung für · Rückmeldeschlüssel "
+                    + "(Vorgeschlagen, Regel)");
+            assertThat(terms.chips().get(0).getToolTipText()).isEqualTo("Rückmeldeschlüssel · 3 Fundstellen auf 2 "
+                    + "Seiten · Klick zeigt die Seiten");
+
+            // Klick: die Seiten mit Fundstellen als Overlay, ein Klick öffnet die Seite.
+            terms.identifierChips().get(0).doClick();
+            assertThat(terms.occurrencePopup().titleText()).isEqualTo("Fundstellen von „Antrag“");
+            assertThat(terms.occurrencePopup().linkTexts()).containsExactly("Seite 1 · 2 Fundstellen",
+                    "Seite 2 · 1 Fundstelle");
+            terms.occurrencePopup().clickLink(1);
+            assertThat(opened).extracting(hit -> hit.pageId()).containsExactly("2");
+
+            // Der Filter fragt den Core neu.
+            terms.filter().setText("xyz");
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(queries).containsExactly("acronyms:", "acronyms:xyz");
+            assertThat(tab[0].chips()).isEmpty();
+            assertThat(tab[0].hint()).isEqualTo("Kein Begriff passt zum Filter.");
+            // Die Gesamtzahlen kommen getrennt im Hintergrund vom Core (BG1b), nie die Zahl der geladenen Chips.
+            known[0] = new TermsTab.Totals(4, 120, 7);
+            tab[0].selection(selection);
+            assertThat(tab[0].counts()).containsExactly("4", "120", "7");
+            // Zurück auf eine Seite: wieder die Darstellung der Seite.
+            tab[0].show(null);
+            assertThat(tab[0].title()).isEqualTo("Begriffe dieser Seite");
+            assertThat(tab[0].analysisShown()).isTrue();
+        });
+    }
+
+    private static <T> com.aresstack.spaceharvester.app.ui.Pager<T> pager(List<T> items) {
+        return new com.aresstack.spaceharvester.app.ui.Pager<>((one, other) -> 0,
+                List.of(List.of(cursor -> new com.aresstack.spaceharvester.app.ui.Pager.Page<>(items, null))));
+    }
+
+    private static com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary summary(String term,
+            TermKind kind, String expansion) {
+        return new com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary(term,
+                term.toLowerCase(java.util.Locale.ROOT), kind, 3, 2, 1, List.of(term),
+                expansion == null ? List.of() : List.of(expansion));
+    }
+
+    private static com.aresstack.spaceharvester.application.terms.TermQueries.Occurrence occurrence(String pageId,
+                                                                                                  String title) {
+        return new com.aresstack.spaceharvester.application.terms.TermQueries.Occurrence("wiki", "DEV", pageId,
+                title, TermKind.NOUN, "Antrag", null, null, 0, 6, "1", "sha", "1", null);
+    }
+
+    /** Lässt nachgeschobene Schritte (Nachladen nach dem Auslegen) auf dem EDT laufen. */
+    private static void flush() throws Exception {
+        for (int i = 0; i < 10; i++) {
+            SwingUtilities.invokeAndWait(() -> { });
+        }
+    }
+
+    @Test
     void aStaleAnalysisCountsNothingAndSaysHowToRecompute() throws Exception {
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {

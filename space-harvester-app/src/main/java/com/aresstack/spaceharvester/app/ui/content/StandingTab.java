@@ -88,6 +88,8 @@ import java.util.function.Supplier;
  */
 final class StandingTab extends JPanel {
 
+    /** Die Begriffe der Auswahl, vorn in derselben Reiterzeile wie auf der Seite (BG2a, AT 17.11.2026). */
+    static final String TERMS = "Begriffe";
     static final String STATEMENTS = "Aussagen";
     static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
@@ -311,6 +313,8 @@ final class StandingTab extends JPanel {
     private boolean byBearer;
     private boolean shown;
     private boolean dirty;
+    /** Meldet, ob die Begriffe der Auswahl zu sehen sind (Reiter sichtbar und „Begriffe“ gewählt). */
+    private Consumer<Boolean> termsShown = visible -> { };
     private int generation;
     private AtomicBoolean cancelled = new AtomicBoolean();
     private Subscription standingWatch = Subscription.NONE;
@@ -473,8 +477,16 @@ final class StandingTab extends JPanel {
                 tool.setVisible(statements);
             }
             topic.setVisible(READING.equals(name));
+            // Die Begriffe bringen ihre Kennzahlen und ihr Filterfeld selbst mit; rechts steht dort nichts.
+            deleteAnalyses.setVisible(!TERMS.equals(name));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
+            termsShown.accept(shown && TERMS.equals(name));
+            if (TERMS.equals(name)) {
+                onStatus.accept(" ");
+                return;
+            }
+            loadIfShown();
             if (READING.equals(name)) {
                 reading.status();
             } else {
@@ -482,6 +494,15 @@ final class StandingTab extends JPanel {
             }
         });
         add(tabs, BorderLayout.CENTER);
+    }
+
+    /**
+     * Setzt die Begriffe der Auswahl als ersten Reiter „Begriffe“ vor „Aussagen“, in dieselbe Reiterzeile (keine
+     * zweite Ebene). {@code onShown} erfährt, ob sie gerade zu sehen sind, damit sie erst dann laden.
+     */
+    void terms(JComponent view, Consumer<Boolean> onShown) {
+        termsShown = Objects.requireNonNull(onShown, "onShown");
+        tabs.first(TERMS, view);
     }
 
     /** Die Statuszeile des Hauptfensters: Umfang der Sicht oder ein Problem. */
@@ -529,11 +550,13 @@ final class StandingTab extends JPanel {
             popup.setVisible(false);
         }
         reading.shown(shown && READING.equals(tabs.selected()));
+        termsShown.accept(shown && TERMS.equals(tabs.selected()));
         loadIfShown();
     }
 
     private void loadIfShown() {
-        if (shown && dirty && selection != null) {
+        // Auf „Begriffe“ wird der Stand nicht gelesen; erst wenn einer seiner Reiter gewählt wird.
+        if (shown && dirty && selection != null && !TERMS.equals(tabs.selected())) {
             load();
         }
     }
@@ -748,6 +771,9 @@ final class StandingTab extends JPanel {
     }
 
     private void status() {
+        if (TERMS.equals(tabs.selected())) {
+            return;
+        }
         if (READING.equals(tabs.selected())) {
             reading.status();
             return;
