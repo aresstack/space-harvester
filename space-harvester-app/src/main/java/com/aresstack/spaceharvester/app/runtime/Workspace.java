@@ -1612,6 +1612,15 @@ public final class Workspace {
         return harvester.statusQuo().view(caller, selection, cancelled);
     }
 
+    /**
+     * Der Wortlaut zu Einträgen der Status-quo-Sicht (FL6): Originalsatz, vereinfachter Satz, Satzgrenzen im Lesetext.
+     * Ohne Leserecht am Inhalt fehlt der Eintrag. Nie auf dem EDT, am besten nur für sichtbare Zeilen.
+     */
+    public java.util.Map<String, com.aresstack.spaceharvester.application.standing.SentenceText> standingSentences(
+            java.util.Collection<com.aresstack.spaceharvester.application.standing.StatusQuoEntry> entries) {
+        return harvester.statusQuo().sentences(caller, entries);
+    }
+
     /** Meldet Entscheidungen zum Stand (ADR 0027), auf dem Zustell-Thread des Core; danach die Sicht neu lesen. */
     public Subscription subscribeStanding(Runnable listener) {
         return harvester.statusQuo().subscribe(Objects.requireNonNull(listener, "listener"));
