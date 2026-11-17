@@ -462,6 +462,15 @@ final class PrimaryRelationExtraction {
             if (head == null || !head.hasUpos("VERB", "AUX") || opensClauseBetween(sentence, head, current)) {
                 return null;
             }
+            // Ein Verb in Zweitstellung ist nie mit einem Verbletzt-Nebensatz gereiht („zahlt …, sobald der Abruf
+            // vorliegt, und informiert …“): Der Parser hängt es an den Nebensatz, gereiht ist es mit dessen Hauptsatz.
+            if (verbFinalClause(sentence, head) && verbSecond(sentence, current)) {
+                Token governor = sentence.head(head);
+                if (governor == null || !governor.hasUpos("VERB", "AUX") || governor.id() > current.id()) {
+                    return null;
+                }
+                head = governor;
+            }
             Token subject = firstOf(sentence, head.id(), "nsubj", "nsubj:pass");
             if (subject != null) {
                 return subject;
@@ -469,6 +478,17 @@ final class PrimaryRelationExtraction {
             current = head;
         }
         return null;
+    }
+
+    /** Eingeleiteter Nebensatz mit Verb am Ende: ein Einleitewort (nicht „zu“) am Prädikat. */
+    private static boolean verbFinalClause(Sentence sentence, Token verb) {
+        return sentence.dependents(verb.id(), "mark").stream().anyMatch(t -> !"zu".equalsIgnoreCase(t.form()));
+    }
+
+    /** Verb in Zweitstellung: ohne Einleitewort und mit einem eigenen Satzglied dahinter. */
+    private static boolean verbSecond(Sentence sentence, Token verb) {
+        return sentence.dependents(verb.id(), "mark").isEmpty() && sentence.dependents(verb.id()).stream()
+                .anyMatch(t -> t.id() > verb.id() && !"punct".equals(t.deprel()));
     }
 
     /** Ob die Übernahme entlang der {@code conj}-Kette an einer Teilsatzgrenze endete. */

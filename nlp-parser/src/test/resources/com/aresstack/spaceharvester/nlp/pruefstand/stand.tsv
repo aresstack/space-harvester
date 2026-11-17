@@ -2,14 +2,14 @@
 # (PruefstandTest nennt die neuen Werte.) Merkmale = Verneinung + Verbindlichkeit + Zeitbezug, gemessen an allen
 # Erwartungen mit gefundenem Verb: richtig bei vorgegebenem Merkmal, fälschlich gesetzt bei den übrigen.
 # Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE	Merkmale richtig	Merkmale fälschlich
-foerderung	heute	58	58	3	9	0
+foerderung	heute	59	59	2	9	0
 foerderung	vorstufe-hand	60	59	4	8	2
 foerderung	vorstufe-gemma4-12b	57	53	6	6	0
-beschaffung	heute	50	50	4	9	0
-foerderung	gezielt-hand	62	61	4	8	2
-foerderung	gezielt-gemma4-12b	62	58	5	8	0
-foerderung	immer-hand	62	61	4	8	2
-foerderung	immer-gemma4-12b	62	58	6	8	0
+beschaffung	heute	51	51	3	9	0
+foerderung	gezielt-hand	63	62	3	8	2
+foerderung	gezielt-gemma4-12b	63	59	4	8	0
+foerderung	immer-hand	63	62	3	8	2
+foerderung	immer-gemma4-12b	63	59	5	8	0
 beschaffung	vorstufe-hand	55	54	2	8	1
-beschaffung	gezielt-hand	54	53	4	8	1
-beschaffung	immer-hand	54	53	5	8	1
+beschaffung	gezielt-hand	55	54	3	8	1
+beschaffung	immer-hand	55	54	4	8	1

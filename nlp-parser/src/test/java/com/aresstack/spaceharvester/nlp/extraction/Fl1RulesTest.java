@@ -98,4 +98,12 @@ class Fl1RulesTest {
         assertEquals(List.of("Leser"), heads(lend, Role.ACTOR));
         assertTrue(lend.has(Finding.RELATIVE_PRONOUN_RESOLVED));
     }
+
+    @Test
+    void aVerbSecondBehindAnInsertedClauseTakesTheSubjectOfTheMainClause() {
+        assertEquals(List.of("Leserin"), heads(statement(14, "informieren"), Role.ACTOR),
+                "Zweitstellung: gereiht mit „zahlt“, nicht mit dem sobald-Satz");
+        assertEquals(List.of("Mahnung"), heads(statement(15, "vorliegen"), Role.ACTOR),
+                "Gegenprobe: Verbletzt im Nebensatz bleibt beim Subjekt des Nebensatzes");
+    }
 }
