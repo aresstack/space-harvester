@@ -432,7 +432,7 @@ class StandingTabTest {
         assertThat(rows.get(0)).isInstanceOf(StandingTab.Group.class);
         StandingTab.Group head = (StandingTab.Group) rows.get(0);
         assertThat(head.title()).as("mit Wort davor, Handelnder in der Schreibweise des ersten Eintrags")
-                .isEqualTo("Sachlage: Der Sachbearbeiter prüfen antrag · muss · bejaht und verneint");
+                .isEqualTo("Sachlage: Der Sachbearbeiter · prüfen · antrag · muss · bejaht und verneint");
         assertThat(tab.tabs().button(StandingTab.CONFLICTS).getText()).as("Zahl an der Pille, ohne Ablösungen")
                 .isEqualTo("Mögliche Widersprüche · 1");
         assertThat(head.tone()).isNotEqualTo(Comic.RED);
