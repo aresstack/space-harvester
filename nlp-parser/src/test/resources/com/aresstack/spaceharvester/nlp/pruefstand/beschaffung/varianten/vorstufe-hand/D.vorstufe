@@ -1,0 +1,10 @@
+2|T|Der Lagerist prüft jede Lieferung am Tag des Eingangs.
+4|T|Der Lieferschein wird mit der Bestellung abgeglichen.
+5|T|Die Ware wird auf Schäden geprüft.
+6|T|Der Wareneingang wird gebucht.
+6|T|Der Lagerplatz wird zugewiesen.
+7|V|Im Jahr 2022 sollten die Lagerplätze automatisch vergeben werden.
+8|V|Dieser Plan wurde aufgegeben.
+9|T|Der Lagerleiter vergibt die Lagerplätze derzeit von Hand.
+10|P|Ein Scanner soll die Lieferscheine ab 2027 erfassen.
+12|T|Die Anbindung an die Buchhaltung ist noch nicht geklärt.

@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.nlp.pruefstand;
 
+import com.aresstack.spaceharvester.nlp.extraction.SimplificationSelection;
 import com.aresstack.spaceharvester.nlp.pruefstand.Bewertung.Zahlen;
+import com.aresstack.spaceharvester.nlp.syntax.ParsedDocument;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Text;
 import com.aresstack.spaceharvester.nlp.pruefstand.Textsatz.Variante;
 import java.util.LinkedHashMap;
@@ -53,12 +55,31 @@ final class Bericht {
             details.append('\n');
         }
         out.append(uebersicht).append('\n');
+        out.append(kosten(satz)).append("\n\n");
         Zahlen heute = result.get(Textsatz.HEUTE);
         out.append("Merkmale (Verneinung, Verbindlichkeit, Zeitbezug) gemessen an allen Erwartungen mit gefundenem "
                 + "Verb, unabhängig von den Rollen; vom Standard abweichend vorgegeben an ").append(heute.merkmaleVorgegeben)
                 .append(" von ").append(heute.erwartet).append(" Aussagen.\n\n");
         out.append(tabellen);
         return result;
+    }
+
+    /** Kosten der Vorstufe: gewählte Sätze und Abschnitte mit Modellaufruf, „nur wo nötig“ und „immer“. */
+    static String kosten(Textsatz satz) {
+        int[] gezielt = new int[3];
+        int[] immer = new int[3];
+        for (Text text : satz.texte()) {
+            ParsedDocument original = satz.analyse(satz.varianten().get(0), text);
+            int[] g = Bewertung.kosten(original, SimplificationSelection.Mode.WHERE_NEEDED);
+            int[] a = Bewertung.kosten(original, SimplificationSelection.Mode.ALWAYS);
+            for (int i = 0; i < 3; i++) {
+                gezielt[i] += g[i];
+                immer[i] += a[i];
+            }
+        }
+        return "Vorstufe „nur wo nötig“: gewählt " + gezielt[0] + " von " + gezielt[2] + " Sätzen, " + gezielt[1]
+                + " Abschnitte mit Modellaufruf; „immer“: " + immer[0] + " von " + immer[2] + " Sätzen, " + immer[1]
+                + " Abschnitte.";
     }
 
     String text() {

@@ -1,2 +1,5 @@
-# Variante	Beschreibung
+# Variante	Beschreibung	Zusammensetzung
 heute	Originaltext direkt in die Kette (OpenNLP + MaltParser + Regeln)
+vorstufe-hand	Vorstufe „reine Hauptsätze“ von Hand (Architekt, obere Schranke, nach Anweisung v1, ohne ergänzte Handelnde); A und C unverändert
+gezielt-hand	Vorstufe von Hand nur für die Sätze der Auswahl „nur wo nötig“; PLAUSIBLE-Aussagen des Originals bleiben	gezielt:vorstufe-hand
+immer-hand	Vorstufe von Hand für alle Sätze, zusammengeführt; PLAUSIBLE-Aussagen des Originals bleiben	immer:vorstufe-hand

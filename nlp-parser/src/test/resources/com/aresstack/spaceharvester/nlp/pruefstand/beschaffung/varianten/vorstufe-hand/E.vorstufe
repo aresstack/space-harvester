@@ -1,0 +1,18 @@
+1|T|Der Lagerist bestätigt die Vollständigkeit der Lieferung.
+2|B|Der Besteller löst eine Bestellung aus.
+2|T|Der Besteller erhält eine Auftragsnummer.
+3|T|Der Einkäufer entscheidet über die Nachbestellung eines Artikels.
+4|T|Die Buchhaltung prüft die Rechnung.
+5|T|Der Lagerist verpackt die Ware.
+5|T|Der Lagerist übergibt die Ware dem Fahrer.
+6|T|Der Einkäufer holt Angebote ein.
+6|T|Der Einkäufer vergleicht die Preise.
+6|T|Der Einkäufer vergibt den Auftrag.
+7|T|Der Lagerist bucht den Wareneingang.
+7|T|Danach bezahlt die Buchhaltung die Rechnung.
+8|T|Die Einhaltung der Lieferfrist durch den Lieferanten wird geprüft.
+9|T|Der Lagerist beanstandet Ware.
+9|T|Der Lieferant muss diese Ware ersetzen.
+10|B|Der Fahrer quittiert die Übernahme.
+10|T|Dann bucht das Lagersystem den Abgang.
+10|T|Das Lagersystem druckt den Lieferschein.

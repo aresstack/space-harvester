@@ -1,0 +1,165 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/B@vorstufe-hand
+# sent_id = 1
+# text = Der Kostenstellenleiter gibt die Bestellanforderung frei.
+1	Der	der	DET	_	_	2	det	_	_
+2	Kostenstellenleiter	kostenstellenleiter	NOUN	_	_	3	nsubj	_	_
+3	gibt	geben	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Bestellanforderung	bestellanforderung	NOUN	_	_	6	nsubj	_	_
+6	frei	frei	ADJ	_	_	3	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Lagerist prüft die Ware auf Beschädigungen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Ware	ware	NOUN	_	_	3	obj	_	_
+6	auf	auf	ADP	_	_	7	case	_	_
+7	Beschädigungen	beschädigung	NOUN	_	_	3	obl	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 3
+# text = Die Rechnung wird durch Überweisung beglichen.
+1	Die	der	DET	_	_	2	det	_	_
+2	Rechnung	rechnung	NOUN	_	_	6	nsubj	_	_
+3	wird	werden	AUX	_	_	6	cop	_	_
+4	durch	durch	ADP	_	_	5	case	_	_
+5	Überweisung	überweisung	NOUN	_	_	6	nmod	_	_
+6	beglichen	beglich	ADJ	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 4
+# text = Der Lagerist sondert beschädigte Artikel aus.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	sondert	sondern	VERB	_	LemmaFrom=Form	0	root	_	_
+4	beschädigte	beschädigt	ADJ	_	_	5	amod	_	_
+5	Artikel	artikel	NOUN	_	_	3	obj	_	_
+6	aus	aus	ADP	_	_	3	compound:prt	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 5
+# text = Die beschädigten Artikel werden innerhalb von zwei Wochen zurückgesendet.
+1	Die	der	DET	_	_	3	det	_	_
+2	beschädigten	beschädigen	ADJ	_	_	3	amod	_	_
+3	Artikel	artikel	NOUN	_	_	9	nsubj:pass	_	_
+4	werden	werden	AUX	_	_	9	aux:pass	_	_
+5	innerhalb	innerhalb	ADV	_	_	9	advmod	_	_
+6	von	von	ADP	_	_	8	case	_	_
+7	zwei	zwei	NUM	_	_	8	nummod	_	_
+8	Wochen	woche	NOUN	_	_	9	obl	_	_
+9	zurückgesendet	zurücksenden	VERB	_	LemmaFrom=Form	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 6
+# text = Der Lagerleiter muss die Inventur einmal jährlich durchführen.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerleiter	lagerleiter	NOUN	_	_	8	nsubj	_	_
+3	muss	müssen	AUX	_	_	8	aux	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Inventur	inventur	NOUN	_	_	8	nsubj	_	_
+6	einmal	einmal	ADV	_	_	7	advmod	_	_
+7	jährlich	jährlich	ADJ	_	_	8	advmod	_	_
+8	durchführen	durchführen	VERB	_	_	0	root	_	SpaceAfter=No
+9	.	.	PUNCT	_	_	8	punct	_	_
+
+# sent_id = 7
+# text = Der Mindestbestand wird unterschritten.
+1	Der	der	DET	_	_	2	det	_	_
+2	Mindestbestand	mindestbestand	NOUN	_	_	4	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	4	aux:pass	_	_
+4	unterschritten	unterschreiten	VERB	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 8
+# text = Dann löst das Lagersystem eine Nachbestellung aus.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	löst	lösen	VERB	_	_	0	root	_	_
+3	das	der	DET	_	_	4	det	_	_
+4	Lagersystem	lagersystem	NOUN	_	_	2	nsubj	_	_
+5	eine	ein	DET	_	_	6	det	_	_
+6	Nachbestellung	nachbestellung	NOUN	_	_	2	obj	_	_
+7	aus	aus	ADP	_	_	2	compound:prt	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 9
+# text = Dann benachrichtigt das Lagersystem den Einkäufer.
+1	Dann	dann	ADV	_	_	2	advmod	_	_
+2	benachrichtigt	benachrichtigen	VERB	_	_	0	root	_	_
+3	das	der	DET	_	_	4	det	_	_
+4	Lagersystem	lagersystem	NOUN	_	_	2	nsubj	_	_
+5	den	der	DET	_	_	6	det	_	_
+6	Einkäufer	einkäufer	NOUN	_	_	2	obj	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	2	punct	_	_
+
+# sent_id = 10
+# text = Der Einkäufer darf den Auftrag nicht vergeben.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	7	nsubj	_	_
+3	darf	dürfen	AUX	_	_	7	aux	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Auftrag	auftrag	NOUN	_	_	7	obj	_	_
+6	nicht	nicht	PART	_	_	7	advmod	_	_
+7	vergeben	vergeben	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 11
+# text = Die Freigabe fehlt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Freigabe	freigabe	NOUN	_	_	3	nsubj	_	_
+3	fehlt	fehlen	VERB	_	_	0	root	_	SpaceAfter=No
+4	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 12
+# text = Der Lagerist erscheint zur Inventur.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	erscheint	erscheinen	VERB	_	_	0	root	_	_
+4-5	zur	_	_	_	_	_	_	_	_
+4	zu	zu	ADP	_	_	6	case	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Inventur	inventur	PROPN	_	_	3	obl	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 13
+# text = Der Lagerist zählt den Bestand.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerist	lagerist	NOUN	_	_	3	nsubj	_	_
+3	zählt	zählen	VERB	_	_	0	root	_	_
+4	den	der	DET	_	_	5	det	_	_
+5	Bestand	bestand	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 14
+# text = Der Einkäufer vergleicht die Angebote.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	vergleicht	vergleichen	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Angebote	angebot	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 15
+# text = Der Einkäufer bewertet die Angebote.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
+3	bewertet	bewerten	VERB	_	_	0	root	_	_
+4	die	der	DET	_	_	5	det	_	_
+5	Angebote	angebot	NOUN	_	_	3	obj	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 16
+# text = Der Auftrag wird dem Lieferanten schriftlich erteilt.
+1	Der	der	DET	_	_	2	det	_	_
+2	Auftrag	auftrag	NOUN	_	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	_	_	7	aux:pass	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Lieferanten	lieferant	NOUN	_	_	7	obl:arg	_	_
+6	schriftlich	schriftlich	ADJ	_	_	7	advmod	_	_
+7	erteilt	erteilen	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+

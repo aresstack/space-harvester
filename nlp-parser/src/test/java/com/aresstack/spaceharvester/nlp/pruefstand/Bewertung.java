@@ -133,29 +133,21 @@ final class Bewertung {
             for (Statement statement : heute.statements()) {
                 ausOriginal.add(befund(heute, heuteMentions, statement, statement.sentence() + 1));
             }
-            Set<Integer> gewaehlt = new HashSet<>();
-            SimplificationSelection.select(original, heute, "immer".equals(variante.art())
-                    ? SimplificationSelection.Mode.ALWAYS : SimplificationSelection.Mode.WHERE_NEEDED)
-                    .keySet().forEach(i -> gewaehlt.add(i + 1));
-            List<Befund> zusammen = new ArrayList<>();
-            List<Befund> ausVorstufe = List.copyOf(befunde);
-            ergaenzbar = new ArrayList<>();
-            for (int satzNr = 1; satzNr <= original.sentences().size(); satzNr++) {
-                int k = satzNr;
-                List<Befund> alt = ausOriginal.stream().filter(b -> b.satz() == k).toList();
-                if (vorstufe == null || !gewaehlt.contains(k)) {
-                    zusammen.addAll(alt);
-                    continue;
-                }
-                List<Befund> bleibt = alt.stream().filter(b -> b.stufe() == StatementQuality.Level.PLAUSIBLE).toList();
-                List<Befund> neu = ausVorstufe.stream().filter(b -> b.satz() == k
-                        && bleibt.stream().noneMatch(o -> gleichesVerb(o, b))).toList();
-                zusammen.addAll(bleibt);
-                zusammen.addAll(neu);
-                ergaenzbar.addAll(neu);
-                alt.stream().filter(b -> b.stufe() != StatementQuality.Level.PLAUSIBLE
-                        && neu.stream().noneMatch(n -> gleichesVerb(n, b))).forEach(zusammen::add);
+            Map<Integer, Set<SimplificationSelection.Reason>> auswahl = SimplificationSelection.select(original,
+                    heute, "immer".equals(variante.art()) ? SimplificationSelection.Mode.ALWAYS
+                            : SimplificationSelection.Mode.WHERE_NEEDED);
+            Set<Integer> vereinfacht = new HashSet<>();
+            if (vorstufe != null) {
+                auswahl.forEach((i, gruende) -> {
+                    if (SimplificationSelection.simplify(gruende)) {
+                        vereinfacht.add(i + 1);
+                    }
+                });
             }
+            List<Befund> ausVorstufe = List.copyOf(befunde);
+            List<Befund> zusammen = SimplificationSelection.merge(ausOriginal, ausVorstufe, vereinfacht, Befund::satz,
+                    b -> b.stufe() == StatementQuality.Level.PLAUSIBLE, Bewertung::gleichesVerb);
+            ergaenzbar = zusammen.stream().filter(ausVorstufe::contains).toList();
             befunde.clear();
             befunde.addAll(zusammen);
         }
@@ -245,6 +237,16 @@ final class Bewertung {
             ergaenzungen(original, analysis, mentions, ergaenzbar, zahlen, prefix);
         }
         return zahlen;
+    }
+
+    /** Vereinfachte Sätze, Abschnitte mit Modellaufruf und Sätze insgesamt für ein Original. */
+    static int[] kosten(ParsedDocument original, SimplificationSelection.Mode mode) {
+        ObjectCentricAnalysis analysis = new ObjectCentricExtraction(ExtractionSettings.defaults()).analyze(original);
+        Map<Integer, Set<SimplificationSelection.Reason>> auswahl = SimplificationSelection.select(original, analysis,
+                mode);
+        int vereinfacht = (int) auswahl.values().stream().filter(SimplificationSelection::simplify).count();
+        return new int[] {vereinfacht, SimplificationSelection.sections(original, auswahl).size(),
+            original.sentences().size()};
     }
 
     private static boolean gleichesVerb(Befund a, Befund b) {

@@ -3,18 +3,25 @@ package com.aresstack.spaceharvester.nlp.extraction;
 import com.aresstack.spaceharvester.nlp.syntax.ParsedDocument;
 import com.aresstack.spaceharvester.nlp.syntax.Sentence;
 import com.aresstack.spaceharvester.nlp.syntax.Token;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiPredicate;
+import java.util.function.Predicate;
+import java.util.function.ToIntFunction;
 import java.util.regex.Pattern;
 
 /**
  * Auswahl der Sätze, die die Vorstufe „Sätze vereinfachen“ in der Betriebsart „nur wo nötig“ bekommt (ADR 0032, FL3).
  * Läuft nach dem Parsen des Originals, deshalb hier neben dem Parser und nicht im Core. Ein Satz wird gewählt, wenn er
  * ein Stichpunkt oder eine Kennungszeile ist, kein Verb hat oder keine Aussage der Stufe PLAUSIBLE. Die
- * PLAUSIBLE-Aussagen des Originals bleiben beim Zusammenführen immer erhalten; die Vorstufe ergänzt nur Fehlendes.
+ * PLAUSIBLE-Aussagen des Originals bleiben beim Zusammenführen immer erhalten; die Vorstufe ergänzt nur Fehlendes
+ * ({@link #merge}). Zeilen ohne Verb (Überschriften, reine Kennungen, Stichworte) sind Zusammenhang, nie selbst zu
+ * vereinfachen; ein Abschnitt geht nur ans Modell, wenn er einen zu vereinfachenden Satz enthält ({@link #sections}).
+ * Prüfstand, App und Core-Auftrag nutzen dieselben Funktionen.
  */
 public final class SimplificationSelection {
 
@@ -92,5 +99,91 @@ public final class SimplificationSelection {
             }
         }
         return false;
+    }
+
+    /** Ob ein gewählter Satz selbst vereinfacht wird: nicht bei Zeilen ohne Verb, die sind nur Zusammenhang. */
+    public static boolean simplify(Set<Reason> reasons) {
+        return reasons != null && !reasons.contains(Reason.NO_VERB);
+    }
+
+    /**
+     * Ein Abschnitt (Index ab 0, einschließlich) mit den Sätzen darin, die vereinfacht werden; die übrigen Sätze des
+     * Abschnitts gehen als Zusammenhang mit.
+     */
+    public record Section(int first, int last, List<Integer> simplify) {
+
+        public Section {
+            simplify = List.copyOf(simplify);
+        }
+    }
+
+    /**
+     * Abschnitte mit Modellaufruf: Ein Abschnitt beginnt an einer Überschrift (Zeile ohne Verb, kein Stichpunkt, nicht
+     * auf „:“ endend) oder am Dokumentanfang; er zählt nur, wenn er mindestens einen zu vereinfachenden Satz hat.
+     */
+    public static List<Section> sections(ParsedDocument document, Map<Integer, Set<Reason>> selection) {
+        List<Section> result = new ArrayList<>();
+        int first = 0;
+        List<Integer> simplify = new ArrayList<>();
+        List<Sentence> sentences = document.sentences();
+        for (int i = 0; i < sentences.size(); i++) {
+            if (i > first && heading(sentences.get(i))) {
+                if (!simplify.isEmpty()) {
+                    result.add(new Section(first, i - 1, simplify));
+                }
+                first = i;
+                simplify = new ArrayList<>();
+            }
+            if (simplify(selection.get(i))) {
+                simplify.add(i);
+            }
+        }
+        if (!simplify.isEmpty()) {
+            result.add(new Section(first, sentences.size() - 1, simplify));
+        }
+        return result;
+    }
+
+    private static boolean heading(Sentence sentence) {
+        String text = sentence.text().strip();
+        return !text.isEmpty() && !text.endsWith(":") && !BULLET.matcher(sentence.text()).find()
+                && sentence.tokens().stream().noneMatch(t -> t.hasUpos("VERB", "AUX"));
+    }
+
+    /**
+     * Führt je Originalsatz zusammen (Satz ab 0): PLAUSIBLE-Aussagen des Originals bleiben; in vereinfachten Sätzen
+     * kommen Aussagen der Vorstufe hinzu, deren Verb dort fehlt; eine Aussage des Originals unter PLAUSIBLE weicht nur
+     * einer Vorstufen-Aussage mit demselben Verb. Nicht vereinfachte Sätze bleiben, wie sie sind.
+     *
+     * @param original   Aussagen des Originals
+     * @param simplified Aussagen der Vorstufe, {@code sentence} liefert ihren Originalsatz
+     * @param simplify   vereinfachte Originalsätze
+     */
+    public static <S> List<S> merge(List<S> original, List<S> simplified, Set<Integer> simplify,
+                                    ToIntFunction<S> sentence, Predicate<S> plausible, BiPredicate<S, S> sameVerb) {
+        List<S> result = new ArrayList<>();
+        int last = -1;
+        for (S s : original) {
+            last = Math.max(last, sentence.applyAsInt(s));
+        }
+        for (S s : simplified) {
+            last = Math.max(last, sentence.applyAsInt(s));
+        }
+        for (int k = 0; k <= last; k++) {
+            int index = k;
+            List<S> own = original.stream().filter(s -> sentence.applyAsInt(s) == index).toList();
+            if (!simplify.contains(k)) {
+                result.addAll(own);
+                continue;
+            }
+            List<S> kept = own.stream().filter(plausible).toList();
+            List<S> added = simplified.stream().filter(s -> sentence.applyAsInt(s) == index
+                    && kept.stream().noneMatch(o -> sameVerb.test(o, s))).toList();
+            result.addAll(kept);
+            result.addAll(added);
+            own.stream().filter(s -> !plausible.test(s) && added.stream().noneMatch(n -> sameVerb.test(n, s)))
+                    .forEach(result::add);
+        }
+        return result;
     }
 }
