@@ -164,6 +164,24 @@ public final class Workspace {
     }
 
     /**
+     * Gesamtzahlen der Begriffe je Art zur Suche ({@code TermQueries.totals}, BG1b); {@code limit} und {@code cursor}
+     * gelten nicht. Bei großen Seitenmengen bis etwa eine Sekunde: nie auf dem EDT.
+     */
+    public TermQueries.TermTotals termTotals(TermQueries.TermSearch search) {
+        return harvester.terms().totals(caller, search);
+    }
+
+    /**
+     * Zahl der Beziehungen je Art ({@code TermRelations.counts}, BG1b), ohne Status ohne die abgelehnten; mit
+     * {@code pages} nur Beziehungen mit einem Begriff auf diesen Seiten, {@code null} ohne Grenze. Nie auf dem EDT.
+     */
+    public java.util.Map<RelationType, Integer> termRelationCounts(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.termRelations().counts(caller, new TermRelations.RelationSearch(null, null, null, null, null,
+                1, null, null, pages));
+    }
+
+    /**
      * Beziehungen zwischen Begriffen ({@code GET /api/v1/term-relations}, #120); {@code status} {@code null} heißt
      * vorgeschlagene und bestätigte, wie im Dienst.
      */

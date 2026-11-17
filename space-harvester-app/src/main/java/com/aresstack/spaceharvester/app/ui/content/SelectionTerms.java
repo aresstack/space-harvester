@@ -76,6 +76,17 @@ final class SelectionTerms implements TermsTab.Selection {
         return new Pager<>((one, other) -> 0, List.of(List.of(fetch)));
     }
 
+    /** Die Gesamtzahlen aus dem Core (BG1b): Bezeichner sind Nomen und Kennungen wie in der Liste. */
+    @Override
+    public TermsTab.Totals totals() {
+        PageSet within = pages();
+        TermQueries.TermTotals terms = workspace.termTotals(new TermQueries.TermSearch(null, null, null, null, false,
+                TermsTab.STEP, null, null).within(within));
+        int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
+        return new TermsTab.Totals(terms.of(TermKind.ACRONYM), terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER),
+                relations);
+    }
+
     @Override
     public TermQueries.OccurrenceList occurrences(TermQueries.TermSummary term) {
         return workspace.occurrences(new TermQueries.OccurrenceSearch(term.normalized(), term.kind(), null, null,

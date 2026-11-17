@@ -58,6 +58,19 @@ public final class PillTabs extends JPanel {
         return this;
     }
 
+    /** Wie {@link #tab}, aber als erster Reiter vorn in der Leiste; er wird gewählt. */
+    public PillTabs first(String name, JComponent content) {
+        tab(name, content);
+        bar.setComponentZOrder(buttons.get(name), 0);
+        Map<String, ComposerToggleButton> ordered = new LinkedHashMap<>();
+        ordered.put(name, buttons.remove(name));
+        ordered.putAll(buttons);
+        buttons.clear();
+        buttons.putAll(ordered);
+        select(name);
+        return this;
+    }
+
     /** Aktionen rechts in der Reiterzeile, auf derselben Höhe wie die Pillen; sie gelten für alle Reiter. */
     public PillTabs actions(JComponent... buttons) {
         for (JComponent button : buttons) {

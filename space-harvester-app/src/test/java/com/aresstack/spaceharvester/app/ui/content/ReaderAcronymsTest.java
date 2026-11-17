@@ -229,6 +229,40 @@ class ReaderAcronymsTest {
         assertThat(acronym(synced, "CI").expansion()).isEqualTo("Continuous Integration");
     }
 
+    /** BG2a: die Begriffe einer Quelle aus dem Core, Listen und Gesamtzahlen über dieselbe Seitenmenge. */
+    @Test
+    void theTermsOfASourceComeFromTheCoreWithTheirRealTotals() throws Exception {
+        Workspace workspace = start(serve(confluence("200", "Schnittstellen", WIKI_PAGE)),
+                serve(confluence("200", "Prüfung", OTHER_PAGE)));
+        sync(workspace, "wiki");
+        sync(workspace, "zweites");
+
+        SelectionTerms wiki = new SelectionTerms(context.runtime(), new ExportPanel.Selection("wiki", null, null,
+                "Wiki"));
+        // Wie oben: der Begriffsindex dieser Testquellen steht erst nach dem Öffnen der Seiten bereit.
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        open(panel, "wiki", "200", false);
+        open(panel, "zweites", "200", false);
+        TermsTab.Totals totals = wiki.totals();
+        List<TermQueries.TermSummary> acronyms = wiki.acronyms("").next(TermQueries.MAX_LIMIT);
+        assertThat(acronyms).extracting(TermQueries.TermSummary::term).contains("API", "SSO");
+        assertThat(acronyms).extracting(TermQueries.TermSummary::normalized).isSorted();
+        assertThat(totals.acronyms()).as("Gesamtzahl wie die Liste").isEqualTo(acronyms.size());
+        assertThat(totals.identifiers()).isEqualTo(wiki.identifiers("").next(TermQueries.MAX_LIMIT).size())
+                .isPositive();
+        assertThat(totals.relations()).isEqualTo(wiki.relations("").next(TermQueries.MAX_LIMIT).size());
+        // Die Fundstellen eines Begriffs bleiben in der Auswahl: API nur auf der Seite der Quelle „wiki“.
+        TermQueries.TermSummary api = acronyms.stream().filter(term -> term.term().equals("API")).findFirst()
+                .orElseThrow();
+        assertThat(wiki.occurrences(api).occurrences()).extracting(TermQueries.Occurrence::sourceId)
+                .containsOnly("wiki");
+        // „Wissensquellen“: keine Seitenmenge, beide Quellen zählen.
+        SelectionTerms all = new SelectionTerms(context.runtime(), ExportPanel.Selection.ALL);
+        assertThat(all.pages()).isNull();
+        assertThat(all.occurrences(api).occurrences()).extracting(TermQueries.Occurrence::sourceId)
+                .contains("wiki", "zweites");
+    }
+
     @Test
     void aPageMissingFromTheCacheIsLoadedStoredAndAnalysed() throws Exception {
         FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);

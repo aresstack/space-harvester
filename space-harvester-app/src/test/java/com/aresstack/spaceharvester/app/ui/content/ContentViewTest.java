@@ -297,18 +297,29 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
-        // Unterreiter wie auf der Seite: „Begriffe“ (über die Auswahl zusammengezählt) und „Aussagen“ (der Stand).
-        assertThat(onEdt(() -> detail.overview().names())).containsExactly("Begriffe", "Aussagen");
-        assertThat(onEdt(() -> detail.overview().selected())).isEqualTo("Begriffe");
+        // EINE Reiterzeile (AT 17.11.2026): „Begriffe“ vorn wie auf der Seite, dahinter die Reiter des Stands.
+        assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
+                "Zuerst lesen", "Mögliche Widersprüche");
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
         onEdt(() -> {
-            detail.overview().select("Aussagen");
+            detail.standing().tabs().select("Aussagen");
             return null;
         });
-        assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Stand");
+        // Der gewählte Reiter bleibt beim Wechsel der Auswahl.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Aussagen");
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
         onEdt(() -> {
@@ -316,7 +327,7 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isFalse();
-        assertThat(onEdt(() -> detail.overview().isVisible())).as("Begriffe/Aussagen der Auswahl").isFalse();
+        assertThat(onEdt(() -> detail.standing().isVisible())).isFalse();
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Absätze");
         // Der Wissensquellen-Kopf: wieder der Stand.
         onEdt(() -> {

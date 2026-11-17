@@ -96,6 +96,32 @@ class StandingTabTest {
     }
 
     @Test
+    void theTermsOfTheSelectionLeadTheSameTabRowAndTheStandIsOnlyReadOnItsOwnTabs() {
+        Fixture fixture = new Fixture(view());
+        List<Boolean> shown = new ArrayList<>();
+        fixture.tab.terms(new javax.swing.JPanel(), shown::add);
+        StandingTab tab = fixture.shownTab();
+        // Eine Zeile, „Begriffe“ vorn und gewählt; rechts nichts vom Stand, gelesen wird der Stand noch nicht.
+        assertThat(tab.tabs().names()).containsExactly(StandingTab.TERMS, StandingTab.STATEMENTS,
+                StandingTab.READING, StandingTab.CONFLICTS);
+        assertThat(tab.tabs().selected()).isEqualTo(StandingTab.TERMS);
+        assertThat(shown).last().isEqualTo(true);
+        assertThat(tab.searchField().getParent().isVisible()).isFalse();
+        assertThat(tab.bearerButton().isVisible()).isFalse();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isFalse();
+        assertThat(fixture.reads).hasValue(0);
+        // „Aussagen“: die Begriffe sind weg, der Stand wird gelesen, Werkzeuge und Papierkorb stehen rechts.
+        tab.tabs().select(StandingTab.STATEMENTS);
+        assertThat(shown).last().isEqualTo(false);
+        assertThat(fixture.reads).hasValue(1);
+        assertThat(tab.bearerButton().isVisible()).isTrue();
+        assertThat(tab.deleteAnalysesButton().isVisible()).isTrue();
+        tab.shown(false);
+        tab.tabs().select(StandingTab.TERMS);
+        assertThat(shown).as("unsichtbar bleiben die Begriffe aus").last().isEqualTo(false);
+    }
+
+    @Test
     void anEmptyListSaysWhyInItsArea() {
         StatusQuoView base = view();
         StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
