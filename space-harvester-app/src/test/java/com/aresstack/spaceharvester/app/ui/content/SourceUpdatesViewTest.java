@@ -369,20 +369,41 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void anUpdateWithoutSummaryOffersToSummarizeButNotTheInitialFill() {
+    void openingTheReadingViewCreatesTheMissingSummaryByItselfOnceAndSaysSo() throws Exception {
         summary.source("wiki", "Confluence HaVdB");
-        summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        assertThat(summary.summarizeOffered()).isTrue();
-        assertThat(summary.summarizeLabel()).isEqualTo(SourceUpdatesView.SUMMARIZE);
-        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.SUMMARIZE_TIP);
-        assertThat(summary.summarizeEntryShown()).as("sichtbarer Einstieg im Bericht").isTrue();
-        assertThat(summary.reportTexts()).doesNotContain("Zusammenfassung");
+        assertThat(summary.selectedUpdate()).isEqualTo(actions.second().id());
+        assertThat(actions.summarizeCalls).as("von selbst beim Öffnen").isEqualTo(1);
+        assertThat(summary.busy()).isTrue();
+        assertThat(summary.reportTexts()).contains(SourceUpdatesView.SUMMARIZING);
+        assertThat(SourceUpdatesView.SUMMARIZING).isEqualTo("Zusammenfassung wird erstellt …");
+
+        actions.finish(JobState.FAILED);
+        assertThat(summary.reportTexts()).as("nicht erstellt: Einstieg zum erneuten Versuch")
+                .contains(SourceUpdatesView.NO_SUMMARY).doesNotContain(SourceUpdatesView.SUMMARIZING);
+        assertThat(summary.summarizeEntryShown()).isTrue();
 
         summary.clickUpdate("10.11.2026, 08:00 · angelo");
+        summary.clickUpdate("16.11.2026, 18:30 · angelo");
+        assertThat(actions.summarizeCalls).as("einmal je Update und Ebene, nicht bei jedem Klick").isEqualTo(1);
+    }
+
+    @Test
+    void theInitialFillAndAHiddenTabStartNothing() throws Exception {
+        visible = false;
+        summary.source("wiki", "Confluence HaVdB");
+        assertThat(actions.summarizeCalls).as("verdeckt nichts erstellen").isZero();
+
+        visible = true;
+        summary.becameVisible();
+        assertThat(actions.summarizeCalls).as("erst beim Öffnen").isEqualTo(1);
+
+        actions.finish(JobState.COMPLETED);
+        summary.clickUpdate("10.11.2026, 08:00 · angelo");
         assertThat(summary.summarizeOffered()).as("Erstbefüllung").isFalse();
+        assertThat(summary.summarizeTip()).isEqualTo(SourceUpdatesView.INITIAL_TIP);
         assertThat(summary.summarizeEntryShown()).isFalse();
-        assertThat(actions.summarizeCalls).as("nie von selbst").isZero();
+        assertThat(actions.summarizeCalls).isEqualTo(1);
     }
 
     @Test
@@ -390,9 +411,7 @@ class SourceUpdatesViewTest {
         summary.source("wiki", "Confluence HaVdB");
         summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
-        summary.clickSummarizeEntry();
-
-        assertThat(actions.summarizeCalls).isEqualTo(1);
+        assertThat(actions.summarizeCalls).as("beim Öffnen von selbst gestartet").isEqualTo(1);
         assertThat(summary.busy()).as("BusyOverlay über dem Bericht").isTrue();
         assertThat(summary.summarizeEntryShown()).isFalse();
         assertThat(summary.summarizeOffered()).as("nie zwei zugleich").isFalse();

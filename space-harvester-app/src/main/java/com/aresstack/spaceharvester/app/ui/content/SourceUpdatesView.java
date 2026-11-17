@@ -67,15 +67,21 @@ final class SourceUpdatesView extends JPanel {
             + "oben, das jüngste ganz rechts und vorgewählt; „Seit dem letzten Update“ ist, was danach dazugekommen ist, "
             + "es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
             + "sie.\n\n"
-            + "„Zusammenfassen“ lässt das eingestellte Chat-Modell das gewählte Update in wenigen Sätzen "
-            + "zusammenfassen. Es liest nur Seiten, die für die KI freigegeben sind; die Zusammenfassung bleibt "
-            + "gespeichert und lässt sich später nachlesen oder neu erstellen. Von selbst wird nie zusammengefasst.";
+            + "Die Leseansicht zeigt die KI-Zusammenfassung des gewählten Updates. Fehlt sie, erstellt das eingestellte "
+            + "Chat-Modell sie beim Öffnen von selbst; „Zusammenfassen“ erstellt sie neu. Es liest nur Seiten, die für "
+            + "die KI freigegeben sind; die Zusammenfassung bleibt gespeichert. Die Erstbefüllung und Updates ohne "
+            + "Änderung bekommen keine.";
     static final String SUMMARIZE = "Zusammenfassen";
     static final String RESUMMARIZE = "Neu zusammenfassen";
-    static final String SUMMARIZING = "Wird zusammengefasst …";
+    static final String SUMMARIZING = "Zusammenfassung wird erstellt …";
     static final String SUMMARIZE_TIP = "Update zusammenfassen";
     static final String RESUMMARIZE_TIP = "Zusammenfassung neu erstellen";
     static final String NO_MODEL = "Kein Chat-Modell eingestellt; unter Einstellungen › Modelle wählen";
+    /** Leseansicht ohne Chat-Modell: warum dort keine Zusammenfassung steht. */
+    static final String NO_MODEL_PAGE = "Für die KI-Zusammenfassung ist kein Chat-Modell eingestellt. Unter "
+            + "Einstellungen › Modelle wählen; danach entsteht sie beim Öffnen von selbst.";
+    static final String INITIAL_TIP = "Für die Erstbefüllung gibt es keine Zusammenfassung";
+    static final String EMPTY_TIP = "In diesem Update hat sich nichts geändert";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
 
     private final Supplier<Actions> actions;
@@ -120,6 +126,8 @@ final class SourceUpdatesView extends JPanel {
     private UpdateSummary summary;
     /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
     private Run running;
+    /** Updates, für die die Leseansicht die Zusammenfassung schon von selbst angestoßen hat (je Quelle, Ebene). */
+    private final java.util.Set<String> autoStarted = new java.util.HashSet<>();
     private Subscription jobWatch = Subscription.NONE;
     /** Ob ein Chat-Modell eingestellt ist. */
     private boolean available = true;
@@ -305,6 +313,27 @@ final class SourceUpdatesView extends JPanel {
         if (messagePending && !messageRunning) {
             changed();
         }
+        if (autoSummarize() && shown != null) {
+            renderReport(shown);
+        }
+    }
+
+    /**
+     * Die Leseansicht zeigt immer die KI-Zusammenfassung (Angelo, 17.11.2026): Fehlt sie für das gezeigte Update, wird
+     * sie beim Öffnen von selbst erstellt, einmal je Update und Ebene, nur bei sichtbarem Reiter und nur mit
+     * Chat-Modell. Die Erstbefüllung und Updates ohne Änderung bekommen keine. {@code true}, wenn gestartet.
+     */
+    private boolean autoSummarize() {
+        if (mode != Mode.SUMMARY || shown == null || summary != null || running != null || !available
+                || sourceId == null || selected == null || !shown.update().id().equals(selected)
+                || shown.update().initial() || shown.pages().isEmpty() || !showing.getAsBoolean()) {
+            return false;
+        }
+        if (!autoStarted.add(sourceId + "\u0000" + spaceKey + "\u0000" + selected)) {
+            return false;
+        }
+        summarize();
+        return running != null;
     }
 
     /** Tests: ob der Reiter als sichtbar gilt (sonst {@link #isShowing()}). */
@@ -446,6 +475,7 @@ final class SourceUpdatesView extends JPanel {
             shown = found.report();
             summary = found.summary();
             available = found.available();
+            autoSummarize();
             renderReport(shown);
             offerSummary();
             restore(position);
@@ -531,14 +561,14 @@ final class SourceUpdatesView extends JPanel {
         ChangeUpdate update = shown != null && shown.update().id().equals(selected) ? shown.update()
                 : entry(updates, selected);
         boolean possible = sourceId != null && update != null && !update.initial() && update.pages() > 0;
-        String tip = !available ? NO_MODEL : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
+        String tip = !available ? NO_MODEL : update != null && update.initial() ? INITIAL_TIP
+                : update != null && update.pages() == 0 ? EMPTY_TIP : summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP;
         summarize.setVisible(mode == Mode.SUMMARY && sourceId != null);
         summarize.setEnabled(possible && available && running == null);
         summarize.setToolTipText(tip);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
         summarizeEntry.setVisible(summary == null && summarize.isEnabled());
-        boolean mine = running != null && Objects.equals(running.sourceId(), sourceId)
-                && Objects.equals(running.spaceKey(), spaceKey) && Objects.equals(running.updateId(), selected);
+        boolean mine = runningHere();
         if (mine != busy.isBusy()) {
             busy.setText(SUMMARIZING);
             busy.setBusy(mine);
@@ -573,6 +603,9 @@ final class SourceUpdatesView extends JPanel {
             if (running == starting) {
                 running = null;
                 offerSummary();
+                if (shown != null && mode == Mode.SUMMARY) {
+                    renderReport(shown);
+                }
             }
             onStatus.accept("Zusammenfassen nicht möglich: " + Problems.describe(failure).title());
         });
@@ -617,10 +650,20 @@ final class SourceUpdatesView extends JPanel {
                     + (status.error() == null ? "" : ": " + status.error().message());
         });
         offerSummary();
-        if (status.state() == JobState.COMPLETED && Objects.equals(run.sourceId(), sourceId)
-                && Objects.equals(run.spaceKey(), spaceKey) && Objects.equals(run.updateId(), selected)) {
+        boolean here = Objects.equals(run.sourceId(), sourceId) && Objects.equals(run.spaceKey(), spaceKey)
+                && Objects.equals(run.updateId(), selected);
+        if (status.state() == JobState.COMPLETED && here) {
             select(selected, true, () -> { });
+        } else if (here && shown != null && mode == Mode.SUMMARY) {
+            // Nicht erstellt: statt „wird erstellt“ wieder der Einstieg zum erneuten Versuch.
+            renderReport(shown);
         }
+    }
+
+    /** Ob der Auftrag „Zusammenfassen“ für das gezeigte Update und die gezeigte Ebene läuft. */
+    private boolean runningHere() {
+        return running != null && Objects.equals(running.sourceId(), sourceId)
+                && Objects.equals(running.spaceKey(), spaceKey) && Objects.equals(running.updateId(), selected);
     }
 
     /** Bricht den laufenden Auftrag ab; die bisherige Zusammenfassung bleibt. Das Ende meldet der Auftrag selbst. */
@@ -779,10 +822,14 @@ final class SourceUpdatesView extends JPanel {
         if (summary != null) {
             renderSummary(found);
         } else if (update.initial()) {
-            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand.",
-                    Comic.TEXT, 13.5f));
+            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
+                    + "Zusammenfassung gibt es ab dem ersten Update mit Änderungen.", Comic.TEXT, 13.5f));
         } else if (found.pages().isEmpty()) {
             add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
+        } else if (!available) {
+            add(reportBody, Comic.wrapped(NO_MODEL_PAGE, Comic.MUTED, 13.5f));
+        } else if (runningHere()) {
+            add(reportBody, Comic.wrapped(SUMMARIZING, Comic.MUTED, 13.5f));
         } else {
             add(reportBody, Comic.wrapped(NO_SUMMARY, Comic.MUTED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));
