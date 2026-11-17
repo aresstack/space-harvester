@@ -107,6 +107,7 @@ public class Jobs implements AutoCloseable {
     static final Duration RECONNECT_RESET_AFTER = Duration.ofMinutes(2);
     /** Wer Wiederanlauf und nachgeholtes „Nur Fehler“ ausführt; {@code null}, bis die Anwendung es verbindet. */
     private volatile JobRecovery recovery;
+    private final Map<String, Set<String>> aliases = new java.util.concurrent.ConcurrentHashMap<>();
     /** Wie oft ein nach dem Durchgang abgelehntes „Nur Fehler neu versuchen“ höchstens versucht wird. */
     static final int RETRY_AFTER_PASS_ATTEMPTS = 48;
     /** So lange nach dem Start eines Laufs für „Nur Fehler neu versuchen“ löst weiteres Drücken keinen weiteren aus. */
@@ -256,6 +257,28 @@ public class Jobs implements AutoCloseable {
             dispatch();
         }
         return status;
+    }
+
+    /**
+     * Lässt {@code owner} auch die Aufträge von {@code alias} sehen, abbrechen, anhalten und löschen, etwa die App
+     * ({@code Harvester.OWNER}) die Aufträge, die Dienste mit ihrem Aufrufer ({@code AccessContext#jobOwner()})
+     * einreihen: „Zusammenfassen“, Synonymlauf, Glossar. Umgekehrt gilt es nicht.
+     */
+    public void ownerAlias(String owner, String alias) {
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(alias, "alias");
+        if (!owner.equals(alias)) {
+            aliases.computeIfAbsent(owner, key -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(alias);
+        }
+    }
+
+    /** Ob ein Auftrag mit Auftraggeber {@code actual} dem Auftraggeber {@code owner} gehört, Aliasse eingeschlossen. */
+    private boolean owns(String actual, String owner) {
+        if (Objects.equals(actual, owner)) {
+            return true;
+        }
+        Set<String> alias = owner == null ? null : aliases.get(owner);
+        return alias != null && actual != null && alias.contains(actual);
     }
 
     /** Angabe eines wartenden Auftrags ({@link #submitAwaiting}): der Auftrag, dem er folgt. */
@@ -428,7 +451,8 @@ public class Jobs implements AutoCloseable {
      */
     public Subscription subscribe(String owner, JobListener listener) {
         Objects.requireNonNull(listener, "listener");
-        return listeners.add(listener, subject -> Objects.equals(subject, owner));
+        return listeners.add(listener, subject -> subject == null ? owner == null
+                : subject instanceof String actual && owns(actual, owner));
     }
 
     /**
@@ -640,7 +664,7 @@ public class Jobs implements AutoCloseable {
     public List<JobStatus> list(String owner, JobType type) {
         List<JobStatus> result = new ArrayList<>();
         for (JobStatus stored : store.all()) {
-            if (Objects.equals(stored.owner(), owner) && stored.type() == type) {
+            if (owns(stored.owner(), owner) && stored.type() == type) {
                 try {
                     result.add(status(stored.id()));
                 } catch (UnknownJobException e) {
@@ -942,9 +966,9 @@ public class Jobs implements AutoCloseable {
         // Je eigenem Auftrag lesen statt global und dann filtern: fremde Ereignisse dürfen eigene nicht verdrängen.
         Set<String> mine = new LinkedHashSet<>();
         synchronized (lock) {
-            open.values().stream().filter(job -> Objects.equals(job.owner, owner)).forEach(job -> mine.add(job.id));
+            open.values().stream().filter(job -> owns(job.owner, owner)).forEach(job -> mine.add(job.id));
         }
-        store.all().stream().filter(status -> Objects.equals(status.owner(), owner))
+        store.all().stream().filter(status -> owns(status.owner(), owner))
                 .forEach(status -> mine.add(status.id()));
         return mine.stream().flatMap(id -> events.events(id).stream())
                 .sorted(Comparator.comparing(JobEvent::at).thenComparingLong(JobEvent::sequence).reversed())
@@ -1052,7 +1076,7 @@ public class Jobs implements AutoCloseable {
     public int deleteAll(String owner, JobType type) {
         int removed = 0;
         for (JobStatus status : store.all()) {
-            if (Objects.equals(status.owner(), owner) && (type == null || status.type() == type)) {
+            if (owns(status.owner(), owner) && (type == null || status.type() == type)) {
                 try {
                     delete(status.id(), owner);
                     removed++;
@@ -1074,7 +1098,7 @@ public class Jobs implements AutoCloseable {
     public int deleteFinished(String owner, JobType type) {
         int removed = 0;
         for (JobStatus status : store.all()) {
-            if (Objects.equals(status.owner(), owner) && (type == null || status.type() == type)
+            if (owns(status.owner(), owner) && (type == null || status.type() == type)
                     && deleteIfFinished(status.id(), false)) {
                 removed++;
             }
@@ -1122,7 +1146,7 @@ public class Jobs implements AutoCloseable {
         Objects.requireNonNull(before, "before");
         int removed = 0;
         for (JobStatus status : store.all()) {
-            if (Objects.equals(status.owner(), owner) && status.state().terminal()) {
+            if (owns(status.owner(), owner) && status.state().terminal()) {
                 removed += deleteBefore(status.id(), before);
             }
         }
@@ -1145,8 +1169,8 @@ public class Jobs implements AutoCloseable {
         return status;
     }
 
-    private static JobStatus requireOwner(JobStatus status, String owner) {
-        if (!Objects.equals(status.owner(), owner)) {
+    private JobStatus requireOwner(JobStatus status, String owner) {
+        if (!owns(status.owner(), owner)) {
             throw new UnknownJobException(status.id());
         }
         return status;

@@ -69,6 +69,24 @@ class JobsObserverTest {
     }
 
     @Test
+    void anOwnerAliasSeesListsAndCancelsTheJobsOfItsAliasButNotTheOtherWayRound() throws InterruptedException {
+        jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        jobs.ownerAlias("app", "client-a");
+        jobs.subscribe("app", mine);
+        String id = jobs.submit(JobType.UPDATE_SUMMARY, "wiki", null, "client-a", JobTask.blocking(context -> { }))
+                .id();
+        String own = jobs.submit(JobType.EXPORT, "wiki", "DEV", "app", JobTask.blocking(context -> { })).id();
+
+        assertThat(mine.next(status -> status.id().equals(id))).isNotNull();
+        assertThat(jobs.status(id, "app").owner()).isEqualTo("client-a");
+        assertThat(jobs.list("app", JobType.UPDATE_SUMMARY)).extracting(JobStatus::id).containsExactly(id);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jobs.status(own, "client-a"))
+                .isInstanceOf(UnknownJobException.class);
+
+        assertThat(jobs.cancel(id, "app").cancelRequested()).isTrue();
+    }
+
+    @Test
     void aDeletionArrivesAndAClosedSubscriptionGetsNothingMore() throws InterruptedException {
         jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofHours(1)), clock);
         Subscription subscription = jobs.subscribe("client-a", mine);
