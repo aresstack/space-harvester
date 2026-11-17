@@ -418,7 +418,10 @@ class StandingTabTest {
         List<StandingTab.Row> rows = tab.conflictRows();
         assertThat(rows.get(0)).isInstanceOf(StandingTab.Group.class);
         StandingTab.Group head = (StandingTab.Group) rows.get(0);
-        assertThat(head.title()).isEqualTo("sachbearbeiter prüfen antrag · muss · bejaht und verneint");
+        assertThat(head.title()).as("mit Wort davor, Handelnder in der Schreibweise des ersten Eintrags")
+                .isEqualTo("Sachlage: Der Sachbearbeiter prüfen antrag · muss · bejaht und verneint");
+        assertThat(tab.tabs().button(StandingTab.CONFLICTS).getText()).as("Zahl an der Pille, ohne Ablösungen")
+                .isEqualTo("Mögliche Widersprüche · 1");
         assertThat(head.tone()).isNotEqualTo(Comic.RED);
         assertThat(rows.subList(1, 3)).extracting(row -> ((StandingTab.Line) row).entry())
                 .containsExactly(affirmed, negated);
@@ -467,6 +470,8 @@ class StandingTabTest {
         Fixture fixture = new Fixture(view());
         StandingTab tab = fixture.shownTab();
         assertThat(fixture.topics).as("gerechnet erst, wenn „Zuerst lesen“ sichtbar ist").isEmpty();
+        assertThat(tab.tabs().button(StandingTab.CONFLICTS).getText()).as("ohne Zahl bei null")
+                .isEqualTo(StandingTab.CONFLICTS);
         assertThat(tab.reading().topicField().isVisible()).isFalse();
 
         tab.tabs().select(StandingTab.READING);

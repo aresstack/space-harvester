@@ -90,8 +90,7 @@ final class StandingTab extends JPanel {
     static final String READING = "Zuerst lesen";
     static final String CONFLICTS = "Mögliche Widersprüche";
     static final String REPLACEMENTS = "Ablösungen";
-    /** Höchstens so viele Einträge holen den Wortlaut für „Mögliche Widersprüche“ auf einmal. */
-    private static final int CONFLICT_SENTENCES = 400;
+    static final String SITUATION = "Sachlage: ";
     static final String BUSY = "Stand wird gelesen …";
     static final String BY_BEARER_TIP = "Nach Träger bündeln: Zustände (Eigenschaften, Rollen) unter ihrem Träger";
     static final String AS_LIST_TIP = "Als Liste nach Stand zeigen";
@@ -346,7 +345,7 @@ final class StandingTab extends JPanel {
         });
         scroll = Comic.scroll(list);
         // Den Wortlaut nur für die sichtbaren Zeilen holen, beim Rollen nach.
-        scroll.getViewport().addChangeListener(e -> fetchSentences());
+        scroll.getViewport().addChangeListener(e -> fetchSentences(list, model));
         busy = new BusyOverlay(scroll);
         busy.setText(BUSY);
         busy.onCancel(() -> cancelled.set(true));
@@ -414,7 +413,9 @@ final class StandingTab extends JPanel {
         topic.setVisible(false);
         tabs.tab(STATEMENTS, busy);
         tabs.tab(READING, reading);
-        tabs.tab(CONFLICTS, Comic.scroll(conflictList));
+        JScrollPane conflictScroll = Comic.scroll(conflictList);
+        conflictScroll.getViewport().addChangeListener(e -> fetchSentences(conflictList, conflictModel));
+        tabs.tab(CONFLICTS, conflictScroll);
         tabs.actions(counts, filter, bearer, field, topic);
         // Zahlen, Filter und Suche gehören zu „Aussagen“, das Themenfeld zu „Zuerst lesen“; anderswo stünden sie
         // ohne Wirkung da.
@@ -527,7 +528,8 @@ final class StandingTab extends JPanel {
             conflicts = loaded.conflicts();
             conflictModel.clear();
             conflictModel.addAll(loaded.conflictRows());
-            fetchConflictSentences(current);
+            conflictLabel();
+            fetchSentences(conflictList, conflictModel);
             status();
         }, failure -> {
             if (request != generation) {
@@ -562,8 +564,8 @@ final class StandingTab extends JPanel {
                 case DARF -> " · darf";
                 case NONE, UNKNOWN -> "";
             };
-            rows.add(new Group(situation(contradiction.situation()) + modal + " · bejaht und verneint",
-                    Comic.STANDING_UNCLEAR, all.size()));
+            String head = SITUATION + situation(contradiction.situation(), all) + modal + " · bejaht und verneint";
+            rows.add(new Group(head, Comic.STANDING_UNCLEAR, all.size()));
             all.forEach(entry -> rows.add(new Line(entry, true)));
         }
         if (!conflicts.replacements().isEmpty()) {
@@ -587,8 +589,19 @@ final class StandingTab extends JPanel {
         };
     }
 
-    private static String situation(com.aresstack.spaceharvester.application.standing.Situation situation) {
-        StringBuilder text = new StringBuilder(situation.subject()).append(' ').append(situation.predicate());
+    /**
+     * Die Sachlage in Grundformen; der Handelnde in der Schreibweise des ersten Eintrags, wenn dort einer steht.
+     */
+    private static String situation(com.aresstack.spaceharvester.application.standing.Situation situation,
+                                     List<StatusQuoEntry> entries) {
+        String subject = situation.subject();
+        for (StatusQuoEntry entry : entries) {
+            if (entry.subject() != null && !entry.subject().isBlank()) {
+                subject = entry.subject();
+                break;
+            }
+        }
+        StringBuilder text = new StringBuilder(subject).append(' ').append(situation.predicate());
         for (com.aresstack.spaceharvester.application.standing.Situation.Participant other : situation.others()) {
             text.append(' ').append(other.marker() == null ? "" : other.marker() + " ").append(other.key());
         }
@@ -596,26 +609,6 @@ final class StandingTab extends JPanel {
     }
 
     /** Beide Sätze im Wortlaut: für die (wenigen) Einträge der Hinweise den Originalsatz auf einmal holen. */
-    private void fetchConflictSentences(Actions current) {
-        List<StatusQuoEntry> missing = new ArrayList<>();
-        for (int i = 0; i < conflictModel.size() && missing.size() < CONFLICT_SENTENCES; i++) {
-            if (conflictModel.get(i) instanceof Line line && asked.add(line.entry().statement().id())) {
-                missing.add(line.entry());
-            }
-        }
-        if (missing.isEmpty()) {
-            return;
-        }
-        int request = sentenceGeneration;
-        runner.run(() -> current.sentences(missing), found -> {
-            if (request == sentenceGeneration) {
-                sentences.putAll(found);
-                conflictList.repaint();
-                list.repaint();
-            }
-        }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
-    }
-
     /** Erst anmelden, dann lesen (ADR 0027): Entscheidungen und das Ende von „Aussagen analysieren“. */
     private void watch(Actions current) {
         if (current == watched) {
@@ -740,7 +733,7 @@ final class StandingTab extends JPanel {
         list.revalidate();
         scroll.getViewport().setViewPosition(clamp(position));
         SwingUtilities.invokeLater(() -> scroll.getViewport().setViewPosition(clamp(position)));
-        fetchSentences();
+        fetchSentences(list, model);
     }
 
     /** Wie viele Zeilen über und unter dem sichtbaren Ausschnitt der Wortlaut mitgeholt wird. */
@@ -750,7 +743,8 @@ final class StandingTab extends JPanel {
      * Holt den Originalsatz für die sichtbaren Zeilen (und einen Rand), die ihn noch nicht haben, im Hintergrund; danach
      * zeichnet die Liste neu. Zehntausende Aussagen bleiben so billig.
      */
-    private void fetchSentences() {
+    /** Holt den Wortlaut für die sichtbaren Zeilen einer Liste (Aussagen oder Widersprüche) samt Rand. */
+    private void fetchSentences(JList<Row> list, DefaultListModel<Row> model) {
         Actions current = actions.get();
         if (current == null || model.isEmpty()) {
             return;
@@ -777,8 +771,17 @@ final class StandingTab extends JPanel {
                 return;
             }
             sentences.putAll(found);
-            list.repaint();
+            this.list.repaint();
+            conflictList.repaint();
         }, failure -> missing.forEach(entry -> asked.remove(entry.statement().id())));
+    }
+
+    /** Die Zahl der möglichen Widersprüche an der Pille, ohne Zahl bei null; Ablösungen zählen nicht mit. */
+    private void conflictLabel() {
+        int found = conflicts == null ? 0 : conflicts.contradictions().size();
+        javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
+        pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
+        pill.revalidate();
     }
 
     private Point clamp(Point position) {
