@@ -114,9 +114,60 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      *                       {@link Quality#PLAUSIBLE}
      * @param review         fachliche Prüfung durch einen Menschen, unabhängig von {@code quality}
      */
+    /** Verneinung einer Aussage; {@link #UNKNOWN} bei Analysen ohne Merkmale. */
+    public enum Negation {
+        UNKNOWN,
+        AFFIRMED,
+        NEGATED
+    }
+
+    /** Verbindlichkeit nach dem Modalverb (ADR 0032); {@link #NONE} ohne Modalverb, {@link #UNKNOWN} nicht bestimmt. */
+    public enum Modality {
+        UNKNOWN,
+        NONE,
+        MUSS,
+        SOLL,
+        KANN,
+        DARF
+    }
+
+    /** Zeitbezug einer Aussage aus Grammatik und Wörtern ihres Satzes (ADR 0032); nie aus dem heutigen Datum. */
+    public enum Temporality {
+        UNKNOWN,
+        GILT,
+        GEPLANT,
+        FRUEHER,
+        VERWORFEN
+    }
+
+    /**
+     * Merkmale einer Aussage (ADR 0032, FL2).
+     *
+     * @param negation    verneint oder nicht
+     * @param modality    Verbindlichkeit
+     * @param temporality Zeitbezug
+     */
+    public record Features(Negation negation, Modality modality, Temporality temporality) {
+
+        /** Merkmale nicht bestimmt (ältere Analysen, andere Analysatoren). */
+        public static final Features UNKNOWN = new Features(Negation.UNKNOWN, Modality.UNKNOWN, Temporality.UNKNOWN);
+
+        public Features {
+            Objects.requireNonNull(negation, "negation");
+            Objects.requireNonNull(modality, "modality");
+            Objects.requireNonNull(temporality, "temporality");
+        }
+
+        /** Ob die Merkmale bestimmt wurden. */
+        public boolean known() {
+            return !equals(UNKNOWN);
+        }
+    }
+
     public record Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
                             Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
-                            int paragraph, Quality quality, List<String> qualityReasons, Review review) {
+                            int paragraph, Quality quality, List<String> qualityReasons, Review review,
+                            Features features) {
 
         public Statement {
             Objects.requireNonNull(id, "id");
@@ -125,9 +176,18 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             Objects.requireNonNull(clause, "clause");
             Objects.requireNonNull(quality, "quality");
             Objects.requireNonNull(review, "review");
+            Objects.requireNonNull(features, "features");
             arguments = List.copyOf(arguments);
             findings = Set.copyOf(findings);
             qualityReasons = List.copyOf(qualityReasons);
+        }
+
+        /** Eine Aussage ohne Merkmale (Analysen vor ADR 0032, FL2): Merkmale {@link Features#UNKNOWN}. */
+        public Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
+                         Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
+                         int paragraph, Quality quality, List<String> qualityReasons, Review review) {
+            this(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core, arguments, findings,
+                    paragraph, quality, qualityReasons, review, Features.UNKNOWN);
         }
 
         /**

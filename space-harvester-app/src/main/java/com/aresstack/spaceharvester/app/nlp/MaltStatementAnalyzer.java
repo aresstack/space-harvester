@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
 import com.aresstack.spaceharvester.nlp.extraction.Resolution;
 import com.aresstack.spaceharvester.nlp.extraction.SalienceProjection;
 import com.aresstack.spaceharvester.nlp.extraction.Statement;
+import com.aresstack.spaceharvester.nlp.extraction.StatementFeatures;
 import com.aresstack.spaceharvester.nlp.extraction.StatementQuality;
 import com.aresstack.spaceharvester.nlp.malt.ExpectedModel;
 import com.aresstack.spaceharvester.nlp.malt.GermanParserModelPin;
@@ -261,7 +262,7 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
                     ParsedStatements.Clause.valueOf(statement.clause().name()), core.contains(statement.id()),
                     arguments, findings, paragraphs[statement.sentence()],
                     ParsedStatements.Quality.valueOf(quality.level().name()), quality.reasons(),
-                    ParsedStatements.Review.UNREVIEWED));
+                    ParsedStatements.Review.UNREVIEWED, features(mentionsById, analysis, statement)));
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
         for (NominalAttachment attachment : analysis.attachments()) {
@@ -279,5 +280,15 @@ public final class MaltStatementAnalyzer implements StatementAnalyzer {
         }
         return new ParsedStatements(sentences, mentions, statements, attachments, components,
                 ConllU.write(document));
+    }
+
+    /** Merkmale der Aussage aus ihrem Satz (ADR 0032, FL2). */
+    private static ParsedStatements.Features features(Map<String, Mention> mentions, ObjectCentricAnalysis analysis,
+                                                      Statement statement) {
+        StatementFeatures.Features features = StatementFeatures.assess(mentions, analysis, statement);
+        return new ParsedStatements.Features(
+                features.negated() ? ParsedStatements.Negation.NEGATED : ParsedStatements.Negation.AFFIRMED,
+                ParsedStatements.Modality.valueOf(features.modality().name()),
+                ParsedStatements.Temporality.valueOf(features.temporality().name()));
     }
 }

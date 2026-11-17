@@ -626,6 +626,10 @@ final class StatementsTab extends JPanel {
                     case COORDINATED -> "koordinierter Satz";
                     case SUBORDINATE -> "Nebensatz";
                 });
+        String features = features(statement.features());
+        if (!features.isEmpty()) {
+            body.add("Merkmale: " + features);
+        }
         for (ParsedStatements.Attachment attachment : result.attachments()) {
             boolean involved = statement.arguments().stream()
                     .anyMatch(argument -> argument.mention().equals(attachment.head()));
@@ -667,6 +671,28 @@ final class StatementsTab extends JPanel {
             notes.add("aus dem Kasus geschlossen");
         }
         return notes.isEmpty() ? "" : " (" + String.join(", ", notes) + ")";
+    }
+
+    /** Abweichungen vom Standard (nicht verneint, ohne Modalverb, gilt), leer wenn nichts abweicht oder unbekannt. */
+    static String features(ParsedStatements.Features features) {
+        List<String> parts = new ArrayList<>();
+        if (features.negation() == ParsedStatements.Negation.NEGATED) {
+            parts.add("verneint");
+        }
+        switch (features.modality()) {
+            case MUSS -> parts.add("muss");
+            case SOLL -> parts.add("soll");
+            case KANN -> parts.add("kann");
+            case DARF -> parts.add("darf");
+            default -> { }
+        }
+        switch (features.temporality()) {
+            case GEPLANT -> parts.add("geplant");
+            case FRUEHER -> parts.add("früher");
+            case VERWORFEN -> parts.add("verworfen");
+            default -> { }
+        }
+        return String.join(" · ", parts);
     }
 
     static String roleLabel(ParsedStatements.Role role) {

@@ -20,8 +20,9 @@ final class Bericht {
         out.append("## Textsatz „").append(satz.name()).append("“ (").append(satz.rolle()).append(")\n\n");
         StringBuilder uebersicht = new StringBuilder();
         uebersicht.append("| Variante | vollständig richtig | streng | Verb gefunden | Grundform richtig "
-                + "| falsch trotz PLAUSIBLE | Verb fehlt | ergänzt Ü/K · Abschnitt · sonst |\n");
-        uebersicht.append("|---|---|---|---|---|---|---|---|\n");
+                + "| falsch trotz PLAUSIBLE | Verb fehlt | ergänzt Ü/K · Abschnitt · sonst "
+                + "| Verneinung · Verbindlichkeit · Zeitbezug: richtig (vorgegeben) | fälschlich gesetzt (übrige) |\n");
+        uebersicht.append("|---|---|---|---|---|---|---|---|---|---|\n");
         StringBuilder tabellen = new StringBuilder();
         for (Variante variante : satz.varianten()) {
             Zahlen summe = new Zahlen();
@@ -42,7 +43,9 @@ final class Bericht {
                     .append(" | ").append(summe.verbGefunden).append(" | ").append(summe.grundformRichtig)
                     .append(" | ").append(summe.plausibelFalsch).append(" von ").append(summe.plausibel)
                     .append(" | ").append(summe.fehlt())
-                    .append(" | ").append(ergaenzt(summe)).append(" |\n");
+                    .append(" | ").append(ergaenzt(summe))
+                    .append(" | ").append(merkmale(summe.merkmalRichtig, summe.merkmalVorgegeben))
+                    .append(" | ").append(merkmale(summe.merkmalFaelschlich, summe.merkmalOhne)).append(" |\n");
             result.put(variante.name(), summe);
             gesamt.put(satz.name() + "/" + variante.name(), summe);
             details.append("### ").append(satz.name()).append(" / ").append(variante.name()).append("\n\n");
@@ -51,7 +54,8 @@ final class Bericht {
         }
         out.append(uebersicht).append('\n');
         Zahlen heute = result.get(Textsatz.HEUTE);
-        out.append("Merkmale (Verneinung, Verbindlichkeit, Zeitbezug) vorgegeben an ").append(heute.merkmaleVorgegeben)
+        out.append("Merkmale (Verneinung, Verbindlichkeit, Zeitbezug) gemessen an allen Erwartungen mit gefundenem "
+                + "Verb, unabhängig von den Rollen; vom Standard abweichend vorgegeben an ").append(heute.merkmaleVorgegeben)
                 .append(" von ").append(heute.erwartet).append(" Aussagen.\n\n");
         out.append(tabellen);
         return result;
@@ -72,6 +76,10 @@ final class Bericht {
                 .append(" | ").append(anteil(z.richtig, z.erwartet)).append(" | ").append(z.streng)
                 .append(" | ").append(z.plausibel).append(" | ").append(z.plausibelFalsch)
                 .append(" | ").append(ergaenzt(z)).append(" |\n");
+    }
+
+    private static String merkmale(int[] wert, int[] von) {
+        return wert[0] + "/" + von[0] + " · " + wert[1] + "/" + von[1] + " · " + wert[2] + "/" + von[2];
     }
 
     private static String ergaenzt(Zahlen z) {

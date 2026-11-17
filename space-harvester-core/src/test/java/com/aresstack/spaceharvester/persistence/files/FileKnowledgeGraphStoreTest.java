@@ -118,6 +118,33 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void featuresSurviveARestartAndOldFilesReadAsUnknown() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement s = base.result().statements().get(0);
+        ParsedStatements.Features features = new ParsedStatements.Features(ParsedStatements.Negation.NEGATED,
+                ParsedStatements.Modality.SOLL, ParsedStatements.Temporality.GEPLANT);
+        ParsedStatements.Statement withFeatures = new ParsedStatements.Statement(s.id(), s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), s.core(), s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                features);
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(withFeatures))));
+
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements())
+                .containsExactly(withFeatures);
+
+        new FileKnowledgeGraphStore(directory).replace(base);
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        assertThat(Files.readString(file, StandardCharsets.UTF_8)).doesNotContain("negation", "modality",
+                "temporality");
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements()
+                .get(0).features()).isEqualTo(ParsedStatements.Features.UNKNOWN);
+    }
+
+    @Test
     void aFileWithoutOrWithUnknownQualityFieldsStillLoads() throws IOException {
         new FileKnowledgeGraphStore(directory).replace(analysis("wiki", "1", "Beleg"));
         Path file;

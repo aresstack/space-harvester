@@ -318,6 +318,11 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
             ArrayNode reasons = entry.putArray("qualityReasons");
             statement.qualityReasons().forEach(reasons::add);
             entry.put("review", statement.review().name());
+            if (statement.features().known()) {
+                entry.put("negation", statement.features().negation().name());
+                entry.put("modality", statement.features().modality().name());
+                entry.put("temporality", statement.features().temporality().name());
+            }
         }
         ArrayNode attachments = node.putArray("attachments");
         for (ParsedStatements.Attachment attachment : result.attachments()) {
@@ -385,7 +390,11 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                     arguments, findings,
                     paragraph.isInt() ? paragraph.asInt() : ParsedStatements.Statement.UNKNOWN_PARAGRAPH, quality,
                     reasons, enumOr(ParsedStatements.Review.class, entry, "review",
-                    ParsedStatements.Review.UNREVIEWED));
+                    ParsedStatements.Review.UNREVIEWED), new ParsedStatements.Features(
+                    enumOr(ParsedStatements.Negation.class, entry, "negation", ParsedStatements.Negation.UNKNOWN),
+                    enumOr(ParsedStatements.Modality.class, entry, "modality", ParsedStatements.Modality.UNKNOWN),
+                    enumOr(ParsedStatements.Temporality.class, entry, "temporality",
+                            ParsedStatements.Temporality.UNKNOWN)));
             statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();

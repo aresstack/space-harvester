@@ -372,4 +372,14 @@ class StatementsTabTest {
             }
         }
     }
+
+    @Test
+    void featuresShowOnlyWhatDeviatesFromTheDefault() {
+        assertThat(StatementsTab.features(ParsedStatements.Features.UNKNOWN)).isEmpty();
+        assertThat(StatementsTab.features(new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT))).isEmpty();
+        assertThat(StatementsTab.features(new ParsedStatements.Features(ParsedStatements.Negation.NEGATED,
+                ParsedStatements.Modality.SOLL, ParsedStatements.Temporality.GEPLANT)))
+                .isEqualTo("verneint · soll · geplant");
+    }
 }

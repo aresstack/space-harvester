@@ -81,9 +81,67 @@ final class GermanTagCorrections {
      * ({@code anzupfen}, {@code aufzucken}: „pf“, „ck“ sind kein Verbstamm).
      */
     static String lemma(String form, String upos, String lemma) {
-        if (!"VERB".equals(upos) || lemma != null && !lemma.equalsIgnoreCase(form)) {
+        return verbLemma(form, upos, lemma);
+    }
+
+    private static String verbLemma(String form, String upos, String lemma) {
+        if (!"VERB".equals(upos)) {
             return lemma;
         }
+        if (lemma != null && !lemma.equalsIgnoreCase(form)) {
+            return participleWithParticle(form, lemma);
+        }
+        // Grundform aus der Form nur, wenn OpenNLP die Form unverändert als Grundform liefert (ADR 0032, FL2)
+        Matcher zu = ZU_INFINITIVE.matcher(form.toLowerCase(Locale.ROOT));
+        return zu.matches() ? zuInfinitive(form, lemma) : lemma == null ? null : finite(form, lemma);
+    }
+
+    /**
+     * Partizip mit Verbzusatz, dessen „ge“ der Lemmatisierer in der Grundform lässt („zurückgesendet“ →
+     * „zurückgesenden“): Zusatz + Stamm, wenn die Form genau Zusatz + ge + Stamm + (e)t ist und der Stamm mindestens
+     * drei Buchstaben hat.
+     */
+    static String participleWithParticle(String form, String lemma) {
+        String lower = form.toLowerCase(Locale.ROOT);
+        String base = lemma.toLowerCase(Locale.ROOT);
+        for (String particle : PARTICLES) {
+            String prefix = particle + "ge";
+            if (!base.startsWith(prefix) || !lower.startsWith(prefix) || !lower.endsWith("t")) {
+                continue;
+            }
+            String rest = base.substring(prefix.length());
+            String stem = rest.endsWith("en") ? rest.substring(0, rest.length() - 2)
+                    : rest.endsWith("n") ? rest.substring(0, rest.length() - 1) : null;
+            String ending = lower.substring(prefix.length());
+            if (stem != null && stem.length() >= 3 && (ending.equals(stem + "t") || ending.equals(stem + "et"))) {
+                return particle + rest;
+            }
+        }
+        return lemma;
+    }
+
+    /**
+     * Grundform einer finiten Form der 3. Person, die der Lemmatisierer unverändert lässt („abruft“ → „abrufen“,
+     * „sammelt“ → „sammeln“, „arbeitet“ → „arbeiten“). Formen mit Umlaut bleiben (starke Verben: „hält“ → „halten“
+     * ist ohne Wörterbuch nicht sicher), ebenso alles, was nicht auf „t“ endet.
+     */
+    static String finite(String form, String lemma) {
+        String lower = form.toLowerCase(Locale.ROOT);
+        if (lower.length() < 4 || !lower.endsWith("t") || lower.endsWith("en") || lower.matches(".*[äöü].*")
+                || !lower.matches("\\p{L}+")) {
+            return lemma;
+        }
+        String stem = lower.substring(0, lower.length() - 1);
+        if (stem.endsWith("er") || stem.endsWith("el")) {
+            return stem + "n";
+        }
+        if (stem.endsWith("de") || stem.endsWith("te")) {
+            return stem.substring(0, stem.length() - 1) + "en";
+        }
+        return stem + "en";
+    }
+
+    private static String zuInfinitive(String form, String lemma) {
         Matcher matcher = ZU_INFINITIVE.matcher(form.toLowerCase(Locale.ROOT));
         if (!matcher.matches()) {
             return lemma;

@@ -141,7 +141,7 @@
 8	sobald	sobald	SCONJ	_	_	11	mark	_	_
 9	der	der	DET	_	_	10	det	_	_
 10	Mittelabruf	mittelabruf	NOUN	_	_	11	nsubj	_	_
-11	vorliegt	vorliegt	VERB	_	_	3	advcl	_	SpaceAfter=No
+11	vorliegt	vorliegen	VERB	_	_	3	advcl	_	SpaceAfter=No
 12	,	,	PUNCT	_	_	14	punct	_	_
 13	und	und	CCONJ	_	_	14	cc	_	_
 14	informiert	informieren	VERB	_	_	11	conj	_	_

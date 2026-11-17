@@ -23,7 +23,7 @@
 # text = Der Einkäufer holt drei Angebote ein.
 1	Der	der	DET	_	_	2	det	_	_
 2	Einkäufer	einkäufer	NOUN	_	_	3	nsubj	_	_
-3	holt	holt	VERB	_	_	0	root	_	_
+3	holt	holen	VERB	_	_	0	root	_	_
 4	drei	drei	NUM	_	_	5	nummod	_	_
 5	Angebote	angebot	NOUN	_	_	3	obj	_	_
 6	ein	ein	ADV	_	_	3	compound:prt	_	SpaceAfter=No

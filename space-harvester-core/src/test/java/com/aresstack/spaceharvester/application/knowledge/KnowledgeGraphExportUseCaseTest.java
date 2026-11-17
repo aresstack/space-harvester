@@ -128,6 +128,8 @@ class KnowledgeGraphExportUseCaseTest {
             assertThat(node.path("extractionQuality").asString()).isEqualTo("PLAUSIBLE");
             assertThat(node.path("verificationStatus").asString()).isEqualTo("UNVERIFIED_PARSER_OUTPUT");
             assertThat(node.has("paragraph")).isTrue();
+            assertThat(node.has("negated") || node.has("modality") || node.has("temporality"))
+                    .as("unbekannte Merkmale fehlen").isFalse();
         });
         assertThat(nodes(doc, "GraphExport").getFirst().path("exportedQuality").toString()).contains("PLAUSIBLE")
                 .doesNotContain("UNCERTAIN");
@@ -141,6 +143,18 @@ class KnowledgeGraphExportUseCaseTest {
         assertThat(both).filteredOn(node -> node.path("extractionQuality").asString().equals("UNCERTAIN"))
                 .singleElement().satisfies(node -> assertThat(node.path("qualityReason").toString())
                         .contains("UNRESOLVED_PRONOUN"));
+    }
+
+    @Test
+    void knownFeaturesAreExported() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt nicht den Beleg.");
+
+        run(new Scope.Page("wiki", "1"));
+        assertThat(nodes(read(), "Statement")).singleElement().satisfies(node -> {
+            assertThat(node.path("negated").asBoolean()).isTrue();
+            assertThat(node.path("modality").asString()).isEqualTo("NONE");
+            assertThat(node.path("temporality").asString()).isEqualTo("GILT");
+        });
     }
 
     private static List<JsonNode> nodes(JsonNode doc, String type) {
