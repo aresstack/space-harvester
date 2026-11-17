@@ -333,6 +333,15 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("stageFlag", statement.derivation().stageFlag().name());
                 entry.put("simplifiedSentence", statement.derivation().simplifiedSentence());
                 entry.put("featuresFrom", statement.derivation().featuresFrom().name());
+                if (statement.derivation().corrects() != null) {
+                    entry.put("corrects", statement.derivation().corrects()); // ADR 0032, FL4
+                }
+            }
+            if (statement.check() != null) {
+                // ADR 0032, FL4: Urteil des Prüfschritts, neben der Stufe des Parsers; fehlt es, ist nichts geprüft
+                entry.putObject("check").put("verdict", statement.check().verdict().name())
+                        .put("version", statement.check().version())
+                        .put("corrected", statement.check().corrected());
             }
         }
         ArrayNode attachments = node.putArray("attachments");
@@ -393,6 +402,10 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 reasons.add(ParsedStatements.Statement.NOT_ASSESSED);
             }
             JsonNode paragraph = entry.path("paragraph");
+            ParsedStatements.Derivation derivation = derivation(entry);
+            if (derivation == null) {
+                continue; // unlesbare Korrektur des Modells: nie als Original-Aussage laden
+            }
             ParsedStatements.Statement statement = new ParsedStatements.Statement(entry.path("id").asString(),
                     entry.path("sentence").asInt(), entry.path("start").asInt(), entry.path("end").asInt(),
                     entry.path("predicateText").asString(), text(entry, "predicateLemma"),
@@ -405,7 +418,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                     enumOr(ParsedStatements.Negation.class, entry, "negation", ParsedStatements.Negation.UNKNOWN),
                     enumOr(ParsedStatements.Modality.class, entry, "modality", ParsedStatements.Modality.UNKNOWN),
                     enumOr(ParsedStatements.Temporality.class, entry, "temporality",
-                            ParsedStatements.Temporality.UNKNOWN)), derivation(entry));
+                            ParsedStatements.Temporality.UNKNOWN)), derivation, check(entry.path("check")));
             statements.add(statement);
         }
         List<ParsedStatements.Attachment> attachments = new ArrayList<>();
@@ -431,19 +444,48 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 document, text(root, "stage"));
     }
 
-    /** Herkunft einer Aussage (ADR 0032, FL3); ohne oder mit unlesbaren Feldern aus dem Original. */
+    /**
+     * Herkunft einer Aussage (ADR 0032, FL3); ohne oder mit unlesbaren Feldern aus dem Original. Eine Korrektur des
+     * Prüfschritts (FL4) mit unlesbaren Feldern ergibt {@code null}: sie wird übergangen, nie als Original geladen.
+     */
     private static ParsedStatements.Derivation derivation(JsonNode entry) {
+        String raw = text(entry, "origin");
         ParsedStatements.Origin origin = enumOr(ParsedStatements.Origin.class, entry, "origin",
                 ParsedStatements.Origin.ORIGINAL);
         ParsedStatements.StageFlag flag = enumOr(ParsedStatements.StageFlag.class, entry, "stageFlag",
                 ParsedStatements.StageFlag.NONE);
         String sentence = text(entry, "simplifiedSentence");
+        if (raw != null && origin == ParsedStatements.Origin.ORIGINAL && !"ORIGINAL".equals(raw)) {
+            return null; // unbekannte Herkunft, etwa aus einer neueren Fassung: nicht als Original ausgeben
+        }
+        if (origin == ParsedStatements.Origin.MODELL) {
+            String corrects = text(entry, "corrects");
+            if (sentence == null || sentence.isBlank() || corrects == null || corrects.isBlank()) {
+                return null;
+            }
+            return ParsedStatements.Derivation.modell(sentence, corrects, enumOr(ParsedStatements.Origin.class, entry,
+                    "featuresFrom", ParsedStatements.Origin.MODELL));
+        }
         if (origin != ParsedStatements.Origin.VORSTUFE || flag == ParsedStatements.StageFlag.NONE || sentence == null
                 || sentence.isBlank()) {
             return ParsedStatements.Derivation.ORIGINAL;
         }
         return new ParsedStatements.Derivation(origin, flag, sentence, enumOr(ParsedStatements.Origin.class, entry,
                 "featuresFrom", ParsedStatements.Origin.VORSTUFE));
+    }
+
+    /** Urteil des Prüfschritts (ADR 0032, FL4) oder {@code null}, wenn es fehlt oder unlesbar ist. */
+    private static ParsedStatements.Check check(JsonNode node) {
+        if (!node.isObject()) {
+            return null;
+        }
+        ParsedStatements.Verdict verdict = enumOr(ParsedStatements.Verdict.class, node, "verdict", null);
+        String version = text(node, "version");
+        if (verdict == null || version == null) {
+            return null;
+        }
+        boolean corrected = node.path("corrected").asBoolean() && verdict == ParsedStatements.Verdict.UNVOLLSTAENDIG;
+        return new ParsedStatements.Check(verdict, version, corrected);
     }
 
     /** Der Aufzählungswert im Feld {@code field} oder {@code fallback}, wenn es fehlt oder unbekannt ist. */

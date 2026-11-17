@@ -19,7 +19,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
-import com.aresstack.spaceharvester.application.simplification.SimplificationModel;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
 import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -339,7 +339,7 @@ class StatementAnalysisJobsTest {
     @Test
     void theStageSendsOnlyReleasedPagesToTheModelAndReportsItsCountsAsNumbersOnly() {
         List<String> inputs = new java.util.concurrent.CopyOnWriteArrayList<>();
-        SimplificationModel model = new SimplificationModel() {
+        StepModel model = new StepModel() {
             @Override
             public String version() {
                 return "fake:m1";

@@ -208,7 +208,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
-import com.aresstack.spaceharvester.source.ai.ChatSimplificationModel;
+import com.aresstack.spaceharvester.source.ai.ChatStepModel;
 import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
 import com.aresstack.spaceharvester.application.simplification.Simplifications;
@@ -906,7 +906,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog summaries = this.changeLog;
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
-            this.simplifications = new Simplifications(new ChatSimplificationModel(
+            this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);

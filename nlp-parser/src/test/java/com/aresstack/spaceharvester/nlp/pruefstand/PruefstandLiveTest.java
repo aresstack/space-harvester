@@ -80,6 +80,41 @@ class PruefstandLiveTest {
                 + abweichungen);
     }
 
+    /**
+     * Korrekturen der Handantworten des Prüfschritts (ADR 0032, FL4): je Text eine Zeile je Korrektur in
+     * Dateireihenfolge durch die echte Kette, wie der Auftrag sie parst; Pins unter
+     * {@code <Textsatz>/pruefung/korrektur/<Text>.conllu}.
+     */
+    @Test
+    void korrekturPinsSindDieAusgabeDerEchtenKette() throws IOException {
+        List<String> abweichungen = new ArrayList<>();
+        Path ziel = Path.of("build", "reports", "pruefstand", "pins");
+        for (Textsatz satz : Textsatz.alle()) {
+            Map<String, String> antworten = PruefschrittTest.antworten(satz);
+            for (Textsatz.Text text : satz.texte()) {
+                List<String> korrekturen = PruefschrittTest.korrekturen(antworten, text.name());
+                if (korrekturen.isEmpty()) {
+                    continue;
+                }
+                String pfad = "pruefung/korrektur/" + text.name() + ".conllu";
+                ParsedDocument document = kette.analyze(new DocumentRef("pruefstand", satz.name() + "/"
+                        + text.name(), "korrektur"), String.join("\n", korrekturen));
+                String actual = ConllU.write(document);
+                Path out = ziel.resolve(satz.name()).resolve(pfad);
+                Files.createDirectories(out.getParent());
+                Files.writeString(out, actual, StandardCharsets.UTF_8);
+                String expected = Textsatz.optional(Textsatz.BASIS + satz.name() + "/" + pfad);
+                if (expected == null || !analyseZeilen(expected).equals(analyseZeilen(actual))) {
+                    abweichungen.add(satz.name() + "/" + pfad);
+                }
+                assertEquals(korrekturen.size(), document.sentences().size(), satz.name() + "/" + pfad
+                        + ": je Korrektur genau ein Satz");
+            }
+        }
+        assertTrue(abweichungen.isEmpty(), "Korrektur-Pins weichen von der echten Kette ab (neue Ausgabe in " + ziel
+                + "): " + abweichungen);
+    }
+
     @Test
     @EnabledIfSystemProperty(named = "pruefstand.seiten", matches = ".+")
     void zahlenUeberEchteSeiten() throws IOException {

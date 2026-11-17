@@ -102,7 +102,7 @@ final class Bewertung {
     }
 
     /** Eine erzeugte Aussage mit Originalsatz und den Namen ihrer Beteiligten. */
-    private record Befund(Statement statement, int satz, String lemma, StatementQuality.Level stufe,
+    record Befund(Statement statement, int satz, String lemma, StatementQuality.Level stufe,
                           Map<Rolle, List<Set<String>>> rollen, Set<String> alleNamen, String kurz,
                           StatementFeatures.Features merkmale) {
 
@@ -119,7 +119,20 @@ final class Bewertung {
      * Wie oben; bei zusammengesetzten Varianten zählen nur Vorstufen-Zeilen (Index ab 0), die {@code akzeptiert}
      * annimmt, etwa nur die, die der Wortabgleich des Core durchlässt.
      */
-    static Zahlen bewerten(Textsatz satz, Variante variante, Text text, java.util.function.IntPredicate akzeptiert) {
+    /**
+     * Die Aussagen einer Variante nach dem Zusammenführen (wie im Auftrag), mit allen Erwähnungen und den Aussagen,
+     * die aus der Vorstufe stammen.
+     *
+     * @param befunde    alle Aussagen in Reihenfolge
+     * @param vorstufe   die Aussagen aus der Vorstufe (bei Varianten ohne Vorstufe leer)
+     * @param ergaenzbar Aussagen, deren Ergänzungen gezählt werden
+     */
+    record Aufbau(ParsedDocument original, ObjectCentricAnalysis analysis, Map<String, Mention> mentions,
+                  List<Befund> befunde, Set<Statement> vorstufe, List<Befund> ergaenzbar,
+                  List<VorstufenSatz> vorstufenSaetze) {
+    }
+
+    static Aufbau aufbauen(Textsatz satz, Variante variante, Text text, java.util.function.IntPredicate akzeptiert) {
         ParsedDocument original = satz.analyse(satz.varianten().get(0), text);
         ParsedDocument document = satz.analyse(variante, text);
         List<VorstufenSatz> vorstufe = satz.vorstufe(variante, text);
@@ -169,6 +182,24 @@ final class Bewertung {
             befunde.clear();
             befunde.addAll(zusammen);
         }
+        Set<Statement> ausDerVorstufe = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        if (vorstufe != null) {
+            ergaenzbar.forEach(befund -> ausDerVorstufe.add(befund.statement()));
+            if (!variante.zusammengesetzt()) {
+                befunde.forEach(befund -> ausDerVorstufe.add(befund.statement()));
+            }
+        }
+        return new Aufbau(original, analysis, mentions, befunde, ausDerVorstufe, ergaenzbar, vorstufe);
+    }
+
+    static Zahlen bewerten(Textsatz satz, Variante variante, Text text, java.util.function.IntPredicate akzeptiert) {
+        Aufbau aufbau = aufbauen(satz, variante, text, akzeptiert);
+        ParsedDocument original = aufbau.original();
+        ObjectCentricAnalysis analysis = aufbau.analysis();
+        Map<String, Mention> mentions = aufbau.mentions();
+        List<Befund> befunde = aufbau.befunde();
+        List<Befund> ergaenzbar = aufbau.ergaenzbar();
+        List<VorstufenSatz> vorstufe = aufbau.vorstufenSaetze();
 
         Zahlen zahlen = new Zahlen();
         String prefix = variante.name() + " " + text.name();
@@ -343,6 +374,20 @@ final class Bewertung {
         kurz.append(' ').append(stufe);
         return new Befund(statement, satz, lemma, stufe, rollen, alle, kurz.toString(),
                 StatementFeatures.assess(mentions, analysis, statement));
+    }
+
+    /** Ob eine Aussage einer Erwartung ihres Originalsatzes vollständig entspricht (wie „falsch trotz PLAUSIBLE“). */
+    static boolean richtig(Textsatz satz, Text text, Befund befund) {
+        return satz.vorgabe().fuer(text.name()).stream()
+                .filter(e -> e.satz() == befund.satz())
+                .flatMap(e -> e.lesarten().stream())
+                .anyMatch(l -> verbPasst(l.verb(), befund.lemma()) && rollenPassen(l, befund, false));
+    }
+
+    /** Die Aussage als {@link Befund} zu einem Originalsatz (ab 1). */
+    static Befund befundZu(ObjectCentricAnalysis analysis, Map<String, Mention> mentions, Statement statement,
+                           int satz) {
+        return befund(analysis, mentions, statement, satz);
     }
 
     private static String verbindlichkeit(StatementFeatures.Features merkmale) {

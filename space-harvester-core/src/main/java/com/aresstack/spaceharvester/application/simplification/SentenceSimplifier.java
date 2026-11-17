@@ -204,6 +204,21 @@ public final class SentenceSimplifier {
     }
 
     /**
+     * Wortabgleich für einen Satz, den ein Modell aus einem anderen ableitet (ADR 0032, FL3 und FL4): ob jedes
+     * Inhaltswort, jede Ziffernfolge, jede Verneinung und jedes Modalverb von {@code derived} in {@code source} steht,
+     * Inhaltswörter auch als Form desselben Stamms. Derselbe Abgleich wie bei {@link #parse}; der Prüfschritt nimmt ihn
+     * für Korrekturen, mit dem Originalsatz als {@code source}.
+     */
+    public static boolean derivable(String source, String derived) {
+        return new Words().add(source).covers(new Words().add(derived));
+    }
+
+    /** Ob der Text eine Verneinung enthält (nicht, kein…, nie, niemals, weder). */
+    public static boolean negated(String text) {
+        return !new Words().add(text).negations.isEmpty();
+    }
+
+    /**
      * Inhaltswörter: ab vier Buchstaben ohne Funktionswörter, dazu kürzere Kürzel mit mindestens zwei Großbuchstaben
      * („IT“, „ZfA“); klein geschrieben.
      */

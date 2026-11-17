@@ -71,9 +71,17 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   Die gespeicherte Analyse merkt sich den Stand der Vorstufe (`stage`: Betriebsart, Modell, Anweisung); nach dem
   Entzug der KI-Freigabe fallen die Aussagen der Vorstufe weg und die Analyse gilt als veraltet
   (`stage-withdrawn`), bis sie ohne Vorstufe neu gerechnet ist,
+  Prüfschritt (ADR 0032, FL4; fehlt bei ungeprüften Aussagen): `sh:checkVerdict` (`STIMMT`/`UNVOLLSTAENDIG`/`FALSCH`,
+  Urteil des Chat-Modells gegen den Originalsatz), `sh:checkVersion` (Modell und Anweisung) und `sh:effectiveQuality`
+  (wirksame Stufe). `sh:extractionQuality` bleibt immer die Stufe des Parsers; `FALSCH` und `UNVOLLSTAENDIG` mit
+  übernommener Korrektur senken nur die wirksame Stufe auf höchstens `UNCERTAIN`, `STIMMT` hebt nie. Der Export filtert
+  nach der wirksamen Stufe. Eine übernommene Korrektur ist eine eigene Aussage mit `sh:origin "MODELL"`, ihrem Satz in
+  `sh:simplifiedSentence` und `sh:corrects` → korrigierte Aussage (nur, wenn diese selbst im Export steht); ihre Rollen
+  stammen aus dem Parse der Korrektur, nie vom Modell. Nach dem Entzug der KI-Freigabe oder vor jedem neuen Prüflauf
+  fallen Urteile und Korrekturen weg, ohne dass die Analyse veraltet,
   `sh:evidence` → Beleg, `sh:inRevision`, `prov:wasDerivedFrom` → Fassung, `prov:wasGeneratedBy` → Analyselauf.
   Rollen-Kanten zu Erwähnungen: `sh:actor`, `sh:affectedObject`, `sh:recipient`, `sh:prepositionalObject`,
-  `sh:instrument`, `sh:time`, `sh:circumstance`, `sh:bearer`.
+  `sh:instrument`, `sh:time`, `sh:circumstance`, `sh:bearer`; `sh:corrects` (Prüfschritt) zeigt auf eine Aussage.
   Zustandsaussage (ADR 0032): Kopula (`sein`, `werden`, `bleiben`) mit prädikativem Adjektiv oder Nomen. Ihr
   `sh:predicateLemma` ist das Adjektiv bzw. Nomen (`zuständig`, `Ansprechpartner`), `sh:predicate` der Wortlaut mit
   Kopula (`ist … zuständig`); das Subjekt hängt über `sh:bearer` (Rolle `BEARER`, Träger), nie über `sh:actor`.

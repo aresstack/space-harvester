@@ -122,7 +122,7 @@ public record PageGraph(PageKey key, List<Node> nodes, List<Edge> edges) {
             }
         }
         for (ParsedStatements.Statement statement : result.statements()) {
-            if (!qualities.contains(statement.quality())) {
+            if (!qualities.contains(statement.effectiveQuality())) {
                 continue;
             }
             nodes.add(new Node(statement.id(), NodeKind.STATEMENT, statement.predicateText(),

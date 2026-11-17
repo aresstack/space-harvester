@@ -176,6 +176,44 @@ class FileKnowledgeGraphStoreTest {
     }
 
     @Test
+    void verdictsAndCorrectionsOfTheCheckSurviveARestart() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        ParsedStatements.Statement s = base.result().statements().get(0);
+        ParsedStatements.Statement checked = s.withCheck(new ParsedStatements.Check(
+                ParsedStatements.Verdict.UNVOLLSTAENDIG, "fake:m1|prompt-1", true));
+        ParsedStatements.Statement correction = new ParsedStatements.Statement(s.id() + "m", s.sentence(), s.start(),
+                s.end(), s.predicateText(), s.predicateLemma(), s.voice(), s.clause(), false, s.arguments(),
+                s.findings(), 0, ParsedStatements.Quality.PLAUSIBLE, List.of(), ParsedStatements.Review.UNREVIEWED,
+                ParsedStatements.Features.UNKNOWN, ParsedStatements.Derivation.modell("Die Stelle prüft den Beleg.",
+                        s.id(), ParsedStatements.Origin.MODELL));
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(checked, correction))));
+
+        List<ParsedStatements.Statement> read = new FileKnowledgeGraphStore(directory).find(base.key())
+                .orElseThrow().result().statements();
+
+        assertThat(read).containsExactly(checked, correction);
+        assertThat(read.get(0).check().corrected()).isTrue();
+        assertThat(read.get(1).derivation().corrects()).isEqualTo(s.id());
+    }
+
+    @Test
+    void anUnreadableCorrectionIsSkippedAndNeverLoadedAsAnOriginal() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        new FileKnowledgeGraphStore(directory).replace(base);
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        String json = Files.readString(file, StandardCharsets.UTF_8);
+        Files.writeString(file, json.replace("\"review\"", "\"origin\" : \"MODELL\", \"review\""),
+                StandardCharsets.UTF_8);
+
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements())
+                .isEmpty();
+    }
+
+    @Test
     void aFileWithoutOrWithUnknownQualityFieldsStillLoads() throws IOException {
         new FileKnowledgeGraphStore(directory).replace(analysis("wiki", "1", "Beleg"));
         Path file;

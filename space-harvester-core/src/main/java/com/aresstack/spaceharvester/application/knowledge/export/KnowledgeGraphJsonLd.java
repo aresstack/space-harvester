@@ -205,7 +205,7 @@ public final class KnowledgeGraphJsonLd {
                 "analyzerVersion", "text", "lemma", "headForm", "mentionKind", "unresolved", "lexicalKey", "start",
                 "end", "sentence", "paragraph", "predicate", "predicateLemma", "voice", "clause", "core",
                 "verificationStatus", "negated", "modality", "temporality", "origin", "stageFlag",
-                "simplifiedSentence", "featuresFrom", "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
+                "simplifiedSentence", "featuresFrom", "checkVerdict", "checkVersion", "effectiveQuality", "role", "relation", "marker", "basis", "priority", "certain", "attachmentKind")) {
             json.writeStringProperty(term, "sh:" + term);
         }
         set(json, "grammaticalCase", "sh:grammaticalCase");
@@ -215,7 +215,7 @@ public final class KnowledgeGraphJsonLd {
         set(json, "exportedQuality", "sh:exportedQuality");
         for (String link : List.of("revisionOf", "documentOf", "page", "mention", "participant", "head",
                 "dependent", "evidence", "inRevision", "actor", "affectedObject", "recipient", "prepositionalObject",
-                "instrument", "time", "circumstance", "bearer", "refersToStatement")) {
+                "instrument", "time", "circumstance", "bearer", "refersToStatement", "corrects")) {
             reference(json, link, "sh:" + link);
         }
         json.writeName("participation");
@@ -366,9 +366,11 @@ public final class KnowledgeGraphJsonLd {
         }
 
         List<ParsedStatements.Statement> statements = result.statements().stream()
-                .filter(statement -> qualities.contains(statement.quality()))
+                .filter(statement -> qualities.contains(statement.effectiveQuality()))
                 .sorted(Comparator.comparingInt(ParsedStatements.Statement::start)
                         .thenComparing(ParsedStatements.Statement::id)).toList();
+        java.util.Set<String> exported = new java.util.HashSet<>();
+        statements.forEach(statement -> exported.add(statement.id()));
         for (ParsedStatements.Statement statement : statements) {
             String id = node(analysis, statement.id());
             json.writeStartObject();
@@ -398,6 +400,17 @@ public final class KnowledgeGraphJsonLd {
                 json.writeStringProperty("stageFlag", statement.derivation().stageFlag().name());
                 json.writeStringProperty("simplifiedSentence", statement.derivation().simplifiedSentence());
                 json.writeStringProperty("featuresFrom", statement.derivation().featuresFrom().name());
+                String corrected = statement.derivation().corrects();
+                if (corrected != null && exported.contains(corrected)) {
+                    // ADR 0032, FL4: die korrigierte Aussage, nur wenn sie selbst im Export steht
+                    json.writeStringProperty("corrects", node(analysis, corrected));
+                }
+            }
+            if (statement.check() != null) {
+                // ADR 0032, FL4: Urteil des Prüfschritts; extractionQuality bleibt die Stufe des Parsers
+                json.writeStringProperty("checkVerdict", statement.check().verdict().name());
+                json.writeStringProperty("checkVersion", statement.check().version());
+                json.writeStringProperty("effectiveQuality", statement.effectiveQuality().name());
             }
             if (!statement.qualityReasons().isEmpty()) {
                 json.writeName("qualityReason");
