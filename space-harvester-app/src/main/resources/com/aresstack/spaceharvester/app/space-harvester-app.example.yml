@@ -11,12 +11,12 @@ space-harvester-app:
   # Export „Analytics“ (Export-Reiter): Zeitraum und die Pfade des Confluence-Analytics-Plugins. Ohne Angabe gelten die
   # Pfade der Analytics-Oberfläche von Confluence 10.2; einstellbar unter Einstellungen › Allgemein › Analytics-Export.
   # Platzhalter {spaceKey}, {from}, {to}; {nextPageToken} in der Seitenliste ist das Token der vorigen Antwort, der
-  # Parameter davor (Vorgabe nextPageToken) heißt an manchen Instanzen anders (Entwicklerwerkzeuge › Netzwerk).
+  # Parameter davor (Vorgabe pageToken, wie die Oberfläche) kann je Instanz anders heißen (Entwicklerwerkzeuge › Netzwerk).
   # analytics:
   #   period: 365d
   #   details: "/rest/confanalytics/1.0/space/details?spaceKey={spaceKey}"
   #   activity-by-date: "/rest/confanalytics/1.0/space/activityByDate?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog"
-  #   content-views: "/rest/confanalytics/1.0/space/paginated/contentViews?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&nextPageToken={nextPageToken}"
+  #   content-views: "/rest/confanalytics/1.0/space/paginated/contentViews?spaceKey={spaceKey}&fromDate={from}&toDate={to}&type=total&period=week&timezone=UTC&content=page%2Cblog&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100&pageToken={nextPageToken}"
 
 space-harvester:
   sources:

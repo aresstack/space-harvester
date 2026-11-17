@@ -142,7 +142,7 @@ class SourceQueryExportsTest {
 
     private static String contentViews(String period, String token) {
         return AnalyticsQueries.ROOT + "space/paginated/contentViews?spaceKey=DEV&" + period
-                + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100" + (token == null ? "" : "&nextPageToken=" + token);
+                + "&sortField=VIEWED_COUNT&sortOrder=DESC&limit=100" + (token == null ? "" : "&pageToken=" + token);
     }
 
     @Test
@@ -228,8 +228,8 @@ class SourceQueryExportsTest {
         AnalyticsQueries.Query only = new AnalyticsQueries.Query("x", "/rest/x?cursor={nextPageToken}");
         assertThat(only.path("DEV", now, now)).isEqualTo("/rest/x");
         AnalyticsQueries.Query none = new AnalyticsQueries.Query("x", "/rest/x?a=1");
-        assertThat(none.path("DEV", now, now, "t")).isEqualTo("/rest/x?a=1&nextPageToken=t");
-        assertThat(AnalyticsQueries.DEFAULT.contentViews().pathTemplate()).endsWith("&nextPageToken={nextPageToken}");
+        assertThat(none.path("DEV", now, now, "t")).isEqualTo("/rest/x?a=1&pageToken=t");
+        assertThat(AnalyticsQueries.DEFAULT.contentViews().pathTemplate()).endsWith("&pageToken={nextPageToken}");
     }
 
     @Test
