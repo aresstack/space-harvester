@@ -169,7 +169,12 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
         /** Aus dem Originalsatz. */
         ORIGINAL,
         /** Aus einem vereinfachten Satz der Vorstufe „Sätze vereinfachen“. */
-        VORSTUFE
+        VORSTUFE,
+        /**
+         * Aus der Korrektur des Prüfschritts (ADR 0032, FL4): ein einfacher Hauptsatz des Chat-Modells, nur aus Wörtern
+         * des Originalsatzes, geparst wie eine Zeile der Vorstufe; zeigt auf die Aussage, die er korrigiert.
+         */
+        MODELL
     }
 
     /**
@@ -190,14 +195,19 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
     }
 
     /**
-     * Woher eine Aussage stammt (ADR 0032, FL3).
+     * Woher eine Aussage stammt (ADR 0032, FL3 und FL4).
      *
-     * @param origin             Original oder Vorstufe
-     * @param stageFlag          Kennzeichen der Vorstufe; {@link StageFlag#NONE} beim Original
-     * @param simplifiedSentence der vereinfachte Satz, aus dem die Aussage stammt, damit die Oberfläche ihn neben dem
-     *                           Originalsatz zeigen kann; {@code null} beim Original
+     * @param origin             Original, Vorstufe oder Korrektur des Prüfschritts
+     * @param stageFlag          Kennzeichen der Vorstufe; {@link StageFlag#NONE} beim Original und bei einer Korrektur
+     * @param simplifiedSentence der vereinfachte Satz (Vorstufe) oder die Korrektur (Modell), aus dem die Aussage
+     *                           stammt, damit die Oberfläche ihn neben dem Originalsatz zeigen kann; {@code null} beim
+     *                           Original
+     * @param corrects           bei einer Korrektur die ID der Aussage, die sie korrigiert; sonst {@code null}
+     * @param section            bei einer Aussage der Vorstufe der Abschnitt, den das Modell zu ihr sah (der
+     *                           Prüfschritt zeigt ihn als Zusammenhang); {@code null} sonst und bei Analysen vor FL4
      */
-    public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom) {
+    public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
+                             String corrects, Section section) {
 
         /** Aus dem Originalsatz (auch alle Analysen vor FL3). */
         public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null,
@@ -205,20 +215,38 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
 
         /**
          * @param featuresFrom woher Verneinung, Verbindlichkeit und Zeitbezug stammen: {@link Origin#ORIGINAL}, wenn
-         *                     das Original eine Aussage zum selben Verb hat (übernommen), sonst {@link Origin#VORSTUFE}
+         *                     das Original eine Aussage zum selben Verb hat (übernommen), sonst die eigene Herkunft
          */
         public Derivation {
             Objects.requireNonNull(origin, "origin");
             Objects.requireNonNull(stageFlag, "stageFlag");
             featuresFrom = featuresFrom == null ? origin : featuresFrom;
             if (origin == Origin.ORIGINAL && (stageFlag != StageFlag.NONE || simplifiedSentence != null
-                    || featuresFrom != Origin.ORIGINAL)) {
+                    || featuresFrom != Origin.ORIGINAL || corrects != null)) {
                 throw new IllegalArgumentException("Eine Aussage aus dem Original hat kein Kennzeichen der Vorstufe");
             }
             if (origin == Origin.VORSTUFE && (stageFlag == StageFlag.NONE || simplifiedSentence == null
-                    || simplifiedSentence.isBlank())) {
+                    || simplifiedSentence.isBlank() || corrects != null)) {
                 throw new IllegalArgumentException("Eine Aussage der Vorstufe braucht Kennzeichen und Satz");
             }
+            if (origin == Origin.MODELL && (stageFlag != StageFlag.NONE || simplifiedSentence == null
+                    || simplifiedSentence.isBlank() || corrects == null || corrects.isBlank())) {
+                throw new IllegalArgumentException("Eine Korrektur braucht ihren Satz und die korrigierte Aussage");
+            }
+            if (section != null && origin != Origin.VORSTUFE) {
+                throw new IllegalArgumentException("Nur eine Aussage der Vorstufe hat einen Abschnitt");
+            }
+        }
+
+        /** Ohne Abschnitt. */
+        public Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
+                          String corrects) {
+            this(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, null);
+        }
+
+        /** Ohne Bezug auf eine korrigierte Aussage und ohne Abschnitt (Original und Vorstufe). */
+        public Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom) {
+            this(origin, stageFlag, simplifiedSentence, featuresFrom, null, null);
         }
 
         /** Aus einem vereinfachten Satz, mit eigenen Merkmalen. */
@@ -226,16 +254,90 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             return new Derivation(Origin.VORSTUFE, stageFlag, simplifiedSentence, Origin.VORSTUFE);
         }
 
+        /**
+         * Aus der Korrektur des Prüfschritts (ADR 0032, FL4).
+         *
+         * @param correction   der Satz des Modells
+         * @param corrects     ID der korrigierten Aussage
+         * @param featuresFrom {@link Origin#ORIGINAL}, wenn die Merkmale aus der Original-Aussage desselben Verbs stammen
+         */
+        public static Derivation modell(String correction, String corrects, Origin featuresFrom) {
+            return new Derivation(Origin.MODELL, StageFlag.NONE, correction, featuresFrom, corrects);
+        }
+
         /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
         public Derivation withFeaturesFromOriginal() {
-            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL);
+            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects, section);
+        }
+
+        /** Dieselbe Herkunft mit dem Abschnitt der Vorstufe. */
+        public Derivation withSection(Section other) {
+            return new Derivation(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, other);
+        }
+    }
+
+    /**
+     * Ein Abschnitt der Seite als Satzindizes (ab 0, einschließlich): die Zeilen, die die Vorstufe in einem Aufruf an
+     * das Modell gab (ADR 0032, FL3); leere Sätze darin gingen nicht mit.
+     */
+    public record Section(int first, int last) {
+
+        public Section {
+            if (first < 0 || last < first) {
+                throw new IllegalArgumentException("Abschnitt " + first + ".." + last + " ungültig");
+            }
+        }
+
+        /** Ob der Satz im Abschnitt liegt. */
+        public boolean contains(int sentence) {
+            return sentence >= first && sentence <= last;
+        }
+    }
+
+    /** Urteil des Prüfschritts über eine Aussage (ADR 0032, FL4). */
+    public enum Verdict {
+        /** Die Aussage gibt den Satz richtig wieder; hebt nie eine Stufe. */
+        STIMMT,
+        /** Richtig, aber es fehlt etwas; senkt die Stufe nur mit gültiger Korrektur. */
+        UNVOLLSTAENDIG,
+        /** Die Aussage gibt den Satz falsch wieder; senkt die wirksame Stufe, löscht nie. */
+        FALSCH
+    }
+
+    /**
+     * Ergebnis des Prüfschritts an einer Aussage (ADR 0032, FL4). Ein eigenes Feld neben der Stufe des Parsers und der
+     * fachlichen Prüfung durch Menschen ({@link Review}); überschreibt keins von beiden. Fällt mit dem Entzug der
+     * KI-Freigabe und vor jedem neuen Prüflauf weg, dann steht die Aussage genau wie vorher da.
+     *
+     * @param verdict   Urteil des Modells
+     * @param version   Modell und Anweisung ({@code StatementChecks#version()})
+     * @param corrected ob eine gültige Korrektur als eigene Aussage ({@link Origin#MODELL}) hinzukam
+     */
+    public record Check(Verdict verdict, String version, boolean corrected) {
+
+        /** Grund in {@link Statement#effectiveQualityReasons()}: das Modell hält die Aussage für falsch. */
+        public static final String MODEL_FALSE = "MODEL_FALSE";
+        /** Grund in {@link Statement#effectiveQualityReasons()}: das Modell hat die Aussage vervollständigt. */
+        public static final String MODEL_CORRECTED = "MODEL_CORRECTED";
+
+        public Check {
+            Objects.requireNonNull(verdict, "verdict");
+            Objects.requireNonNull(version, "version");
+            if (corrected && verdict != Verdict.UNVOLLSTAENDIG) {
+                throw new IllegalArgumentException("Nur eine unvollständige Aussage hat eine Korrektur");
+            }
+        }
+
+        /** Ob das Urteil die wirksame Stufe senkt: falsch, oder unvollständig mit gültiger Korrektur. */
+        public boolean lowers() {
+            return verdict == Verdict.FALSCH || corrected;
         }
     }
 
     public record Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
                             Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
                             int paragraph, Quality quality, List<String> qualityReasons, Review review,
-                            Features features, Derivation derivation) {
+                            Features features, Derivation derivation, Check check) {
 
         public Statement {
             Objects.requireNonNull(id, "id");
@@ -249,6 +351,15 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             arguments = List.copyOf(arguments);
             findings = Set.copyOf(findings);
             qualityReasons = List.copyOf(qualityReasons);
+        }
+
+        /** Ohne Urteil des Prüfschritts (ADR 0032, FL4). */
+        public Statement(String id, int sentence, int start, int end, String predicateText, String predicateLemma,
+                         Voice voice, Clause clause, boolean core, List<Argument> arguments, Set<String> findings,
+                         int paragraph, Quality quality, List<String> qualityReasons, Review review,
+                         Features features, Derivation derivation) {
+            this(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core, arguments, findings,
+                    paragraph, quality, qualityReasons, review, features, derivation, null);
         }
 
         /** Eine Aussage aus dem Original ({@link Derivation#ORIGINAL}), etwa jede Analyse vor ADR 0032, FL3. */
@@ -283,6 +394,37 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
 
         /** Absatz für Aussagen ohne Absatzangabe. */
         public static final int UNKNOWN_PARAGRAPH = -1;
+
+        /**
+         * Die wirksame Stufe (ADR 0032, FL4): die Stufe des Parsers ({@link #quality()}), außer das Urteil des
+         * Prüfschritts senkt sie ({@link Check#lowers()}): dann höchstens {@link Quality#UNCERTAIN}. Ein Urteil hebt nie;
+         * die Stufe des Parsers bleibt gespeichert. Graph, Export und Verbzählungen filtern nach dieser Stufe.
+         */
+        public Quality effectiveQuality() {
+            return check != null && check.lowers() && quality == Quality.PLAUSIBLE ? Quality.UNCERTAIN : quality;
+        }
+
+        /** Die Gründe zu {@link #effectiveQuality()}: die des Parsers, dazu der Grund des Urteils, wenn es senkt. */
+        public List<String> effectiveQualityReasons() {
+            if (check == null || !check.lowers()) {
+                return qualityReasons;
+            }
+            List<String> reasons = new java.util.ArrayList<>(qualityReasons);
+            reasons.add(check.verdict() == Verdict.FALSCH ? Check.MODEL_FALSE : Check.MODEL_CORRECTED);
+            return List.copyOf(reasons);
+        }
+
+        /** Dieselbe Aussage mit diesem Urteil oder ohne ({@code null}). */
+        public Statement withCheck(Check other) {
+            return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
+                    arguments, findings, paragraph, quality, qualityReasons, review, features, derivation, other);
+        }
+
+        /** Dieselbe Aussage mit dieser Herkunft. */
+        public Statement withDerivation(Derivation other) {
+            return new Statement(id, sentence, start, end, predicateText, predicateLemma, voice, clause, core,
+                    arguments, findings, paragraph, quality, qualityReasons, review, features, other, check);
+        }
 
         /** Alle Beteiligten mit dieser Rolle. */
         public List<Argument> withRole(Role role) {

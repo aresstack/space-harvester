@@ -481,7 +481,7 @@ public class KnowledgeGraph {
     private static List<Participation> participations(ParsedStatements result, String mentionId) {
         List<Participation> found = new ArrayList<>();
         for (ParsedStatements.Statement statement : result.statements()) {
-            if (!PageGraph.DEFAULT_QUALITIES.contains(statement.quality())) {
+            if (!PageGraph.DEFAULT_QUALITIES.contains(statement.effectiveQuality())) {
                 continue;
             }
             for (ParsedStatements.Argument argument : statement.arguments()) {

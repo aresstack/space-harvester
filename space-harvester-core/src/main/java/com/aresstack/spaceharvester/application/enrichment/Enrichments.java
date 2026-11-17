@@ -58,6 +58,13 @@ public class Enrichments {
      */
     public static final String SIMPLIFICATIONS = "sentence-simplifications";
 
+    /**
+     * Vorbehaltene Prozessor-ID: unter ihr legt der Prüfschritt (ADR 0032, FL4) seine Urteile je Aussage ab
+     * ({@code StatementCheckStore}). Wie {@link #SIMPLIFICATIONS} kein Prozessor, nie in {@link #view}, mit der Seite
+     * entfernt; der Entzug der KI-Freigabe entfernt sie ebenfalls.
+     */
+    public static final String STATEMENT_CHECKS = "statement-checks";
+
     /** So viele erzwungene Neuberechnungen warten höchstens zugleich im Hintergrund; der übrige Platz bleibt frei. */
     public static final int FORCED_IN_BACKGROUND = 50;
 
@@ -379,7 +386,8 @@ public class Enrichments {
         List<View> views = new ArrayList<>();
         for (Enrichment enrichment : store.find(snapshot.key())) {
             if (READING_VIEW.equals(enrichment.processorId()) || IMPORTED_ASSETS.equals(enrichment.processorId())
-                    || SIMPLIFICATIONS.equals(enrichment.processorId())) {
+                    || SIMPLIFICATIONS.equals(enrichment.processorId())
+                    || STATEMENT_CHECKS.equals(enrichment.processorId())) {
                 // Rechte für eingebundene Inhalte prüft nur die Lese-Ansicht selbst; mitgebrachte Bilder gehören zum
                 // Export.
                 continue;
