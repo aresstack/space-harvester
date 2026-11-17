@@ -83,6 +83,8 @@ class WorkspaceTest {
     Path home;
 
     private AppRuntime runtime;
+    /** Zusätzlicher Block unter {@code space-harvester:} (etwa {@code ai:}); leer ohne. */
+    private String extraConfig = "";
 
     @AfterAll
     static void stopServer() {
@@ -229,6 +231,86 @@ class WorkspaceTest {
             assertThat(finished.progress().processed()).isPositive();
             assertThat(events).extracting(com.aresstack.spaceharvester.application.jobs.JobEvent::jobId)
                     .contains(started.id());
+        }
+    }
+
+    /**
+     * Die Aufträge „Zusammenfassen“ gehören dem Aufrufer der App, nicht dem Core-Eigentümer der Abgleiche. Über den
+     * Workspace findet die Leseansicht sie, hört ihr Ende und bricht sie ab (Fehler bis #843: BusyOverlay blieb stehen).
+     */
+    @Test
+    void theSummaryJobIsFoundHeardAndCancelledThroughTheWorkspace() throws Exception {
+        java.util.concurrent.CountDownLatch asked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        com.sun.net.httpserver.HttpServer model = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        model.createContext("/", exchange -> {
+            asked.countDown();
+            try {
+                release.await(20, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(500, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        model.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        model.start();
+        try {
+            extraConfig = """
+                      ai:
+                        base-url: http://127.0.0.1:%d/v1
+                        chat-model: test-chat
+                        external-processing-sources:
+                          - handbuch
+                    """.formatted(model.getAddress().getPort());
+            Workspace workspace = start().workspace();
+            String space = workspace.spaces("handbuch").get(0).key();
+            assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
+            // Die Marke setzt der Core nach der Meldung über das Ende der Runde; erst dann beginnt das nächste Update.
+            awaitUpdate(workspace, candidate -> candidate.initial() && !candidate.open());
+            Files.writeString(home.resolve("handbuch").resolve("betrieb.md"),
+                    "# Betrieb\n\nNeustart mit systemctl restart, danach Protokoll prüfen.\n");
+            assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
+            com.aresstack.spaceharvester.application.changelog.ChangeUpdate update = awaitUpdate(workspace,
+                    candidate -> !candidate.initial() && !candidate.open() && candidate.pages() > 0);
+            assertThat(workspace.changeSummariesAvailable()).isTrue();
+
+            java.util.concurrent.BlockingQueue<JobStatus> changes = new java.util.concurrent.LinkedBlockingQueue<>();
+            try (com.aresstack.spaceharvester.application.observe.Subscription subscription =
+                         workspace.subscribeSummaryJobs(new com.aresstack.spaceharvester.application.jobs.JobListener() {
+                             @Override
+                             public void changed(JobStatus status) {
+                                 changes.add(status);
+                             }
+                         })) {
+                JobStatus started = workspace.summarizeUpdate("handbuch", update.id(), null);
+                assertThat(workspace.summaryJob(started.id()).id()).as("über den Eigentümer der App gefunden")
+                        .isEqualTo(started.id());
+                assertThat(asked.await(20, java.util.concurrent.TimeUnit.SECONDS)).as("Modell gefragt").isTrue();
+
+                assertThat(workspace.cancelSummary(started.id()).cancelRequested()).isTrue();
+                release.countDown();
+
+                JobStatus ended = null;
+                long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+                while (ended == null && System.nanoTime() < until) {
+                    JobStatus next = changes.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                    if (next != null && next.id().equals(started.id()) && next.state().terminal()) {
+                        ended = next;
+                    }
+                }
+                assertThat(ended).as("Ende über subscribeSummaryJobs gemeldet").isNotNull();
+                // Der Abbruch wirkt nach der laufenden Modellanfrage; scheitert sie (hier HTTP 500), endet der Auftrag
+                // als gescheitert. Entscheidend ist, dass das Ende über den Workspace ankommt und nichts entstand.
+                assertThat(ended.state()).isIn(JobState.CANCELLED, JobState.FAILED);
+                assertThat(workspace.changeSummary("handbuch", update.id(), null)).isEmpty();
+            }
+        } finally {
+            release.countDown();
+            model.stop(0);
         }
     }
 
@@ -718,10 +800,29 @@ class WorkspaceTest {
                             location: file:%s
                             password: %s
                 """.formatted(home.resolve("data"), server.baseUrl(), certificates.client, TestCertificates.CLIENT_ALIAS,
-                files, certificates.harvesterTrust, TestCertificates.STORE_PASSWORD));
+                files, certificates.harvesterTrust, TestCertificates.STORE_PASSWORD)
+                .replace("space-harvester:\n  sources:", "space-harvester:\n" + extraConfig + "  sources:"));
         AppSettings settings = new AppSettingsLoader(new Placeholders(env::get), home).load(config);
         assertThat(settings.problems()).isEmpty();
         return settings;
+    }
+
+    /** Wartet, bis die Updates der Quelle „handbuch“ ein passendes enthalten (die Marke folgt dem Ende per Meldung). */
+    private static com.aresstack.spaceharvester.application.changelog.ChangeUpdate awaitUpdate(Workspace workspace,
+            java.util.function.Predicate<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> wanted)
+            throws InterruptedException {
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        java.util.List<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> all = List.of();
+        while (Instant.now().isBefore(deadline)) {
+            all = workspace.changeUpdates("handbuch", null);
+            java.util.Optional<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> found =
+                    all.stream().filter(wanted).findFirst();
+            if (found.isPresent()) {
+                return found.get();
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("kein passendes Update: " + all);
     }
 
     private static JobStatus await(Workspace workspace, JobStatus started) throws InterruptedException {
