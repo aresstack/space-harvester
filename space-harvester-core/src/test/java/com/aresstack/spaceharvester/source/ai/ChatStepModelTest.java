@@ -7,15 +7,15 @@ import java.net.URI;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** Modell der Vorstufe (ADR 0032, FL3): eigenes Modell je Schritt, sonst das Chat-Modell; ohne Netz. */
-class ChatSimplificationModelTest {
+/** Modell eines Analyseschritts (ADR 0032, FL3/FL4): eigenes Modell je Schritt, sonst das Chat-Modell; ohne Netz. */
+class ChatStepModelTest {
 
     private static final AiServiceSettings AI = new AiServiceSettings(URI.create("https://ai.example.org/v1"), "key",
             "chat-model", null, null, null, null, Set.of());
 
     @Test
     void theStepModelReplacesTheChatModelAndIsPartOfTheVersion() {
-        ChatSimplificationModel model = new ChatSimplificationModel(() -> AI, () -> "step-model", settings -> {
+        ChatStepModel model = new ChatStepModel(ChatStepModel.SIMPLIFICATION, () -> AI, () -> "step-model", settings -> {
             throw new AssertionError("kein Aufruf");
         });
         assertThat(model.effective().chatModel()).isEqualTo("step-model");
@@ -26,15 +26,23 @@ class ChatSimplificationModelTest {
 
     @Test
     void withoutStepModelTheChatModelApplies() {
-        ChatSimplificationModel model = new ChatSimplificationModel(() -> AI, () -> " ", settings -> {
+        ChatStepModel model = new ChatStepModel(ChatStepModel.SIMPLIFICATION, () -> AI, () -> " ", settings -> {
             throw new AssertionError("kein Aufruf");
         });
         assertThat(model.version()).startsWith("sentence-simplification:chat-model@");
     }
 
     @Test
+    void bothStepsShareTheAdapterButNotTheVersion() {
+        ChatStepModel check = new ChatStepModel(ChatStepModel.CHECK, () -> AI, () -> "", settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+        assertThat(check.version()).startsWith("statement-check:chat-model@");
+    }
+
+    @Test
     void withoutServiceNothingIsAvailable() {
-        ChatSimplificationModel model = new ChatSimplificationModel(() -> null, () -> "step-model", settings -> {
+        ChatStepModel model = new ChatStepModel(ChatStepModel.SIMPLIFICATION, () -> null, () -> "step-model", settings -> {
             throw new AssertionError("kein Aufruf");
         });
         assertThat(model.available()).isFalse();

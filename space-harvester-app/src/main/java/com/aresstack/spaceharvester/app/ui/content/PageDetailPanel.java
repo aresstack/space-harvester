@@ -101,6 +101,8 @@ public final class PageDetailPanel extends JPanel {
     private static final String GRAPH = "Graph";
     static final String GRAPH_PLACEHOLDER = "Noch kein Wissensgraph – Analyse folgt";
     private static final String ADVANCED = "Erweitert";
+    /** Reiter „Stand“ (ADR 0032, FL6): was in der Auswahl links gilt, geplant, unklar oder überholt ist. */
+    static final String STAND = "Stand";
     /** Reiter „Export“ (Angelo, 13.11.2026): Stand und Ausgabe der Auswahl links, auch ohne gezeigte Seite. */
     static final String EXPORT = "Export";
     static final String CHAT = "Chat";
@@ -111,6 +113,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String PAGE = "page";
     private static final String EXPORT_CARD = "export";
     private static final String CHAT_CARD = "chat";
+    private static final String STAND_CARD = "standing";
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
@@ -128,6 +131,11 @@ public final class PageDetailPanel extends JPanel {
     private String pageCard = EMPTY;
     private final ExportPanel export;
     private final ChatPanel chat;
+    private final StandingTab standing;
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton standingHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, STAND, StandingTab.HELP);
+    /** Wohin nach dem Laden gesprungen wird (aus „Stand“); {@code null} ohne. */
+    private StandingTab.Target pendingJump;
     private final JLabel empty = Comic.muted(EMPTY_PAGE);
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
@@ -319,6 +327,7 @@ public final class PageDetailPanel extends JPanel {
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
         this.chat = new ChatPanel(context);
+        this.standing = new StandingTab(context::runtime);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 14));
         title.setFont(Comic.semiBold(15f));
@@ -410,6 +419,8 @@ public final class PageDetailPanel extends JPanel {
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSES, analysisTabs)
+                // Der Stand hängt wie Export und Chat an der Auswahl links, nicht an der gezeigten Seite.
+                .tab(STAND, new JPanel())
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
@@ -424,6 +435,7 @@ public final class PageDetailPanel extends JPanel {
         icons.put(PROPERTIES, PageTabIcons.properties());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
         icons.put(ANALYSES, PageTabIcons.analyses());
+        icons.put(STAND, PageTabIcons.standing());
         icons.put(ADVANCED, PageTabIcons.advanced());
         icons.put(EXPORT, PageTabIcons.export());
         icons.put(CHAT, ChatIcons.chat());
@@ -445,6 +457,8 @@ public final class PageDetailPanel extends JPanel {
         references.onStatus(text -> tabStatus(REFERENCES, text));
         statementsView.onStatus(text -> tabStatus(STATEMENTS, text));
         sourceView.onStatus(text -> tabStatus(READING, text));
+        standing.onStatus(text -> tabStatus(STAND, text));
+        standing.onJump(this::openAt);
         sourceChanges.onStatus(text -> tabStatus(READ, text));
         graphView.onStatus(text -> tabStatus(GRAPH, text));
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
@@ -511,6 +525,7 @@ public final class PageDetailPanel extends JPanel {
         deck.add(page, PAGE);
         deck.add(export, EXPORT_CARD);
         deck.add(chat, CHAT_CARD);
+        deck.add(standing, STAND_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
         deck.add(sourceProperties, SOURCE_PROPERTIES_CARD);
@@ -634,13 +649,16 @@ public final class PageDetailPanel extends JPanel {
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
+        standingHelp.setVisible(STAND.equals(selected));
+        standing.shown(STAND.equals(selected));
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
             page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD
                     : PROPERTIES.equals(selected) ? SOURCE_PROPERTIES_CARD : EMPTY;
         }
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD : page);
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : CHAT.equals(selected) ? CHAT_CARD
+                : STAND.equals(selected) ? STAND_CARD : page);
     }
 
     /**
@@ -681,6 +699,29 @@ public final class PageDetailPanel extends JPanel {
     /** Der Reiter „Chat“ (Angelo, 13.11.2026), vorerst ein Click-Dummy; sein Wissen ist die Auswahl links. */
     public ChatPanel chat() {
         return chat;
+    }
+
+    /** Der Reiter „Stand“ (ADR 0032, FL6); seine Grundlage ist die Auswahl links. */
+    StandingTab standing() {
+        return standing;
+    }
+
+    /**
+     * Zeigt eine Aussage aus „Stand“ im Lesetext: die Seite öffnen (der Explorer folgt), dann die Stelle markieren.
+     * Ist die Seite schon offen, wird sofort markiert.
+     */
+    void openAt(StandingTab.Target target) {
+        TermsTab.Span span = new TermsTab.Span(target.start(), target.end());
+        if (shown != null && page != null && target.sourceId().equals(sourceId) && target.pageId().equals(pageId)) {
+            jumpTo(List.of(span));
+            return;
+        }
+        pendingJump = target;
+        if (context.navigator() != null) {
+            context.navigator().openPage(target.sourceId(), target.pageId());
+        } else {
+            load(target.sourceId(), target.pageId(), false);
+        }
     }
 
     /** Der Reiter „Analysen › Graph“; die Auswahl links grenzt ihn ein (ADR 0029). */
@@ -810,6 +851,11 @@ public final class PageDetailPanel extends JPanel {
             loadPosition();
             if (loaded.passage() != null) {
                 showPassage(loaded.passage());
+            }
+            StandingTab.Target jump = pendingJump;
+            pendingJump = null;
+            if (jump != null && jump.sourceId().equals(sourceId) && jump.pageId().equals(pageId)) {
+                jumpTo(List.of(new TermsTab.Span(jump.start(), jump.end())));
             }
         }, error -> {
             if (current != request) {
@@ -2139,7 +2185,8 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp, star, more);
+        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
+                standingHelp, star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */

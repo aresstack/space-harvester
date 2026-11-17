@@ -208,7 +208,7 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
-import com.aresstack.spaceharvester.source.ai.ChatSimplificationModel;
+import com.aresstack.spaceharvester.source.ai.ChatStepModel;
 import com.aresstack.spaceharvester.source.ai.ChatUpdateSummaryModel;
 import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
 import com.aresstack.spaceharvester.application.simplification.Simplifications;
@@ -914,7 +914,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog summaries = this.changeLog;
             // ADR 0032, FL3: Vorstufe „Sätze vereinfachen“ nur auf Auftrag, an das Modell nur Seiten mit KI-Freigabe;
             // ihre Ablage zählt als Seiteninhalt und fällt mit der Seite, der Quelle und der Freigabe.
-            this.simplifications = new Simplifications(new ChatSimplificationModel(
+            this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings.simplification().model(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
@@ -959,7 +959,25 @@ public final class Harvester implements AutoCloseable {
                     cache::findHeader, new com.aresstack.spaceharvester.persistence.files.FileStandingDecisionStore(
                     builder.dataDirectory.resolve("standing")), access,
                     () -> com.aresstack.spaceharvester.application.standing.StandingWords.of(
-                            this.settings.standing()), clock);
+                            this.settings.standing()), clock,
+                    new com.aresstack.spaceharvester.application.standing.SentenceSource() {
+                        @Override
+                        public Optional<KnowledgeGraph.AnalysedPage> analysis(AccessContext who,
+                                                                              KnowledgeGraph.PageRef page) {
+                            return page.document() == null ? knowledgeGraph.page(who, page.key())
+                                    : knowledgeGraph.page(who, page.document());
+                        }
+
+                        @Override
+                        public Optional<String> text(KnowledgeGraph.PageRef page, String inputSha256) {
+                            // Lesetexte von Anhängen kommen erst mit deren Analyse (ADR 0026); bis dahin kein Satz.
+                            if (page.document() != null) {
+                                return Optional.empty();
+                            }
+                            return cache.find(page.key()).flatMap(readerText)
+                                    .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
+                        }
+                    });
             this.readingAdvice = new com.aresstack.spaceharvester.application.standing.ReadingAdvice(statusQuo,
                     knowledgeGraph::analysed,
                     new com.aresstack.spaceharvester.application.standing.ChangeLogRecentChanges(changeLog), clock);
