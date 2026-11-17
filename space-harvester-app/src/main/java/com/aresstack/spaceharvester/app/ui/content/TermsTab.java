@@ -175,10 +175,13 @@ final class TermsTab extends JPanel {
         lists.add(acronyms, BorderLayout.NORTH);
         lists.add(identifiers, BorderLayout.CENTER);
         lists.add(relations, BorderLayout.SOUTH);
-        JPanel body = new JPanel(new BorderLayout(0, 6));
-        body.setOpaque(false);
-        body.add(lists, BorderLayout.NORTH);
-        body.add(hint, BorderLayout.CENTER);
+        // Folgt der Breite des Sichtfensters: die Chips brechen um, statt einen waagerechten Balken zu erzeugen.
+        JPanel column = new JPanel(new BorderLayout(0, 6));
+        column.setOpaque(false);
+        column.add(lists, BorderLayout.NORTH);
+        column.add(hint, BorderLayout.CENTER);
+        JPanel body = new com.aresstack.spaceharvester.app.ui.controls.ScrollColumn(new BorderLayout());
+        body.add(column, BorderLayout.NORTH);
 
         add(top, BorderLayout.NORTH);
         scroll = Comic.scroll(body);
