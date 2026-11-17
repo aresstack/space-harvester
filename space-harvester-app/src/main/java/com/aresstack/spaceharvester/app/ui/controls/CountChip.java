@@ -25,6 +25,8 @@ public final class CountChip extends JToggleButton {
     private int count;
     /** Ohne Zahl: eine Auswahlpille mit Wort (etwa „Stand setzen“ im Overlay). */
     private boolean numbered = true;
+    private String tipOff;
+    private String tipOn;
     private final KeyboardFocusRing focusRing;
 
     public CountChip(String word, Color tone) {
@@ -69,8 +71,19 @@ public final class CountChip extends JToggleButton {
         return word;
     }
 
+    /**
+     * Eigene Tooltips statt „Nur … zeigen“, etwa für einen Chip, der etwas zusätzlich einblendet: {@code off} gilt,
+     * solange er nicht gedrückt ist, {@code on} danach.
+     */
+    public CountChip tips(String off, String on) {
+        this.tipOff = Objects.requireNonNull(off, "off");
+        this.tipOn = Objects.requireNonNull(on, "on");
+        describe();
+        return this;
+    }
+
     private void describe() {
-        String tip = !numbered ? isSelected() ? "Von Hand gesetzt: „" + word + "“" : "„" + word + "“ von Hand setzen"
+        String tip = tipOff != null ? isSelected() ? tipOn : tipOff : !numbered ? isSelected() ? "Von Hand gesetzt: „" + word + "“" : "„" + word + "“ von Hand setzen"
                 : isSelected() ? "Filter „" + word + "“ aufheben" : "Nur „" + word + "“ zeigen";
         setToolTipText(tip);
         getAccessibleContext().setAccessibleName((numbered ? word + " " + count : word) + ", " + tip);

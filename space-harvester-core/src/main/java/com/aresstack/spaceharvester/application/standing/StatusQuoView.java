@@ -10,15 +10,26 @@ import java.util.Map;
  * @param entries          alle Aussagen der Sicht, sortiert nach Stand ({@link Standing}), dann Seite, Satz, Stelle
  * @param states           Zustandsaussagen je Träger, Träger mit den meisten geltenden Zuständen zuerst
  * @param pages            Stand je Seite bzw. Dokument, in der Reihenfolge der Seiten
- * @param counts           Anzahl aller Aussagen je Stand (alle Stände, auch 0)
- * @param certainCounts    Anzahl der sicheren Aussagen je Stand
+ * @param counts           Anzahl der Aussagen aus aktuellen Analysen je Stand (alle Stände, auch 0)
+ * @param certainCounts    Anzahl der sicheren Aussagen aus aktuellen Analysen je Stand
  * @param staleDecisions   Entscheidungen zu Aussagen sichtbarer Seiten, die es in der aktuellen Analyse nicht mehr
  *                         gibt (Text geändert, Vorstufe entzogen): Sie greifen nicht mehr und warten darauf, neu
  *                         getroffen oder gelöscht zu werden
+ * @param staleEntries     Einträge aus veralteten Analysen ({@link StatusQuoEntry#analysisStale()}): Sie stehen in
+ *                         {@code entries}, zählen aber weder in den Zahlen noch im Stand je Seite, in {@code states}
+ *                         oder bei möglichen Widersprüchen
  */
 public record StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
                             Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
-                            List<StandingDecision> staleDecisions) {
+                            List<StandingDecision> staleDecisions, int staleEntries) {
+
+    /** Mit der Zahl der veralteten Einträge aus {@code entries}. */
+    public StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
+                         Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
+                         List<StandingDecision> staleDecisions) {
+        this(entries, states, pages, counts, certainCounts, staleDecisions,
+                (int) entries.stream().filter(StatusQuoEntry::analysisStale).count());
+    }
 
     public StatusQuoView {
         entries = List.copyOf(entries);

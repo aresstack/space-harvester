@@ -92,10 +92,66 @@ class SourcePropertiesViewTest {
                 "Seiten", "360", "Lokal", "305 aktuell, 6 veraltet", "Nicht lokal", "47", "Gesperrt", "2",
                 "Stand vom", "16.11.2026, 18:30", "Updates", "1", "Letztes Update", "16.11.2026, 18:30",
                 "Seit dem letzten Update", "2 geänderte Seiten");
+        // Die Zeilen in der farbigen Form des Export-Reiters (Angelo 17.11.2026), in drei Kästen.
         assertThat(texts).as("je Space eine Zeile").containsSubsequence("Spaces", "CLUK",
-                "340 Seiten · 300 lokal · 5 veraltet · 2 gesperrt · Stand 16.11.2026, 18:30", "DEV",
-                "20 Seiten · 5 lokal · 1 veraltet · keine Inventur");
+                "305 von 340 Seiten lokal · 5 veraltet · 2 gesperrt · Stand vom 16.11.2026, 18:30", "DEV",
+                "6 von 20 Seiten lokal · 1 veraltet · " + ExportPanel.INCOMPLETE);
+        assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", "Einstellungen");
         assertThat(view.subscribed()).isTrue();
+    }
+
+    /** Angelo 17.11.2026: „Wissensquellen“ zeigt die Gesamtsicht über alle Quellen statt der zuletzt gewählten. */
+    @Test
+    void allSourcesSumUpEveryQuelleAndListTheSpacesWithTheirSourceTitle() throws Exception {
+        view.all(List.of("wiki", "archiv"));
+
+        assertThat(view.showsAll()).isTrue();
+        assertThat(view.editEnabled()).isFalse();
+        assertThat(actions.subscriptions).as("je Quelle der Bestand").isEqualTo(2);
+        List<String> texts = view.texts();
+        assertThat(view.plateTitles()).containsExactly("Kennzahlen", "Spaces", SourcePropertiesView.ALL_SOURCES);
+        assertThat(texts).containsSubsequence("Kennzahlen", "Spaces", "4 Spaces, davon 2 mit Inventur", "Seiten", "720",
+                "Seit dem letzten Update", "4 geänderte Seiten");
+        assertThat(texts).containsSubsequence("Spaces", "archiv › CLUK", "archiv › DEV", "Confluence HaVdB › CLUK",
+                "Confluence HaVdB › DEV");
+        assertThat(texts).containsSubsequence(SourcePropertiesView.ALL_SOURCES, "Confluence HaVdB",
+                "Confluence · Personal Access Token · aktiv", "archiv", "aktiv");
+        assertThat(texts).doesNotContain("Einstellungen", "Token");
+
+        // Eine Quelle ohne Space im Bestand (nie geladen) steht in Orange mit Zusatz, auch bei den Kennzahlen.
+        actions.empty.add("leer");
+        view.all(List.of("wiki", "leer"));
+        texts = view.texts();
+        assertThat(texts).containsSubsequence("Spaces", "2 Spaces, davon 1 mit Inventur · 1 Quelle "
+                + SourcePropertiesView.NOT_LOADED, SourcePropertiesView.ALL_SOURCES, "leer",
+                "aktiv · " + SourcePropertiesView.NOT_LOADED);
+
+        // Eine Meldung einer der Quellen liest neu; eine einzelne Quelle beendet die Gesamtsicht.
+        int reads = actions.reads;
+        actions.changes.changed("leer");
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(actions.reads).isGreaterThan(reads);
+        view.source("wiki");
+        assertThat(view.showsAll()).isFalse();
+        assertThat(view.texts()).contains("Einstellungen").doesNotContain("archiv › CLUK");
+    }
+
+    /**
+     * Architekt 17.11.2026: Ohne abgeschlossenes Update heißt die Zeile „Seit Beginn der Aufzeichnung“; ist das offene
+     * Update die Erstbefüllung, entfällt sie (Erstladen ist keine Änderung, ADR 0030).
+     */
+    @Test
+    void withoutAFinishedUpdateTheOpenOneCountsSinceTheStartAndTheInitialFillNotAtAll() {
+        actions.openOnly.add("wiki");
+        view.source("wiki");
+        assertThat(view.texts()).containsSubsequence("Updates", "noch keines", SourcePropertiesView.SINCE_START,
+                "2 geänderte Seiten").doesNotContain("Seit dem letzten Update");
+
+        actions.initialOnly.add("wiki");
+        view.source(null);
+        view.source("wiki");
+        assertThat(view.texts()).contains("noch keines").doesNotContain(SourcePropertiesView.SINCE_START,
+                "Seit dem letzten Update");
     }
 
     @Test
@@ -240,19 +296,36 @@ class SourcePropertiesViewTest {
         ChangeLogListener changes;
         int reads;
         int closed;
+        int subscriptions;
+        /** Quellen ohne Space im Bestand. */
+        final Set<String> empty = new java.util.HashSet<>();
+        /** Quellen mit nur dem offenen Update, bzw. nur der offenen Erstbefüllung. */
+        final Set<String> openOnly = new java.util.HashSet<>();
+        final Set<String> initialOnly = new java.util.HashSet<>();
 
         @Override
         public List<SpaceSummary> spaces(String sourceId) {
             reads++;
+            if (empty.contains(sourceId)) {
+                return List.of();
+            }
             return List.of(
-                    new SpaceSummary("wiki", "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
+                    new SpaceSummary(sourceId, "DEV", new CacheGeneration("g0", CacheState.INCOMPLETE, null, null),
                             new HoldingCounts(20, 5, 1, 0)),
-                    new SpaceSummary("wiki", "CLUK", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
+                    new SpaceSummary(sourceId, "CLUK", new CacheGeneration("g3", CacheState.CONFIRMED, SYNCED, SYNCED),
                             counts));
         }
 
         @Override
         public List<ChangeUpdate> updates(String sourceId) {
+            if (initialOnly.contains(sourceId)) {
+                return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, true,
+                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+            }
+            if (openOnly.contains(sourceId)) {
+                return List.of(new ChangeUpdate(ChangeUpdate.OPEN, sourceId, SYNCED, null, null, false,
+                        Map.of(ChangeKind.NEW, 2), Map.of("CLUK", 2), 2, 0, 0, false));
+            }
             return List.of(
                     new ChangeUpdate(ChangeUpdate.OPEN, "wiki", SYNCED, null, null, false, Map.of(ChangeKind.NEW, 2),
                             Map.of("CLUK", 2), 2, 0, 0, false),
@@ -278,6 +351,7 @@ class SourcePropertiesViewTest {
         @Override
         public Subscription subscribeHoldings(String sourceId, HoldingsListener listener) {
             holdings = listener;
+            subscriptions++;
             return () -> closed++;
         }
 

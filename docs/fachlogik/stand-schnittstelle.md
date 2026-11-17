@@ -190,3 +190,15 @@ Liste, auch für die Einträge möglicher Widersprüche und Ablösungen (es sind
   gespeichert.
 - Anhänge und enthaltene Dateien liefern noch keinen Originalsatz, bis ihre Lesetexte an die Analyse angebunden sind
   (ADR 0026). Bis dahin zeigt die Anzeige den vereinfachten Satz oder Handelnden und Prädikat.
+
+## Veraltete Analysen
+
+Einträge aus veralteten Analysen (`StatusQuoEntry#analysisStale`, Seite `PageStatements.State.STALE`) stehen weiter in
+`entries`, damit nichts versteckt wird. Sie zählen aber nicht als aktuelle Aussagen:
+
+- `counts`, `certainCounts`, der Stand je Seite (`pages`) und `states` kommen nur aus aktuellen Analysen;
+- `StatusQuoView#staleEntries` nennt, wie viele Einträge aus veralteten Analysen stammen (für „n veraltet
+  ausgeblendet“ in der Anzeige, ohne selbst nachzuzählen);
+- `StatementConflicts.of` vergleicht sie nie;
+- in der Leseempfehlung geben sie keine Punkte für Aussagen, keine Begriffe und keine Erwähnungen des Themas (mit Thema
+  fehlt eine veraltete Seite daher); der Abzug `STALE_ANALYSIS` bleibt.

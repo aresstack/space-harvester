@@ -1632,6 +1632,16 @@ public final class Workspace {
         return harvester.changeLog().latestMark(caller, sourceId);
     }
 
+    /**
+     * Jüngste Inhaltsänderung je Seite seit {@code from} in einer Quelle und, wenn angegeben, einem Space (ADR 0030),
+     * aus dem Änderungsprotokoll; nur Seiten, die der Aufrufer sehen darf. Für „Was ist neu?“ im Chat, das die
+     * Schnittmenge mit den Seiten der Auswahl bildet. Nie auf dem EDT.
+     */
+    public java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey, java.time.Instant>
+            latestContentChanges(String sourceId, String spaceKey, java.time.Instant from) {
+        return harvester.changeLog().latestContentChanges(caller, sourceId, spaceKey, from);
+    }
+
     /** Ob ein Chat-Modell für Update-Zusammenfassungen eingestellt ist (ADR 0030, Abschnitt 5). */
     public boolean changeSummariesAvailable() {
         return harvester.changeLog().summariesAvailable();

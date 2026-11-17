@@ -92,7 +92,10 @@ public final class ReadingAdvice {
             }
             selected.add(page);
             Map<String, Integer> counts = new HashMap<>();
-            for (ParsedStatements.Mention mention : page.analysis().result().mentions()) {
+            // Eine veraltete Analyse gibt keine Begriffe und keine Erwähnungen des Themas her.
+            List<ParsedStatements.Mention> mentions = page.page().state() == PageStatements.State.STALE ? List.of()
+                    : page.analysis().result().mentions();
+            for (ParsedStatements.Mention mention : mentions) {
                 if (!GlossaryDerivation.isTerm(mention)) {
                     continue;
                 }

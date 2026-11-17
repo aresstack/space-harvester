@@ -26,7 +26,7 @@ import java.util.function.Function;
  * ({@link ReplacementKind#NEGATION}) oder auf derselben Seite mit gleichem Prädikat und Betroffenem, aber anderem
  * Handelnden ({@link ReplacementKind#ACTOR}).
  *
- * <p>Nie verglichen: unsichere Aussagen, Aussagen ohne vollständige Sachlage, Zustandswechsel, Nebensätze, Aussagen mit
+ * <p>Nie verglichen: Aussagen aus veralteten Analysen, unsichere Aussagen, Aussagen ohne vollständige Sachlage, Zustandswechsel, Nebensätze, Aussagen mit
  * Vorstufen-Kennzeichen Bedingung (dort hängt die Verneinung an einer Bedingung) und zwei Aussagen aus demselben Satz
  * derselben Seite (Original und Vorstufe beschreiben denselben Satz).
  *
@@ -159,7 +159,7 @@ public record StatementConflicts(List<PossibleContradiction> contradictions, Lis
 
     /** Ob die Aussage verglichen wird. */
     static boolean comparable(StatusQuoEntry entry) {
-        return !entry.uncertain() && entry.situation() != null && !entry.stateChange()
+        return !entry.uncertain() && !entry.analysisStale() && entry.situation() != null && !entry.stateChange()
                 && entry.statement().clause() != ParsedStatements.Clause.SUBORDINATE
                 && entry.stageFlag() != ParsedStatements.StageFlag.CONDITION;
     }
