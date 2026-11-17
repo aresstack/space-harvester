@@ -105,6 +105,8 @@ final class SourceUpdatesView extends JPanel {
     private Subscription subscription = Subscription.NONE;
     private List<ChangeUpdate> updates = List.of();
     private String selected;
+    /** Der gewählte Space der Quelle, {@code null} für die ganze Quelle. */
+    private String spaceKey;
     private ChangeReport shown;
     /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
     private UpdateSummary summary;
@@ -210,10 +212,19 @@ final class SourceUpdatesView extends JPanel {
      * Hintergrund. Eine vorige Anmeldung endet.
      */
     void source(String id, String title) {
+        source(id, null, title);
+    }
+
+    /**
+     * Die gewählte Ebene (ADR-0030-Nachtrag, TZ5): eine Quelle, oder mit {@code space} ein Space als Ausschnitt
+     * derselben Updates. Dieselben Marken, die Zähler gelten nur für die Ebene. {@code id == null}: keine.
+     */
+    void source(String id, String space, String title) {
         subscription.close();
         subscription = Subscription.NONE;
         generation++;
         sourceId = id;
+        spaceKey = id == null || space == null || space.isBlank() ? null : space;
         updates = List.of();
         selected = null;
         shown = null;
@@ -246,11 +257,12 @@ final class SourceUpdatesView extends JPanel {
     void reload() {
         Actions current = actions.get();
         String id = sourceId;
+        String space = spaceKey;
         if (current == null || id == null) {
             return;
         }
         int mine = ++generation;
-        runner.run(() -> current.updates(id), found -> {
+        runner.run(() -> current.updates(id, space), found -> {
             if (mine != generation) {
                 return;
             }
@@ -317,7 +329,9 @@ final class SourceUpdatesView extends JPanel {
         offerSummary();
         int mine = ++generation;
         boolean summaries = mode == Mode.SUMMARY;
-        runner.run(() -> new Loaded(current.report(id, updateId), summaries ? current.summary(id, updateId) : null,
+        String space = spaceKey;
+        runner.run(() -> new Loaded(current.report(id, updateId, space),
+                summaries ? current.summary(id, updateId, space) : null,
                 summaries && current.summariesAvailable()), found -> {
             if (mine != generation) {
                 return;
@@ -343,7 +357,7 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Ein gestarteter Auftrag „Zusammenfassen“; {@code jobId} ist {@code null}, solange der Start unterwegs ist. */
-    private record Run(String jobId, String sourceId, String updateId) {
+    private record Run(String jobId, String sourceId, String spaceKey, String updateId) {
     }
 
     private static ChangeUpdate entry(List<ChangeUpdate> in, String id) {
@@ -365,7 +379,7 @@ final class SourceUpdatesView extends JPanel {
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SUMMARIZE : RESUMMARIZE);
         summarizeEntry.setVisible(summary == null && summarize.isEnabled());
         boolean mine = running != null && Objects.equals(running.sourceId(), sourceId)
-                && Objects.equals(running.updateId(), selected);
+                && Objects.equals(running.spaceKey(), spaceKey) && Objects.equals(running.updateId(), selected);
         if (mine != busy.isBusy()) {
             busy.setText(SUMMARIZING);
             busy.setBusy(mine);
@@ -380,19 +394,20 @@ final class SourceUpdatesView extends JPanel {
     private void summarize() {
         Actions current = actions.get();
         String id = sourceId;
+        String space = spaceKey;
         String updateId = selected;
         if (current == null || id == null || updateId == null || running != null) {
             return;
         }
-        Run starting = new Run(null, id, updateId);
+        Run starting = new Run(null, id, space, updateId);
         running = starting;
         offerSummary();
         onStatus.accept(SUMMARIZING);
-        runner.run(() -> current.summarize(id, updateId), status -> {
+        runner.run(() -> current.summarize(id, updateId, space), status -> {
             if (running != starting) {
                 return;
             }
-            Run run = new Run(status.id(), id, updateId);
+            Run run = new Run(status.id(), id, space, updateId);
             running = run;
             watch(current, run);
         }, failure -> {
@@ -444,7 +459,7 @@ final class SourceUpdatesView extends JPanel {
         });
         offerSummary();
         if (status.state() == JobState.COMPLETED && Objects.equals(run.sourceId(), sourceId)
-                && Objects.equals(run.updateId(), selected)) {
+                && Objects.equals(run.spaceKey(), spaceKey) && Objects.equals(run.updateId(), selected)) {
             select(selected, true);
         }
     }
@@ -860,20 +875,21 @@ final class SourceUpdatesView extends JPanel {
     /** Das Änderungsprotokoll der App; in Tests ersetzbar. */
     interface Actions {
 
-        List<ChangeUpdate> updates(String sourceId);
+        /** Die Updates der Ebene: {@code spaceKey == null} die ganze Quelle, sonst ein Space als Ausschnitt. */
+        List<ChangeUpdate> updates(String sourceId, String spaceKey);
 
-        ChangeReport report(String sourceId, String updateId);
+        ChangeReport report(String sourceId, String updateId, String spaceKey);
 
         Subscription subscribe(String sourceId, ChangeLogListener listener);
 
         /** Die gespeicherte Zusammenfassung des Updates, {@code null} ohne. */
-        UpdateSummary summary(String sourceId, String updateId);
+        UpdateSummary summary(String sourceId, String updateId, String spaceKey);
 
         /** Ob ein Chat-Modell für Zusammenfassungen eingestellt ist. */
         boolean summariesAvailable();
 
         /** Startet den Auftrag „Zusammenfassen“; das Ergebnis legt der Core neben dem Protokoll ab. */
-        JobStatus summarize(String sourceId, String updateId);
+        JobStatus summarize(String sourceId, String updateId, String spaceKey);
 
         JobStatus job(String jobId);
 
@@ -887,13 +903,13 @@ final class SourceUpdatesView extends JPanel {
             }
             return new Actions() {
                 @Override
-                public List<ChangeUpdate> updates(String sourceId) {
-                    return workspace.changeUpdates(sourceId);
+                public List<ChangeUpdate> updates(String sourceId, String spaceKey) {
+                    return workspace.changeUpdates(sourceId, spaceKey);
                 }
 
                 @Override
-                public ChangeReport report(String sourceId, String updateId) {
-                    return workspace.changeReport(sourceId, updateId);
+                public ChangeReport report(String sourceId, String updateId, String spaceKey) {
+                    return workspace.changeReport(sourceId, updateId, spaceKey);
                 }
 
                 @Override
@@ -902,8 +918,8 @@ final class SourceUpdatesView extends JPanel {
                 }
 
                 @Override
-                public UpdateSummary summary(String sourceId, String updateId) {
-                    return workspace.changeSummary(sourceId, updateId).orElse(null);
+                public UpdateSummary summary(String sourceId, String updateId, String spaceKey) {
+                    return workspace.changeSummary(sourceId, updateId, spaceKey).orElse(null);
                 }
 
                 @Override
@@ -912,8 +928,8 @@ final class SourceUpdatesView extends JPanel {
                 }
 
                 @Override
-                public JobStatus summarize(String sourceId, String updateId) {
-                    return workspace.summarizeUpdate(sourceId, updateId);
+                public JobStatus summarize(String sourceId, String updateId, String spaceKey) {
+                    return workspace.summarizeUpdate(sourceId, updateId, spaceKey);
                 }
 
                 @Override
@@ -1004,6 +1020,10 @@ final class SourceUpdatesView extends JPanel {
 
     String sourceId() {
         return sourceId;
+    }
+
+    String spaceKey() {
+        return spaceKey;
     }
 
     List<String> updateHeadings() {

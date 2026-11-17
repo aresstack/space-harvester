@@ -613,12 +613,20 @@ public final class PageDetailPanel extends JPanel {
      * die Updates der Quelle; Export und Chat folgen ohnehin der Auswahl.
      */
     public void showSource(String sourceId, String sourceTitle) {
+        showSource(sourceId, null, sourceTitle);
+    }
+
+    /**
+     * Dieselbe Seite für einen Space (ADR-0030-Nachtrag, TZ5): „Text“ und „Leseansicht“ zeigen die Updates der Quelle
+     * als Ausschnitt dieses Space; {@code spaceKey == null} die ganze Quelle.
+     */
+    public void showSource(String sourceId, String spaceKey, String title) {
         clear();
-        title.setText(sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle);
+        String shownTitle = title == null || title.isBlank() ? spaceKey == null ? sourceId : spaceKey : title;
+        this.title.setText(shownTitle);
         empty.setText(EMPTY_SOURCE);
-        String shownTitle = sourceTitle == null || sourceTitle.isBlank() ? sourceId : sourceTitle;
-        sourceView.source(sourceId, shownTitle);
-        sourceChanges.source(sourceId, shownTitle);
+        sourceView.source(sourceId, spaceKey, shownTitle);
+        sourceChanges.source(sourceId, spaceKey, shownTitle);
         pageCard = SOURCE_CARD;
         showDeck();
     }
@@ -647,9 +655,15 @@ public final class PageDetailPanel extends JPanel {
         return sourceView;
     }
 
-    /** Ob gerade die Quellenseite (ADR 0030) gezeigt wird. */
+    /** Ob gerade die Quellenseite (ADR 0030) gezeigt wird, für die ganze Quelle oder einen Space. */
     boolean showsSource() {
         return SOURCE_CARD.equals(pageCard);
+    }
+
+    /** Ob gerade die Updates genau dieser Ebene gezeigt werden; {@code spaceKey == null} die ganze Quelle. */
+    boolean showsLevel(String sourceId, String spaceKey) {
+        return showsSource() && java.util.Objects.equals(sourceView.sourceId(), sourceId)
+                && java.util.Objects.equals(sourceView.spaceKey(), spaceKey);
     }
 
     public KnowledgeGraphTab graph() {

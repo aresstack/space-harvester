@@ -1466,6 +1466,22 @@ public final class Workspace {
         return harvester.changeLog().updates(caller, sourceId);
     }
 
+    /**
+     * Die Updates einer Ebene (ADR-0030-Nachtrag, TZ1): {@code spaceKey == null} die ganze Quelle, sonst derselbe
+     * Satz Marken mit Zählern nur für diesen Space ({@code pages() == 0}: keine Änderung im Space). Nie auf dem EDT.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.changelog.ChangeUpdate> changeUpdates(
+            String sourceId, String spaceKey) {
+        return harvester.changeLog().updates(caller, sourceId, spaceKey);
+    }
+
+    /** Der Änderungsbericht eines Updates in einer Ebene; {@code spaceKey == null} die ganze Quelle. Nie auf dem EDT. */
+    public com.aresstack.spaceharvester.application.changelog.ChangeReport changeReport(String sourceId,
+                                                                                       String updateId,
+                                                                                       String spaceKey) {
+        return harvester.changeLog().report(caller, sourceId, updateId, spaceKey);
+    }
+
     /** Der Änderungsbericht eines Updates (ADR 0030): die geänderten Seiten nach Art; bei der Erstbefüllung nur Zähler. */
     public com.aresstack.spaceharvester.application.changelog.ChangeReport changeReport(String sourceId,
                                                                                        String updateId) {
@@ -1493,6 +1509,17 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
             String sourceId, String updateId) {
         return harvester.changeLog().summary(caller, sourceId, updateId);
+    }
+
+    /** Die gespeicherte Zusammenfassung eines Updates in einer Ebene (ADR 0031); {@code spaceKey == null} die Quelle. */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> changeSummary(
+            String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summary(caller, sourceId, updateId, spaceKey);
+    }
+
+    /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
+    public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
+        return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);
     }
 
     /**

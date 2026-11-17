@@ -88,6 +88,23 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void aSpaceShowsTheSameUpdatesAsAnExcerptAndSummarizesForItsLevel() {
+        summary.source("wiki", "DEV", "DEV");
+
+        assertThat(summary.spaceKey()).isEqualTo("DEV");
+        assertThat(actions.levels).as("jede Abfrage für den Space").isNotEmpty().containsOnly("DEV");
+        assertThat(summary.selectedUpdate()).as("ohne Update mit Änderungen im Space: das jüngste abgeschlossene")
+                .isEqualTo(actions.second().id());
+        assertThat(summary.paleClouds()).as("leer und Erstbefüllung blass").hasSize(2);
+
+        summary.source("wiki", "Confluence HaVdB");
+        assertThat(summary.spaceKey()).as("die ganze Quelle").isNull();
+        assertThat(actions.levels).last().isNull();
+        summary.clickSummarize();
+        assertThat(actions.summarizedLevel).isNull();
+    }
+
+    @Test
     void theUpdatesAreCloudsOnTopWithTheNewestMarkedAndAClickMovesTheMark() {
         view.source("wiki", "Confluence HaVdB");
 
@@ -440,15 +457,27 @@ class SourceUpdatesViewTest {
                     Map.of(ChangeKind.NEW, 340), spaces, 340, 0, 0, false);
         }
 
+        /** Die Ebenen der Abfragen, in Reihenfolge; {@code null} die ganze Quelle. */
+        final List<String> levels = new ArrayList<>();
+        String summarizedLevel = "nie";
+
         @Override
-        public List<ChangeUpdate> updates(String sourceId) {
+        public List<ChangeUpdate> updates(String sourceId, String spaceKey) {
             updateCalls++;
+            levels.add(spaceKey);
+            if ("DEV".equals(spaceKey)) {
+                // Im Space DEV hat das jüngste Update nichts geändert: dieselben Marken, Zähler nur für den Space.
+                ChangeUpdate s = second();
+                return List.of(new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), s.mark(), false, Map.of(),
+                        Map.of(), 0, 0, 0, false), initial());
+            }
             return none ? List.of() : List.of(open(), second(), initial());
         }
 
         @Override
-        public ChangeReport report(String sourceId, String updateId) {
+        public ChangeReport report(String sourceId, String updateId, String spaceKey) {
             reportCalls++;
+            levels.add(spaceKey);
             if (updateId.equals(initial().id())) {
                 return new ChangeReport(initial(), List.of());
             }
@@ -469,7 +498,7 @@ class SourceUpdatesViewTest {
         }
 
         @Override
-        public UpdateSummary summary(String sourceId, String updateId) {
+        public UpdateSummary summary(String sourceId, String updateId, String spaceKey) {
             return stored;
         }
 
@@ -479,8 +508,9 @@ class SourceUpdatesViewTest {
         }
 
         @Override
-        public JobStatus summarize(String sourceId, String updateId) {
+        public JobStatus summarize(String sourceId, String updateId, String spaceKey) {
             summarizeCalls++;
+            summarizedLevel = spaceKey;
             return job(JobState.QUEUED);
         }
 

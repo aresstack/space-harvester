@@ -90,7 +90,10 @@ public final class ContentView implements View {
 
     /** Ein Space wurde gewählt (z. B. „Inhalte öffnen“ eines Auftrags): ohne Seite, die wählt man im Explorer. */
     public void openSpace(String sourceId, String spaceKey) {
-        detail.clear();
+        // Ein Space hat dieselbe Seite wie die Quelle, als Ausschnitt seiner Updates (ADR-0030-Nachtrag, TZ5).
+        if (!detail.showsLevel(sourceId, spaceKey)) {
+            detail.showSource(sourceId, spaceKey, spaceKey);
+        }
         this.sourceId = sourceId;
         this.spaceKey = spaceKey;
         renderCrumbs();
@@ -99,11 +102,12 @@ public final class ContentView implements View {
     /** Die Quellenseite unter „Leseansicht“ (Doppelklick auf eine Quelle im Explorer, ADR 0030). */
     /** Die Quelle, deren Updates gerade zu sehen sind, sonst {@code null}. */
     public String shownSource() {
-        return detail.showsSource() ? detail.sourceView().sourceId() : null;
+        // Nur die ganze Quelle: „Nach dem Update Änderungen anzeigen“ öffnet die Quelle, nicht einen Space.
+        return detail.showsSource() && detail.sourceView().spaceKey() == null ? detail.sourceView().sourceId() : null;
     }
 
     public void openSource(String sourceId, String title) {
-        if (!Objects.equals(sourceId, this.sourceId) || !detail.showsSource()) {
+        if (!detail.showsLevel(sourceId, null)) {
             detail.showSource(sourceId, title);
         }
         this.sourceId = sourceId;
@@ -277,10 +281,12 @@ public final class ContentView implements View {
             // Eine andere Quelle, oder eine Quelle bzw. ein Space statt einer Seite: Die Seitenreiter (Leseansicht bis
             // Erweitert) haben dafür keinen Inhalt und zeigen leer statt der vorher geöffneten Seite; Export und Chat
             // folgen der Auswahl (Angelo, 16.11.2026).
-            if (selection.spaceKey() == null && !selection.page()) {
-                // Die Wurzel einer Quelle: die Quellenseite mit ihren Updates (ADR 0030); schon gezeigt, bleibt sie.
-                if (!Objects.equals(selection.sourceId(), sourceId) || !detail.showsSource()) {
-                    detail.showSource(selection.sourceId(), selection.title());
+            String space = selection.spaceKey() == null || selection.spaceKey().isBlank() ? null : selection.spaceKey();
+            if (!selection.page()) {
+                // Die Wurzel einer Quelle oder ein Space: die Quellenseite mit den Updates dieser Ebene (ADR 0030,
+                // Nachtrag TZ5); schon gezeigt, bleibt sie.
+                if (!detail.showsLevel(selection.sourceId(), space)) {
+                    detail.showSource(selection.sourceId(), space, selection.title());
                 }
             } else if (!Objects.equals(selection.sourceId(), sourceId) || !selection.page()) {
                 detail.clear();
