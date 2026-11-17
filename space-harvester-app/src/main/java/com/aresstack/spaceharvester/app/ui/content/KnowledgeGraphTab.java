@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -247,11 +248,11 @@ final class KnowledgeGraphTab extends JPanel {
         pageButton.addActionListener(e -> showPage());
         expand.addActionListener(e -> expandSelected());
         back.addActionListener(e -> back());
-        com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(filterMenu, filter);
+        PopupHover.clearOnClose(filterMenu, filter);
         filter.addActionListener(e -> filterMenu.show(filter, 0, filter.getHeight()));
         fit.addActionListener(e -> canvas.fit());
         view.addActionListener(e -> toggleView());
-        export.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(exportMenu(), export)
+        export.addActionListener(e -> PopupHover.clearOnClose(exportMenu(), export)
                 .show(export, 0, export.getHeight()));
         deleteAll.addActionListener(e -> deleteAllStatements());
 

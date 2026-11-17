@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.spaceharvester.application.terms.SynonymBudget;
 
 import javax.swing.JComponent;
@@ -1263,6 +1264,9 @@ final class AiSettingsPanel {
                     : model.displayName() + " (" + model.id() + ")");
             item.addActionListener(e -> choose(field, model.id()));
             menu.add(item);
+        }
+        if (anchor instanceof javax.swing.AbstractButton button) {
+            PopupHover.clearOnClose(menu, button);
         }
         menu.show(anchor, 0, anchor.getHeight());
     }

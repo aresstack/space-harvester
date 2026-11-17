@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
@@ -1634,7 +1635,7 @@ public final class SourcesView implements View {
             });
             more.addActionListener(e -> {
                 select(entry.id());
-                com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(menu(), more)
+                PopupHover.clearOnClose(menu(), more)
                         .show(more, 0, more.getHeight());
             });
             MouseAdapter choose = new MouseAdapter() {
