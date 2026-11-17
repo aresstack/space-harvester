@@ -240,6 +240,9 @@ public class SourceQueryExports {
         List<String> pages = scopes.pages(caller, root);
         context.discovered(pages.size());
         context.checkpoint();
+        // #944: Die Abfragen bei der Quelle sind ein Download (JobType.download()); sie warten auf einen der
+        // eingestellten Download-Plätze, statt einen der Plätze für Abgleiche und Exporte zu belegen.
+        context.awaitDownloadSlot();
         String name = fileName(type, root.spaceKey(), root.pageId(), context.jobId());
         Path target = directory.resolve(name);
         Path part = directory.resolve("." + name + ".part");
