@@ -255,6 +255,32 @@ class ConfigurationParityTest {
         assertThat(springConsoleThreshold(environment)).isEqualTo("OFF").isEqualTo(app.consoleOutput().name());
     }
 
+    /** ADR 0032, FL6: „-“ allein heißt in beiden Loadern keine Wörter, als Text und als YAML-Liste. */
+    @Test
+    void aLoneDashMeansNoStandingWordsInServiceAndApp(@TempDir Path home) throws IOException {
+        String yaml = """
+                space-harvester:
+                  statements:
+                    standing:
+                      outdated-words: "-"
+                      draft-words:
+                        - "-"
+                """;
+        Path file = home.resolve("space-harvester.yml");
+        Files.writeString(file, yaml);
+        AppSettings app = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader().load("yaml", new ByteArrayResource(yaml.getBytes()))
+                .forEach(source -> environment.getPropertySources().addLast(source));
+        HarvesterConfiguration service = ConfigurationManagerConfiguration.withSyncRules(
+                HarvesterConfiguration.DEFAULT, Binder.get(environment));
+
+        assertThat(app.problems()).isEmpty();
+        assertThat(app.standing()).isEqualTo(service.standing())
+                .isEqualTo(new com.aresstack.spaceharvester.application.configuration.StandingSettings(
+                        List.of(), List.of()));
+    }
+
     /** Was Spring Boot dem Logback-Filter am Konsolen-Appender gibt ({@code CONSOLE_LOG_THRESHOLD}). */
     private static String springConsoleThreshold(StandardEnvironment environment) {
         Map<String, String> properties = new HashMap<>();

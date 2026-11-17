@@ -142,7 +142,8 @@ public final class StatusQuo {
                 StatementKind kind = StandingRules.kind(statement);
                 ParsedStatements.Mention subject = subject(statement, kind, mentions);
                 entries.add(new StatusQuoEntry(ref, statement, kind, subject == null ? null : subject.text(),
-                        subject == null ? null : subject.key(), quality.get(), standing, decision, stale));
+                        subject == null ? null : subject.key(), situation(statement, kind, mentions), quality.get(),
+                        standing, decision, stale));
             }
             pageStandings.add(pageStanding(ref, pageDecision, marks, cap, counts, certain));
         }
@@ -317,8 +318,49 @@ public final class StatusQuo {
 
     private static ParsedStatements.Mention subject(ParsedStatements.Statement statement, StatementKind kind,
                                                     Map<String, ParsedStatements.Mention> mentions) {
+        return first(statement, kind == StatementKind.STATE ? ParsedStatements.Role.BEARER
+                : ParsedStatements.Role.ACTOR, mentions);
+    }
+
+    /** Die Sachlage oder {@code null}, wenn ein Beteiligter fehlt, offen ist oder kein Begriff ist. */
+    private static Situation situation(ParsedStatements.Statement statement, StatementKind kind,
+                                       Map<String, ParsedStatements.Mention> mentions) {
         ParsedStatements.Role role = kind == StatementKind.STATE ? ParsedStatements.Role.BEARER
                 : ParsedStatements.Role.ACTOR;
+        String predicate = statement.predicateLemma();
+        if (predicate == null || predicate.isBlank()) {
+            return null;
+        }
+        String subject = null;
+        List<Situation.Participant> others = new ArrayList<>();
+        for (ParsedStatements.Argument argument : statement.arguments()) {
+            String key = termKey(mentions.get(argument.mention()));
+            if (key == null) {
+                return null;
+            }
+            if (subject == null && argument.role() == role) {
+                subject = key;
+            } else {
+                String marker = argument.marker() == null || argument.marker().isBlank() ? null
+                        : argument.marker().strip().toLowerCase(Locale.ROOT);
+                others.add(new Situation.Participant(argument.role(), marker, key));
+            }
+        }
+        return subject == null ? null
+                : new Situation(kind, subject, predicate.strip().toLowerCase(Locale.ROOT), others);
+    }
+
+    private static String termKey(ParsedStatements.Mention mention) {
+        if (mention == null || mention.unresolved() || mention.kind() == ParsedStatements.MentionKind.CLAUSE
+                || mention.kind() == ParsedStatements.MentionKind.PRONOUN) {
+            return null;
+        }
+        String key = com.aresstack.spaceharvester.application.glossary.GlossaryDerivation.keyOf(mention);
+        return key == null || key.isBlank() ? null : key;
+    }
+
+    private static ParsedStatements.Mention first(ParsedStatements.Statement statement, ParsedStatements.Role role,
+                                                  Map<String, ParsedStatements.Mention> mentions) {
         return statement.withRole(role).stream().map(argument -> mentions.get(argument.mention()))
                 .filter(Objects::nonNull).findFirst().orElse(null);
     }

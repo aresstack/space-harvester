@@ -45,17 +45,16 @@ public final class StandingRules {
     }
 
     /**
-     * Die einzige Stelle, die beantwortet, ob eine Aussage zählt und mit welcher Stufe. Leer: gehört nicht in die Sicht
+     * Ob eine Aussage in der Sicht zählt und mit welcher Stufe, aus der einen Zählstelle
+     * {@link com.aresstack.spaceharvester.application.knowledge.CountedStatements}. Leer: gehört nicht in die Sicht
      * (ungültig oder von einem Menschen abgelehnt). {@link ParsedStatements.Quality#PLAUSIBLE} zählt für den Stand der
-     * Seite, {@link ParsedStatements.Quality#UNCERTAIN} erscheint als unsicher und zählt nicht. Hier hängt FL4 später
-     * die wirksame Stufe aus dem Prüfschritt ein.
+     * Seite, {@link ParsedStatements.Quality#UNCERTAIN} erscheint als unsicher und zählt nicht. FL4 hängt die wirksame
+     * Stufe aus dem Prüfschritt in der Zählstelle ein.
      */
     public static Optional<ParsedStatements.Quality> effectiveQuality(ParsedStatements.Statement statement) {
-        if (statement.quality() == ParsedStatements.Quality.INVALID
-                || statement.review() == ParsedStatements.Review.REJECTED) {
-            return Optional.empty();
-        }
-        return Optional.of(statement.quality());
+        // Die eine Zählstelle (FL5/FL4); ungültige filtert sie heute selbst, der Stand verlässt sich nicht darauf.
+        return com.aresstack.spaceharvester.application.knowledge.CountedStatements.level(statement)
+                .filter(level -> level != ParsedStatements.Quality.INVALID);
     }
 
     /** Art der Aussage. */
