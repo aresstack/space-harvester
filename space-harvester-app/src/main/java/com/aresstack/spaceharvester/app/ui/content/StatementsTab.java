@@ -704,6 +704,7 @@ final class StatementsTab extends JPanel {
             case INSTRUMENT -> "Mittel";
             case TIME -> "Zeit";
             case CIRCUMSTANCE -> "Umstand";
+            case BEARER -> "Träger";
         };
     }
 
@@ -728,6 +729,9 @@ final class StatementsTab extends JPanel {
             case "AGENT_FROM_DURCH" -> "Handelnder aus der durch-Gruppe abgeleitet (unsicher)";
             case "AGENT_FROM_VON" -> "Handelnder aus der von-Gruppe bei „ist … zu“ abgeleitet (unsicher)";
             case "LEMMA_FROM_FORM" -> "Grundform des Verbs aus der Wortform erzeugt";
+            case "STATE_PROPERTY" -> "Zustand: Eigenschaft mit „sein“, „werden“ oder „bleiben“, kein Verb";
+            case "STATE_ROLE_NOUN" -> "Zustand: Rollennomen oder Begriffsbestimmung, kein Verb";
+            case "STATE_CHANGE" -> "Zustandswechsel („wird …“): der Zustand tritt erst ein";
             default -> code;
         };
     }

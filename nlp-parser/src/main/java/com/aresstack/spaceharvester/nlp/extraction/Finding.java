@@ -84,5 +84,21 @@ public enum Finding {
      */
     AGENT_FROM_DURCH,
     /** „ist … zu + Infinitiv“: die von-Gruppe ist als Handelnder übernommen, abgeleitet und unsicher. */
-    AGENT_FROM_VON
+    AGENT_FROM_VON,
+    /**
+     * Zustandsaussage mit Eigenschaft (ADR 0032): Kopula ({@code sein}, {@code werden}, {@code bleiben}) mit
+     * prädikativem Adjektiv („Der Antrag ist unvollständig“). Das Prädikat ist das Adjektiv, kein Verb; der Träger hat
+     * die Rolle {@link Role#BEARER}. Zählt nie als Verb (Verbliste, Valenz).
+     */
+    STATE_PROPERTY,
+    /**
+     * Zustandsaussage mit Rollennomen (ADR 0032): Kopula mit prädikativem Nomen („Der Sachbearbeiter ist
+     * Ansprechpartner“, „Der Zuschuss ist eine Förderung“). Das Prädikat ist das Nomen, kein Verb.
+     */
+    STATE_ROLE_NOUN,
+    /**
+     * Zustandswechsel: die Kopula ist {@code werden} („Der Bescheid wird bestandskräftig“). Der Zustand gilt noch nicht,
+     * er tritt ein; reiner Hinweis, ändert die Stufe nicht.
+     */
+    STATE_CHANGE
 }

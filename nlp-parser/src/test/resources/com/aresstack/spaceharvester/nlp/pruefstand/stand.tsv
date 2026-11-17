@@ -3,14 +3,14 @@
 # Erwartungen mit gefundenem Verb: richtig bei vorgegebenem Merkmal, fälschlich gesetzt bei den übrigen. Zusammengesetzte
 # Varianten (gezielt-*, immer-*) übernehmen die Merkmale aus dem Original (FL3): dort ist „fälschlich“ 0 ein Pin.
 # Textsatz	Variante	vollständig richtig	streng	falsch trotz PLAUSIBLE	Merkmale richtig	Merkmale fälschlich
-foerderung	heute	59	59	2	9	0
-foerderung	vorstufe-hand	60	59	4	8	2
-foerderung	vorstufe-gemma4-12b	57	53	6	6	0
-beschaffung	heute	53	53	1	9	0
-foerderung	gezielt-hand	63	62	3	9	0
-foerderung	gezielt-gemma4-12b	63	59	4	9	0
-foerderung	immer-hand	63	62	3	9	0
-foerderung	immer-gemma4-12b	63	59	5	9	0
-beschaffung	vorstufe-hand	55	54	2	8	1
-beschaffung	gezielt-hand	57	56	1	9	0
-beschaffung	immer-hand	57	56	2	9	0
+foerderung	heute	69	69	4	13	0
+foerderung	vorstufe-hand	70	69	4	12	2
+foerderung	vorstufe-gemma4-12b	67	63	6	10	0
+beschaffung	heute	66	66	2	13	0
+foerderung	gezielt-hand	73	72	5	13	0
+foerderung	gezielt-gemma4-12b	73	69	6	13	0
+foerderung	immer-hand	73	72	5	13	0
+foerderung	immer-gemma4-12b	73	69	7	13	0
+beschaffung	vorstufe-hand	68	67	2	12	1
+beschaffung	gezielt-hand	70	69	2	13	0
+beschaffung	immer-hand	70	69	3	13	0

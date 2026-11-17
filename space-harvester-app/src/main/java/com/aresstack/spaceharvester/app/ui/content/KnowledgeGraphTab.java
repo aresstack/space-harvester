@@ -938,6 +938,7 @@ final class KnowledgeGraphTab extends JPanel {
             case INSTRUMENT -> "Mittel";
             case TIME -> "Zeit";
             case CIRCUMSTANCE -> "Umstand";
+            case BEARER -> "Träger";
             case NOMINAL -> "nominaler Bezug";
             case LEXICAL_CANDIDATE -> "gleiche Grundform?";
             case CONFIRMED_TERM_RELATION -> "Begriffsbeziehung";

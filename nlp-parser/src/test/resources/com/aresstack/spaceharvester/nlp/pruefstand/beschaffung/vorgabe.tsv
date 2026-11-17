@@ -66,3 +66,17 @@ E18	E	9	ersetzen	Lieferant	§beanstanden|Ware|Artikel|Beanstandung	-	nein	MUSS	G
 E19	E	10	buchen	Lagersystem	Abgang	-	nein	-	GILT	
 E20	E	10	quittieren	Fahrer	Übernahme	-	nein	-	GILT	sobald-Satz
 E21	E	10	drucken	Lagersystem	Lieferschein	-	nein	-	GILT	gemeinsames Subjekt über den Nebensatz hinweg
+# Text F (Zustände, 17.11.2026): von Hand festgelegt, BEVOR die Zustandsregel gebaut war. Spalte handelnder = Träger, verb = Eigenschaft oder Rollennomen.
+F01	F	1	verantwortlich	Lagerleiter	-	-	nein	-	GILT	Zustand; Bezug „für die Vergabe“
+F02	F	2	vollständig	Lieferung	-	-	nein	-	GILT	Zustand
+F03	F	3	Ansprechpartner	Einkäufer	-	-	nein	-	GILT	Zustand; Rollennomen
+F04	F	4	stornierbar	Bestellung	-	-	ja	-	GILT	Zustand; verneint
+F05	F	5	prüffähig	Rechnung	-	-	nein	MUSS	GILT	Zustand; „muss … sein“
+F06	F	6	klein	Lager	-	-	nein	-	FRUEHER	Zustand; „war“
+F07	F	7	einlagern	-	Ware	-	ja	-	GILT	Gegenprobe: Zustandspassiv bleibt Verblesung
+F08	F	8	genehmigen	Abteilungsleiter	Bestellung	-	nein	-	GILT	Gegenprobe: Zustandspassiv mit „von“
+F09	F	9	knapp	Lagerplätze	-	-	nein	-	GILT	Zustand; Träger mit Ortsangabe
+F10	F	10	gültig	Angebot	-	-	nein	-	GILT	Zustand; „bleiben“
+F11	F	11	sichtbar	Auftragsnummer	-	-	nein	-	GILT	Zustand; „werden“ mit Eigenschaft (Zustandswechsel)
+F12	F	12	Begleitpapier	Lieferschein	-	-	nein	-	GILT	Zustand; Begriffsbestimmung „ist ein“
+F13	F	13	richtig	Rechnung	-	-	nein	-	GILT	Zustand; eine Aussage trotz Reihung „sachlich und rechnerisch“

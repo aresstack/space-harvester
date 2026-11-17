@@ -18,5 +18,10 @@ public enum Role {
     /** Zeitangabe ({@code am Montag}); Wortliste. */
     TIME,
     /** Andere adverbiale Ergänzung ({@code obl}). */
-    CIRCUMSTANCE
+    CIRCUMSTANCE,
+    /**
+     * Träger eines Zustands oder einer Eigenschaft (ADR 0032): Subjekt einer Zustandsaussage mit Kopula („Der Antrag
+     * ist unvollständig“, „Der Sachbearbeiter ist Ansprechpartner“). Er handelt nicht; deshalb nie {@link #ACTOR}.
+     */
+    BEARER
 }

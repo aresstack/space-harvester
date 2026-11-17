@@ -56,7 +56,7 @@ public final class StatementQuality {
             Finding.HEURISTIC_PARTICIPANT, Finding.SUBJECT_FROM_LABEL);
     /** Rollen, die eine Aussage zur Relation machen. */
     private static final Set<Role> PARTICIPANT_ROLES = Set.of(Role.ACTOR, Role.AFFECTED_OBJECT, Role.RECIPIENT,
-            Role.PREPOSITIONAL_OBJECT);
+            Role.PREPOSITIONAL_OBJECT, Role.BEARER);
 
     private StatementQuality() {
     }
@@ -128,7 +128,9 @@ public final class StatementQuality {
                 && !"obj+conj".equals(argument.relation())).count() > 1) {
             uncertain.add("ROLE_CONFLICT");
         }
-        if (statement.voice() == Statement.Voice.ACTIVE && actor == null && invalid.isEmpty()) {
+        // Eine Zustandsaussage hat einen Träger statt eines Handelnden (ADR 0032)
+        if (statement.voice() == Statement.Voice.ACTIVE && actor == null && statement.core(Role.BEARER) == null
+                && invalid.isEmpty()) {
             uncertain.add("NO_ACTOR");
         }
         if (!invalid.isEmpty()) {

@@ -1,0 +1,13 @@
+Der Lagerleiter ist für die Vergabe der Lagerplätze verantwortlich.
+Die Lieferung ist vollständig.
+Der Einkäufer ist Ansprechpartner für den Lieferanten.
+Die Bestellung ist nicht stornierbar.
+Die Rechnung muss prüffähig sein.
+Das alte Lager war zu klein.
+Die Ware ist noch nicht eingelagert.
+Die Bestellung ist vom Abteilungsleiter genehmigt.
+Die Lagerplätze im Außenlager sind knapp.
+Das Angebot bleibt vier Wochen gültig.
+Die Auftragsnummer wird nach der Freigabe sichtbar.
+Ein Lieferschein ist ein Begleitpapier der Lieferung.
+Die Rechnung ist sachlich und rechnerisch richtig.

@@ -1,0 +1,140 @@
+# Prüfstand ADR 0032: unveränderte Ausgabe der gepinnten Kette OpenNLP 1.3.0 + MaltParser maltparser-de-gsd-v1.0.0
+# (PruefstandLiveTest prüft die Übereinstimmung; nach bewusster Änderung der Vorverarbeitung neu übernehmen).
+# newdoc id = pruefstand/beschaffung/F@heute
+# sent_id = 1
+# text = Der Lagerleiter ist für die Vergabe der Lagerplätze verantwortlich.
+1	Der	der	DET	_	_	2	det	_	_
+2	Lagerleiter	lagerleiter	NOUN	_	_	9	nsubj	_	_
+3	ist	sein	AUX	_	_	9	cop	_	_
+4	für	für	ADP	_	_	6	case	_	_
+5	die	der	DET	_	_	6	det	_	_
+6	Vergabe	vergabe	NOUN	_	_	9	nmod	_	_
+7	der	der	DET	_	_	8	det	_	_
+8	Lagerplätze	lagerplätze	NOUN	_	_	6	nmod	_	_
+9	verantwortlich	verantwortlich	ADJ	_	_	0	root	_	SpaceAfter=No
+10	.	.	PUNCT	_	_	9	punct	_	_
+
+# sent_id = 2
+# text = Die Lieferung ist vollständig.
+1	Die	der	DET	_	_	2	det	_	_
+2	Lieferung	lieferung	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	vollständig	vollständig	ADJ	_	_	0	root	_	SpaceAfter=No
+5	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 3
+# text = Der Einkäufer ist Ansprechpartner für den Lieferanten.
+1	Der	der	DET	_	_	2	det	_	_
+2	Einkäufer	einkäufer	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	Ansprechpartner	ansprechpartner	NOUN	_	_	0	root	_	_
+5	für	für	ADP	_	_	7	case	_	_
+6	den	der	DET	_	_	7	det	_	_
+7	Lieferanten	lieferant	NOUN	_	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 4
+# text = Die Bestellung ist nicht stornierbar.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bestellung	bestellung	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	nicht	nicht	PART	_	_	5	advmod	_	_
+5	stornierbar	stornierbar	ADJ	_	_	0	root	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 5
+# text = Die Rechnung muss prüffähig sein.
+1	Die	der	DET	_	_	2	det	_	_
+2	Rechnung	rechnung	NOUN	_	_	4	nsubj	_	_
+3	muss	müssen	AUX	_	_	4	aux	_	_
+4	prüffähig	prüffähig	ADJ	_	_	0	root	_	_
+5	sein	sein	AUX	_	_	4	cop	_	SpaceAfter=No
+6	.	.	PUNCT	_	_	4	punct	_	_
+
+# sent_id = 6
+# text = Das alte Lager war zu klein.
+1	Das	der	DET	_	_	3	det	_	_
+2	alte	alt	ADJ	_	_	3	amod	_	_
+3	Lager	lager	NOUN	_	_	6	nsubj	_	_
+4	war	sein	AUX	_	_	6	cop	_	_
+5	zu	zu	ADV	_	_	6	advmod	_	_
+6	klein	klein	ADJ	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 7
+# text = Die Ware ist noch nicht eingelagert.
+1	Die	der	DET	_	_	2	det	_	_
+2	Ware	ware	NOUN	_	_	6	nsubj:pass	_	_
+3	ist	sein	AUX	_	_	6	aux:pass	_	_
+4	noch	noch	ADV	_	_	5	advmod	_	_
+5	nicht	nicht	PART	_	_	6	advmod	_	_
+6	eingelagert	einlagern	VERB	_	_	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	6	punct	_	_
+
+# sent_id = 8
+# text = Die Bestellung ist vom Abteilungsleiter genehmigt.
+1	Die	der	DET	_	_	2	det	_	_
+2	Bestellung	bestellung	NOUN	_	_	7	nsubj:pass	_	_
+3	ist	sein	AUX	_	_	7	aux:pass	_	_
+4-5	vom	_	_	_	_	_	_	_	_
+4	von	von	ADP	_	_	6	case	_	_
+5	dem	der	DET	_	_	6	det	_	_
+6	Abteilungsleiter	abteilungsleiter	NOUN	_	_	7	obl:agent	_	_
+7	genehmigt	genehmigen	VERB	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 9
+# text = Die Lagerplätze im Außenlager sind knapp.
+1	Die	der	DET	_	_	2	det	_	_
+2	Lagerplätze	lagerplätze	NOUN	_	_	7	nsubj	_	_
+3-4	im	_	_	_	_	_	_	_	_
+3	in	in	ADP	_	_	5	case	_	_
+4	dem	der	DET	_	_	5	det	_	_
+5	Außenlager	außenlager	NOUN	_	_	2	nmod	_	_
+6	sind	sein	AUX	_	_	7	cop	_	_
+7	knapp	knapp	ADJ	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 10
+# text = Das Angebot bleibt vier Wochen gültig.
+1	Das	der	DET	_	_	2	det	_	_
+2	Angebot	angebot	NOUN	_	_	3	nsubj	_	_
+3	bleibt	bleiben	VERB	_	_	0	root	_	_
+4	vier	vier	NUM	_	_	5	nummod	_	_
+5	Wochen	woche	NOUN	_	_	6	nmod	_	_
+6	gültig	gültig	ADJ	_	_	3	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	3	punct	_	_
+
+# sent_id = 11
+# text = Die Auftragsnummer wird nach der Freigabe sichtbar.
+1	Die	der	DET	_	_	2	det	_	_
+2	Auftragsnummer	auftragsnummer	NOUN	_	_	7	nsubj	_	_
+3	wird	werden	AUX	_	_	7	cop	_	_
+4	nach	nach	ADP	_	_	6	case	_	_
+5	der	der	DET	_	_	6	det	_	_
+6	Freigabe	freigabe	NOUN	_	_	7	nmod	_	_
+7	sichtbar	sichtbar	ADJ	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
+# sent_id = 12
+# text = Ein Lieferschein ist ein Begleitpapier der Lieferung.
+1	Ein	ein	DET	_	_	2	det	_	_
+2	Lieferschein	lieferschein	NOUN	_	_	5	nsubj	_	_
+3	ist	sein	AUX	_	_	5	cop	_	_
+4	ein	ein	DET	_	_	5	det	_	_
+5	Begleitpapier	begleitpapier	NOUN	_	_	0	root	_	_
+6	der	der	DET	_	_	7	det	_	_
+7	Lieferung	lieferung	NOUN	_	_	5	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	5	punct	_	_
+
+# sent_id = 13
+# text = Die Rechnung ist sachlich und rechnerisch richtig.
+1	Die	der	DET	_	_	2	det	_	_
+2	Rechnung	rechnung	NOUN	_	_	4	nsubj	_	_
+3	ist	sein	AUX	_	_	4	cop	_	_
+4	sachlich	sachlich	ADJ	_	_	7	advmod	_	_
+5	und	und	CCONJ	_	_	6	cc	_	_
+6	rechnerisch	rechnerisch	ADJ	_	_	4	conj	_	_
+7	richtig	richtig	ADJ	_	_	0	root	_	SpaceAfter=No
+8	.	.	PUNCT	_	_	7	punct	_	_
+
