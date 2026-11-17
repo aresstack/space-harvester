@@ -1,12 +1,12 @@
 package com.aresstack.spaceharvester.application.configuration;
 
-import java.text.Normalizer;
+import com.aresstack.spaceharvester.application.terms.TermText;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Regeln der Begriffsableitung für das Fachglossar (ADR 0032, FL5b) unter {@code space-harvester.glossary.rules.*}:
@@ -123,10 +123,28 @@ public record GlossaryRuleSettings(int maxTerms, Map<Kind, List<String>> added, 
         return new GlossaryRuleSettings(value, added, excluded);
     }
 
-    /** Ein Wort wie im Glossar normalisiert: klein, Leerraum zusammengefasst. */
+    /** Ein Wort wie im Glossar normalisiert ({@link TermText#normalize}, die eine Stelle für Wortlisten und Suchwerte). */
     public static String normalize(String word) {
-        return Normalizer.normalize(word, Normalizer.Form.NFC).toLowerCase(Locale.ROOT).replaceAll("\\s+", " ")
-                .strip();
+        return TermText.normalize(word);
+    }
+
+    /**
+     * Die brauchbaren Wörter einer Liste aus der Konfiguration; jedes unbrauchbare Wort meldet {@code problem} mit
+     * Begründung, die übrigen gelten.
+     *
+     * @param adding ob es Wörter zum Hinzufügen sind (dann gilt die Regel für kurze Köpfe)
+     */
+    public static List<String> accepted(Kind kind, boolean adding, List<String> words, Consumer<String> problem) {
+        List<String> result = new ArrayList<>();
+        for (String word : words) {
+            try {
+                result.addAll(lists(Map.of(kind, java.util.Collections.singletonList(word)), adding)
+                        .getOrDefault(kind, List.of()));
+            } catch (IllegalArgumentException e) {
+                problem.accept(e.getMessage());
+            }
+        }
+        return result;
     }
 
     private static Map<Kind, List<String>> lists(Map<Kind, List<String>> lists, boolean adding) {
