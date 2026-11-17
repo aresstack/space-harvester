@@ -264,9 +264,14 @@ public final class PageDetailPanel extends JPanel {
     static final int MOUSE_BACK_BUTTON = 4;
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
     static final int MOUSE_FORWARD_BUTTON = 5;
-    /** Verlauf wie im Lesebereich des EAC: zuvor gezeigte Seiten und die per Zurück verlassenen. */
-    private final java.util.Deque<PageKey> backStack = new java.util.ArrayDeque<>();
-    private final java.util.Deque<PageKey> forwardStack = new java.util.ArrayDeque<>();
+    /**
+     * Verlauf wie im Lesebereich des EAC, hier über alles, was die Mitte zeigt (Angelo, 17.11.2026): zuvor gezeigte
+     * Seiten und Quellenseiten (Quelle oder Space) und die per Zurück verlassenen.
+     */
+    private final java.util.Deque<Place> backStack = new java.util.ArrayDeque<>();
+    private final java.util.Deque<Place> forwardStack = new java.util.ArrayDeque<>();
+    /** Erfährt jeden Schritt per Zurück/Vor, damit Bereichsanzeige und Baum folgen. */
+    private java.util.function.Consumer<Place> navigated = place -> { };
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
@@ -279,7 +284,7 @@ public final class PageDetailPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.IconButton forwardButton = new com.aresstack.spaceharvester.app
             .ui.IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronRight(),
             "Vor (Maustaste Vor)");
-    /** Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, beim Loslassen wie im EAC. */
+    /** Die Maustasten Zurück (4) und Vor (5) irgendwo im Fenster, beim Loslassen wie im EAC. */
     private final java.awt.event.AWTEventListener mouseNavigation = event -> {
         if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED) {
             mouseButton(mouse.getButton(), mouse.getComponent());
@@ -545,6 +550,12 @@ public final class PageDetailPanel extends JPanel {
      * Neuberechnungsaufträge, damit keine Seite einer anderen Quelle nachträglich erscheint.
      */
     public void clear() {
+        remember(null);
+        clearState();
+    }
+
+    /** Wie {@link #clear()}, ohne den Verlauf zu berühren: für den Wechsel auf eine Quellenseite. */
+    private void clearState() {
         request++;
         sourceId = null;
         pageId = null;
@@ -681,8 +692,9 @@ public final class PageDetailPanel extends JPanel {
      * als Ausschnitt dieses Space; {@code spaceKey == null} die ganze Quelle.
      */
     public void showSource(String sourceId, String spaceKey, String title) {
-        clear();
         String shownTitle = title == null || title.isBlank() ? spaceKey == null ? sourceId : spaceKey : title;
+        remember(Place.level(sourceId, spaceKey, shownTitle));
+        clearState();
         this.title.setText(shownTitle);
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, spaceKey, shownTitle);
@@ -758,6 +770,11 @@ public final class PageDetailPanel extends JPanel {
                 && java.util.Objects.equals(sourceView.spaceKey(), spaceKey);
     }
 
+    /** Ob gerade genau diese Seite gezeigt wird oder lädt. */
+    boolean showsPage(String sourceId, String pageId) {
+        return sourceId != null && sourceId.equals(this.sourceId) && pageId != null && pageId.equals(this.pageId);
+    }
+
     public KnowledgeGraphTab graph() {
         return graphView;
     }
@@ -809,7 +826,7 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
-        remember(sourceId, pageId);
+        remember(Place.page(sourceId, pageId));
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
@@ -1426,26 +1443,69 @@ public final class PageDetailPanel extends JPanel {
         return lower.startsWith("www.") ? lower.substring(4) : lower;
     }
 
-    /** Merkt die gezeigte Seite im Verlauf, bevor eine andere geladen wird; Zurück/Vor selbst merken nichts. */
-    private void remember(String nextSource, String nextPage) {
+    /**
+     * Ein Ort im Verlauf: eine Seite ({@code pageId} gesetzt) oder die Quellenseite einer Quelle ({@code spaceKey}
+     * {@code null}) bzw. eines Space, mit dem Titel, den die Quellenseite trug.
+     */
+    public record Place(String sourceId, String spaceKey, String pageId, String title) {
+
+        static Place page(String sourceId, String pageId) {
+            return new Place(sourceId, null, pageId, null);
+        }
+
+        static Place level(String sourceId, String spaceKey, String title) {
+            return new Place(sourceId, spaceKey, null, title);
+        }
+
+        public boolean page() {
+            return pageId != null;
+        }
+
+        /** Derselbe Ort, der Titel zählt nicht. */
+        boolean sameAs(Place other) {
+            return other != null && sourceId.equals(other.sourceId) && java.util.Objects.equals(spaceKey, other.spaceKey)
+                    && java.util.Objects.equals(pageId, other.pageId);
+        }
+    }
+
+    /** Was die Mitte gerade zeigt: die Seite, die Quellenseite oder nichts. */
+    private Place current() {
+        if (sourceId != null && pageId != null) {
+            return Place.page(sourceId, pageId);
+        }
+        if (showsSource() && sourceView.sourceId() != null) {
+            return Place.level(sourceView.sourceId(), sourceView.spaceKey(), title.getText());
+        }
+        return null;
+    }
+
+    /**
+     * Merkt das Gezeigte im Verlauf, bevor {@code next} an seine Stelle tritt ({@code null}: die Mitte wird leer);
+     * Zurück/Vor selbst merken nichts, und derselbe Ort noch einmal auch nicht.
+     */
+    private void remember(Place next) {
         pendingAnchor = null;
-        if (navigating || nextSource.equals(this.sourceId) && nextPage.equals(this.pageId)) {
+        if (navigating) {
             return;
         }
-        // Eine neu geöffnete Seite verwirft den Vor-Verlauf, auch wenn gerade keine Seite gezeigt wird.
-        if (this.sourceId != null && this.pageId != null) {
-            backStack.push(new PageKey(this.sourceId, this.pageId));
+        Place now = current();
+        if (next != null && next.sameAs(now)) {
+            return;
         }
+        if (now != null) {
+            backStack.push(now);
+        }
+        // Ein neu geöffneter Ort verwirft den Vor-Verlauf, auch wenn gerade nichts gezeigt wird.
         forwardStack.clear();
         updateNavigation();
     }
 
-    /** Zurück zur zuvor gezeigten Seite; die aktuelle kommt in den Vor-Verlauf. */
+    /** Zurück zum zuvor Gezeigten; das Aktuelle kommt in den Vor-Verlauf. */
     public boolean back() {
         return step(backStack, forwardStack);
     }
 
-    /** Vor zur zuletzt per Zurück verlassenen Seite. */
+    /** Vor zum zuletzt per Zurück Verlassenen. */
     public boolean forward() {
         return step(forwardStack, backStack);
     }
@@ -1458,21 +1518,32 @@ public final class PageDetailPanel extends JPanel {
         return !forwardStack.isEmpty();
     }
 
-    private boolean step(java.util.Deque<PageKey> from, java.util.Deque<PageKey> to) {
+    /** Erfährt jeden Schritt per Zurück/Vor (die Bereichsanzeige oben, der Baum links). */
+    public void onNavigated(java.util.function.Consumer<Place> listener) {
+        this.navigated = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
         if (from.isEmpty() || context.runtime() == null) {
             return false;
         }
-        PageKey next = from.pop();
-        if (sourceId != null && pageId != null) {
-            to.push(new PageKey(sourceId, pageId));
+        Place next = from.pop();
+        Place now = current();
+        if (now != null) {
+            to.push(now);
         }
         navigating = true;
         try {
-            load(next.sourceId(), next.pageId(), false);
+            if (next.page()) {
+                load(next.sourceId(), next.pageId(), false);
+            } else {
+                showSource(next.sourceId(), next.spaceKey(), next.title());
+            }
         } finally {
             navigating = false;
         }
         updateNavigation();
+        navigated.accept(next);
         return true;
     }
 
@@ -1482,13 +1553,18 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Die Maustasten Zurück (4) und Vor (5) irgendwo in der Seitenansicht, wie im Lesebereich des EAC.
+     * Die Maustasten Zurück (4) und Vor (5) irgendwo im Fenster der Seitenansicht, auch über dem Baum (Angelo,
+     * 17.11.2026); im EAC nur im Lesebereich.
      *
      * @return ob die Taste behandelt wurde
      */
     boolean mouseButton(int button, java.awt.Component source) {
-        if (source == null || !javax.swing.SwingUtilities.isDescendingFrom(source, this)
-                || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
+        if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
+            return false;
+        }
+        java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(this);
+        if (!javax.swing.SwingUtilities.isDescendingFrom(source, this)
+                && (window == null || javax.swing.SwingUtilities.getWindowAncestor(source) != window)) {
             return false;
         }
         if (button == MOUSE_BACK_BUTTON) {

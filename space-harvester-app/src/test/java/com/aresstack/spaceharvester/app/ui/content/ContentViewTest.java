@@ -540,6 +540,68 @@ class ContentViewTest {
     }
 
     @Test
+    void backAndForwardAlsoReturnToSourcesAndSpacesChosenInTheTree() throws Exception {
+        // Angelo, 17.11.2026: Bereich um Bereich im Baum gewählt, dann Zurück – nichts passierte, weil nur Seiten im
+        // Verlauf standen. Jetzt stehen Quelle und Space darin, und Bereichsanzeige und Baum folgen jedem Schritt.
+        PageDetailPanel detail = view.detail();
+        String handbuch = space("handbuch");
+        String notizen = space("notizen");
+        String page = firstPage("handbuch", handbuch);
+        List<String> located = new java.util.ArrayList<>();
+        onEdt(() -> {
+            view.onLocate((source, space) -> located.add(source + "/" + space));
+            view.onLocatePage((source, pageId) -> located.add(source + "#" + pageId));
+            view.openPage("handbuch", page);
+            return null;
+        });
+        await(() -> shown(detail, page));
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("notizen", notizen, null, "notizen"));
+            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+
+        assertThat(onEdt(detail::back)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
+        assertThat(located).containsExactly("notizen/" + notizen);
+        assertThat(onEdt(detail::back)).isTrue();
+        await(() -> shown(detail, page));
+        assertThat(located).containsExactly("notizen/" + notizen, "handbuch#" + page);
+        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+        // Der Baum wählt die Seite wieder: die Auswahl kommt an der Mitte an, ohne die gezeigte Seite zu leeren.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", handbuch, page, "handbuch 0"));
+            return null;
+        });
+        assertThat(onEdt(() -> shown(detail, page))).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+
+        assertThat(onEdt(detail::forward)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
+        assertThat(onEdt(detail::forward)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+
+        // Von der Quellenseite zu einer Seite einer anderen Quelle (Baum: Auswahl, dann Öffnen): Zurück führt zur Quelle.
+        String other = context.runtime().workspace().liveMetadata("handbuch", handbuch, null, 10).entries().get(1)
+                .page().pageId();
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", handbuch, other, "handbuch 1"));
+            view.openPage("handbuch", other);
+            return null;
+        });
+        await(() -> shown(detail, other));
+        assertThat(onEdt(detail::back)).isTrue();
+        assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
+        assertThat(onEdt(detail::forward)).isTrue();
+        await(() -> shown(detail, other));
+    }
+
+    @Test
     void onlyLinksToTheDomainOfThePageStayInTheReader() throws Exception {
         java.net.URI page = java.net.URI.create("https://wiki.example.org/pages/viewpage.action?pageId=1");
         assertThat(PageDetailPanel.sameDomain(java.net.URI.create("https://wiki.example.org/display/DEV/Start").toURL(), page))
