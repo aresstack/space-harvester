@@ -317,6 +317,19 @@ Core selbst.
   **Neuer Chat** (Plus) und **Chat löschen** (Papierkorb, nur bei einem gespeicherten Chat und nicht während einer
   Antwort; „Diesen Chat wirklich löschen?“, Ja/Nein), nur im Reiter Chat sichtbar. Rechtsklick auf den Namen:
   **Umbenennen** an Ort und Stelle (Enter übernimmt, Esc verwirft, leer heißt wieder die Kennung) und **Chat löschen**.
+  Unten in der Leiste mit der Lupe stehen mittig die Schnellaktionen des Chats als Text-Chips (`ActionChip`, Angelo
+  17.11.2026, nur im Reiter Chat): bei einer Seite **Seite zusammenfassen** (nur die Seite) und **Seite samt
+  Unterseiten zusammenfassen**, sonst **Bereich zusammenfassen**, dazu **Was ist neu?**; sie wirken immer auf den
+  gewählten Knoten samt Unterknoten, nie auf Eltern, und gehen den normalen Sendeweg (Sprechblase, Verlauf, Freigabe).
+  **Was ist neu?** (ADR 0030, `ChatTurn.Kind.WHATS_NEW`) nimmt je Quelle der Auswahl die vorige Marke, den Anfang
+  des jüngsten abgeschlossenen Updates (bei der Erstbefüllung seine eigene Marke), nie weiter zurück; holt vom Core je
+  Space die Seiten mit ihrer jüngsten Inhaltsänderung seither (`Workspace.latestContentChanges`) und behält nur die
+  Seiten der Auswahl, jüngste zuerst, mit Text im üblichen Budget; ohne Marke oder ohne Änderung antwortet der Chat
+  ohne Modellaufruf mit einem festen Satz; ein Lesefehler des Protokolls endet als Fehler, nie als „nichts geändert“.
+  „Seite zusammenfassen“ nennt dem Modell als Bereich nur die Seite („‹Titel› · 1 Seite“); Sprechblase und Verlauf
+  zeigen immer den gesendeten Satz. Die feste Frage an das Modell nennt die Grundlage
+  („n geänderte Seiten seit dem …“) und verbietet erfundene Unterschiede: Was sich innerhalb einer Seite geändert hat,
+  weiß der Chat nicht, solange der Core keinen Vergleich liefert.
   Chats sind keine globale Liste: Sie gehören zum Bereich, der links gewählt ist (Quelle, Space oder Seite samt
   Unterseiten, `ChatNode`), und liegen je Bereich im Datenordner unter `chats/<Quelle>/<Space>/<Seite>/<UUID>.json`
   (`ChatStore`, atomar geschrieben, leere Chats ohne Datei; Kennungen mit Sonderzeichen bekommen einen kurzen Hash).
