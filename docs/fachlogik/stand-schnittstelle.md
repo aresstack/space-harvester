@@ -209,6 +209,3 @@ Was mit dem Löschen geschieht:
 - Entscheidungen von Hand zu einzelnen Aussagen bleiben stehen und erscheinen als `staleDecisions`, bis die Aussage
   wieder auftaucht oder die Entscheidung gelöscht wird. Entscheidungen zu ganzen Seiten bleiben unberührt und greifen
   nach dem nächsten Analysieren wieder.
-
-Veraltete Analysen (`analysisStale`, Seite `State.STALE`) liefert die Status-quo-Sicht weiter mit, nichts wird
-versteckt; die Anzeige darf sie standardmäßig ausblenden.
