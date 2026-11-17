@@ -41,6 +41,23 @@ class ActivitiesStageNotesTest {
                 "1 Seiten ohne KI-Freigabe nicht geprüft");
     }
 
+    /** „Fachbegriffe ermitteln“ (FL5b): ausgelassene Modellphase gelb, Regelphase als Ergebniszeile. */
+    @Test
+    void theGlossaryShowsASkippedModelPhaseInYellowAndTheRuleResult() {
+        List<JobEvent> events = List.of(
+                event(1, com.aresstack.spaceharvester.application.glossary.GlossaryClassification.RULES_DONE,
+                        "40 Begriffe abgeleitet"),
+                event(2, com.aresstack.spaceharvester.application.glossary.GlossaryClassification.SkipReason.NO_MODEL
+                        .code(), "Kein Modell eingestellt"),
+                event(3, com.aresstack.spaceharvester.application.glossary.GlossaryClassification.SkipReason
+                        .NOT_RELEASED.code(), "Quelle nicht freigegeben"));
+
+        assertThat(ActivitiesView.notes(events)).containsExactly(
+                new ActivitiesView.Note(ActivitiesView.RESULT_LABEL, "40 Begriffe abgeleitet", false),
+                new ActivitiesView.Note(ActivitiesView.SKIPPED_LABEL, "Kein Modell eingestellt", true),
+                new ActivitiesView.Note(ActivitiesView.SKIPPED_LABEL, "Quelle nicht freigegeben", true));
+    }
+
     private static JobEvent event(long sequence, String code, String message) {
         return new JobEvent("job-1", sequence, Instant.parse("2026-11-17T03:00:00Z"), JobType.STATEMENT_ANALYSIS,
                 "wiki", "DEV", JobEvent.Severity.INFO, JobEvent.Category.JOB, StatementAnalysisJobs.COMPONENT,
