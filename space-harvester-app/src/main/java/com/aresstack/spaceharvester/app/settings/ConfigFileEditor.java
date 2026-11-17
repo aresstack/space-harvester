@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.configuration.CheckSettings;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings;
 import com.aresstack.spaceharvester.application.configuration.StandingSettings;
 import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -568,6 +569,53 @@ public final class ConfigFileEditor {
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Regeln der Begriffsableitung ({@code space-harvester.glossary.rules.*}, ADR
+     * 0032, FL5b), dieselben Schlüssel wie im Dienst; nur der Block {@code rules} unter {@code glossary} ändert sich.
+     * Die Höchstzahl entfällt bei der Vorgabe, je Art stehen nur die Abweichungen von der festen Liste da ({@code add}
+     * und {@code exclude}).
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withGlossaryRules(Path file, Draft base, GlossaryRuleSettings rules) {
+        String text = nested(base.text(), "glossary", "rules", indent -> {
+            String inner = indent + "  ";
+            StringBuilder body = new StringBuilder();
+            if (rules.maxTerms() != GlossaryRuleSettings.DEFAULT_MAX_TERMS) {
+                body.append(inner).append("max-terms: ").append(rules.maxTerms()).append('\n');
+            }
+            for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {
+                List<String> add = rules.added(kind);
+                List<String> exclude = rules.excluded(kind);
+                if (add.isEmpty() && exclude.isEmpty()) {
+                    continue;
+                }
+                body.append(inner).append(kind.key()).append(":\n");
+                if (!add.isEmpty()) {
+                    body.append(inner).append("  add: ").append(yamlList(add)).append('\n');
+                }
+                if (!exclude.isEmpty()) {
+                    body.append(inner).append("  exclude: ").append(yamlList(exclude)).append('\n');
+                }
+            }
+            return body.isEmpty() ? indent + "rules: {}\n" : indent + "rules:\n" + body;
+        });
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || !settings.terms().glossaryRules().equals(rules)) {
+            throw new IllegalArgumentException("Die Regeln für das Fachglossar ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.glossary.rules von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    private static String yamlList(List<String> words) {
+        return "[" + words.stream().map(ConfigFileEditor::quoted).collect(java.util.stream.Collectors.joining(", "))
+                + "]";
     }
 
     /** Dieselben Wörter, Reihenfolge egal. */

@@ -173,6 +173,13 @@ final class GlossaryTab {
      * @param context Laufzeit für Statuszeile, Auswahl und Navigation; {@code null} zeigt nur das Gerüst (Tests)
      * @param access  das Glossar des Core, leer solange es keinen Unterbau gibt
      */
+    /** Die zuletzt gesehenen Regeln der Begriffsableitung, um nur bei einer Änderung neu zu lesen. */
+    private com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules;
+
+    private com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings rules() {
+        return context == null || context.settings() == null ? null : context.settings().terms().glossaryRules();
+    }
+
     GlossaryTab(AppContext context, Supplier<Optional<GlossaryAccess>> access) {
         this.context = context;
         this.access = access;
@@ -237,6 +244,17 @@ final class GlossaryTab {
                 fitChips();
             }
         });
+        if (context != null) {
+            // Neue Regeln (Einstellungen › Modelle) ändern die Einordnung: dann einmal die volle Sicht, ohne Zeitgeber.
+            rules = rules();
+            context.onChange(changed -> {
+                com.aresstack.spaceharvester.application.configuration.GlossaryRuleSettings now = rules();
+                if (!java.util.Objects.equals(now, rules)) {
+                    rules = now;
+                    reread(Pending.FULL);
+                }
+            });
+        }
         page.setOpaque(false);
         page.add(chipLine, java.awt.BorderLayout.NORTH);
         page.add(busy, java.awt.BorderLayout.CENTER);

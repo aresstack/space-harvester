@@ -102,6 +102,7 @@ public final class SettingsView implements View {
     /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
     final FileAccessEditor fileAccess;
     final StandingWordsEditor standingWords;
+    final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
     private final Facts runtime = new Facts();
@@ -155,6 +156,7 @@ public final class SettingsView implements View {
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.standingWords = new StandingWordsEditor(context);
+        this.glossaryRules = new GlossaryRulesEditor(context);
         this.keePass = new KeePassPairingPanel(context);
         this.releases = new PageReleasesPanel(context);
         keePass.onChange(() -> {
@@ -254,7 +256,8 @@ public final class SettingsView implements View {
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
         // Die Wörter für den Stand gehören zur Aussagenanalyse, deren Vorstufe unter „Modelle“ steht (ADR 0032).
         page(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent()),
-                Comic.plate(null, Comic.PETROL, standingWords.component())));
+                Comic.plate(null, Comic.PETROL, standingWords.component()),
+                Comic.plate(null, Comic.PETROL, glossaryRules.component())));
         page(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
                 withButtons(network, proxy, tls)),
                 Comic.plate(SettingDialogs.RETRY_TITLE, Comic.PETROL, withButtons(retry, editRetry))));
@@ -283,6 +286,7 @@ public final class SettingsView implements View {
             render();
             fileAccess.render();
             standingWords.render();
+            glossaryRules.render();
             keePass.render();
             // Eingaben in den offenen Bereichen „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
