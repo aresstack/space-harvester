@@ -56,6 +56,11 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 | `space-harvester.statements.check.scope` | `uncertain-and-stage` | Prüfschritt der Aussagenanalyse (ADR 0032, FL4): welche Aussagen das Chat-Modell gegen ihren Originalsatz beurteilt. `uncertain-and-stage` Aussagen unter PLAUSIBLE und alle der Vorstufe, `all` alle außer den ungültigen. Läuft nur im ausdrücklich gestarteten Prüfauftrag und nur für Seiten mit KI-Freigabe; ein Urteil senkt höchstens die wirksame Stufe |
 | `space-harvester.statements.check.parallel` | `2` | so viele Sätze einer Seite höchstens zugleich beim Modell, mindestens 1 |
 | `space-harvester.statements.check.model` | leer | eigenes Chat-Modell für den Prüfschritt; leer heißt `ai.chat-model`. Ein anderes Modell ersetzt beim nächsten Prüflauf alle früheren Urteile |
+| `space-harvester.glossary.rules.max-terms` | `500` | Begriffsableitung für das Fachglossar (ADR 0032, FL5b): höchstens so viele Vorschläge der Regel je Geltungsbereich und Lauf, nach Wichtigkeit; die übrigen Einträge bleiben unverändert. Mindestens 1 |
+| `space-harvester.glossary.rules.technical-heads.add` / `.exclude` | leer | technische Köpfe zur festen Wortliste dazu oder heraus; gelten auch als Ende eines zusammengeschriebenen Worts („Antragsdatenbank“), darum mindestens 5 Buchstaben (kürzere unter `technical-words`). YAML-Liste oder Text mit Kommas |
+| `space-harvester.glossary.rules.technical-words.add` / `.exclude` | leer | technische Wörter, nur als ganzes Wort oder nach Bindestrich/Leerzeichen („Batch-Job“, „Load Balancer“) |
+| `space-harvester.glossary.rules.role-heads.add` / `.exclude` | leer | Köpfe für Rollen und Stellen, wie `technical-heads` mindestens 5 Buchstaben |
+| `space-harvester.glossary.rules.role-words.add` / `.exclude` | leer | Wörter für Rollen und Stellen, nur als ganzes Wort |
 
 - `GET /api/v1/configuration`: wirksame Version, `activatedAt` und die Werte. Vom API-Key und vom Proxy-Passwort
   steht nur `apiKeySet` bzw. `passwordSet`; Adressen ohne Query.

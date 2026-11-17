@@ -678,10 +678,15 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // ADR 0032, FL5b: erste Phase „Begriffe ableiten“ aus den Aussagenanalysen, ohne Modell; Regeln aus
+            // glossary.rules.* der wirksamen Konfiguration.
+            TermSettings glossaryTerms = builder.terms;
+            Harvester self = this; // der Wissensgraph entsteht weiter unten, gefragt wird erst im Auftrag
             this.glossaryClassification = new GlossaryClassification(catalog, enrichmentStore, access,
                     cache::findHeader, key -> cache.find(key).flatMap(projector::project), glossary, chatModel,
                     ResolutionCache.inMemory(), jobs, termProcessor.version(), GlossaryClassification.Budget.DEFAULT,
-                    clock);
+                    who -> self.knowledgeGraph.analysed(who),
+                    () -> (this.settings != null ? this.settings.terms() : glossaryTerms).glossaryRules(), clock);
             // #336: Synonymerkennung auf Knopfdruck; Embedding- und Chat-Modell folgen der Konfiguration, Text nur
             // aus freigegebenen Quellen, Budget aus terms.synonyms.*.
             EmbeddingProcessor embeddingForTerms = embedding;
