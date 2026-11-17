@@ -61,7 +61,8 @@ Knoten hinter `<seite>` zusätzlich `:<dokument>`, das ist `DocumentKey#fileName
   (`UNVERIFIED_PARSER_OUTPUT` bis zur fachlichen Prüfung, sonst `CONFIRMED`/`REJECTED`),
   Merkmale aus dem Satz (ADR 0032, FL2; fehlen bei älteren Analysen = unbekannt): `sh:negated` (true/false),
   `sh:modality` (`NONE`/`MUSS`/`SOLL`/`KANN`/`DARF`), `sh:temporality` (`GILT`/`GEPLANT`/`FRUEHER`/`VERWORFEN`, nur aus
-  Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum),
+  Grammatik und Wörtern, nie aus einem Vergleich mit dem heutigen Datum; Präteritum und Plusquamperfekt im Indikativ
+  sind `FRUEHER`, auch beim Vollverb, Perfekt und Konjunktiv II nie),
   Herkunft (ADR 0032, FL3; fehlt bei Aussagen aus dem Original): `sh:origin` (`VORSTUFE`, wenn die Aussage aus einem
   vereinfachten Satz der Vorstufe „Sätze vereinfachen“ stammt), `sh:stageFlag` (Kennzeichen der Vorstufe: `FACT`,
   `CONDITION`, `PLANNING`, `DISCARDED`; ein eigenes Feld, kein Zeitbezug) und `sh:simplifiedSentence` (der vereinfachte

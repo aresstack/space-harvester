@@ -239,6 +239,19 @@ public final class PageDetailPanel extends JPanel {
             com.aresstack.spaceharvester.application.observe.Subscription.NONE;
     private AppRuntime releaseRuntime;
     private final ReadingPane readingPane = new ReadingPane();
+    /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
+    static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
+            + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
+            + "Hat die Quelle inzwischen einen neueren Stand, bleibt der gezeigte stehen, und oben steht „Es gibt N "
+            + "Updates seit Ihrem letzten Besuch – Seite neu laden“. Der Klick zeigt den neuen Stand an derselben "
+            + "Stelle und markiert die Änderungen wie bei Git: neue Absätze grün, geänderte blau, entfernte rot und "
+            + "durchgestrichen an ihrer alten Stelle. Die Farben bleiben, bis du die Seite verlässt.\n\n"
+            + "Grenzen: Markiert wird nur der Unterschied zwischen dem gezeigten Stand aus dem Cache und dem neuen. "
+            + "Wer die Seite verlässt, ohne zu klicken, sieht beim nächsten Öffnen den neuen Stand ohne Farben, weil "
+            + "die Prüfung den Cache schon erneuert hat. Ist der geänderte Teil sehr lang (mehr als rund tausend "
+            + "Absätze auf beiden Seiten), bleibt die Seite ohne Farben; Bilder ohne Text zählen nicht als Änderung.";
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton readingHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
@@ -620,6 +633,7 @@ public final class PageDetailPanel extends JPanel {
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && PROPERTIES.equals(selected));
+        readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
@@ -1232,7 +1246,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             showReading(cached.get().prepared());
-            loadLiveReading(runtime, source, id, shown, cached.get().view().version());
+            loadLiveReading(runtime, source, id, shown, cached.get());
         }, error -> {
             if (shown == page) {
                 loadLiveReading(runtime, source, id, shown, null);
@@ -1253,18 +1267,24 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Holt die Leseansicht bei der Quelle ({@code refresh=false}). Ohne gezeigten Stand ({@code cachedVersion} null)
-     * erscheint sie; sonst nur der Hinweis auf den neueren Stand, wenn die Version abweicht.
+     * Holt die Leseansicht bei der Quelle ({@code refresh=false}). Ohne gezeigten Stand ({@code cached} null) erscheint
+     * sie; sonst nur der Hinweis auf den neueren Stand, wenn die Version abweicht. Der neue Stand trägt dann die
+     * Änderungen gegenüber dem gezeigten farbig markiert ({@link ReadingChanges}, Angelo 17.11.2026).
      */
     private void loadLiveReading(AppRuntime runtime, String source, String id, DeliveredPage shown,
-                                 String cachedVersion) {
-        boolean waiting = cachedVersion == null;
+                                 ShownView cached) {
+        boolean waiting = cached == null;
+        String cachedVersion = waiting ? null : cached.view().version();
         Background.run(() -> {
             var view = runtime.workspace().readingView(source, id, false);
             if (!waiting && java.util.Objects.equals(view.version(), cachedVersion)) {
                 return java.util.Optional.<ShownView>empty();
             }
-            return java.util.Optional.of(new ShownView(view, prepare(runtime, view)));
+            ReadingPane.Prepared prepared = prepare(runtime, view);
+            if (!waiting) {
+                prepared = prepared.withHtml(ReadingChanges.mark(cached.prepared().html(), prepared.html()).html());
+            }
+            return java.util.Optional.of(new ShownView(view, prepared));
         }, fresh -> {
             if (shown != page || fresh.isEmpty()) {
                 return;
@@ -2119,7 +2139,7 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), star, more);
+        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp, star, more);
     }
 
     /** Zurück und Vor für die Statuszeile des Hauptfensters. */
