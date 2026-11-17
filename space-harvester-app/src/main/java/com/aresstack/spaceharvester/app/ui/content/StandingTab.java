@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
@@ -23,6 +24,9 @@ import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.Standing;
 import com.aresstack.spaceharvester.application.standing.StandingBasis;
 import com.aresstack.spaceharvester.application.standing.StandingDecision;
+import com.aresstack.spaceharvester.application.standing.StandingDecisionStore;
+import com.aresstack.spaceharvester.application.standing.StandingConflictException;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.standing.StandingReason;
 import com.aresstack.spaceharvester.application.standing.StatementKind;
 import com.aresstack.spaceharvester.application.standing.StatusQuoEntry;
@@ -86,6 +90,12 @@ final class StandingTab extends JPanel {
     static final String FILTER_TIP = "Filter: Handlungen, Zustände, nur sichere Aussagen";
     static final String STALE_GROUP = "Entscheidungen ohne Aussage";
     static final String OPEN_TEXT = "Im Lesetext zeigen";
+    static final String SET_LABEL = "Stand von Hand:";
+    static final String CLEAR_TIP = "Entscheidung von Hand löschen; danach gilt wieder der berechnete Stand";
+    static final String HISTORY_TIP = "Protokoll: wer wann welchen Stand gesetzt oder gelöscht hat";
+    static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
+            + "berechnete Stand.";
+    static final String NOT_WATCHING = "Stand erneuert sich nicht von selbst (Anmeldung beim Core fehlgeschlagen)";
     static final String HELP = "Jede Aussage der Auswahl links hat einen Stand: „gilt“ (gilt jetzt), „geplant“ (soll "
             + "kommen, gilt noch nicht), „unklar“ (nicht bestimmbar, etwa auf einer Entwurfsseite) oder „überholt“ "
             + "(früher gültig oder verworfen; grau am Ende, nie versteckt).\n\n"
@@ -115,6 +125,15 @@ final class StandingTab extends JPanel {
         /** Der Wortlaut zu Aussagen (FL6, {@code StatusQuo#sentences}), je statementId; nie auf dem EDT. */
         Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries);
 
+        /** Setzt den Stand von Hand ({@code StatusQuo#decide}); {@code expectedRevision} 0 ohne Entscheidung. */
+        StandingDecision decide(PageKey page, String statementId, Standing standing, long expectedRevision);
+
+        /** Löscht eine Entscheidung ({@code StatusQuo#clear}). */
+        boolean clear(PageKey page, String statementId, long expectedRevision);
+
+        /** Das Protokoll der Entscheidungen, älteste zuerst. */
+        List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId);
+
         static Actions of(AppRuntime runtime) {
             if (runtime == null) {
                 return null;
@@ -139,6 +158,22 @@ final class StandingTab extends JPanel {
                 @Override
                 public Map<String, SentenceText> sentences(java.util.Collection<StatusQuoEntry> entries) {
                     return runtime.workspace().standingSentences(entries);
+                }
+
+                @Override
+                public StandingDecision decide(PageKey page, String statementId, Standing standing,
+                                               long expectedRevision) {
+                    return runtime.workspace().decideStanding(page, statementId, standing, expectedRevision);
+                }
+
+                @Override
+                public boolean clear(PageKey page, String statementId, long expectedRevision) {
+                    return runtime.workspace().clearStanding(page, statementId, expectedRevision);
+                }
+
+                @Override
+                public List<StandingDecisionStore.AuditEntry> history(PageKey page, String statementId) {
+                    return runtime.workspace().standingHistory(page, statementId);
                 }
             };
         }
@@ -208,6 +243,9 @@ final class StandingTab extends JPanel {
     private final java.util.Set<String> asked = new java.util.HashSet<>();
     /** Zählt neue Sichten, damit eine späte Antwort zum Wortlaut nicht in die nächste Sicht fällt. */
     private int sentenceGeneration;
+    /** Ob eine Anmeldung beim Core fehlschlug; dann sagt die Statuszeile, dass sich nichts von selbst erneuert. */
+    private boolean watchFailed;
+    private BooleanSupplier confirmClear = () -> Dialogs.confirm(this, "Entscheidung löschen?", CLEAR_QUESTION);
 
     /** @param runtime die laufende App oder {@code null}, solange keine läuft */
     StandingTab(Supplier<AppRuntime> runtime) {
@@ -415,23 +453,35 @@ final class StandingTab extends JPanel {
         standingWatch.close();
         jobWatch.close();
         watched = current;
+        watchFailed = false;
         try {
             standingWatch = current.subscribeStanding(() -> SwingUtilities.invokeLater(this::changed));
         } catch (RuntimeException e) {
             standingWatch = Subscription.NONE;
+            watchFailed = true;
         }
         try {
             jobWatch = current.subscribeJobs(new JobListener() {
                 @Override
                 public void changed(JobStatus status) {
-                    if (status.type() == JobType.STATEMENT_ANALYSIS && status.state().terminal()) {
+                    if (rereads(status)) {
                         SwingUtilities.invokeLater(StandingTab.this::changed);
                     }
                 }
             });
         } catch (RuntimeException e) {
             jobWatch = Subscription.NONE;
+            watchFailed = true;
         }
+    }
+
+    /**
+     * Welche Aufträge die Sicht ändern, wenn sie enden: „Aussagen analysieren“ und „Aussagen prüfen“ (die Urteile
+     * ändern die wirksame Stufe, also auch „unsicher“).
+     */
+    static boolean rereads(JobStatus status) {
+        return status.state().terminal() && (status.type() == JobType.STATEMENT_ANALYSIS
+                || "STATEMENT_CHECK".equals(status.type().name()));
     }
 
     /** Filter, Träger oder Suche geändert: die Zeilen im Hintergrund neu bilden, nichts neu lesen. */
@@ -483,7 +533,7 @@ final class StandingTab extends JPanel {
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
                 + " auf " + Texts.count(pages, "Seite", "Seiten");
-        onStatus.accept(text);
+        onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
     }
 
     /**
@@ -830,10 +880,12 @@ final class StandingTab extends JPanel {
 
     private void details(Row row, int x, int y) {
         popup.clearLinks();
+        popup.controls(null);
         if (row instanceof Line line) {
             StatusQuoEntry entry = line.entry();
             popup.text(entry.page().title() == null ? entry.page().key().pageId() : entry.page().title(),
                     details(entry, sentences.get(entry.statement().id())));
+            popup.controls(decisionControls(entry));
             popup.link(OPEN_TEXT, () -> {
                 popup.setVisible(false);
                 jump(entry);
@@ -842,13 +894,141 @@ final class StandingTab extends JPanel {
             StandingDecision decision = stale.decision();
             popup.text(STALE_GROUP, "Von Hand „" + word(decision.standing()) + "“ zu einer Aussage, die es in der "
                     + "aktuellen Analyse nicht mehr gibt (Text geändert oder Vorstufe entzogen).\nSeite: "
-                    + decision.page().pageId() + "\n" + decided(decision));
+                    + pageName(decision.page()) + "\n" + decided(decision));
+            popup.controls(staleControls(decision));
         } else {
             return;
         }
         if (list.isShowing()) {
             popup.showAt(list, x, y);
         }
+    }
+
+    /** Der Titel einer Seite, wenn sie in der Sicht vorkommt, sonst ihre ID (Entscheidungen ohne Aussage). */
+    private String pageName(PageKey page) {
+        StatusQuoView current = view;
+        if (current != null) {
+            for (com.aresstack.spaceharvester.application.standing.PageStanding standing : current.pages()) {
+                if (standing.page().key().equals(page) && standing.page().title() != null
+                        && !standing.page().title().isBlank()) {
+                    return standing.page().title();
+                }
+            }
+        }
+        return page.pageId();
+    }
+
+    /**
+     * Stand von Hand im Overlay: vier Wortpillen (die gesetzte ist gefüllt), Löschen und Protokoll als Icon-Knöpfe.
+     * Keine Standardknöpfe; das Overlay schließt mit Esc.
+     */
+    private JComponent decisionControls(StatusQuoEntry entry) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        row.setOpaque(false);
+        JLabel label = new JLabel(SET_LABEL);
+        label.setFont(Comic.regular(12.5f));
+        label.setForeground(Comic.MUTED);
+        row.add(label);
+        StandingDecision decision = entry.decision();
+        long revision = decision == null ? 0 : decision.revision();
+        PageKey page = entry.page().key();
+        String statementId = entry.statement().id();
+        for (Standing standing : Standing.values()) {
+            CountChip chip = CountChip.choice(word(standing), tone(standing));
+            chip.setSelected(decision != null && decision.standing() == standing);
+            chip.addActionListener(e -> {
+                popup.setVisible(false);
+                if (decision != null && decision.standing() == standing) {
+                    return;
+                }
+                write(() -> actions.get().decide(page, statementId, standing, revision),
+                        "Stand von Hand gesetzt: „" + word(standing) + "“");
+            });
+            row.add(chip);
+        }
+        IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
+        clear.setEnabled(decision != null);
+        clear.addActionListener(e -> clear(page, statementId, revision));
+        IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
+        history.addActionListener(e -> history(page, statementId));
+        row.add(clear);
+        row.add(history);
+        return row;
+    }
+
+    /** Eine Entscheidung ohne Aussage lässt sich nur löschen (neu entscheiden geht an der neuen Aussage). */
+    private JComponent staleControls(StandingDecision decision) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        row.setOpaque(false);
+        IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
+        clear.addActionListener(e -> clear(decision.page(), decision.statementId(), decision.revision()));
+        IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
+        history.addActionListener(e -> history(decision.page(), decision.statementId()));
+        row.add(clear);
+        row.add(history);
+        return row;
+    }
+
+    private void clear(PageKey page, String statementId, long revision) {
+        popup.setVisible(false);
+        if (!confirmClear.getAsBoolean()) {
+            return;
+        }
+        write(() -> actions.get().clear(page, statementId, revision), "Entscheidung von Hand gelöscht");
+    }
+
+    /**
+     * Schreibt im Hintergrund. Das neue Lesen stößt der Core über {@code subscribeStanding} an; passt die Revision
+     * nicht mehr, wird sofort neu gelesen und die Statuszeile sagt es.
+     */
+    private void write(Callable<?> work, String done) {
+        if (actions.get() == null) {
+            return;
+        }
+        runner.run(work, result -> onStatus.accept(done), failure -> {
+            if (failure instanceof StandingConflictException) {
+                onStatus.accept("Inzwischen von anderer Seite geändert; der Stand wurde neu gelesen");
+                changed();
+            } else {
+                onStatus.accept("Stand nicht gesetzt (" + failure.getClass().getSimpleName() + ")");
+            }
+        });
+    }
+
+    /** Das Protokoll im selben Overlay statt der Details. */
+    private void history(PageKey page, String statementId) {
+        Actions current = actions.get();
+        if (current == null) {
+            return;
+        }
+        Point at = popup.isVisible() && list.isShowing() ? historyAt() : null;
+        runner.run(() -> current.history(page, statementId), entries -> {
+            popup.clearLinks();
+            popup.controls(null);
+            popup.text("Protokoll", history(entries));
+            if (at != null && list.isShowing()) {
+                popup.showAt(list, at.x, at.y);
+            }
+        }, failure -> onStatus.accept("Protokoll nicht lesbar (" + failure.getClass().getSimpleName() + ")"));
+    }
+
+    private Point historyAt() {
+        Point screen = popup.getLocationOnScreen();
+        SwingUtilities.convertPointFromScreen(screen, list);
+        return screen;
+    }
+
+    static String history(List<StandingDecisionStore.AuditEntry> entries) {
+        if (entries.isEmpty()) {
+            return "Noch keine Entscheidung von Hand.";
+        }
+        List<String> lines = new ArrayList<>();
+        for (StandingDecisionStore.AuditEntry entry : entries) {
+            String what = StandingDecisionStore.AuditEntry.REMOVE.equals(entry.action())
+                    ? "gelöscht (war „" + word(entry.standing()) + "“)" : "„" + word(entry.standing()) + "“ gesetzt";
+            lines.add(WHEN.format(entry.at()) + " · " + entry.actor() + " · " + what);
+        }
+        return String.join("\n", lines);
     }
 
     /** Markiert den ganzen Satz, wenn seine Grenzen bekannt sind, sonst die Stelle der Aussage. */
@@ -928,7 +1108,7 @@ final class StandingTab extends JPanel {
                 standing = decision.standing();
                 words = "Entscheidung ohne Aussage";
                 markText = "";
-                metaText = "Seite " + decision.page().pageId() + " · neu entscheiden oder löschen";
+                metaText = "Seite " + pageName(decision.page()) + " · löschen im Overlay";
             }
             Color tone = tone(standing);
             boolean faded = standing == Standing.UEBERHOLT;
@@ -1010,5 +1190,36 @@ final class StandingTab extends JPanel {
 
     JComponent statementsView() {
         return busy;
+    }
+
+    /** Für Tests: die Rückfrage vor dem Löschen. */
+    void confirmClear(BooleanSupplier confirm) {
+        this.confirmClear = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    /** Für Tests: die Wortpille „Stand von Hand“ im offenen Overlay. */
+    CountChip decisionChip(Standing standing) {
+        return find(popup, CountChip.class, chip -> chip.word().equals(word(standing)));
+    }
+
+    /** Für Tests: ein Icon-Knopf im offenen Overlay nach Tooltip. */
+    IconButton overlayButton(String tip) {
+        return find(popup, IconButton.class, button -> tip.equals(button.getToolTipText()));
+    }
+
+    private static <T extends Component> T find(java.awt.Container root, Class<T> type,
+                                                java.util.function.Predicate<T> match) {
+        for (Component child : root.getComponents()) {
+            if (type.isInstance(child) && match.test(type.cast(child))) {
+                return type.cast(child);
+            }
+            if (child instanceof java.awt.Container container) {
+                T found = find(container, type, match);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 }

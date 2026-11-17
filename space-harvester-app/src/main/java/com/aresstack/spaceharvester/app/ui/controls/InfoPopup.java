@@ -55,6 +55,8 @@ public final class InfoPopup extends JPopupMenu {
     private final WrappedText body = Comic.wrapped(" ", Comic.TEXT, 13f);
     private final JScrollPane scroll = Comic.scroll(body);
     private final JPanel links = new JPanel();
+    /** Bedienelemente zum Inhalt (etwa Stand setzen) zwischen Text und Links; leer ohne. */
+    private final JPanel controls = new JPanel(new java.awt.BorderLayout());
     private final JPanel content = new JPanel();
 
     public InfoPopup() {
@@ -75,6 +77,10 @@ public final class InfoPopup extends JPopupMenu {
         content.add(title);
         content.add(Box.createVerticalStrut(GAP));
         content.add(scroll);
+        controls.setOpaque(false);
+        controls.setAlignmentX(LEFT_ALIGNMENT);
+        controls.setVisible(false);
+        content.add(controls);
         content.add(links);
         add(content);
         // Esc schließt auch, wenn ein Link den Fokus hat.
@@ -93,6 +99,21 @@ public final class InfoPopup extends JPopupMenu {
         title.setText(heading == null ? "" : heading);
         title.setVisible(heading != null && !heading.isBlank());
         body.setText(text == null ? "" : text);
+        return this;
+    }
+
+    /**
+     * Bedienelemente unter dem Text (eine Zeile aus Icon-Knöpfen oder Auswahlpillen, keine Standardknöpfe);
+     * {@code null} entfernt sie.
+     */
+    public InfoPopup controls(JComponent row) {
+        controls.removeAll();
+        if (row != null) {
+            controls.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+            controls.add(row, java.awt.BorderLayout.CENTER);
+        }
+        controls.setVisible(row != null);
+        controls.revalidate();
         return this;
     }
 
@@ -180,7 +201,8 @@ public final class InfoPopup extends JPopupMenu {
         int width = Math.min(MAX_WIDTH, naturalWidth() + 2 * PAD);
         int inner = width - 2 * PAD;
         int titleHeight = title.isVisible() ? title.heightFor(inner) + GAP : 0;
-        int linksHeight = links.isVisible() ? links.getPreferredSize().height : 0;
+        int linksHeight = (links.isVisible() ? links.getPreferredSize().height : 0)
+                + (controls.isVisible() ? controls.getPreferredSize().height : 0);
         int bodyHeight = body.heightFor(inner);
         int fixed = 2 * PAD + titleHeight + linksHeight;
         int bodyRoom = Math.max(48, Math.min(bodyHeight, availableHeight - fixed));
@@ -218,6 +240,9 @@ public final class InfoPopup extends JPopupMenu {
         }
         if (links.isVisible()) {
             widest = Math.max(widest, links.getPreferredSize().width);
+        }
+        if (controls.isVisible()) {
+            widest = Math.max(widest, controls.getPreferredSize().width);
         }
         return Math.max(160, widest + 2);
     }
