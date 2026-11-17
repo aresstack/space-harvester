@@ -10,11 +10,17 @@ public final class StatusMessageEvent implements ApplicationEvent<StatusMessageE
         private final String text;
         private final int durationMs;
         private final Severity severity; // darf null sein
+        private final boolean closable;
 
         public Payload(String text, int durationMs, Severity severity) {
+            this(text, durationMs, severity, false);
+        }
+
+        public Payload(String text, int durationMs, Severity severity, boolean closable) {
             this.text = text;
             this.durationMs = durationMs <= 0 ? 3000 : durationMs;
             this.severity = severity;
+            this.closable = closable;
         }
 
         public String getText() {
@@ -27,6 +33,11 @@ public final class StatusMessageEvent implements ApplicationEvent<StatusMessageE
 
         public Severity getSeverity() {
             return severity;
+        }
+
+        /** Ob die Meldung stehen bleibt, bis der Benutzer sie mit ✕ wegklickt (etwa das Ergebnis eines Exports). */
+        public boolean isClosable() {
+            return closable;
         }
     }
 
@@ -41,7 +52,12 @@ public final class StatusMessageEvent implements ApplicationEvent<StatusMessageE
     }
 
     public StatusMessageEvent(String text, int durationMs, Severity severity) {
-        this.payload = new Payload(text, durationMs, severity);
+        this(text, durationMs, severity, false);
+    }
+
+    /** @param closable die Meldung bleibt stehen, bis sie der Benutzer wegklickt ({@code durationMs} zählt dann nicht) */
+    public StatusMessageEvent(String text, int durationMs, Severity severity, boolean closable) {
+        this.payload = new Payload(text, closable ? Integer.MAX_VALUE : durationMs, severity, closable);
     }
 
     @Override

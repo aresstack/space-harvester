@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Downloads;
 import com.aresstack.spaceharvester.app.ui.Facts;
+import com.aresstack.spaceharvester.app.event.Severity;
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.FormatIcon;
 import com.aresstack.spaceharvester.app.ui.IconButton;
@@ -347,6 +349,11 @@ public final class ExportPanel extends JPanel {
         outputPlate = Comic.plate("Ausgabe", Comic.GREEN, outputBody);
 
         // Kein eigener Titel und kein Hinweistext (Angelo): die Kopfzeile nennt die Auswahl, der Reiter heißt Export.
+        // „Gestartet“ und das Ergebnis eines Exports stehen in der Statuszeile des Hauptfensters: die Laufmeldung
+        // bleibt, bis das Ergebnis sie ersetzt, das Ergebnis bleibt, bis es der Benutzer mit ✕ wegklickt (Architekt
+        // 17.11.2026); die Platte zeigt nur noch Warnungen und Probleme.
+        feedback.statusLine((text, tone) -> context.events().publish(new StatusMessageEvent(text,
+                Integer.MAX_VALUE, Severity.INFO, tone != Comic.BLUE && !text.isEmpty())));
         add(feedback, BorderLayout.NORTH);
         add(Comic.column(standPlate, outputPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
@@ -1246,6 +1253,11 @@ public final class ExportPanel extends JPanel {
             }
         }
         renderButtons();
+    }
+
+    /** Für Tests: ob die Meldungsplatte gerade sichtbar ist (nur bei Warnungen und Problemen). */
+    boolean feedbackVisibleForTest() {
+        return feedback.isVisible();
     }
 
     /** Der gezeigte Datenbestand, für Tests. */

@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowHoldCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
@@ -84,12 +85,11 @@ public final class MainWindow implements AppContext.Navigator {
     private static final String JOBS = "jobs";
     private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
+    /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
+    private final ComposerButton statusClose = closeButton();
     /** So lange bleibt eine kurze Meldung stehen. */
     private static final int NOTICE_MS = 8000;
-    private final javax.swing.Timer statusClear = new javax.swing.Timer(NOTICE_MS, e -> {
-        status.setText(" ");
-        status.setToolTipText(null);
-    });
+    private final javax.swing.Timer statusClear = new javax.swing.Timer(NOTICE_MS, e -> clearStatus());
     /** Bis die Laufzeit steht, zeigt die Statuszeile „Startet …“. */
     private boolean starting = true;
     /** Stand des sichtbaren Bereichs ({@link View#statusInfo()}) links in der Statuszeile, vor dem Stand der App. */
@@ -332,8 +332,13 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
         proxyNotice = new ProxyNotice(context);
+        JPanel statusBox = new JPanel(new BorderLayout(4, 0));
+        statusBox.setOpaque(false);
+        statusBox.add(status, BorderLayout.CENTER);
+        statusBox.add(statusClose, BorderLayout.EAST);
+        statusClose.setVisible(false);
         statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
-                status, jobStatus, new CopyrightLink());
+                statusBox, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);
@@ -607,8 +612,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (context.runtime() != null) {
             if (starting) {
                 starting = false;
-                status.setText(" ");
-                status.setToolTipText(null);
+                clearStatus();
             }
         } else if (context.startProblem() != null) {
             // Nach einem späteren Fehlschlag löscht ein erfolgreicher Neustart die Meldung wieder.
@@ -629,6 +633,7 @@ public final class MainWindow implements AppContext.Navigator {
             status.setToolTipText(text.isEmpty() ? null : text);
             status.setForeground(message.getSeverity() == Severity.ERROR ? Comic.RED
                     : message.getSeverity() == Severity.WARN ? Comic.ORANGE : Comic.MUTED);
+            statusClose.setVisible(!text.isEmpty() && message.isClosable());
             statusClear.stop();
             if (message.getDurationMs() < Integer.MAX_VALUE) {
                 statusClear.setInitialDelay(message.getDurationMs());
@@ -640,6 +645,37 @@ public final class MainWindow implements AppContext.Navigator {
         } else {
             javax.swing.SwingUtilities.invokeLater(apply);
         }
+    }
+
+    /** Leert den Stand der App in der Statuszeile (Ablauf der Dauer, ✕ oder Start der Laufzeit). */
+    private void clearStatus() {
+        status.setText(" ");
+        status.setToolTipText(null);
+        statusClose.setVisible(false);
+    }
+
+    /** Das ✕ hinter dem Stand der App, wie an der Meldungsplatte ({@link Feedback}): durchsichtiger Icon-Knopf. */
+    private ComposerButton closeButton() {
+        ComposerButton button = ComposerButton.iconButton(ComposerIcons.close(), "Meldung schließen");
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setFocusPainted(false);
+        button.setOpaque(false);
+        button.setPreferredSize(new Dimension(16, 16));
+        button.addActionListener(e -> {
+            statusClear.stop();
+            clearStatus();
+        });
+        return button;
+    }
+
+    /** Für Tests: der Stand der App in der Statuszeile und sein ✕. */
+    JLabel statusText() {
+        return status;
+    }
+
+    ComposerButton statusClose() {
+        return statusClose;
     }
 
     private boolean confirmClose(JFrame frame) {

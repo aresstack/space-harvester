@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
@@ -121,6 +122,40 @@ class ExportPanelTest {
         await(() -> panel[0].exportBlocked("pdf") == null);
         await(() -> panel[0].shownDataset() != null);
         await(() -> panel[0].files.getText().contains(".pdf"));
+    }
+
+    /**
+     * Architekt 17.11.2026: „Gestartet“ und das Ergebnis eines Exports stehen in der Statuszeile des Hauptfensters,
+     * nicht auf der Platte. Die Laufmeldung bleibt, bis das Ergebnis sie ersetzt; das Ergebnis bleibt mit ✕.
+     */
+    @Test
+    void startAndResultOfAnExportGoToTheStatusLineAndOnlyTheResultIsClosable() throws Exception {
+        Path out = startHandbuch();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        List<StatusMessageEvent.Payload> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+        context.events().subscribe(StatusMessageEvent.class, event -> messages.add(event.getPayload()));
+        ExportPanel[] panel = new ExportPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+        });
+        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        SwingUtilities.invokeAndWait(() -> panel[0].output("pdf"));
+        await(() -> messages.stream().anyMatch(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")));
+        StatusMessageEvent.Payload started = messages.stream()
+                .filter(m -> m.getText().startsWith("PDF-Dokument wird eingeplant")).findFirst().orElseThrow();
+        assertThat(started.isClosable()).as("Laufmeldung ohne ✕, das Ergebnis ersetzt sie").isFalse();
+        assertThat(started.getDurationMs()).isEqualTo(Integer.MAX_VALUE);
+        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".pdf")));
+        await(() -> messages.stream().anyMatch(m -> m.getText().contains("gespeichert in")));
+        StatusMessageEvent.Payload result = messages.stream()
+                .filter(m -> m.getText().contains("gespeichert in")).findFirst().orElseThrow();
+        assertThat(result.getText()).contains(".pdf");
+        assertThat(result.isClosable()).as("Ergebnis bleibt, bis es der Benutzer wegklickt").isTrue();
+        assertThat(result.getDurationMs()).isEqualTo(Integer.MAX_VALUE);
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].feedbackVisibleForTest())
+                .as("die Platte zeigt nur Warnungen und Probleme").isFalse());
     }
 
     @Test
