@@ -688,6 +688,8 @@ public final class PageDetailPanel extends JPanel {
         title.setVisible(!chatTab);
         chat.header().setVisible(chatTab);
         chat.headerActions().setVisible(chatTab);
+        // Die Schnellaktionen in der unteren Leiste gehören nur zum Chat.
+        chat.quickActions().setVisible(chatTab);
         heading.revalidate();
         heading.repaint();
         String page = pageCard;

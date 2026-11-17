@@ -271,10 +271,19 @@ public final class ContentView implements View {
 
     /**
      * Die Reiter der Seitenansicht als Symbolknöpfe für die Icon-Leiste des Hauptfensters; sie schalten die Mitte um
-     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste steht deshalb nichts mehr ({@link #tools()} bleibt leer).
+     * (Angelo, 13.11.2026). Unten in der Werkzeugleiste stehen nur die Schnellaktionen des Chats ({@link #tools()}).
      */
     public JComponent tabBar() {
         return detail.tabIcons();
+    }
+
+    /**
+     * Mittig in der unteren Leiste die Schnellaktionen des Chats (Angelo, 17.11.2026), sichtbar nur im Reiter Chat:
+     * „Seite zusammenfassen“, „Seite samt Unterseiten zusammenfassen“ bzw. „Bereich zusammenfassen“, „Was ist neu?“.
+     */
+    @Override
+    public JComponent tools() {
+        return detail.chat().quickActions();
     }
 
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */

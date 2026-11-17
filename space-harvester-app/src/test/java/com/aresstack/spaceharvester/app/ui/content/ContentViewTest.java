@@ -301,7 +301,9 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
-        assertThat(onEdt(() -> view.tools())).as("unten in der Werkzeugleiste steht nichts mehr").isNull();
+        // Unten in der Werkzeugleiste stehen nur die Schnellaktionen des Chats, außerhalb des Reiters Chat unsichtbar.
+        assertThat(onEdt(() -> view.tools() == view.detail().chat().quickActions() && !view.tools().isVisible()))
+                .as("unten nur die unsichtbaren Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
         onEdt(() -> {
             view.tabsActive(false);
@@ -405,6 +407,17 @@ class ContentViewTest {
         assertThat(onEdt(() -> barIcons(view.detail()))).containsExactly(bar);
     }
 
+    private static List<String> chipLabels(ChatPanel chat) {
+        return find((java.awt.Container) chat.quickActions(), javax.swing.AbstractButton.class).stream()
+                .map(javax.swing.AbstractButton::getText).toList();
+    }
+
+    private static boolean chipsEnabled(ChatPanel chat) {
+        List<javax.swing.AbstractButton> chips = find((java.awt.Container) chat.quickActions(),
+                javax.swing.AbstractButton.class);
+        return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
+    }
+
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
         return java.util.stream.Stream.of("Leseansicht", "Text", "Eigenschaften", "Anhänge", "Analysen", "Erweitert",
                 "Export", "Chat").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
@@ -433,6 +446,23 @@ class ContentViewTest {
                 .map(button -> button.getAccessibleContext().getAccessibleName() + ":" + button.isEnabled()).toList());
         assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":false");
         // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
+        await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
+        // Schnellaktionen in der unteren Leiste (Angelo, 17.11.2026): die Werkzeuge der Ansicht sind die Chips des
+        // Chats, nur im Reiter Chat sichtbar; bei einer Quelle „Bereich zusammenfassen“ und „Was ist neu?“.
+        assertThat(onEdt(() -> view.tools() == chat.quickActions() && chat.quickActions().isVisible())).isTrue();
+        assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_AREA, ChatPanel.WHATS_NEW);
+        await(() -> chipsEnabled(chat));
+        // Bei einer Seite: nur die Seite, die Seite samt Unterseiten, Was ist neu – nie die Eltern.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", space("handbuch"), "p1", "Seite 1"));
+            return null;
+        });
+        assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_PAGE,
+                ChatPanel.SUMMARIZE_SUBTREE, ChatPanel.WHATS_NEW);
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            return null;
+        });
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Senden ohne Chat-Modell: nichts geht ab, die Statuszeile sagt, was fehlt; Text und Anhang bleiben stehen.
         onEdt(() -> {
@@ -464,9 +494,9 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
         assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
-        // In jedem anderen Reiter steht die Seitenüberschrift wieder, die Chat-Symbole sind weg.
+        // In jedem anderen Reiter steht die Seitenüberschrift wieder, die Chat-Symbole und die Chips sind weg.
         assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.header().isVisible()
-                && !chat.headerActions().isVisible())).isTrue();
+                && !chat.headerActions().isVisible() && !chat.quickActions().isVisible())).isTrue();
         onEdt(() -> {
             detail.tabs().select("Leseansicht");
             return null;

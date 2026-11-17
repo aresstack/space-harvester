@@ -15,8 +15,15 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.changelog.ChangeUpdate;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +55,27 @@ public final class ChatTurn {
     /** Die Suche nimmt höchstens so viele Zeichen Frage an ({@code KeywordSearch.MAX_TEXT_LENGTH}). */
     static final int MAX_QUERY_CHARS = 500;
 
+    /** Welche Art Turn: eine freie Frage oder „Was ist neu?“ aus dem Änderungsprotokoll (ADR 0030). */
+    public enum Kind {
+        /** Die Frage des Benutzers mit Wissen aus Suche oder ganzen Seiten. */
+        QUESTION,
+        /**
+         * „Was ist neu?“: die seit der vorigen Update-Marke geänderten Seiten der Auswahl, die jüngsten zuerst; ohne
+         * Änderung oder ohne Marke antwortet der Turn mit einem festen Satz, ohne das Modell zu rufen.
+         */
+        WHATS_NEW
+    }
+
+    /** Die feste Antwort, wenn in der Auswahl seit der vorigen Marke nichts geändert wurde. */
+    public static final String NOTHING_NEW = "Seit dem letzten Abgleich hat sich in dieser Auswahl nichts geändert.";
+    /** Die feste Antwort, wenn keine Quelle der Auswahl eine Update-Marke hat. */
+    public static final String NO_MARK = "Für diese Quelle gibt es noch keinen Abgleich, mit dem sich vergleichen ließe.";
+    /** Die feste Antwort ohne Auswahl. */
+    public static final String NO_AREA = "Links eine Wissensquelle, einen Space oder eine Seite wählen.";
+    /** Höchstens so viele geänderte Seiten gehen mit Text an das Modell. */
+    static final int CHANGED_PAGES = ChatKnowledge.MAX_SOURCES;
+    static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
+
     /** Was die Oberfläche vom Turn erfährt, immer auf dem UI-Thread. */
     public interface Listener {
 
@@ -74,6 +102,7 @@ public final class ChatTurn {
     private final PageSelection scope;
     /** Der gewählte Bereich in Worten für die Systemnachricht; {@code null} ohne Auswahl. */
     private final String area;
+    private final Kind kind;
     private final Listener listener;
     private final Executor ui;
     private final StringBuilder received = new StringBuilder();
@@ -85,6 +114,12 @@ public final class ChatTurn {
     public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
                     List<ChatRecord.Message> history, String question, PageSelection scope, String area,
                     Listener listener, Executor ui) {
+        this(workspace, port, model, effort, history, question, scope, area, Kind.QUESTION, listener, ui);
+    }
+
+    public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
+                    List<ChatRecord.Message> history, String question, PageSelection scope, String area, Kind kind,
+                    Listener listener, Executor ui) {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.port = Objects.requireNonNull(port, "port");
         this.model = Objects.requireNonNull(model, "model");
@@ -93,6 +128,7 @@ public final class ChatTurn {
         this.question = Objects.requireNonNull(question, "question");
         this.scope = scope;
         this.area = area;
+        this.kind = Objects.requireNonNull(kind, "kind");
         this.listener = Objects.requireNonNull(listener, "listener");
         this.ui = Objects.requireNonNull(ui, "ui");
     }
@@ -119,11 +155,30 @@ public final class ChatTurn {
 
     private void run() {
         ChatKnowledge.Context context;
-        try {
-            context = gather();
-        } catch (RuntimeException e) {
-            // Ohne Wissen antwortet das Modell trotzdem; die Statuszeile sagt, dass die Suche scheiterte.
-            context = ChatKnowledge.Context.EMPTY;
+        String asked = question;
+        if (kind == Kind.WHATS_NEW) {
+            Changes changes;
+            try {
+                changes = changes();
+            } catch (RuntimeException e) {
+                changes = new Changes(NOTHING_NEW, List.of(), 0, null);
+            }
+            if (changes.fixed() != null) {
+                // Ohne Änderung kein Modellaufruf: der feste Satz ist die Antwort.
+                String fixed = changes.fixed();
+                onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
+                finish(() -> listener.completed(fixed));
+                return;
+            }
+            context = ChatKnowledge.assemble(changes.excerpts());
+            asked = whatsNewQuestion(question, changes.total(), context.accepted().size(), changes.since());
+        } else {
+            try {
+                context = gather();
+            } catch (RuntimeException e) {
+                // Ohne Wissen antwortet das Modell trotzdem; die Statuszeile sagt, dass die Suche scheiterte.
+                context = ChatKnowledge.Context.EMPTY;
+            }
         }
         if (cancelRequested) {
             finish(() -> listener.cancelled(""));
@@ -144,7 +199,7 @@ public final class ChatTurn {
                 messages.add(AiChat.Message.assistant(message.text()));
             }
         }
-        messages.add(AiChat.Message.user(question));
+        messages.add(AiChat.Message.user(asked));
         task = port.stream(new AiChat.Request(messages, model, effort), new AiChat.Listener() {
             @Override
             public void delta(String text) {
@@ -177,6 +232,102 @@ public final class ChatTurn {
         if (cancelRequested) {
             task.cancel();
         }
+    }
+
+    // ------------------------------------------------------------------ Was ist neu?
+
+    /**
+     * Das Ergebnis der Suche nach Änderungen: ein fester Satz statt einer Modellantwort, oder die geänderten Seiten
+     * der Auswahl als Auszüge (die jüngsten zuerst), ihre Gesamtzahl und die älteste Marke, seit der gezählt wurde.
+     */
+    record Changes(String fixed, List<ChatKnowledge.Excerpt> excerpts, int total, Instant since) {
+    }
+
+    /**
+     * Die geänderten Seiten der Auswahl seit der vorigen Update-Marke jeder Quelle (ADR 0030): Grundlage ist je Quelle
+     * das jüngste Update mit Änderungen, das keine Erstbefüllung ist (das offene nach der letzten Marke, sonst das
+     * letzte abgeschlossene); „seit“ ist dessen Marke. Der Core liefert je Quelle und Space die Seiten mit ihrer
+     * jüngsten Inhaltsänderung; hier bleibt nur die Schnittmenge mit den Seiten der Auswahl.
+     */
+    private Changes changes() {
+        if (scope == null) {
+            return new Changes(NO_AREA, List.of(), 0, null);
+        }
+        Set<String> sourceIds = new LinkedHashSet<>(scope.pages().sourceIds());
+        scope.spaces().forEach(space -> sourceIds.add(space.sourceId()));
+        Map<String, Instant> since = new HashMap<>();
+        boolean anyMark = false;
+        for (String sourceId : sourceIds) {
+            List<ChangeUpdate> updates;
+            try {
+                updates = workspace.changeUpdates(sourceId);
+            } catch (RuntimeException gone) {
+                continue;
+            }
+            if (updates.stream().anyMatch(update -> !update.open())) {
+                anyMark = true;
+            }
+            updates.stream().filter(update -> !update.initial() && update.pages() > 0 && update.from() != null)
+                    .findFirst().ifPresent(update -> since.put(sourceId, update.from()));
+        }
+        if (!anyMark) {
+            return new Changes(NO_MARK, List.of(), 0, null);
+        }
+        Map<PageKey, Instant> changed = new HashMap<>();
+        for (var space : scope.spaces()) {
+            Instant from = since.get(space.sourceId());
+            if (from == null) {
+                continue;
+            }
+            Map<PageKey, Instant> latest;
+            try {
+                latest = workspace.latestContentChanges(space.sourceId(), space.spaceKey(), from);
+            } catch (RuntimeException gone) {
+                continue;
+            }
+            for (Map.Entry<PageKey, Instant> entry : latest.entrySet()) {
+                if (scope.contains(entry.getKey())) {
+                    changed.merge(entry.getKey(), entry.getValue(), (a, b) -> a.isAfter(b) ? a : b);
+                }
+            }
+        }
+        if (changed.isEmpty()) {
+            return new Changes(NOTHING_NEW, List.of(), 0, null);
+        }
+        List<Map.Entry<PageKey, Instant>> ordered = new ArrayList<>(changed.entrySet());
+        ordered.sort((a, b) -> b.getValue().compareTo(a.getValue()));
+        List<ChatKnowledge.Excerpt> excerpts = new ArrayList<>();
+        for (Map.Entry<PageKey, Instant> entry : ordered) {
+            if (excerpts.size() >= CHANGED_PAGES) {
+                break;
+            }
+            ChatKnowledge.Excerpt excerpt = page(entry.getKey().sourceId(), entry.getKey().pageId(), null,
+                    ChatKnowledge.MAX_HIT_CHARS);
+            if (excerpt != null) {
+                excerpts.add(new ChatKnowledge.Excerpt((excerpt.title() == null ? entry.getKey().pageId()
+                        : excerpt.title()) + " (geändert am " + date(entry.getValue()) + ")", excerpt.sourceId(),
+                        excerpt.location(), excerpt.text()));
+            }
+        }
+        Instant oldest = since.values().stream().min(Instant::compareTo).orElse(null);
+        return new Changes(null, excerpts, ordered.size(), oldest);
+    }
+
+    /**
+     * Die feste Frage an das Modell für „Was ist neu?“: nennt die Grundlage und verbietet erfundene Unterschiede,
+     * weil der Chat nur weiß, welche Seiten sich wann geändert haben, nicht was darin (kein Vergleich im Core).
+     */
+    static String whatsNewQuestion(String question, int total, int withText, Instant since) {
+        return question + "\n\nGrundlage: " + total + (total == 1 ? " geänderte Seite" : " geänderte Seiten")
+                + (since == null ? "" : " seit dem " + date(since)) + (withText < total
+                ? ", davon die " + withText + " jüngsten mit Text im Kontext" : ", mit Text im Kontext")
+                + ". Beginne die Antwort mit dieser Grundlage. Nenne die geänderten Seiten mit Titel und Datum, die "
+                + "jüngsten zuerst, und fasse ihren jetzigen Inhalt kurz zusammen. Was sich innerhalb einer Seite "
+                + "geändert hat, ist nicht bekannt: Erfinde keine Unterschiede und behaupte keine.";
+    }
+
+    static String date(Instant at) {
+        return CHANGE_DATE.format(at.atZone(ZoneId.systemDefault()));
     }
 
     // ------------------------------------------------------------------ Wissen

@@ -165,6 +165,111 @@ class ChatTurnTest {
                 .doesNotContain(ChatKnowledge.NO_CONTEXT);
     }
 
+    @Test
+    void whatsNewListsOnlyChangedPagesOfTheSelectionSinceEachSourcesOwnMark() throws Exception {
+        Path a = Files.createDirectories(home.resolve("a"));
+        Path b = Files.createDirectories(home.resolve("b"));
+        Files.writeString(a.resolve("alt-a.md"), "# Alt A\n\nSteht schon lange da.\n");
+        Files.writeString(b.resolve("alt-b.md"), "# Alt B\n\nSteht schon lange da.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: a
+                      type: files
+                      title: Quelle A
+                      options:
+                        directory: %s
+                    - id: b
+                      type: files
+                      title: Quelle B
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), a, b));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        String spaceA = workspace.spaces("a").get(0).key();
+        String spaceB = workspace.spaces("b").get(0).key();
+
+        // Noch kein Abgleich: keine Marke, mit der sich vergleichen ließe; das Modell bleibt ungerufen.
+        PageSelection fresh = workspace.resolveSelection(Selection.of(Selection.Root.source("a")));
+        FakeAiChat port = new FakeAiChat(List.of("Antwort"), null);
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", fresh, "Quelle A",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.completed).isEqualTo(ChatTurn.NO_MARK);
+        assertThat(port.lastRequest).isNull();
+
+        // Erster (manueller) Abgleich beider Quellen: Erstladen zählt nicht als Änderung.
+        workspace.startSync("a", spaceA, SyncMode.FULL);
+        workspace.startSync("b", spaceB, SyncMode.FULL);
+        awaitMarks(workspace, "a", 1);
+        awaitMarks(workspace, "b", 1);
+        PageSelection onlyA = await(() -> {
+            PageSelection resolved = workspace.resolveSelection(Selection.of(Selection.Root.source("a")));
+            return resolved.counts().stored() > 0 ? resolved : null;
+        });
+        events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", onlyA, "Quelle A",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.completed).isEqualTo(ChatTurn.NOTHING_NEW);
+        assertThat(port.lastRequest).as("ohne Änderung kein Modellaufruf").isNull();
+
+        // Je Quelle eine neue Seite und ein eigener Abgleich: zwei Quellen, zwei verschiedene Marken.
+        Files.writeString(a.resolve("neu-a.md"), "# Neu A\n\nDie neue Seite der Quelle A.\n");
+        workspace.startSync("a", spaceA, SyncMode.FULL);
+        awaitMarks(workspace, "a", 2);
+        Files.writeString(b.resolve("neu-b.md"), "# Neu B\n\nDie neue Seite der Quelle B.\n");
+        workspace.startSync("b", spaceB, SyncMode.FULL);
+        awaitMarks(workspace, "b", 2);
+
+        // Nur Quelle A gewählt: die Änderung in B kommt nicht vor.
+        onlyA = await(() -> {
+            PageSelection resolved = workspace.resolveSelection(Selection.of(Selection.Root.source("a")));
+            return resolved.counts().stored() >= 2 ? resolved : null;
+        });
+        events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", onlyA, "Quelle A",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.completed).isEqualTo("Antwort");
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::title)
+                .anySatisfy(title -> assertThat(title).startsWith("neu-a.md (geändert am "))
+                .noneSatisfy(title -> assertThat(title).contains("neu-b.md"))
+                .noneSatisfy(title -> assertThat(title).contains("alt-a.md"));
+        String asked = port.lastRequest.messages().get(port.lastRequest.messages().size() - 1).text();
+        assertThat(asked).startsWith("Was ist neu?").contains("Grundlage: 1 geänderte Seite seit dem ")
+                .contains("Erfinde keine Unterschiede");
+
+        // Beide Quellen: jede seit ihrer eigenen Marke, die jüngste Änderung zuerst.
+        PageSelection both = workspace.resolveSelection(Selection.of(Selection.Root.source("a"),
+                Selection.Root.source("b")));
+        events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist neu?", both, "alle Wissensquellen",
+                ChatTurn.Kind.WHATS_NEW, events, Runnable::run).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.context.accepted()).extracting(ChatKnowledge.Excerpt::title).hasSize(2)
+                .satisfies(titles -> {
+                    assertThat(titles.get(0)).startsWith("neu-b.md (geändert am ");
+                    assertThat(titles.get(1)).startsWith("neu-a.md (geändert am ");
+                });
+        asked = port.lastRequest.messages().get(port.lastRequest.messages().size() - 1).text();
+        assertThat(asked).contains("Grundlage: 2 geänderte Seiten seit dem ");
+    }
+
+    /** Wartet, bis die Quelle so viele abgeschlossene Updates (Marken) im Änderungsprotokoll hat. */
+    private static void awaitMarks(Workspace workspace, String sourceId, int marks) throws InterruptedException {
+        await(() -> workspace.changeUpdates(sourceId).stream().filter(update -> !update.open()).count() >= marks
+                ? Boolean.TRUE : null);
+    }
+
     /** Chat-Modell für Tests (wie {@code FakeChatCompletionPort} im Client): Deltas oder ein Fehler, Anfrage gemerkt. */
     private static final class FakeAiChat implements AiChat {
 
